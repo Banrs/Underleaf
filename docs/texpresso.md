@@ -11,9 +11,7 @@ in the Live Preview Log, which follows TeX's at most five times a second. When L
 the last build's PDF returns. A restart the session makes itself (after a rename, a new main file,
 a file gone, or TeXpresso ending after 10 s) stays `starting` and keeps the live document until
 the new run's first replaces it. Compile still uses latexmk and the project's engine; automatic
-builds pause meanwhile without changing the setting. Settings › Live Preview › Show Live Preview
-In can choose TeXpresso's own window instead: the session then sets no `TEXPRESSO_PDF_OUTPUT`,
-tells TeXpresso no view or caret, and the pane keeps the last build's PDF.
+builds pause meanwhile without changing the setting.
 
 ## Install
 

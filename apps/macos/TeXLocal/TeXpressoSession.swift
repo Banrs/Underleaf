@@ -69,11 +69,8 @@ final class TeXpressoSession {
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
-    /// The setting's as this session started: a change waits for the next.
-    private var viewer = LiveViewer.pane
 
     var active: Bool { phase == .starting || phase == .running }
-    var inWindow: Bool { active && viewer == .window }
     var needsAttention: Bool { halted || !acknowledged && failed }
     var title: LocalizedStringResource {
         switch phase {
@@ -87,8 +84,8 @@ final class TeXpressoSession {
     // MARK: - The session's state
 
     /// At once, not when the session says so: the toggle that asked follows the click.
-    func starting(in viewer: LiveViewer) {
-        (phase, self.viewer) = (.starting, viewer)
+    func starting() {
+        phase = .starting
         acknowledged = false
     }
 
@@ -101,23 +98,5 @@ final class TeXpressoSession {
         if state.alert == true || state.phase == .starting && phase == .stopped { acknowledged = false }
         (phase, halted, failed) = (state.phase, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
-    }
-}
-
-/// Read as a session starts.
-nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
-    case pane, window
-
-    static var current: Self {
-        UserDefaults.standard.string(forKey: DefaultsKey.liveViewer).flatMap(Self.init) ?? .pane
-    }
-
-    var id: Self { self }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .pane: "PDF Pane"
-        case .window: "TeXpresso’s Window"
-        }
     }
 }

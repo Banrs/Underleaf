@@ -2,8 +2,7 @@
 //! latexmk build and PDF continue to use saved project files.
 //!
 //! A build with Underleaf's patch (tools/texpresso) writes the pages the client says it
-//! shows as one-page PDFs when retypeset, and the whole document when a run ends. A client
-//! that gives no pane gets TeXpresso's own window instead.
+//! shows as one-page PDFs when retypeset, and the whole document when a run ends.
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,15 +80,15 @@ pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
     /// A preview of the project at `root` for the session `owner`, in place of any the owner
-    /// had. With a `pane`, a patched build writes the document for it instead of opening a
-    /// window; upstream opens its window all the same.
+    /// had. A patched build writes the document for the `pane` instead of opening a window;
+    /// upstream opens its window all the same.
     fn start(
         &self,
         owner: u64,
         root: &Path,
         files: &[FileBuffer],
         path_env: &str,
-        pane: Option<&Pane>,
+        pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError>;
     fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError>;
@@ -181,7 +180,7 @@ struct State {
 
 struct Session {
     root: PathBuf,
-    pdf: Option<PathBuf>,
+    pdf: PathBuf,
     state: Mutex<State>,
     files: Mutex<HashMap<String, Rope>>,
     lines: mpsc::UnboundedSender<Vec<u8>>,
@@ -197,7 +196,7 @@ impl Session {
         if let Some(tree) = state.tree.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
             tree.kill();
-            remove_pdf_folder(self.pdf.as_deref());
+            remove_pdf_folder(&self.pdf);
             state.error.clone_from(&error);
             if let Ok(mut files) = self.files.try_lock() {
                 files.clear();
@@ -236,8 +235,8 @@ impl Drop for Session {
     }
 }
 
-fn remove_pdf_folder(pdf: Option<&Path>) {
-    if let Some(folder) = pdf.and_then(Path::parent) {
+fn remove_pdf_folder(pdf: &Path) {
+    if let Some(folder) = pdf.parent() {
         let _ = fs::remove_dir_all(folder);
     }
 }
@@ -268,11 +267,13 @@ impl Manager {
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
     }
     pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
-        (self.owned(owner)?.pdf.clone())
-            .filter(|pdf| pdf.with_extension("synctex").is_file())
-            .ok_or_else(|| {
-                CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
-            })
+        let pdf = self.owned(owner)?.pdf.clone();
+        if !pdf.with_extension("synctex").is_file() {
+            return Err(CoreError::not_found(
+                "TeXpresso hasn't written a document to sync with yet",
+            ));
+        }
+        Ok(pdf)
     }
 }
 
@@ -283,7 +284,7 @@ impl Preview for Manager {
         root: &Path,
         files: &[FileBuffer],
         path_env: &str,
-        pane: Option<&Pane>,
+        pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
         let root = dunce::canonicalize(root)?;
@@ -299,16 +300,14 @@ impl Preview for Manager {
         }
         // TeXpresso's idle reruns stay off: each restarts TeX from nothing after a pause in
         // typing and shows no page until it is over.
-        if let Some(pane) = pane {
-            let view = pane
-                .view
-                .map(|(first, last)| json!(["view", first, last.max(first)]));
-            let caret = pane.caret.as_ref().and_then(|(rel, units)| {
-                let offset = byte_offset(buffers.get(rel)?, *units)?;
-                Some(json!(["caret", root.join(rel), offset]))
-            });
-            opening.extend(view.into_iter().chain(caret));
-        }
+        let view = pane
+            .view
+            .map(|(first, last)| json!(["view", first, last.max(first)]));
+        let caret = pane.caret.as_ref().and_then(|(rel, units)| {
+            let offset = byte_offset(buffers.get(rel)?, *units)?;
+            Some(json!(["caret", root.join(rel), offset]))
+        });
+        opening.extend(view.into_iter().chain(caret));
         let failed = |error: String| {
             Ok(Status {
                 error: Some(error),
@@ -325,27 +324,19 @@ impl Preview for Manager {
             previous.stop(None);
         }
         // The session's own folder, for its owner alone; the session removes it as it stops.
-        let pdf = match pane {
-            Some(_) => {
-                let mut folder = tempfile::Builder::new();
-                folder.prefix("texlocal-texpresso-");
-                #[cfg(unix)]
-                folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
-                let folder = folder.tempdir()?.keep();
-                Some(dunce::canonicalize(folder)?.join("live.pdf"))
-            }
-            None => None,
-        };
+        let mut folder = tempfile::Builder::new();
+        folder.prefix("texlocal-texpresso-");
+        #[cfg(unix)]
+        folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        let pdf = dunce::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         let mut command = process::tool(&executable, path_env);
         command
             .args(["-json", "-texlive", "-I"])
             .arg(&build)
             .arg(&main)
             .current_dir(&root)
-            .stdin(Stdio::piped());
-        if let Some(pdf) = &pdf {
-            command.env("TEXPRESSO_PDF_OUTPUT", pdf);
-        }
+            .stdin(Stdio::piped())
+            .env("TEXPRESSO_PDF_OUTPUT", &pdf);
         // A Mac app runs with signals ignored or blocked that a child inherits across exec.
         // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends.
         // SAFETY: only async-signal-safe calls, between fork and exec.
@@ -364,7 +355,7 @@ impl Preview for Manager {
         let (mut child, tree) = match Tree::spawn(&mut command) {
             Ok(spawned) => spawned,
             Err(err) => {
-                remove_pdf_folder(pdf.as_deref());
+                remove_pdf_folder(&pdf);
                 return failed(format!(
                     "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
                 ));
@@ -444,9 +435,7 @@ impl Preview for Manager {
     }
     fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError> {
         let session = self.owned(owner)?;
-        if session.pdf.is_some() {
-            session.send(&[json!(["view", first, last.max(first)])]);
-        }
+        session.send(&[json!(["view", first, last.max(first)])]);
         Ok(())
     }
     fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError> {
@@ -454,9 +443,7 @@ impl Preview for Manager {
         let offset = (lock(&session.files).get(rel))
             .and_then(|text| byte_offset(text, offset))
             .ok_or_else(|| CoreError::unfit(UNFIT))?;
-        if session.pdf.is_some() {
-            session.send(&[json!(["caret", session.root.join(rel), offset])]);
-        }
+        session.send(&[json!(["caret", session.root.join(rel), offset])]);
         Ok(())
     }
     fn rescan(&self, owner: u64) -> Result<(), CoreError> {
@@ -610,10 +597,8 @@ fn apply_message(session: &Session, message: &Value) {
             return;
         }
         "page" => {
-            let folder = session.pdf.as_deref().and_then(Path::parent);
-            let path = message[2].as_str().filter(|path| {
-                folder.is_some_and(|folder| Path::new(path).parent() == Some(folder))
-            });
+            let folder = session.pdf.parent();
+            let path = (message[2].as_str()).filter(|path| Path::new(path).parent() == folder);
             let (Some(page), Some(path)) = (number(1), path) else {
                 return;
             };
@@ -623,15 +608,12 @@ fn apply_message(session: &Session, message: &Value) {
             }
         }
         "pdf" => {
-            let Some(pdf) = &session.pdf else {
-                return;
-            };
             let changed = message[4].as_array().map(|ranges| {
                 let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
                 ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
             });
             LiveEvent::Document {
-                path: pdf.to_string_lossy().into_owned(),
+                path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
                 run: message[3].as_str().map(str::to_owned),
                 changed,
@@ -730,7 +712,7 @@ mod tests {
     async fn output_is_read_a_line_at_a_time_and_an_overlong_line_is_no_message() {
         let session = Arc::new(Session {
             root: PathBuf::new(),
-            pdf: None,
+            pdf: PathBuf::new(),
             state: Mutex::default(),
             files: Mutex::default(),
             lines: mpsc::unbounded_channel().0,
@@ -836,7 +818,7 @@ done
             root: &Path,
             path_env: &str,
             text: Option<&str>,
-            pane: Option<&Pane>,
+            pane: &Pane,
         ) -> (Status, Events) {
             let (tx, events) = mpsc::unbounded_channel();
             let sink = Box::new(move |event| drop(tx.send(event)));
@@ -851,7 +833,7 @@ done
         }
 
         fn begin(manager: &Manager, root: &Path, path_env: &str) -> Status {
-            start(manager, root, path_env, None, Some(&Pane::default())).0
+            start(manager, root, path_env, None, &Pane::default()).0
         }
 
         #[tokio::test]
@@ -862,8 +844,8 @@ done
             fs::create_dir_all(root.join(BUILD_DIR)).unwrap();
             let normal = root.join(BUILD_DIR).join("texpresso-live.pdf");
             fs::write(&normal, "normal build").unwrap();
-            let pane = Some(&Pane::default());
-            let (first, mut events) = start(&manager, &root, &path_env, Some("abc"), pane);
+            let (first, mut events) =
+                start(&manager, &root, &path_env, Some("abc"), &Pane::default());
             assert!(first.running);
             let LiveEvent::Document { path, .. } = next(&mut events, document).await else {
                 unreachable!()
@@ -923,7 +905,7 @@ done
         async fn an_exit_keeps_the_output_says_why_and_stops_the_engine_group() {
             let (tmp, root, path_env) = setup();
             let manager = Manager::default();
-            let (_, mut events) = start(&manager, &root, &path_env, None, None);
+            let (_, mut events) = start(&manager, &root, &path_env, None, &Pane::default());
             let engine = || fs::read_to_string(tmp.path().join("engine.pid"));
             until(|| engine().is_ok() && manager.status(OWNER).unwrap().output == "ready").await;
             let engine: i32 = engine().unwrap().trim().parse().unwrap();
@@ -936,33 +918,6 @@ done
             let status = manager.status(OWNER).unwrap();
             assert!(!status.running && status.output == "ready");
             until(|| unsafe { libc::kill(engine, 0) == -1 }).await;
-        }
-
-        /// Without a pane TeXpresso shows the document in its own window: the session makes no
-        /// folder, offers none, and tells TeXpresso no view or caret.
-        #[tokio::test]
-        async fn in_texpressos_own_window_only_the_log_comes_and_no_view_or_caret_is_sent() {
-            let (tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            let (_, mut events) = start(&manager, &root, &path_env, Some("abc"), None);
-            assert!(manager.owned(OWNER).unwrap().pdf.is_none());
-            manager.view(OWNER, 0, 1).unwrap();
-            manager.caret(OWNER, "main.tex", 1).unwrap();
-            until(|| manager.status(OWNER).unwrap().output == "ready").await;
-            manager.update(OWNER, "main.tex", "TEX_ERROR").unwrap();
-            until(|| manager.status(OWNER).unwrap().log.contains("! Undefined")).await;
-            manager.update(OWNER, "main.tex", "EXIT_CLEAN").unwrap();
-            let mut seen = vec![next(&mut events, |_| true).await];
-            while !matches!(seen.last(), Some(LiveEvent::Ended(_))) {
-                seen.push(next(&mut events, |_| true).await);
-            }
-            assert_eq!(seen.pop(), Some(LiveEvent::Ended(None)));
-            assert!(!seen.is_empty() && seen.iter().all(|e| *e == LiveEvent::Log));
-            let sent = commands(&tmp);
-            assert!(
-                sent.iter().all(|c| c[0] != "view" && c[0] != "caret"),
-                "{sent:?}"
-            );
         }
 
         #[tokio::test]
@@ -994,7 +949,7 @@ done
                 view: Some((2, 3)),
                 caret: Some(("main.tex".into(), 4)),
             };
-            start(&manager, &root, &path_env, Some("aé😀b"), Some(&pane));
+            start(&manager, &root, &path_env, Some("aé😀b"), &pane);
             let path = dunce::canonicalize(root.join("main.tex")).unwrap();
             manager.edit(OWNER, "main.tex", 4, 0, "X").unwrap();
             manager.view(OWNER, 5, 4).unwrap();
@@ -1035,8 +990,7 @@ done
         async fn pages_and_documents_come_as_typeset_and_the_end_after_them() {
             let (_tmp, root, path_env) = setup();
             let manager = Manager::default();
-            let pane = Some(&Pane::default());
-            let (_, mut events) = start(&manager, &root, &path_env, Some("abc"), pane);
+            let (_, mut events) = start(&manager, &root, &path_env, Some("abc"), &Pane::default());
             let session = manager.owned(OWNER).unwrap();
             let first = next(&mut events, document).await;
             let LiveEvent::Document {

@@ -430,10 +430,7 @@ impl Actor {
                     self.reload_tree();
                 }
             }
-            "live_start" => {
-                let window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
-                return Ok(self.live_start_asked(window));
-            }
+            "live_start" => return Ok(self.live_start_asked()),
             "live_stop" => {
                 self.live_stop();
                 return Ok(self.live_state());

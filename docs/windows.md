@@ -161,7 +161,7 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
 | PDF | Print, scroll to the caret after compiling | Scroll to the caret after compiling; no print | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
-| Live | Pane or TeXpresso window, log, restarts | None | Core 12 |
+| Live | Pane, log, restarts | None | Core 12 |
 | Settings | Template, engine, sync after compile, Live Preview | Sync after compile; raw latexmk line | Core 7, 12; UI |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
