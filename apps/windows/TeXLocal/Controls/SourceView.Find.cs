@@ -109,7 +109,7 @@ public sealed partial class SourceView
     {
         if (source is null || FindBox.Text.Length == 0) return;
         var s = Selected;
-        if (Search(s.Start, true) == s) Apply(new Change([new(s.Start, s.Length, ReplaceBox.Text)], [new(s.Start + ReplaceBox.Text.Length, 0)]));
+        if (Search(s.Start, true) == s) Apply(new TextEdit(s.Start, s.Length, ReplaceBox.Text));
         FindNext(true);
     }
 

@@ -166,7 +166,7 @@
                 <MenuBarItem AccessKey="V" Title="View">
                     <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="N" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Navigation pane" />
                     <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
-                    <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" Click="OnPdfPane" IsChecked="True" Text="PDF" />
+                    <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" IsChecked="True" Text="PDF" />
                     <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="OnIssuesPane" Text="Issues" />
                     <MenuFlyoutSeparator />
                     <!-- The PDF's, wherever the focus is: the editor has no zoom of its own. -->
@@ -275,7 +275,8 @@
                     <AppBarButton.Flyout>
                         <MenuFlyout x:Name="EquationMenu" Placement="BottomEdgeAlignedLeft">
                             <MenuFlyoutItem Click="OnInlineMaths" KeyboardAcceleratorTextOverride="Alt+=" Text="Inline maths" />
-                            <MenuFlyoutItem x:Name="EquationAnchor" Click="OnDisplayMaths" Text="Display maths" />
+                            <MenuFlyoutItem Click="OnDisplayMaths" Text="Display maths" />
+                            <MenuFlyoutSeparator />
                         </MenuFlyout>
                     </AppBarButton.Flyout>
                 </AppBarButton>
@@ -285,7 +286,11 @@
                 <AppBarButton x:Name="InsertButton" Label="Insert" ToolTipService.ToolTip="Insert">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
                     <AppBarButton.Flyout>
-                        <MenuFlyout x:Name="InsertFlyout" Placement="BottomEdgeAlignedLeft" />
+                        <MenuFlyout x:Name="InsertFlyout" Placement="BottomEdgeAlignedLeft">
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutSubItem x:Name="BarListMenu" Text="List" />
+                            <MenuFlyoutSubItem x:Name="BarReferencesMenu" Text="References and links" />
+                        </MenuFlyout>
                     </AppBarButton.Flyout>
                 </AppBarButton>
             </CommandBar>
@@ -297,8 +302,7 @@
                 <AppBarToggleButton
                     x:Name="PdfButton"
                     Width="40"
-                    Click="OnPdfButton"
-                    IsChecked="True"
+                    IsChecked="{x:Bind PdfItem.IsChecked, Mode=TwoWay}"
                     Label="PDF"
                     LabelPosition="Collapsed"
                     ToolTipService.ToolTip="PDF (Ctrl+Alt+P)">

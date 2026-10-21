@@ -33,31 +33,21 @@ public sealed partial class WorkspacePage
     void SetUpInsert()
     {
         var templates = Catalogue.Templates;
-        After(InsertMenu.Items, MathsAnchor, templates.Math);
-        After(InsertMenu.Items, InsertAnchor, templates.Insert);
-        foreach (var t in templates.List) ListMenu.Items.Add(Item(t));
-        foreach (var t in templates.References) ReferencesMenu.Items.Add(Item(t));
+        Fill(InsertMenu.Items, InsertMenu.Items.IndexOf(MathsAnchor) + 1, templates.Math);
+        Fill(InsertMenu.Items, InsertMenu.Items.IndexOf(InsertAnchor) + 1, templates.Insert);
+        Fill(ListMenu.Items, 0, templates.List);
+        Fill(ReferencesMenu.Items, 0, templates.References);
         // The command bar's Equation and Insert: the same templates, Insert's lists and references by kind.
-        After(EquationMenu.Items, EquationAnchor, templates.Math, separate: true);
-        foreach (var t in templates.Insert) InsertFlyout.Items.Add(Item(t));
-        InsertFlyout.Items.Add(new MenuFlyoutSeparator());
-        InsertFlyout.Items.Add(Sub("List", templates.List));
-        InsertFlyout.Items.Add(Sub("References and links", templates.References));
+        Fill(EquationMenu.Items, EquationMenu.Items.Count, templates.Math);
+        Fill(InsertFlyout.Items, 0, templates.Insert);
+        Fill(BarListMenu.Items, 0, templates.List);
+        Fill(BarReferencesMenu.Items, 0, templates.References);
         ShowHeadings(Source.SyntaxCall<HeadingStyle[]>("heading_styles", new { }) ?? []);
     }
 
-    void After(IList<MenuFlyoutItemBase> items, MenuFlyoutItemBase anchor, Template[] templates, bool separate = false)
+    void Fill(IList<MenuFlyoutItemBase> items, int at, Template[] templates)
     {
-        var at = items.IndexOf(anchor);
-        if (separate && templates.Length > 0) items.Insert(++at, new MenuFlyoutSeparator());
-        foreach (var t in templates) items.Insert(++at, Item(t));
-    }
-
-    MenuFlyoutSubItem Sub(string text, Template[] templates)
-    {
-        var sub = new MenuFlyoutSubItem { Text = text };
-        foreach (var t in templates) sub.Items.Add(Item(t));
-        return sub;
+        foreach (var t in templates) items.Insert(at++, Item(t));
     }
 
     /// A catalogue block by its id, or an inline command round the selection, whose argument then completes.

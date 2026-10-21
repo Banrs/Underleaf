@@ -15,8 +15,6 @@ public partial class App : Application
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
     static readonly TaskCompletionSource<MainWindow> shown = new();
 
-    internal static string? CoreError { get; private set; }
-
     public App()
     {
         InitializeComponent();
@@ -28,13 +26,14 @@ public partial class App : Application
         };
     }
 
-    public static bool OpenCore()
+    /// Why the library can't open, or null once it has.
+    public static string? OpenCore()
     {
-        if (Core is not null) return true;
+        if (Core is not null) return null;
         var queue = DispatcherQueue.GetForCurrentThread();
         try { Core = Core.Open(Core.DefaultDataDir, a => queue.TryEnqueue(() => a())); }
-        catch (Exception ex) { CoreError = ex.Message; }
-        return Core is not null;
+        catch (Exception ex) { return ex.Message; }
+        return null;
     }
 
     public static void ExitSmoke(string? error)
@@ -54,6 +53,15 @@ public partial class App : Application
         if (Directory.Exists(path)) FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
         else FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
     });
+
+    /// The files of a drop from File Explorer, read while the drop waits: its data goes once the handler returns.
+    public static async Task<string[]> Dropped(DragEventArgs e)
+    {
+        var deferral = e.GetDeferral();
+        var items = await e.DataView.GetStorageItemsAsync();
+        deferral.Complete();
+        return [.. items.Select(i => i.Path).Where(p => p.Length > 0)];
+    }
 
     public static Task<ContentDialogResult> Show(ContentDialog dialog)
     {
@@ -82,14 +90,14 @@ public partial class App : Application
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        OpenCore();
+        var error = OpenCore();
         Window = new MainWindow();
         Window.Activate();
         shown.SetResult(Window);
         _ = Window.Import(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
-        if (Core is null) ExitSmoke(CoreError);
+        if (Core is null) ExitSmoke(error);
         try { Window.OpenProject((await Core!.CallAsync<ProjectInfo>("create_project", new { name = "Smoke", template = "blank" })).Id); }
         catch (CoreException ex) { ExitSmoke(ex.Message); }
     }
