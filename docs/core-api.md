@@ -1,9 +1,8 @@
 # The core's API for hosts
 
-Underleaf's hosts (the macOS app and the Windows app) are UI and OS integration only.
-Everything else is the Rust core's: stateless commands (`Service`) and **project sessions**
-(`texlocal_core::session`), which keep each open project's documents, saves, builds and
-preview. This is the contract the hosts are written against.
+The contract the hosts (the Mac and Windows apps) are written against. The core answers
+stateless commands (`Service`) and keeps **project sessions** (`texlocal_core::session`): each
+open project's documents, saves, builds and preview.
 
 ## Calling the core
 
@@ -36,13 +35,12 @@ the call.
   call, and keeps what they say. The answer describes the session as it opened: a `tree` event
   that came before it is the newer tree.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
-  (they never wait for a build or TeXpresso to finish), but go through the session's queue:
-  keep them off the UI thread or use `tl_call_async`. `session_analyze` and `session_search`
-  are taken in their turn but worked out beside the session, which goes on with the commands
-  after them meanwhile;
-  `session_outline_current` is answered at once from the outline kept, from no queue, so a host
-  may call it with `tl_call` on the UI thread; so may `locate`, which reads only the path's
-  folders, for a drag that asks it as it moves.
+  (they never wait for a build or TeXpresso), but go through the session's queue: keep them off
+  the UI thread or use `tl_call_async`. `session_analyze` and `session_search` are taken in their
+  turn but worked out beside the session, which goes on with the commands after them.
+  `session_outline_current` is answered at once from the outline kept, on no queue, so a host may
+  call it with `tl_call` on the UI thread; so may `locate`, which reads only the path's folders,
+  for a drag that asks it as it moves.
 - `tl_call_async` queues a session's commands (every `session_*` but `session_open`) for it
   before it returns, so the session takes them in the order they were sent, though their
   answers may come back on different threads in another order. Send a session's commands
@@ -102,10 +100,13 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
-Every other command (`file_tree`, `synctex_*`, `set_ui_state`,
-`pdf_path` for a new main file's PDF, …) is the service's. While the
-PDF shown is the live document, pass `live: true, session: <the session's number>` to
-`synctex_forward` and `synctex_inverse`.
+The service's other commands (`id` is the project's): `list_projects`, `rename_project {id,
+name}`, `get_settings {id}`, `file_tree {id}`, `project_root {id}`, `pdf_path {id}` (a new main
+file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest}`, `import_files {id, dir?, paths?,
+conflict}`, `import_project {src}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
+`synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
+`synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
+`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`.
 
 ## Errors
 
@@ -144,11 +145,15 @@ Service commands (`tl_call`):
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in, as its folder's name, and the path in it, spelt as the disk spells it; null outside every project. |
 | `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
-Syntax commands (`tl_syntax_call`), JSON in, JSON out:
+Syntax commands (`tl_syntax_call`), JSON in, JSON out; `math_svg` and `glyph_svg` are as
+`texlocal.h` describes them:
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
 | `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret, unless TeX can't read the path as written (`%`, `#`, `\` or unpaired braces); any other file opens (`{"open": true}`). The path is written as given. |
+| `themes` | | `[{id, title}]` | |
+| `theme_colors` | `theme`, `dark`, `increaseContrast?`, `background`, `fill`, `system?` | `[[r, g, b, a]]`, one per highlight kind | `system` maps the System theme's colour names to the host's values; each colour is made `legible`. |
+| `menus` | | `{templates, symbolGroups}` | The Insert and Math menus' catalogue. |
 | `heading_styles` | | as `session_analyze`'s `headingStyles` | The levels without a project: every level, as the standard classes set and number them. |
 | `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
 
@@ -256,147 +261,3 @@ editor's thread.
   `halted` until a run completes.
 - **Symbols** (labels and citations) are scanned when the session opens and 150 ms after a
   save or another app's change; the session's documents complete from them.
-
-## Changes for hosts (October 2026)
-
-Every change a host follows since commit d6bee12, in the order made.
-
-- Service commands removed: `texpresso_status`, `texpresso_start`, `texpresso_update`,
-  `texpresso_edit`, `texpresso_view`, `texpresso_caret`, `texpresso_wait`, `texpresso_stop`,
-  `texpresso_rescan`, `compile`, `clean_build`, `rename_entry`, `scan_symbols`, and
-  `create_project`'s `free` option. Sessions do all of it.
-- `session_close_document` has no `discard` option.
-- The `symbols` event is gone: a session's documents complete from its own scan.
-- The `document` event is `{path, error, held}`, sent only as a document opens or moves and
-  when `error` or `held` changes.
-- The `build` event is `{compiling, auto, outdated}`.
-- `tl_source_call` no longer answers `indent`, `set_symbols`, `reset_typing` or the commands
-  that need no source; `tl_syntax_call` no longer answers `contrast`.
-- **A host numbers its sessions.** `session_open` takes `session`, the host's number for it
-  (409 if one of that number is open), and the core no longer holds a new session's events
-  back until its answer is handed over: a host listens for the number before the call and
-  keeps the events that come before the answer. Windows: choose the number in WorkspacePage's
-  two `session_open` call sites and filter events by it from before the call, so a new
-  session's first events are no longer dropped.
-- `session_open` also answers `settings` and `ui`, so a host need not call `get_settings` and
-  `get_ui_state` after it.
-- A build's `result.pdf` (`build_finished`) is an absolute path, as `session_open`'s `pdf` is;
-  it was relative to the project. Windows' `Full(pdf)` still finds it, as `Path.Combine` keeps
-  a rooted second path, but can go.
-- `session_set_options` takes the preference alone: the session builds by itself only once
-  `status` has found TeX, so a host no longer combines the two, nor sends the option again when
-  TeX comes or goes.
-- `create_project` takes `engine?`, so a new project is made with its engine in one call.
-- `tl_call_async` queues a session's commands for it as they are sent, so it takes them in
-  that order; other commands run side by side, as before.
-- A live preview is its project session's, by the session's number: the `live` event has no
-  `token`, and `synctex_forward` and `synctex_inverse` take the session's number as
-  `session` with `live: true`. Windows: nothing to change (it has no live preview yet).
-- `session_live_status` is gone, and the `live` event has no `revision`: a host says with
-  `session_live_log {shown}` whether it shows the Live Preview Log, and while it does, each
-  `live` event carries the log's whole text as `log` (null otherwise), as does an `alert`.
-  Windows: nothing to change.
-- `tl_source_edit` takes `changing` (a `TlRange *`, NULL for none) and `mirroring`, follows the
-  edit itself and answers a snippet's mirror edits (NULL for none, which is every edit outside a
-  snippet; free one with `tl_free`). `tl_source_select` is new. `tl_source_call` no longer
-  answers `follow`, `select`, `mirror_snippet`, `text` or `not_prose`: `code_ranges` answers
-  what spelling or Writing Tools leave alone. Windows: pass NULL and false to
-  `tl_source_edit` and free what it answers.
-- `session_open_document` answers null: the text is `tl_source_text`'s, read from the document's
-  source (Windows: `WorkspacePage.Document`'s open reads it there, and frees it with
-  `tl_source_free_text`).
-- `analyze_project` and `outline_current` are gone: `session_analyze {path}` answers the outline
-  as a tree only (no flat `outline`; flatten the tree in order for the list), with `words` and
-  the main file's `headingStyles`, and keeps the outline for `session_outline_current {path,
-  line}`. A heading has its `command` and `level`; an empty title is the level's (“Untitled Section”) with
-  `untitled: true`, where it was “(untitled)”; fold keys are as before.
-- `tl_syntax_call` no longer answers `document_class`, and `menus` no longer has
-  `headingLevels`: the levels are `session_analyze`'s `headingStyles`, or `heading_styles`
-  without a project.
-- An `issues` line has `compact` and `tokens` in place of `command`.
-- `search_project` answers its hits by file (`[{file, hits}]`), and `status`, `set_tex_dir` and
-  `set_texpresso_dir` answer `latexmkVersion`.
-- `session_rename` also answers `ui`, the ui state with the entry's paths moved, so a host
-  need not call `get_ui_state` after it (it sends any `set_ui_state` before the rename).
-- Errors keep the file system's kind (404, 403, 409) without “(os error N)”, an unreadable
-  `.texlocal.json` makes a settings write 409, and a session a panic ended answers as in
-  Errors. A `tl_source_call` command missing an argument it needs answers NULL, where it was
-  answered for the start of the text; every argument the hosts send is there already.
-- A document ends its lines with `\n` alone, whatever the file's are, and saves keep the file's.
-  Windows: the editor no longer normalises a CRLF file itself (`SourceView.Show`'s `Reload`, which
-  marked the normalised text saved).
-- `session_open_document` refuses a file that isn't UTF-8 (400); it opened with U+FFFD in place of
-  the bytes, which the first save wrote over the file.
-- `drop_text` opens a file whose path TeX can't read in `\includegraphics` (`%`, `#`, `\`,
-  unpaired braces) rather than inserting it.
-- A failed write's message is a sentence that names the file, and its folder when the write
-  was refused, as Foundation words it (“You don’t have permission to save the file “main.tex”
-  in the folder “Thesis”.”); its status is still the file system's.
-- The service no longer answers `read_file`, `write_file`, `set_settings` or `get_ui_state`,
-  which no host's app called: a session reads and saves its documents and changes the settings
-  (`session_set_settings`), and `session_open` and `session_rename` answer the ui state. Both
-  hosts' tests write their fixtures into the project's folder.
-- `session_state` is gone: no host used it. A session's events say what it holds.
-- `build_finished` no longer sets `announce` for a build Stop ended (Windows announced it as
-  “Build succeeded”).
-- `live_document` has no `version` or `serial`, and `live_page` no `serial`: events come in
-  order, and neither host read them.
-- A host opens one session of a project at a time, as both do: a session's Live Preview no
-  longer takes over another session's preview of the project, nor stops when another's Start
-  takes it (“Another window started TeXpresso…”). A live sync (`live: true`) of a session
-  whose Live Preview has been stopped is 404.
-- `create_entry` always numbers past a taken name, as both hosts asked with `free: true`, which
-  it no longer reads.
-- `set_tex_dir` and `set_texpresso_dir` take `dir` as given, as both hosts send a folder chosen
-  or null: a blank one is 400, where it cleared the choice.
-- texlocal-ffi builds a static library alone, its tests the crate's own, so the release
-  profile's LTO reaches the Mac app's archive too; Windows builds its DLL with
-  `cargo rustc --crate-type cdylib`.
-- `heading_styles` takes no arguments, `math_svg` and `glyph_svg` answer no `baseline`, and
-  `themes` answers each theme's `id` and `title` alone: what the hosts read.
-- `catalogue` is new: the templates and engines a new project may start from, with Home's
-  titles, so a host need not keep its own lists.
-- A build's result has `badBoxes`, apart from its issues, and BibTeX's and biber's warnings
-  among its `warnings`; a build that failed for want of shell escape has an issue whose
-  `compact` is “Needs Shell Escape”.
-- `completions` may answer `kind` `file`, the project's files in a file's argument, and
-  offers the project's own commands and environments first.
-- A file TeX names in another case than the disk's (`\input{Chapters/Intro}` for
-  `chapters/intro.tex`) is named as the disk spells it, as the tree does: in a build's items,
-  `synctex_inverse`'s `file` and `session_analyze`'s headings. `session_open_document` keeps a
-  document by the disk's spelling too, so a save never renames the file: its events name it so,
-  and `tl_session_source` and the session's commands find it by that spelling. Both hosts open
-  the paths the tree and these answers give, so nothing changes for them.
-- `file_tree` and the `tree` event mark the main file's node `main: true` (other nodes have no
-  `main`), and a session sends the tree again when the main file changes. Both hosts may adopt
-  it in place of their own marks; nothing breaks meanwhile.
-- Both hosts mark the main file from the tree's `main`, not their copy of the settings, and
-  Windows keeps Delete off for that node. The service's `stop_compile` is gone: a project's
-  build is its session's, which closing the workspace stops (`session_stop_compile` stays).
-- `tl_source_call` answers `definition {at}`: the label, citation, environment, command or file
-  named at the offset and the places the project defines it (`{kind, name, places: [{file,
-  line, column, length}]}`, or null), for Jump to Definition. A host opens the first place's
-  `file` at its `line` and selects `length` units from `column`; one that doesn't ask changes
-  nothing. It also answers at a `\label`, `\bibitem` or .bib entry's own key, so Rename can
-  start where a name is defined.
-- A `completions` item may have a `detail`: a citation's .bib entry, “Knuth · 1984 · The
-  TeXbook”, for a host to show beside its key as Xcode shows a completion's description.
-  Items without one have no `detail`, so a host that doesn't read it changes nothing.
-- `session_search {query, matchCase?, wholeWord?}` takes the place of the service's
-  `search_project`, which is gone, and answers as it did, but finds the open document's unsaved
-  edits, which Replace would otherwise miss. It ends a line where the editor does, at a carriage
-  return alone too.
-- `session_replace` is new, for Replace All: a host applies its `edits` to the open document as
-  one undoable edit, at once, and may show `written`'s counts; the core has written the other
-  files.
-- `session_rename_symbol {kind, from, to}` is new, for Rename of a label or a citation: it
-  answers as `session_replace`, and a host applies the answer the same way.
-- The `tree` event also comes when another app (by hand, git, a sync client) changes the main
-  file in `.texlocal.json`, so a host marking the tree's `main` follows it with nothing to do.
-- `session_replace` and `session_rename_symbol` change every file or none: a file that can't be
-  written puts back those written before it, and the error comes with no `edits` to apply. A
-  citation's rename reaches .bib entries' `crossref` fields, and `definition` answers at one.
-- `tl_source_call` answers `version` for a session's document, the one `session_replace`'s and
-  `session_rename_symbol`'s `edits` name. Both hosts apply those edits only while it is the
-  same, as they apply them only to the file they name, so typing between the call and its
-  answer no longer shifts them.

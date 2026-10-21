@@ -6,11 +6,9 @@ accounts, cloud or network.
 The repository is **Underleaf**; the app is **TeXLocal**, and so are its names on disk
 (`~/TeXLocal`, `.texlocal.json`, `TEXLOCAL_DATA`), so existing projects keep working.
 
-One Rust core with thin native hosts, for macOS and Windows (no Linux):
-- **macOS app** (`apps/macos`): AppKit and SwiftUI for macOS 27, with a TextKit editor and PDFKit.
-- **Windows app** (`apps/windows`): WinUI 3, in progress.
-
-[AGENTS.md](AGENTS.md) has the architecture and the standing decisions.
+One Rust core with thin native apps, for macOS and Windows (no Linux):
+- **macOS** (`apps/macos`): AppKit and SwiftUI for macOS 27, with a TextKit editor and PDFKit.
+- **Windows** (`apps/windows`): WinUI 3, in progress.
 
 ## Quick start
 
@@ -33,13 +31,13 @@ On Windows, `apps/windows/install.ps1` builds the app (.NET 10 SDK and Rust) int
 - **Editor**: completion of commands, environments, `\cite{}` from your `.bib` files and `\ref{}`
   from your `\label{}`s; closing brackets and snippets; Overleaf, TeXstudio and System colours;
   a maths preview at the cursor, typeset by RaTeX.
-- **Compile** with latexmk (pdfLaTeX, XeLaTeX, LuaLaTeX; BibTeX and biber reruns). Builds run past
-  errors, as Overleaf's, with every issue on its line; a project can Stop on First Error. A pause
-  in typing saves and compiles.
-- **Live Preview** (experimental): edits go to a persistent TeXpresso as you type and show in the
-  PDF pane ([docs/texpresso.md](docs/texpresso.md)).
+- **Compile** with latexmk (pdfLaTeX, XeLaTeX, LuaLaTeX; BibTeX and biber reruns). As on Overleaf,
+  builds run past errors with every issue on its line, a project can Stop on First Error, and a
+  pause in typing saves and compiles.
+- **Live Preview** (experimental, Mac): edits go to a persistent TeXpresso as you type and show in
+  the PDF pane ([docs/texpresso.md](docs/texpresso.md)).
 - **PDF**: zoom, fit, find (Mac), and SyncTeX both ways, to the word.
-- **File outline**, word count and project-wide search.
+- **File outline**, word count, and project-wide search and replace.
 - **Settings**: General, Editor, Compiling, PDF and Live Preview; per project (the Mac's
   inspector) the main file, engine, shell escape and Stop on First Error.
 
@@ -48,7 +46,10 @@ On Windows, `apps/windows/install.ps1` builds the app (.NET 10 SDK and Rust) int
 A TeX distribution with `latexmk`, `pdflatex` and `synctex`: on macOS
 `brew install --cask mactex-no-gui`, on Windows TeX Live (MiKTeX's installer lacks the Perl
 latexmk needs). TeXLocal finds TeX on `PATH`, in the usual install locations, or in a folder
-chosen in Settings. Building needs Rust stable, and Xcode 27 or the .NET 10 SDK.
+chosen in Settings. On macOS 27, MacTeX 2026's biber fails (its launcher calls
+`lipo -extract_family`, which `lipo` refuses) until `tlmgr update biber`.
+
+Building needs Rust stable, and Xcode 27 or the .NET 10 SDK.
 
 ## Layout
 
@@ -57,16 +58,16 @@ crates/texlocal-core/  projects, builds, SyncTeX, logs, sessions, and `syntax`, 
 crates/texlocal-ffi/   the C ABI (header in include/)
 apps/macos/            the Mac app, UI only
 apps/windows/          the Windows app, UI only
-docs/                  core-api.md (the hosts' contract), windows.md, texpresso.md,
+docs/                  core-api.md (the apps' contract with the core), windows.md, texpresso.md,
                        design-tokens.md, agent-code.md, handoff.md (what is open)
 tools/                 texpresso/ (the patched engine), qa/ (the Mac's QA driver), install-mac.sh
 ```
 
 ## Development
 
-Commands and checks are in [AGENTS.md](AGENTS.md) (Testing; Build and install). Keep the version
-the same in the workspace `Cargo.toml`, `apps/macos/project.yml` and the `.xcodeproj`
-(`MARKETING_VERSION`), and `apps/windows/TeXLocal/TeXLocal.csproj`.
+[AGENTS.md](AGENTS.md) has the architecture, the decisions, and the commands to test and install.
+A version change goes in the workspace `Cargo.toml`, `apps/macos/project.yml`, the `.xcodeproj`
+(`MARKETING_VERSION`) and `apps/windows/TeXLocal/TeXLocal.csproj`.
 
 ## Security
 
