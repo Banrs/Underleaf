@@ -8,6 +8,8 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
   path through the popover is unverified.
 - An opened folder's menu on Home, and Install's password dialog with MacTeX (the rows, the
   button, its progress and a failure are checked).
+- A click on a Live Preview issue opening the Live Preview Log (its look and a build's issue over
+  one on its line are checked).
 
 ## 27.2 workarounds
 
@@ -25,7 +27,6 @@ it works around.
 - Windows, on a machine: Home's rows for an opened and a missing folder, and Install's UAC
   elevation (allowed and cancelled), which GitHub's runner can't show.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
-- The Mac doesn't yet draw `live_issues` (`docs/core-api.md`); Windows has no Live Preview.
 - TeXpresso's frontend (`texpresso`, not `texpresso-xetex`) is still to be rebuilt with the
   patch's fix for a worker killed as it starts (`docs/texpresso.md`). It needs MuPDF and SDL2
   (`brew install mupdf sdl2`). Until then `texpresso_live` fails at "Recovery without a restart".
