@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::process::run;
 use crate::settings::AppSettings;
+use crate::tinytex;
 
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
     std::fs::read_dir(dir)
@@ -52,9 +53,9 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
 }
 
 /// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
-/// link and Homebrew's folders, or MiKTeX's for one user and for all.
+/// link and Homebrew's folders, or MiKTeX's for one user and for all; then TinyTeX's.
 fn usual_tex_dirs() -> Vec<PathBuf> {
-    if cfg!(windows) {
+    let mut dirs: Vec<PathBuf> = if cfg!(windows) {
         let under = |var, dir| Some(PathBuf::from(std::env::var_os(var)?).join(dir));
         [
             under("LOCALAPPDATA", r"Programs\MiKTeX\miktex\bin\x64"),
@@ -67,12 +68,14 @@ fn usual_tex_dirs() -> Vec<PathBuf> {
         ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
             .map(PathBuf::from)
             .into()
-    }
+    };
+    dirs.extend(tinytex::root().map(|root| tinytex::bin(&root)));
+    dirs
 }
 
 /// Folders as a PATH, in the platform's form. A folder whose name holds the
 /// separator can't be one of them, and is left out.
-fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
+pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
     let dirs = dirs
         .into_iter()
         .filter(|dir| std::env::join_paths([dir]).is_ok());

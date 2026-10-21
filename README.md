@@ -44,14 +44,18 @@ to the Trash or the Recycle Bin.
 
 ## Requirements
 
-You need a TeX distribution that includes latexmk, pdflatex and synctex. On macOS, install
-[MacTeX](https://tug.org/mactex/), or run `brew install --cask mactex-no-gui`. On Windows, install
-[TeX Live](https://tug.org/texlive/windows.html); MiKTeX's installer doesn't come with the Perl
-that latexmk needs.
+You need a TeX distribution that includes latexmk, pdflatex and synctex. If TeXLocal finds none,
+it offers to install [TinyTeX](https://yihui.org/tinytex/), a small TeX Live of about 260 MB that
+goes in your user folder without asking for a password, and adds the packages a document needs
+when you click Install beside the error. For the full distribution instead, install
+[MacTeX](https://tug.org/mactex/) on macOS, or run `brew install --cask mactex-no-gui`. On
+Windows, install [TeX Live](https://tug.org/texlive/windows.html); MiKTeX's installer doesn't come
+with the Perl that latexmk needs.
 
 TeXLocal looks for TeX on your `PATH` and in the places installers usually put it:
-`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>` and MiKTeX's
-folders. If yours is somewhere else, choose its folder in Settings (on the Mac, under Compiling).
+`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>`, MiKTeX's
+folders and TinyTeX's. If yours is somewhere else, choose its folder in Settings (on the Mac,
+under Compiling).
 
 On macOS 27, MacTeX 2026's biber fails with an error from `lipo`. Running
 `sudo tlmgr update biber` fixes it.

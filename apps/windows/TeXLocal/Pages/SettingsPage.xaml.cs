@@ -35,6 +35,7 @@ public sealed partial class SettingsPage : Page
         FontBox.SelectionChanged += OnLook;
         SizeBox.SelectionChanged += OnLook;
         SyntaxBox.SelectionChanged += OnLook;
+        TexMissing.Installed += ShowTex;
         Loaded += (_, _) => ShowPreview();
         ActualThemeChanged += (_, _) => DispatcherQueue.TryEnqueue(ShowPreview);
     }

@@ -80,6 +80,8 @@ final class AppModel {
     private(set) var projectsLoaded = false
     var tex: TexStatus?
     private(set) var settingTeX = false
+    /// TinyTeX's install, which takes a minute or more.
+    private(set) var installingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
     private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil
@@ -225,11 +227,23 @@ final class AppModel {
     }
 
     func setTeXFolder(_ path: String?, texpresso: Bool) async throws {
+        try await setTeX(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path])
+    }
+
+    /// TinyTeX into the user's Library, with no password; Install then adds what a document needs.
+    func installTeX() async throws {
+        installingTeX = true
+        defer { installingTeX = false }
+        try await setTeX("install_tex")
+    }
+
+    /// Commands that change where TeX is, and answer the status.
+    private func setTeX(_ command: String, _ args: [String: any Sendable] = [:]) async throws {
         settingTeX = true
         texCheck?.cancel()
         defer { settingTeX = false }
         do {
-            tex = try await core.call(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path], as: TexStatus.self)
+            tex = try await core.call(command, args, as: TexStatus.self)
         } catch {
             // The status read this choice cancelled.
             Task { await refreshTeXStatus() }

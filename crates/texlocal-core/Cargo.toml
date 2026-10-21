@@ -16,6 +16,8 @@ regex = "1.12.1"
 trash = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Checks TinyTeX's download against the sum GitHub gives it.
+sha2 = "0.11"
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 # zip's `deflate` feature also brings zopfli, used only past level 9, and the

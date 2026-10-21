@@ -22,8 +22,8 @@ the system control that already looks right, never by dropping a guideline-corre
   bar). Mica, layers and acrylic where Windows 11 uses them; no Liquid Glass stand-ins.
 - **Distribution:** an unpackaged, self-contained zip and a winget manifest; no MSIX for now.
 - **Library:** `TEXLOCAL_DATA`, else `%USERPROFILE%\TeXLocal`, outside OneDrive-redirected
-  Documents, whose sync locks files mid-build. The missing-TeX tip names TeX Live, whose installer
-  brings the Perl latexmk needs.
+  Documents, whose sync locks files mid-build. The missing-TeX bar installs TinyTeX into the user's
+  AppData without UAC, and links TeX Live, whose installer brings the Perl latexmk needs.
 - **Look:** `{ThemeResource}` only, no hex; Segoe UI Variable through the type ramp, sentence case,
   Semibold never bold; every size a multiple of 4; at most one accent button per surface; system
   focus visuals; every icon-only button named for UI Automation with its key in a ToolTip; only

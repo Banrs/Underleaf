@@ -25,6 +25,7 @@ pub mod syntax;
 mod templates;
 mod tex;
 mod texpresso;
+mod tinytex;
 mod wordmatch;
 mod zipexport;
 

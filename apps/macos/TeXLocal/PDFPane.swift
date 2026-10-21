@@ -21,13 +21,27 @@ struct PDFPane: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if app.tex?.available != true {
+        if app.installingTeX {
             ContentUnavailableView {
-                Label("MacTeX Isn’t Installed", systemImage: "richtext.page")
+                Label("Installing TinyTeX…", systemImage: "richtext.page")
             } description: {
-                Text("Install it to compile; TeXLocal finds it afterwards.")
+                Text("This can take a few minutes.")
             } actions: {
-                LinkButton(title: "Get MacTeX", url: Links.mactex).buttonStyle(.borderedProminent)
+                ProgressView()
+            }
+        } else if app.tex?.available != true {
+            ContentUnavailableView {
+                Label("TeX Isn’t Installed", systemImage: "richtext.page")
+            } description: {
+                Text("Install TinyTeX to compile, or get MacTeX, the full TeX distribution.")
+            } actions: {
+                Button("Install TinyTeX") {
+                    Task {
+                        do { try await app.installTeX() } catch { app.report(error, "Couldn’t Install TinyTeX") }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                LinkButton(title: "Get MacTeX", url: Links.mactex)
             }
         } else if project.compiling {
             // The toolbar's Stop can be in its overflow menu (HIG, Progress indicators).

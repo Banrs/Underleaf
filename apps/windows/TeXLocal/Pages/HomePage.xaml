@@ -100,18 +100,7 @@
                         <Button Click="OnRetry" Content="Try again" />
                     </InfoBar.ActionButton>
                 </InfoBar>
-                <InfoBar
-                    x:Name="TexMissing"
-                    Title="TeX isn't installed"
-                    Margin="0,16,0,0"
-                    IsClosable="False"
-                    Message="TeXLocal compiles with TeX Live."
-                    Severity="Warning"
-                    Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}">
-                    <InfoBar.ActionButton>
-                        <HyperlinkButton Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" />
-                    </InfoBar.ActionButton>
-                </InfoBar>
+                <controls:TexBar x:Name="TexMissing" Margin="0,16,0,0" Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}" />
 
                 <TextBlock Style="{StaticResource GroupHeaderStyle}" Text="New" />
                 <!-- Word's template gallery: each a page drawn as its first page lies, its name under it. -->
