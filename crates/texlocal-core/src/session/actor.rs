@@ -785,12 +785,17 @@ impl Actor {
         if self.live.active() {
             self.live.disk_paths.extend(meaning.listed.iter().cloned());
         }
-        if meaning.tree || meaning.settings {
-            let main = self.tree.main.clone();
+        let main = self.tree.main.clone();
+        if meaning.tree {
             self.reload_tree();
-            // Another app chose another main file: builds and Live Preview follow it as they
-            // follow the app's own choice.
-            if meaning.settings && self.tree.main != main {
+        }
+        // Another app chose another main file: builds and Live Preview follow it as they follow
+        // the app's own choice. Each fold and folder opened writes the settings too, so the
+        // folder is walked again only for another mark.
+        if meaning.settings {
+            let chosen = paths::fold_case(&settings::read_settings(&self.root).main_file);
+            let mut files = self.tree.files.iter();
+            if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
                 self.main_file_changed();
             }
         }

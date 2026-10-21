@@ -700,6 +700,13 @@ async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_
     let paper = (json!("paper.tex"), Some(json!(true)));
     assert_eq!(marks, [(json!("main.tex"), None), paper]);
     let builds = rig.fake.called("compile");
+    // A fold's write keeps the main file, so the folder isn't walked for files it didn't hear of.
+    fs::write(rig.root.join("unheard.tex"), "").unwrap();
+    let folds = r#"{ "mainFile": "paper.tex", "ui": { "foldedHeadings": ["a"] } }"#;
+    fs::write(rig.root.join(".texlocal.json"), folds).unwrap();
+    rig.changed(".texlocal.json", false);
+    wait(300).await;
+    assert!(rig.of_type("tree").await.is_empty());
     let settings = r#"{ "mainFile": "main.tex" }"#;
     fs::write(rig.root.join(".texlocal.json"), settings).unwrap();
     rig.changed(".texlocal.json", false);
