@@ -48,8 +48,7 @@ struct BuildPanel: View {
             case .texpresso:
                 if project.texpresso.log.isEmpty {
                     ContentUnavailableView(project.texpresso.title, systemImage: "bolt", description: Text(
-                        project.texpresso.inWindow ? "Live Preview shows the document in its own window. Compile to update the PDF here."
-                            : project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
+                        project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
                 } else {
                     LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: "Live Preview Log")
                 }

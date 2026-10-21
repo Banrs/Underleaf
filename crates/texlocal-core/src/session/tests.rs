@@ -29,7 +29,6 @@ struct Fake {
     calls: Mutex<Vec<String>>,
     builds: Mutex<VecDeque<oneshot::Sender<Result<CompileResult, CoreError>>>>,
     starts: Mutex<Vec<Vec<String>>>,
-    panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
     edits: Mutex<Vec<(String, usize, usize, String)>>,
     /// The next edit's refusal.
@@ -127,11 +126,10 @@ impl Preview for Fake {
         _root: &Path,
         files: &[FileBuffer],
         _path_env: &str,
-        pane: Option<&Pane>,
+        _pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
         self.note("live_start");
-        lock(&self.panes).push(pane.is_some());
         lock(&self.starts).push(files.iter().map(|f| f.path.clone()).collect());
         *lock(&self.sink) = Some(sink);
         Ok(status(true))
@@ -1109,21 +1107,6 @@ async fn the_caret_is_told_once_it_settles() {
     wait(200).await;
     rig.state().await;
     assert_eq!(rig.fake.called("live_caret"), 1, "away and back is no move");
-}
-
-#[tokio::test(start_paused = true)]
-async fn texpressos_own_window_is_kept_through_the_sessions_restarts() {
-    let rig = Rig::new(false).await;
-    fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
-    let started = rig.ok("live_start", json!({ "window": true })).await;
-    assert_eq!(started["phase"], "running");
-    rig.ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
-        .await;
-    wait(200).await;
-    rig.state().await;
-    rig.ok("live_stop", json!({})).await;
-    live(&rig).await;
-    assert_eq!(*lock(&rig.fake.panes), [false, false, true]);
 }
 
 #[tokio::test(start_paused = true)]

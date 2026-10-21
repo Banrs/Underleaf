@@ -50,7 +50,6 @@ pub(crate) struct Live {
     pub disk_paths: BTreeSet<String>,
     /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
-    window: bool,
     /// Rises with each start and each end: what an earlier start's preview tells is dropped.
     generation: u64,
     pub document_seen: bool,
@@ -168,10 +167,9 @@ impl Actor {
     }
 
     /// A restart still pending gives way to a user's Start: it would stop the preview this starts.
-    pub fn live_start_asked(&mut self, window: bool) -> Value {
+    pub fn live_start_asked(&mut self) -> Value {
         if self.live.phase == Phase::Stopped {
             self.live_cancel_work();
-            self.live.window = window;
             self.live_start();
         }
         self.live_state()
@@ -193,21 +191,17 @@ impl Actor {
             let path = path.clone();
             files.push(FileBuffer { path, text });
         }
-        let caret = self.live.wanted.clone().filter(|_| !self.live.window);
-        let pane = (!self.live.window).then(|| Pane {
+        let caret = self.live.wanted.clone();
+        let pane = Pane {
             view: self.live.view,
             caret: caret.clone(),
-        });
+        };
         let (tx, generation) = (self.tx.clone(), self.live.generation);
         let sink = Box::new(move |event| {
             let _ = tx.send(Msg::Live(generation, event));
         });
         let path_env = self.service.tool_paths().1;
-        let (root, pane) = (&self.root, pane.as_ref());
-        match self
-            .preview
-            .start(self.id, root, &files, &path_env, pane, sink)
-        {
+        match (self.preview).start(self.id, &self.root, &files, &path_env, &pane, sink) {
             Ok(status) => {
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
