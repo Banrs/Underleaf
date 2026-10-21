@@ -6,51 +6,48 @@
     AllowDrop="True">
 
     <UserControl.Resources>
-        <ResourceDictionary>
-            <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
-            <Style x:Key="SurfaceStyle" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
-                <Setter Property="BorderBrush" Value="{ThemeResource SurfaceStrokeColorFlyoutBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
-            </Style>
-            <Style x:Key="FindButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
-                <Setter Property="Width" Value="32" />
-                <Setter Property="Height" Value="32" />
-                <Setter Property="Padding" Value="0" />
-            </Style>
-            <Style x:Key="CompletionItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
-                <Setter Property="Padding" Value="12,0,16,0" />
-                <Setter Property="AllowFocusOnInteraction" Value="False" />
-            </Style>
-            <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
-                <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <InfoBadge VerticalAlignment="Center" Style="{x:Bind Badge}" />
-                    <TextBlock
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Style="{StaticResource CaptionTextBlockStyle}"
-                        Text="{x:Bind Label, Mode=OneWay}"
-                        TextTrimming="CharacterEllipsis"
-                        TextWrapping="NoWrap" />
-                </Grid>
-            </DataTemplate>
-            <!-- Visual Studio's and Word's squiggle under an undefined command, in the status colours: high contrast
-                 draws both in the window's text colour. -->
-            <Style x:Key="ErrorSquiggleStyle" TargetType="Polyline">
-                <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCriticalBrush}" />
-                <Setter Property="StrokeThickness" Value="1" />
-                <Setter Property="IsHitTestVisible" Value="False" />
-            </Style>
-            <Style x:Key="WarningSquiggleStyle" TargetType="Polyline" BasedOn="{StaticResource ErrorSquiggleStyle}">
-                <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCautionBrush}" />
-            </Style>
-        </ResourceDictionary>
+        <!-- A flyout's surface, for the popups that leave the keyboard in the editor. -->
+        <Style x:Key="SurfaceStyle" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource AcrylicInAppFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource SurfaceStrokeColorFlyoutBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
+        </Style>
+        <Style x:Key="FindButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style x:Key="CompletionItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+            <Setter Property="Padding" Value="12,0,16,0" />
+            <Setter Property="AllowFocusOnInteraction" Value="False" />
+        </Style>
+        <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
+            <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <InfoBadge VerticalAlignment="Center" Style="{x:Bind Badge}" />
+                <TextBlock
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="NoWrap" />
+            </Grid>
+        </DataTemplate>
+        <!-- Visual Studio's and Word's squiggle under an undefined command, in the status colours: high contrast
+             draws both in the window's text colour. -->
+        <Style x:Key="ErrorSquiggleStyle" TargetType="Polyline">
+            <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+            <Setter Property="StrokeThickness" Value="1" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+        <Style x:Key="WarningSquiggleStyle" TargetType="Polyline" BasedOn="{StaticResource ErrorSquiggleStyle}">
+            <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCautionBrush}" />
+        </Style>
     </UserControl.Resources>
 
     <Grid>

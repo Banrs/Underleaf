@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
@@ -33,28 +32,17 @@ public sealed record CompletionRow(Completion Item, int Count, string Glyph)
 /// An issue's label at its line's end, as Visual Studio 2022's inline diagnostics: the message where there is room, then
 /// the core's fewer words that keep an undefined command's name, then cut at the tail, and the badge alone where fewer
 /// than ten characters would show.
-public sealed class IssueMark(IssueLine issue) : INotifyPropertyChanged
+public sealed class IssueMark(IssueLine issue)
 {
     const int Least = 10;
     static readonly TextBlock measure = new() { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
     string Whole => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
-    (double Whole, double Compact, double Cut)? widths;
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    public string Label
-    {
-        get;
-        private set
-        {
-            if (field == value) return;
-            field = value;
-            PropertyChanged?.Invoke(this, new(nameof(Label)));
-        }
-    } = "";
+    string Shortest => issue.Compact ?? Whole;
+    /// The whole label's width, and the least the shortest takes: whole, or cut to its first ten characters.
+    (double Whole, double Shortest)? widths;
 
     /// The label for this much room after the badge.
-    public void Fit(double room)
+    public string Fit(double room)
     {
         static double Width(string text)
         {
@@ -62,11 +50,13 @@ public sealed class IssueMark(IssueLine issue) : INotifyPropertyChanged
             measure.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             return measure.DesiredSize.Width;
         }
-        var shortest = issue.Compact ?? Whole;
-        widths ??= (Width(Whole), issue.Compact is { } compact ? Width(compact) : double.PositiveInfinity,
-            shortest.Length < Least ? double.PositiveInfinity : Width(shortest[..Least].TrimEnd() + "…"));
-        var (all, fewer, cut) = widths.Value;
-        Label = all <= room ? Whole : fewer <= room || cut <= room ? shortest : "";
+        if (widths is null)
+        {
+            var cut = Shortest.Length < Least ? double.PositiveInfinity : Width(Shortest[..Least].TrimEnd() + "…");
+            widths = (Width(Whole), Math.Min(Width(Shortest), cut));
+        }
+        var (whole, shortest) = widths.Value;
+        return whole <= room ? Whole : shortest <= room ? Shortest : "";
     }
 
     public string Tip => string.Join("\n", [issue.Message, .. issue.Others]);
@@ -80,7 +70,7 @@ public sealed partial class SourceView : UserControl
     const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12, Badge = 16;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly List<(IssueLine Issue, IssueMark Label, FrameworkElement Mark, Polyline[] Squiggles)> marks = [];
+    readonly List<(IssueLine Issue, IssueMark Label, Grid Mark, Polyline[] Squiggles)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
     readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
@@ -269,19 +259,18 @@ public sealed partial class SourceView : UserControl
     public async Task Show(string path, Source src)
     {
         await ready.Task;
+        scroller!.ChangeView(0, 0, null, true);
+        await Swap(path, src, src.Text);
+    }
+
+    public void Clear() => _ = Swap(null, null, "");
+
+    Task Swap(string? path, Source? src, string text)
+    {
         source?.Dispose();
         (Path, source) = (path, src);
         SetIssues([]);
-        scroller!.ChangeView(0, 0, null, true);
-        await SetText(src.Text);
-    }
-
-    public void Clear()
-    {
-        source?.Dispose();
-        (Path, source) = (null, null);
-        _ = SetText("");
-        SetIssues([]);
+        return SetText(text);
     }
 
     public async void Reload(string content)
@@ -492,16 +481,17 @@ public sealed partial class SourceView : UserControl
         if (edits is not null && edits.Path == Path && edits.Version == source?.Call<ulong?>("version", new { })) Apply(edits.Edits);
     }
 
+    /// One edit as an undo step, with the caret after it unless the selection is given.
+    bool Apply(TextEdit edit, SourceRange? selection = null) =>
+        Apply(new Change([edit], [selection ?? new(edit.Start + edit.Text.Length, 0)]));
+
+    /// The insertion, then its snippet's first field selected.
     void Insert(Insertion? insertion)
     {
         if (insertion is null) return;
-        Apply(new Change([insertion.Edit], [new(insertion.Caret, 0)]));
-        StartSnippet(insertion.Fields, insertion.Edit.Start);
-    }
-
-    void StartSnippet(SnippetField[] fields, int at)
-    {
-        if (source!.Call<SourceRange>("start_snippet", new { fields, at }) is { } first) Place(first);
+        Apply(insertion.Edit, new(insertion.Caret, 0));
+        var snippet = new { fields = insertion.Fields, at = insertion.Edit.Start };
+        if (source!.Call<SourceRange>("start_snippet", snippet) is { } first) Place(first);
     }
 
     /// A word's letters are one undo step.
@@ -530,7 +520,7 @@ public sealed partial class SourceView : UserControl
     bool Newline()
     {
         if (source!.Call<Keystroke>("insert_newline", new { selection = Selected }) is not { Edit: { } edit } stroke) return false;
-        Apply(new Change([edit], [stroke.Selection ?? new(edit.Start + edit.Text.Length, 0)]));
+        Apply(edit, stroke.Selection);
         Finish(stroke);
         return true;
     }
@@ -543,7 +533,7 @@ public sealed partial class SourceView : UserControl
             reoffer = completing;
             return false;
         }
-        Apply(new Change([edit], [new(edit.Start + edit.Text.Length, 0)]));
+        Apply(edit);
         if (completing) Complete(false);
         else CloseCompletions();
         return true;
@@ -724,8 +714,7 @@ public sealed partial class SourceView : UserControl
         CloseCompletions();
         if (caret < o.Start) return;
         var item = o.Items[index];
-        Apply(new Change([new(o.Start, caret - o.Start, item.Text)], [new(o.Start + item.Text.Length, 0)]));
-        StartSnippet(item.Fields, o.Start);
+        Insert(new Insertion(new(o.Start, caret - o.Start, item.Text), o.Start + item.Text.Length, item.Fields));
     }
 
     /// The list never has the keyboard, so Narrator hears the chosen item, and its detail, from the editor.
@@ -854,7 +843,7 @@ public sealed partial class SourceView : UserControl
         if (source is null || !content.Contains(StandardDataFormats.Text)) return;
         var pasted = (await content.GetTextAsync()).Replace("\r\n", "\n").Replace('\r', '\n');
         var at = Selected;
-        Apply(new Change([new(at.Start, at.Length, pasted)], [new(at.Start + pasted.Length, 0)]));
+        Apply(new TextEdit(at.Start, at.Length, pasted));
     }
 
     static bool HasFiles(DataPackageView data) => data.Contains(StandardDataFormats.StorageItems) || data.Contains(FileFormat);
@@ -938,7 +927,7 @@ public sealed partial class SourceView : UserControl
     }
 
     /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.
-    public void InsertDropped(int at, string text) => Command(() => Apply(new Change([new(at, 0, text)], [new(at, text.Length)])));
+    public void InsertDropped(int at, string text) => Command(() => Apply(new TextEdit(at, 0, text), new(at, text.Length)));
 
     int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : Text.Length;
 
@@ -1133,8 +1122,8 @@ public sealed partial class SourceView : UserControl
                 continue;
             }
             mark.Visibility = Visibility.Visible;
-            // Past the badge and the template's spacing.
-            label.Fit(right - x - Badge - 8);
+            // The template's label, past its badge and spacing.
+            ((TextBlock)mark.Children[1]).Text = label.Fit(right - x - Badge - 8);
             (mark.MaxWidth, mark.Height) = (right - x, r.Height);
             Canvas.SetLeft(mark, x);
             Canvas.SetTop(mark, r.Y);
@@ -1158,7 +1147,7 @@ public sealed partial class SourceView : UserControl
         foreach (var issue in lines)
         {
             var label = new IssueMark(issue);
-            var mark = (FrameworkElement)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
+            var mark = (Grid)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
             (mark.DataContext, mark.Visibility) = (label, Visibility.Collapsed);
             mark.Tapped += (_, _) => IssueInvoked?.Invoke(issue);
             var style = (Style)Resources[issue.Error ? "ErrorSquiggleStyle" : "WarningSquiggleStyle"];

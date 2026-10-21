@@ -3,6 +3,8 @@ using TeXLocal.Bridge;
 
 namespace TeXLocal.Tests;
 
+/// The bridge: calls, events and the source's marshalling, and that the core's answers decode into the app's records.
+/// What the answers say is the core's to test.
 public sealed class CoreTests : IDisposable
 {
     readonly string dir = Directory.CreateTempSubdirectory("tl-test-").FullName;
@@ -23,15 +25,11 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(404, e.Status);
     }
 
+    /// Null args, then a name through UTF-8 both ways.
     [Fact]
-    public async Task NullArgsListNothing()
+    public async Task ProjectsListAndNamesRoundTripAsUtf8()
     {
         Assert.Empty(await core.CallAsync<ProjectInfo[]>("list_projects"));
-    }
-
-    [Fact]
-    public async Task NamesRoundTripAsUtf8()
-    {
         const string name = "Thèse ✓ 😀";
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name });
         Assert.Equal(name, made.Name);
@@ -56,15 +54,10 @@ public sealed class CoreTests : IDisposable
         const ulong session = 1;
         await core.CallAsync("session_open", new { id = made.Id, session });
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
-        using (var source = core.SessionSource(session, "main.tex"))
-        {
-            Assert.NotNull(source);
-            source.Edit(0, 0, "% x\n");
-        }
+        using (var source = core.SessionSource(session, "main.tex")!) source.Edit(0, 0, "% x\n");
         await core.CallAsync("session_save", new { session });
         await saved.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var text = File.ReadAllText(Path.Combine(dir, made.Id, "main.tex"));
-        Assert.StartsWith("% x", text);
+        Assert.StartsWith("% x", File.ReadAllText(Path.Combine(dir, made.Id, "main.tex")));
         await core.CallAsync("session_close", new { session });
     }
 
@@ -86,38 +79,25 @@ public sealed class CoreTests : IDisposable
         var untitled = analysis.Outline.Last();
         Assert.True(untitled.Untitled);
         Assert.Contains(analysis.HeadingStyles, s => s.Command == "chapter");
-        Assert.Equal<int?>(untitled.Index, await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 5 }));
+        var current = await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 5 });
+        Assert.Equal<int?>(untitled.Index, current);
         await core.CallAsync("session_close", new { session });
     }
 
-    /// By file, with the open document's text as the editor has it.
+    /// Search's hits by file; Replace's edits of the open document, at its source's version, and the other files counted.
     [Fact]
-    public async Task SearchAnswersByFile()
+    public async Task SearchAndReplaceDecode()
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Search" });
-        File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\nNeedle b\n");
-        const ulong session = 3;
-        await core.CallAsync("session_open", new { id = made.Id, session });
-        await core.CallAsync("session_open_document", new { session, path = "notes.tex" });
-        using (var source = core.SessionSource(session, "notes.tex")) source!.Edit(0, 0, "needle\n");
-        var notes = Assert.Single(await core.CallAsync<SearchFile[]>("session_search", new { session, query = "needle" }));
-        Assert.Equal("notes.tex", notes.File);
-        Assert.Equal(new[] { 1, 2, 3 }, notes.Hits.Select(h => h.Line));
-        Assert.Equal(("a ", "needle", 2, 6), (notes.Hits[1].Before, notes.Hits[1].Match, notes.Hits[1].Column, notes.Hits[1].Length));
-        await core.CallAsync("session_close", new { session });
-    }
-
-    /// The open document's matches come back as edits for the editor; the other files are written and counted.
-    [Fact]
-    public async Task ReplaceLeavesTheOpenDocumentToTheEditor()
-    {
-        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Replace" });
         File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\n");
-        const ulong session = 4;
+        const ulong session = 3;
         await core.CallAsync("session_open", new { id = made.Id, session });
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
         using var source = core.SessionSource(session, "main.tex")!;
         source.Edit(0, 0, "needle ");
+        var found = await core.CallAsync<SearchFile[]>("session_search", new { session, query = "needle" });
+        var hit = Assert.Single(Assert.Single(found, f => f.File == "notes.tex").Hits);
+        Assert.Equal(("a ", "needle", 1, 2, 6), (hit.Before, hit.Match, hit.Line, hit.Column, hit.Length));
         var replaced = await core.CallAsync<Replaced>("session_replace", new { session, query = "needle", replacement = "pin" });
         Assert.Equal("main.tex", replaced.Edits?.Path);
         Assert.Equal(source.Call<ulong?>("version", new { }), replaced.Edits?.Version);
@@ -148,7 +128,8 @@ public sealed class CoreTests : IDisposable
     [Fact]
     public void MathsRenderAsSvg()
     {
-        var maths = Source.SyntaxCall<MathSvg>("math_svg", new { tex = "x^2", display = false, size = 14.0, color = new[] { 0.0, 0.0, 0.0, 1.0 } });
+        var args = new { tex = "x^2", display = false, size = 14.0, color = new[] { 0.0, 0.0, 0.0, 1.0 } };
+        var maths = Source.SyntaxCall<MathSvg>("math_svg", args);
         Assert.StartsWith("<svg", maths?.Svg);
         Assert.True(maths!.Width > 0);
     }
@@ -175,8 +156,7 @@ public sealed class CoreTests : IDisposable
     {
         const string text = "\\label{a}\n\\ref{a}";
         using var source = Source.New(text);
-        var defined = source.Call<Definition>("definition", new { at = text.LastIndexOf('a') });
-        Assert.NotNull(defined);
+        var defined = source.Call<Definition>("definition", new { at = text.LastIndexOf('a') })!;
         Assert.Equal(("label", "a"), (defined.Kind, defined.Name));
         Assert.Equal(new Place("", 1, 7, 1), Assert.Single(defined.Places));
     }
@@ -191,6 +171,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal("", source.Text);
     }
 
+    /// Edit's answer and its mirroring flag, and Select's, across the C ABI.
     [Fact]
     public void SnippetFieldsMirror()
     {
