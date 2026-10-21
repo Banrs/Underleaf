@@ -81,7 +81,6 @@ struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
         "secondaryLabelColor": .secondaryLabelColor, "systemRed": .systemRed,
     ]
 
-    /// Kinds the theme colours alike share one colour.
     private func colors() -> [NSColor] {
         var shades: [NSAppearance.Name: [[Double]]] = [:]
         for name in NSColor.textAppearances {
@@ -90,15 +89,10 @@ struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
             args["system"] = Self.systemColors.mapValues { $0.rgba(in: appearance) }
             shades[name] = Syntax.call("theme_colors", args) as [[Double]]?
         }
-        var shared: [[[Double]?]: NSColor] = [:]
-        return HighlightKind.allCases.map { kind -> NSColor in
+        return HighlightKind.allCases.map { kind in
             let index = Int(kind.rawValue)
             let byName = shades.compactMapValues { index < $0.count ? $0[index] : nil }
-            let key = NSColor.textAppearances.map { byName[$0] }
-            if let color = shared[key] { return color }
-            let color = NSColor.adapting(byName.mapValues { NSColor.srgb($0) }, fallback: .textColor)
-            shared[key] = color
-            return color
+            return NSColor.adapting(byName.mapValues { NSColor.srgb($0) }, fallback: .textColor)
         }
     }
 }

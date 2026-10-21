@@ -1,8 +1,6 @@
 //! The editor's syntax colours (Overleaf, TeXstudio and System, light and dark) and WCAG's contrast maths that
 //! raises a colour to a legible contrast on the editor's background and current line.
 
-use super::HighlightKind;
-
 pub type Rgba = [f64; 4];
 
 /// A theme's colour for a kind: sRGB in each appearance, or a system colour by its AppKit name that each host
@@ -18,15 +16,8 @@ pub struct ThemeColor {
 pub struct Theme {
     pub id: &'static str,
     pub title: &'static str,
-    /// `\command`, `\begin`, `\end`, escapes.
-    pub command: ThemeColor,
-    /// Environment, label, reference, citation, file and package-option names.
-    pub argument: ThemeColor,
-    /// Maths' delimiters and what is in it, verbatim.
-    pub maths: ThemeColor,
-    pub comment: ThemeColor,
-    /// Foreground only: a stray brace, what maths can't hold.
-    pub invalid: ThemeColor,
+    /// By `HighlightKind`; invalid's is a foreground only.
+    pub colors: [ThemeColor; 5],
 }
 
 const fn hex(rgb: u32) -> Rgba {
@@ -60,53 +51,46 @@ pub const THEMES: [Theme; 3] = [
     Theme {
         id: "overleaf",
         title: "Overleaf",
-        command: rgb(0x0000FF, 0x8BE9FD),
-        argument: rgb(0x318495, 0xFFB86C),
-        maths: rgb(0x036A07, 0xF1FA8C),
-        comment: rgb(0x4C886B, 0x6272A4),
-        invalid: rgb(0xFF0000, 0xFF79C6),
+        colors: [
+            rgb(0x0000FF, 0x8BE9FD),
+            rgb(0x318495, 0xFFB86C),
+            rgb(0x036A07, 0xF1FA8C),
+            rgb(0x4C886B, 0x6272A4),
+            rgb(0xFF0000, 0xFF79C6),
+        ],
     },
     // TeXstudio's formats (defaultFormats.qxf, defaultFormatsDark.qxf); invalid is "braceMismatch", whose fill Light
     // takes and whose text Dark takes, the fill not being drawn.
     Theme {
         id: "texstudio",
         title: "TeXstudio",
-        command: rgb(0x800000, 0x60CDF2),
-        argument: rgb(0x008000, 0x60F260),
-        maths: rgb(0x509600, 0x85F218),
-        comment: rgb(0x808080, 0x667299),
-        invalid: rgb(0xC00000, 0xF2F218),
+        colors: [
+            rgb(0x800000, 0x60CDF2),
+            rgb(0x008000, 0x60F260),
+            rgb(0x509600, 0x85F218),
+            rgb(0x808080, 0x667299),
+            rgb(0xC00000, 0xF2F218),
+        ],
     },
     Theme {
         id: "system",
         title: "System",
-        command: system("systemPink", hex(0xFF2D55), hex(0xFF375F)),
-        argument: system("systemTeal", hex(0x30B0C7), hex(0x40C8E0)),
-        maths: system("systemPurple", hex(0xAF52DE), hex(0xBF5AF2)),
-        comment: system(
-            "secondaryLabelColor",
-            [0.0, 0.0, 0.0, 0.5],
-            [1.0, 1.0, 1.0, 0.55],
-        ),
-        invalid: system("systemRed", hex(0xFF3B30), hex(0xFF453A)),
+        colors: [
+            system("systemPink", hex(0xFF2D55), hex(0xFF375F)),
+            system("systemTeal", hex(0x30B0C7), hex(0x40C8E0)),
+            system("systemPurple", hex(0xAF52DE), hex(0xBF5AF2)),
+            system(
+                "secondaryLabelColor",
+                [0.0, 0.0, 0.0, 0.5],
+                [1.0, 1.0, 1.0, 0.55],
+            ),
+            system("systemRed", hex(0xFF3B30), hex(0xFF453A)),
+        ],
     },
 ];
 
 pub fn theme(id: &str) -> Option<&'static Theme> {
     THEMES.iter().find(|t| t.id == id)
-}
-
-impl Theme {
-    pub fn color(&self, kind: HighlightKind) -> &ThemeColor {
-        use HighlightKind::*;
-        match kind {
-            Command => &self.command,
-            Argument | Builtin => &self.argument,
-            MathDelimiter | MathIdentifier | Number | StringLiteral => &self.maths,
-            Comment => &self.comment,
-            Invalid => &self.invalid,
-        }
-    }
 }
 
 pub fn luminance(c: Rgba) -> f64 {
@@ -183,8 +167,9 @@ pub struct Appearance {
 
 pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
     let ratio = text_contrast(appearance.increase_contrast);
-    let colors = HighlightKind::ALL.into_iter().map(|kind| theme.color(kind));
-    colors
+    theme
+        .colors
+        .iter()
         .map(|color| {
             let published = if appearance.dark {
                 color.dark
@@ -201,7 +186,7 @@ pub fn theme_colors(theme: &Theme, appearance: &Appearance) -> Vec<Rgba> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use HighlightKind::Command;
+    use crate::syntax::highlight::HighlightKind::Command;
 
     /// The Mac's text background and current line fill, resolved in Light and Dark (27.2).
     fn appearance(dark: bool, increase_contrast: bool) -> Appearance {
