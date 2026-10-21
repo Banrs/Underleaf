@@ -140,6 +140,11 @@ impl Actor {
         let announce = !result.stopped && (!auto || builds.error_count != before);
         let outdated = builds.outdated;
         self.mark_issues();
+        // Live Preview reads the build folder's .aux and .bbl; TeXpresso goes back only as far
+        // as their first changed byte. A stopped build may have left them half written.
+        if !result.stopped {
+            self.live_rescan();
+        }
         let fields =
             json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });
         self.emit("build_finished", fields);

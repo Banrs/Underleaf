@@ -95,7 +95,7 @@ the engine built from `tools/texpresso`, beside the core's other tests that need
 - The live document has no links (MuPDF's PDF device carries no annotations); a build's PDF has
   them.
 - Final output and bibliography tools need a Compile; live sessions read the build folder's
-  auxiliary files.
+  auxiliary files, again after each Compile, so its citations and references fill in live.
 - Closing the project stops its preview; an app opens one session of a project at a time.
 - A file TeXpresso can't be sent (a path outside the project, a folder, text with a NUL) is
   reported until it is accepted, and doesn't block other files.

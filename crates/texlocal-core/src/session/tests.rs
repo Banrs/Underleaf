@@ -1030,6 +1030,17 @@ async fn automatic_builds_wait_while_live_preview_runs() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_build_done_during_live_preview_has_texpresso_read_its_files_again() {
+    let rig = Rig::new(false).await;
+    live(&rig).await;
+    rig.ok("compile", json!({})).await;
+    assert_eq!(rig.fake.called("live_rescan"), 0);
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.state().await;
+    assert_eq!(rig.fake.called("live_rescan"), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_live_event_carries_the_log_while_the_host_shows_it() {
     let mut rig = Rig::new(false).await;
     live(&rig).await;

@@ -35,7 +35,8 @@ Clicking in the PDF takes you to that place in the source, and you can go the ot
 (SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.
 
 Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
-save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background.
+save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
+brings it new citations and references.
 
 There's also a file tree, an outline of the current file, a word count, search and replace across
 the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go
