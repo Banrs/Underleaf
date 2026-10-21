@@ -1,17 +1,51 @@
 //! The session's builds: one at a time with one more queued, Clean once the build
-//! stops, and the issues of the last build on the editor's lines.
+//! stops, and the issues of the last build on the editor's lines. latexmk is behind a seam
+//! (`Engine`), so the session's rules are tested without it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
 use super::actor::{Actor, Later, Timer};
-use super::{Msg, Reply};
+use super::{Document, Msg, Reply};
 use crate::CoreError;
 use crate::analyze::disk_spelling;
-use crate::compile::CompileResult;
-use crate::logparse::{LogItem, SHELL_ESCAPE};
-use crate::syntax::TextRange;
+use crate::compile::{CompileManager, CompileResult};
+use crate::logparse::{LogItem, SHELL_ESCAPE, Severity};
+use crate::service::Service;
+
+pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+pub(crate) trait Engine: Send + Sync {
+    fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>>;
+    fn stop_compile(&self, root: &Path);
+    fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>>;
+}
+
+impl Engine for Arc<Service> {
+    fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
+        let service = Self::clone(self);
+        Box::pin(async move {
+            let tex_path = service.tool_paths().0;
+            service.compile.compile(&root, &tex_path).await
+        })
+    }
+
+    fn stop_compile(&self, root: &Path) {
+        self.compile.stop(root);
+    }
+
+    fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>> {
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || CompileManager::clean(&root))
+                .await
+                .map_err(|err| CoreError::internal(err.to_string()))?
+        })
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Builds {
@@ -27,6 +61,7 @@ pub(crate) struct Builds {
     chosen: Option<usize>,
     result_edits: u64,
     pub cleaners: Vec<Reply>,
+    /// Whether live preview ran as the clean began, and the Start it ran for.
     cleaning: Option<(bool, u64)>,
     shown: Value,
 }
@@ -39,7 +74,7 @@ impl Actor {
     /// An automatic build waits while live preview runs, and for TeX to be found. Err: a save
     /// someone asked for failed.
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
-        if self.closed || auto && self.live_previewing() {
+        if auto && self.live_previewing() {
             return Ok(());
         }
         if auto && !*self.service.tex_found.borrow() {
@@ -78,47 +113,41 @@ impl Actor {
         // As the documents are kept, not as TeX wrote them.
         let mut spelt: HashMap<String, String> = HashMap::new();
         let items = result.errors.iter_mut().chain(&mut result.warnings);
-        for file in items
+        let files = items
             .chain(&mut result.bad_boxes)
-            .filter_map(|item| item.file.as_mut())
-        {
+            .filter_map(|item| item.file.as_mut());
+        for file in files {
             let disk = || disk_spelling(&self.root, file).unwrap_or_else(|| file.clone());
             *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
         }
-        if !self.closed {
-            let builds = &mut self.builds;
-            if result.pdf.is_some() {
-                builds.pdf = true;
-                builds.outdated = self.edits != builds.built;
-            }
-            let before = builds.error_count;
-            builds.issues = result
-                .errors
-                .iter()
-                .chain(&result.warnings)
-                .cloned()
-                .collect();
-            builds.error_count = result.errors.len();
-            builds.result_edits = builds.built;
-            builds.chosen = None;
-            let auto = builds.auto;
-            let announce = !result.stopped && (!auto || builds.error_count != before);
-            let outdated = builds.outdated;
-            self.mark_issues();
-            let fields = json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });
-            self.emit("build_finished", fields);
+        let builds = &mut self.builds;
+        if result.pdf.is_some() {
+            builds.pdf = true;
+            builds.outdated = self.edits != builds.built;
         }
-        self.finish_build();
-    }
-
-    fn finish_build(&mut self) {
+        let before = builds.error_count;
+        builds.issues = result
+            .errors
+            .iter()
+            .chain(&result.warnings)
+            .cloned()
+            .collect();
+        builds.error_count = result.errors.len();
+        builds.result_edits = builds.built;
+        builds.chosen = None;
+        let auto = builds.auto;
+        let announce = !result.stopped && (!auto || builds.error_count != before);
+        let outdated = builds.outdated;
+        self.mark_issues();
+        let fields =
+            json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });
+        self.emit("build_finished", fields);
         self.builds.compiling = false;
-        let again = self.builds.queued.take().filter(|_| !self.closed);
         if !self.builds.cleaners.is_empty() && self.builds.cleaning.is_none() {
             self.start_clean();
         }
         // Published once the queued build has started: builds back to back show as one.
-        if let Some(auto) = again {
+        if let Some(auto) = self.builds.queued.take() {
             let _ = self.compile(auto);
         }
         self.publish_build();
@@ -168,7 +197,7 @@ impl Actor {
         let Some((live, intent)) = self.builds.cleaning.take() else {
             return;
         };
-        if result.is_ok() && !self.closed {
+        if result.is_ok() {
             if live && intent == self.live.intent {
                 self.after(Timer::Restart);
             }
@@ -198,15 +227,13 @@ impl Actor {
         }
     }
 
+    /// A document edited since the last build began isn't marked: its lines may have moved.
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         for (path, doc) in &mut self.docs {
-            let last_edit = self.last_edits.get(path).copied().unwrap_or(0);
-            let lines = if last_edit <= self.builds.result_edits {
-                let tokens = |line, command: &str| {
-                    doc.doc.with(|source| source.command_ranges(line, command))
-                };
-                issue_lines(&self.builds.issues, path, tokens)
+            let edits = self.last_edits.get(path).copied().unwrap_or(0);
+            let lines = if edits <= self.builds.result_edits {
+                issue_lines(&self.builds.issues, path, &doc.doc)
             } else {
                 Vec::new()
             };
@@ -229,6 +256,7 @@ impl Actor {
         json!({ "index": index, "issue": issues[index] })
     }
 
+    /// The next or previous issue with a place, round the list's ends.
     pub fn next_issue(&mut self, next: bool) -> Value {
         let issues = &self.builds.issues;
         let places: Vec<usize> = (0..issues.len())
@@ -242,50 +270,46 @@ impl Actor {
             let before = places.iter().rev().find(|&&p| chosen.is_none_or(|c| p < c));
             before.or(places.last())
         };
-        let Some(&place) = place else {
-            return Value::Null;
-        };
-        self.choose_issue(Some(place))
+        match place {
+            Some(&place) => self.choose_issue(Some(place)),
+            None => Value::Null,
+        }
     }
 }
 
-/// An undefined command's issue has where the line has the command (`tokens`), and a
-/// `compact` message that names it in fewer words; so does one that needs shell escape.
-fn issue_lines(
-    issues: &[LogItem],
-    path: &str,
-    tokens: impl Fn(u32, &str) -> Vec<TextRange>,
-) -> Vec<Value> {
-    let mut lines: BTreeMap<u32, (&LogItem, Vec<String>)> = BTreeMap::new();
+/// Each line's first issue, with the messages of the others there. An undefined command's
+/// issue has where the line has the command (`tokens`), and a `compact` message that names it
+/// in fewer words; so does one that needs shell escape.
+fn issue_lines(issues: &[LogItem], path: &str, doc: &Document) -> Vec<Value> {
+    let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
         .iter()
-        .rev()
         .filter(|item| item.file.as_deref() == Some(path))
     {
-        let Some(line) = item.line else {
-            continue;
-        };
-        let others = lines.remove(&line).map(|(later, mut others)| {
-            others.insert(0, later.message.clone());
-            others
-        });
-        lines.insert(line, (item, others.unwrap_or_default()));
+        if let Some(line) = item.line {
+            lines.entry(line).or_default().push(item);
+        }
     }
-    lines
-        .into_iter()
-        .map(|(line, (item, others))| {
-            let command = item.command.as_deref();
-            json!({
-                "line": line,
-                "error": item.kind == crate::logparse::Severity::Error,
-                "message": item.message,
-                "short": item.short,
-                "compact": command.map(|command| format!("Undefined: {command}")).or_else(|| {
-                    (item.message == SHELL_ESCAPE).then(|| "Needs Shell Escape".to_owned())
-                }),
-                "tokens": command.map_or_else(Vec::new, |command| tokens(line, command)),
-                "others": others,
-            })
+    let line = |(line, items): (u32, Vec<&LogItem>)| {
+        let (item, others) = (items[0], &items[1..]);
+        let command = item.command.as_deref();
+        let compact = match command {
+            Some(command) => Some(format!("Undefined: {command}")),
+            None => (item.message == SHELL_ESCAPE).then(|| "Needs Shell Escape".to_owned()),
+        };
+        let tokens = command.map_or_else(Vec::new, |command| {
+            doc.with(|source| source.command_ranges(line, command))
+        });
+        let others: Vec<&str> = others.iter().map(|other| other.message.as_str()).collect();
+        json!({
+            "line": line,
+            "error": item.kind == Severity::Error,
+            "message": item.message,
+            "short": item.short,
+            "compact": compact,
+            "tokens": tokens,
+            "others": others,
         })
-        .collect()
+    };
+    lines.into_iter().map(line).collect()
 }

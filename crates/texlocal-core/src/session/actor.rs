@@ -20,7 +20,6 @@ use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Named, Place};
-use crate::events::Emitter;
 use crate::paths::{self, within};
 use crate::projects::{self, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
@@ -56,7 +55,8 @@ pub(crate) struct Doc {
     force: bool,
     /// The disk's text as the document would hold it; None while the file isn't UTF-8.
     disk_text: Option<String>,
-    newline: Newline,
+    /// The file's own line ending, which a save writes.
+    newline: &'static str,
     /// While a stat still gives it, a change told of is the session's own save, or none.
     disk_stamp: Option<Stamp>,
     /// Asked about once; until answered, no save writes over the other app's change.
@@ -81,6 +81,7 @@ impl Doc {
     }
 }
 
+/// Work a step leaves for after it, so none of it runs inside another.
 pub(crate) enum Later {
     Compile(bool),
     Restart,
@@ -131,11 +132,10 @@ pub(crate) struct Actor {
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
     pub preview: Arc<dyn Preview>,
-    events: Emitter,
+    events: std::sync::mpsc::Sender<Value>,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub docs: BTreeMap<String, Doc>,
-    by_id: HashMap<u64, String>,
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
@@ -156,7 +156,7 @@ pub(crate) struct Actor {
     deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub closed: bool,
+    closed: bool,
 }
 
 impl Actor {
@@ -174,10 +174,8 @@ impl Actor {
             .then(|| watch::watch(&root, tx.clone()))
             .flatten();
         let settings = settings::read_settings(&root);
-        let pdf = settings
-            .output(&root, "pdf")
-            .ok()
-            .filter(|pdf| pdf.is_file());
+        let pdf = settings.output(&root, "pdf").ok();
+        let pdf = pdf.filter(|pdf| pdf.is_file());
         let opened = json!({
             "session": id,
             "root": root.to_string_lossy(),
@@ -188,18 +186,21 @@ impl Actor {
         });
         let mut builds = Builds::default();
         builds.pdf = pdf.is_some();
-        let mut actor = Self {
+        let mut later = VecDeque::new();
+        if auto_compile && !builds.pdf {
+            later.push_back(Later::Compile(true));
+        }
+        let actor = Self {
             id,
             project,
             root,
             service: Arc::clone(&sessions.service),
             engine: Arc::clone(&sessions.engine),
             preview: Arc::clone(&sessions.preview),
-            events: sessions.hub.emitter(),
+            events: sessions.hub.queue.clone(),
             tx,
             shared: Arc::default(),
             docs: BTreeMap::new(),
-            by_id: HashMap::new(),
             next_doc: 1,
             symbols: Arc::default(),
             symbols_seq: 0,
@@ -217,16 +218,13 @@ impl Actor {
             _watcher: watcher,
             deleting: BTreeSet::new(),
             live: Live::default(),
-            later: VecDeque::new(),
+            later,
             closed: false,
         };
-        if actor.auto_compile && !actor.builds.pdf {
-            actor.later.push_back(Later::Compile(true));
-        }
         Ok((actor, opened))
     }
 
-    pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) -> bool {
+    pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
         let mut woken = None;
         loop {
             // A panic is a bug: the session ends, but the edits it holds mustn't end with it.
@@ -240,11 +238,10 @@ impl Actor {
                 self.run_later();
             }));
             if step.is_err() {
-                self.stopped(&mut rx);
-                return true;
+                return self.stopped(&mut rx);
             }
             if self.closed {
-                return false;
+                return;
             }
             let deadline = self.timers.values().min().copied();
             let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
@@ -252,7 +249,7 @@ impl Actor {
             woken = tokio::select! {
                 message = rx.recv() => match message {
                     Some(message) => Some(Wake::Message(message)),
-                    None => return false,
+                    None => return,
                 },
                 () = sleep, if deadline.is_some() => Some(Wake::Deadline),
                 Ok(()) = self.tex.changed(), if waiting_for_tex => Some(Wake::TexFound),
@@ -277,13 +274,13 @@ impl Actor {
             self.live_stop();
         }));
         for doc in self.docs.values() {
-            let mut state = doc.state();
-            state["error"] = (if doc.dirty() {
+            let error = if doc.dirty() {
                 STOPPED_UNSAVED
             } else {
                 STOPPED_SAVED
-            })
-            .into();
+            };
+            let mut state = doc.state();
+            state["error"] = error.into();
             self.emit("document", state);
         }
         rx.close();
@@ -300,19 +297,12 @@ impl Actor {
     pub fn emit(&self, kind: &str, mut fields: Value) {
         fields["type"] = kind.into();
         fields["session"] = self.id.into();
-        self.events.send(fields);
+        let _ = self.events.send(fields);
     }
 
     fn handle(&mut self, message: Msg) {
         match message {
-            Msg::Edited {
-                doc,
-                version,
-                start,
-                length,
-                text,
-            } => self.edited(doc, version, start, length, &text),
-            Msg::Reloaded { doc, version } => self.reloaded(doc, version),
+            Msg::Changed { doc, version, edit } => self.changed(doc, version, edit),
             Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
@@ -363,7 +353,7 @@ impl Actor {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart => self.live_restart(),
+                Later::Restart => self.live_start(),
                 Later::FlushLive => self.flush_pending(),
                 Later::Rescan => self.live_rescan(),
             }
@@ -462,20 +452,16 @@ impl Actor {
 
     #[cfg(test)]
     fn state(&self) -> Value {
-        let docs: Vec<Value> = self
-            .docs
-            .values()
-            .map(|doc| {
-                let mut state = doc.state();
-                state["dirty"] = doc.dirty().into();
-                state["conflict"] = json!(doc.asking);
-                state
-            })
-            .collect();
+        let doc = |doc: &Doc| {
+            let mut state = doc.state();
+            state["dirty"] = doc.dirty().into();
+            state["conflict"] = json!(doc.asking);
+            state
+        };
         let mut build = self.build_state();
         build["queued"] = self.builds.queued.is_some().into();
         json!({
-            "documents": docs,
+            "documents": self.docs.values().map(doc).collect::<Vec<_>>(),
             "build": build,
             "live": self.live_state(),
             "autoCompile": self.auto_compile,
@@ -522,7 +508,6 @@ impl Actor {
             shown: Value::Null,
         };
         self.docs.insert(path.to_owned(), doc);
-        self.by_id.insert(id, path.to_owned());
         lock(&self.shared).insert(path.to_owned(), document);
         self.publish_doc(path);
         self.mark_issues();
@@ -539,56 +524,48 @@ impl Actor {
     }
 
     fn close_doc(&mut self, path: &str, reason: &str) {
-        if let Some(doc) = self.docs.remove(path) {
-            self.by_id.remove(&doc.doc.id());
+        if self.docs.remove(path).is_some() {
             lock(&self.shared).remove(path);
             self.emit("document_closed", json!({ "path": path, "reason": reason }));
         }
     }
 
-    fn edited(&mut self, doc: u64, version: u64, start: u32, length: u32, text: &str) {
-        let Some(path) = self.by_id.get(&doc).cloned() else {
+    /// A document's text changed: by an edit, or to a reload's text.
+    fn changed(&mut self, id: u64, version: u64, edit: Option<TextEdit>) {
+        let Some(doc) = self.docs.values().find(|doc| doc.doc.id() == id) else {
             return;
         };
-        self.text_changed(&path);
-        self.publish_doc(&path);
-        self.after(Timer::Autosave);
-        self.live_edited(&path, version, start, length, text);
+        let path = doc.path.clone();
+        self.edits += 1;
+        self.last_edits.insert(path.clone(), self.edits);
+        self.clear_issues(&path);
+        self.mark_outdated();
+        match edit {
+            Some(edit) => {
+                self.after(Timer::Autosave);
+                self.live_edited(&path, version, &edit);
+            }
+            None => self.reloaded(&path, version),
+        }
     }
 
-    fn reloaded(&mut self, doc: u64, version: u64) {
-        let Some(path) = self.by_id.get(&doc).cloned() else {
-            return;
-        };
-        self.text_changed(&path);
+    fn reloaded(&mut self, path: &str, version: u64) {
         self.after(Timer::Symbols);
-        let Some(doc) = self.docs.get_mut(&path) else {
-            return;
-        };
+        let doc = self.docs.get_mut(path).expect("found by its id");
         doc.saved = version;
         let reason = doc.reload.take();
-        if reason == Some(Reload::Revert) {
-            // A save under way when the change came may have written over it.
-            doc.force = true;
-        }
-        self.publish_doc(&path);
-        self.live_whole(&path);
+        // A save under way when the change came may have written over it.
+        doc.force |= reason == Some(Reload::Revert);
+        self.live_whole(path);
         match reason {
             Some(Reload::Revert) => {
-                if self.save_doc(&path, true, false).unwrap_or(false) && self.auto_compile {
+                if self.save_doc(path, true, false).unwrap_or(false) && self.auto_compile {
                     self.later.push_back(Later::Compile(true));
                 }
             }
             Some(Reload::Disk) if self.auto_compile => self.later.push_back(Later::Compile(true)),
             _ => {}
         }
-    }
-
-    fn text_changed(&mut self, path: &str) {
-        self.edits += 1;
-        self.last_edits.insert(path.to_owned(), self.edits);
-        self.clear_issues(path);
-        self.mark_outdated();
     }
 
     pub fn publish_doc(&mut self, path: &str) {
@@ -620,10 +597,13 @@ impl Actor {
     }
 
     fn dirty_paths(&self) -> Vec<String> {
-        let docs = self.docs.values();
-        docs.filter(|doc| doc.dirty())
-            .map(|doc| doc.path.clone())
-            .collect()
+        let docs = self.docs.values().filter(|doc| doc.dirty());
+        docs.map(|doc| doc.path.clone()).collect()
+    }
+
+    /// On its way to the Trash, alone or in a folder.
+    fn deleting(&self, path: &str) -> bool {
+        self.deleting.iter().any(|entry| within(path, entry))
     }
 
     /// Ok(false): not written, and not to be (a conflict, or a reload or deletion under way).
@@ -632,7 +612,7 @@ impl Actor {
     /// watcher hasn't told of yet is taken as the watcher would take it, not written over.
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
         for _ in 0..2 {
-            let deleting = self.deleting.iter().any(|entry| within(path, entry));
+            let deleting = self.deleting(path);
             let Some(doc) = self.docs.get_mut(path) else {
                 return Ok(true);
             };
@@ -650,7 +630,11 @@ impl Actor {
                 return Ok(false);
             }
             let (text, version) = doc.doc.snapshot();
-            let file = doc.newline.written(&text);
+            let text = lf(text);
+            let file = match doc.newline {
+                "\n" => Cow::Borrowed(text.as_str()),
+                ending => Cow::Owned(text.replace('\n', ending)),
+            };
             let written = self.service.with_project(&self.project, |root| {
                 let abs = paths::safe_write_path(root, path)?;
                 if !as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
@@ -664,7 +648,7 @@ impl Actor {
                     continue;
                 }
                 Ok(Some(stamp)) => {
-                    (doc.disk_text, doc.disk_stamp) = (Some(lf(text)), Some(stamp));
+                    (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
                     self.after(Timer::Symbols);
                     self.emit("saved", json!({ "path": path }));
@@ -686,6 +670,7 @@ impl Actor {
         self.flush(None, reporting)
     }
 
+    /// Text typed while a save waits for the project's lock is saved by the next round.
     fn flush(&mut self, only: Option<&str>, reporting: bool) -> Result<bool, CoreError> {
         let mut failure = None;
         for _ in 0..3 {
@@ -776,10 +761,8 @@ impl Actor {
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.reload = Some(reason);
-            self.emit(
-                "document_reload",
-                json!({ "path": path, "text": text, "reason": reason }),
-            );
+            let reload = json!({ "path": path, "text": text, "reason": reason });
+            self.emit("document_reload", reload);
         }
     }
 
@@ -792,11 +775,8 @@ impl Actor {
         for path in &meaning.docs {
             self.check_disk(path);
         }
-        let others: Vec<&String> = meaning
-            .listed
-            .iter()
-            .filter(|p| !self.docs.contains_key(*p))
-            .collect();
+        let others = meaning.listed.iter();
+        let others: Vec<&String> = others.filter(|p| !self.docs.contains_key(*p)).collect();
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
@@ -839,28 +819,22 @@ impl Actor {
             return;
         };
         doc.disk_stamp = stamp;
-        let Some((text, newline)) = disk else {
-            doc.disk_text = None;
-            if !doc.dirty() {
-                return self.close_doc(path, "gone");
+        if let Some((text, newline)) = &disk {
+            doc.newline = *newline;
+            if doc.disk_text.as_ref() == Some(text) {
+                return;
             }
-            if doc.conflict.replace(Conflict::Changed).is_none() {
-                self.ask(path, Conflict::Changed);
-            }
-            return;
-        };
-        doc.newline = newline;
-        if doc.disk_text.as_deref() == Some(text.as_str()) {
-            return;
         }
-        doc.disk_text = Some(text.clone());
-        if doc.dirty() {
-            if doc.conflict.replace(Conflict::Changed).is_none() {
-                self.ask(path, Conflict::Changed);
+        doc.disk_text = disk.map(|(text, _)| text);
+        match (doc.disk_text.clone(), doc.dirty()) {
+            (_, true) => {
+                if doc.conflict.replace(Conflict::Changed).is_none() {
+                    self.ask(path, Conflict::Changed);
+                }
             }
-            return;
+            (Some(text), false) => self.request_reload(path, &text, Reload::Disk),
+            (None, false) => self.close_doc(path, "gone"),
         }
-        self.request_reload(path, &text, Reload::Disk);
     }
 
     fn file_gone(&mut self, path: &str) {
@@ -908,11 +882,11 @@ impl Actor {
     }
 
     fn symbols_done(&mut self, seq: u64, result: Result<Symbols, CoreError>) {
-        let Ok(symbols) = result else { return };
-        if seq != self.symbols_seq {
-            return;
+        if let Ok(symbols) = result
+            && seq == self.symbols_seq
+        {
+            *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
         }
-        *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
     }
 
     // MARK: - Analysis
@@ -969,9 +943,10 @@ impl Actor {
     /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
     /// one key of a list alone.
     fn rename_symbol(&self, args: &Value) -> Result<Value, CoreError> {
-        let (kind, noun) = match string_arg(args, "kind")? {
-            "label" => (SymbolKind::Label, "label"),
-            "citation" => (SymbolKind::Citation, "citation"),
+        let noun = string_arg(args, "kind")?;
+        let kind = match noun {
+            "label" => SymbolKind::Label,
+            "citation" => SymbolKind::Citation,
             _ => {
                 return Err(CoreError::bad_request(
                     "Only a label or a citation is renamed",
@@ -985,14 +960,10 @@ impl Actor {
             )));
         }
         let open = self.texts_to_edit("renamed")?;
-        let symbols = projects::scan_symbols(
-            &self.root,
-            &self.facts,
-            &open
-                .iter()
-                .map(|(path, text, _)| (path.clone(), text.clone()))
-                .collect(),
-        )?;
+        let texts = open
+            .iter()
+            .map(|(path, text, _)| (path.clone(), text.clone()));
+        let symbols = projects::scan_symbols(&self.root, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = symbols.by_file.values();
             files.any(|facts| definitions(facts, kind).iter().any(|n| n.name == name))
@@ -1010,15 +981,11 @@ impl Actor {
         let tex = |rel: &str| matches!(file_kind(rel), "tex" | "bib");
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
-            let defined = definitions(&facts, kind).iter().filter(|n| n.name == from);
-            let used = facts
-                .uses
-                .iter()
-                .filter(|u| u.kind == kind && u.name == from);
-            let mut places: Vec<Place> = defined
-                .map(|n| n.place)
-                .chain(used.map(|u| u.place))
-                .collect();
+            let used = facts.uses.iter().filter(|u| u.kind == kind);
+            let named = definitions(&facts, kind).iter().map(|n| (&n.name, n.place));
+            let named = named.chain(used.map(|u| (&u.name, u.place)));
+            let mut places: Vec<Place> =
+                named.filter(|(n, _)| *n == from).map(|(_, p)| p).collect();
             places.sort_by_key(|place| (place.line, place.column));
             places
         };
@@ -1075,8 +1042,7 @@ impl Actor {
                 "Only one open document can be edited at once: close the others first.",
             ));
         }
-        let deleting = |rel: &str| self.deleting.iter().any(|entry| within(rel, entry));
-        let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !deleting(rel);
+        let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
         let written = self.service.with_project(&self.project, |root| {
             projects::replace_in_files(root, &others, found, to)
         })?;
@@ -1110,12 +1076,10 @@ impl Actor {
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
             doc.shown = Value::Null;
-            self.by_id.insert(doc.doc.id(), new.clone());
-            {
-                let mut shared = lock(&self.shared);
-                shared.remove(&old);
-                shared.insert(new.clone(), doc.doc.clone());
-            }
+            let mut shared = lock(&self.shared);
+            shared.remove(&old);
+            shared.insert(new.clone(), doc.doc.clone());
+            drop(shared);
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
                 self.last_edits.insert(new.clone(), edit);
@@ -1211,46 +1175,28 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     }
 }
 
-/// None for a file that isn't UTF-8, whose bytes a save would change; the stamp is from
-/// before the read, so a write meanwhile reads again at the next look.
+/// The text with line feeds alone, as a document holds it, and the file's own line ending;
+/// None for a file that isn't UTF-8, whose bytes a save would change. The stamp is from before
+/// the read, so a write meanwhile reads again at the next look.
 fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError> {
     let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
     let disk = String::from_utf8(fs::read(path)?).ok().map(|text| {
-        let newline = Newline::of(&text);
+        let newline = newline(&text);
         (lf(text), newline)
     });
     Ok((disk, stamp))
 }
 
-type DiskText = (String, Newline);
+type DiskText = (String, &'static str);
 
-/// A document holds `\n` alone, as an editor needs; a save writes the file's own ending.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Newline {
-    Lf,
-    CrLf,
-    Cr,
-}
-
-impl Newline {
-    pub fn of(text: &str) -> Self {
-        let Some(at) = text.find(['\r', '\n']) else {
-            return Self::Lf;
-        };
-        match &text.as_bytes()[at..] {
-            [b'\r', b'\n', ..] => Self::CrLf,
-            [b'\r', ..] => Self::Cr,
-            _ => Self::Lf,
-        }
-    }
-
-    pub fn written(self, text: &str) -> Cow<'_, str> {
-        let ending = match self {
-            Self::Lf if !text.contains('\r') => return Cow::Borrowed(text),
-            Self::Lf => return Cow::Owned(lf(text.to_owned())),
-            Self::CrLf => "\r\n",
-            Self::Cr => "\r",
-        };
-        Cow::Owned(lf(text.to_owned()).replace('\n', ending))
+/// The first line break's.
+pub(crate) fn newline(text: &str) -> &'static str {
+    let Some(at) = text.find(['\r', '\n']) else {
+        return "\n";
+    };
+    match &text.as_bytes()[at..] {
+        [b'\r', b'\n', ..] => "\r\n",
+        [b'\r', ..] => "\r",
+        _ => "\n",
     }
 }

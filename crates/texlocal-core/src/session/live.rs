@@ -11,6 +11,7 @@ use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use crate::CoreError;
 use crate::projects::is_text;
+use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 
 /// TeXpresso's own limit on a file sent to it; one larger it reads from the disk at the rescan.
@@ -31,6 +32,7 @@ pub(crate) enum Phase {
 #[derive(Default)]
 pub(crate) struct Live {
     phase: Phase,
+    /// Whole texts to send: an open document's as it is then, or another file's as read.
     pending: BTreeMap<String, Option<String>>,
     /// TeXpresso keeps these through a rescan: only a new start drops one whose file went.
     synced: HashSet<String>,
@@ -66,10 +68,8 @@ impl Live {
     }
 
     fn errors(&self) -> Vec<String> {
-        let rejected = self
-            .rejected
-            .iter()
-            .map(|(path, error)| format!("{path}: {error}"));
+        let rejected = self.rejected.iter();
+        let rejected = rejected.map(|(path, error)| format!("{path}: {error}"));
         self.failure.iter().cloned().chain(rejected).collect()
     }
 }
@@ -89,8 +89,8 @@ impl Actor {
     }
 
     fn live_log(&self, failure: Option<&str>) -> String {
-        let status = self.preview.status(self.id);
         let mut parts: Vec<&str> = failure.into_iter().collect();
+        let status = self.preview.status(self.id);
         if let Ok(status) = &status {
             let error = status.error.as_deref();
             parts.extend(error.filter(|&error| Some(error) != failure));
@@ -119,6 +119,7 @@ impl Actor {
         }
     }
 
+    /// An error not reported before alerts.
     fn report(&mut self) {
         let mut errors: BTreeSet<String> = self.live.errors().into_iter().collect();
         errors.extend(self.live.error.clone());
@@ -127,7 +128,7 @@ impl Actor {
         self.publish_live(alert);
     }
 
-    pub fn live_reset(&mut self) {
+    fn live_reset(&mut self) {
         for timer in [Timer::Caret, Timer::Halting, Timer::Retry] {
             self.timers.remove(&timer);
         }
@@ -136,11 +137,10 @@ impl Actor {
         live.pending.clear();
         live.synced.clear();
         live.sent.clear();
-        (live.halted, live.sent_view) = (false, None);
-        live.caret = None;
+        (live.halted, live.sent_view, live.caret) = (false, None, None);
     }
 
-    pub fn live_cancel_work(&mut self) {
+    fn live_cancel_work(&mut self) {
         self.live.intent += 1;
         self.timers.remove(&Timer::Restart);
         self.timers.remove(&Timer::Disk);
@@ -162,7 +162,7 @@ impl Actor {
         self.live.rejected.clear();
         self.live.document_seen = false;
         self.publish_live(false);
-        if !self.closed && self.auto_compile {
+        if self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
     }
@@ -172,30 +172,26 @@ impl Actor {
         if self.live.phase == Phase::Stopped {
             self.live_cancel_work();
             self.live.window = window;
-            self.live_start(false);
+            self.live_start();
         }
         self.live_state()
     }
 
-    pub fn live_start(&mut self, restart: bool) -> bool {
-        if self.closed || !restart && self.live.phase != Phase::Stopped {
-            return false;
-        }
-        self.live.phase = Phase::Starting;
-        self.live.failure = None;
-        self.live.rejected.clear();
-        self.live.reported.clear();
+    /// In place of a preview running, as a restart.
+    pub fn live_start(&mut self) {
+        let live = &mut self.live;
+        live.phase = Phase::Starting;
+        live.failure = None;
+        live.rejected.clear();
+        live.reported.clear();
         self.live_reset();
         self.publish_live(false);
-        let mut files = Vec::new();
-        let mut versions = HashMap::new();
+        let (mut files, mut versions) = (Vec::new(), HashMap::new());
         for (path, doc) in &self.docs {
             let (text, version) = doc.doc.snapshot();
             versions.insert(path.clone(), version);
-            files.push(FileBuffer {
-                path: path.clone(),
-                text,
-            });
+            let path = path.clone();
+            files.push(FileBuffer { path, text });
         }
         let caret = self.live.wanted.clone().filter(|_| !self.live.window);
         let pane = (!self.live.window).then(|| Pane {
@@ -208,23 +204,22 @@ impl Actor {
         });
         let path_env = self.service.tool_paths().1;
         let (root, pane) = (&self.root, pane.as_ref());
-        let start = self
+        match self
             .preview
-            .start(self.id, root, &files, &path_env, pane, sink);
-        match start {
+            .start(self.id, root, &files, &path_env, pane, sink)
+        {
             Ok(status) => {
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
                 (self.live.sent_view, self.live.caret) = (self.live.view, caret);
-                let running = status.running;
-                if running {
+                if status.running {
                     self.live.phase = Phase::Running;
                 } else if status.error.is_none() {
                     self.live.failure = Some(DIDNT_START.into());
                 }
                 self.live.error = status.error;
                 self.report();
-                if running {
+                if status.running {
                     self.flush_pending();
                 } else {
                     self.ended();
@@ -232,17 +227,8 @@ impl Actor {
             }
             Err(error) => {
                 self.fail(error);
-                if self.live.phase != Phase::Stopped {
-                    self.ended();
-                }
+                self.ended();
             }
-        }
-        true
-    }
-
-    pub fn live_restart(&mut self) {
-        if !self.live_start(true) && self.live.phase != Phase::Stopped {
-            self.ended();
         }
     }
 
@@ -260,27 +246,28 @@ impl Actor {
     }
 
     pub fn live_follow(&mut self) {
-        if self.live.active() && !self.closed {
+        if self.live.active() {
             self.after(Timer::Restart);
         }
     }
 
     // MARK: - Edits
 
-    pub fn live_edited(&mut self, path: &str, version: u64, start: u32, length: u32, text: &str) {
-        if !self.live.active() || self.closed {
+    pub fn live_edited(&mut self, path: &str, version: u64, edit: &TextEdit) {
+        if !self.live.active() {
             return;
         }
-        let end = start as usize + text.encode_utf16().count();
+        let end = edit.start as usize + edit.text.encode_utf16().count();
         self.live.caret = Some((path.to_owned(), end));
         let live = &self.live;
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
         }
+        let (start, length) = (edit.start as usize, edit.length as usize);
         if live.fits(path)
             && self
                 .preview
-                .edit(self.id, path, start as usize, length as usize, text)
+                .edit(self.id, path, start, length, &edit.text)
                 .is_ok()
         {
             return;
@@ -290,21 +277,18 @@ impl Actor {
     }
 
     pub fn live_whole(&mut self, path: &str) {
-        if self.live.active() && !self.closed {
+        if self.live.active() {
             self.live.pending.insert(path.to_owned(), None);
             self.later.push_back(Later::FlushLive);
         }
     }
 
     pub fn flush_pending(&mut self) {
-        if self.live.phase != Phase::Running || self.closed || self.live.pending.is_empty() {
+        if self.live.phase != Phase::Running {
             return;
         }
         self.timers.remove(&Timer::Retry);
-        while self.live.phase == Phase::Running && !self.closed {
-            let Some((path, text)) = self.live.pending.pop_first() else {
-                break;
-            };
+        while let Some((path, text)) = self.live.pending.pop_first() {
             let (text, version) = match text {
                 Some(text) => (text, None),
                 None => match self.docs.get(&path) {
@@ -335,10 +319,8 @@ impl Actor {
                 }
                 Err(error) => {
                     self.fail(error);
-                    if self.live.phase == Phase::Running {
-                        self.live.pending.entry(path).or_insert(Some(text));
-                        self.after(Timer::Retry);
-                    }
+                    self.live.pending.entry(path).or_insert(Some(text));
+                    self.after(Timer::Retry);
                     return;
                 }
             }
@@ -347,7 +329,6 @@ impl Actor {
 
     pub fn live_rescan(&mut self) {
         if self.live.phase == Phase::Running
-            && !self.closed
             && let Err(error) = self.preview.rescan(self.id)
         {
             self.fail(error);
@@ -403,11 +384,12 @@ impl Actor {
     /// A save of an open document isn't news to TeXpresso: a rescan as it typesets the edit
     /// stalled it (TeXpresso e8df770).
     pub fn refresh_live_disk(&mut self) {
+        let paths = std::mem::take(&mut self.live.disk_paths);
+        if !self.live.active() {
+            return;
+        }
         let mut others = false;
-        for path in std::mem::take(&mut self.live.disk_paths) {
-            if !self.live.active() || self.closed {
-                return;
-            }
+        for path in paths {
             if self.docs.contains_key(&path) {
                 continue;
             }
@@ -435,7 +417,6 @@ impl Actor {
         if generation != self.live.generation {
             return;
         }
-        let live = &mut self.live;
         match event {
             LiveEvent::Page { page, path } => {
                 self.emit("live_page", json!({ "page": page, "path": path }));
@@ -447,7 +428,7 @@ impl Actor {
                 changed,
             } => {
                 if pages > 0 {
-                    live.document_seen = true;
+                    self.live.document_seen = true;
                     let complete = !matches!(run.as_deref(), Some("stopped" | "partial"));
                     let document = json!({
                         "path": path,
@@ -462,18 +443,18 @@ impl Actor {
                 }
             }
             LiveEvent::Done(run) => self.run_ended(&run),
-            LiveEvent::Log if live.log_shown => self.soon(Timer::Log),
+            LiveEvent::Log if self.live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
                 // It stays `starting` meanwhile: a host that saw it stop would show the build's PDF
                 // until the new run's first page came.
-                if self.timers.contains_key(&Timer::Restart) && !self.closed {
+                if self.timers.contains_key(&Timer::Restart) {
                     self.live.phase = Phase::Starting;
                     self.live_reset();
                     return self.publish_live(false);
                 }
                 if let Some(error) = error {
-                    live.failure = Some(error);
+                    self.live.failure = Some(error);
                     self.report();
                 }
                 self.ended();

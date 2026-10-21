@@ -6,7 +6,6 @@
 mod actor;
 mod build;
 mod document;
-mod engine;
 mod live;
 #[cfg(test)]
 mod tests;
@@ -24,24 +23,20 @@ use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
 use crate::projects::Symbols;
 use crate::service::{Service, arg, out, string_arg};
+use crate::syntax::TextEdit;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
+pub(crate) use build::Engine;
 pub use document::Document;
-pub(crate) use engine::Engine;
 use watch::Change;
 
 pub(crate) enum Msg {
-    Edited {
+    /// A document's text changed to `version`: by `edit`, or replaced whole by a reload.
+    Changed {
         doc: u64,
         version: u64,
-        start: u32,
-        length: u32,
-        text: String,
-    },
-    Reloaded {
-        doc: u64,
-        version: u64,
+        edit: Option<TextEdit>,
     },
     Command {
         name: String,
@@ -130,11 +125,6 @@ impl Sessions {
         self.hub.set_listener(listener);
     }
 
-    #[cfg(test)]
-    pub(crate) fn hub(&self) -> &Hub {
-        &self.hub
-    }
-
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
         let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
@@ -173,11 +163,11 @@ impl Sessions {
         };
         let sessions = Arc::clone(&self.open);
         tokio::spawn(async move {
-            if actor.run(rx).await {
-                let mut open = lock(&sessions);
-                if open.get(&id).is_some_and(|open| open.tx.same_channel(&tx)) {
-                    open.remove(&id);
-                }
+            actor.run(rx).await;
+            // A close took it off already, and the host may have opened the number again.
+            let mut open = lock(&sessions);
+            if open.get(&id).is_some_and(|open| open.tx.same_channel(&tx)) {
+                open.remove(&id);
             }
         });
         Ok(opened)
@@ -215,22 +205,11 @@ impl Sessions {
         async move {
             let id = queued?;
             let answer = answer.await.unwrap_or_else(|_| Err(gone()));
+            // Taken off here, not as the task ends, so the number is free once this answers.
             if closing {
                 lock(&open).remove(&id);
             }
             answer
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn outline(&self, session: u64) -> Arc<Mutex<Outline>> {
-        Arc::clone(&lock(&self.open)[&session].outline)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn inject(&self, session: u64, message: Msg) {
-        if let Some(open) = lock(&self.open).get(&session) {
-            let _ = open.tx.send(message);
         }
     }
 
