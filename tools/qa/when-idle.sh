@@ -1,6 +1,6 @@
 #!/bin/zsh
-# when-idle.sh <script> [max minutes] [idle seconds]: waits until the Mac has been idle that long (default ten minutes), then runs the
-# foreground script once under the QA lock. Gives up after the given minutes (default 120).
+# when-idle.sh <script> [max minutes] [idle seconds]: waits until the Mac has been idle that long (default ten
+# minutes), then runs the foreground script once under the QA lock. Gives up after the given minutes (default 120).
 S=${QA_SCRATCH:?export QA_SCRATCH=<scratchpad>, set up by tools/qa/setup.sh}
 idle() { ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}' }
 end=$(( $(date +%s) + ${2:-120} * 60 ))

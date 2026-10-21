@@ -11,11 +11,13 @@ QA_BG=1 $QA_SCRATCH/qa/qa launch --dark -- -openProject "Test Errors and Warning
 ```
 
 Without the screen:
-- `typecheck.sh [repo]` type-checks the app and its tests in about 20 s, with no build; parallel
-  worktree agents use it instead of `xcodebuild`.
-- `xctest.sh <repo> <derived data> [-only-testing:TeXLocalTests/<Suite>]` runs the native tests one
-  run at a time per session (the test host takes the keyboard), with
+- `typecheck.sh [repo]` type-checks the app and its tests in about 20 s, with no build.
+- `xctest.sh <repo> <derived data> [-only-testing:TeXLocalTests/<Suite>]` runs the native tests,
+  one run at a time per session (the test host takes the keyboard), with
   `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`.
+- Profiling: `xcrun xctrace record --template 'Time Profiler' --attach <pid>`, with typing posted
+  through Accessibility (`qa insert`, which sets `AXSelectedText`), not a driver that walks the tree
+  per key.
 
 ## Rules
 
@@ -33,9 +35,10 @@ Without the screen:
 
 ## qa
 
-JSON out; failures print `qa: …` and exit 1 (2 = a permission is missing). Coordinates are points
-from the window's top-left (`--screen` for global). `--app` / `QA_APP` and `--bundle` / `QA_BUNDLE`
-pick another build; `QA_ENV="K=V;K2=V2"` passes environment (say a scratch `TEXLOCAL_TEXPRESSO`).
+JSON out; failures print `qa: …` and exit 1 (2: a permission is missing). Coordinates are points
+from the window's top-left (`--screen` for the screen's). `--app` / `QA_APP` and `--bundle` /
+`QA_BUNDLE` pick another build; `QA_ENV="K=V;K2=V2"` adds environment (a scratch
+`TEXLOCAL_TEXPRESSO`, say).
 
     qa check | qa launch [--data dir] [--light|--dark] [-- args] | qa quit | qa front | qa window
     qa resize 1400 900 | qa move 0 40 | qa shot out.png [--no-front] | qa screen out.png [--around]
@@ -46,7 +49,9 @@ pick another build; `QA_ENV="K=V;K2=V2"` passes environment (say a scratch `TEXL
     qa caret <line> [--start] | qa insert ' word' | qa text          # the source editor, as real edits
     qa close [--window t | --other] | qa lock -- cmd args…
 
-`press` ranks identifier, then exact title, description or value, then substring; ambiguity is an error.
+`press` ranks identifier, then exact title, description or value, then substring; ambiguity is an
+error. `--window t` and `--all-windows` choose where `tree`, `find`, `press`, `get`, `set` and
+`wait-for` look.
 
 ## Traps
 
@@ -60,10 +65,11 @@ pick another build; `QA_ENV="K=V;K2=V2"` passes environment (say a scratch `TEXL
   splitter's value is the width of the pane before it.
 - Compile: `qa press "Compile" --role AXButton`. Home's button in a project is "Back".
 - `qa type`, `click` and `shot` raise the window, which closes the completion list and popovers:
-  pass `--no-raise` / `--no-front` once fronted. The first key after fronting can be lost: use `qa insert`.
-- A popover or sheet is its own window: `qa screen out.png --around`, then crop out the desktop and Dock.
+  pass `--no-raise` / `--no-front` once fronted. The first key after fronting can be lost: use
+  `qa insert`.
+- A popover or sheet is its own window: `qa screen out.png --around`, then crop out the desktop.
 - A locked screen hides every window (`locked` prints its state; `cgwin <pid>` lists the window
-  server's). Native tests don't need the screen.
+  server's windows). Native tests don't need the screen.
 - The first live document takes about 5 s. "Test Long (400 pages)" gives a build long enough to
   capture (`qa caret 17; qa insert " x"`, then Compile Automatically starts it).
 - `post <name>` posts a distributed notification (the Debug build's `com.texlocal.qa.*` hooks).
