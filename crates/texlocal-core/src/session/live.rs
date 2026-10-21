@@ -13,6 +13,7 @@ use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
 use crate::logparse::{LogItem, parse_live_log};
 use crate::projects::is_text;
+use crate::settings::Engine;
 use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
@@ -95,6 +96,8 @@ impl Actor {
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         json!({
             "phase": live.phase,
+            // Whatever the project's: TeXpresso has only XeTeX.
+            "engine": Engine::Xelatex,
             "halted": live.halted,
             "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
             "failure": failure,

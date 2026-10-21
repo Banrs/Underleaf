@@ -903,6 +903,7 @@ async fn text_typed_during_a_save_is_saved_before_a_build_or_a_trash_goes_on() {
 async fn live(rig: &Rig) -> Value {
     let started = rig.ok("live_start", json!({})).await;
     assert_eq!(started["phase"], "running");
+    assert_eq!(started["engine"], "xelatex");
     started
 }
 

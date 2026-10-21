@@ -37,11 +37,24 @@ struct StatusBar: View {
             } label: { buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
-                Button { project.panel.show(.texpresso) } label: {
-                    Label(project.texpresso.title, systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
-                        .hitTarget()
+                // As the build's time after its result: the engine whose breaks the pages show, when the PDF's differ.
+                let title = project.texpresso.engine.flatMap { engine in
+                    project.livePDF && engine != project.settings?.engine ? TeXEngine(rawValue: engine)?.title ?? engine : nil
                 }
-                .help("Show the Live Preview log")
+                Button { project.panel.show(.texpresso) } label: {
+                    Label {
+                        if let title {
+                            Text("\(Text(project.texpresso.title)) \(Text("· \(title)").foregroundStyle(.secondary))")
+                        } else {
+                            Text(project.texpresso.title)
+                        }
+                    } icon: {
+                        Image(systemName: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                    }
+                    .hitTarget()
+                }
+                .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }
+                      ?? "Show the Live Preview log")
             }
             if let reason = project.saveFailure {
                 Button { Task { await project.save() } } label: {

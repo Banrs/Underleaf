@@ -3,6 +3,8 @@ import PDFKit
 
 nonisolated struct LiveState: Decodable, Sendable {
     let phase: TeXpressoSession.Phase
+    /// The engine Live Preview typesets with, as a project's `engine`.
+    let engine: String
     let halted: Bool
     let failure, error: String?
     /// The Live Preview Log's whole text, while the window shows it (`session_live_log`) and with an alert.
@@ -66,6 +68,7 @@ final class TeXpressoSession {
     }
     private var failed = false
     private(set) var halted = false
+    private(set) var engine: String?
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
@@ -96,7 +99,7 @@ final class TeXpressoSession {
 
     func receive(_ state: LiveState) {
         if state.alert == true || state.phase == .starting && phase == .stopped { acknowledged = false }
-        (phase, halted, failed) = (state.phase, state.halted, state.failure != nil || state.error != nil)
+        (phase, engine, halted, failed) = (state.phase, state.engine, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
     }
 }
