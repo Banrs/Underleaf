@@ -194,7 +194,14 @@ private struct ProgramFolder: View {
             LabeledContent {
                 HStack {
                     if program.folder(in: tex) == nil {
-                        LinkButton(title: program == .tex ? "Get MacTeX" : "Install Guide", url: program == .tex ? Links.mactex : Links.texpressoGuide)
+                        if program == .tex {
+                            Button("Install TinyTeX", action: install)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(app.settingTeX)
+                            LinkButton(title: "Get MacTeX", url: Links.mactex)
+                        } else {
+                            LinkButton(title: "Install Guide", url: Links.texpressoGuide)
+                        }
                     }
                     if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(program.title)") }
                     Picker(program.title, selection: Binding<Choice>(get: { chosen == nil ? .automatic : .chosen }, set: {
@@ -215,7 +222,7 @@ private struct ProgramFolder: View {
                 }
             } label: {
                 Text(program.title)
-                Text(program.detail(in: tex))
+                Text(app.installingTeX && program == .tex ? "Installing TinyTeX…" : program.detail(in: tex))
                     .textSelection(.enabled)
             }
             .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
@@ -230,6 +237,12 @@ private struct ProgramFolder: View {
             .alert($alert)
         } else {
             LabeledContent(program.title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(program.title)") }
+        }
+    }
+
+    private func install() {
+        Task {
+            do { try await app.installTeX() } catch { alert = AppAlert("Couldn’t Install TinyTeX", error) }
         }
     }
 
