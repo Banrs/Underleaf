@@ -67,8 +67,6 @@ nonisolated struct TexStatus: Decodable {
 nonisolated struct ProjectSettings: Decodable {
     var mainFile, engine: String
     var shellEscape, stopOnFirstError: Bool
-
-    mutating func apply(_ change: SettingsChange) { change.apply(&self) }
 }
 
 /// One setting's new value: shown at once, and sent to the session as its patch.

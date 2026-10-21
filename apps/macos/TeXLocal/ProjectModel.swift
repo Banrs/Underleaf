@@ -517,7 +517,7 @@ final class ProjectModel {
         guard let session, !closed else { return false }
         settingsPatches += 1
         let patch = settingsPatches, before = settings
-        settings?.apply(change)
+        if settings != nil { change.apply(&settings!) }
         // Answers can come back out of order: the latest's has them all.
         let latest = { patch == self.settingsPatches }
         guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
