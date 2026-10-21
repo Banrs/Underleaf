@@ -150,7 +150,13 @@ pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
         context.set_delete_method(DeleteMethod::NsFileManager);
         context.delete(path)
     };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "ios")]
+    let trashed = {
+        use objc2_foundation::{NSFileManager, NSString, NSURL};
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        NSFileManager::defaultManager().trashItemAtURL_resultingItemURL_error(&url, None)
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let trashed = trash::delete(path);
     trashed.map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
 }

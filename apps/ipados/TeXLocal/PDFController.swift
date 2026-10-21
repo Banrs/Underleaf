@@ -1,0 +1,296 @@
+import PDFKit
+import SwiftUI
+import UIKit
+
+@Observable
+final class PDFController: NSObject {
+    /// PDFKit would go to 10,000%; the scale's label has room for three digits.
+    private static let minScale: CGFloat = 0.1
+    private static let maxScale: CGFloat = 8
+
+    @ObservationIgnored let view = SyncPDFView()
+    private(set) var page = 0
+    private(set) var pageCount = 0
+    private(set) var scale: CGFloat = 1
+    private(set) var zoom = Zoom.fitWidth
+    var canZoomIn: Bool { scale < Self.maxScale }
+    var canZoomOut: Bool { scale > Self.minScale }
+
+    /// A project's last page and zoom, kept until the view has a size to show them in.
+    @ObservationIgnored var restorePage: Int?
+    @ObservationIgnored var restoreZoom: Zoom?
+    @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
+    @ObservationIgnored private var toldPages: ClosedRange<Int>?
+    @ObservationIgnored private(set) var shownVersion = 0
+    @ObservationIgnored private var liveShown = false
+    @ObservationIgnored private var liveMissed = false
+    @ObservationIgnored private var pendingReveal: ForwardLoc?
+
+    override init() {
+        super.init()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.pageShadowsEnabled = true
+        view.onResize = { [weak self] in
+            guard let self else { return }
+            if zoom == .fitPage { fitPage() }
+            restoreIfReady()
+            if let pending = pendingReveal { reveal(pending) }
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
+        NotificationCenter.default.addObserver(self, selector: #selector(visiblePagesChanged), name: .PDFViewVisiblePagesChanged, object: view)
+        NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
+    }
+
+    @objc private func pageChanged() {
+        guard let document = view.document, let page = view.currentPage else { return }
+        if let number = document.number(of: page) { self.page = number }
+        pageCount = document.pageCount
+    }
+
+    var visiblePages: ClosedRange<Int>? {
+        guard let document = view.document, view.hasShownArea else { return nil }
+        let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
+        return shown.min().flatMap { first in shown.max().map { first...$0 } }
+    }
+
+    @objc private func visiblePagesChanged() {
+        guard let pages = visiblePages, pages != toldPages else { return }
+        toldPages = pages
+        onVisiblePages(pages)
+    }
+
+    @objc private func scaleChanged() {
+        guard view.document != nil, view.hasShownArea else { return }
+        scale = view.scaleFactor
+        if view.autoScales, abs(scale - view.scaleFactorForSizeToFit) < 0.001 {
+            zoom = .fitWidth
+        } else if zoom != .fitPage {
+            zoom = .scale(Double(scale))
+        }
+    }
+
+    func apply(_ zoom: Zoom) {
+        switch zoom {
+        case .fitWidth: fitWidth()
+        case .fitPage: fitPage()
+        case .scale(let scale): setScale(CGFloat(scale))
+        }
+    }
+
+    func setScale(_ scale: CGFloat) {
+        zoom = .scale(Double(self.scale))
+        view.autoScales = false
+        view.scaleFactor = min(max(scale, Self.minScale), Self.maxScale)
+    }
+
+    func zoom(in zoomIn: Bool) { setScale(scale * (zoomIn ? 1.25 : 0.8)) }
+
+    func go(toPage number: Int) {
+        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
+    }
+
+    func fitWidth() {
+        zoom = .fitWidth
+        view.autoScales = true
+    }
+
+    func fitPage() {
+        guard let page = view.currentPage, view.hasShownArea else { return }
+        view.autoScales = false
+        let box = page.bounds(for: view.displayBox)
+        view.scaleFactor = min(view.shownHeight / box.height, view.scaleFactorForSizeToFit)
+        zoom = .fitPage
+    }
+
+    /// The file given (the build's during Live Preview), or the document showing.
+    func print(title: String, file: URL?) {
+        Task {
+            let document = if let file { await Self.loadDocument(file) } else { view.document }
+            guard let data = document?.dataRepresentation() else { return }
+            let info = UIPrintInfo.printInfo()
+            info.jobName = title
+            info.outputType = .general
+            let printing = UIPrintInteractionController.shared
+            printing.printInfo = info
+            printing.printingItem = data
+            printing.present(animated: true)
+        }
+    }
+
+    /// Into the document showing, so the place and zoom stay.
+    func show(_ document: PDFDocument) {
+        shownVersion += 1
+        (liveShown, liveMissed) = (false, false)
+        let place = restorePage == nil ? view.shownPlace : nil
+        view.removeMark()
+        if let shown = view.document {
+            view.clearSelection()
+            shown.replacePages(with: document)
+        } else {
+            view.document = document
+        }
+        view.minScaleFactor = Self.minScale
+        view.maxScaleFactor = Self.maxScale
+        restoreIfReady()
+        if let place { go(to: place) }
+        pageChanged()
+    }
+
+    private func go(to place: (index: Int, point: CGPoint)) {
+        guard let document = view.document, let page = document.page(ifAt: min(place.index, document.pageCount - 1)) else { return }
+        view.go(to: PDFDestination(page: page, at: place.point))
+    }
+
+    func clear() {
+        shownVersion += 1
+        pendingReveal = nil
+        (liveShown, liveMissed) = (false, false)
+        view.removeMark()
+        view.document = nil
+        (page, pageCount) = (0, 0)
+    }
+
+    private func restoreIfReady() {
+        guard view.document != nil, view.hasShownArea else { return }
+        if let zoom = restoreZoom.take() { apply(zoom) }
+        if let number = restorePage.take() { go(toPage: number) }
+    }
+
+    // MARK: - Live Preview
+
+    func showLive(_ read: LiveRead) {
+        switch read {
+        case .document(let live?):
+            guard let shown = view.document, let changed = live.changed, !liveMissed else {
+                liveMissed = false
+                show(live.document)
+                liveShown = true
+                return
+            }
+            for index in changed where index < live.document.pageCount {
+                guard let page = live.document.page(at: index)?.copy() as? PDFPage else { continue }
+                if shown.replacePage(at: index, with: page) == nil { shown.insert(page, at: index) }
+            }
+            if shown.pageCount > live.document.pageCount, live.complete {
+                while shown.pageCount > live.document.pageCount { shown.removePage(at: shown.pageCount - 1) }
+            }
+            liveShown = true
+            pageChanged()
+        case .document(nil):
+            liveMissed = true
+        case .page(let live?) where liveShown:
+            _ = view.document?.replacePage(at: live.index, with: live.page)
+        case .page:
+            break
+        }
+    }
+
+    func endLiveRun() { (liveMissed, liveShown) = (false, false) }
+
+    // MARK: - SyncTeX
+
+    func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
+        guard view.hasShownArea else { return pendingReveal = loc }
+        pendingReveal = nil
+        guard let page = view.document?.page(ifAt: Int(loc.page) - 1) else { return }
+        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
+        view.flash(rect, on: page)
+    }
+
+    /// SyncTeX resolves only points on a glyph box, so the probe walks down to a line of text.
+    func sourcePoint() -> (page: Int, point: CGPoint)? {
+        guard let document = view.document else { return nil }
+        let probe = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + view.shownHeight * 0.2)
+        guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
+        let bounds = page.bounds(for: view.displayBox)
+        var point = view.convert(probe, to: page)
+        while point.y > bounds.minY {
+            if let line = page.selectionForLine(at: point), let text = line.string, !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                let box = line.bounds(for: page)
+                point = CGPoint(x: box.midX, y: box.minY)
+                break
+            }
+            point.y -= 6
+        }
+        return (number, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
+    }
+}
+
+final class SyncPDFView: PDFView {
+    var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?) -> Void = { _, _, _ in }
+    var onResize: () -> Void = {}
+    private var markView: UIView?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // A double tap goes to the source, as a double-click does on the Mac.
+        let tap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped))
+        tap.numberOfTapsRequired = 2
+        addGestureRecognizer(tap)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        let size = bounds.size
+        super.layoutSubviews()
+        if size != laidOutSize {
+            laidOutSize = size
+            onResize()
+        }
+    }
+
+    private var laidOutSize = CGSize.zero
+
+    var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
+    var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
+
+    var shownPlace: (index: Int, point: CGPoint)? {
+        let top = CGPoint(x: bounds.minX, y: safeAreaInsets.top + 1)
+        guard let page = page(for: top, nearest: true), let document else { return nil }
+        return (index: document.index(for: page), point: convert(top, to: page))
+    }
+
+    @objc private func doubleTapped(_ tap: UITapGestureRecognizer) {
+        let location = tap.location(in: self)
+        guard let page = page(for: location, nearest: true), let number = document?.number(of: page) else { return }
+        let point = convert(location, to: page)
+        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.click(at: point))
+    }
+
+    /// Fades after a moment; with Reduce Motion it fades too, as the HIG puts a fade in motion's place.
+    func flash(_ rect: CGRect, on page: PDFPage) {
+        removeMark()
+        let topLeft = convert(CGPoint(x: rect.minX, y: rect.maxY), from: page)
+        let bottomRight = convert(CGPoint(x: rect.maxX, y: rect.minY), from: page)
+        let mark = UIView(frame: CGRect(x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y))
+        mark.backgroundColor = .systemYellow.withAlphaComponent(0.35)
+        mark.layer.cornerRadius = 3
+        mark.isUserInteractionEnabled = false
+        addSubview(mark)
+        markView = mark
+        UIView.animate(withDuration: 0.6, delay: 2.2, options: []) { mark.alpha = 0 } completion: { _ in mark.removeFromSuperview() }
+    }
+
+    func removeMark() {
+        markView?.removeFromSuperview()
+        markView = nil
+    }
+}
+
+struct PDFRepresentable: UIViewRepresentable {
+    let project: ProjectModel
+
+    func makeUIView(context: Context) -> SyncPDFView {
+        let view = project.pdf.view
+        view.onInverse = { [weak project] page, point, click in
+            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
+        }
+        return view
+    }
+
+    func updateUIView(_ view: SyncPDFView, context: Context) {}
+}

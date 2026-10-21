@@ -13,7 +13,6 @@ ropey = "1.6"
 which = "8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1.12.1"
-trash = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Checks TinyTeX's download against the sum GitHub gives it.
@@ -39,6 +38,13 @@ ratex-types = "=0.1.14"
 # on: debug and test builds would read them from the registry at run time.
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 ttf-parser = "0.25"
+
+# iPadOS has no trash crate: its Recently Deleted takes what NSFileManager trashes.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+trash = "5"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
