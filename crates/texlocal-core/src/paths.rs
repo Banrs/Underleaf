@@ -75,26 +75,27 @@ fn win32_alias(segment: &str) -> bool {
     device || segment.ends_with(['.', ' ']) || segment.contains(':')
 }
 
-fn in_build_dir(segments: &[&str]) -> bool {
-    segments
-        .first()
-        .is_some_and(|first| first.eq_ignore_ascii_case(BUILD_DIR))
+/// Whether a project path is in the top-level `build` folder, in any case, which holds compile
+/// output.
+pub(crate) fn in_build_dir(rel: &str) -> bool {
+    rel.split('/')
+        .next()
+        .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
 }
 
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    Ok(root.join(safe_segments(rel)?.join("/")))
+    Ok(root.join(rel_key(rel)?))
 }
 
-/// The top-level `build` folder, in any case, holds compile output and the
-/// tree hides it, so nothing of the author's is written there.
+/// The tree hides the build folder, so nothing of the author's is written there.
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    let segments = safe_segments(rel)?;
-    if in_build_dir(&segments) {
+    let rel = rel_key(rel)?;
+    if in_build_dir(&rel) {
         return Err(CoreError::bad_request(
             "“build” holds the compiled PDF. Choose another name.",
         ));
     }
-    Ok(root.join(segments.join("/")))
+    Ok(root.join(rel))
 }
 
 pub(crate) fn fold_case(path: &str) -> String {
@@ -189,10 +190,8 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
     } else {
         input
     };
-    let segments = safe_segments(rel).ok()?;
-    let source = !in_build_dir(&segments) && !segments.iter().any(|s| s.starts_with('-'));
-    let rel = segments.join("/");
-    (source && root.join(&rel).is_file()).then_some(rel)
+    let rel = safe_rel_file(rel).ok()?;
+    (!in_build_dir(&rel) && root.join(&rel).is_file()).then_some(rel)
 }
 
 #[cfg(test)]

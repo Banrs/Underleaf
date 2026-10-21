@@ -41,20 +41,14 @@ fn copy_xattrs(from: &Path, to: &File) {
 /// There an indexer, antivirus or sync client holding the target refuses the
 /// rename for a moment, so it is tried again for about 100 ms.
 pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
-    let rename = || fs::rename(&temp, path);
-    #[cfg(windows)]
-    let rename = || {
-        for _ in 0..3 {
-            match rename() {
-                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-                    std::thread::sleep(std::time::Duration::from_millis(33));
-                }
-                done => return done,
-            }
+    let mut tries = 0;
+    while let Err(error) = fs::rename(&temp, path) {
+        tries += 1;
+        if !cfg!(windows) || tries > 3 || error.kind() != io::ErrorKind::PermissionDenied {
+            return Err(error);
         }
-        rename()
-    };
-    rename()?;
+        std::thread::sleep(std::time::Duration::from_millis(33));
+    }
     let _ = temp.keep();
     Ok(())
 }
