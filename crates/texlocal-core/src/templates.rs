@@ -21,8 +21,7 @@ Hello, world!
 
 macro_rules! preamble {
     () => {
-        r"\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
+        r"\usepackage[T1]{fontenc}
 \usepackage{amsmath, amssymb}
 \usepackage{graphicx}
 \usepackage[margin=1in]{geometry}
