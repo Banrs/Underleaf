@@ -98,15 +98,12 @@ jobs:
       # A dylib would load from target/, which exists only where it was built.
       - name: Core linked statically, tests ran
         run: |
-          if otool -L "$RUNNER_TEMP"/dd/Build/Products/Debug/TeXLocal.app/Contents/MacOS/TeXLocal \
-            | grep -q texlocal_ffi; then
-            echo "::error::The app loads the Rust core as a dylib"
-            exit 1
+          if otool -L "$RUNNER_TEMP"/dd/Build/Products/Debug/TeXLocal.app/Contents/MacOS/TeXLocal | grep -q texlocal_ffi; then
+            echo "::error::The app loads the Rust core as a dylib"; exit 1
           fi
           # xcodebuild passes a run in which no test ran.
           xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/TeXLocal.xcresult" --compact \
-            | jq -e '. as $r | "\(.totalTestCount) tests: \(.passedTests) passed, \(.skippedTests) skipped"
-              | debug | $r.passedTests > 0'
+            | jq -e '. as $r | "\(.totalTestCount) tests: \(.passedTests) passed, \(.skippedTests) skipped" | debug | $r.passedTests > 0'
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -139,13 +136,8 @@ jobs:
         shell: bash
         run: |
           # An if, since bash -e ignores a failing `! grep` before the last line.
-          if grep -rIlE 'WebView2|CoreWebView' apps/windows --exclude-dir=obj --exclude-dir=bin \
-            --include='*.cs' --include='*.xaml' --include='*.csproj' --include='*.props'; then
-            exit 1
-          fi
-          if LC_ALL=C.UTF-8 grep -rIlP '[\x{E000}-\x{F8FF}]' apps/windows --include='*.cs' --include='*.xaml'; then
-            exit 1
-          fi
+          if grep -rIlE 'WebView2|CoreWebView' apps/windows --exclude-dir=obj --exclude-dir=bin --include='*.cs' --include='*.xaml' --include='*.csproj' --include='*.props'; then exit 1; fi
+          if LC_ALL=C.UTF-8 grep -rIlP '[\x{E000}-\x{F8FF}]' apps/windows --include='*.cs' --include='*.xaml'; then exit 1; fi
       - run: cargo rustc -p texlocal-ffi --lib --release --crate-type cdylib
       - run: dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64 -p:SkipCargo=true
       - run: dotnet test apps/windows/TeXLocal.Tests -c Debug -p:SkipCargo=true
