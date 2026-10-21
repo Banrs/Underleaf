@@ -17,15 +17,14 @@ is open, `docs/windows.md` the Windows app and its gaps, `docs/texpresso.md` Liv
   glyphs through RaTeX.
 - **`crates/texlocal-ffi`** is the C ABI: a static library, built as a DLL for Windows.
 - **The apps** (`apps/macos`, `apps/windows`) are UI only. They have the same features, each in
-  its own system's design: the Mac the HIG, Windows WinUI 3 and Fluent, never the Mac's.
+  its own system's design: the Mac the HIG, Windows WinUI 3 and Fluent.
 - **Security**: `-shell-escape` is off unless a project turns it on, and a project's own
   `latexmkrc` is read only then; `.texlocal.json` can't be written through the generic file
   commands.
 
 ## The Mac app
 
-The owner's decisions: change them only when he asks. Each macOS 27.2 workaround says why in
-its comment.
+Decided: change only when asked. Each macOS 27.2 workaround says why in its comment.
 
 - **AppKit** for the window and splits; **SwiftUI** for panes, bars, sheets, popovers, Settings
   and Home.
@@ -82,7 +81,7 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 
 - A commit's subject is a sentence saying what is now true, with no closing full stop and no AI
   trailer.
-- Follow-on work goes on the open PR's branch; ask the owner before opening another PR.
+- Follow-on work goes on the open PR's branch; ask before opening another PR.
 - `README.md` is for people reading about TeXLocal on GitHub: what it does and how to install it,
   in plain paragraphs without
   [Wikipedia's signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)
