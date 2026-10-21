@@ -18,18 +18,16 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
         .map(|entry| entry.path())
 }
 
-fn texlive_root() -> PathBuf {
-    if cfg!(windows) {
+/// TeX Live's year folders' programs, newest first.
+fn texlive_bins() -> impl Iterator<Item = PathBuf> {
+    let root = if cfg!(windows) {
         let mut root = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
         root.push(r"\texlive");
-        root.into()
+        PathBuf::from(root)
     } else {
         PathBuf::from("/usr/local/texlive")
-    }
-}
-
-fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let mut years: Vec<_> = children(texlive_root())
+    };
+    let mut years: Vec<_> = children(root)
         .filter(|year| {
             year.file_name()
                 .and_then(|name| name.to_str())

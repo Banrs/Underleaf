@@ -1,5 +1,5 @@
-// Shared command surface: hosts forward here so path checks and edit
-// serialization have one implementation.
+//! The commands outside a project session, which every host forwards here, and the lock that
+//! takes a project's edits one at a time.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -74,7 +74,7 @@ impl Service {
         use_project(&self.project_root(id)?)
     }
 
-    pub async fn status(&self) -> TexStatus {
+    async fn status(&self) -> TexStatus {
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
@@ -90,37 +90,30 @@ impl Service {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
-    pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
-        let chosen = dir.map(Path::new);
-        if let Some(dir) = chosen
-            && tex::program_at(&dir.join("texpresso")).is_none()
-        {
-            return Err(CoreError::bad_request(NO_TEXPRESSO));
-        }
-        AppSettings::update(&self.data_dir, |app| {
-            app.texpresso_dir = chosen.map(Path::to_path_buf);
-        })?;
-        Ok(self.status().await)
-    }
-
-    pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
-        let chosen = dir
-            .map(|dir| {
-                tex::tex_bin_dir(Path::new(dir)).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))
-            })
-            .transpose()?;
-        AppSettings::update(&self.data_dir, |app| app.tex_dir = chosen)?;
-        Ok(self.status().await)
-    }
-
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| string_arg(args, key);
         let root = || self.project_root(s("id")?);
         let folder = || arg::<Option<String>>(args, "dir");
         match command {
             "status" => out(self.status().await),
-            "set_texpresso_dir" => out(self.set_texpresso_dir(folder()?.as_deref()).await?),
-            "set_tex_dir" => out(self.set_tex_dir(folder()?.as_deref()).await?),
+            "set_texpresso_dir" => {
+                let dir = folder()?.map(PathBuf::from);
+                if let Some(dir) = &dir
+                    && tex::program_at(&dir.join("texpresso")).is_none()
+                {
+                    return Err(CoreError::bad_request(NO_TEXPRESSO));
+                }
+                AppSettings::update(&self.data_dir, |app| app.texpresso_dir = dir)?;
+                out(self.status().await)
+            }
+            "set_tex_dir" => {
+                let no_latexmk = || CoreError::bad_request(NO_LATEXMK);
+                let dir =
+                    folder()?.map(|dir| tex::tex_bin_dir(Path::new(&dir)).ok_or_else(no_latexmk));
+                let dir = dir.transpose()?;
+                AppSettings::update(&self.data_dir, |app| app.tex_dir = dir)?;
+                out(self.status().await)
+            }
             "catalogue" => Ok(json!({
                 "templates": templates::TEMPLATES.map(|(id, title)| json!({ "id": id, "title": title })),
                 "engines": Engine::ALL.map(|engine| json!({
@@ -218,6 +211,7 @@ impl Service {
                 &folder()?.unwrap_or_default(),
                 &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
                 arg(args, "conflict")?,
+                projects::discard,
             )?),
             "import_project" => out(import::import_project(self, Path::new(s("src")?))?),
             "set_ui_state" => out(self.with_project(s("id")?, |root| {

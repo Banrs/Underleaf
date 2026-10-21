@@ -13,15 +13,6 @@ pub(crate) struct Point {
     pub names: Names,
 }
 
-impl Visit for Option<(usize, usize)> {
-    fn range(&mut self, from: usize, to: usize) {
-        *self = match *self {
-            Some((start, end)) if from <= end => Some((start, end.max(to))),
-            _ => Some((from, to)),
-        };
-    }
-}
-
 struct Keeping<'a> {
     text: &'a Text,
     run: &'a mut Option<(usize, usize)>,
@@ -31,7 +22,10 @@ struct Keeping<'a> {
 
 impl Visit for Keeping<'_> {
     fn range(&mut self, from: usize, to: usize) {
-        self.run.range(from, to);
+        *self.run = match *self.run {
+            Some((start, end)) if from <= end => Some((start, end.max(to))),
+            _ => Some((from, to)),
+        };
     }
 
     fn command(&mut self, name: &str, command_start: usize, name_end: usize) {

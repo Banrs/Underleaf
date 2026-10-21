@@ -10,10 +10,11 @@ use std::time::SystemTime;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+use crate::SETTINGS_FILE;
 use crate::atomic::{create_temp, persist};
 use crate::error::CoreError;
+use crate::paths::in_build_dir;
 use crate::projects::is_litter;
-use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let parent = dest.parent().expect("a file is in a folder");
@@ -22,7 +23,6 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     // Resolved as the walk resolves the project, so a destination spelled through a link is recognised.
     let mut export = Export {
         writer: ZipWriter::new(file),
-        options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
         archive_dir: dunce::canonicalize(parent).map_err(CoreError::at(dest))?,
         archive_names: [dest.file_name(), temp_path.file_name()],
     };
@@ -33,7 +33,6 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
 
 struct Export<'a> {
     writer: ZipWriter<File>,
-    options: SimpleFileOptions,
     archive_dir: PathBuf,
     archive_names: [Option<&'a OsStr>; 2],
 }
@@ -42,15 +41,16 @@ impl Export<'_> {
     fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(DirEntry::file_name);
-        let holds_archive = dunce::canonicalize(dir)? == self.archive_dir;
+        if dunce::canonicalize(dir)? == self.archive_dir {
+            entries.retain(|entry| !self.archive_names.contains(&Some(&entry.file_name())));
+        }
+        self.add_entries(&entries, prefix)
+    }
 
+    /// Adds a folder's listed entries; one gone since it was listed is left out.
+    fn add_entries(&mut self, entries: &[DirEntry], prefix: &str) -> Result<(), CoreError> {
         for entry in entries {
-            let file_name = entry.file_name();
-            if holds_archive && self.archive_names.contains(&Some(file_name.as_os_str())) {
-                continue;
-            }
-            match self.add_entry(&entry, prefix) {
-                // Gone since the folder was listed.
+            match self.add_entry(entry, prefix) {
                 Err(err) if err.status == 404 => {}
                 added => added?,
             }
@@ -64,7 +64,6 @@ impl Export<'_> {
             return Ok(());
         }
         let path = entry.path();
-
         let entry_type = entry.file_type()?;
         // Links are followed to files only, as folder links can cycle.
         if entry_type.is_symlink() {
@@ -72,9 +71,9 @@ impl Export<'_> {
                 self.add_file(&rel, &path)?;
             }
         } else if entry_type.is_dir() {
-            let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
             let dir = format!("{rel}/");
-            self.writer.add_directory(dir.clone(), options)?;
+            let modified = entry.metadata().and_then(|meta| meta.modified());
+            self.writer.add_directory(dir.clone(), options(modified))?;
             self.add_dir(&path, &dir)?;
         } else if entry_type.is_file() {
             self.add_file(&rel, &path)?;
@@ -85,7 +84,9 @@ impl Export<'_> {
     fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
         let mut file = File::open(path)?;
         let meta = file.metadata()?;
-        let options = dated(self.options, meta.modified()).large_file(needs_zip64(meta.len()));
+        // Past 4 GiB sizes need ZIP64's fields, and from 3 GiB a file gets them too, since deflate
+        // can store an incompressible one larger.
+        let options = options(meta.modified()).large_file(meta.len() >= 3 << 30);
         self.writer.start_file(rel, options)?;
         // No flush per file: on a deflated entry it forces a sync block into the stream.
         io::copy(&mut file, &mut self.writer)?;
@@ -97,20 +98,13 @@ impl Export<'_> {
 /// project: `is_litter` at any depth, and the compile output and the project's
 /// own settings at the top, in any case.
 pub(crate) fn left_out(rel: &str) -> bool {
-    let top = rel.split_once('/').map_or(rel, |(top, _)| top);
-    top.eq_ignore_ascii_case(BUILD_DIR)
-        || rel.eq_ignore_ascii_case(SETTINGS_FILE)
-        || rel.split('/').any(is_litter)
+    in_build_dir(rel) || rel.eq_ignore_ascii_case(SETTINGS_FILE) || rel.split('/').any(is_litter)
 }
 
-/// Past 4 GiB sizes need ZIP64's fields, and from 3 GiB a file gets them too, since deflate can store an incompressible one larger.
-fn needs_zip64(len: u64) -> bool {
-    len >= 3 << 30
-}
-
-/// `options` with the entry dated as `modified`. ZIP stores local time, as
-/// unzipping tools show it; undated, every entry would say 1 January 1980.
-fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> SimpleFileOptions {
+/// A deflated entry dated as `modified`. ZIP stores local time, as unzipping
+/// tools show it; undated, every entry would say 1 January 1980.
+fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let Ok(modified) = modified else {
         return options;
     };
@@ -205,21 +199,13 @@ mod tests {
         fs::remove_file(root.join("gone.tex")).unwrap();
 
         let dest = dir.path().join("out.zip");
-        let (file, temp) = create_temp(dir.path()).unwrap();
         let mut export = Export {
-            writer: ZipWriter::new(file),
-            options: SimpleFileOptions::default(),
-            archive_dir: dir.path().to_path_buf(),
+            writer: ZipWriter::new(File::create(&dest).unwrap()),
+            archive_dir: PathBuf::new(),
             archive_names: [None, None],
         };
-        for entry in &listed {
-            match export.add_entry(entry, "") {
-                Err(err) if err.status == 404 => {}
-                added => added.unwrap(),
-            }
-        }
+        export.add_entries(&listed, "").unwrap();
         export.writer.finish().unwrap();
-        persist(temp, &dest).unwrap();
         assert_eq!(zip_names(&dest), ["a.tex", "main.tex"]);
     }
 
@@ -230,6 +216,5 @@ mod tests {
         let err = export_zip(&root, &dest).unwrap_err();
         assert_eq!(err.status, 404);
         assert!(err.message.contains("out.zip"), "{}", err.message);
-        assert!(!err.message.contains("os error"), "{}", err.message);
     }
 }

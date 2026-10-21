@@ -19,36 +19,35 @@ pub fn scan_symbols(
 ) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
-        if !matches!(file_kind(rel), "tex" | "bib") {
+        let kind = file_kind(rel);
+        if !matches!(kind, "tex" | "bib") {
             return Ok(true);
         }
         let found = match open.get(rel) {
-            Some(text) => Some(Arc::new(Facts::read(text, file_kind(rel)))),
+            Some(text) => Some(Arc::new(Facts::read(text, kind))),
             None => skip_unreadable(facts.facts(abs, rel))?,
         };
-        if let Some(found) = found {
-            files.insert(rel.to_owned(), found);
-        }
+        files.extend(found.map(|found| (rel.to_owned(), found)));
         Ok(true)
     })?;
     facts.keep(files.keys());
-    /// The first of each name.
-    fn dedup<'a, T: Clone>(
-        symbols: impl Iterator<Item = &'a T>,
+    /// The first of each name, in the files' order.
+    fn firsts<'a, T: Clone>(
+        all: impl Iterator<Item = &'a T>,
         name: fn(&'a T) -> &'a str,
     ) -> Vec<T> {
         let mut seen = HashSet::new();
-        symbols.filter(|s| seen.insert(name(s))).cloned().collect()
+        all.filter(|item| seen.insert(name(item)))
+            .cloned()
+            .collect()
     }
-    fn names(list: &[Named]) -> impl Iterator<Item = &String> {
-        list.iter().map(|named| &named.name)
-    }
-    let all = files.values();
+    let all = || files.values().map(|facts| &**facts);
+    let names = |named: Vec<Named>| named.into_iter().map(|named| named.name).collect();
     Ok(Symbols {
-        citations: dedup(all.clone().flat_map(|f| &f.citations), |c| &c.name),
-        labels: dedup(all.clone().flat_map(|f| names(&f.labels)), String::as_str),
-        commands: dedup(all.clone().flat_map(|f| &f.commands), |c| &c.name),
-        environments: dedup(all.flat_map(|f| names(&f.environments)), String::as_str),
+        citations: firsts(all().flat_map(|f| &f.citations), |c| &c.name),
+        labels: names(firsts(all().flat_map(|f| &f.labels), |l| &l.name)),
+        commands: firsts(all().flat_map(|f| &f.commands), |c| &c.name),
+        environments: names(firsts(all().flat_map(|f| &f.environments), |e| &e.name)),
         by_file: files,
         ..Symbols::default()
     })

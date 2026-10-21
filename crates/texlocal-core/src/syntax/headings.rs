@@ -6,6 +6,7 @@ use serde::Serialize;
 use super::SourceDocument;
 use super::scan::{Scanner, Visit, arguments};
 use super::scans::SPACING;
+use Shape::{Italic, SmallCaps, Upright};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentClass {
@@ -91,124 +92,73 @@ enum Size {
     Points(f64),
 }
 
-type Look = (&'static str, Size, bool, Shape);
+type Look = Option<(Size, bool, Shape)>;
 
+/// A class's look for each of `LEVELS`, none where it has no such level.
+type Looks = [Look; 6];
+
+/// Steps of the class's sizes: \normalsize, \large, \Large, \huge and \Huge.
 const NORMAL: usize = 0;
 const LARGE_: usize = 1;
 const LARGE: usize = 2;
 const HUGE_: usize = 4;
 const HUGE: usize = 5;
 
-const fn bold(command: &'static str, step: usize) -> Look {
-    (command, Size::Step(step), true, Shape::Upright)
+const NO: Look = None;
+
+const fn b(step: usize) -> Look {
+    Some((Size::Step(step), true, Upright))
 }
 
-const fn plain(command: &'static str, shape: Shape) -> Look {
-    (command, Size::Step(NORMAL), false, shape)
+const fn p(shape: Shape) -> Look {
+    Some((Size::Step(NORMAL), false, shape))
 }
 
-const BOOK: &[Look] = &[
-    bold("part", HUGE),
-    bold("chapter", HUGE),
-    bold("section", LARGE),
-    bold("subsection", LARGE_),
-    bold("subsubsection", NORMAL),
-    bold("paragraph", NORMAL),
+/// \@xxpt and \@xivpt, whatever the size option.
+const fn pt(points: f64) -> Look {
+    Some((Size::Points(points), true, Upright))
+}
+
+const BOOK: Looks = [b(HUGE), b(HUGE), b(LARGE), b(LARGE_), b(NORMAL), b(NORMAL)];
+const ARTICLE: Looks = [b(HUGE_), NO, b(LARGE), b(LARGE_), b(NORMAL), b(NORMAL)];
+const AMS_ARTICLE: Looks = [
+    b(NORMAL),
+    NO,
+    p(SmallCaps),
+    b(NORMAL),
+    p(Italic),
+    p(Upright),
 ];
-const ARTICLE: &[Look] = &[
-    bold("part", HUGE_),
-    bold("section", LARGE),
-    bold("subsection", LARGE_),
-    bold("subsubsection", NORMAL),
-    bold("paragraph", NORMAL),
+const AMS_BOOK: Looks = [
+    pt(20.74),
+    pt(14.4),
+    b(NORMAL),
+    b(NORMAL),
+    p(Italic),
+    p(Upright),
 ];
-const AMS_ARTICLE: &[Look] = &[
-    bold("part", NORMAL),
-    plain("section", Shape::SmallCaps),
-    bold("subsection", NORMAL),
-    plain("subsubsection", Shape::Italic),
-    plain("paragraph", Shape::Upright),
-];
-const AMS_BOOK: &[Look] = &[
-    // \@xxpt and \@xivpt, whatever the size option.
-    ("part", Size::Points(20.74), true, Shape::Upright),
-    ("chapter", Size::Points(14.4), true, Shape::Upright),
-    bold("section", NORMAL),
-    bold("subsection", NORMAL),
-    plain("subsubsection", Shape::Italic),
-    plain("paragraph", Shape::Upright),
-];
-const KOMA_ARTICLE: &[Look] = &[
-    bold("part", HUGE),
-    bold("section", LARGE),
-    bold("subsection", LARGE_),
-    bold("subsubsection", NORMAL),
-    bold("paragraph", NORMAL),
-];
+const KOMA_ARTICLE: Looks = [b(HUGE), NO, b(LARGE), b(LARGE_), b(NORMAL), b(NORMAL)];
 /// headings=big, KOMA-Script's default.
-const KOMA_BOOK: &[Look] = &[
-    bold("part", HUGE),
-    bold("chapter", HUGE_),
-    bold("section", LARGE),
-    bold("subsection", LARGE_),
-    bold("subsubsection", NORMAL),
-    bold("paragraph", NORMAL),
-];
-const IEEE: &[Look] = &[
-    plain("section", Shape::SmallCaps),
-    plain("subsection", Shape::Italic),
-    plain("subsubsection", Shape::Italic),
-    plain("paragraph", Shape::Italic),
-];
-const LLNCS: &[Look] = &[
-    bold("part", HUGE),
-    bold("section", LARGE_),
-    bold("subsection", NORMAL),
-    bold("subsubsection", NORMAL),
-    plain("paragraph", Shape::Italic),
-];
+const KOMA_BOOK: Looks = [b(HUGE), b(HUGE_), b(LARGE), b(LARGE_), b(NORMAL), b(NORMAL)];
+const IEEE: Looks = [NO, NO, p(SmallCaps), p(Italic), p(Italic), p(Italic)];
+const LLNCS: Looks = [b(HUGE), NO, b(LARGE_), b(NORMAL), b(NORMAL), p(Italic)];
 /// beamer.cls defines neither \chapter nor \paragraph.
-const BEAMER: &[Look] = &[
-    bold("part", HUGE),
-    bold("section", LARGE),
-    bold("subsection", LARGE_),
-    bold("subsubsection", NORMAL),
-];
+const BEAMER: Looks = [b(HUGE), NO, b(LARGE), b(LARGE_), b(NORMAL), NO];
 
-struct Class {
-    looks: &'static [Look],
-    numbered: i64,
-    chapters: bool,
-    roman: bool,
-}
-
-impl Class {
-    const fn new(looks: &'static [Look], numbered: i64, chapters: bool) -> Self {
-        Self {
-            looks,
-            numbered,
-            chapters,
-            roman: false,
-        }
-    }
-}
-
-fn known(name: &str) -> Option<Class> {
+/// A class's looks, how deep it numbers its levels, and whether it has chapters.
+fn known(name: &str) -> Option<(&'static Looks, i64, bool)> {
     Some(match name {
-        "article" | "proc" => Class::new(ARTICLE, 3, false),
-        "report" | "book" | "memoir" => Class::new(BOOK, 2, true),
-        "amsart" | "amsproc" => Class::new(AMS_ARTICLE, 3, false),
-        "amsbook" => Class::new(AMS_BOOK, 3, true),
-        "scrartcl" => Class::new(KOMA_ARTICLE, 3, false),
-        "scrreprt" | "scrbook" => Class::new(KOMA_BOOK, 2, true),
-        "IEEEtran" => Class {
-            roman: true,
-            ..Class::new(IEEE, 4, false)
-        },
-        "llncs" => Class::new(LLNCS, 2, false),
+        "article" | "proc" => (&ARTICLE, 3, false),
+        "report" | "book" | "memoir" => (&BOOK, 2, true),
+        "amsart" | "amsproc" => (&AMS_ARTICLE, 3, false),
+        "amsbook" => (&AMS_BOOK, 3, true),
+        "scrartcl" => (&KOMA_ARTICLE, 3, false),
+        "scrreprt" | "scrbook" => (&KOMA_BOOK, 2, true),
+        "IEEEtran" => (&IEEE, 4, false),
+        "llncs" => (&LLNCS, 2, false),
         // Frames print no section headings: only the part page has a number.
-        "beamer" => Class::new(BEAMER, 0, false),
-        "letter" | "minimal" => Class::new(&[], 0, false),
+        "beamer" => (&BEAMER, 0, false),
+        "letter" | "minimal" => (&[NO; 6], 0, false),
         _ => return None,
     })
 }
@@ -223,13 +173,10 @@ fn points(size: u32) -> [f64; 6] {
 
 pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<Level> {
     let sizes = points(class.map_or(10, |c| c.point_size));
-    let Class {
-        looks,
-        numbered,
-        chapters,
-        roman,
-    } = class.and_then(|c| known(&c.name)).unwrap_or(Class::new(
-        BOOK,
+    // IEEEtran numbers its levels I, A, 1, a.
+    let roman = class.is_some_and(|c| c.name == "IEEEtran");
+    let (looks, numbered, chapters) = class.and_then(|c| known(&c.name)).unwrap_or((
+        &BOOK,
         if has_chapters { 2 } else { 3 },
         has_chapters,
     ));
@@ -255,13 +202,13 @@ pub fn heading_styles(class: Option<&DocumentClass>, has_chapters: bool) -> Vec<
         font: Font {
             scale: 1.0,
             bold: false,
-            shape: Shape::Upright,
+            shape: Upright,
         },
         marker: None,
     };
-    let levels = LEVELS.iter().enumerate();
-    let levels = levels.filter_map(|(index, &(command, title))| {
-        let &(_, size, bold, shape) = looks.iter().find(|look| look.0 == command)?;
+    let levels = LEVELS.iter().zip(looks).enumerate();
+    let levels = levels.filter_map(|(index, (&(command, title), look))| {
+        let (size, bold, shape) = (*look)?;
         let points = match size {
             Size::Step(step) => sizes[step],
             Size::Points(points) => points,

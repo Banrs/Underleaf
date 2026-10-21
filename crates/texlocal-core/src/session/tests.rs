@@ -10,8 +10,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use super::actor::Newline;
-use super::engine::Fut;
+use super::actor::newline;
+use super::build::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
 use crate::compile::CompileResult;
@@ -32,7 +32,8 @@ struct Fake {
     panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
     edits: Mutex<Vec<(String, usize, usize, String)>>,
-    edit_answers: Mutex<VecDeque<Result<(), CoreError>>>,
+    /// The next edit's refusal.
+    refusal: Mutex<Option<CoreError>>,
     sink: Mutex<Option<Sink>>,
     log: Mutex<String>,
 }
@@ -72,35 +73,30 @@ fn exited() -> LiveEvent {
 
 impl Fake {
     fn called(&self, what: &str) -> usize {
-        let calls = self.calls.lock().unwrap();
-        calls.iter().filter(|c| *c == what).count()
+        lock(&self.calls).iter().filter(|c| *c == what).count()
     }
 
-    fn log(&self, what: &str) {
-        self.calls.lock().unwrap().push(what.into());
+    fn note(&self, what: &str) {
+        lock(&self.calls).push(what.into());
     }
 
     fn finish_build(&self, result: CompileResult) {
-        let build = self.builds.lock().unwrap().pop_front();
+        let build = lock(&self.builds).pop_front();
         let _ = build.expect("a build runs").send(Ok(result));
     }
 
     fn tell(&self, event: LiveEvent) {
-        if let Some(sink) = self.sink.lock().unwrap().as_ref() {
+        if let Some(sink) = lock(&self.sink).as_ref() {
             sink(event);
         }
-    }
-
-    fn refuse_edit(&self, error: CoreError) {
-        self.edit_answers.lock().unwrap().push_back(Err(error));
     }
 }
 
 impl Engine for Fake {
     fn compile(&self, _root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
-        self.log("compile");
+        self.note("compile");
         let (tx, rx) = oneshot::channel();
-        self.builds.lock().unwrap().push_back(tx);
+        lock(&self.builds).push_back(tx);
         Box::pin(async move {
             rx.await
                 .unwrap_or_else(|_| Err(CoreError::internal("dropped")))
@@ -108,16 +104,18 @@ impl Engine for Fake {
     }
 
     fn stop_compile(&self, _root: &Path) {
-        self.log("stop_compile");
-        if let Some(build) = self.builds.lock().unwrap().pop_front() {
-            let mut stopped = built(false, Vec::new());
-            stopped.stopped = true;
+        self.note("stop_compile");
+        if let Some(build) = lock(&self.builds).pop_front() {
+            let stopped = CompileResult {
+                stopped: true,
+                ..built(false, Vec::new())
+            };
             let _ = build.send(Ok(stopped));
         }
     }
 
     fn clean(&self, _root: PathBuf) -> Fut<Result<(), CoreError>> {
-        self.log("clean");
+        self.note("clean");
         Box::pin(async { Ok(()) })
     }
 }
@@ -132,17 +130,15 @@ impl Preview for Fake {
         pane: Option<&Pane>,
         sink: Sink,
     ) -> Result<Status, CoreError> {
-        self.log("live_start");
-        self.panes.lock().unwrap().push(pane.is_some());
-        let paths = files.iter().map(|f| f.path.clone()).collect();
-        self.starts.lock().unwrap().push(paths);
-        *self.sink.lock().unwrap() = Some(sink);
+        self.note("live_start");
+        lock(&self.panes).push(pane.is_some());
+        lock(&self.starts).push(files.iter().map(|f| f.path.clone()).collect());
+        *lock(&self.sink) = Some(sink);
         Ok(status(true))
     }
 
     fn update(&self, _owner: u64, path: &str, text: &str) -> Result<(), CoreError> {
-        let update = (path.to_owned(), text.to_owned());
-        self.updates.lock().unwrap().push(update);
+        lock(&self.updates).push((path.to_owned(), text.to_owned()));
         Ok(())
     }
 
@@ -154,39 +150,38 @@ impl Preview for Fake {
         remove: usize,
         text: &str,
     ) -> Result<(), CoreError> {
-        let answer = self.edit_answers.lock().unwrap().pop_front();
-        if answer.as_ref().is_none_or(Result::is_ok) {
-            let edit = (path.to_owned(), start, remove, text.to_owned());
-            self.edits.lock().unwrap().push(edit);
+        if let Some(refusal) = lock(&self.refusal).take() {
+            return Err(refusal);
         }
-        answer.unwrap_or(Ok(()))
+        lock(&self.edits).push((path.to_owned(), start, remove, text.to_owned()));
+        Ok(())
     }
 
     fn view(&self, _owner: u64, _first: u32, _last: u32) -> Result<(), CoreError> {
-        self.log("live_view");
+        self.note("live_view");
         Ok(())
     }
 
     fn caret(&self, _owner: u64, _path: &str, _offset: usize) -> Result<(), CoreError> {
-        self.log("live_caret");
+        self.note("live_caret");
         Ok(())
     }
 
     fn rescan(&self, _owner: u64) -> Result<(), CoreError> {
-        self.log("live_rescan");
+        self.note("live_rescan");
         Ok(())
     }
 
     fn status(&self, _owner: u64) -> Result<Status, CoreError> {
         Ok(Status {
-            log: self.log.lock().unwrap().clone(),
+            log: lock(&self.log).clone(),
             output: "TeX's output".into(),
             ..status(true)
         })
     }
 
     fn stop_request(&self, _owner: u64) -> Status {
-        self.log("live_stop");
+        self.note("live_stop");
         self.tell(LiveEvent::Ended(None));
         status(false)
     }
@@ -231,7 +226,7 @@ impl Rig {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         sessions.set_listener(Some(Box::new(move |event| {
-            sink.lock().unwrap().push(event.clone());
+            lock(&sink).push(event.clone());
         })));
         let args = json!({ "id": "P", "session": 1, "autoCompile": auto_compile });
         let opened = sessions.call("session_open", &args).await.unwrap();
@@ -262,21 +257,19 @@ impl Rig {
         self.sessions.document(self.session, path).unwrap()
     }
 
+    /// Every event since the last call, once the session has taken what was sent before.
     async fn events(&mut self) -> Vec<Value> {
-        self.ok("state", json!({})).await;
+        self.state().await;
         self.marks += 1;
-        let mark = self.marks;
-        let marker = json!({ "type": "mark", "n": mark });
-        self.sessions.hub().emitter().send(marker);
+        let mark = json!({ "type": "mark", "n": self.marks });
+        self.sessions.hub.queue.send(mark.clone()).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
-            let mut seen = self.seen.lock().unwrap();
-            let at = seen
-                .iter()
-                .position(|e| e["type"] == "mark" && e["n"] == mark);
-            if let Some(at) = at {
-                let events: Vec<Value> = seen.drain(..=at).collect();
-                return events[..events.len() - 1].to_vec();
+            let mut seen = lock(&self.seen);
+            if let Some(at) = seen.iter().position(|e| *e == mark) {
+                let mut events: Vec<Value> = seen.drain(..=at).collect();
+                events.pop();
+                return events;
             }
             drop(seen);
             assert!(std::time::Instant::now() < deadline, "events arrive");
@@ -299,11 +292,9 @@ impl Rig {
     }
 
     fn changed(&self, path: &str, structural: bool) {
-        let change = Change {
-            path: self.root.join(path),
-            structural,
-        };
-        self.sessions.inject(self.session, Msg::Fs(vec![change]));
+        let path = self.root.join(path);
+        let changes = Msg::Fs(vec![Change { path, structural }]);
+        let _ = lock(&self.sessions.open)[&self.session].tx.send(changes);
     }
 
     async fn state(&self) -> Value {
@@ -394,7 +385,7 @@ async fn requests_during_a_build_queue_one_more_and_stop_drops_it() {
     assert_eq!(rig.fake.called("compile"), 1);
     rig.ok("compile", json!({ "auto": true })).await;
     rig.ok("compile", json!({})).await;
-    assert_eq!(rig.ok("state", json!({})).await["build"]["queued"], true);
+    assert_eq!(rig.state().await["build"]["queued"], true);
     rig.fake.finish_build(built(true, Vec::new()));
     rig.state().await;
     assert_eq!(rig.fake.called("compile"), 2);
@@ -408,7 +399,7 @@ async fn requests_during_a_build_queue_one_more_and_stop_drops_it() {
     rig.ok("stop_compile", json!({})).await;
     rig.state().await;
     assert_eq!(rig.fake.called("stop_compile"), 1);
-    assert!(rig.fake.builds.lock().unwrap().is_empty());
+    assert!(lock(&rig.fake.builds).is_empty());
     let state = rig.state().await;
     assert_eq!(state["build"]["compiling"], false);
     assert_eq!(state["build"]["queued"], false);
@@ -457,10 +448,8 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     assert_eq!(rig.ok("issue", json!({ "next": false })).await["index"], 2);
     doc.edit(0, 0, "x");
     let cleared = rig.of_type("issues").await;
-    assert_eq!(
-        cleared,
-        [json!({ "type": "issues", "session": rig.session, "path": "main.tex", "lines": [] })]
-    );
+    let none = json!({ "type": "issues", "session": rig.session, "path": "main.tex", "lines": [] });
+    assert_eq!(cleared, [none]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -512,7 +501,7 @@ async fn an_analysis_holds_up_no_other_command_and_the_last_asked_for_is_kept() 
     let rig = Rig::new(false).await;
     fs::write(rig.root.join("main.tex"), "\\section{A}\n\\section{B}\n").unwrap();
     fs::write(rig.root.join("ch.tex"), "\\section{C}\n").unwrap();
-    let outline = rig.sessions.outline(rig.session);
+    let outline = Arc::clone(&lock(&rig.sessions.open)[&rig.session].outline);
     let held = lock(&outline);
     let analyze = |path| {
         let args = json!({ "session": rig.session, "path": path });
@@ -668,11 +657,8 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
     let events = rig.events().await;
     let of = |kind: &'static str| events.iter().filter(move |e| e["type"] == kind);
     let closed: Vec<&Value> = of("document_closed").collect();
-    assert_eq!(
-        (closed[0]["path"].as_str(), closed.len()),
-        (Some("ch.tex"), 1)
-    );
-    assert_eq!(closed[0]["reason"], "gone");
+    let gone = json!({ "type": "document_closed", "session": rig.session, "path": "ch.tex", "reason": "gone" });
+    assert_eq!(closed, [&gone]);
     assert!(rig.sessions.document(rig.session, "ch.tex").is_none());
     assert_eq!(of("tree").count(), 1);
     assert_eq!(of("conflict").next().unwrap()["kind"], "gone");
@@ -697,9 +683,11 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     assert_eq!(changed[0]["paths"], json!(["refs.bib"]));
 }
 
+/// Chosen here or by another app (by hand, by git or by a sync client), the main file is marked
+/// in the tree and built.
 #[tokio::test(start_paused = true)]
-async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
-    let mut rig = Rig::new(false).await;
+async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_built() {
+    let mut rig = Rig::new(true).await;
     fs::write(rig.root.join("paper.tex"), "").unwrap();
     rig.changed("paper.tex", true);
     wait(300).await;
@@ -707,58 +695,28 @@ async fn the_tree_marks_the_main_file_and_comes_again_when_another_is_chosen() {
     let patch = json!({ "patch": { "mainFile": "paper.tex" } });
     rig.ok("set_settings", patch).await;
     let trees = rig.of_type("tree").await;
-    let marks: Vec<_> = trees[0]["tree"]
-        .as_array()
-        .unwrap()
-        .iter()
+    let nodes = trees[0]["tree"].as_array().unwrap().iter();
+    let marks: Vec<_> = nodes
         .map(|n| (n["path"].clone(), n.get("main").cloned()))
         .collect();
-    assert_eq!(
-        marks,
-        [
-            (json!("main.tex"), None),
-            (json!("paper.tex"), Some(json!(true)))
-        ]
-    );
-}
-
-#[test]
-fn a_file_ends_its_lines_as_its_first_line_break_does() {
-    assert_eq!(Newline::of("a\r\nb\nc"), Newline::CrLf);
-    assert_eq!(Newline::of("a\rb"), Newline::Cr);
-    assert_eq!(Newline::of("a\nb\r\n"), Newline::Lf);
-    assert_eq!(Newline::of("a"), Newline::Lf);
-    assert_eq!(Newline::CrLf.written("a\nb\r\nc\rd"), "a\r\nb\r\nc\r\nd");
-    assert_eq!(Newline::Cr.written("a\nb"), "a\rb");
-    assert_eq!(Newline::Lf.written("a\r\nb"), "a\nb");
-    assert!(matches!(
-        Newline::Lf.written("a\nb"),
-        std::borrow::Cow::Borrowed(_)
-    ));
-}
-
-/// By hand, by git or by a sync client: the host's mark follows the tree's.
-#[tokio::test(start_paused = true)]
-async fn another_apps_change_of_the_main_file_is_marked_and_built() {
-    let mut rig = Rig::new(true).await;
-    fs::write(rig.root.join("paper.tex"), "").unwrap();
-    rig.changed("paper.tex", true);
-    wait(300).await;
-    rig.events().await;
+    let paper = (json!("paper.tex"), Some(json!(true)));
+    assert_eq!(marks, [(json!("main.tex"), None), paper]);
     let builds = rig.fake.called("compile");
-    let settings = r#"{ "mainFile": "paper.tex" }"#;
+    let settings = r#"{ "mainFile": "main.tex" }"#;
     fs::write(rig.root.join(".texlocal.json"), settings).unwrap();
     rig.changed(".texlocal.json", false);
     wait(300).await;
     let trees = rig.of_type("tree").await;
-    let tree = trees[0]["tree"].as_array().unwrap();
-    let main = tree.iter().find(|node| node["main"] == true);
-    assert_eq!(main.unwrap()["path"], "paper.tex");
-    assert_eq!(
-        rig.fake.called("compile"),
-        builds + 1,
-        "the new main file is built"
-    );
+    assert_eq!(trees[0]["tree"][0]["main"], true);
+    assert_eq!(rig.fake.called("compile"), builds + 1);
+}
+
+#[test]
+fn a_file_ends_its_lines_as_its_first_line_break_does() {
+    assert_eq!(newline("a\r\nb\nc"), "\r\n");
+    assert_eq!(newline("a\rb"), "\r");
+    assert_eq!(newline("a\nb\r\n"), "\n");
+    assert_eq!(newline("a"), "\n");
 }
 
 #[tokio::test(start_paused = true)]
@@ -767,16 +725,16 @@ async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
     fs::write(rig.root.join("main.tex"), "a\r\nb\r\n").unwrap();
     let doc = rig.open("main.tex").await;
     assert_eq!(doc.snapshot().0, "a\nb\n");
-    doc.edit(4, 0, "c\r\nd");
+    doc.edit(4, 0, "c\r\nd\re");
     wait(800).await;
-    assert_eq!(rig.disk("main.tex"), "a\r\nb\r\nc\r\nd");
+    assert_eq!(rig.disk("main.tex"), "a\r\nb\r\nc\r\nd\r\ne");
     // Another app changing only the line ends changes no text, and the next save keeps its.
-    rig.write_elsewhere("main.tex", "a\nb\nc\nd");
+    rig.write_elsewhere("main.tex", "a\nb\nc\nd\ne");
     wait(300).await;
     assert!(rig.of_type("document_reload").await.is_empty());
-    doc.edit(8, 0, "!");
+    doc.edit(10, 0, "!");
     wait(800).await;
-    assert_eq!(rig.disk("main.tex"), "a\nb\nc\nd!");
+    assert_eq!(rig.disk("main.tex"), "a\nb\nc\nd\ne!");
 }
 
 #[tokio::test(start_paused = true)]
@@ -809,35 +767,16 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
 
 // MARK: - Files
 
+/// Its edits are saved first; a rename only in case moves it rather than closing it.
 #[tokio::test(start_paused = true)]
 async fn a_rename_moves_the_open_document_and_its_saves() {
-    let mut rig = Rig::new(false).await;
-    fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
-    let doc = rig.open("ch.tex").await;
-    doc.edit(0, 0, "A ");
-    let renamed = rig
-        .ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
-        .await;
-    assert_eq!(renamed["to"], "one.tex");
-    let moved = rig.of_type("document_renamed").await;
-    assert_eq!(moved[0]["to"], "one.tex");
-    doc.edit(0, 0, "B");
-    wait(800).await;
-    assert_eq!(rig.disk("one.tex"), "BA chapter");
-    assert!(!rig.root.join("ch.tex").exists());
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_rename_only_in_case_moves_the_open_document_rather_than_closing_it() {
     let mut rig = Rig::new(false).await;
     fs::create_dir(rig.root.join("chapters")).unwrap();
     fs::write(rig.root.join("chapters/Ch.tex"), "chapter").unwrap();
     let doc = rig.open("chapters/Ch.tex").await;
-    rig.ok(
-        "rename",
-        json!({ "from": "chapters/Ch.tex", "to": "chapters/ch.tex" }),
-    )
-    .await;
+    doc.edit(0, 0, "A ");
+    let to_lower = json!({ "from": "chapters/Ch.tex", "to": "chapters/ch.tex" });
+    assert_eq!(rig.ok("rename", to_lower).await["to"], "chapters/ch.tex");
     rig.ok("rename", json!({ "from": "chapters", "to": "Chapters" }))
         .await;
     let events = rig.events().await;
@@ -845,14 +784,11 @@ async fn a_rename_only_in_case_moves_the_open_document_rather_than_closing_it() 
     let moved = events.iter().filter(|e| e["type"] == "document_renamed");
     let moved: Vec<_> = moved.map(|e| e["to"].clone()).collect();
     assert_eq!(moved, ["chapters/ch.tex", "Chapters/ch.tex"]);
-    assert!(
-        rig.sessions
-            .document(rig.session, "Chapters/ch.tex")
-            .is_some()
-    );
-    doc.edit(0, 0, "A ");
+    let found = rig.sessions.document(rig.session, "Chapters/ch.tex");
+    assert!(found.is_some());
+    doc.edit(0, 0, "B");
     wait(800).await;
-    assert_eq!(rig.disk("Chapters/ch.tex"), "A chapter");
+    assert_eq!(rig.disk("Chapters/ch.tex"), "BA chapter");
 }
 
 #[tokio::test(start_paused = true)]
@@ -887,12 +823,10 @@ async fn a_file_tex_names_in_another_case_is_spelt_as_the_disk_spells_it() {
 #[tokio::test(start_paused = true)]
 async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back() {
     let rig = Rig::new(false).await;
-    let refused = rig
-        .call("prepare_delete", json!({ "path": "main.tex" }))
-        .await;
-    assert_eq!(refused.unwrap_err().status, 409);
-    let other_case = rig.call("prepare_delete", json!({ "path": "MAIN.tex" }));
-    assert_eq!(other_case.await.unwrap_err().status, 409);
+    for path in ["main.tex", "MAIN.tex"] {
+        let refused = rig.call("prepare_delete", json!({ "path": path })).await;
+        assert_eq!(refused.unwrap_err().status, 409);
+    }
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
     doc.edit(0, 0, "x");
@@ -962,18 +896,18 @@ async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
     live(&rig).await;
-    assert_eq!(rig.fake.starts.lock().unwrap()[0], ["main.tex"]);
+    assert_eq!(lock(&rig.fake.starts)[0], ["main.tex"]);
     doc.edit(5, 0, "!");
     rig.state().await;
-    assert_eq!(rig.fake.edits.lock().unwrap().len(), 1);
-    rig.fake.refuse_edit(CoreError::unfit("unfit"));
+    assert_eq!(lock(&rig.fake.edits).len(), 1);
+    *lock(&rig.fake.refusal) = Some(CoreError::unfit("unfit"));
     doc.edit(6, 0, "?");
     rig.state().await;
-    let updates = rig.fake.updates.lock().unwrap().clone();
+    let updates = lock(&rig.fake.updates).clone();
     assert_eq!(updates, [("main.tex".to_string(), "Hello!?".to_string())]);
     doc.edit(7, 0, ".");
     rig.state().await;
-    assert_eq!(rig.fake.edits.lock().unwrap().len(), 2);
+    assert_eq!(lock(&rig.fake.edits).len(), 2);
 }
 
 fn phases(events: &[Value]) -> Vec<&str> {
@@ -996,7 +930,7 @@ async fn a_file_changed_on_disk_goes_to_texpresso_unless_too_large_to_send() {
     }
     wait(1000).await;
     rig.state().await;
-    let updates = rig.fake.updates.lock().unwrap().clone();
+    let updates = lock(&rig.fake.updates).clone();
     assert_eq!(updates, [("ch.tex".to_string(), "chapter".to_string())]);
     assert!(rig.fake.called("live_rescan") > 0);
 }
@@ -1023,7 +957,7 @@ async fn a_stopped_run_is_halted_only_once_it_has_lasted_a_second() {
 async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_before() {
     let mut rig = Rig::new(false).await;
     live(&rig).await;
-    let earlier = rig.fake.sink.lock().unwrap().take();
+    let earlier = lock(&rig.fake.sink).take();
     rig.ok("live_stop", json!({})).await;
     live(&rig).await;
     let page = |path: &str| LiveEvent::Page {
@@ -1060,7 +994,7 @@ async fn a_preview_that_ends_by_itself_is_reported_and_not_started_again() {
     let state = rig.state().await;
     assert_eq!(state["live"]["phase"], "stopped");
     assert_eq!(state["live"]["failure"], "TeXpresso exited");
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 1);
+    assert_eq!(lock(&rig.fake.starts).len(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1121,7 +1055,7 @@ async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_me
     wait(100).await;
     let started = rig.ok("live_start", json!({})).await;
     assert_eq!(started["phase"], "starting");
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 1);
+    assert_eq!(lock(&rig.fake.starts).len(), 1);
     wait(100).await;
     assert_eq!(phases(&rig.events().await), ["starting", "running"]);
     rig.ok("rename", json!({ "from": "one.tex", "to": "ch.tex" }))
@@ -1129,7 +1063,7 @@ async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_me
     rig.ok("live_stop", json!({})).await;
     live(&rig).await;
     wait(200).await;
-    assert_eq!(rig.fake.starts.lock().unwrap().len(), 3);
+    assert_eq!(lock(&rig.fake.starts).len(), 3);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1139,7 +1073,7 @@ async fn the_log_follows_tex_at_most_five_times_a_second() {
     rig.ok("live_log", json!({ "shown": true })).await;
     rig.events().await;
     for line in 0..20 {
-        *rig.fake.log.lock().unwrap() = format!("line {line}");
+        *lock(&rig.fake.log) = format!("line {line}");
         rig.fake.tell(LiveEvent::Log);
         wait(20).await;
     }
@@ -1154,20 +1088,19 @@ async fn the_caret_is_told_once_it_settles() {
     let rig = Rig::new(false).await;
     rig.open("main.tex").await;
     live(&rig).await;
-    for offset in 0..5 {
-        let caret = json!({ "path": "main.tex", "offset": offset });
-        rig.ok("live_caret", caret).await;
-        wait(50).await;
-    }
+    let move_to = async |offsets: &[usize]| {
+        for &offset in offsets {
+            let caret = json!({ "path": "main.tex", "offset": offset });
+            rig.ok("live_caret", caret).await;
+            wait(50).await;
+        }
+    };
+    move_to(&[0, 1, 2, 3, 4]).await;
     assert_eq!(rig.fake.called("live_caret"), 0);
     wait(200).await;
     rig.state().await;
     assert_eq!(rig.fake.called("live_caret"), 1);
-    for offset in [0, 4] {
-        let caret = json!({ "path": "main.tex", "offset": offset });
-        rig.ok("live_caret", caret).await;
-        wait(50).await;
-    }
+    move_to(&[0, 4]).await;
     wait(200).await;
     rig.state().await;
     assert_eq!(rig.fake.called("live_caret"), 1, "away and back is no move");
@@ -1185,7 +1118,7 @@ async fn texpressos_own_window_is_kept_through_the_sessions_restarts() {
     rig.state().await;
     rig.ok("live_stop", json!({})).await;
     live(&rig).await;
-    assert_eq!(*rig.fake.panes.lock().unwrap(), [false, false, true]);
+    assert_eq!(*lock(&rig.fake.panes), [false, false, true]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1206,7 +1139,7 @@ async fn closing_saves_and_stops_the_preview() {
 fn until_event(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Option<Value> {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
-        if let Some(event) = seen.lock().unwrap().iter().find(|e| found(e)) {
+        if let Some(event) = lock(seen).iter().find(|e| found(e)) {
             return Some(event.clone());
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -1235,7 +1168,7 @@ async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     let again = json!({ "id": "P", "session": rig.session });
     let taken = rig.sessions.call("session_open", &again).await.unwrap_err();
     assert_eq!(taken.status, 409);
-    assert!(rig.ok("state", json!({})).await["build"]["compiling"] == true);
+    assert_eq!(rig.state().await["build"]["compiling"], true);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1319,16 +1252,19 @@ async fn citations_and_files_another_app_writes_reach_completion() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_symbol_scan_reads_an_open_document_as_the_editor_has_it() {
+async fn the_symbol_scan_and_a_search_read_an_open_document_as_the_editor_has_it() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
     // Marked text holds the autosave, so the label never reaches the disk.
     let composing = json!({ "path": "main.tex", "composing": true });
     rig.ok("composing", composing).await;
-    doc.edit(5, 0, "\\label{typed}");
+    doc.edit(5, 0, " \\label{typed}");
     fs::write(rig.root.join("b.tex"), "").unwrap();
     rig.changed("b.tex", true);
     assert!(until(&doc, |symbols| symbols.labels == ["typed"]).await);
+    let found = rig.ok("search", json!({ "query": "typed" })).await;
+    assert_eq!(found[0]["hits"][0]["file"], "main.tex");
+    assert_eq!(found[0]["hits"][0]["column"], 13);
     assert_eq!(rig.disk("main.tex"), "Hello");
 }
 
@@ -1345,20 +1281,6 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     let answer = doc.with(|source| source.call("definition", r#"{"at": 20}"#));
     let answer: Value = serde_json::from_str(&answer.unwrap()).unwrap();
     assert_eq!(answer["places"][0]["file"], "b.tex");
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_search_reads_the_open_document_as_the_editor_has_it() {
-    let rig = Rig::new(false).await;
-    let doc = rig.open("main.tex").await;
-    // Marked text holds the autosave, so the word never reaches the disk.
-    let composing = json!({ "path": "main.tex", "composing": true });
-    rig.ok("composing", composing).await;
-    doc.edit(5, 0, " needle");
-    let found = rig.ok("search", json!({ "query": "needle" })).await;
-    assert_eq!(found[0]["hits"][0]["file"], "main.tex");
-    assert_eq!(found[0]["hits"][0]["column"], 6);
-    assert_eq!(rig.disk("main.tex"), "Hello");
 }
 
 /// Every match in a file goes, and only in the files asked for; one that isn't UTF-8 refuses
@@ -1381,13 +1303,11 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
     let replaced = replace(json!(["ch.tex", "main.tex"])).await.unwrap();
     let edit = json!({ "start": 6, "length": 3, "text": "dog" });
-    assert_eq!(
-        replaced,
-        json!({
-            "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
-            "written": [{ "file": "ch.tex", "count": 2 }],
-        })
-    );
+    let answer = json!({
+        "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
+        "written": [{ "file": "ch.tex", "count": 2 }],
+    });
+    assert_eq!(replaced, answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
     assert_eq!(rig.disk("notes.txt"), "cat");
 }
@@ -1415,13 +1335,11 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     }
     let renamed = rename("knuth", "knuth84").await.unwrap();
     let edit = json!({ "start": 14, "length": 5, "text": "knuth84" });
-    assert_eq!(
-        renamed,
-        json!({
-            "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
-            "written": [{ "file": "refs.bib", "count": 2 }],
-        })
-    );
+    let answer = json!({
+        "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
+        "written": [{ "file": "refs.bib", "count": 2 }],
+    });
+    assert_eq!(renamed, answer);
     assert_eq!(rig.disk("refs.bib"), bib.replace("knuth", "knuth84"));
 }
 
