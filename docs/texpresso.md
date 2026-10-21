@@ -54,6 +54,10 @@ the app quits or crashes.
 - Finishing passes, which bring references and contents up to date, run in a second TeX that
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle reruns
   stay off.
+- A change that takes TeX back to the main file's start launches a new worker. A second change
+  before it has answered (10 ms) kills it as stuck, and upstream then kept the dead worker, which
+  left the run stopped, with an empty log, until a restart: the rollback now drops a dead worker
+  too, and the next step launches another.
 - With or without the variable, a run that TeX stops (an emergency stop, a source without
   `\end{document}`, 100 errors) ends `texpresso-xetex` with exit status 1 where upstream's calls
   `abort()`, which left a macOS crash report for each one while typing. TeXpresso sees the run end

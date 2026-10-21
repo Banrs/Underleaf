@@ -25,6 +25,6 @@ it works around.
   then the custom one stays (the look is decided).
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
 - The hosts don't yet draw `live_issues` (`docs/core-api.md`).
-- TeXpresso: a change that rolls TeX back to the start of the main file, then another within
-  milliseconds, kills the restarted worker without a new one ("rewinded trace from 0 to 0
-  entries"): the run stays stopped with an empty log until Live Preview restarts.
+- TeXpresso's frontend (`texpresso`, not `texpresso-xetex`) is still to be rebuilt with the
+  patch's fix for a worker killed as it starts (`docs/texpresso.md`). It needs MuPDF and SDL2
+  (`brew install mupdf sdl2`). Until then `texpresso_live` fails at "Recovery without a restart".

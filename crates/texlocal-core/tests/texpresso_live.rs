@@ -232,12 +232,11 @@ async fn run(library: &Path) {
         }
     };
     client.event(&mut from, a, "live_issues", on(4)).await;
-    let moved = "\\typeout{UL_ERROR_MOVED}\n";
-    main_doc.edit(units_to(&broken, "\\typeout"), 0, moved);
+    // Typed at the file's start, it starts TeX again from nothing, and the next edit comes as
+    // that TeX starts.
+    main_doc.edit(0, 0, "%\n");
     client.event(&mut from, a, "live_issues", on(5)).await;
-    client
-        .shows(a, "UL_ERROR_MOVED", "A line above the error")
-        .await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
     retype(&main_doc, &recovered);
     let cleared = |e: &Value| e["path"] == "main.tex" && e["lines"] == json!([]);
