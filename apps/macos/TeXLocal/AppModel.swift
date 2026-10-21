@@ -9,6 +9,7 @@ nonisolated enum DefaultsKey {
     static let autoCompile = "autoCompile"
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
+    static let folderBookmarks = "folderBookmarks"
     static let showPDF = "showPDF"
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
@@ -66,6 +67,12 @@ struct NewProjectDraft: Identifiable {
 }
 
 private nonisolated struct FreeName: Decodable { let name: String }
+
+/// `open_path`'s answer: the project, and the file in it to show.
+private nonisolated struct Opening: Decodable {
+    let project: ProjectInfo
+    let file: String?
+}
 
 @Observable
 final class AppModel {
@@ -197,7 +204,10 @@ final class AppModel {
     func refresh() async {
         guard core.isOpen else { return }
         do {
-            projects = try await core.call("list_projects", as: [ProjectInfo].self)
+            let listed = try await core.call("list_projects", as: [ProjectInfo].self)
+            var followed = false
+            for project in listed where project.missing { followed = await follow(project) || followed }
+            projects = followed ? try await core.call("list_projects", as: [ProjectInfo].self) : listed
             libraryProblem = nil
         } catch {
             libraryProblem = AppAlert("Couldn’t Load Projects", error)
@@ -248,38 +258,62 @@ final class AppModel {
     }
 
     /// One alone opens.
-    func importProjects(_ urls: [URL]) async {
-        for url in urls { await importProject(from: url, open: urls.count == 1) }
+    func open(_ urls: [URL]) async {
+        for url in urls { await open(url, alone: urls.count == 1) }
     }
 
-    /// Without asking: the copy goes to the Trash like any project.
-    func importProject(from url: URL, open: Bool = true) async {
-        if await isInLibrary(url, open: open) { return }
+    /// A folder, or a .tex file's, opens where it is; a .zip or another file is copied into the library.
+    func open(_ url: URL, alone: Bool = true) async {
         // A second Return while it copies would make a second project.
         guard !importing.contains(url) else { return }
         importing.append(url)
         defer { importing.removeAll { $0 == url } }
-        guard let info = await alerting("Couldn’t Open “\(url.lastPathComponent)”", {
-            try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
-        }) else { return }
+        guard let opening = await alerting("Couldn’t Open “\(url.lastPathComponent)”", { try await openPath(url) }) else { return }
         await refresh()
-        guard open else { return }
-        // Its own row takes over from the copy's.
+        guard alone else { return }
+        // Its own row takes over.
         importing.removeAll { $0 == url }
-        await self.open(info.id)
+        let id = opening.project.id
+        await open(id)
+        if let file = opening.file, let project, project.id == id { await project.open(file) }
     }
 
-    private func isInLibrary(_ url: URL, open: Bool) async -> Bool {
-        guard let located = try? await core.call("locate", ["path": url.path(percentEncoded: false)], as: Located?.self) else { return false }
-        let id = located.id
-        if !projects.contains(where: { $0.id == id }) { await refresh() }
-        guard projects.contains(where: { $0.id == id }) else { return false }
-        guard open else { return true }
-        await self.open(id)
-        if !located.path.isEmpty, let project, project.id == id, project.tree.node(at: located.path)?.isDirectory == false {
-            await project.open(located.path)
+    private func openPath(_ url: URL) async throws -> Opening {
+        let opening = try await core.call("open_path", ["path": url.path(percentEncoded: false)], as: Opening.self)
+        if opening.project.opened {
+            bookmarks[opening.project.id] = try? opening.project.folder.bookmarkData()
         }
-        return true
+        return opening
+    }
+
+    /// Plain bookmarks, as the app isn't sandboxed: they find an opened folder again after a move.
+    private var bookmarks: [String: Data] {
+        get { defaults.dictionary(forKey: DefaultsKey.folderBookmarks) as? [String: Data] ?? [:] }
+        set { defaults.set(newValue, forKey: DefaultsKey.folderBookmarks) }
+    }
+
+    /// A missing folder that its bookmark finds, unless in the Trash, opened again at its new path: the core knows it by
+    /// its identity and keeps its id.
+    private func follow(_ project: ProjectInfo) async -> Bool {
+        var stale = false, trashed = FileManager.URLRelationship.other
+        guard let bookmark = bookmarks[project.id],
+              let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale),
+              (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return false }
+        try? FileManager.default.getRelationship(&trashed, of: .trashDirectory, in: .userDomainMask, toItemAt: url)
+        guard trashed != .contains else { return false }
+        return (try? await openPath(url)) != nil
+    }
+
+    /// The folder stays as it is; its settings and build output go.
+    func forget(_ project: ProjectInfo) async {
+        let forgotten: Void? = await alerting("Couldn’t Remove “\(project.name)” from the List") {
+            try await core.call("forget_folder", ["id": project.id])
+        }
+        if forgotten != nil {
+            bookmarks[project.id] = nil
+            recentProjects.removeAll { $0 == project.id }
+        }
+        await refresh()
     }
 
     func rename(_ project: ProjectInfo, to name: String) async {
@@ -312,9 +346,8 @@ final class AppModel {
 
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
-        guard let root = await folder(of: project, orAlert: failure) else { return }
         let item = UndoableTrash(
-            original: root, name: project.name, undoManager: undoManager,
+            original: project.folder, name: project.name, undoManager: undoManager,
             trash: { [weak self] item in
                 do {
                     try item.recycle()
@@ -329,17 +362,6 @@ final class AppModel {
             failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })
         await item.moveToTrash()
         await refresh()
-    }
-
-    func revealProject(_ project: ProjectInfo) {
-        Task {
-            guard let root = await folder(of: project, orAlert: "Couldn’t Show “\(project.name)” in Finder") else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([root])
-        }
-    }
-
-    private func folder(of project: ProjectInfo, orAlert title: String) async -> URL? {
-        await alerting(title) { URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self)) }
     }
 
     /// What `work` answers, or nil once its failure is an alert under `title`, unless `quiet` by then.

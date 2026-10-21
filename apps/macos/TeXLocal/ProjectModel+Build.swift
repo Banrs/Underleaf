@@ -41,6 +41,20 @@ extension ProjectModel {
         if sent == nil { compiling = false }
     }
 
+    /// TeX Live's package with `file`, which can take minutes behind the system's password dialog; then a build.
+    func install(_ file: String) async {
+        installing = file
+        defer { installing = nil }
+        do {
+            try await core.call("install_package", ["file": file])
+        } catch {
+            // 403: the password dialog was cancelled, which needs no alert.
+            if (error as? CoreError)?.status != 403, !closed { app?.report(error, "Couldn’t Install “\(file)”") }
+            return
+        }
+        await compile()
+    }
+
     func stopCompile() {
         guard compiling, let session else { return }
         core.send("session_stop_compile", ["session": session])

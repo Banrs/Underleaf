@@ -17,9 +17,10 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::mpsc;
 
+use crate::paths::{self, Project};
 use crate::process::{self, Tree};
 use crate::tex::{find_tool, program_at};
-use crate::{BUILD_DIR, CoreError, lock, paths, settings, tail};
+use crate::{CoreError, lock, settings, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
 /// TeX's log is kept whole for its errors' files, which only its start opens.
@@ -83,13 +84,13 @@ pub enum LiveEvent {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of the project at `root` for the session `owner`, in place of any the owner
-    /// had. A patched build writes the document for the `pane` instead of opening a window;
-    /// upstream opens its window all the same.
+    /// A preview of `project` for the session `owner`, in place of any the owner had. A
+    /// patched build writes the document for the `pane` instead of opening a window; upstream
+    /// opens its window all the same.
     fn start(
         &self,
         owner: u64,
-        root: &Path,
+        project: &Project,
         files: &[FileBuffer],
         path_env: &str,
         pane: &Pane,
@@ -301,14 +302,15 @@ impl Preview for Manager {
     fn start(
         &self,
         owner: u64,
-        root: &Path,
+        project: &Project,
         files: &[FileBuffer],
         path_env: &str,
         pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
-        let root = dunce::canonicalize(root)?;
-        let main = paths::safe_path(&root, &settings::read_settings(&root).main_file)?;
+        let root = dunce::canonicalize(&project.root)?;
+        let main = settings::read_settings(&project.settings).main_file;
+        let main = paths::safe_path(&root, &main)?;
         if !main.is_file() {
             return Err(CoreError::bad_request("The main file does not exist."));
         }
@@ -337,9 +339,8 @@ impl Preview for Manager {
         let Some(executable) = discover(path_env) else {
             return failed(MISSING.into());
         };
-        let build = paths::safe_path(&root, BUILD_DIR)?;
-        fs::create_dir_all(&build)?;
-        let build = dunce::canonicalize(build)?;
+        fs::create_dir_all(&project.build)?;
+        let build = dunce::canonicalize(&project.build)?;
         if let Some(previous) = lock(&self.sessions).get(&owner) {
             previous.stop(None);
         }
@@ -866,7 +867,8 @@ done
                     text: text.into(),
                 })
                 .collect();
-            let status = manager.start(OWNER, root, &files, path_env, pane, sink);
+            let project = Project::in_folder(root);
+            let status = manager.start(OWNER, &project, &files, path_env, pane, sink);
             (status.unwrap(), events)
         }
 
@@ -879,8 +881,8 @@ done
             use std::os::unix::fs::PermissionsExt;
             let (tmp, root, path_env) = setup();
             let manager = Manager::default();
-            fs::create_dir_all(root.join(BUILD_DIR)).unwrap();
-            let normal = root.join(BUILD_DIR).join("texpresso-live.pdf");
+            fs::create_dir_all(root.join("build")).unwrap();
+            let normal = root.join("build/texpresso-live.pdf");
             fs::write(&normal, "normal build").unwrap();
             let (first, mut events) =
                 start(&manager, &root, &path_env, Some("abc"), &Pane::default());

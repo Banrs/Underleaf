@@ -6,10 +6,11 @@ import Testing
 extension ProjectFlowTests {
     @Test func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
         let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
-        await app.importProject(from: missing)
+        await app.open(missing)
         #expect(app.alert?.title == "Couldn’t Open “\(missing.lastPathComponent)”" && app.project == nil && !app.isOpening)
         let recents = app.recentProjects
-        let gone = ProjectInfo(id: "No Such Project \(UUID().uuidString.prefix(8))", name: "Gone", mtime: 0, mainFile: "main.tex")
+        let gone = ProjectInfo(id: "No Such Project \(UUID().uuidString.prefix(8))", name: "Gone", mtime: 0, mainFile: "main.tex",
+                               path: "/", opened: false, missing: false)
         await app.rename(gone, to: "Elsewhere")
         #expect(app.alert?.title == "Couldn’t Rename “Gone”" && app.recentProjects == recents)
     }

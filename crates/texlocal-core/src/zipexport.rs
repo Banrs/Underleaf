@@ -141,8 +141,9 @@ mod tests {
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, text).unwrap();
         }
-        write_settings(&root, &serde_json::json!({ "engine": "lualatex" })).unwrap();
-        fs::rename(root.join(SETTINGS_FILE), root.join(".TeXLocal.json")).unwrap();
+        let settings = root.join(SETTINGS_FILE);
+        write_settings(&settings, &serde_json::json!({ "engine": "lualatex" })).unwrap();
+        fs::rename(settings, root.join(".TeXLocal.json")).unwrap();
         let dest = dir.path().join("out.zip");
         export_zip(&root, &dest).unwrap();
         let kept = [
@@ -171,7 +172,7 @@ mod tests {
         let latexmkrc = fs::read_to_string(copy.join(".latexmkrc")).unwrap();
         assert_eq!(latexmkrc, "$pdf_mode = 1;");
         assert_eq!(
-            read_settings(&copy).engine,
+            read_settings(&copy.join(SETTINGS_FILE)).engine,
             crate::settings::Engine::Pdflatex
         );
     }

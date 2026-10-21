@@ -165,7 +165,12 @@ final class InPlaceRename<ID: Hashable> {
     }
 }
 
-struct ItemActions { let rename, showInFinder, moveToTrash: () -> Void }
+/// A folder opened where it is has neither Rename nor Move to Trash.
+struct ItemActions {
+    let rename: (() -> Void)?
+    let showInFinder: () -> Void
+    let moveToTrash: (() -> Void)?
+}
 
 /// A group has icons for all its items or none (HIG, Menus).
 struct ItemMenuItems: View {
@@ -173,14 +178,14 @@ struct ItemMenuItems: View {
     var trashShortcut: KeyboardShortcut?
 
     var body: some View {
-        Button { actions?.rename() } label: { Label("Rename", systemImage: "pencil") }
-            .disabled(actions == nil)
+        Button { actions?.rename?() } label: { Label("Rename", systemImage: "pencil") }
+            .disabled(actions?.rename == nil)
         Button { actions?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
             .disabled(actions == nil)
         Divider()
-        Button { actions?.moveToTrash() } label: { Label("Move to Trash", systemImage: "trash") }
+        Button { actions?.moveToTrash?() } label: { Label("Move to Trash", systemImage: "trash") }
             .keyboardShortcut(trashShortcut)
-            .disabled(actions == nil)
+            .disabled(actions?.moveToTrash == nil)
     }
 }
 

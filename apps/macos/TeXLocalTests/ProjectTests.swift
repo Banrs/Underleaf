@@ -11,7 +11,7 @@ private extension SourceTextView.FileDrop {
 
 @Suite(.serialized, .timeLimit(.minutes(2)))
 final class ProjectFlowTests {
-    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
+    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.folderBookmarks]
     private let kept: [Any?]
     private var folders: [URL] = []
     let files = FileManager.default
@@ -202,10 +202,29 @@ final class ProjectFlowTests {
         try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
         await app.refresh()
         let count = app.projects.count
-        await app.importProject(from: folder.appending(path: "notes.tex"))
+        await app.open(folder.appending(path: "notes.tex"))
         #expect(app.project?.id == info.id && app.project?.openPath == "notes.tex")
         #expect(app.projects.count == count && app.alert == nil)
         await app.close()
+    }
+
+    @Test func aFolderOpensWhereItIsFollowsAMoveAndLeavesTheListWithoutHarm() async throws {
+        let folder = files.temporaryDirectory.appending(path: "Opened \(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let moved = folder.deletingLastPathComponent().appending(path: "\(folder.lastPathComponent) Moved", directoryHint: .isDirectory)
+        folders += [folder, moved]
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "text".write(to: folder.appending(path: "paper.tex"), atomically: true, encoding: .utf8)
+        await app.open(folder.appending(path: "paper.tex"))
+        let project = try #require(app.project)
+        #expect(project.openPath == "paper.tex" && project.name == folder.lastPathComponent && project.id != project.name)
+        await app.close()
+        try files.moveItem(at: folder, to: moved)
+        await app.refresh()
+        let info = try #require(app.projects.first { $0.id == project.id })
+        #expect(info.opened && !info.missing && info.name == moved.lastPathComponent)
+        await app.forget(info)
+        #expect(!app.projects.contains { $0.id == info.id } && app.alert == nil)
+        #expect(try files.contentsOfDirectory(atPath: moved.path(percentEncoded: false)) == ["paper.tex"])
     }
 
     /// Live Preview from a TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched

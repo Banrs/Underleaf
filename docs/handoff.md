@@ -6,6 +6,9 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - The haptic as the source|PDF divider stops at the even split (the stop itself is checked).
 - Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
   path through the popover is unverified.
+- Home's rows for an opened folder and a missing one, and their menu.
+- Install in an issue row with `missing` (a `\usepackage` of one not installed): the button, its
+  progress, and the password dialog with MacTeX.
 
 ## 27.2 workarounds
 
@@ -16,13 +19,20 @@ fonts, replaced pages' memory (`PDFController.wholeAt`), zoom limits, menu image
 the drawn underline, PDFKit's fade, the frame guard, PDFKit's one drawer. Each comment says what
 it works around.
 
+## Opened folders
+
+The core opens a folder where it is (`docs/core-api.md`, Opened folders); `import_project` and
+`project_root` are gone, so until Windows follows, its Open and Show in Finder fail.
+- Windows: `MainWindow.Import` calls `open_path`; `ProjectInfo` gains `Path`, `Opened`,
+  `Missing` and `SessionOpened` `Name` for the title; Home shows the path, dims a missing folder,
+  offers Remove from list in place of Rename and Delete, and reveals `Path`.
+
 ## Left
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
   then the custom one stays (the look is decided).
-- Install for a missing package: the core's `install_package` and the build items' `missing` are
-  done; each host's Install in the build panel is left, and Windows' elevated install (UAC through
-  PowerShell) has not yet run on Windows.
+- Install for a missing package: the core and the Mac's build panel have it; Windows' Install is
+  left, and its elevated install (UAC through PowerShell) has not yet run on Windows.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
 - The hosts don't yet draw `live_issues` (`docs/core-api.md`).
 - TeXpresso's frontend (`texpresso`, not `texpresso-xetex`) is still to be rebuilt with the
