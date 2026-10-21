@@ -105,6 +105,8 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 - Windows: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke` exits 0 once
   a new blank project's session is open. Dev builds run with a scratch `TEXLOCAL_DATA`.
 - Live Preview end to end needs the patched engine: `docs/texpresso.md`, Verify.
+- Tests that need TeX Live and TeXpresso run in `.github/workflows/tex-check.yml`: nightly, from
+  Actions' Run workflow, or on a push to a `claude/tex-check/<name>` branch.
 
 ## Build and install
 

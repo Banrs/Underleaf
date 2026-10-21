@@ -84,6 +84,9 @@ TEXLOCAL_TEXPRESSO=/absolute/path/to/texpresso \
 
 Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --workspace`.
 
+CI has no TeX, so `.github/workflows/tex-check.yml` runs this nightly on macOS, with TinyTeX and
+the engine built from `tools/texpresso`, beside the core's other tests that need TeX Live.
+
 ## Boundaries
 
 - Live Preview uses XeTeX whatever the project's engine.
