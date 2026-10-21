@@ -1,5 +1,7 @@
 import Accessibility
+#if os(macOS)
 import AppKit
+#endif
 import PDFKit
 
 /// Builds, their PDF and their issues, as the session's build events tell them (docs/core-api.md).
@@ -90,7 +92,9 @@ extension ProjectModel {
         if !finished.auto {
             if result.failed {
                 panel.openForFailedBuild()
+                #if os(macOS)
                 if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+                #endif
             } else if result.ok, issues.isEmpty {
                 panel.closeAfterCleanBuild()
             }

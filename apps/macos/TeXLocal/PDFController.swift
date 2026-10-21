@@ -3,21 +3,6 @@ import SwiftUI
 
 @Observable
 final class PDFController: NSObject {
-    /// Read whole: the next build rewrites the file in place.
-    @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
-        for index in 0..<document.pageCount {
-            for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
-                let border = PDFBorder()
-                border.lineWidth = 0
-                link.border = border
-            }
-        }
-        return document
-    }
-
-    nonisolated enum Zoom: Codable, Hashable { case fitWidth, fitPage, scale(Double) }
-
     /// PDFKit would go to 10,000%; the toolbar's scale has room for three digits.
     private static let minScale: CGFloat = 0.1
     private static let maxScale: CGFloat = 8
@@ -250,45 +235,5 @@ final class PDFController: NSObject {
         guard view.document != nil, view.hasShownArea else { return }
         if let zoom = restoreZoom.take() { apply(zoom) }
         if let number = restorePage.take() { go(toPage: number) }
-    }
-}
-
-extension PDFDocument {
-    /// `page(at:)` raises outside the document.
-    func page(ifAt index: Int) -> PDFPage? { (0..<pageCount).contains(index) ? page(at: index) : nil }
-
-    /// PDFKit answers NSNotFound for a page that has left the document.
-    func number(of page: PDFPage) -> Int? {
-        let index = index(for: page)
-        return index == NSNotFound ? nil : index + 1
-    }
-
-    /// `new` in before the old page out, so the document is never shorter than the place being read.
-    func replacePage(at index: Int, with new: PDFPage) -> PDFPage? {
-        guard let old = page(ifAt: index) else { return nil }
-        insert(new, at: index)
-        removePage(at: index + 1)
-        return old
-    }
-
-    func replacePages(with other: PDFDocument) {
-        let pages = (0..<other.pageCount).compactMap { other.page(at: $0)?.copy() as? PDFPage }
-        for (index, page) in pages.enumerated() {
-            if replacePage(at: index, with: page) == nil { insert(page, at: index) }
-        }
-        while pageCount > pages.count { removePage(at: pageCount - 1) }
-        func here(_ destination: PDFDestination?) -> PDFDestination? {
-            guard let destination, let target = destination.page, target.document === other,
-                  let page = page(ifAt: other.index(for: target)) else { return nil }
-            let local = PDFDestination(page: page, at: destination.point)
-            local.zoom = destination.zoom
-            return local
-        }
-        for link in pages.flatMap(\.annotations) where link.type == "Link" {
-            if let destination = here(link.destination) { link.destination = destination }
-            if let goTo = link.action as? PDFActionGoTo, let destination = here(goTo.destination) {
-                link.action = PDFActionGoTo(destination: destination)
-            }
-        }
     }
 }

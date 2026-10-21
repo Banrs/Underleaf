@@ -11,6 +11,21 @@ nonisolated struct ProjectInfo: Decodable, Identifiable {
     var folder: URL { URL(filePath: path, directoryHint: .isDirectory) }
 }
 
+enum ProjectTemplate: String, CaseIterable, Identifiable {
+    case blank, article, report, beamer
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .blank: "Blank"
+        case .article: "Article"
+        case .report: "Report"
+        case .beamer: "Presentation"
+        }
+    }
+}
+
 nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     nonisolated enum Entry: String, Decodable { case file, dir }
 

@@ -114,8 +114,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     // MARK: - Where it is
 
-    var currentLine: Int { textView.document.line(at: textView.selectedRange().location) }
-    var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
+    var caret: Int { textView.selectedRange().location }
+    var currentLine: Int { textView.document.line(at: caret) }
+    var currentColumn: Int { caret - textView.document.lineStart(currentLine) }
 
     /// The match `length` long at `column`, or the word there. The find indicator bounces, so not with Reduce Motion, where
     /// the selection is the mark.
@@ -266,26 +267,3 @@ struct EditorView: NSViewRepresentable {
         if editor.shown != shown { editor.shown = shown }
     }
 }
-
-enum EditorCommand: Equatable {
-    case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown
-    /// Without its backslash; empty for Normal Text.
-    case heading(String)
-    case symbol(String)
-    /// The core's block by its id; the title names the undo.
-    case block(id: String, title: String? = nil)
-    /// "$0" is where the selection goes.
-    case inline(template: String, title: String? = nil)
-}
-
-enum EditorPrefs {
-    static let fontSize = Int(NSFont.systemFontSize)
-    static let fontSizes = 10...28
-
-    static var spellCheck: Bool {
-        get { UserDefaults.standard.object(forKey: DefaultsKey.editorSpellCheck) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: DefaultsKey.editorSpellCheck) }
-    }
-}
-
-@Observable final class EditorChanges { var count = 0 }

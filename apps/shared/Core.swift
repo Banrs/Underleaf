@@ -17,9 +17,18 @@ final class Core {
     static let libraryFolder = if let dir = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"], !dir.isEmpty {
         URL(filePath: dir, directoryHint: .isDirectory)
     } else {
+        defaultLibrary
+    }
+
+    #if os(macOS)
+    private static var defaultLibrary: URL {
         (ProcessInfo.processInfo.environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? .homeDirectory)
             .appending(path: "TeXLocal", directoryHint: .isDirectory)
     }
+    #else
+    /// Files shows it as On My iPad › TeXLocal.
+    private static var defaultLibrary: URL { .documentsDirectory }
+    #endif
 
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }

@@ -210,21 +210,6 @@ struct LinkButton: View {
     var body: some View { Button(title) { openURL(url) } }
 }
 
-enum ProjectTemplate: String, CaseIterable, Identifiable {
-    case blank, article, report, beamer
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .blank: "Blank"
-        case .article: "Article"
-        case .report: "Report"
-        case .beamer: "Presentation"
-        }
-    }
-}
-
 /// An image button (HIG, Buttons): no border at rest, 10 pt to the clickable edge, a fill under the pointer that deepens
 /// while pressed.
 private struct TemplateButtonStyle: ButtonStyle {

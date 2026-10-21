@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import Observation
 
 /// A project's window state over its core session (docs/core-api.md), which owns its text, saves, builds and Live Preview.
@@ -401,10 +405,6 @@ final class ProjectModel {
         let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue, "into": openKind?.rawValue ?? ""])
         if let insert = drop?.insert { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
-    }
-
-    func showInFinder(_ path: String) {
-        if let url = self.url(path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
     /// A build follows when automatic.

@@ -1,4 +1,7 @@
+#if os(macOS)
 import AppKit
+#endif
+import Foundation
 
 /// Live Preview, which the session runs, and SyncTeX between the source and either PDF.
 extension ProjectModel {
@@ -39,7 +42,7 @@ extension ProjectModel {
 
     func liveCaret() {
         guard texpresso.active, let session, let path = editor.path else { return }
-        core.send("session_live_caret", ["session": session, "path": path, "offset": editor.textView.selectedRange().location])
+        core.send("session_live_caret", ["session": session, "path": path, "offset": editor.caret])
     }
 
     /// The build's PDF, or none, in place of the live one: at Stop and again as the session says it ended, whose load
@@ -112,7 +115,9 @@ extension ProjectModel {
     /// No match is ordinary (a comment, the preamble, a figure).
     private func reportSync(_ error: any Error, _ title: String) {
         guard (error as? CoreError)?.status == 404 else { app?.report(error, title); return }
+        #if os(macOS)
         NSSound.beep()
+        #endif
         notices.note(error.localizedDescription)
     }
 }

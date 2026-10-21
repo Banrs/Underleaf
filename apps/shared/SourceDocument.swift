@@ -223,6 +223,21 @@ nonisolated struct Completions: Decodable {
     var items: [Completion]
 }
 
+nonisolated enum CompletionKind: String, Decodable {
+    case command, environment, label, citation, entryType, file
+
+    var name: String {
+        switch self {
+        case .command: String(localized: "Command")
+        case .environment: String(localized: "Environment")
+        case .label: String(localized: "Label")
+        case .citation: String(localized: "Citation")
+        case .entryType: String(localized: "Entry Type")
+        case .file: String(localized: "File")
+        }
+    }
+}
+
 nonisolated struct Completion: Decodable {
     var label, text: String
     var fields: [SnippetField]

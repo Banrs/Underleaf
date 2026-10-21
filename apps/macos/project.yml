@@ -26,6 +26,10 @@ targets:
     sources:
       - path: TeXLocal
         type: syncedFolder
+      # The models and the core's bridge, which the iPad app builds too.
+      - path: ../shared
+        name: Shared
+        type: syncedFolder
     # What Finder's Open With and the Dock icon can hand the app, as Open…
     # takes them: a .tex file, a .zip or a folder. Alternate, so TeXLocal
     # never becomes their default app; org.tug.tex is TeX distributions'
@@ -86,7 +90,7 @@ targets:
     preBuildScripts:
       - name: Build Rust core
         script: |
-          "$SRCROOT/scripts/build-core.sh"
+          "$SRCROOT/../../tools/build-core.sh"
         # Cargo checks Rust inputs and the archive's freshness itself.
         basedOnDependencyAnalysis: false
   TeXLocalTests:

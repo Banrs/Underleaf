@@ -165,13 +165,6 @@ final class InPlaceRename<ID: Hashable> {
     }
 }
 
-/// A folder opened where it is has neither Rename nor Move to Trash.
-struct ItemActions {
-    let rename: (() -> Void)?
-    let showInFinder: () -> Void
-    let moveToTrash: (() -> Void)?
-}
-
 /// A group has icons for all its items or none (HIG, Menus).
 struct ItemMenuItems: View {
     let actions: ItemActions?

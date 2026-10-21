@@ -1,21 +1,6 @@
 import AppKit
 import SwiftUI
 
-nonisolated enum CompletionKind: String, Decodable {
-    case command, environment, label, citation, entryType, file
-
-    var name: String {
-        switch self {
-        case .command: String(localized: "Command")
-        case .environment: String(localized: "Environment")
-        case .label: String(localized: "Label")
-        case .citation: String(localized: "Citation")
-        case .entryType: String(localized: "Entry Type")
-        case .file: String(localized: "File")
-        }
-    }
-}
-
 /// The core's completions under the caret, a view over the editor: 27.2's glass in a borderless panel that isn't key
 /// draws flat, and AppKit's own completion list is still its square box. Typing stays in the document.
 final class CompletionList {

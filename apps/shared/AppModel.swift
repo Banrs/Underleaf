@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -260,6 +259,13 @@ final class AppModel {
         Task { await open(info.id) }
     }
 
+    #if os(macOS)
+    private static var recentLimit: Int { NSDocumentController.shared.maximumRecentDocumentCount }
+    #else
+    /// AppKit's own default.
+    private static let recentLimit = 10
+    #endif
+
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
     static func canOpen(_ url: URL) -> Bool {
@@ -356,7 +362,12 @@ final class AppModel {
     }
 
     var undoManager: UndoManager? { undoSource() }
+    #if os(macOS)
     @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
+    #else
+    /// The window's, which its root view supplies.
+    @ObservationIgnored var undoSource: () -> UndoManager? = { nil }
+    #endif
 
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
@@ -411,8 +422,7 @@ final class AppModel {
         dropRequests()
         // Home's renames and moves to the Trash can't be undone under a project, whose folder they could move.
         undoManager?.removeAllActions()
-        recentProjects = Array(([id] + recentProjects.filter { $0 != id })
-            .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
+        recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(Self.recentLimit))
         let model = ProjectModel(id: id, app: self)
         project = model
         await model.load(restoring: saved?.project == id ? saved : nil)

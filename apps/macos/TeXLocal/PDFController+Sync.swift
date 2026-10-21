@@ -83,32 +83,3 @@ extension PDFController {
         return (number, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
     }
 }
-
-/// SyncTeX uses top-left PDF points; PDFKit uses bottom-left page-box points.
-enum SyncTeXGeometry {
-    /// A box SyncTeX gives no size has a line's height and a word's width.
-    static func highlightRect(_ loc: ForwardLoc, pageBounds: CGRect) -> CGRect {
-        CGRect(x: pageBounds.minX + (loc.h ?? 0), y: pageBounds.maxY - (loc.v ?? 0),
-               width: max(24, CGFloat(loc.width ?? 0)), height: CGFloat(loc.height ?? 12))
-            .insetBy(dx: -2, dy: -2)
-    }
-
-    static func synctexPoint(_ point: CGPoint, pageBounds: CGRect) -> CGPoint {
-        CGPoint(x: point.x - pageBounds.minX, y: pageBounds.maxY - point.y)
-    }
-}
-
-extension PDFPage {
-    /// The page's text and the clicked letter's index in it, for the core to find in the source. 27.2: `characterIndex` is
-    /// wrong for pdfTeX's T1 fonts, so each letter's selection is measured instead.
-    func click(at point: CGPoint) -> PageClick? {
-        // PDFKit's word lookup crashes on a page whose document has gone.
-        guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }
-        let range = word.range(at: 0, on: self)
-        guard range.location != NSNotFound else { return nil }
-        let offset = (0..<range.length).first { i in
-            selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
-        }
-        return PageClick(text: text, at: range.location + (offset ?? 0))
-    }
-}
