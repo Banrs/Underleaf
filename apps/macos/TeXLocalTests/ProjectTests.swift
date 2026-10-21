@@ -26,6 +26,7 @@ final class ProjectFlowTests {
 
     isolated deinit {
         app.project?.close()
+        unsetenv("TEXLOCAL_TEXPRESSO")
         for (key, value) in zip(keys, kept) { UserDefaults.standard.set(value, forKey: key) }
         for folder in folders { try? files.removeItem(at: folder) }
     }
@@ -206,14 +207,14 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched build does, and reads edits until it's stopped.
-    private func liveTeXpresso() throws -> URL {
+    /// Live Preview from a TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched
+    /// build does, and reads edits until it's stopped.
+    private func startLivePreview(_ project: ProjectModel) async throws {
         let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
         try files.createDirectory(at: folder, withIntermediateDirectories: true)
         folders.append(folder)
-        let pdf = folder.appending(path: "live.pdf")
+        let pdf = folder.appending(path: "live.pdf"), script = folder.appending(path: "texpresso")
         try #require(try textPDF(["live"]).dataRepresentation()).write(to: pdf)
-        let script = folder.appending(path: "texpresso")
         try """
         #!/bin/sh
         cp '\(pdf.path)' "$TEXPRESSO_PDF_OUTPUT"
@@ -221,17 +222,17 @@ final class ProjectFlowTests {
         exec cat > /dev/null
         """.write(to: script, atomically: true, encoding: .utf8)
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        return script
-    }
-
-    @Test func livePagesAreNeverTakenForABuilds() async throws {
-        setenv("TEXLOCAL_TEXPRESSO", try liveTeXpresso().path, 1)
-        defer { unsetenv("TEXLOCAL_TEXPRESSO") }
-        let project = try await opened("\\documentclass{article}\\begin{document}x\\end{document}").project
+        // Read as Live Preview starts.
+        setenv("TEXLOCAL_TEXPRESSO", script.path, 1)
         project.startTeXpresso()
         try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
             "phase \(project.texpresso.phase), log \(project.texpresso.log)"
         }
+    }
+
+    @Test func livePagesAreNeverTakenForABuilds() async throws {
+        let project = try await opened("\\documentclass{article}\\begin{document}x\\end{document}").project
+        try await startLivePreview(project)
         #expect(project.editor.textView.forwardSync(false) != nil)
         await project.forwardSync()
         #expect(project.notices.current?.contains("TeXpresso") == true, "Notice: \(String(describing: project.notices.current))")
@@ -463,18 +464,13 @@ final class ProjectFlowTests {
     /// Stop and the session's word that Live Preview ended each put the build's PDF back: the pane never empties, and the
     /// build's pages go into the document showing.
     @Test func stoppingLivePreviewGoesBackToTheBuildsPDF() async throws {
-        setenv("TEXLOCAL_TEXPRESSO", try liveTeXpresso().path, 1)
-        defer { unsetenv("TEXLOCAL_TEXPRESSO") }
         let (info, folder) = try await project("\\documentclass{article}\\begin{document}x\\end{document}")
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
         #expect(try textPDF(["one", "two", "three"]).write(to: folder.appending(path: "build/main.pdf")))
         await app.open(info.id)
         let project = try #require(app.project)
         #expect(project.hasPDF && project.pdf.pageCount == 3)
-        project.startTeXpresso()
-        try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
-            "phase \(project.texpresso.phase), log \(project.texpresso.log)"
-        }
+        try await startLivePreview(project)
         let shown = project.pdf.view.document
         let emptied = OSAllocatedUnfairLock(initialState: false)
         let watch = track({ project.hasPDF }) { if !$0 { emptied.withLock { $0 = true } } }
