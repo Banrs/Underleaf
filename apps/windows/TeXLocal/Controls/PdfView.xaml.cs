@@ -79,6 +79,8 @@ public sealed partial class PdfView : UserControl
             GetTex.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
         }
     }
+    /// The file the pages shown were read from, for Export and Share.
+    public string? FilePath { get; private set; }
     public int PageCount => pages.Length;
     public double Zoom => Scroller.ZoomFactor;
     public MenuFlyout ZoomMenu => Menu;
@@ -158,6 +160,7 @@ public sealed partial class PdfView : UserControl
         await Draw(next, fresh, at, y, zoom);
         if (load != loads) return;
 
+        FilePath = path;
         Show(next, fresh, at);
         View(zoom, fit == Fit.None ? null : 0, y);
     }
@@ -182,6 +185,7 @@ public sealed partial class PdfView : UserControl
     public void Clear()
     {
         loads++;
+        FilePath = null;
         Show(null, [], []);
     }
 
@@ -203,7 +207,8 @@ public sealed partial class PdfView : UserControl
         View(zoom, Math.Max(centre * zoom - Scroller.ViewportWidth / 2, 0));
     }
 
-    public void ZoomBy(double step) => ZoomTo(Zoom * step);
+    public void ZoomIn() => ZoomTo(Zoom * 1.25);
+    public void ZoomOut() => ZoomTo(Zoom * 0.8);
     public void FitWidth() => Refit(Fit.Width);
     /// The page at the view's centre, whole, with its top edge at the view's.
     public void FitPage() => Refit(Fit.Page, pages.Length == 0 ? null : tops[CurrentPage - 1] - Edge);
@@ -282,7 +287,5 @@ public sealed partial class PdfView : UserControl
         if (source is (var number, var at)) Inverse?.Invoke(number, at.X / PointToDip, at.Y / PointToDip);
     }
 
-    void OnZoomIn(object sender, RoutedEventArgs e) => ZoomBy(1.25);
-    void OnZoomOut(object sender, RoutedEventArgs e) => ZoomBy(0.8);
     void OnRootChanged(XamlRoot sender, XamlRootChangedEventArgs e) => Render();
 }

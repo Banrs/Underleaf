@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
-    case editBold, editItalic, editUnderline, editMath, editComment, editMoveLineUp, editMoveLineDown, editGotoLine
+    case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
+    case editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
@@ -33,9 +34,13 @@ enum MenuCommand: CaseIterable {
         case .editUnderline: ("Underline", KeyboardShortcut("u"))
         case .editMath: ("Inline Math", KeyboardShortcut("e", modifiers: [.command, .option]))
         case .editComment: ("Comment Selection", KeyboardShortcut("/"))
+        case .editShiftRight: ("Shift Right", KeyboardShortcut("]"))
+        case .editShiftLeft: ("Shift Left", KeyboardShortcut("["))
         case .editMoveLineUp: ("Move Line Up", KeyboardShortcut(.upArrow, modifiers: [.command, .control]))
         case .editMoveLineDown: ("Move Line Down", KeyboardShortcut(.downArrow, modifiers: [.command, .control]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
+        case .jumpToDefinition: ("Jump to Definition", KeyboardShortcut("j", modifiers: [.command, .control]))
+        case .editRename: ("Rename…", nil)
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSidebar: ("Sidebar", KeyboardShortcut("s", modifiers: [.command, .control]))
@@ -64,12 +69,11 @@ enum MenuCommand: CaseIterable {
     /// Text commands on the source's selection, which the menu bar's follow the source's keyboard for (`isEnabledInMenuBar`).
     var editsSelection: Bool {
         switch self {
-        case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown: true
+        case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
+             .editMoveLineDown, .jumpToDefinition, .editRename: true
         default: false
         }
     }
-
-    var symbol: String? { style?.symbol }
 
     /// The format toggles' symbol, and what they do (HIG, Offering help).
     var style: (symbol: String, help: String)? {
@@ -83,7 +87,7 @@ enum MenuCommand: CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoLine, gotoPage
+    case gotoLine, gotoPage, rename(Definition)
 
     var id: Self { self }
 }
@@ -103,9 +107,11 @@ extension AppModel {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
-        case .fileSave, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .viewTextBigger, .viewTextSmaller:
+        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .jumpToDefinition,
+             .viewTextBigger, .viewTextSmaller:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
+        case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
         case .compileRun: tex?.available == true && project?.compiling == false
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
@@ -163,15 +169,19 @@ extension AppModel {
         case .fileSave: Task { await project?.save() }
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
-        case .filePrint: if let project { project.pdf.print(title: project.id) }
+        case .filePrint: if let project { project.pdf.print(title: project.id, file: project.livePDF ? project.buildPDF : nil) }
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
+        case .editShiftRight: project?.editor.textView.shiftLines(1)
+        case .editShiftLeft: project?.editor.textView.shiftLines(-1)
         case .editMoveLineUp: project?.editor.perform(.moveLineUp)
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
+        case .jumpToDefinition: project?.editor.jumpToDefinition()
+        case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
@@ -246,7 +256,9 @@ struct AppCommands: Commands {
         CommandGroup(before: .textEditing) { items(.projectSearch, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
-            items(.editComment, .editMoveLineUp, .editMoveLineDown)
+            items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown)
+            Divider()
+            items(.editRename)
         }
         // A submenu stays available while its items are dim (HIG Menus).
         CommandGroup(replacing: .textFormatting) {
@@ -266,6 +278,8 @@ struct AppCommands: Commands {
         CommandMenu("Go") {
             items(.editGotoLine, .pdfGotoPage)
             Divider()
+            items(.jumpToDefinition)
+            Divider()
             items(.syncForward, .syncInverse)
             Divider()
             items(.issueNext, .issuePrevious)
@@ -282,7 +296,7 @@ struct AppCommands: Commands {
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             LivePreviewItem(app: app)
             Divider()
-            Menu("Engine") { EngineItems(project: project) }
+            Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
             SetMainFileItem(app: app)
         }
     }
@@ -298,7 +312,7 @@ private struct CommandItem: View {
         Button { app.perform(command, on: project) } label: {
             let title = app.title(command, on: project)
             // macOS 27 shows a menu item's image only with this style.
-            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
+            if let symbol = command.style?.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
         .labelStyle(.titleAndIcon)
         // ⌘N follows whether a project is open, not which window is key.
@@ -307,19 +321,20 @@ private struct CommandItem: View {
     }
 }
 
-/// Compile ▸ Engine's choices, which dim with no project rather than the submenu.
-private struct EngineItems: View {
+/// The inspector's and Compile ▸ Engine's, whose choices dim with no project rather than the submenu. A project's engine,
+/// even nil or unlisted, is a choice: a selection with no tag is a SwiftUI fault.
+struct EnginePicker: View {
     let project: ProjectModel?
 
     var body: some View {
         let engine = project?.settings?.engine
-        ForEach(TeXEngine.allCases) { choice in
-            Toggle(choice.title, isOn: Binding(get: { engine == choice.id }, set: { _ in
-                if let project { Task.immediate { await project.patchSettings(.engine(choice.id)) } }
-            }))
+        Picker("Engine", selection: Binding(get: { engine }, set: { new in
+            if let project, let new { Task.immediate { await project.patchSettings(.engine(new)) } }
+        })) {
+            ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
+            if project != nil, engine.flatMap(TeXEngine.init) == nil { Text(engine ?? "").tag(engine) }
         }
         .disabled(engine == nil)
-        if let engine, TeXEngine(rawValue: engine) == nil { Toggle(engine, isOn: .constant(true)) }
     }
 }
 
@@ -328,9 +343,8 @@ private struct LivePreviewItem: View {
 
     var body: some View {
         let project = app.commandProject
-        Toggle("Live Preview", isOn: Binding(get: { project?.texpresso.active == true },
-                                             set: { $0 ? project?.startTeXpresso() : project?.stopTeXpresso() }))
-            .disabled(!app.canPreviewLive || project.map { !$0.initialLoadComplete || $0.texpresso.phase == .stopping } ?? true)
+        Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
+            .disabled(project?.canSwitchLivePreview != true)
     }
 }
 

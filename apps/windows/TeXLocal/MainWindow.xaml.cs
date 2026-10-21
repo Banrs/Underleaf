@@ -68,6 +68,14 @@ public sealed partial class MainWindow : Window
         Pages.Navigate(typeof(HomePage));
     }
 
+    /// A later launch brings the window forward and opens what it names; its process has let this one take the foreground.
+    public void Arrive(string[] args)
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter) presenter.Restore();
+        Activate();
+        _ = Import(args);
+    }
+
     /// The project's menus in the title bar; null takes them away.
     public void SetMenu(MenuBar? menu) => Bar.Content = menu;
 
@@ -109,14 +117,23 @@ public sealed partial class MainWindow : Window
         if (await picker.PickSingleFileAsync() is { } picked) await Import(picked.Path);
     }
 
-    /// What's already in the library opens its project, and a file in it, as on the Mac; anything else is imported.
-    async Task Import(string src)
+    /// The folders, .tex and .zip files of a command line or a drop on Home; as on the Mac, one alone opens.
+    public async Task Import(IEnumerable<string> paths)
+    {
+        string[] openable = [.. paths.Where(p => Directory.Exists(p) || Path.GetExtension(p).ToLowerInvariant() is ".tex" or ".zip").Select(Path.GetFullPath)];
+        foreach (var path in openable) await Import(path, openable.Length == 1);
+        if (openable.Length > 1) (Pages.Content as HomePage)?.Refresh();
+    }
+
+    /// What's already in the library is its project, opening at the file, as on the Mac; anything else is imported.
+    async Task Import(string src, bool open = true)
     {
         if (App.Core is null) return;
         try
         {
-            if (await App.Core.CallAsync<Located?>("locate", new { path = src }) is { } at) OpenProject(at.Id, File.Exists(src) ? at.Path : null);
-            else OpenProject((await App.Core.CallAsync<ProjectInfo>("import_project", new { src })).Id);
+            var at = await App.Core.CallAsync<Located?>("locate", new { path = src });
+            var id = at?.Id ?? (await App.Core.CallAsync<ProjectInfo>("import_project", new { src })).Id;
+            if (open) OpenProject(id, at is not null && File.Exists(src) ? at.Path : null);
         }
         catch (CoreException ex) { await App.Alert("Can't open this", ex.Message); }
     }

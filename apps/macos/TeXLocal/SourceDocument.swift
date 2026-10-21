@@ -24,12 +24,12 @@ final class SourceDocument {
     /// edit going in, what's typed in a snippet's field for its other places, from the last.
     func edit(_ range: NSRange, with text: String, changing: NSRange?, mirroring: Bool) -> [TextEdit] {
         var text = text
+        let said = TlRange(start: UInt32(changing?.location ?? 0), length: UInt32(changing?.length ?? 0))
         let out = text.withUTF8 { text in
-            let edit = { (changing: UnsafePointer<TlRange>?) in
-                tl_source_edit(self.raw, UInt32(range.location), UInt32(range.length), text.baseAddress, text.count, changing, mirroring)
+            withUnsafePointer(to: said) { said in
+                tl_source_edit(raw, UInt32(range.location), UInt32(range.length), text.baseAddress, text.count,
+                               changing == nil ? nil : said, mirroring)
             }
-            guard let changing else { return edit(nil) }
-            return withUnsafePointer(to: TlRange(start: UInt32(changing.location), length: UInt32(changing.length)), edit)
         }
         guard let out else { return [] }
         return Syntax.decode("edit", out) ?? []
@@ -74,6 +74,10 @@ final class SourceDocument {
     }
     func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
+    /// The name at `offset` and the places the project defines it, the first where a jump goes.
+    func definition(at offset: Int) -> Definition? { call("definition", ["at": offset]) }
+    /// What the session's replaces and renames of its document are made against; nil for the editor's own text.
+    var version: Int? { call("version", [:]) }
 
     var text: String {
         var count = 0
@@ -222,6 +226,20 @@ nonisolated struct Completions: Decodable {
 nonisolated struct Completion: Decodable {
     var label, text: String
     var fields: [SnippetField]
+    /// A citation's entry: “Knuth · 1984 · The TeXbook”.
+    var detail: String?
+}
+
+nonisolated struct Definition: Decodable, Hashable {
+    nonisolated struct Place: Decodable, Hashable {
+        var file: String
+        var line, column, length: Int
+    }
+
+    /// `label`, `citation`, `environment`, `command` or `file`.
+    var kind: String
+    var name: String
+    var places: [Place]
 }
 
 nonisolated struct MathPreview: Decodable, Equatable {

@@ -8,12 +8,11 @@ use tokio::sync::mpsc;
 use super::Msg;
 use crate::lock;
 use crate::projects::Symbols;
-use crate::syntax::SourceDocument;
+use crate::syntax::{SourceDocument, TextEdit};
 
 struct Text {
     source: SourceDocument,
     version: u64,
-    symbols: Option<Arc<Symbols>>,
 }
 
 struct Cell {
@@ -29,17 +28,16 @@ pub struct Document(Arc<Cell>);
 impl Document {
     pub(crate) fn new(
         id: u64,
+        path: &str,
         text: &str,
         tx: mpsc::UnboundedSender<Msg>,
         symbols: Arc<RwLock<Arc<Symbols>>>,
     ) -> Self {
+        let source = SourceDocument::named(text, path);
+        let text = Mutex::new(Text { source, version: 0 });
         Self(Arc::new(Cell {
             id,
-            text: Mutex::new(Text {
-                source: SourceDocument::new(text),
-                version: 0,
-                symbols: None,
-            }),
+            text,
             tx,
             symbols,
         }))
@@ -48,26 +46,25 @@ impl Document {
     pub fn edit(&self, start: u32, length: u32, text: &str) {
         let mut held = lock(&self.0.text);
         held.source.edit(start, length, text);
-        held.version += 1;
-        // Sent under the lock, so the session has edits in the order made.
-        let _ = self.0.tx.send(Msg::Edited {
-            doc: self.0.id,
-            version: held.version,
+        let edit = TextEdit {
             start,
             length,
             text: text.to_owned(),
-        });
+        };
+        self.changed(&mut held, Some(edit));
     }
 
     pub fn reload(&self, text: &str) {
         let mut held = lock(&self.0.text);
-        held.source = SourceDocument::new(text);
-        held.symbols = None;
+        held.source = SourceDocument::named(text, &held.source.path);
+        self.changed(&mut held, None);
+    }
+
+    /// Sent under the lock, so the session has changes in the order made.
+    fn changed(&self, held: &mut Text, edit: Option<TextEdit>) {
         held.version += 1;
-        let _ = self.0.tx.send(Msg::Reloaded {
-            doc: self.0.id,
-            version: held.version,
-        });
+        let (doc, version) = (self.0.id, held.version);
+        let _ = self.0.tx.send(Msg::Changed { doc, version, edit });
     }
 
     /// The editor is about to show the document again, and what an earlier visit left isn't
@@ -79,25 +76,21 @@ impl Document {
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
         let symbols = self.symbols();
         let mut held = lock(&self.0.text);
-        if !held
-            .symbols
-            .as_ref()
-            .is_some_and(|s| Arc::ptr_eq(s, &symbols))
-        {
-            let (labels, citations) = (symbols.labels.clone(), symbols.citations.clone());
-            held.source.set_symbols(labels, citations);
-            held.symbols = Some(symbols);
-        }
+        held.source.set_symbols(symbols);
         body(&mut held.source)
     }
 
     pub fn symbols(&self) -> Arc<Symbols> {
-        let symbols = &self.0.symbols;
-        Arc::clone(&symbols.read().unwrap_or_else(PoisonError::into_inner))
+        let symbols = self.0.symbols.read();
+        Arc::clone(&symbols.unwrap_or_else(PoisonError::into_inner))
     }
 
     pub(crate) fn id(&self) -> u64 {
         self.0.id
+    }
+
+    pub(crate) fn moved(&self, path: &str) {
+        path.clone_into(&mut lock(&self.0.text).source.path);
     }
 
     pub(crate) fn snapshot(&self) -> (String, u64) {
@@ -105,7 +98,7 @@ impl Document {
         (held.source.text(), held.version)
     }
 
-    pub(crate) fn version(&self) -> u64 {
+    pub fn version(&self) -> u64 {
         lock(&self.0.text).version
     }
 }

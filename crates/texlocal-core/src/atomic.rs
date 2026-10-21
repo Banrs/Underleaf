@@ -38,8 +38,17 @@ fn copy_xattrs(from: &Path, to: &File) {
 }
 
 /// Moves a finished temporary file into place with std's rename; tempfile's reaches no path past 260 characters on Windows.
+/// There an indexer, antivirus or sync client holding the target refuses the
+/// rename for a moment, so it is tried again for about 100 ms.
 pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
-    fs::rename(&temp, path)?;
+    let mut tries = 0;
+    while let Err(error) = fs::rename(&temp, path) {
+        tries += 1;
+        if !cfg!(windows) || tries > 3 || error.kind() != io::ErrorKind::PermissionDenied {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(33));
+    }
     let _ = temp.keep();
     Ok(())
 }

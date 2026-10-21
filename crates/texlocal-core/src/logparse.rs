@@ -72,10 +72,18 @@ static WARNING: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
+static BAD_BOX_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:at lines|detected at line) (\d+)").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*)---line (\d+) of file (.+)$").unwrap());
-static BIBER_ERROR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
+static BIBTEX_WARNING_PLACE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^--line (\d+) of file (.+)$").unwrap());
+static BIBER_MESSAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[\d+\] .*> (ERROR|WARN) - (.*)$").unwrap());
+static SHELL_ESCAPE_ASKED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)shell[- ]escape|\\write18").unwrap());
+static RUNSYSTEM_REFUSED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"runsystem\(.*\)\.\.\.disabled").unwrap());
 
 fn error_start(line: &str) -> Option<Captures<'_>> {
     ERROR
@@ -210,9 +218,11 @@ fn echo_of(lines: &[&str], i: usize) -> Option<usize> {
         .map(|k| i + 1 + k)
 }
 
-pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
+/// The log's errors and warnings, and apart from them its overfull and underfull boxes.
+pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
+    let mut bad_boxes = Vec::new();
     let mut open = Vec::new();
     // Lines before this echo source whose parentheses needn't pair up.
     let mut quiet_until = 0;
@@ -282,6 +292,10 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             ));
         } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
             quiet_until = blank_from(&lines, i + 1);
+            let line_no = BAD_BOX_LINE.captures(line).and_then(|m| m[1].parse().ok());
+            let mut message = line.trim().to_string();
+            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
+            bad_boxes.push(LogItem::new(Severity::Warning, file, line_no, message));
         }
         if i >= quiet_until {
             track(&mut open, line);
@@ -291,31 +305,70 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     // Reruns duplicate messages; keep the first in order.
     let mut seen = HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
+    bad_boxes.retain(|item| seen.insert(item.clone()));
+    (items, bad_boxes)
+}
+
+/// Errors and warnings from bibtex's or biber's .blg; bibtex names the .bib line after an
+/// error's message or on the line below it, and below a warning's.
+pub fn parse_blg(blg: &str) -> Vec<LogItem> {
+    let mut items: Vec<LogItem> = Vec::new();
+    let mut above = "";
+    for line in blg.lines() {
+        if let Some(m) = BIBTEX_ERROR.captures(line) {
+            let file = project_path(m[3].trim());
+            let message = if m[1].trim().is_empty() { above } else { &m[1] };
+            items.push(LogItem::new(
+                Severity::Error,
+                file.clone(),
+                file.and(m[2].parse().ok()),
+                message.trim().to_string(),
+            ));
+        } else if let Some(message) = line.strip_prefix("Warning--") {
+            items.push(LogItem::new(
+                Severity::Warning,
+                None,
+                None,
+                message.trim().to_string(),
+            ));
+        } else if let Some(m) = BIBTEX_WARNING_PLACE.captures(line)
+            && above.starts_with("Warning--")
+            && let Some(warning) = items.last_mut()
+        {
+            warning.file = project_path(m[2].trim());
+            warning.line = warning.file.as_ref().and(m[1].parse().ok());
+        } else if let Some(m) = BIBER_MESSAGE.captures(line) {
+            let kind = if &m[1] == "WARN" {
+                Severity::Warning
+            } else {
+                Severity::Error
+            };
+            items.push(LogItem::new(kind, None, None, m[2].trim().to_string()));
+        }
+        above = line;
+    }
     items
 }
 
-/// Errors from bibtex's or biber's .blg; bibtex names the .bib line after its message or on the line below.
-pub fn parse_blg(blg: &str) -> Vec<LogItem> {
-    let mut previous = "";
-    blg.lines()
-        .filter_map(|line| {
-            let above = std::mem::replace(&mut previous, line);
-            if let Some(m) = BIBTEX_ERROR.captures(line) {
-                let file = project_path(m[3].trim());
-                let message = if m[1].trim().is_empty() { above } else { &m[1] };
-                Some(LogItem::new(
-                    Severity::Error,
-                    file.clone(),
-                    file.and(m[2].parse().ok()),
-                    message.trim().to_string(),
-                ))
-            } else {
-                BIBER_ERROR
-                    .captures(line)
-                    .map(|m| LogItem::error(m[1].trim()))
-            }
-        })
-        .collect()
+pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
+
+/// A failed build's error that asks for shell escape (minted's "invoke LaTeX with the
+/// -shell-escape flag") says where to allow it; without one, a program TeX refused
+/// ("runsystem(…)...disabled") adds that error with no place.
+pub(crate) fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
+    if let Some(error) = errors
+        .iter_mut()
+        .find(|e| SHELL_ESCAPE_ASKED.is_match(&e.short))
+    {
+        *error = LogItem::new(
+            Severity::Error,
+            error.file.take(),
+            error.line,
+            SHELL_ESCAPE.into(),
+        );
+    } else if RUNSYSTEM_REFUSED.is_match(log) {
+        errors.insert(0, LogItem::error(SHELL_ESCAPE));
+    }
 }
 
 pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
@@ -331,7 +384,7 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
+    use super::*;
 
     fn described(items: &[LogItem]) -> Vec<String> {
         let place = |part: Option<String>| part.unwrap_or_else(|| "-".into());
@@ -349,16 +402,20 @@ mod tests {
     }
 
     fn parsed(log: &str) -> Vec<String> {
-        described(&parse_log(log, "main.tex"))
+        described(&parse_log(log, "main.tex").0)
     }
 
     #[test]
-    fn an_error_without_its_own_line_names_no_place() {
+    fn an_error_takes_the_line_tex_echoes_after_it_or_names_no_place() {
         let error = "./main.tex:12: Undefined control sequence.\nl.12 \\foo\n";
         let fatal = "==> Fatal error occurred, no output PDF file produced!";
         let undefined = "error main.tex:12 Undefined control sequence: \\foo";
         let alone = format!("error -:- {fatal}");
-        let cases: [(String, &[&str]); 4] = [
+        let cases: [(String, &[&str]); 5] = [
+            (
+                "! Emergency stop.\nl.9 \\end\n".into(),
+                &["error main.tex:9 Emergency stop."],
+            ),
             // A "!" error doesn't take the next error's "l.<n>".
             (
                 format!("! Emergency stop.\n{error}"),
@@ -377,26 +434,6 @@ mod tests {
         for (log, expected) in cases {
             assert_eq!(parsed(&log), expected, "{log}");
         }
-    }
-
-    #[test]
-    fn crlf_logs_parse_like_lf_logs() {
-        let lf = "./main.tex:3: Undefined control sequence.\n\
-                  <recently read> \\foo\n\
-                  l.3 \\foo\n\
-                  \n\
-                  ! Emergency stop.\n\
-                  l.9 \\end\n\
-                  Package hyperref Warning: Token not allowed\n\
-                  (hyperref) removing `math shift' on input line 44.\n";
-        assert_eq!(
-            parsed(&lf.replace('\n', "\r\n")),
-            [
-                "error main.tex:3 Undefined control sequence: \\foo",
-                "error main.tex:9 Emergency stop.",
-                "warning main.tex:44 Token not allowed removing `math shift' on input line 44.",
-            ]
-        );
     }
 
     #[test]
@@ -423,7 +460,7 @@ mod tests {
                    \n\
                    See the LaTeX manual or LaTeX Companion for explanation.\n\
                    l.3 \\newcommand\\a{y}\n";
-        let items = parse_log(log, "main.tex");
+        let (items, _) = parse_log(log, "main.tex");
         let found: Vec<_> = items
             .iter()
             .map(|it| (it.short.as_str(), it.command.as_deref()))
@@ -447,7 +484,7 @@ mod tests {
             "x.sty: Undefined control sequence: \\a",
             "Undefined control sequence: \\ab-c",
         ] {
-            assert_eq!(super::undefined_command(message), None, "{message}");
+            assert_eq!(undefined_command(message), None, "{message}");
         }
     }
 
@@ -524,6 +561,7 @@ mod tests {
                    \n\
                    \x20)\n";
         let places: Vec<_> = parse_log(log, "other.tex")
+            .0
             .into_iter()
             .map(|it| (it.file, it.line))
             .collect();
@@ -612,8 +650,37 @@ mod tests {
     }
 
     #[test]
+    fn bad_boxes_are_kept_apart_from_the_issues_at_their_first_line() {
+        let log = format!(
+            "{NESTED}\n(./chapters/intro.tex\n\
+             Underfull \\hbox (badness 10000) in paragraph at lines 12--14\n\
+             []\\OT1/cmr/m/n/10 x\n\
+             \n\
+             Overfull \\vbox (3.0pt too high) has occurred while \\output is active\n\
+             \n)"
+        );
+        let (items, bad_boxes) = parse_log(&log, "main.tex");
+        assert_eq!(described(&items), parsed(NESTED));
+        assert_eq!(
+            described(&bad_boxes),
+            [
+                "warning main.tex:8 Overfull \\hbox (216.66702pt too wide) detected at line 8",
+                "warning chapters/intro.tex:12 Underfull \\hbox (badness 10000) in paragraph at lines 12--14",
+                "warning -:- Overfull \\vbox (3.0pt too high) has occurred while \\output is active",
+            ]
+        );
+    }
+
+    #[test]
+    fn crlf_logs_parse_like_lf_logs() {
+        for log in [NESTED, FONTSPEC, LUALATEX] {
+            assert_eq!(parsed(&log.replace('\n', "\r\n")), parsed(log));
+        }
+    }
+
+    #[test]
     fn a_missing_font_in_xetex_gives_one_error_with_the_whole_message() {
-        let items = parse_log(FONTSPEC, "main.tex");
+        let (items, _) = parse_log(FONTSPEC, "main.tex");
         let errors: Vec<_> = items
             .iter()
             .filter(|it| it.kind == Severity::Error)
@@ -657,14 +724,20 @@ mod tests {
                    \x20:   author = {Nobody},\n\
                    I'm skipping whatever remains of this entry\n\
                    Warning--empty author in broken\n\
+                   Warning--I'm ignoring knuth's extra \"year\" field\n\
+                   --line 12 of file refs.bib\n\
                    I couldn't open database file .bib\n---line 5 of file main.aux\n\
-                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
+                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n\
+                   [813] Biber.pm:131> WARN - Duplicate entry key 'x' in file 'refs.bib'\n";
         assert_eq!(
             described(&parse_blg(blg)),
             [
                 "error refs.bib:7 I was expecting a `,' or a `}'",
+                "warning -:- empty author in broken",
+                "warning refs.bib:12 I'm ignoring knuth's extra \"year\" field",
                 "error main.aux:5 I couldn't open database file .bib",
                 "error -:- BibTeX subsystem: syntax error",
+                "warning -:- Duplicate entry key 'x' in file 'refs.bib'",
             ]
         );
         let output = "Latexmk: All targets (build/main.pdf) are up-to-date\n\

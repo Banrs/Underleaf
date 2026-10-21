@@ -16,13 +16,15 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     /// A file's, from its name; a folder has none.
     var kind: FileKind?
     let children: [TreeNode]?
+    /// The core's mark, as latexmk finds the main file.
+    var main: Bool?
 
     var id: String { path }
     var isDirectory: Bool { type == .dir }
 
     var symbol: String {
-        if isDirectory { return "folder" }
-        return switch kind ?? .other {
+        switch kind {
+        case _ where isDirectory: "folder"
         case .tex: "text.document"
         case .bib: "books.vertical"
         case .image: "photo"
@@ -65,27 +67,18 @@ nonisolated struct TexStatus: Decodable {
 nonisolated struct ProjectSettings: Decodable {
     var mainFile, engine: String
     var shellEscape, stopOnFirstError: Bool
-
-    mutating func apply(_ change: SettingsChange) {
-        switch change {
-        case .mainFile(let path): mainFile = path
-        case .engine(let name): engine = name
-        case .shellEscape(let on): shellEscape = on
-        case .stopOnFirstError(let on): stopOnFirstError = on
-        }
-    }
 }
 
-nonisolated enum SettingsChange {
-    case mainFile(String), engine(String), shellEscape(Bool), stopOnFirstError(Bool)
+/// One setting's new value: shown at once, and sent to the session as its patch.
+nonisolated struct SettingsChange {
+    let patch: [String: any Sendable]
+    let apply: (inout ProjectSettings) -> Void
 
-    var patch: [String: any Sendable] {
-        switch self {
-        case .mainFile(let path): ["mainFile": path]
-        case .engine(let name): ["engine": name]
-        case .shellEscape(let on): ["shellEscape": on]
-        case .stopOnFirstError(let on): ["stopOnFirstError": on]
-        }
+    static func mainFile(_ path: String) -> Self { Self(patch: ["mainFile": path]) { $0.mainFile = path } }
+    static func engine(_ name: String) -> Self { Self(patch: ["engine": name]) { $0.engine = name } }
+    static func shellEscape(_ on: Bool) -> Self { Self(patch: ["shellEscape": on]) { $0.shellEscape = on } }
+    static func stopOnFirstError(_ on: Bool) -> Self {
+        Self(patch: ["stopOnFirstError": on]) { $0.stopOnFirstError = on }
     }
 }
 
@@ -104,10 +97,13 @@ nonisolated struct CompileResult: Decodable {
     let pdf: String?
     let pdfChanged: Bool
     let durationMs: Int
-    let errors, warnings: [LogItem]
+    let errors, warnings, badBoxes: [LogItem]
     let log: String
 
     var failed: Bool { !ok && !stopped }
+    /// The bad boxes after the warnings, as Overleaf lists its typesetting warnings: numbered on from the issues, which the
+    /// session numbers alone.
+    var listed: [LogItem] { errors + warnings + badBoxes }
 
     var durationText: String {
         Duration.milliseconds(durationMs)
@@ -117,7 +113,7 @@ nonisolated struct CompileResult: Decodable {
 
 nonisolated struct SearchHit: Decodable, Identifiable {
     let file: String
-    let line: Int
+    let line, column, length: Int
     let before, match, after: String
 
     var id: String { "\(file):\(line):\(before.count)" }

@@ -10,17 +10,6 @@ extension SourceTextView {
         super.setFrameSize(size)
         textContainer?.size.width = max(0, size.width - gutter.width - EditorGutter.trailingMargin)
         top.map(scroll(toShownTop:))
-        layOutViewportOnceSettled()
-    }
-
-    /// 27.2: widths changing faster than a frame can leave the viewport's text gone until it next scrolls.
-    func layOutViewportOnceSettled() {
-        guard !viewportPending else { return }
-        viewportPending = true
-        Task { [weak self] in
-            self?.viewportPending = false
-            self?.textLayoutManager?.textViewportLayoutController.layoutViewport()
-        }
     }
 
     /// The clip view's bounds less the scroll view's insets for the bars over it.

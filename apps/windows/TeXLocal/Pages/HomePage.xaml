@@ -6,7 +6,14 @@
     xmlns:bridge="using:TeXLocal.Bridge"
     xmlns:controls="using:TeXLocal.Controls"
     xmlns:local="using:TeXLocal.Pages"
-    Background="Transparent">
+    AllowDrop="True"
+    Background="Transparent"
+    DragOver="OnDragOver"
+    Drop="OnDrop">
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator Invoked="OnNewArticle" Key="N" Modifiers="Control,Shift" />
+        <KeyboardAccelerator Invoked="OnFindKey" Key="F" Modifiers="Control" />
+    </Page.KeyboardAccelerators>
     <Page.Resources>
         <!-- One menu for a row's right-click or context key and for its More button; F2 and Del are the list's. -->
         <MenuFlyout x:Key="ProjectMenu" Opening="OnMenuOpening" Placement="BottomEdgeAlignedRight">
@@ -41,9 +48,26 @@
     <ScrollViewer x:Name="Scroller">
         <Grid>
             <StackPanel MaxWidth="1064" Padding="36,0,36,36">
-                <Grid Margin="0,24,0,0">
+                <Grid Margin="0,24,0,0" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
                     <TextBlock AutomationProperties.HeadingLevel="Level1" Style="{StaticResource TitleTextBlockStyle}" Text="Home" />
-                    <DropDownButton HorizontalAlignment="Right" VerticalAlignment="Center" AutomationProperties.Name="Open">
+                    <AutoSuggestBox
+                        x:Name="Search"
+                        Grid.Column="1"
+                        Width="280"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Search projects"
+                        PlaceholderText="Search projects"
+                        TextChanged="OnSearch">
+                        <AutoSuggestBox.QueryIcon>
+                            <FontIcon FontSize="12" Glyph="&#xE721;" />
+                        </AutoSuggestBox.QueryIcon>
+                    </AutoSuggestBox>
+                    <DropDownButton Grid.Column="2" VerticalAlignment="Center" AutomationProperties.Name="Open">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon FontSize="16" Glyph="&#xE8E5;" />
                             <TextBlock Text="Open" />
@@ -208,7 +232,6 @@
                     Margin="12,16"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource BodyTextBlockStyle}"
-                    Text="No projects yet. Choose a template above, or open a folder or a .zip."
                     Visibility="Collapsed" />
             </StackPanel>
         </Grid>

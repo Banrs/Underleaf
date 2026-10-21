@@ -47,10 +47,7 @@ final class IssueOverlay {
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
             guard let reported = lines[number] else { return }
             let former = views.removeValue(forKey: number)
-            // The document's last empty line is the last of the lines of the paragraph before it.
-            var lines = fragment.textLineFragments[...]
-            if extra { lines = lines.suffix(1) } else if view.extraLine(of: fragment) != nil { lines = lines.dropLast() }
-            let placed = row(number, reported, on: lines, of: fragment, in: former)
+            let placed = row(number, reported, on: view.lines(of: fragment, extra: extra), of: fragment, in: former)
             if placed?.message?.view !== former { former?.removeFromSuperview() }
             guard let placed else { return }
             view.setNeedsDisplay(placed.band)

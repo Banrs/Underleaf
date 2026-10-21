@@ -5,37 +5,30 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 
 namespace TeXLocal.Pages;
 
-/// A template the core makes projects from (create_project's `template`), as the gallery shows it.
-public sealed record ProjectTemplate(string Id, string Title, double Width = 120, double Height = 156)
+/// A template of the core's catalogue (create_project's `template`), as the gallery shows it: a slide's page is landscape.
+public sealed record ProjectTemplate(string Id, string Title)
 {
     public string Spoken => $"New {Title.ToLowerInvariant()} project";
     public string Tip => Id == "article" ? $"{Spoken} (Ctrl+Shift+N)" : Spoken;
+    public double Width => Id == "beamer" ? 160 : 120;
+    public double Height => Id == "beamer" ? 90 : 156;
 }
 
 public sealed partial class HomePage : Page
 {
-    static readonly ProjectTemplate[] templates = [new("blank", "Blank"), new("article", "Article"), new("report", "Report"), new("beamer", "Presentation", 160, 90)];
     readonly RenameFlyout rename = new();
+    ProjectTemplate[] templates = [];
+    ProjectInfo[] projects = [];
     ProjectInfo? target;
     string? focus;
     int loads;
 
-    public HomePage()
-    {
-        InitializeComponent();
-        Templates.ItemsSource = templates;
-        var shortcut = new KeyboardAccelerator { Key = VirtualKey.N, Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift };
-        shortcut.Invoked += (_, e) =>
-        {
-            e.Handled = true;
-            New(templates[1]);
-        };
-        KeyboardAccelerators.Add(shortcut);
-    }
+    public HomePage() => InitializeComponent();
 
     public static string Modified(long mtime) => $"{DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
 
@@ -59,37 +52,47 @@ public sealed partial class HomePage : Page
     }
 
     /// Lists the projects again, keeping keyboard focus on its row (or moving it to project `id`); a later call's answer
-    /// wins over an earlier one's.
+    /// wins over an earlier one's. The templates come with the first list, once the library has opened.
     async void Reload(string? id = null)
     {
         focus = id ?? focus;
         var generation = ++loads;
-        var error = App.OpenCore() ? null : App.CoreError ?? "";
-        ProjectInfo[] projects = [];
+        var error = App.OpenCore();
+        ProjectInfo[] listed = [];
         if (error is null)
-            try { projects = await Core.CallAsync<ProjectInfo[]>("list_projects"); }
+            try
+            {
+                listed = await Core.CallAsync<ProjectInfo[]>("list_projects");
+                if (templates.Length == 0)
+                    Templates.ItemsSource = templates = [.. (await Core.CallAsync<Catalogue>("catalogue")).Templates.Select(t => new ProjectTemplate(t.Id, t.Title))];
+            }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != loads) return;
         LibraryError.Message = error ?? "";
         LibraryError.IsOpen = error is not null;
-        if (error is null) Show(projects);
-        if (App.Smoke) App.ExitSmoke(error);
+        if (error is not null) return;
+        projects = listed;
+        Show();
     }
 
-    void Show(ProjectInfo[] projects)
+    /// The projects whose names hold the search's text, as on the Mac.
+    void Show()
     {
+        var query = Search.Text.Trim();
+        ProjectInfo[] shown = [.. projects.Where(p => p.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))];
         var id = focus ?? Focused?.Id;
         focus = null;
-        if (List.ItemsSource is not ProjectInfo[] shown || !shown.SequenceEqual(projects))
+        if (List.ItemsSource is not ProjectInfo[] listed || !listed.SequenceEqual(shown))
         {
-            List.ItemsSource = projects;
-            if (projects.FirstOrDefault(p => p.Id == id) is { } p)
+            List.ItemsSource = shown;
+            if (shown.FirstOrDefault(p => p.Id == id) is { } p)
             {
                 List.UpdateLayout();
                 (List.ContainerFromItem(p) as Control)?.Focus(FocusState.Programmatic);
             }
         }
-        var empty = projects.Length == 0;
+        var empty = shown.Length == 0;
+        Empty.Text = projects.Length == 0 ? "No projects yet. Choose a template above, or open or drop a folder, .tex file or .zip." : $"No results for “{query}”.";
         Empty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         List.Visibility = Columns.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -101,9 +104,31 @@ public sealed partial class HomePage : Page
 
     void OnRetry(object sender, RoutedEventArgs e) => Reload();
 
+    void OnSearch(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e) => Show();
+
+    void OnFindKey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        Search.Focus(FocusState.Keyboard);
+    }
+
+    void OnDragOver(object sender, DragEventArgs e)
+    {
+        if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;
+    }
+
+    /// Folders, .tex and .zip files from File Explorer, imported as from the Open menu.
+    async void OnDrop(object sender, DragEventArgs e) => await App.Window.Import(await App.Dropped(e));
+
     void OnItemClick(object sender, ItemClickEventArgs e) => App.Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
     void OnTemplate(object sender, RoutedEventArgs e) => New((ProjectTemplate)((FrameworkElement)sender).DataContext);
+
+    void OnNewArticle(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (templates.FirstOrDefault(t => t.Id == "article") is { } article) New(article);
+    }
 
     /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.
     async void New(ProjectTemplate template)
@@ -184,11 +209,7 @@ public sealed partial class HomePage : Page
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         }) != ContentDialogResult.Primary) return;
-        try
-        {
-            await Core.CallAsync("stop_compile", new { id = p.Id });
-            await App.Recycle(await Root(p));
-        }
+        try { await App.Recycle(await Root(p)); }
         catch (Exception ex) { await App.Alert("Can't delete this project", ex.Message); }
         Reload();
     }

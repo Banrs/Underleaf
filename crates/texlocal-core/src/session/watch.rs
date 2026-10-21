@@ -2,7 +2,6 @@
 //! session: the listed tree changed, or a file changed in place.
 
 use std::collections::{BTreeSet, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use notify::event::ModifyKind;
@@ -10,6 +9,8 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
+use crate::SETTINGS_FILE;
+use crate::analyze::disk_spelling;
 use crate::paths::within;
 use crate::projects::TreeNode;
 
@@ -55,6 +56,8 @@ fn changes(event: notify::Event) -> Vec<Change> {
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,
+    /// So another main file's mark sends the tree again.
+    pub main: Option<String>,
 }
 
 impl TreeIndex {
@@ -68,6 +71,9 @@ impl TreeIndex {
                     }
                     None => {
                         index.files.insert(node.path.clone());
+                        if node.main {
+                            index.main = Some(node.path.clone());
+                        }
                     }
                 }
             }
@@ -85,6 +91,8 @@ impl TreeIndex {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Meaning {
     pub tree: bool,
+    /// The settings changed, perhaps their main file, which the tree marks.
+    pub settings: bool,
     pub docs: BTreeSet<String>,
     pub listed: BTreeSet<String>,
 }
@@ -124,6 +132,7 @@ pub(crate) fn classify(
         if change.structural && shown_folder && !listed_as_before(root, &rel, index) {
             meaning.tree = true;
         }
+        meaning.settings |= rel.eq_ignore_ascii_case(SETTINGS_FILE);
         if index.contains(&rel) {
             meaning.listed.insert(rel);
         }
@@ -132,35 +141,25 @@ pub(crate) fn classify(
 }
 
 /// A save renames a new file over a listed one, which leaves the listing as it was; nor
-/// does the tree list a hidden file.
+/// does the tree list a hidden file. A rename that changes only case leaves a file at the old
+/// spelling on a volume that ignores case.
 fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.starts_with('.') || index.files.contains(rel) && is_file_spelt(root, rel)
-}
-
-/// A rename that changes only case leaves a file at the old spelling on a volume that
-/// ignores case.
-fn is_file_spelt(root: &Path, rel: &str) -> bool {
-    let path = root.join(rel);
-    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-        return false;
-    };
-    fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file())
-        && fs::read_dir(parent).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .any(|entry| entry.file_name().as_os_str() == name)
-        })
+    name.starts_with('.')
+        || index.files.contains(rel) && disk_spelling(root, rel).as_deref() == Some(rel)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn index(files: &[&str], folders: &[&str]) -> TreeIndex {
         TreeIndex {
             files: files.iter().map(ToString::to_string).collect(),
             folders: folders.iter().map(ToString::to_string).collect(),
+            main: None,
         }
     }
 

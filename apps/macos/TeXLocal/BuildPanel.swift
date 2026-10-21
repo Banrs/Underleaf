@@ -25,6 +25,16 @@ final class BuildPanelModel {
     }
 
     func closeAfterCleanBuild() { if openedByBuild, tab == .issues { shown = false } }
+
+    func matches(_ item: LogItem) -> Bool {
+        issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(issueFilter)
+            || (item.file?.localizedCaseInsensitiveContains(issueFilter) ?? false)
+    }
+
+    /// Enumerated before filtering: duplicate messages keep distinct, stable row IDs.
+    func rows(of result: CompileResult?) -> [(offset: Int, element: LogItem)] {
+        (result?.listed ?? []).enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
+    }
 }
 
 struct BuildPanel: View {
@@ -59,18 +69,12 @@ struct BuildPanel: View {
         }
     }
 
-    private func matches(_ item: LogItem) -> Bool {
-        project.panel.issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(project.panel.issueFilter)
-            || (item.file?.localizedCaseInsensitiveContains(project.panel.issueFilter) ?? false)
-    }
-
     /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder private var issues: some View {
-        // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
-        let items = project.issues.enumerated().filter { (project.panel.showsWarnings || $0.element.isError) && matches($0.element) }
+        let items = project.panel.rows(of: project.result)
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !project.panel.showsWarnings, project.result?.warnings.contains(where: matches) == true {
+        } else if !project.panel.showsWarnings, project.result?.listed.contains(where: { !$0.isError && project.panel.matches($0) }) == true {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
@@ -113,7 +117,7 @@ struct BuildPanelBar: View {
                 Toggle(isOn: $panel.showsWarnings) { Label("Warnings", systemImage: "exclamationmark.triangle") }
                 .toggleStyle(.button)
                 .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
-                .disabled(project.warningCount == 0)
+                .disabled(project.warningCount == 0 && project.result?.badBoxes.isEmpty != false)
                 filter($panel.issueFilter)
             } else {
                 let text = panel.tab == .texpresso ? project.texpresso.log : project.result?.log ?? ""

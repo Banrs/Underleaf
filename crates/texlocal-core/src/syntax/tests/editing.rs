@@ -1,8 +1,8 @@
 //! The editing commands' answers, case by case: maths at a place, the maths
 //! to preview, completions, headings, blocks, and comments and indentation.
 
-use super::units;
-use crate::syntax::{Insertion, SourceDocument, range};
+use super::{cited, units};
+use crate::syntax::{Insertion, SourceDocument, Symbols, range};
 
 fn marked(source: &str) -> (SourceDocument, u32) {
     let at = units(&source[..source.find('|').unwrap()]);
@@ -151,7 +151,11 @@ fn completions_are_offered_for_what_is_typed() {
     ];
     for (before, explicit, expected) in cases {
         let mut doc = SourceDocument::new(before);
-        doc.set_symbols(vec!["sec:intro".into()], vec!["knuth84".into()]);
+        doc.set_symbols(std::sync::Arc::new(Symbols {
+            labels: vec!["sec:intro".into()],
+            citations: cited(&["knuth84"]),
+            ..Symbols::default()
+        }));
         let found = doc.completions(units(before), explicit);
         let place = found
             .as_ref()
@@ -185,6 +189,7 @@ fn a_line_becomes_a_heading() {
         ("% note", "section", "\\section{}% note", 9),
         ("\\section{Title} % \\section{x}", "subsection", "\\subsection{Title} % \\section{x}", 17),
         ("50\\% done", "section", "\\section{50\\% done}", 18),
+        ("a \\\\% c", "section", "\\section{a \\\\}% c", 13),
         ("   ", "section", "   \\section{}", 12),
         ("\\sectionmark{x} words", "chapter", "\\chapter{\\sectionmark{x} words}", 30),
     ];

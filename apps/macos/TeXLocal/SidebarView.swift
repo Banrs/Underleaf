@@ -15,23 +15,22 @@ struct FilesList: View {
             Group { if project.search.isSearching { results } else { files } }
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
-            // Each search reads every file: it waits for typing to pause.
-            .task(id: project.search.query) {
-                if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-                guard !Task.isCancelled else { return }
-                await project.search.run()
-                // VoiceOver hears the count, as it does the PDF's find count.
-                guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
-                let count = project.search.hitCount
-                project.notices.announce(count == 0 ? String(localized: "Not found")
-                    : String(AttributedString(localized: "^[\(count) match](inflect: true)").characters), queued: true)
-            }
-            .onChange(of: app.newEntry, initial: true) { _, entry in
-                // A project left for another still shows while the next loads, whose list takes the entry.
-                guard let entry, !project.closed else { return }
-                app.newEntry = nil
-                create(entry)
-            }
+        // Each search reads every file: it waits for typing to pause.
+        .task(id: project.search.query) {
+            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
+            guard !Task.isCancelled else { return }
+            await project.search.run(in: project.session)
+            // VoiceOver hears the count, as it does the PDF's find count.
+            guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
+            let count = project.search.hitCount
+            project.notices.announce(count == 0 ? String(localized: "Not found") : matches(count), queued: true)
+        }
+        .onChange(of: app.newEntry, initial: true) { _, entry in
+            // A project left for another still shows while the next loads, whose list takes the entry.
+            guard let entry, !project.closed else { return }
+            app.newEntry = nil
+            create(entry)
+        }
     }
 
     private var files: some View {
@@ -72,7 +71,7 @@ struct FilesList: View {
                         Divider()
                     } else if node.kind == .tex {
                         Button("Set as Main File") { Task { await project.patchSettings(.mainFile(node.path)) } }
-                            .disabled(node.path == project.settings?.mainFile)
+                            .disabled(node.main == true)
                         Divider()
                     }
                     ItemMenuItems(actions: actions(node))
@@ -139,59 +138,74 @@ struct FilesList: View {
     }
 
     private var results: some View {
-        List(selection: $hit) { searchResults }
-            .listStyle(.sidebar)
-            .accessibilityLabel("Search Results")
-            // A new query can reuse a hit's ID: the first click on the new hit opens it.
-            .onChange(of: project.search.query, initial: true) { hit = nil }
-            .onChange(of: hit) { _, id in open(id, focus: false) }
-            .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
-            .overlay {
-                if let failure = project.search.failure {
-                    ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
-                                           description: Text(failure))
-                } else if project.search.groups?.isEmpty == true {
-                    ContentUnavailableView.search(text: project.search.searched)
+        List(selection: $hit) {
+            ForEach(project.search.groups ?? []) { group in
+                Section {
+                    ForEach(group.hits) { hit in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
+                                .lineLimit(2)
+                            Spacer(minLength: 4)
+                            Text("\(hit.line)")
+                                .font(.subheadline)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Line \(hit.line)")
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                } header: {
+                    HStack {
+                        Text(group.file).truncationMode(.middle)
+                        Spacer()
+                        Text(group.hits.count, format: .number).monospacedDigit()
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(group.file), \(matches(group.hits.count))")
                 }
             }
+        }
+        .listStyle(.sidebar)
+        .accessibilityLabel("Search Results")
+        // A new query can reuse a hit's ID: the first click on the new hit opens it.
+        .onChange(of: project.search.query, initial: true) { hit = nil }
+        .onChange(of: hit) { _, id in open(id, focus: false) }
+        .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
+        .safeAreaBar(edge: .top, spacing: 0) { replaceBar }
+        .overlay {
+            if let failure = project.search.failure {
+                ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
+                                       description: Text(failure))
+            } else if project.search.groups?.isEmpty == true {
+                ContentUnavailableView.search(text: project.search.searched)
+            }
+        }
+    }
+
+    /// Under the search field, as Xcode's Find navigator in Replace mode, at the inset and spacing the field's accessory has
+    /// (measured, 27.2).
+    private var replaceBar: some View {
+        HStack {
+            SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
+            Button("Replace All") { Task { await project.replaceAll() } }
+                .disabled(project.search.hitCount == 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 9)
     }
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {
         if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line, focus: focus) }
+            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus) }
         }
     }
 
-    private var searchResults: some View {
-        ForEach(project.search.groups ?? []) { group in
-            Section {
-                ForEach(group.hits) { hit in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
-                            .lineLimit(2)
-                        Spacer(minLength: 4)
-                        Text("\(hit.line)")
-                            .font(.subheadline)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Line \(hit.line)")
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            } header: {
-                HStack {
-                    Text(group.file).truncationMode(.middle)
-                    Spacer()
-                    Text(group.hits.count, format: .number).monospacedDigit()
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(group.file), \(String(AttributedString(localized: "^[\(group.hits.count) match](inflect: true)").characters))")
-            }
-        }
+    private func matches(_ count: Int) -> String {
+        String(AttributedString(localized: "^[\(count) match](inflect: true)").characters)
     }
 
     private func row(_ node: TreeNode) -> some View {
-        let isMain = node.path == project.settings?.mainFile
+        let isMain = node.main == true
         return Label {
             HStack {
                 if rename.id == node.path {

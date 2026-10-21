@@ -41,10 +41,10 @@ final class ProjectModel {
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
-    nonisolated enum ShownPDF: Equatable { case none, build(URL), live(URL) }
+    nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
     var shown = ShownPDF.none
     var hasPDF: Bool { shown != .none }
-    var livePDF: Bool { if case .live = shown { true } else { false } }
+    var livePDF: Bool { shown == .live }
     var buildPDF: URL?
     let pdf = PDFController()
     let panel = BuildPanelModel()
@@ -70,7 +70,7 @@ final class ProjectModel {
     /// Not the session's, so not in its order: written in turn, and a rename waits for the last.
     @ObservationIgnored var uiStateWrites: Task<Void, Never>?
 
-    let search: ProjectSearch
+    let search = ProjectSearch()
 
     let editor = SourceEditor()
     private(set) var sourceHasKeyboard = false
@@ -84,6 +84,7 @@ final class ProjectModel {
     /// A finished build's PDF is shown before the next build event.
     @ObservationIgnored private var buildLane: Task<Void, Never>?
     @ObservationIgnored private var closing: Task<Void, Never>?
+    @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
     private(set) var closed = false
@@ -91,20 +92,18 @@ final class ProjectModel {
     init(id: String, app: AppModel) {
         self.id = id
         self.app = app
-        search = ProjectSearch(id: id)
         tree = FileTree(id: id)
-        texpresso.watchLog { [panel] in panel.showsLiveLog } tell: { [weak self] shown in
-            guard let self, let session else { return }
-            core.send("session_live_log", ["session": session, "shown": shown])
+        // The session sends the log while the panel shows it.
+        liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
+            guard let self else { return }
+            if let session { core.send("session_live_log", ["session": session, "shown": shown]) }
+            if !shown { texpresso.logClosed() }
         }
-        texpresso.onAlert = { [weak self] in self?.panel.show(.texpresso) }
-        texpresso.onEnded = { [weak self] in Task { await self?.endLivePDF() } }
         tree.onChange = { [weak self] in
             self?.openKindChanged()
             self?.analyze()
         }
         pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
-        pdf.buildBehindLive = { [weak self] in self.flatMap { $0.livePDF ? $0.buildPDF : nil } }
     }
 
     var isLaTeX: Bool { openKind == .tex }
@@ -128,6 +127,9 @@ final class ProjectModel {
         }
         return nil
     }
+
+    /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
+    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath ?? id).fileName)” Wasn’t Saved") }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -217,6 +219,10 @@ final class ProjectModel {
         editor.textView.forwardSync = { [weak self] quietly in
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
         }
+        editor.textView.openDefinition = { [weak self] place in
+            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
+        }
+        editor.command = { [weak self] in self?.app?.perform($0, on: self) }
     }
 
     func autoCompileChanged() {
@@ -280,7 +286,7 @@ final class ProjectModel {
         if !state.held { heldReasons[state.path] = nil }
         // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays until a save succeeds.
         if let error = state.error, before?.error == nil {
-            let title = String(localized: "“\(state.path.fileName)” Wasn’t Saved")
+            let title = notSavedTitle(state.path)
             if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
         }
     }
@@ -301,7 +307,7 @@ final class ProjectModel {
 
     /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
     /// the editor never shows a file without its document.
-    func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
+    func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         openRequests += 1
         let request = openRequests
         let latest = { request == self.openRequests && !self.closed }
@@ -309,11 +315,10 @@ final class ProjectModel {
             guard latest() else { return }
             if path != openPath {
                 guard let session else { return }
-                let text: Bool
+                // A file made a moment ago may not be in the tree yet.
+                if tree.node(at: path) == nil { await tree.reload() }
+                let text = isText(path)
                 do {
-                    // A file made a moment ago may not be in the tree yet.
-                    if tree.node(at: path) == nil { await tree.reload() }
-                    text = isText(path)
                     if text { try await core.call("session_open_document", ["session": session, "path": path]) }
                 } catch {
                     if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
@@ -329,7 +334,7 @@ final class ProjectModel {
                 }
                 show(path, focus: focus)
             }
-            if let line, editsText, latest() { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
+            if let line, editsText, latest() { editor.reveal(line: line, column: column, length: length, atTop: atTop, focus: focus) }
         }.value
     }
 
@@ -346,7 +351,7 @@ final class ProjectModel {
     /// Saved first; false, staying open, if that failed or asks about the disk.
     func closeDocument(_ path: String) async -> Bool {
         guard let session else { return true }
-        return await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+        return await alerting(notSavedTitle(path)) {
             try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
         } ?? false
     }
@@ -384,7 +389,7 @@ final class ProjectModel {
         do {
             return try await core.call("session_save", ["session": session, "reporting": reporting], as: Saved.self).saved
         } catch {
-            if reporting, !closed { app?.report(error, String(localized: "“\((openPath ?? id).fileName)” Wasn’t Saved")) }
+            if reporting, !closed { app?.report(error, notSavedTitle()) }
             return false
         }
     }
@@ -422,6 +427,40 @@ final class ProjectModel {
         return try? core.now("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
     }
 
+    /// The matches the search shows, which the field may be ahead of.
+    func replaceAll() async {
+        guard let session else { return }
+        let query = search.searched
+        guard let answer = await alerting("Couldn’t Replace “\(query)”", {
+            try await editProject("session_replace", ["session": session, "query": query, "replacement": search.replacement],
+                                  named: String(localized: "Replace"))
+        }) else { return }
+        let count = (answer.edits?.edits.count ?? 0) + answer.written.reduce(0) { $0 + $1.count }
+        let files = answer.written.count + (answer.edits == nil ? 0 : 1)
+        notices.note(String(AttributedString(localized: "Replaced ^[\(count) match](inflect: true) in ^[\(files) file](inflect: true)")
+            .characters))
+        await search.run(in: session)
+    }
+
+    /// A refusal is the core's sentence, for the sheet to show.
+    func renameSymbol(_ symbol: Definition, to name: String) async throws {
+        guard let session else { return }
+        try await editProject("session_rename_symbol", ["session": session, "kind": symbol.kind, "from": symbol.name, "to": name],
+                              named: String(localized: "Rename"))
+    }
+
+    /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
+    /// session saves as any.
+    @discardableResult
+    private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
+        let answer = try await core.call(command, args, as: ProjectEdits.self)
+        // A file shown since has text of its own, as one typed in since does.
+        if let edits = answer.edits, edits.path == editor.path, edits.version == editor.textView.document.version {
+            editor.textView.apply(edits.edits, named: name)
+        }
+        return answer
+    }
+
     // MARK: - Changes on disk
 
     /// `save`, `revert`, `close`, or `cancel` with the reason it is held, unsaved, until a save asks again.
@@ -432,7 +471,7 @@ final class ProjectModel {
         if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
-            await alerting(String(localized: "“\(path.fileName)” Wasn’t Saved")) {
+            await alerting(notSavedTitle(path)) {
                 try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
             }
         }
@@ -456,6 +495,7 @@ final class ProjectModel {
         tree.close()
         syncTask?.cancel()
         pdfLoad?.cancel()
+        liveLogWatch?.cancel()
         if let session {
             core.forget(session)
             closing = Task { [uiStateWrites] in
@@ -477,7 +517,7 @@ final class ProjectModel {
         guard let session, !closed else { return false }
         settingsPatches += 1
         let patch = settingsPatches, before = settings
-        settings?.apply(change)
+        if settings != nil { change.apply(&settings!) }
         // Answers can come back out of order: the latest's has them all.
         let latest = { patch == self.settingsPatches }
         guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
@@ -516,3 +556,17 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
 
 /// None: the file dropped opens.
 private nonisolated struct DropText: Decodable { let insert: String? }
+
+/// `session_replace`'s and `session_rename_symbol`'s.
+private nonisolated struct ProjectEdits: Decodable {
+    nonisolated struct Document: Decodable {
+        var path: String
+        var version: Int
+        var edits: [TextEdit]
+    }
+
+    nonisolated struct Written: Decodable { var count: Int }
+
+    var edits: Document?
+    var written: [Written]
+}

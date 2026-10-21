@@ -117,16 +117,21 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var currentLine: Int { textView.document.line(at: textView.selectedRange().location) }
     var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
-    /// The find indicator bounces, so not with Reduce Motion, where the selection is the mark.
-    func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
+    /// The match `length` long at `column`, or the word there. The find indicator bounces, so not with Reduce Motion, where
+    /// the selection is the mark.
+    func reveal(line: Int, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
         let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
-        let word = column.map { textView.selectionRange(forProposedRange: .caret(min(start + $0, end)), granularity: .selectByWord) }
-        textView.setSelectedRange(word ?? .caret(start))
+        let found = column.map { column in
+            let at = min(start + column, end)
+            return length.map { NSRange(location: at, length: min($0, end - at)) }
+                ?? textView.selectionRange(forProposedRange: .caret(at), granularity: .selectByWord)
+        }
+        textView.setSelectedRange(found ?? .caret(start))
         atTop ? textView.scroll(toTop: start) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
-        let shown = word ?? NSRange(location: start, length: end - start)
+        let shown = found ?? NSRange(location: start, length: end - start)
         // Once the scroll's layout is done.
         if shown.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: shown) } }
     }
@@ -160,37 +165,47 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
-        let ours = [(textView.forwardSync(false) != nil, MenuCommand.syncForward, #selector(goToPDF)),
-                    (textView.isEditable, MenuCommand.editComment, #selector(toggleComment))].filter(\.0).map { _, command, action in
-            let item = NSMenuItem(title: command.title, action: action, keyEquivalent: "")
+        let offered: [(MenuCommand, Bool)] = [
+            (.jumpToDefinition, true), (.editRename, textView.isEditable && renamable != nil),
+            (.syncForward, textView.forwardSync(false) != nil), (.editComment, textView.isEditable),
+        ]
+        let ours = offered.filter(\.1).map { command, _ in
+            let item = NSMenuItem(title: command.title, action: #selector(choose), keyEquivalent: "")
             item.target = self
+            item.representedObject = command
             return item
         }
         let kept = menu.items.filter { item in
             !unwanted.contains { action in item.action == action || item.submenu?.items.contains { $0.action == action } == true }
         }
-        menu.removeAllItems()
-        // A separator only between two groups.
-        for item in ours + [.separator()] + kept where !item.isSeparatorItem || menu.items.last?.isSeparatorItem == false {
-            menu.addItem(item)
-        }
-        if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.numberOfItems - 1) }
+        menu.tidy(ours + [.separator()] + kept)
         return menu
     }
 
-    @objc private func goToPDF() { textView.forwardSync(false)?() }
-    @objc private func toggleComment() { perform(.comment) }
+    /// The context menu's items are the menu bar's commands, which the project performs.
+    var command: (MenuCommand) -> Void = { _ in }
+
+    @objc private func choose(_ item: NSMenuItem) { (item.representedObject as? MenuCommand).map(command) }
+
+    /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
+    func jumpToDefinition() {
+        guard let place = textView.document.definition(at: textView.selectedRange().location)?.places.first else { return NSSound.beep() }
+        textView.openDefinition(place)
+    }
+
+    /// The label or citation at the selection's start, which Rename renames everywhere. Read through `changes`, so a menu
+    /// showing it follows the caret.
+    var renamable: Definition? {
+        _ = changes.count
+        guard let found = textView.document.definition(at: textView.selectedRange().location),
+              ["label", "citation"].contains(found.kind) else { return nil }
+        return found
+    }
 
     @discardableResult
     func perform(_ command: EditorCommand) -> Bool {
         guard path != nil, textView.isEditable else { return false }
         let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
-        let insert = { (insertion: Insertion?, name: String) in
-            guard let insertion else { return false }
-            self.textView.apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
-            self.textView.startSnippet(insertion.fields, at: insertion.edit.start)
-            return true
-        }
         switch command {
         case .bold: textView.apply(document.toggle(.bold, selections), named: String(localized: "Bold"))
         case .italic: textView.apply(document.toggle(.italic, selections), named: String(localized: "Italic"))
@@ -205,14 +220,17 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             textView.apply(document.toggleComment(selections), named: String(localized: "Comment"))
         case .moveLineUp, .moveLineDown:
             let up = command == .moveLineUp
-            guard textView.apply(document.moveLines(selections, up: up),
-                                 named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")) else { return false }
+            let name = up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")
+            guard textView.apply(document.moveLines(selections, up: up), named: name) else { return false }
         case .heading(let command):
-            guard insert(document.setHeading(caret: selection.location, command: command), String(localized: "Section Level")) else { return false }
+            let level = document.setHeading(caret: selection.location, command: command)
+            guard textView.insert(level, named: String(localized: "Section Level")) else { return false }
         case .symbol(let command):
-            guard insert(document.insertSymbol(command, replacing: selection), String(localized: "Insert Symbol")) else { return false }
+            let symbol = document.insertSymbol(command, replacing: selection)
+            guard textView.insert(symbol, named: String(localized: "Insert Symbol")) else { return false }
         case .block(let id, let title):
-            guard insert(document.insertBlock(id, replacing: selection), Self.insertion(titled: title)) else { return false }
+            let block = document.insertBlock(id, replacing: selection)
+            guard textView.insert(block, named: Self.insertion(titled: title)) else { return false }
         }
         focus()
         return true

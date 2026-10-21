@@ -30,8 +30,7 @@ nonisolated enum LiveRead: Sendable {
 
     /// Mapped: the file is replaced, never rewritten, so it stays whole when its name goes. It has no links to see to.
     init(_ event: LiveDocumentEvent) {
-        let url = URL(filePath: event.path)
-        guard let document = Self.mapped(url), document.pageCount > 0 else {
+        guard let document = Self.mapped(URL(filePath: event.path)), document.pageCount > 0 else {
             self = .document(nil)
             return
         }
@@ -40,7 +39,7 @@ nonisolated enum LiveRead: Sendable {
                 if range.count == 2, range[0] <= range[1] { set.insert(integersIn: range[0]...range[1]) }
             }
         }
-        self = .document(LiveDocument(url: url, document: document, changed: changed, complete: event.complete))
+        self = .document(LiveDocument(document: document, changed: changed, complete: event.complete))
     }
 
     /// None for a file already gone: TeXpresso keeps a page's last two, and a newer one is coming.
@@ -54,7 +53,7 @@ nonisolated enum LiveRead: Sendable {
 }
 
 /// Made off the main actor and handed to it, which alone uses it from then on.
-nonisolated struct LiveDocument: @unchecked Sendable { let url: URL, document: PDFDocument, changed: IndexSet?, complete: Bool }
+nonisolated struct LiveDocument: @unchecked Sendable { let document: PDFDocument, changed: IndexSet?, complete: Bool }
 
 nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage }
 
@@ -65,18 +64,14 @@ final class TeXpressoSession {
     private(set) var phase = Phase.stopped {
         didSet { if phase != .stopped { used = true } }
     }
-    private(set) var failure: String?
-    private var error: String?
+    private var failed = false
     private(set) var halted = false
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
-    @ObservationIgnored var onAlert: () -> Void = {}
-    @ObservationIgnored var onEnded: () -> Void = {}
-    @ObservationIgnored private var logWatch: Task<Void, Never>?
 
     var active: Bool { phase == .starting || phase == .running }
-    var needsAttention: Bool { halted || !acknowledged && (failure != nil || error != nil) }
+    var needsAttention: Bool { halted || !acknowledged && failed }
     var title: LocalizedStringResource {
         switch phase {
         case .stopped: needsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
@@ -85,17 +80,6 @@ final class TeXpressoSession {
         case .stopping: "Stopping Live Preview…"
         }
     }
-
-    /// The session sends the log while the panel shows it, and an ended session's trouble counts as seen once the log closes.
-    func watchLog(_ shows: @escaping @MainActor @Sendable () -> Bool, tell: @escaping @MainActor (Bool) -> Void) {
-        logWatch = track(shows, initial: false) { [weak self] shows in
-            guard let self else { return }
-            tell(shows)
-            if !shows, phase == .stopped { acknowledged = true }
-        }
-    }
-
-    isolated deinit { logWatch?.cancel() }
 
     // MARK: - The session's state
 
@@ -107,21 +91,13 @@ final class TeXpressoSession {
 
     func stopping() { if active { phase = .stopping } }
 
-    /// Stop's answer, for a preview that had ended already and sends no event.
-    func stopped(_ state: LiveState) {
-        if state.phase == .stopped, phase == .stopping { receive(state) }
-    }
+    /// An ended session's trouble counts as seen once its log closes.
+    func logClosed() { if phase == .stopped { acknowledged = true } }
 
     func receive(_ state: LiveState) {
-        let was = phase
-        if state.phase == .starting, was == .stopped { acknowledged = false }
-        (phase, halted, failure, error) = (state.phase, state.halted, state.failure, state.error)
+        if state.alert == true || state.phase == .starting && phase == .stopped { acknowledged = false }
+        (phase, halted, failed) = (state.phase, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
-        if state.alert == true {
-            acknowledged = false
-            onAlert()
-        }
-        if phase == .stopped, was != .stopped { onEnded() }
     }
 }
 

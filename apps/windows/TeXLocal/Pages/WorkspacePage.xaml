@@ -64,7 +64,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="32" />
+            <RowDefinition Height="Auto" MinHeight="32" />
         </Grid.RowDefinitions>
 
         <!-- Narrow, the navigation pane overlays the layers on acrylic; wide (1008 and up, the Fluent breakpoint), it sits
@@ -91,6 +91,7 @@
                 <MenuBarItem AccessKey="F" Title="File">
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
                     <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
+                    <MenuFlyoutItem AccessKey="A" Click="OnAddFiles" Text="Add files…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutSubItem AccessKey="O" Text="Open">
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" AccessKey="F" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…" />
@@ -98,12 +99,17 @@
                     </MenuFlyoutSubItem>
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Click="OnSave" Text="Save" />
+                    <MenuFlyoutSeparator />
+                    <!-- The PDF shown, as the Mac's Export as PDF and Share. -->
+                    <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
+                    <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
+                    <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
                     <MenuFlyoutSeparator />
                     <!-- The window handles Ctrl+, itself: the editor swallows it before accelerators. -->
                     <MenuFlyoutItem AccessKey="T" Click="{x:Bind app:App.Window.OpenSettings}" KeyboardAcceleratorTextOverride="Ctrl+," Text="Settings" />
                 </MenuBarItem>
-                <!-- The editor owns undo, the clipboard and moving lines, so their keys are only shown. -->
+                <!-- The editor owns undo, the clipboard and moving and shifting lines, so their keys are only shown. -->
                 <MenuBarItem AccessKey="E" Title="Edit">
                     <MenuFlyoutItem AccessKey="U" Click="{x:Bind Editor.Undo}" KeyboardAcceleratorTextOverride="Ctrl+Z" Text="Undo" />
                     <MenuFlyoutItem AccessKey="R" Click="{x:Bind Editor.Redo}" KeyboardAcceleratorTextOverride="Ctrl+Y" Text="Redo" />
@@ -119,10 +125,16 @@
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+F" AccessKey="J" Click="OnFindInProject" Text="Find in project…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+/" AccessKey="M" Click="{x:Bind Editor.ToggleComment}" Text="Toggle comment" />
+                    <MenuFlyoutItem AccessKey="H" Click="OnShiftRight" KeyboardAcceleratorTextOverride="Ctrl+]" Text="Shift right" />
+                    <MenuFlyoutItem AccessKey="L" Click="OnShiftLeft" KeyboardAcceleratorTextOverride="Ctrl+[" Text="Shift left" />
                     <MenuFlyoutItem AccessKey="O" Click="OnMoveLineUp" KeyboardAcceleratorTextOverride="Alt+Up" Text="Move line up" />
                     <MenuFlyoutItem AccessKey="W" Click="OnMoveLineDown" KeyboardAcceleratorTextOverride="Alt+Down" Text="Move line down" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Click="OnGoToLine" Text="Go to line…" />
+                    <!-- Visual Studio's key. No access key: each of its letters is another item's. -->
+                    <MenuFlyoutItem x:Name="DefinitionItem" controls:Shortcut.Keys="F12" Click="{x:Bind Editor.GoToDefinition}" Text="Go to definition" />
+                    <!-- VS Code's key, the editor's: in Files, F2 renames the file. -->
+                    <MenuFlyoutItem x:Name="RenameSymbolItem" controls:Shortcut.Keys="F2" AccessKey="Y" Click="{x:Bind Editor.RenameSymbol}" Text="Rename symbol" />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+G" AccessKey="A" Click="OnGoToPage" Text="Go to page…" />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+J" AccessKey="D" Click="OnForwardSync" Text="Go to PDF position" />
                     <MenuFlyoutSeparator />
@@ -154,13 +166,13 @@
                 <MenuBarItem AccessKey="V" Title="View">
                     <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="N" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Navigation pane" />
                     <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
-                    <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" Click="OnPdfPane" IsChecked="True" Text="PDF" />
+                    <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" IsChecked="True" Text="PDF" />
                     <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="OnIssuesPane" Text="Issues" />
                     <MenuFlyoutSeparator />
                     <!-- The PDF's, wherever the focus is: the editor has no zoom of its own. -->
                     <MenuFlyoutSubItem AccessKey="Z" Text="Zoom">
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Click="OnZoomIn" Text="Zoom in" />
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Click="OnZoomOut" Text="Zoom out" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Click="{x:Bind Pdf.ZoomIn}" Text="Zoom in" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Click="{x:Bind Pdf.ZoomOut}" Text="Zoom out" />
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+0" AccessKey="A" Click="OnActualSize" Text="Actual size" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem AccessKey="W" Click="{x:Bind Pdf.FitWidth}" Text="Fit width" />
@@ -263,7 +275,8 @@
                     <AppBarButton.Flyout>
                         <MenuFlyout x:Name="EquationMenu" Placement="BottomEdgeAlignedLeft">
                             <MenuFlyoutItem Click="OnInlineMaths" KeyboardAcceleratorTextOverride="Alt+=" Text="Inline maths" />
-                            <MenuFlyoutItem x:Name="EquationAnchor" Click="OnDisplayMaths" Text="Display maths" />
+                            <MenuFlyoutItem Click="OnDisplayMaths" Text="Display maths" />
+                            <MenuFlyoutSeparator />
                         </MenuFlyout>
                     </AppBarButton.Flyout>
                 </AppBarButton>
@@ -273,7 +286,11 @@
                 <AppBarButton x:Name="InsertButton" Label="Insert" ToolTipService.ToolTip="Insert">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
                     <AppBarButton.Flyout>
-                        <MenuFlyout x:Name="InsertFlyout" Placement="BottomEdgeAlignedLeft" />
+                        <MenuFlyout x:Name="InsertFlyout" Placement="BottomEdgeAlignedLeft">
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutSubItem x:Name="BarListMenu" Text="List" />
+                            <MenuFlyoutSubItem x:Name="BarReferencesMenu" Text="References and links" />
+                        </MenuFlyout>
                     </AppBarButton.Flyout>
                 </AppBarButton>
             </CommandBar>
@@ -285,8 +302,7 @@
                 <AppBarToggleButton
                     x:Name="PdfButton"
                     Width="40"
-                    Click="OnPdfButton"
-                    IsChecked="True"
+                    IsChecked="{x:Bind PdfItem.IsChecked, Mode=TwoWay}"
                     Label="PDF"
                     LabelPosition="Collapsed"
                     ToolTipService.ToolTip="PDF (Ctrl+Alt+P)">
@@ -296,7 +312,7 @@
                 <AppBarElementContainer VerticalAlignment="Center">
                     <Button
                         x:Name="CompileButton"
-                        Width="112"
+                        MinWidth="112"
                         Margin="4,0,0,0"
                         AutomationProperties.Name="Compile"
                         Click="OnCompileButton"
@@ -328,17 +344,54 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <AutoSuggestBox
-                        x:Name="Search"
-                        Margin="4,0,4,4"
-                        AutomationProperties.Name="Search in project"
-                        KeyDown="OnSearchKey"
-                        QuerySubmitted="OnSearchSubmitted"
-                        TextChanged="OnSearchChanged">
-                        <AutoSuggestBox.QueryIcon>
-                            <FontIcon FontSize="12" Glyph="&#xE721;" />
-                        </AutoSuggestBox.QueryIcon>
-                    </AutoSuggestBox>
+                    <!-- VS Code's search view: the chevron beside the search box shows Replace under it. -->
+                    <Grid Margin="4,0,4,4" ColumnSpacing="4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button
+                            Width="32"
+                            Height="32"
+                            Padding="0"
+                            VerticalAlignment="Top"
+                            AutomationProperties.Name="Toggle replace"
+                            Click="OnReplaceToggle"
+                            Style="{StaticResource SubtleButtonStyle}"
+                            ToolTipService.ToolTip="Toggle replace">
+                            <FontIcon x:Name="ReplaceChevron" FontSize="12" Glyph="&#xE76C;" />
+                        </Button>
+                        <AutoSuggestBox
+                            x:Name="Search"
+                            Grid.Column="1"
+                            AutomationProperties.Name="Search in project"
+                            KeyDown="OnSearchKey"
+                            QuerySubmitted="OnSearchSubmitted"
+                            TextChanged="OnSearchChanged">
+                            <AutoSuggestBox.QueryIcon>
+                                <FontIcon FontSize="12" Glyph="&#xE721;" />
+                            </AutoSuggestBox.QueryIcon>
+                        </AutoSuggestBox>
+                        <!-- A margin rather than row spacing, so a hidden row leaves no gap. -->
+                        <Grid
+                            x:Name="ReplaceRow"
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            Margin="0,4,0,0"
+                            ColumnSpacing="4"
+                            Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ReplaceBox" AutomationProperties.Name="Replace in project" PlaceholderText="Replace" />
+                            <Button x:Name="ReplaceAll" Grid.Column="1" Click="OnReplaceAll" Content="Replace all" IsEnabled="False" />
+                        </Grid>
+                    </Grid>
                     <SelectorBar x:Name="SideTabs" Grid.Row="1" Margin="0,0,0,4" SelectionChanged="OnSideTab">
                         <SelectorBarItem x:Name="FilesTab" IsSelected="True" Text="Files" />
                         <SelectorBarItem x:Name="OutlineTab" Text="Outline" />
@@ -349,20 +402,26 @@
                         Grid.Row="2"
                         AllowDrop="True"
                         AutomationProperties.Name="Files"
+                        CanDragItems="True"
                         Collapsed="OnCollapsed"
                         ContextRequested="OnFilesContext"
+                        DragItemsStarting="OnFilesDrag"
                         DragOver="OnDragOver"
                         Drop="OnDrop"
                         Expanding="OnExpanding"
-                        ItemInvoked="OnInvoked">
+                        ItemInvoked="OnInvoked"
+                        SelectionChanged="{x:Bind ShowFileCommands}">
                         <!-- File Explorer's menu, with its icons. -->
                         <TreeView.ContextFlyout>
-                            <MenuFlyout Opening="OnFileMenuOpening">
+                            <MenuFlyout>
                                 <MenuFlyoutItem Click="OnNewFile" Text="New file">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutItem Click="OnNewFolder" Text="New folder">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F4;" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Click="OnAddFiles" Text="Add files…">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
                                 <MenuFlyoutItem x:Name="MainItem" Click="OnSetMain" Text="Set as main file">
@@ -496,6 +555,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
                                 <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
@@ -521,8 +581,21 @@
                                     <TextBlock Text="Copy log" />
                                 </StackPanel>
                             </Button>
-                            <Button
+                            <!-- The Mac's filter, one for each tab: issues by message or file, the log by line. -->
+                            <AutoSuggestBox
+                                x:Name="Filter"
                                 Grid.Column="2"
+                                Width="180"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Filter"
+                                PlaceholderText="Filter"
+                                TextChanged="OnFilter">
+                                <AutoSuggestBox.QueryIcon>
+                                    <FontIcon FontSize="12" Glyph="&#xE71C;" />
+                                </AutoSuggestBox.QueryIcon>
+                            </AutoSuggestBox>
+                            <Button
+                                Grid.Column="3"
                                 Width="32"
                                 Height="32"
                                 Padding="0"
@@ -533,7 +606,24 @@
                                 <FontIcon FontSize="12" Glyph="&#xE711;" />
                             </Button>
                         </Grid>
-                        <ListView x:Name="IssueList" Grid.Row="1" Padding="0,0,0,4" AutomationProperties.Name="Issues" IsItemClickEnabled="True" ItemClick="OnIssueClick" Visibility="Collapsed">
+                        <ListView
+                            x:Name="IssueList"
+                            Grid.Row="1"
+                            Padding="0,0,0,4"
+                            AutomationProperties.Name="Issues"
+                            ContextRequested="OnIssueContext"
+                            IsItemClickEnabled="True"
+                            ItemClick="OnIssueClick"
+                            Visibility="Collapsed">
+                            <!-- The Mac's issue menu. -->
+                            <ListView.ContextFlyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem x:Name="IssuePlaceItem" Click="OnIssuePlace" Text="Go to line" />
+                                    <MenuFlyoutItem x:Name="CopyIssueItem" Click="OnCopyIssue" Text="Copy">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </ListView.ContextFlyout>
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="local:IssueItem">
                                     <Grid Padding="0,6" ColumnSpacing="12">
@@ -605,7 +695,7 @@
                 TextTrimming="CharacterEllipsis"
                 ToolTipService.ToolTip="{x:Bind BuildState.Text, Mode=OneWay}" />
             <StackPanel Grid.Column="2" Orientation="Horizontal">
-                <Grid Width="96">
+                <Grid MinWidth="96">
                     <Button x:Name="NotSaved" AutomationProperties.Name="Not saved" Click="OnSave" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Save (Ctrl+S)" Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
@@ -624,7 +714,7 @@
                 </Button>
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
                 <StackPanel x:Name="ZoomBar" Margin="4,0,0,0" Orientation="Horizontal" Spacing="2">
-                    <RepeatButton AutomationProperties.Name="Zoom out" Click="OnZoomOut" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
+                    <RepeatButton AutomationProperties.Name="Zoom out" Click="{x:Bind Pdf.ZoomOut}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
                         <FontIcon FontSize="12" Glyph="&#xE738;" />
                     </RepeatButton>
                     <Slider
@@ -638,7 +728,7 @@
                         StepFrequency="0.01"
                         ValueChanged="OnZoomSlider"
                         Visibility="Collapsed" />
-                    <RepeatButton AutomationProperties.Name="Zoom in" Click="OnZoomIn" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
+                    <RepeatButton AutomationProperties.Name="Zoom in" Click="{x:Bind Pdf.ZoomIn}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
                         <FontIcon FontSize="12" Glyph="&#xE710;" />
                     </RepeatButton>
                     <Button MinWidth="56" Flyout="{x:Bind Pdf.ZoomMenu}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">

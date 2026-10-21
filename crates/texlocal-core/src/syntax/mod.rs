@@ -22,10 +22,13 @@ mod typing;
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 pub use call::call;
 use complete::SnippetField;
+pub use complete::{SymbolKind, Symbols};
 use highlight::{Highlight, HighlightKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +110,7 @@ fn line_starts(units: &[u16], at: u32) -> impl Iterator<Item = u32> + '_ {
 }
 
 impl Text {
-    fn new(text: &str) -> Self {
+    pub(crate) fn new(text: &str) -> Self {
         let units: Vec<u16> = text.encode_utf16().collect();
         let lines = std::iter::once(0).chain(line_starts(&units, 0)).collect();
         Self { units, lines }
@@ -164,9 +167,11 @@ pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
     scans: scans::Scans,
-    labels: Vec<String>,
-    citations: Vec<String>,
+    symbols: Arc<Symbols>,
     typing: typing::Typing,
+    /// The project's name for the file, which its own definitions are placed in; none for a
+    /// source of the editor's own.
+    pub(crate) path: String,
 }
 
 impl SourceDocument {
@@ -175,15 +180,22 @@ impl SourceDocument {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
             scans: scans::Scans::default(),
-            labels: Vec::new(),
-            citations: Vec::new(),
+            symbols: Arc::default(),
             typing: typing::Typing::default(),
+            path: String::new(),
+        }
+    }
+
+    pub(crate) fn named(text: &str, path: &str) -> Self {
+        Self {
+            path: path.to_owned(),
+            ..Self::new(text)
         }
     }
 
     /// Kept here rather than sent with each completions call: a bibliography is thousands of keys.
-    pub fn set_symbols(&mut self, labels: Vec<String>, citations: Vec<String>) {
-        (self.labels, self.citations) = (labels, citations);
+    pub fn set_symbols(&mut self, symbols: Arc<Symbols>) {
+        self.symbols = symbols;
     }
 
     /// A range past the end is cut to the text: the mirror never fails the editor.
@@ -229,9 +241,7 @@ impl SourceDocument {
         let units = self.text.line(index);
         // TeX's letters, with `@` as in a class's or a package's own source.
         let tex_letter = |u: u16| letter(u) || is(u, '@');
-        let end = (0..units.len())
-            .find(|&i| is(units[i], '%') && !escaped(units, i))
-            .unwrap_or(units.len());
+        let end = comment_start(units);
         let word = name.get(1).is_some_and(|&u| tex_letter(u));
         let (mut found, mut from) = (vec![], 0);
         while let Some(at) = units[from..end].windows(name.len()).position(|w| w == name) {
@@ -262,6 +272,12 @@ fn escaped(units: &[u16], at: usize) -> bool {
         .take_while(|&&u| is(u, '\\'))
         .count();
     slashes % 2 == 1
+}
+
+/// A line alone can't tell a `%` that \verb or a verbatim environment holds.
+fn comment_start(line: &[u16]) -> usize {
+    let percent = |&i: &usize| is(line[i], '%') && !escaped(line, i);
+    (0..line.len()).find(percent).unwrap_or(line.len())
 }
 
 const NAME: usize = 64;

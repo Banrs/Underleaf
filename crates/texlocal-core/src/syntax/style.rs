@@ -133,23 +133,16 @@ mod tests {
         let units: Vec<u16> = source.encode_utf16().collect();
         let (start, end) = (utf16(&source[..start]) as u32, utf16(&source[..end]) as u32);
         let found = SourceDocument::new(&source).text_styles(range(start, end - start));
+        // Each style's command, from the edits that take away its name and its braces.
         [found.bold, found.italic, found.underline].map(|edits| {
-            let Some(edits) = edits else {
-                return String::new();
-            };
-            let (head, tail) = (&edits[0], &edits[1]);
-            let opening = String::from_utf16_lossy(
-                &units[head.start as usize..(head.start + head.length) as usize],
-            );
-            let closing = units[tail.start as usize] == b'}' as u16;
-            if opening.ends_with('{') && closing {
-                opening[1..]
-                    .chars()
-                    .take_while(char::is_ascii_alphabetic)
-                    .collect()
-            } else {
-                "?".to_string()
-            }
+            edits.map_or(String::new(), |edits| {
+                let (head, tail) = (&edits[0], &edits[1]);
+                let opening = &units[head.start as usize..(head.start + head.length) as usize];
+                let braces = (opening.last(), units[tail.start as usize]);
+                assert_eq!(braces, (Some(&u16::from(b'{')), u16::from(b'}')));
+                let name = String::from_utf16_lossy(&opening[1..]);
+                name.chars().take_while(char::is_ascii_alphabetic).collect()
+            })
         })
     }
 

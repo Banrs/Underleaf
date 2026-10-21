@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -16,8 +17,8 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
 
-/// An issues panel row: a build's error or warning, by its index among the build's issues.
-public sealed record IssueItem(int Index, LogItem Item)
+/// An issues panel row: a build's error or warning, by its index among the build's issues, or a bad box, which is none.
+public sealed record IssueItem(int? Index, LogItem Item)
 {
     public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
@@ -31,13 +32,11 @@ public sealed partial class WorkspacePage : Page
 {
     sealed record Chosen(int Index, LogItem Issue);
 
-    static readonly string[] shownEvents = ["tree", "document", "saved", "document_reload", "document_closed", "document_renamed",
-        "conflict", "issues", "build", "build_finished", "build_cleaned"];
     static ulong sessions;
-    readonly DispatcherQueueTimer searchTimer, caretTimer;
+    readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
-    string id = "", root = "", mainFile = "";
+    string id = "", root = "", issueFilter = "", logFilter = "";
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
@@ -54,15 +53,17 @@ public sealed partial class WorkspacePage : Page
         NavigationCacheMode = NavigationCacheMode.Required;
         searchTimer = Timer(250, () => _ = RunSearch());
         caretTimer = Timer(150, CaretSettled);
+        scrollTimer = Timer(150, ScrollSettled);
         SetSplit(ratio);
         ShowEdge();
         ShowPage();
-        // A layer's content scrolls under its rounded corners.
+        // A layer's content scrolls under its rounded corners, inside its 1 px border.
+        var radius = (float)((CornerRadius)Application.Current.Resources["OverlayCornerRadius"]).TopLeft - 1;
         foreach (var layer in (FrameworkElement[])[EditorClip, PdfClip, IssuesClip])
         {
             var visual = ElementCompositionPreview.GetElementVisual(layer);
             var shape = visual.Compositor.CreateRoundedRectangleGeometry();
-            shape.CornerRadius = new(7, 7);
+            shape.CornerRadius = new(radius, radius);
             visual.Clip = visual.Compositor.CreateGeometricClip(shape);
             layer.SizeChanged += (_, e) => shape.Size = new((float)e.NewSize.Width, (float)e.NewSize.Height);
         }
@@ -79,6 +80,7 @@ public sealed partial class WorkspacePage : Page
             ShowEdge();
         });
         Split.PaneOpened += (_, _) => Remeasure(SideTabs);
+        PdfItem.RegisterPropertyChangedCallback(ToggleMenuFlyoutItem.IsCheckedProperty, (_, _) => ShowPdf());
         // An overlaid pane open as the window widens is light-dismissed after it has become inline; it stays.
         Split.PaneClosing += (_, e) => e.Cancel = Inline;
         PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
@@ -91,11 +93,22 @@ public sealed partial class WorkspacePage : Page
         SplitSizer.Released += () => Prefs.SplitRatio = ratio;
         IssuesSizer.Delta += d => IssuesRow.Height = new(Math.Clamp(IssuesRow.Height.Value - d, 120, Math.Max(ActualHeight / 2, 120)));
         IssuesSizer.Released += () => Prefs.IssuesHeight = IssuesRow.Height.Value;
+        PaneSizer.Spoken = () => $"{Split.OpenPaneLength:0} pixels";
+        SplitSizer.Spoken = () => $"{ratio:P0}";
+        IssuesSizer.Spoken = () => $"{IssuesRow.Height.Value:0} pixels";
 
+        // A scroll within the caret's wait of a move, either side, is the caret's.
         Editor.CaretMoved += () =>
         {
             ShowCaret();
+            headingLine = Editor.Caret.Line;
+            caretScrolled |= scrollTimer.IsRunning;
             Restart(caretTimer);
+        };
+        Editor.Scrolled += () =>
+        {
+            caretScrolled |= caretTimer.IsRunning;
+            Restart(scrollTimer);
         };
         Editor.Composing += composing =>
         {
@@ -113,13 +126,18 @@ public sealed partial class WorkspacePage : Page
             var index = Array.FindIndex(BuildIssues, i => i.File == Editor.Path && i.Line == line.Line);
             if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
         };
+        Editor.FilesDropped += OnFilesDropped;
+        Editor.DefinitionFound += place => _ = Reveal(place.File, place.Line, place.Column, place.Length);
+        // The core's refusal shows in the flyout.
+        Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Editor.Apply((await Core.CallAsync<Replaced>("session_rename_symbol",
+            new { session, kind = symbol.Kind, from = symbol.Name, to })).Edits), at);
         Pdf.ViewMoved += ShowPage;
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
             var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
             await Reveal(at.File, at.Line, at.Column ?? 0);
         });
-        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem]) Shortcut.SetScope(item, Editor);
+        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, RenameSymbolItem]) Shortcut.SetScope(item, Editor);
         foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
@@ -163,7 +181,6 @@ public sealed partial class WorkspacePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        App.Window.SetMenu(null);
         if (e.SourcePageType == typeof(SettingsPage)) return;
         Prefs.EditorChanged -= ShowLook;
         Core.Event -= OnEvent;
@@ -189,21 +206,26 @@ public sealed partial class WorkspacePage : Page
     {
         session = ++sessions;
         var opened = await Core.CallAsync<SessionOpened>("session_open", new { id, session, autoCompile = Prefs.AutoCompile });
+        // A smoke run ends here, not after the editor's first layout below, which a headless runner may never do.
+        if (App.Smoke)
+        {
+            if (IsLoaded) App.ExitSmoke(null);
+            else Loaded += (_, _) => App.ExitSmoke(null);
+        }
         root = opened.Root;
-        mainFile = MainFile(opened.Settings);
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
         ReadFolds(opened.Ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
         if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
-        Select(FilesTree, i => i.Key == (file ?? mainFile));
+        Select(FilesTree, i => i.Key == (file ?? opened.Settings.GetProperty("mainFile").GetString()));
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
     }
 
     void OnEvent(CoreEvent e)
     {
-        if (e.Session != session || !shownEvents.Contains(e.Type)) return;
+        if (e.Session != session) return;
         var ev = e.Json.Deserialize<DocEvent>(Core.Json)!;
         switch (e.Type)
         {
@@ -280,10 +302,11 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// A place in a file: a line from 1, a column from 0 and what to select from there.
+    /// A place in a file: a line from 1, a column from 0 and what to select from there. The file opens as Files would open
+    /// it, so a graphic a definition names opens in its own app.
     async Task Reveal(string path, int line, int column = 0, int length = 0)
     {
-        if (await OpenDocument(path)) Editor.GoTo(line, column, length);
+        if (await OpenDocument(path, KindOf(path) ?? "tex")) Editor.GoTo(line, column, length);
     }
 
     /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
@@ -301,7 +324,7 @@ public sealed partial class WorkspacePage : Page
 
     void CloseEditor()
     {
-        (analysis, caretHeading) = (null, null);
+        (analysis, currentHeading) = (null, null);
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
@@ -315,7 +338,7 @@ public sealed partial class WorkspacePage : Page
     void ShowLook()
     {
         Editor.SetLook(Prefs.EditorFont, Prefs.EditorFontSize, Prefs.EditorTheme);
-        (Editor.AutoPair, Editor.AutoComplete) = (Prefs.AutoPair, Prefs.AutoComplete);
+        (Editor.AutoPair, Editor.AutoComplete, Editor.LineNumbers) = (Prefs.AutoPair, Prefs.AutoComplete, Prefs.LineNumbers);
     }
 
     /// Another app changed or removed a file with edits here. Changed, the safe choice (Cancel) is the default.
@@ -347,9 +370,9 @@ public sealed partial class WorkspacePage : Page
     {
         var done = result = ev.Result!;
         (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
-        WarningsToggle.IsEnabled = done.Warnings.Length > 0;
+        WarningsToggle.IsEnabled = done.Warnings.Length + done.BadBoxes.Length > 0;
         WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
-        Log.Text = done.Log.ReplaceLineEndings("\r");
+        ShowLog();
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
         if (failed && !ev.Auto)
@@ -361,7 +384,13 @@ public sealed partial class WorkspacePage : Page
             IssueList.SelectedIndex = IssueList.Items.Count > 0 ? 0 : -1;
         }
         if (ev.Announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
-        if (done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0)) _ = Pdf.Load(pdf);
+        var shown = done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0) ? Pdf.Load(pdf) : Task.CompletedTask;
+        // Settings › PDF, as on the Mac: only to a PDF that shows and has the caret's text.
+        if (done.Ok && !ev.Outdated && Prefs.SyncAfterCompile && PdfItem.IsChecked && Editor.Path is not null) Run(null, async () =>
+        {
+            await shown;
+            await SyncToCaret();
+        });
         outdated = ev.Outdated;
         ShowBuild();
     }
@@ -381,23 +410,50 @@ public sealed partial class WorkspacePage : Page
         BuildState.Text = outdated && !compiling && result is not null ? $"{state} · Preview out of date" : state;
     }
 
+    /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
     void ShowIssues()
     {
-        var all = BuildIssues.Select((item, i) => new IssueItem(i, item));
-        IssueList.ItemsSource = (WarningsToggle.IsChecked == true ? all : all.Where(i => i.IsError)).ToArray();
+        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item)).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
+            .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
+
+    void ShowLog()
+    {
+        var log = (result?.Log ?? "").ReplaceLineEndings("\r");
+        Log.Text = logFilter.Length == 0 ? log : string.Join('\r', log.Split('\r').Where(line => Has(line, logFilter)));
+    }
+
+    static bool Has(string? text, string part) => text?.Contains(part, StringComparison.CurrentCultureIgnoreCase) == true;
 
     void ShowIssueTab()
     {
         if (Log is null) return;
         var log = IssueTabs.SelectedItem == LogTab;
-        var none = IssueList.ItemsSource is not IssueItem[] { Length: > 0 };
-        Log.Visibility = CopyLog.Visibility = Vis(log);
+        var filter = Filter.Text = log ? logFilter : issueFilter;
+        var none = log ? filter.Length > 0 && Log.Text.Length == 0 : IssueList.ItemsSource is not IssueItem[] { Length: > 0 };
+        Log.Visibility = Vis(log && !none);
+        CopyLog.Visibility = Vis(log);
         WarningsToggle.Visibility = Vis(!log);
         IssueList.Visibility = Vis(!log && !none);
-        NoIssues.Visibility = Vis(!log && none);
-        NoIssues.Text = result is null ? "Compile to check for issues." : "No issues in the last build.";
+        NoIssues.Visibility = Vis(none);
+        NoIssues.Text = filter.Length > 0 ? $"No results for “{filter}”." : result is null ? "Compile to check for issues." : "No issues in the last build.";
+    }
+
+    void OnFilter(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e)
+    {
+        if (e.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        if (IssueTabs.SelectedItem == LogTab)
+        {
+            logFilter = sender.Text;
+            ShowLog();
+            ShowIssueTab();
+        }
+        else
+        {
+            issueFilter = sender.Text;
+            ShowIssues();
+        }
     }
 
     void ShowPanel(bool open)
@@ -419,7 +475,14 @@ public sealed partial class WorkspacePage : Page
         if (chosen.Issue.File is { } file) await Reveal(file, chosen.Issue.Line ?? 1);
     });
 
-    void OnIssueClick(object sender, ItemClickEventArgs e) => GoToIssue("session_choose_issue", new { session, ((IssueItem)e.ClickedItem).Index });
+    /// A bad box isn't one of the session's issues, so its place is opened here.
+    void Choose(IssueItem row)
+    {
+        if (row.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
+        else if (row.Item.File is { } file) _ = Reveal(file, row.Item.Line ?? 1);
+    }
+
+    void OnIssueClick(object sender, ItemClickEventArgs e) => Choose((IssueItem)e.ClickedItem);
     void OnNextIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = true });
     void OnPreviousIssue(object sender, RoutedEventArgs e) => GoToIssue("session_issue", new { session, next = false });
     void OnIssueTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) => ShowIssueTab();
@@ -442,10 +505,32 @@ public sealed partial class WorkspacePage : Page
         IssueList.Focus(FocusState.Programmatic);
     }
 
-    void OnCopyLog(object sender, RoutedEventArgs e)
+    void OnCopyLog(object sender, RoutedEventArgs e) => Copy(result?.Log ?? "");
+
+    /// The Mac's issue menu, on the row right-clicked or, from the keyboard, the one focused.
+    void OnIssueContext(UIElement sender, ContextRequestedEventArgs args)
+    {
+        var row = (args.OriginalSource as FrameworkElement)?.DataContext as IssueItem;
+        IssueList.SelectedItem = row;
+        IssuePlaceItem.Text = row?.Item.Line is null ? "Open file" : "Go to line";
+        IssuePlaceItem.Visibility = Vis(row?.HasPlace == true);
+        CopyIssueItem.IsEnabled = row is not null;
+    }
+
+    void OnIssuePlace(object sender, RoutedEventArgs e)
+    {
+        if (IssueList.SelectedItem is IssueItem row) Choose(row);
+    }
+
+    void OnCopyIssue(object sender, RoutedEventArgs e)
+    {
+        if (IssueList.SelectedItem is IssueItem row) Copy(row.Item.Message);
+    }
+
+    static void Copy(string text)
     {
         var data = new DataPackage();
-        data.SetText(result?.Log ?? "");
+        data.SetText(text);
         Clipboard.SetContent(data);
     }
 
@@ -486,6 +571,7 @@ public sealed partial class WorkspacePage : Page
         PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
         foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
+        ExportItem.IsEnabled = ShareItem.IsEnabled = shown;
         zooming = true;
         ZoomSlider.Value = Math.Log2(Pdf.Zoom);
         zooming = false;
@@ -520,16 +606,13 @@ public sealed partial class WorkspacePage : Page
         Prefs.SplitRatio = ratio;
     }
 
-    void ShowPdf(bool show)
+    void ShowPdf()
     {
-        (PdfItem.IsChecked, PdfButton.IsChecked) = (show, show);
+        var show = PdfItem.IsChecked;
         PdfLayer.Visibility = SplitSizer.Visibility = Vis(show);
         PdfColumn.MinWidth = show ? 240 : 0;
         PdfColumn.Width = new(show ? 1 - ratio : 0, GridUnitType.Star);
     }
-
-    void OnPdfPane(object sender, RoutedEventArgs e) => ShowPdf(PdfItem.IsChecked);
-    void OnPdfButton(object sender, RoutedEventArgs e) => ShowPdf(PdfButton.IsChecked == true);
 
     /// F6 and Shift+F6: the sidebar, the editor, the PDF and the issues panel in turn, each that is shown.
     void OnNextRegion(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -599,10 +682,15 @@ public sealed partial class WorkspacePage : Page
     /// Turns the PDF on if it's hidden, since that's where this goes.
     void OnForwardSync(object sender, RoutedEventArgs e)
     {
-        if (Editor.Path is not { } file || Pdf.PageCount == 0) return;
+        if (Editor.Path is null || Pdf.PageCount == 0) return;
+        PdfItem.IsChecked = true;
+        Run(null, SyncToCaret);
+    }
+
+    async Task SyncToCaret()
+    {
         var (line, column) = Editor.Caret;
-        ShowPdf(true);
-        Run(null, async () => Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file, line, column })));
+        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line, column }));
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
@@ -610,11 +698,55 @@ public sealed partial class WorkspacePage : Page
     void OnReplace(object sender, RoutedEventArgs e) => Editor.ShowFind(true);
     void OnFindNext(object sender, RoutedEventArgs e) => Editor.FindNext(true);
     void OnFindPrevious(object sender, RoutedEventArgs e) => Editor.FindNext(false);
+    void OnShiftRight(object sender, RoutedEventArgs e) => Editor.ShiftLines(1);
+    void OnShiftLeft(object sender, RoutedEventArgs e) => Editor.ShiftLines(-1);
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
-    void OnZoomIn(object sender, RoutedEventArgs e) => Pdf.ZoomBy(1.25);
-    void OnZoomOut(object sender, RoutedEventArgs e) => Pdf.ZoomBy(0.8);
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
+
+    async void OnExportPdf(object sender, RoutedEventArgs e)
+    {
+        if (Pdf.FilePath is not { } path) return;
+        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = id };
+        picker.FileTypeChoices.Add("PDF document", [".pdf"]);
+        if (await picker.PickSaveFileAsync() is not { } picked) return;
+        try { File.Copy(path, picked.Path, true); }
+        catch (Exception ex) { await App.Alert("Can't export", ex.Message); }
+    }
+
+    /// Windows' share sheet, which a desktop app opens through its window.
+    async void OnSharePdf(object sender, RoutedEventArgs e)
+    {
+        if (Pdf.FilePath is not { } path) return;
+        var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
+        // The interop throws when Windows refuses the sheet, which unhandled would end the app.
+        DataTransferManager? sharing = null;
+        try
+        {
+            sharing = DataTransferManagerInterop.GetForWindow(window);
+            sharing.DataRequested += Requested;
+            DataTransferManagerInterop.ShowShareUIForWindow(window);
+        }
+        catch (Exception ex)
+        {
+            if (sharing is not null) sharing.DataRequested -= Requested;
+            await App.Alert("Can't share", ex.Message);
+        }
+
+        // For this Share only: the manager is the window's, and outlives the page.
+        async void Requested(DataTransferManager manager, DataRequestedEventArgs args)
+        {
+            manager.DataRequested -= Requested;
+            var deferral = args.Request.GetDeferral();
+            try
+            {
+                args.Request.Data.Properties.Title = System.IO.Path.GetFileName(path);
+                args.Request.Data.SetStorageItems([await Windows.Storage.StorageFile.GetFileFromPathAsync(path)]);
+            }
+            catch (Exception ex) { args.Request.FailWithDisplayText(ex.Message); }
+            finally { deferral.Complete(); }
+        }
+    }
 
     // MARK: helpers
 
@@ -649,6 +781,4 @@ public sealed partial class WorkspacePage : Page
     static Visibility Vis(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
 
     string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
-
-    static string MainFile(JsonElement settings) => settings.GetProperty("mainFile").GetString() ?? "";
 }

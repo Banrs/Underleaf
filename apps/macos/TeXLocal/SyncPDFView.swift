@@ -69,16 +69,16 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             documentView.addSubview(liveCanvas)
         }
         // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
-        let onScreen = overlay.convert(overlay.bounds, to: nil).size, pixel = window.backingScaleFactor
-        let whole = CGSize(width: (onScreen.width * pixel).rounded(), height: (onScreen.height * pixel).rounded())
-        let unit = CGSize(width: overlay.bounds.width / (onScreen.width * pixel), height: overlay.bounds.height / (onScreen.height * pixel))
-        let part = CGRect(x: (visible.minX - overlay.bounds.minX) / unit.width, y: (visible.minY - overlay.bounds.minY) / unit.height,
-                          width: visible.width / unit.width, height: visible.height / unit.height)
-            .integral.intersection(CGRect(origin: .zero, size: whole))
-        let width = Int(part.width), height = Int(part.height)
+        let pixel = window.backingScaleFactor, box = overlay.bounds
+        let onScreen = overlay.convert(box, to: nil).size.applying(CGAffineTransform(scaleX: pixel, y: pixel))
+        let toPixels = CGAffineTransform(scaleX: onScreen.width / box.width, y: onScreen.height / box.height)
+            .translatedBy(x: -box.minX, y: -box.minY)
+        let whole = CGRect(x: 0, y: 0, width: onScreen.width.rounded(), height: onScreen.height.rounded())
+        let part = visible.applying(toPixels).integral.intersection(whole)
         // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours (27.2).
-        guard width >= 1, height >= 1,
-              let surface = IOSurface(properties: [.width: width, .height: height, .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
+        guard part.width >= 1, part.height >= 1,
+              let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
+                                                   .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
               surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
         Self.drawLive(page, to: surface, box: page.bounds(for: .cropBox), scale: scaleFactor * pixel, from: part.origin)
         surface.unlock(options: [], seed: nil)
@@ -91,8 +91,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             return layer
         }()
         layer.contents = surface
-        layer.frame = liveCanvas.convert(CGRect(x: overlay.bounds.minX + part.minX * unit.width, y: overlay.bounds.minY + part.minY * unit.height,
-                                                width: part.width * unit.width, height: part.height * unit.height), from: overlay)
+        layer.frame = liveCanvas.convert(part.applying(toPixels.inverted()), from: overlay)
         liveScale = shownScale
         return true
     }
@@ -179,8 +178,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// Unrotated: PDFKit rotates the overlay itself.
     private func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
         let box = page.bounds(for: displayBox)
-        let x = overlay.bounds.width / box.width, y = overlay.bounds.height / box.height
-        mark.frame = CGRect(x: (rect.minX - box.minX) * x, y: (rect.minY - box.minY) * y, width: rect.width * x, height: rect.height * y)
+        let scale = CGAffineTransform(scaleX: overlay.bounds.width / box.width, y: overlay.bounds.height / box.height)
+        mark.frame = rect.applying(scale.translatedBy(x: -box.minX, y: -box.minY))
         mark.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin, .width, .height]
         overlay.addSubview(mark)
     }
@@ -307,8 +306,13 @@ extension NSMenu {
     func keep(_ actions: Set<Selector>) {
         func kept(_ item: NSMenuItem) -> Bool { item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true }
         let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
-        var shown = Array(items[..<word])
-        for item in items[word...] where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : kept(item) { shown.append(item) }
+        tidy(items[..<word] + items[word...].filter { $0.isSeparatorItem || kept($0) })
+    }
+
+    /// Shows these items with a separator only between two groups.
+    func tidy(_ list: [NSMenuItem]) {
+        var shown: [NSMenuItem] = []
+        for item in list where !item.isSeparatorItem || shown.last?.isSeparatorItem == false { shown.append(item) }
         if shown.last?.isSeparatorItem == true { shown.removeLast() }
         items = shown
     }

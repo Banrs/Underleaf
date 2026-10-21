@@ -8,12 +8,19 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
     public override string ToString() => Name;
 }
 
+/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template.
+public sealed record Choice(string Id, string Title);
+
+/// What a new project may start from, in the order Home shows it; each id is create_project's `template`.
+public sealed record Catalogue(Choice[] Templates);
+
 /// <param name="Path">"" for the project's folder.</param>
 public sealed record Located(string Id, string Path);
 
 /// <param name="Type">file or dir.</param>
 /// <param name="Kind">tex, bib, image, pdf, text or other; null for a folder.</param>
-public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children);
+/// <param name="Main">The core's mark, as latexmk finds the main file.</param>
+public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children, bool Main);
 
 /// <param name="Found">The folder the working latexmk runs from.</param>
 public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
@@ -31,10 +38,14 @@ public sealed record LogItem(string Type, string? File, int? Line, string Messag
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
-public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, string Log, bool PdfChanged);
+/// <param name="BadBoxes">Overfull and underfull boxes, warnings kept apart from the issues.</param>
+public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, string? Pdf, LogItem[] Errors, LogItem[] Warnings, LogItem[] BadBoxes,
+    string Log, bool PdfChanged);
 
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
-public sealed record IssueLine(int Line, bool Error, string Message, string Short, string[] Others);
+/// <param name="Compact">For an undefined command, fewer words that keep its name.</param>
+/// <param name="Tokens">Where the line has that command, from the line's start.</param>
+public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others);
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
@@ -65,14 +76,22 @@ public sealed record Tabbing(SourceRange? Field, TextEdit[] Edits);
 
 public sealed record SnippetField(int Start, int Length, int Index);
 
-public sealed record Completion(string Label, string Text, SnippetField[] Fields);
+/// <param name="Detail">A citation's .bib entry: “Knuth · 1984 · The TeXbook”.</param>
+public sealed record Completion(string Label, string Text, SnippetField[] Fields, string? Detail);
 
-/// <param name="Kind">command, environment, label, citation or entryType.</param>
+/// <param name="Kind">command, environment, label, citation, entryType or file (a project file, in \input or \includegraphics).</param>
 public sealed record Completions(int Start, string Kind, Completion[] Items);
 
 public sealed record Insertion(TextEdit Edit, int Caret, SnippetField[] Fields);
 
 public sealed record MathPreview(int Start, string Tex, bool Display);
+
+/// <param name="Line">From 1; Column, from 0, and Length are UTF-16 units of the line.</param>
+public sealed record Place(string File, int Line, int Column, int Length);
+
+/// Every place the project defines the name at an offset, in the order of their files' paths.
+/// <param name="Kind">label, citation, environment, command or file; a label or a citation can be renamed.</param>
+public sealed record Definition(string Kind, string Name, Place[] Places);
 
 /// Each style the whole selection has, as the edits that would take it off.
 public sealed record TextStyles(TextEdit[]? Bold, TextEdit[]? Italic, TextEdit[]? Underline);
@@ -98,6 +117,15 @@ public sealed record Analysis(OutlineNode[] Tree, int Words, HeadingStyle[] Head
 public sealed record SearchHit(string File, int Line, int Column, int Length, string Before, string Match, string After);
 
 public sealed record SearchFile(string File, SearchHit[] Hits);
+
+/// The open document's edits, against its text at Version, to apply at once as one undoable edit.
+public sealed record DocumentEdits(string Path, ulong Version, TextEdit[] Edits);
+
+public sealed record FileCount(string File, int Count);
+
+/// session_replace's and session_rename_symbol's answer: the open document's edits, if it has a match, and the other
+/// files, which the core has written.
+public sealed record Replaced(DocumentEdits? Edits, FileCount[] Written);
 
 /// <param name="Shape">upright, italic or smallCaps.</param>
 public sealed record HeadingFont(double Scale, bool Bold, string Shape);

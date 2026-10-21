@@ -102,11 +102,19 @@
                             <TextBlock x:Name="Preview" TextWrapping="Wrap" />
                         </Grid>
                     </Border>
+                    <controls:Card Glyph="&#xEA37;" Header="Show line numbers">
+                        <ToggleSwitch MinWidth="0" AutomationProperties.Name="Show line numbers" IsOn="{x:Bind app:Prefs.LineNumbers, Mode=TwoWay}" />
+                    </controls:Card>
                     <controls:Card Description="Typing (, [ or { adds its partner" Glyph="&#xE943;" Header="Close brackets automatically">
                         <ToggleSwitch MinWidth="0" AutomationProperties.Name="Close brackets automatically" IsOn="{x:Bind app:Prefs.AutoPair, Mode=TwoWay}" />
                     </controls:Card>
                     <controls:Card Description="When off, press Ctrl+Space to see suggestions" Glyph="&#xE8FD;" Header="Suggest completions while typing">
                         <ToggleSwitch MinWidth="0" AutomationProperties.Name="Suggest completions while typing" IsOn="{x:Bind app:Prefs.AutoComplete, Mode=TwoWay}" />
+                    </controls:Card>
+
+                    <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="PDF" />
+                    <controls:Card Description="Scrolls the PDF to the line you are editing" Glyph="&#xEA90;" Header="Scroll to the cursor after compiling">
+                        <ToggleSwitch MinWidth="0" AutomationProperties.Name="Scroll to the cursor after compiling" IsOn="{x:Bind app:Prefs.SyncAfterCompile, Mode=TwoWay}" />
                     </controls:Card>
 
                     <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="About" />

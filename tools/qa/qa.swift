@@ -1,68 +1,65 @@
-// qa: on-screen QA driver for macOS apps (AX + CGEvent + screencapture).
-// Build: xcrun swiftc -O -o qa qa.swift
-import Cocoa
+// qa: the on-screen QA driver for the Mac app (Accessibility, CGEvent, screencapture); tools/qa/README.md.
 import ApplicationServices
+import Cocoa
 
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ e: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 // MARK: - basics
 
-// The session scratchpad: lock file, appearance.dylib, default app and data paths live under it.
-let SCR = ProcessInfo.processInfo.environment["QA_SCRATCH"] ?? NSTemporaryDirectory() + "texlocal-qa"
 let env = ProcessInfo.processInfo.environment
-setvbuf(stdout, nil, _IOLBF, 0)
-/// QA_BG=1: the owner is using the Mac. Nothing fronts the app or posts an event: Accessibility
-/// calls and window captures only, and the app is opened behind what is frontmost.
+// The scratchpad holds the lock, appearance.dylib, and the default app and library.
+let SCR = env["QA_SCRATCH"] ?? NSTemporaryDirectory() + "texlocal-qa"
+// QA_BG=1: the owner is using the Mac. Nothing fronts the app or posts an event, and the app opens behind.
 let BG = env["QA_BG"] == "1"
+setvbuf(stdout, nil, _IOLBF, 0)
 
 func fail(_ msg: String, _ code: Int32 = 1) -> Never {
-    FileHandle.standardError.write(Data(("qa: " + msg + "\n").utf8))
+    FileHandle.standardError.write(Data("qa: \(msg)\n".utf8))
     exit(code)
 }
 func emit(_ obj: Any) {
-    let d = try! JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    let options: JSONSerialization.WritingOptions = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    let d = try! JSONSerialization.data(withJSONObject: obj, options: options)
     print(String(decoding: d, as: UTF8.self))
 }
 func sleepS(_ s: Double) { Thread.sleep(forTimeInterval: s) }
 
 var args = Array(CommandLine.arguments.dropFirst())
 
-/// Remove `--name value` from args and return the value.
+/// Removes `name value` from the arguments and returns the value.
 func takeOpt(_ name: String) -> String? {
     guard let i = args.firstIndex(of: name) else { return nil }
     guard i + 1 < args.count else { fail("\(name) needs a value") }
-    let v = args[i + 1]
-    args.removeSubrange(i...(i + 1))
-    return v
+    defer { args.removeSubrange(i...(i + 1)) }
+    return args[i + 1]
 }
 func takeFlag(_ name: String) -> Bool {
-    if let i = args.firstIndex(of: name) { args.remove(at: i); return true }
-    return false
+    guard let i = args.firstIndex(of: name) else { return false }
+    args.remove(at: i)
+    return true
 }
 
 let bundleID = takeOpt("--bundle") ?? env["QA_BUNDLE"] ?? "com.texlocal.mac.qa"
 let appPath = takeOpt("--app") ?? env["QA_APP"] ?? "\(SCR)/dd-frontend/Build/Products/Debug/TeXLocal.app"
 
 guard !args.isEmpty else {
-    fail("usage: qa <launch|quit|front|window|resize|move|shot|screen|menu|menus|key|type|click|move-mouse|drag|scroll|tree|find|press|set|get|toolbar|wait|wait-for|lock|check> …")
+    fail("usage: qa <check|launch|quit|front|window|resize|move|shot|screen|menu|menus|key|type|click|move-mouse|"
+        + "drag|scroll|tree|find|press|set|get|caret|insert|text|toolbar|close|wait|wait-for|lock> …")
 }
 let cmd = args.removeFirst()
 
 // MARK: - lock
 
-func acquireLock() {
-    if env["QA_LOCK_HELD"] == "1" { return }
+// Every caller takes the lock, held until exit; `qa lock` holds it for its command, whose qa calls skip it.
+if env["QA_LOCK_HELD"] != "1" {
     let fd = open("\(SCR)/qa/lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
     if fd < 0 { fail("cannot open lock file") }
     if flock(fd, LOCK_EX | LOCK_NB) != 0 {
         FileHandle.standardError.write(Data("qa: waiting for lock…\n".utf8))
         if flock(fd, LOCK_EX) != 0 { fail("flock failed") }
     }
-    // fd stays open for the life of the process (CLOEXEC: children do not inherit it).
 }
-
-acquireLock()
 
 if cmd == "lock" {
     if args.first == "--" { args.removeFirst() }
@@ -70,9 +67,7 @@ if cmd == "lock" {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = args
-    var e = env
-    e["QA_LOCK_HELD"] = "1"
-    p.environment = e
+    p.environment = env.merging(["QA_LOCK_HELD": "1"]) { $1 }
     do { try p.run() } catch { fail("cannot run \(args[0]): \(error)") }
     p.waitUntilExit()
     exit(p.terminationStatus)
@@ -80,34 +75,33 @@ if cmd == "lock" {
 
 // MARK: - permissions
 
-func checkAX() {
-    if !AXIsProcessTrusted() {
-        fail("MISSING PERMISSION: Accessibility is not granted to the hosting process (System Settings > Privacy & Security > Accessibility)", 2)
-    }
-}
-func checkScreen() {
-    if !CGPreflightScreenCaptureAccess() {
-        // preflight can be stale; try a real capture
-        let t = "\(NSTemporaryDirectory())qa-perm-\(getpid()).png"
-        defer { try? FileManager.default.removeItem(atPath: t) }
-        let r = run("/usr/sbin/screencapture", ["-x", "-R0,0,8,8", t])
-        if r != 0 || !FileManager.default.fileExists(atPath: t) {
-            fail("MISSING PERMISSION: Screen Recording is not granted to the hosting process", 2)
-        }
-    }
-}
 @discardableResult
-func run(_ path: String, _ a: [String], capture: Bool = false) -> Int32 {
+func run(_ path: String, _ a: [String]) -> Int32 {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = a
-    if !capture { p.standardOutput = FileHandle.nullDevice }
+    p.standardOutput = FileHandle.nullDevice
     do { try p.run() } catch { return -1 }
     p.waitUntilExit()
     return p.terminationStatus
 }
+func checkAX() {
+    if !AXIsProcessTrusted() {
+        fail("MISSING PERMISSION: Accessibility is not granted to the hosting process "
+            + "(System Settings > Privacy & Security > Accessibility)", 2)
+    }
+}
+func checkScreen() {
+    if CGPreflightScreenCaptureAccess() { return }
+    // The preflight can be stale: a real capture decides.
+    let t = "\(NSTemporaryDirectory())qa-perm-\(getpid()).png"
+    defer { try? FileManager.default.removeItem(atPath: t) }
+    if run("/usr/sbin/screencapture", ["-x", "-R0,0,8,8", t]) != 0 || !FileManager.default.fileExists(atPath: t) {
+        fail("MISSING PERMISSION: Screen Recording is not granted to the hosting process", 2)
+    }
+}
 
-// MARK: - AX helpers
+// MARK: - Accessibility
 
 func axApp(_ pid: pid_t) -> AXUIElement {
     let a = AXUIElementCreateApplication(pid)
@@ -120,28 +114,23 @@ func attr(_ e: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 func attrStr(_ e: AXUIElement, _ name: String) -> String? { attr(e, name) as? String }
 func attrEls(_ e: AXUIElement, _ name: String) -> [AXUIElement] { (attr(e, name) as? [AXUIElement]) ?? [] }
-func pointOf(_ v: CFTypeRef?) -> CGPoint? {
+func title(_ e: AXUIElement) -> String { attrStr(e, "AXTitle") ?? "" }
+func axValue<T: BitwiseCopyable>(_ v: CFTypeRef?, _ type: AXValueType, _ empty: T) -> T? {
     guard let v, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
-    var p = CGPoint.zero
-    return AXValueGetValue(v as! AXValue, .cgPoint, &p) ? p : nil
+    var out = empty
+    return AXValueGetValue(v as! AXValue, type, &out) ? out : nil
 }
-func sizeOf(_ v: CFTypeRef?) -> CGSize? {
-    guard let v, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
-    var s = CGSize.zero
-    return AXValueGetValue(v as! AXValue, .cgSize, &s) ? s : nil
-}
+func pointOf(_ v: CFTypeRef?) -> CGPoint? { axValue(v, .cgPoint, CGPoint.zero) }
+func sizeOf(_ v: CFTypeRef?) -> CGSize? { axValue(v, .cgSize, CGSize.zero) }
 func frameOf(_ e: AXUIElement) -> CGRect? {
     guard let p = pointOf(attr(e, "AXPosition")), let s = sizeOf(attr(e, "AXSize")) else { return nil }
     return CGRect(origin: p, size: s)
 }
-func setPoint(_ e: AXUIElement, _ name: String, _ p: CGPoint) {
-    var p = p
-    if let v = AXValueCreate(.cgPoint, &p) { AXUIElementSetAttributeValue(e, name as CFString, v) }
+func setAX<T: BitwiseCopyable>(_ e: AXUIElement, _ name: String, _ type: AXValueType, _ value: T) {
+    var value = value
+    if let v = AXValueCreate(type, &value) { AXUIElementSetAttributeValue(e, name as CFString, v) }
 }
-func setSize(_ e: AXUIElement, _ name: String, _ s: CGSize) {
-    var s = s
-    if let v = AXValueCreate(.cgSize, &s) { AXUIElementSetAttributeValue(e, name as CFString, v) }
-}
+func enabled(_ e: AXUIElement) -> Bool? { (attr(e, "AXEnabled") as? NSNumber)?.boolValue }
 
 struct El {
     let ref: AXUIElement
@@ -151,48 +140,53 @@ struct El {
     var focused: Bool?
     var children: [AXUIElement] = []
     var label: String { [title, desc, value].first { !$0.isEmpty } ?? "" }
+    var name: String { ident.isEmpty ? label : ident }
 }
 let loadNames = ["AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXValue", "AXIdentifier",
                  "AXPosition", "AXSize", "AXEnabled", "AXFocused", "AXChildren", "AXHelp"] as CFArray
+/// One round trip for the attributes a walk reads.
 func load(_ e: AXUIElement) -> El {
     var el = El(ref: e)
     var out: CFArray?
-    guard AXUIElementCopyMultipleAttributeValues(e, loadNames, AXCopyMultipleAttributeOptions(rawValue: 0), &out) == .success,
+    let options = AXCopyMultipleAttributeOptions(rawValue: 0)
+    guard AXUIElementCopyMultipleAttributeValues(e, loadNames, options, &out) == .success,
           let arr = out as? [Any] else { return el }
     func ok(_ i: Int) -> CFTypeRef? {
         let v = arr[i] as CFTypeRef
         if CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .axError { return nil }
         return v
     }
-    func s(_ i: Int) -> String {
-        guard let v = ok(i) else { return "" }
-        if let x = v as? String { return x }
-        if let x = v as? NSNumber { return x.stringValue }
-        return ""
-    }
-    el.role = s(0); el.sub = s(1); el.title = s(2); el.desc = s(3); el.value = s(4); el.ident = s(5)
+    func s(_ i: Int) -> String { (ok(i) as? String) ?? (ok(i) as? NSNumber)?.stringValue ?? "" }
+    el.role = s(0); el.sub = s(1); el.title = s(2); el.desc = s(3); el.value = s(4); el.ident = s(5); el.help = s(11)
     if let p = pointOf(ok(6)), let sz = sizeOf(ok(7)) { el.frame = CGRect(origin: p, size: sz) }
     el.enabled = (ok(8) as? NSNumber)?.boolValue
     el.focused = (ok(9) as? NSNumber)?.boolValue
     el.children = (ok(10) as? [AXUIElement]) ?? []
-    el.help = s(11)
     return el
 }
 
+/// Depth first, at most 20,000 elements; `visit` returning false skips the element's children.
 func walk(_ root: AXUIElement, maxDepth: Int = 40, _ visit: (El, [Int], Int) -> Bool) {
     var count = 0
     func rec(_ e: AXUIElement, _ path: [Int], _ depth: Int) {
         count += 1
         if count > 20000 { return }
         let el = load(e)
-        if !visit(el, path, depth) { return }
-        if depth >= maxDepth { return }
+        guard visit(el, path, depth), depth < maxDepth else { return }
         for (i, c) in el.children.enumerated() { rec(c, path + [i], depth + 1) }
     }
     rec(root, [], 0)
 }
+func first(in root: AXUIElement, maxDepth: Int = 40, _ match: (El) -> Bool) -> El? {
+    var found: El?
+    walk(root, maxDepth: maxDepth) { el, _, _ in
+        if found == nil, match(el) { found = el }
+        return found == nil
+    }
+    return found
+}
 
-// MARK: - target app
+// MARK: - the app and its windows
 
 func targetApp() -> NSRunningApplication? {
     NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
@@ -202,41 +196,53 @@ func needApp() -> NSRunningApplication {
     return a
 }
 func appEl() -> AXUIElement { axApp(needApp().processIdentifier) }
-
 func axWindows() -> [AXUIElement] { attrEls(appEl(), "AXWindows") }
 
 func mainWindow() -> AXUIElement {
     let a = appEl()
     for n in ["AXMainWindow", "AXFocusedWindow"] {
-        if let w = attr(a, n), CFGetTypeID(w) == AXUIElementGetTypeID() {
-            let e = w as! AXUIElement
-            if frameOf(e) != nil { return e }
+        if let w = attr(a, n), CFGetTypeID(w) == AXUIElementGetTypeID(), frameOf(w as! AXUIElement) != nil {
+            return w as! AXUIElement
         }
     }
     if let w = attrEls(a, "AXWindows").first { return w }
     fail("\(bundleID) has no window")
+}
+func windowList(_ options: CGWindowListOption) -> [[String: Any]] {
+    CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+}
+func bounds(_ w: [String: Any]) -> CGRect {
+    let b = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+    return CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
 }
 func windowID(_ w: AXUIElement) -> CGWindowID? {
     var id: CGWindowID = 0
     if _AXUIElementGetWindow(w, &id) == .success && id != 0 { return id }
     // 27.2: the private call can fail for a background app; the app's largest normal window by pid instead.
     let pid = needApp().processIdentifier
-    let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
-    let mine = list.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
-    func area(_ w: [String: Any]) -> CGFloat {
-        guard let b = w[kCGWindowBounds as String] as? [String: CGFloat] else { return 0 }
-        return (b["Width"] ?? 0) * (b["Height"] ?? 0)
+    let mine = windowList([.optionAll]).filter {
+        ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
     }
-    return (mine.max { area($0) < area($1) }?[kCGWindowNumber as String] as? NSNumber).map { CGWindowID($0.uint32Value) }
+    let largest = mine.max { bounds($0).width * bounds($0).height < bounds($1).width * bounds($1).height }
+    return (largest?[kCGWindowNumber as String] as? NSNumber).map { CGWindowID($0.uint32Value) }
 }
-func pickWindow(_ title: String?) -> AXUIElement {
-    guard let t = title else { return mainWindow() }
-    for w in axWindows() where (attrStr(w, "AXTitle") ?? "").localizedCaseInsensitiveContains(t) { return w }
-    fail("no window with title containing '\(t)'")
+func pickWindow(_ named: String?) -> AXUIElement {
+    guard let t = named else { return mainWindow() }
+    guard let w = axWindows().first(where: { title($0).localizedCaseInsensitiveContains(t) }) else {
+        fail("no window with title containing '\(t)'")
+    }
+    return w
+}
+/// The windows searched: `--all-windows`, or the one `--window` names, else the main one.
+func takeRoots() -> [AXUIElement] {
+    let all = takeFlag("--all-windows")
+    let title = takeOpt("--window")
+    return all ? axWindows() : [pickWindow(title)]
 }
 func rel(_ r: CGRect, _ win: CGRect) -> [Double] {
-    [r.origin.x - win.origin.x, r.origin.y - win.origin.y, r.width, r.height].map { (v: CGFloat) -> Double in (Double(v) * 10).rounded() / 10 }
+    [r.minX - win.minX, r.minY - win.minY, r.width, r.height].map { (Double($0) * 10).rounded() / 10 }
 }
+func frameJSON(_ f: CGRect) -> [CGFloat] { [f.origin.x, f.origin.y, f.width, f.height] }
 
 func front() {
     if BG { return }
@@ -255,20 +261,17 @@ func front() {
 }
 
 func windowInfo(_ w: AXUIElement, main: Bool) -> [String: Any] {
-    var d: [String: Any] = ["main": main, "title": attrStr(w, "AXTitle") ?? ""]
+    var d: [String: Any] = ["main": main, "title": title(w), "role": attrStr(w, "AXRole") ?? "",
+                            "subrole": attrStr(w, "AXSubrole") ?? ""]
     if let id = windowID(w) { d["id"] = id }
-    if let f = frameOf(w) { d["frame"] = [f.origin.x, f.origin.y, f.width, f.height] }
+    if let f = frameOf(w) { d["frame"] = frameJSON(f) }
     if let s = sizeOf(attr(w, "AXMinSize")) { d["minSize"] = [s.width, s.height] }
-    d["role"] = attrStr(w, "AXRole") ?? ""
-    d["subrole"] = attrStr(w, "AXSubrole") ?? ""
     return d
 }
-func windowList() -> [[String: Any]] {
+func windows() -> [[String: Any]] {
     let m = mainWindow()
     let mid = windowID(m)
-    var out = [windowInfo(m, main: true)]
-    for w in axWindows() where windowID(w) != mid { out.append(windowInfo(w, main: false)) }
-    return out
+    return [windowInfo(m, main: true)] + axWindows().filter { windowID($0) != mid }.map { windowInfo($0, main: false) }
 }
 
 // MARK: - events
@@ -285,13 +288,11 @@ let keyCodes: [String: CGKeyCode] = [
     "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100, "f9": 101, "f10": 109,
     "f11": 103, "f12": 111,
 ]
-func parseChord(_ s: String) -> (CGKeyCode, CGEventFlags) {
+let fnKeys: Set = ["left", "right", "up", "down", "home", "end", "pageup", "pagedown", "forwarddelete"]
+
+func modifiers(_ names: [String]) -> CGEventFlags {
     var flags: CGEventFlags = []
-    var parts = s.lowercased().components(separatedBy: "+")
-    // a trailing "+" key ("cmd++")
-    var key = parts.removeLast()
-    if key.isEmpty { key = "="; flags.insert(.maskShift) }  // "cmd++" -> cmd+shift+=
-    for p in parts {
+    for p in names {
         switch p {
         case "cmd", "command", "meta": flags.insert(.maskCommand)
         case "shift": flags.insert(.maskShift)
@@ -302,14 +303,16 @@ func parseChord(_ s: String) -> (CGKeyCode, CGEventFlags) {
         default: fail("unknown modifier '\(p)'")
         }
     }
-    guard let code = keyCodes[key] else { fail("unknown key '\(key)'") }
-    if ["left", "right", "up", "down", "home", "end", "pageup", "pagedown", "forwarddelete"].contains(key) {
-        flags.insert(.maskSecondaryFn)
-    }
-    return (code, flags)
+    return flags
 }
 func pressKey(_ chord: String) {
-    let (code, flags) = parseChord(chord)
+    var parts = chord.lowercased().components(separatedBy: "+")
+    var key = parts.removeLast()
+    var flags = modifiers(parts)
+    // "cmd++" is cmd+shift+=.
+    if key.isEmpty { key = "="; flags.insert(.maskShift) }
+    guard let code = keyCodes[key] else { fail("unknown key '\(key)'") }
+    if fnKeys.contains(key) { flags.insert(.maskSecondaryFn) }
     let src = CGEventSource(stateID: .hidSystemState)
     for down in [true, false] {
         let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
@@ -333,57 +336,37 @@ func typeText(_ t: String) {
     }
 }
 
-func modFlags(_ s: String?) -> CGEventFlags {
-    var f: CGEventFlags = []
-    for p in (s ?? "").lowercased().split(separator: ",") {
-        switch p {
-        case "cmd", "command": f.insert(.maskCommand)
-        case "shift": f.insert(.maskShift)
-        case "alt", "opt", "option": f.insert(.maskAlternate)
-        case "ctrl", "control": f.insert(.maskControl)
-        default: fail("unknown modifier '\(p)'")
-        }
-    }
-    return f
-}
-/// Safety: never deliver a click to anything but the target app (e.g. a system permission prompt on top of it).
+/// Never a click on anything but the target app, such as a system prompt over it.
 func guardPoint(_ p: CGPoint) {
     let pid = needApp().processIdentifier
-    guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return }
-    for w in list {  // front to back
-        guard let b = w[kCGWindowBounds as String] as? [String: CGFloat],
-              CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0).contains(p) else { continue }
+    for w in windowList([.optionOnScreenOnly]) where bounds(w).contains(p) {  // front to back
         if (w[kCGWindowAlpha as String] as? Double ?? 1) < 0.05 { continue }
         let owner = w[kCGWindowOwnerName as String] as? String ?? ""
-        let opid = w[kCGWindowOwnerPID as String] as? Int32 ?? 0
-        if opid == pid { return }
-        if owner == "Window Server" || owner == "Dock" { continue }
-        if (w[kCGWindowLayer as String] as? Int ?? 0) < 0 { continue }
-        fail("refusing to click at \(Int(p.x)),\(Int(p.y)): the topmost window there belongs to '\(owner)', not the target app")
+        if (w[kCGWindowOwnerPID as String] as? Int32 ?? 0) == pid { return }
+        if owner == "Window Server" || owner == "Dock" || (w[kCGWindowLayer as String] as? Int ?? 0) < 0 { continue }
+        fail("refusing to click at \(Int(p.x)),\(Int(p.y)): the topmost window there belongs to '\(owner)', "
+            + "not the target app")
     }
 }
 func noEvents(_ what: String) {
     if BG { fail("background mode (QA_BG=1): \(what) posts real events; use press, set, caret, insert") }
 }
 func guardFrontmost() {
-    let pid = needApp().processIdentifier
-    if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
-        fail("refusing to send keys: the target app is not frontmost (\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")
+    let frontmost = NSWorkspace.shared.frontmostApplication
+    if frontmost?.processIdentifier != needApp().processIdentifier {
+        fail("refusing to send keys: the target app is not frontmost (\(frontmost?.localizedName ?? "?"))")
     }
 }
-func moveMouse(_ p: CGPoint) {
-    post(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
+func mouse(_ type: CGEventType, _ p: CGPoint, _ button: CGMouseButton = .left) -> CGEvent? {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button)
 }
 func clickAt(_ p: CGPoint, right: Bool = false, count: Int = 1, flags: CGEventFlags = []) {
-    let down: CGEventType = right ? .rightMouseDown : .leftMouseDown
-    let up: CGEventType = right ? .rightMouseUp : .leftMouseUp
-    let btn: CGMouseButton = right ? .right : .left
     guardPoint(p)
-    moveMouse(p)
+    post(mouse(.mouseMoved, p))
     sleepS(0.05)
     for n in 1...count {
-        for t in [down, up] {
-            let e = CGEvent(mouseEventSource: nil, mouseType: t, mouseCursorPosition: p, mouseButton: btn)
+        for t in right ? [CGEventType.rightMouseDown, .rightMouseUp] : [.leftMouseDown, .leftMouseUp] {
+            let e = mouse(t, p, right ? .right : .left)
             e?.setIntegerValueField(.mouseEventClickState, value: Int64(n))
             e?.flags = flags
             post(e)
@@ -394,60 +377,62 @@ func clickAt(_ p: CGPoint, right: Bool = false, count: Int = 1, flags: CGEventFl
 
 func nums(_ n: Int, _ usage: String) -> [Double] {
     guard args.count >= n else { fail("usage: \(usage)") }
-    return (0..<n).map { (i: Int) -> Double in
-        guard let v = Double(args[i]) else { fail("not a number: \(args[i])") }
+    return args.prefix(n).map { a -> Double in
+        guard let v = Double(a) else { fail("not a number: \(a)") }
         return v
     }
 }
-func globalPoint(_ x: Double, _ y: Double, screen: Bool) -> CGPoint {
-    if screen { return CGPoint(x: x, y: y) }
-    let f = frameOf(mainWindow()) ?? .zero
-    return CGPoint(x: f.origin.x + x, y: f.origin.y + y)
+/// A point from the window's top-left, or the screen's with `--screen`.
+func point(_ x: Double, _ y: Double, screen: Bool) -> CGPoint {
+    let origin = screen ? .zero : (frameOf(mainWindow()) ?? .zero).origin
+    return CGPoint(x: origin.x + x, y: origin.y + y)
 }
 
 // MARK: - menus
 
-func menuBar() -> AXUIElement {
+func menuBarItems() -> [AXUIElement] {
     guard let m = attr(appEl(), "AXMenuBar") else { fail("no menu bar (is the app frontmost?)") }
-    return m as! AXUIElement
+    return attrEls(m as! AXUIElement, "AXChildren")
+}
+func topMenu(_ name: String) -> AXUIElement {
+    guard let item = menuBarItems().first(where: { title($0).lowercased() == name.lowercased() }) else {
+        fail("no menu '\(name)'")
+    }
+    return item
 }
 func menuItemInfo(_ e: AXUIElement, depth: Int) -> [String: Any] {
-    var d: [String: Any] = [:]
-    let role = attrStr(e, "AXRole") ?? ""
-    d["title"] = attrStr(e, "AXTitle") ?? ""
-    d["enabled"] = (attr(e, "AXEnabled") as? NSNumber)?.boolValue ?? true
+    var d: [String: Any] = ["title": title(e), "enabled": enabled(e) ?? true]
     if let m = attrStr(e, "AXMenuItemMarkChar"), !m.isEmpty { d["checked"] = m }
     if let c = attrStr(e, "AXMenuItemCmdChar"), !c.isEmpty {
+        // Accessibility's modifier bits: 1 shift, 2 option, 4 control, 8 no command.
         let mods = (attr(e, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue ?? 0
-        var s = ""
-        // AX modifier bits: 1 shift, 2 option, 4 control, 8 = no command
-        if mods & 4 != 0 { s += "ctrl+" }
-        if mods & 2 != 0 { s += "opt+" }
-        if mods & 1 != 0 { s += "shift+" }
-        if mods & 8 == 0 { s += "cmd+" }
-        d["shortcut"] = s + c.lowercased()
+        let names = [(4, "ctrl+"), (2, "opt+"), (1, "shift+")].filter { mods & $0.0 != 0 }.map(\.1)
+        d["shortcut"] = names.joined() + (mods & 8 == 0 ? "cmd+" : "") + c.lowercased()
     }
-    if role == "AXMenuBarItem" || role == "AXMenuItem" {
-        if depth < 3, let menu = attrEls(e, "AXChildren").first {
-            d["items"] = attrEls(menu, "AXChildren").map { c in
-                (attrStr(c, "AXTitle") ?? "").isEmpty && (attrStr(c, "AXRole") ?? "") == "AXMenuItem"
-                    ? ["title": "-", "separator": true] : menuItemInfo(c, depth: depth + 1)
-            }
+    let role = attrStr(e, "AXRole") ?? ""
+    if role == "AXMenuBarItem" || role == "AXMenuItem", depth < 3, let menu = attrEls(e, "AXChildren").first {
+        d["items"] = attrEls(menu, "AXChildren").map { c in
+            title(c).isEmpty && attrStr(c, "AXRole") == "AXMenuItem"
+                ? ["title": "-", "separator": true] : menuItemInfo(c, depth: depth + 1)
         }
     }
     return d
 }
-func findMenuItem(in container: AXUIElement, _ title: String) -> AXUIElement? {
-    let items = attrEls(container, "AXChildren")
-    let t = title.lowercased()
-    func norm(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "").trimmingCharacters(in: .whitespaces) }
-    return items.first { (attrStr($0, "AXTitle") ?? "").lowercased() == t }
-        ?? items.first { norm(attrStr($0, "AXTitle") ?? "") == norm(title) }
-        ?? items.first { (attrStr($0, "AXTitle") ?? "").lowercased().hasPrefix(t) }
+/// By exact title, then without an ellipsis, then by prefix, ignoring case.
+func findMenuItem(in menu: AXUIElement, _ name: String) -> AXUIElement? {
+    let items = attrEls(menu, "AXChildren")
+    func norm(_ s: String) -> String {
+        s.lowercased().replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+    let t = name.lowercased()
+    return items.first { title($0).lowercased() == t }
+        ?? items.first { norm(title($0)) == norm(name) }
+        ?? items.first { title($0).lowercased().hasPrefix(t) }
 }
-/// AXPress can block while a menu is tracking; run it off-thread with a timeout.
 /// A failed `menu` must not leave the menu open under the next command.
 func closeMenus() { pressKey("escape"); sleepS(0.1); pressKey("escape"); sleepS(0.2) }
+/// AXPress can block while a menu tracks, so it runs off this thread with a timeout.
 func pressAsync(_ e: AXUIElement, timeout: Double = 3) {
     let sem = DispatchSemaphore(value: 0)
     DispatchQueue.global().async { AXUIElementPerformAction(e, kAXPressAction as CFString); sem.signal() }
@@ -456,23 +441,19 @@ func pressAsync(_ e: AXUIElement, timeout: Double = 3) {
 
 // MARK: - element search
 
-func allRoots(_ allWindows: Bool, _ title: String?) -> [AXUIElement] {
-    if allWindows { return axWindows() }
-    return [pickWindow(title)]
-}
 struct Hit { let el: El; let path: [Int]; let rank: Int; let win: CGRect }
+/// Rank 4 an identifier, 3 an exact title, description, value or identifier, 2 a substring of one; ignoring case.
 func search(_ text: String, roots: [AXUIElement], role: String? = nil) -> [Hit] {
     var hits: [Hit] = []
     let t = text.lowercased()
     for root in roots {
         let wf = frameOf(root) ?? .zero
         walk(root) { el, path, _ in
-            if let r = role, el.role != r { return true }
-            let fields = [el.title, el.desc, el.value, el.ident]
-            var rank = 0
-            if el.ident.lowercased() == t { rank = 4 }
-            else if fields.contains(where: { $0.lowercased() == t }) { rank = 3 }
-            else if fields.contains(where: { $0.lowercased().contains(t) }) { rank = 2 }
+            if let role, el.role != role { return true }
+            let fields = [el.title, el.desc, el.value, el.ident].map { $0.lowercased() }
+            let rank = el.ident.lowercased() == t ? 4
+                : fields.contains(t) ? 3
+                : fields.contains { $0.contains(t) } ? 2 : 0
             if rank > 0 { hits.append(Hit(el: el, path: path, rank: rank, win: wf)) }
             return true
         }
@@ -481,60 +462,58 @@ func search(_ text: String, roots: [AXUIElement], role: String? = nil) -> [Hit] 
 }
 func hitJSON(_ h: Hit, _ i: Int? = nil) -> [String: Any] {
     var d: [String: Any] = ["role": h.el.role, "path": h.path.map(String.init).joined(separator: "."), "rank": h.rank]
+    let fields = ["subrole": h.el.sub, "title": h.el.title, "description": h.el.desc,
+                  "value": String(h.el.value.prefix(200)), "identifier": h.el.ident]
+    for (k, v) in fields where !v.isEmpty { d[k] = v }
     if let i { d["index"] = i }
-    if !h.el.sub.isEmpty { d["subrole"] = h.el.sub }
-    if !h.el.title.isEmpty { d["title"] = h.el.title }
-    if !h.el.desc.isEmpty { d["description"] = h.el.desc }
-    if !h.el.value.isEmpty { d["value"] = String(h.el.value.prefix(200)) }
-    if !h.el.ident.isEmpty { d["identifier"] = h.el.ident }
     if let f = h.el.frame { d["frame"] = rel(f, h.win) }
     if let e = h.el.enabled { d["enabled"] = e }
     return d
 }
+/// The one best match, or `--index n` of the best; several are an error.
 func bestHit(_ text: String) -> Hit {
-    let all = takeFlag("--all-windows")
-    let roots = allRoots(all, takeOpt("--window"))
+    let roots = takeRoots()
     let role = takeOpt("--role")
-    let idx = takeOpt("--index").flatMap { Int($0) }
-    var hits = search(text, roots: roots, role: role)
-    if hits.isEmpty { fail("no element matches '\(text)'") }
-    let top = hits.map(\.rank).max()!
-    hits = hits.filter { $0.rank == top }
-    if let idx {
-        guard idx < hits.count else { fail("--index \(idx) out of range (\(hits.count) matches)") }
-        return hits[idx]
+    let index = takeOpt("--index").flatMap { Int($0) }
+    let hits = search(text, roots: roots, role: role)
+    guard let top = hits.map(\.rank).max() else { fail("no element matches '\(text)'") }
+    let best = hits.filter { $0.rank == top }
+    if let index {
+        guard index < best.count else { fail("--index \(index) out of range (\(best.count) matches)") }
+        return best[index]
     }
-    if hits.count > 1 {
-        let desc = hits.enumerated().map { "  [\($0.offset)] \($0.element.el.role) '\($0.element.el.label)' id=\($0.element.el.ident) @\($0.element.path.map(String.init).joined(separator: "."))" }.joined(separator: "\n")
-        fail("'\(text)' is ambiguous (\(hits.count) matches); use --index n or --role:\n\(desc)")
+    if best.count > 1 {
+        let list = best.enumerated().map {
+            "  [\($0.offset)] \($0.element.el.role) '\($0.element.el.label)' id=\($0.element.el.ident) "
+                + "@\($0.element.path.map(String.init).joined(separator: "."))"
+        }
+        fail("'\(text)' is ambiguous (\(best.count) matches); use --index n or --role:\n"
+            + list.joined(separator: "\n"))
     }
-    return hits[0]
+    return best[0]
 }
 
-// MARK: - launch
+// MARK: - commands
 
 func launch() {
     let dataDir = takeOpt("--data") ?? "\(SCR)/qa-library"
     let dark = takeFlag("--dark"), light = takeFlag("--light")
     var extra: [String] = []
-    if let i = args.firstIndex(of: "--") { extra = Array(args[(i + 1)...]); args.removeSubrange(i...) }
-    if targetApp() == nil || targetApp()!.isTerminated {
-        var oa = (BG ? ["-g"] : []) + ["-n", "--env", "TEXLOCAL_DATA=\(dataDir)"]
-        // QA_ENV="K=V;K2=V2": more environment for the app, e.g. TEXLOCAL_TEXPRESSO for a scratch engine.
-        for pair in (env["QA_ENV"] ?? "").split(separator: ";") where pair.contains("=") { oa += ["--env", String(pair)] }
-        oa += [appPath, "--args"]
+    if let i = args.firstIndex(of: "--") { extra = Array(args[(i + 1)...]) }
+    if targetApp() == nil {
+        var envs = ["TEXLOCAL_DATA=\(dataDir)"]
+        // Launch arguments alone don't change the appearance on macOS 27: a dylib injected into this
+        // process alone sets NSApp.appearance.
+        let dylib = "\(SCR)/qa/appearance.dylib"
+        if dark || light, FileManager.default.fileExists(atPath: dylib) {
+            envs = ["QA_APPEARANCE=\(dark ? "dark" : "light")", "DYLD_INSERT_LIBRARIES=\(dylib)"] + envs
+        }
+        // QA_ENV="K=V;K2=V2": more environment, such as a scratch TEXLOCAL_TEXPRESSO.
+        envs += (env["QA_ENV"] ?? "").split(separator: ";").filter { $0.contains("=") }.map(String.init)
+        var oa = (BG ? ["-g"] : []) + ["-n"] + envs.flatMap { ["--env", $0] } + [appPath, "--args"]
         if light { oa += ["-NSRequiresAquaSystemAppearance", "YES"] }
         if dark { oa += ["-AppleInterfaceStyle", "Dark"] }
-        // Launch arguments alone do not change the effective appearance on macOS 27; a tiny dylib
-        // (qa/appearance.dylib, injected into this one process only) sets NSApp.appearance.
-        if dark || light {
-            let dylib = "\(SCR)/qa/appearance.dylib"
-            if FileManager.default.fileExists(atPath: dylib) {
-                oa = (BG ? ["-g"] : []) + ["-n", "--env", "QA_APPEARANCE=\(dark ? "dark" : "light")", "--env", "DYLD_INSERT_LIBRARIES=\(dylib)"] + Array(oa.drop { $0 == "-g" || $0 == "-n" })
-            }
-        }
-        oa += extra
-        if run("/usr/bin/open", oa) != 0 { fail("open failed for \(appPath)") }
+        if run("/usr/bin/open", oa + extra) != 0 { fail("open failed for \(appPath)") }
     }
     for _ in 0..<150 {
         if let a = targetApp(), !attrEls(axApp(a.processIdentifier), "AXWindows").isEmpty { break }
@@ -543,32 +522,28 @@ func launch() {
     guard targetApp() != nil else { fail("app did not start") }
     sleepS(0.5)
     front()
-    emit(["pid": Int(needApp().processIdentifier), "windows": windowList()])
+    emit(["pid": Int(needApp().processIdentifier), "windows": windows()])
 }
-
-// MARK: - commands
 
 func printTree() {
     let depthMax = takeOpt("--depth").flatMap { Int($0) } ?? 40
-    let all = takeFlag("--all-windows")
-    let roots = allRoots(all, takeOpt("--window"))
+    let roots = takeRoots()
     let role = takeOpt("--role")
     let help = takeFlag("--help-tags")
     for root in roots {
         let wf = frameOf(root) ?? .zero
-        walk(root, maxDepth: depthMax) { el, path, depth in
-            if role == nil || el.role == role {
-                var s = String(repeating: "  ", count: depth) + el.role
-                if !el.sub.isEmpty { s += "/" + el.sub }
-                let l = el.label.replacingOccurrences(of: "\n", with: "⏎")
-                if !l.isEmpty { s += " \"" + (l.count > 60 ? String(l.prefix(60)) + "…" : l) + "\"" }
-                if !el.ident.isEmpty { s += " id=" + el.ident }
-                if let f = el.frame { s += " " + rel(f, wf).map { String(format: "%g", $0) }.joined(separator: ",") }
-                if el.enabled == false { s += " disabled" }
-                if el.focused == true { s += " focused" }
-                if help, !el.help.isEmpty { s += " help=\"" + el.help.replacingOccurrences(of: "\n", with: "⏎") + "\"" }
-                print(s)
-            }
+        walk(root, maxDepth: depthMax) { el, _, depth in
+            guard role == nil || el.role == role else { return true }
+            var s = String(repeating: "  ", count: depth) + el.role
+            if !el.sub.isEmpty { s += "/" + el.sub }
+            let l = el.label.replacingOccurrences(of: "\n", with: "⏎")
+            if !l.isEmpty { s += " \"" + (l.count > 60 ? String(l.prefix(60)) + "…" : l) + "\"" }
+            if !el.ident.isEmpty { s += " id=" + el.ident }
+            if let f = el.frame { s += " " + rel(f, wf).map { String(format: "%g", $0) }.joined(separator: ",") }
+            if el.enabled == false { s += " disabled" }
+            if el.focused == true { s += " focused" }
+            if help, !el.help.isEmpty { s += " help=\"" + el.help.replacingOccurrences(of: "\n", with: "⏎") + "\"" }
+            print(s)
             return true
         }
     }
@@ -577,48 +552,39 @@ func printTree() {
 func toolbarJSON() {
     let w = mainWindow()
     let wf = frameOf(w) ?? .zero
-    var tb: El?
-    walk(w, maxDepth: 6) { el, _, _ in
-        if tb == nil && el.role == "AXToolbar" { tb = el }
-        return tb == nil
+    guard let tb = first(in: w, maxDepth: 6, { $0.role == "AXToolbar" }) else {
+        fail("no AXToolbar in the main window")
     }
-    guard let tb else { fail("no AXToolbar in the main window") }
-    let tf = tb.frame
-    var items: [[String: Any]] = []
-    var overflow: [String: Any]?
-    func add(_ el: El, depth: Int) {
-        let name = !el.ident.isEmpty ? el.ident : el.label
-        var d: [String: Any] = ["role": el.role, "name": name, "description": el.desc, "title": el.title, "identifier": el.ident]
+    func item(_ el: El) -> [String: Any] {
+        var d: [String: Any] = ["role": el.role, "name": el.name, "description": el.desc, "title": el.title]
         if let f = el.frame { d["frame"] = rel(f, wf) }
         if let e = el.enabled { d["enabled"] = e }
-        let low = (el.ident + el.desc + el.title).lowercased()
-        let isOverflowBtn = low.contains("overflow") || low.contains("more") || el.ident == "NSToolbarOverflowItem"
-        var inOverflow = false
-        if let f = el.frame, let tf { inOverflow = f.width == 0 || f.height == 0 || !tf.insetBy(dx: -2, dy: -2).intersects(f) }
-        d["overflowButton"] = isOverflowBtn
-        d["inOverflow"] = inOverflow
-        if isOverflowBtn { overflow = d } else { items.append(d) }
+        return d
     }
-    // Toolbar items are children; groups (AXGroup) hold their buttons.
-    for c in tb.children {
-        let el = load(c)
+    var items: [[String: Any]] = []
+    var overflow: [String: Any]?
+    for el in tb.children.map(load) {
+        // A group holds its buttons.
         if el.role == "AXGroup" || el.role == "AXToolbar" {
-            let sub = el.children.map(load)
-            var g: [String: Any] = ["role": el.role, "name": el.ident.isEmpty ? el.label : el.ident, "group": true]
+            var g: [String: Any] = ["role": el.role, "name": el.name, "group": true]
+            g["children"] = el.children.map { item(load($0)) }
             if let f = el.frame { g["frame"] = rel(f, wf) }
-            g["children"] = sub.map { s -> [String: Any] in
-                var x: [String: Any] = ["role": s.role, "name": s.ident.isEmpty ? s.label : s.ident, "description": s.desc, "title": s.title]
-                if let f = s.frame { x["frame"] = rel(f, wf) }
-                if let e = s.enabled { x["enabled"] = e }
-                return x
-            }
             items.append(g)
-        } else { add(el, depth: 0) }
+            continue
+        }
+        var d = item(el)
+        d["identifier"] = el.ident
+        let low = (el.ident + el.desc + el.title).lowercased()
+        let isOverflow = low.contains("overflow") || low.contains("more") || el.ident == "NSToolbarOverflowItem"
+        d["overflowButton"] = isOverflow
+        if let f = el.frame, let tf = tb.frame {
+            d["inOverflow"] = f.width == 0 || f.height == 0 || !tf.insetBy(dx: -2, dy: -2).intersects(f)
+        } else { d["inOverflow"] = false }
+        if isOverflow { overflow = d } else { items.append(d) }
     }
-    var out: [String: Any] = ["items": items]
-    if let tf { out["toolbarFrame"] = rel(tf, wf) }
-    out["window"] = [wf.width, wf.height]
-    if let overflow { out["overflow"] = overflow; out["hasOverflow"] = true } else { out["hasOverflow"] = false }
+    var out: [String: Any] = ["items": items, "window": [wf.width, wf.height], "hasOverflow": overflow != nil]
+    if let tf = tb.frame { out["toolbarFrame"] = rel(tf, wf) }
+    if let overflow { out["overflow"] = overflow }
     emit(out)
 }
 
@@ -626,22 +592,61 @@ func shotWindow(_ out: String, title: String?, noFront: Bool) {
     checkScreen()
     if !noFront { front(); sleepS(0.4) }
     let w = pickWindow(title)
-    // A window whose foot runs past the screen's edge is captured short there: move it onto the visible area first
-    // (AX frames are top-left, the visible frame bottom-left).
+    // A window past the screen's edge is captured short: move it onto the visible area first
+    // (Accessibility's frames are top-left, the visible frame bottom-left).
     if let f = frameOf(w), let screen = NSScreen.screens.first {
-        let visible = screen.visibleFrame, top = screen.frame.maxY - visible.maxY, foot = screen.frame.maxY - visible.minY
+        let visible = screen.visibleFrame
+        let top = screen.frame.maxY - visible.maxY, foot = screen.frame.maxY - visible.minY
         if f.maxY > foot || f.minY < top || f.maxX > visible.maxX || f.minX < visible.minX {
-            setPoint(w, "AXPosition", CGPoint(x: max(visible.minX, min(f.minX, visible.maxX - f.width)),
-                                              y: max(top, min(f.minY, foot - f.height))))
+            setAX(w, "AXPosition", .cgPoint, CGPoint(x: max(visible.minX, min(f.minX, visible.maxX - f.width)),
+                                                     y: max(top, min(f.minY, foot - f.height))))
             sleepS(0.4)
-            if let g = frameOf(w), g.maxY > screen.frame.maxY { FileHandle.standardError.write("qa: window taller than the screen, captured short\n".data(using: .utf8)!) }
+            if let g = frameOf(w), g.maxY > screen.frame.maxY {
+                FileHandle.standardError.write(Data("qa: window taller than the screen, captured short\n".utf8))
+            }
         }
     }
     guard let id = windowID(w) else { fail("cannot get CGWindowID") }
-    if run("/usr/sbin/screencapture", ["-x", "-o", "-l", String(id), out]) != 0 || !FileManager.default.fileExists(atPath: out) {
+    let status = run("/usr/sbin/screencapture", ["-x", "-o", "-l", String(id), out])
+    if status != 0 || !FileManager.default.fileExists(atPath: out) {
         fail("screencapture failed for window \(id)")
     }
     emit(["file": out, "windowID": id])
+}
+
+/// The source editor through Accessibility alone, for a window that isn't frontmost.
+func editor() {
+    guard let area = first(in: pickWindow(nil), { $0.role == "AXTextArea" })?.ref else {
+        fail("no text area in the window")
+    }
+    switch cmd {
+    case "text":
+        emit(["value": attrStr(area, "AXValue") ?? ""])
+    case "insert":
+        guard let t = args.first else { fail("usage: qa insert <text>") }
+        let r = AXUIElementSetAttributeValue(area, "AXSelectedText" as CFString, t as CFString)
+        if r != .success { fail("cannot insert (\(r.rawValue))") }
+        emit(["inserted": t])
+    default:
+        let start = takeFlag("--start")
+        guard let n = args.first.flatMap({ Int($0) }), n >= 1 else { fail("usage: qa caret <line> [--start]") }
+        // The file's lines, not the wrapped ones AXRangeForLine counts.
+        let text = (attrStr(area, "AXValue") ?? "") as NSString
+        var line = NSRange(location: 0, length: 0), at = 0
+        for _ in 1...n {
+            guard at <= text.length else { fail("no line \(n)") }
+            line = text.lineRange(for: NSRange(location: at, length: 0))
+            at = line.location + max(line.length, 1)
+        }
+        var end = line.location + line.length
+        if end > line.location, text.character(at: end - 1) == 10 { end -= 1 }
+        var caret = CFRange(location: start ? line.location : end, length: 0)
+        guard let v = AXValueCreate(.cfRange, &caret),
+              AXUIElementSetAttributeValue(area, "AXSelectedTextRange" as CFString, v) == .success else {
+            fail("cannot move the caret")
+        }
+        emit(["caret": caret.location])
+    }
 }
 
 switch cmd {
@@ -656,52 +661,45 @@ case "quit":
     checkAX()
     guard let app = targetApp() else { print("{\"running\": false}"); exit(0) }
     front()
-    var done = false
-    if let m = attr(axApp(app.processIdentifier), "AXMenuBar") {
-        // first menu after the Apple menu is the app menu; its "Quit …" item
-        let bar = m as! AXUIElement
-        let tops = attrEls(bar, "AXChildren")
-        if tops.count > 1, let menu = attrEls(tops[1], "AXChildren").first {
-            if let q = attrEls(menu, "AXChildren").first(where: { (attrStr($0, "AXTitle") ?? "").hasPrefix("Quit") }) {
-                pressAsync(q); done = true
-            }
+    // The app menu's Quit item; the app menu follows the Apple menu.
+    var pressed = false
+    if let bar = attr(axApp(app.processIdentifier), "AXMenuBar") {
+        let tops = attrEls(bar as! AXUIElement, "AXChildren")
+        if tops.count > 1, let menu = attrEls(tops[1], "AXChildren").first,
+           let q = attrEls(menu, "AXChildren").first(where: { title($0).hasPrefix("Quit") }) {
+            pressAsync(q); pressed = true
         }
     }
-    for _ in 0..<50 { if targetApp() == nil { break }; sleepS(0.1) }
-    if let a = targetApp() {
-        // a save sheet or similar may be blocking; fall back
-        if !done { a.terminate() }
-        for _ in 0..<30 { if targetApp() == nil { break }; sleepS(0.1) }
-        if let a2 = targetApp() { a2.forceTerminate(); sleepS(0.3) }
-        emit(["running": false, "forced": true])
-    } else { emit(["running": false]) }
+    for _ in 0..<50 where targetApp() != nil { sleepS(0.1) }
+    guard let a = targetApp() else { emit(["running": false]); break }
+    // A sheet may be in the way.
+    if !pressed { a.terminate() }
+    for _ in 0..<30 where targetApp() != nil { sleepS(0.1) }
+    if let a = targetApp() { a.forceTerminate(); sleepS(0.3) }
+    emit(["running": false, "forced": true])
 
 case "front":
     checkAX(); front(); emit(["frontmost": true])
 
 case "window":
-    checkAX(); emit(windowList())
+    checkAX(); emit(windows())
 
-case "resize":
+case "resize", "move":
     checkAX()
     let wt = takeOpt("--window")
-    let n = nums(2, "qa resize <w> <h> [--window t]")
+    let n = nums(2, cmd == "resize" ? "qa resize <w> <h> [--window t]" : "qa move <x> <y> [--window t]")
     let w = pickWindow(wt)
-    setSize(w, "AXSize", CGSize(width: n[0], height: n[1]))
+    if cmd == "move" {
+        setAX(w, "AXPosition", .cgPoint, CGPoint(x: n[0], y: n[1]))
+        sleepS(0.3)
+        emit(["frame": frameJSON(frameOf(w)!)])
+        break
+    }
+    setAX(w, "AXSize", .cgSize, CGSize(width: n[0], height: n[1]))
     sleepS(0.4)
     let f = frameOf(w)!
-    emit(["frame": [f.origin.x, f.origin.y, f.width, f.height], "requested": [n[0], n[1]],
-          "clamped": abs(f.width - n[0]) > 1 || abs(f.height - n[1]) > 1])
-
-case "move":
-    checkAX()
-    let wt = takeOpt("--window")
-    let n = nums(2, "qa move <x> <y> [--window t]")
-    let w = pickWindow(wt)
-    setPoint(w, "AXPosition", CGPoint(x: n[0], y: n[1]))
-    sleepS(0.3)
-    let f = frameOf(w)!
-    emit(["frame": [f.origin.x, f.origin.y, f.width, f.height]])
+    let clamped = abs(f.width - n[0]) > 1 || abs(f.height - n[1]) > 1
+    emit(["frame": frameJSON(f), "requested": [n[0], n[1]], "clamped": clamped])
 
 case "shot":
     checkAX()
@@ -712,126 +710,111 @@ case "shot":
 
 case "screen":
     checkScreen()
-    let around = takeFlag("--around")  // crop to the main window plus a 60 pt margin (popovers, menus)
+    // --around: the main window and 60 pt round it, for popovers and menus.
+    let around = takeFlag("--around")
     guard let out = args.first else { fail("usage: qa screen <out.png> [--around]") }
     var sa = ["-x"]
     if around, let f = frameOf(mainWindow()) {
-        let r = f.insetBy(dx: -60, dy: -60).intersection(CGRect(x: 0, y: 0, width: NSScreen.main!.frame.width, height: NSScreen.main!.frame.height))
-        sa += ["-R\(Int(r.minX)),\(Int(r.minY)),\(Int(r.width)),\(Int(r.height))"]
+        let r = f.insetBy(dx: -60, dy: -60).intersection(CGRect(origin: .zero, size: NSScreen.main!.frame.size))
+        sa.append("-R\(Int(r.minX)),\(Int(r.minY)),\(Int(r.width)),\(Int(r.height))")
     }
     if run("/usr/sbin/screencapture", sa + [out]) != 0 { fail("screencapture failed") }
     emit(["file": out])
 
 case "menus":
-    checkAX()
-    front()
-    let bar = menuBar()
-    let tops = attrEls(bar, "AXChildren")
+    checkAX(); front()
     if let t = args.first {
-        guard let item = tops.first(where: { (attrStr($0, "AXTitle") ?? "").lowercased() == t.lowercased() }) else { fail("no menu '\(t)'") }
-        emit(menuItemInfo(item, depth: 0))
+        emit(menuItemInfo(topMenu(t), depth: 0))
     } else {
-        emit(tops.map { menuItemInfo($0, depth: 0) })
+        emit(menuBarItems().map { menuItemInfo($0, depth: 0) })
     }
 
 case "menu":
     checkAX()
-    guard args.count >= 1 else { fail("usage: qa menu <Top> [<Item> [<Subitem>]]") }
+    guard !args.isEmpty else { fail("usage: qa menu <Top> [<Item> [<Subitem>]]") }
     front(); sleepS(0.2)
-    let tops = attrEls(menuBar(), "AXChildren")
-    guard let top = tops.first(where: { (attrStr($0, "AXTitle") ?? "").lowercased() == args[0].lowercased() }) else { fail("no menu '\(args[0])'") }
-    pressAsync(top, timeout: 1.5)
-    var cur = top
+    var cur = topMenu(args[0])
+    pressAsync(cur, timeout: 1.5)
     for name in args.dropFirst() {
         sleepS(0.25)
-        guard let menu = attrEls(cur, "AXChildren").first else { closeMenus(); fail("'\(attrStr(cur, "AXTitle") ?? "")' has no menu") }
+        guard let menu = attrEls(cur, "AXChildren").first else { closeMenus(); fail("'\(title(cur))' has no menu") }
         guard let item = findMenuItem(in: menu, name) else { closeMenus(); fail("no menu item '\(name)'") }
-        if (attr(item, "AXEnabled") as? NSNumber)?.boolValue == false { closeMenus(); fail("menu item '\(name)' is disabled") }
+        if enabled(item) == false { closeMenus(); fail("menu item '\(name)' is disabled") }
         pressAsync(item, timeout: 1.5)
         cur = item
     }
     emit(["menu": args])
 
-case "key":
-    checkAX(); noEvents("key")
-    // --no-raise: keys for a popover or a menu, which raising the main window would close.
+case "key", "type":
+    checkAX(); noEvents(cmd)
+    // --no-raise: into a window already fronted. Raising it again resigns and takes key round the keys,
+    // which closes what a key window keeps open (a popover, a menu, the completion list).
     let noRaise = takeFlag("--no-raise")
-    guard let c = args.first else { fail("usage: qa key <chord> [--no-raise]") }
+    guard let a = args.first else { fail("usage: qa \(cmd) <\(cmd == "key" ? "chord" : "text")> [--no-raise]") }
     if !noRaise { front(); sleepS(0.1) }
-    guardFrontmost(); pressKey(c)
-
-case "type":
-    checkAX(); noEvents("type")
-    // --no-raise: typing into a window already fronted. Raising it again resigns and takes key around the keys,
-    // which closes what a key window keeps open (a completion list).
-    let noRaise = takeFlag("--no-raise")
-    guard let t = args.first else { fail("usage: qa type <text> [--no-raise]") }
-    if !noRaise { front(); sleepS(0.1) }
-    guardFrontmost(); typeText(t)
+    guardFrontmost()
+    if cmd == "key" { pressKey(a) } else { typeText(a) }
 
 case "click":
     checkAX(); noEvents("click")
-    let right = takeFlag("--right"), dbl = takeFlag("--double"), screen = takeFlag("--screen")
-    let mods = takeOpt("--mod")
+    let right = takeFlag("--right"), double = takeFlag("--double"), screen = takeFlag("--screen")
+    let mods = modifiers((takeOpt("--mod") ?? "").lowercased().split(separator: ",").map(String.init))
     // --no-raise: a click in a window already fronted, on something a passing loss of key would close.
     let noRaise = takeFlag("--no-raise")
     let n = nums(2, "qa click <x> <y>")
     if !noRaise { front(); sleepS(0.1) }
-    clickAt(globalPoint(n[0], n[1], screen: screen), right: right, count: dbl ? 2 : 1, flags: modFlags(mods))
+    clickAt(point(n[0], n[1], screen: screen), right: right, count: double ? 2 : 1, flags: mods)
 
 case "move-mouse":
     checkAX(); noEvents("move-mouse")
     let screen = takeFlag("--screen"), noRaise = takeFlag("--no-raise")
     let n = nums(2, "qa move-mouse <x> <y>")
     if !noRaise { front() }
-    moveMouse(globalPoint(n[0], n[1], screen: screen))
+    post(mouse(.mouseMoved, point(n[0], n[1], screen: screen)))
 
 case "drag":
     checkAX(); noEvents("drag")
     let screen = takeFlag("--screen")
-    let dur = Double(takeOpt("--duration") ?? "0.5") ?? 0.5
+    let duration = Double(takeOpt("--duration") ?? "0.5") ?? 0.5
     let steps = Int(takeOpt("--steps") ?? "30") ?? 30
     let n = nums(4, "qa drag <x1> <y1> <x2> <y2>")
     front(); sleepS(0.1)
-    let a = globalPoint(n[0], n[1], screen: screen), b = globalPoint(n[2], n[3], screen: screen)
+    let a = point(n[0], n[1], screen: screen), b = point(n[2], n[3], screen: screen)
     guardPoint(a); guardPoint(b)
-    moveMouse(a); sleepS(0.05)
-    post(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: a, mouseButton: .left))
+    post(mouse(.mouseMoved, a)); sleepS(0.05)
+    post(mouse(.leftMouseDown, a))
     for i in 1...steps {
         let t = Double(i) / Double(steps)
-        let p = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
-        post(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left))
-        sleepS(dur / Double(steps))
+        post(mouse(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)))
+        sleepS(duration / Double(steps))
     }
-    post(CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: b, mouseButton: .left))
+    post(mouse(.leftMouseUp, b))
 
 case "scroll":
     checkAX(); noEvents("scroll")
     let screen = takeFlag("--screen")
     let n = nums(4, "qa scroll <x> <y> <dx> <dy>")
     front(); sleepS(0.1)
-    moveMouse(globalPoint(n[0], n[1], screen: screen)); sleepS(0.05)
-    // positive dy scrolls content up (wheel convention: negative = down); we pass values through as pixels
-    post(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(n[3]), wheel2: Int32(n[2]), wheel3: 0))
+    post(mouse(.mouseMoved, point(n[0], n[1], screen: screen))); sleepS(0.05)
+    // Pixels, in the wheel's sense: a positive dy scrolls the content up.
+    post(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                 wheel1: Int32(n[3]), wheel2: Int32(n[2]), wheel3: 0))
 
 case "tree":
     checkAX(); printTree()
 
 case "find":
     checkAX()
-    let all = takeFlag("--all-windows")
-    let roots = allRoots(all, takeOpt("--window"))
+    let roots = takeRoots()
     let role = takeOpt("--role")
     guard let t = args.first else { fail("usage: qa find <text>") }
-    let hits = search(t, roots: roots, role: role)
-    emit(hits.enumerated().map { hitJSON($0.element, $0.offset) })
+    emit(search(t, roots: roots, role: role).enumerated().map { hitJSON($0.element, $0.offset) })
 
 case "press":
     checkAX()
     guard let t = args.first else { fail("usage: qa press <text> [--index n]") }
-    let dbl = takeFlag("--double")
-    // qa press <label> --row-control AXCheckBox: the control of that role on the label's row, for a
-    // form's switch, which has no title of its own.
+    let double = takeFlag("--double")
+    // --row-control AXCheckBox: the control of that role on the label's row, as a form's switch, which has no title.
     if let role = takeOpt("--row-control") {
         let root = pickWindow(nil)
         guard let label = search(t, roots: [root], role: "AXStaticText").max(by: { $0.rank < $1.rank })?.el.frame else {
@@ -839,30 +822,27 @@ case "press":
         }
         var best: (AXUIElement, CGFloat)?
         walk(root) { el, _, _ in
-            if el.role == role, let f = el.frame, abs(f.midY - label.midY) < (best?.1 ?? 12) { best = (el.ref, abs(f.midY - label.midY)) }
+            if el.role == role, let f = el.frame, abs(f.midY - label.midY) < (best?.1 ?? 12) {
+                best = (el.ref, abs(f.midY - label.midY))
+            }
             return true
         }
         guard let control = best?.0 else { fail("no \(role) on the row of '\(t)'") }
         pressAsync(control, timeout: 2)
         emit(["pressed": t, "value": attrStr(control, "AXValue") ?? "\(attr(control, "AXValue") ?? "" as CFString)"])
-        exit(0)
+        break
     }
     let h = bestHit(t)
-    // popups and menu buttons only open when the app is active
-    front(); sleepS(0.3)  // also makes the window key again after a menu action
-    if dbl {
-        noEvents("press --double")
-        guard let f = h.el.frame else { fail("element has no frame") }
-        front(); clickAt(CGPoint(x: f.midX, y: f.midY), count: 2)
-        emit(hitJSON(h)); exit(0)
-    }
-    let acts = { () -> [String] in var a: CFArray?; AXUIElementCopyActionNames(h.el.ref, &a); return (a as? [String]) ?? [] }()
-    if acts.contains("AXPress") {
+    // Pop-ups and menu buttons open only in an active app; this also makes the window key after a menu action.
+    front(); sleepS(0.3)
+    var actions: CFArray?
+    AXUIElementCopyActionNames(h.el.ref, &actions)
+    if !double, ((actions as? [String]) ?? []).contains("AXPress") {
         pressAsync(h.el.ref, timeout: 2)
     } else if let f = h.el.frame {
-        noEvents("press on an element without AXPress")
-        front(); clickAt(CGPoint(x: f.midX, y: f.midY))
-    } else { fail("element has no AXPress and no frame") }
+        noEvents(double ? "press --double" : "press on an element without AXPress")
+        front(); clickAt(CGPoint(x: f.midX, y: f.midY), count: double ? 2 : 1)
+    } else { fail(double ? "element has no frame" : "element has no AXPress and no frame") }
     emit(hitJSON(h))
 
 case "set":
@@ -872,46 +852,13 @@ case "set":
     let number = takeFlag("--number")
     let v = args.removeLast()
     let h = bestHit(args[0])
-    let value: CFTypeRef = number ? (NSNumber(value: Double(v) ?? 0) as CFTypeRef) : (v as CFString)
+    let value: CFTypeRef = number ? NSNumber(value: Double(v) ?? 0) as CFTypeRef : v as CFString
     let r = AXUIElementSetAttributeValue(h.el.ref, name as CFString, value)
     if r != .success { fail("cannot set \(name) (\(r.rawValue))") }
     emit(hitJSON(h))
 
-// The source editor through Accessibility alone, for a window that isn't frontmost.
-// qa caret <line> [--start]   the caret at the end (or start) of a line, from 1
-// qa insert <text>            the text at the caret, as typed (one undo step)
-// qa text                     the editor's whole text
 case "caret", "insert", "text":
-    checkAX()
-    var area: AXUIElement?
-    walk(pickWindow(nil)) { el, _, _ in
-        if area == nil, el.role == "AXTextArea" { area = el.ref }
-        return area == nil
-    }
-    guard let area else { fail("no text area in the window") }
-    if cmd == "text" { emit(["value": attrStr(area, "AXValue") ?? ""]); break }
-    if cmd == "insert" {
-        guard let t = args.first else { fail("usage: qa insert <text>") }
-        let r = AXUIElementSetAttributeValue(area, "AXSelectedText" as CFString, t as CFString)
-        if r != .success { fail("cannot insert (\(r.rawValue))") }
-        emit(["inserted": t]); break
-    }
-    let start = takeFlag("--start")
-    guard let n = args.first.flatMap({ Int($0) }), n >= 1 else { fail("usage: qa caret <line> [--start]") }
-    // The file's lines, not the wrapped ones AXRangeForLine counts.
-    let text = (attrStr(area, "AXValue") ?? "") as NSString
-    var line = NSRange(location: 0, length: 0), at = 0
-    for _ in 1...n {
-        guard at <= text.length else { fail("no line \(n)") }
-        line = text.lineRange(for: NSRange(location: at, length: 0))
-        at = line.location + max(line.length, 1)
-    }
-    var end = line.location + line.length
-    if end > line.location, text.character(at: end - 1) == 10 { end -= 1 }
-    var caret = CFRange(location: start ? line.location : end, length: 0)
-    guard let v = AXValueCreate(.cfRange, &caret),
-          AXUIElementSetAttributeValue(area, "AXSelectedTextRange" as CFString, v) == .success else { fail("cannot move the caret") }
-    emit(["caret": caret.location])
+    checkAX(); editor()
 
 case "get":
     checkAX()
@@ -920,11 +867,7 @@ case "get":
     let h = bestHit(args[0])
     let name = a.hasPrefix("AX") ? a : "AX" + a.prefix(1).uppercased() + a.dropFirst()
     guard let v = attr(h.el.ref, name) else { fail("attribute \(name) not available") }
-    if CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .cgRect {
-        var r = CGRect.zero; AXValueGetValue(v as! AXValue, .cgRect, &r)
-        let wf = frameOf(pickWindow(nil)) ?? .zero
-        emit(["frame": rel(r, wf)])
-    }
+    if let r = axValue(v, .cgRect, CGRect.zero) { emit(["frame": rel(r, frameOf(pickWindow(nil)) ?? .zero)]) }
     else if let p = pointOf(v) { emit([p.x, p.y]) }
     else if let s = sizeOf(v) { emit([s.width, s.height]) }
     else if let s = v as? String { emit(["value": s]) }
@@ -935,17 +878,17 @@ case "toolbar":
     checkAX(); toolbarJSON()
 
 case "close":
-    // close a window by its AX close button (never quits the app via cmd+w by accident)
+    // By the window's close button, so a stray Cmd-W never quits the app.
     checkAX()
-    var w: AXUIElement
-    if takeFlag("--other") {  // a secondary window (About, Settings): any window that is not the project/main one
+    let w: AXUIElement
+    if takeFlag("--other") {  // a window other than the main one (About, Settings)
         let mid = windowID(mainWindow())
         guard let o = axWindows().first(where: { windowID($0) != mid }) else { fail("no secondary window") }
         w = o
     } else { w = pickWindow(takeOpt("--window")) }
-    guard let cb = attr(w, "AXCloseButton") else { fail("window has no close button") }
-    AXUIElementPerformAction(cb as! AXUIElement, kAXPressAction as CFString)
-    emit(["closed": attrStr(w, "AXTitle") ?? ""])
+    guard let button = attr(w, "AXCloseButton") else { fail("window has no close button") }
+    AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+    emit(["closed": title(w)])
 
 case "wait":
     guard let s = args.first.flatMap(Double.init) else { fail("usage: qa wait <seconds>") }
@@ -959,9 +902,8 @@ case "wait-for":
     guard let t = args.first else { fail("usage: qa wait-for <text> [--timeout s]") }
     let end = Date().addingTimeInterval(timeout)
     while Date() < end {
-        if targetApp() != nil {
-            let hits = search(t, roots: allRoots(all, title))
-            if let h = hits.first { emit(hitJSON(h)); exit(0) }
+        if targetApp() != nil, let h = search(t, roots: all ? axWindows() : [pickWindow(title)]).first {
+            emit(hitJSON(h)); exit(0)
         }
         sleepS(0.3)
     }

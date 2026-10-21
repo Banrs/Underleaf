@@ -129,7 +129,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project), help: "Insert a figure, table, list or reference")
         case .bold, .italic, .underline:
             let command = Self.styles[id]!
-            item = button(id, command.title, command.symbol!, #selector(style(_:)), help: command.style!.help)
+            item = button(id, command.title, command.style!.symbol, #selector(style(_:)), help: command.style!.help)
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
@@ -369,6 +369,7 @@ private struct CompileButton: View {
     let compiling, compact, enabled: Bool
     let action: () -> Void
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -379,7 +380,7 @@ private struct CompileButton: View {
             }
             // Faint in a window that isn't the active one, as AppKit's own items.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
-            .animation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
+            .animation(reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
             // AppKit's glass for a title and for a symbol (27.2).
             .padding(.horizontal, compact ? 0 : 12)
             .frame(minWidth: 36, minHeight: 36)

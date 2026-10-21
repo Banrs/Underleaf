@@ -42,24 +42,14 @@ const CLOSE_BEFORE: [&str; 6] = [")", "]", "}", ":", ";", ">"];
 
 const PARTNER_WITHIN: usize = 10_000;
 
-fn bracket(c: &str) -> Option<(&'static str, bool)> {
-    Some(match c {
-        "(" => (")", true),
-        "[" => ("]", true),
-        "{" => ("}", true),
-        ")" => ("(", false),
-        "]" => ("[", false),
-        "}" => ("{", false),
-        _ => return None,
-    })
-}
+const PAIRS: [(&str, &str); 3] = [("(", ")"), ("[", "]"), ("{", "}")];
 
 fn closing_of(c: &str) -> Option<&'static str> {
-    bracket(c).and_then(|(close, opens)| opens.then_some(close))
+    PAIRS.iter().find(|pair| pair.0 == c).map(|pair| pair.1)
 }
 
 pub(super) fn is_closing(c: &str) -> bool {
-    bracket(c).is_some_and(|(_, opens)| !opens)
+    PAIRS.iter().any(|pair| pair.1 == c)
 }
 
 /// As NSString's composed character sequence.
@@ -75,17 +65,12 @@ fn character(units: &[u16], at: usize) -> Option<String> {
     let window = String::from_utf16_lossy(&units[from..to]);
     let mut offset = from;
     for cluster in window.graphemes(true) {
-        let end = offset + utf16(cluster);
-        if at < end {
+        offset += utf16(cluster);
+        if at < offset {
             return Some(cluster.to_owned());
         }
-        offset = end;
     }
     None
-}
-
-fn whitespace(c: &str) -> bool {
-    c.chars().next().is_some_and(char::is_whitespace)
 }
 
 fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
@@ -116,24 +101,17 @@ impl SourceDocument {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let length = end - start;
         let next = character(units, start);
-        let next_is = |c: &str| next.as_deref() == Some(c);
+        let next = next.as_deref();
         if length == 0 && typing.closers.contains(&start) && is_closing(typed) {
-            if next_is(typed) {
+            // A closer put in as \] or \}: its bracket steps over both, and a backslash typed for it goes. A
+            // backslash alone is typed in, being a command's as often as the closer's.
+            let escaped_closer =
+                next == Some("\\") && character(units, start + 1).as_deref() == Some(typed);
+            if next == Some(typed) || escaped_closer {
                 typing.closers.remove(&start);
-                return Keystroke {
-                    selection: Some(span(start + 1, 0)),
-                    partner: Some(start as u32),
-                    ..Keystroke::default()
-                };
-            }
-            // A closer put in as \] or \}: its bracket steps over both, and a
-            // backslash typed for it goes. A backslash alone is typed in,
-            // being a command's as often as the closer's.
-            if next_is("\\") && character(units, start + 1).as_deref() == Some(typed) {
-                typing.closers.remove(&start);
-                let mut bracket = start + 1;
+                let mut bracket = start + escaped_closer as usize;
                 let mut keystroke = Keystroke::default();
-                if escaped(units, start) {
+                if escaped_closer && escaped(units, start) {
                     keystroke.edit = Some(splice(start - 1, 1, ""));
                     keystroke.completions = Completing::Close;
                     bracket -= 1;
@@ -153,18 +131,12 @@ impl SourceDocument {
                     ..Keystroke::default()
                 };
             }
-            if next
-                .as_deref()
-                .is_none_or(|n| whitespace(n) || CLOSE_BEFORE.contains(&n))
-            {
-                let pair = if escaped(units, start) {
-                    format!("{typed}\\{close}")
-                } else {
-                    format!("{typed}{close}")
-                };
+            let space = |n: &str| n.starts_with(char::is_whitespace);
+            if next.is_none_or(|n| space(n) || CLOSE_BEFORE.contains(&n)) {
+                let slash = if escaped(units, start) { "\\" } else { "" };
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
-                    edit: Some(splice(start, 0, pair)),
+                    edit: Some(splice(start, 0, format!("{typed}{slash}{close}"))),
                     selection: Some(span(start + 1, 0)),
                     completions: Completing::Offer,
                     ..Keystroke::default()
@@ -293,9 +265,14 @@ impl SourceDocument {
         let at = at as usize;
         let units = &self.text.units[..];
         let start = *units.get(at)?;
-        let (partner, opens) = bracket(&String::from_utf16_lossy(&[start]))?;
-        let partner = u16::from(partner.as_bytes()[0]);
+        let bracket = String::from_utf16_lossy(&[start]);
+        let &(open, close) = PAIRS
+            .iter()
+            .find(|pair| pair.0 == bracket || pair.1 == bracket)?;
+        let opens = open == bracket;
+        let partner = u16::from(if opens { close } else { open }.as_bytes()[0]);
         let near = at.saturating_sub(PARTNER_WITHIN)..(at + PARTNER_WITHIN + 1).min(units.len());
+        let escaped_here = escaped(units, at);
         // A comment is known from its line's start, so reading starts there.
         let mut brackets = Vec::new();
         let (mut comment, mut slashes) = (false, 0);
@@ -307,29 +284,25 @@ impl SourceDocument {
             } else if is(u, '%') && !escaped {
                 comment = true;
             }
-            if !comment && near.contains(&i) && (u == start || u == partner) {
-                brackets.push((i, u, escaped));
+            let ours = u == start || u == partner;
+            if ours && !comment && escaped == escaped_here && near.contains(&i) {
+                brackets.push((i, u));
             }
             slashes = if is(u, '\\') { slashes + 1 } else { 0 };
         }
-        let here = brackets.iter().position(|&(i, ..)| i == at)?;
-        let escaped = brackets[here].2;
-        let same = |b: &&(usize, u16, bool)| b.2 == escaped;
+        let here = brackets.iter().position(|&(i, _)| i == at)?;
         let found = if opens {
-            matched(brackets[here..].iter().filter(same), start)
+            matched(brackets[here..].iter(), start)
         } else {
-            matched(brackets[..=here].iter().rev().filter(same), start)
+            matched(brackets[..=here].iter().rev(), start)
         };
         found.map(|i| i as u32)
     }
 }
 
-fn matched<'a>(
-    brackets: impl Iterator<Item = &'a (usize, u16, bool)>,
-    start: u16,
-) -> Option<usize> {
+fn matched<'a>(brackets: impl Iterator<Item = &'a (usize, u16)>, start: u16) -> Option<usize> {
     brackets
-        .scan(0, |depth, &(i, u, _)| {
+        .scan(0, |depth, &(i, u)| {
             *depth += if u == start { 1 } else { -1 };
             Some((i, *depth))
         })

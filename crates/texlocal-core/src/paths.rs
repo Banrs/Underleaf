@@ -48,6 +48,10 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
         return Err(CoreError::bad_request("Missing path"));
     }
     let segments = normalize_segments(rel, "Path escapes project")?;
+    #[cfg(windows)]
+    if segments.iter().any(|s| win32_alias(s)) {
+        return Err(CoreError::bad_request("Invalid name"));
+    }
     match segments[..] {
         [] => Err(CoreError::bad_request("Path escapes project")),
         [name] if name.eq_ignore_ascii_case(SETTINGS_FILE) => {
@@ -57,26 +61,41 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     }
 }
 
-fn in_build_dir(segments: &[&str]) -> bool {
-    segments
-        .first()
-        .is_some_and(|first| first.eq_ignore_ascii_case(BUILD_DIR))
+/// Win32 drops a name's trailing dots and spaces, reads `:` as a data stream
+/// and a device's name as the device, so such a segment reaches a file the
+/// rules above never saw.
+#[cfg(windows)]
+fn win32_alias(segment: &str) -> bool {
+    let stem = segment.split('.').next().unwrap_or_default().trim_end();
+    let device = match stem.to_ascii_uppercase().as_bytes() {
+        b"CON" | b"PRN" | b"AUX" | b"NUL" => true,
+        [b'C', b'O', b'M', digit] | [b'L', b'P', b'T', digit] => digit.is_ascii_digit(),
+        _ => false,
+    };
+    device || segment.ends_with(['.', ' ']) || segment.contains(':')
+}
+
+/// Whether a project path is in the top-level `build` folder, in any case, which holds compile
+/// output.
+pub(crate) fn in_build_dir(rel: &str) -> bool {
+    rel.split('/')
+        .next()
+        .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
 }
 
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    Ok(root.join(safe_segments(rel)?.join("/")))
+    Ok(root.join(rel_key(rel)?))
 }
 
-/// The top-level `build` folder, in any case, holds compile output and the
-/// tree hides it, so nothing of the author's is written there.
+/// The tree hides the build folder, so nothing of the author's is written there.
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    let segments = safe_segments(rel)?;
-    if in_build_dir(&segments) {
+    let rel = rel_key(rel)?;
+    if in_build_dir(&rel) {
         return Err(CoreError::bad_request(
             "“build” holds the compiled PDF. Choose another name.",
         ));
     }
-    Ok(root.join(segments.join("/")))
+    Ok(root.join(rel))
 }
 
 pub(crate) fn fold_case(path: &str) -> String {
@@ -171,10 +190,8 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
     } else {
         input
     };
-    let segments = safe_segments(rel).ok()?;
-    let source = !in_build_dir(&segments) && !segments.iter().any(|s| s.starts_with('-'));
-    let rel = segments.join("/");
-    (source && root.join(&rel).is_file()).then_some(rel)
+    let rel = safe_rel_file(rel).ok()?;
+    (!in_build_dir(&rel) && root.join(&rel).is_file()).then_some(rel)
 }
 
 #[cfg(test)]
@@ -202,6 +219,24 @@ mod tests {
         assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
         fails_with(safe_write_path(&root, "Build/x.tex"), "compiled PDF");
         assert!(safe_path(&root, "build/main.pdf").is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn names_win32_would_alias_are_refused() {
+        let (_dir, service) = with_project();
+        let root = service.project_root("P").unwrap();
+        for path in [
+            ".texlocal.json.",
+            "build./x.tex",
+            "a/b ",
+            "ab:c",
+            "nul.tex",
+            "Com1",
+        ] {
+            fails_with(safe_path(&root, path), "Invalid name");
+        }
+        assert!(safe_path(&root, "console.tex").is_ok());
     }
 
     #[test]

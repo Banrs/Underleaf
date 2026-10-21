@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 /// The source editor's text view: TextKit 2 only, with the core's document as the text's mirror.
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
@@ -26,6 +25,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
     enum FileDrop { case open(() -> Void), insert(String) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
+    var openDefinition: (Definition.Place) -> Void = { _ in }
     private(set) var loading = false
 
     /// `source` is the session's document holding `text`.
@@ -125,7 +125,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let top = shownTop
         defer {
             top.map(scroll(toShownTop:))
-            if !issues.lines.isEmpty { layOutViewportOnceSettled() }
+            // The issues' rows are placed anew once the new font is laid out.
+            if !issues.lines.isEmpty {
+                Task { [weak self] in self?.textLayoutManager?.textViewportLayoutController.layoutViewport() }
+            }
         }
         self.font = font
         completions.close()
@@ -155,7 +158,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var gutter = EditorGutter()
     /// The fragments TextKit last laid out in the viewport, by offset (+Viewport).
     var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
-    var viewportPending = false
     /// Each time TextKit lays out the viewport.
     var laidOut: () -> Void = {}
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
@@ -367,6 +369,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         apply(answer.edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
     }
 
+    /// Shift Right and Shift Left: the lines, even from within a snippet's field, which Tab would leave for the next.
+    func shiftLines(_ step: Int) {
+        guard isEditable else { return }
+        _ = document.endSnippet()
+        tab(step)
+    }
+
     override func toggleContinuousSpellChecking(_ sender: Any?) {
         super.toggleContinuousSpellChecking(sender)
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
@@ -411,8 +420,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var mirroring = false
     private var mirrorEdits: [TextEdit] = []
 
-    func startSnippet(_ fields: [SnippetField], at location: Int) {
-        if let first = document.startSnippet(fields, at: location) { setSelectedRange(first) }
+    /// One undo step with the caret at the insertion's, then its snippet's first field selected. False for none.
+    @discardableResult
+    func insert(_ insertion: Insertion?, named name: String) -> Bool {
+        guard let insertion else { return false }
+        apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
+        if let first = document.startSnippet(insertion.fields, at: insertion.edit.start) { setSelectedRange(first) }
+        return true
     }
 
     override func didChangeText() {
@@ -452,25 +466,32 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
-        if event.type == .leftMouseDown, let row = issue(at: event), clicked(row, with: event) { return }
+        let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
+        if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {
+            if row.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true { issueClicked(row.line) }
+            return
+        }
+        // ⌘-click, as Xcode's: asked before the release, so a name nothing defines leaves the click to the text view.
+        if event.type == .leftMouseDown, held == .command,
+           let place = document.definition(at: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))?.places.first,
+           release(of: event) != nil {
+            return openDefinition(place)
+        }
         super.mouseDown(with: event)
         if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
 
-    /// False for a drag, Shift-click and double-click, which are the text view's.
-    private func clicked(_ issue: IssueOverlay.Row, with down: NSEvent) -> Bool {
-        guard down.clickCount == 1, down.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]) else { return false }
+    /// A single click's release; nil for a drag, reposted, and a double-click, which are the text view's.
+    private func release(of down: NSEvent) -> NSEvent? {
+        guard down.clickCount == 1 else { return nil }
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            if next.type == .leftMouseUp {
-                if issue.message?.rect.contains(convert(next.locationInWindow, from: nil)) == true { issueClicked(issue.line) }
-                return true
-            }
+            if next.type == .leftMouseUp { return next }
             if hypot(next.locationInWindow.x - down.locationInWindow.x, next.locationInWindow.y - down.locationInWindow.y) > 3 {
                 window?.postEvent(next, atStart: true)
-                return false
+                return nil
             }
         }
-        return true
+        return nil
     }
 
     private func selectLines(with event: NSEvent) {

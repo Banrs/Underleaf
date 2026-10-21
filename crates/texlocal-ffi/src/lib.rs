@@ -7,7 +7,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use texlocal_core::CoreError;
 use texlocal_core::events::Listener;
 use texlocal_core::service::Service;
@@ -55,15 +55,6 @@ impl Callback {
     fn send(self, value: &Value) {
         (self.call)(self.ctx, c_json(value.to_string()).as_ptr());
     }
-}
-
-/// # Safety
-/// `source` is null or came from `tl_source_new` and is not freed, and no
-/// two calls on it overlap: one thread at a time, queries included.
-unsafe fn on_source<T>(source: *mut TlSource, none: T, body: impl FnOnce(&mut TlSource) -> T) -> T {
-    unsafe { source.as_mut() }
-        .and_then(|source| caught(|| body(source)))
-        .unwrap_or(none)
 }
 
 /// JSON text for C: JSON escapes a NUL inside a string, so it holds none.
@@ -141,7 +132,7 @@ unsafe fn command_args<'a>(
 
 fn envelope(result: Result<Value, CoreError>) -> Value {
     match result {
-        Ok(value) => Value::Object(Map::from_iter([("ok".to_owned(), value)])),
+        Ok(value) => json!({ "ok": value }),
         Err(err) => json!({ "error": err.message, "status": err.status }),
     }
 }
@@ -245,6 +236,43 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     });
 }
 
+/// A file's text as the editor has it (`syntax::SourceDocument`):
+/// the host's own, or a session's document.
+pub enum TlSource {
+    Own(Box<SourceDocument>),
+    Session(Document),
+}
+
+impl TlSource {
+    fn with<T>(&mut self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
+        match self {
+            Self::Own(doc) => body(doc),
+            Self::Session(document) => document.with(body),
+        }
+    }
+}
+
+/// `body`'s answer for `source`, or the default for a null source or a panic.
+///
+/// # Safety
+/// `source` is null or came from `tl_source_new` and is not freed, and no
+/// two calls on it overlap: one thread at a time, queries included.
+unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut TlSource) -> T) -> T {
+    unsafe { source.as_mut() }
+        .and_then(|source| caught(|| body(source)))
+        .unwrap_or_default()
+}
+
+/// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches
+/// the mirror. Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes
+/// them, so an edit still lands with the length the editor has.
+unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
+    if ptr.is_null() {
+        return Cow::Borrowed("");
+    }
+    String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
+}
+
 /// # Safety
 /// `handle` came from `tl_open` and is not closed; `path` is null or NUL-terminated.
 #[unsafe(no_mangle)]
@@ -260,45 +288,16 @@ pub unsafe extern "C" fn tl_session_source(
         .flatten()
         .map_or(std::ptr::null_mut(), |document| {
             document.reset_typing();
-            Box::into_raw(Box::new(TlSource(Source::Session(document))))
+            Box::into_raw(Box::new(TlSource::Session(document)))
         })
-}
-
-/// A file's text as the editor has it (`syntax::SourceDocument`):
-/// the host's own, or a session's document.
-pub struct TlSource(Source);
-
-enum Source {
-    Own(Box<SourceDocument>),
-    Session(Document),
-}
-
-impl TlSource {
-    fn with<T>(&mut self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
-        match &mut self.0 {
-            Source::Own(doc) => body(doc),
-            Source::Session(document) => document.with(body),
-        }
-    }
-}
-
-/// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches
-/// the mirror. Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes
-/// them, so an edit still lands with the length the editor has.
-unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
-    if ptr.is_null() {
-        return Cow::Borrowed("");
-    }
-    String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
 /// # Safety
 /// `text` is null (empty) or `len` bytes of UTF-8.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
-    Box::into_raw(Box::new(TlSource(Source::Own(Box::new(
-        SourceDocument::new(&unsafe { text_arg(text, len) }),
-    )))))
+    let doc = SourceDocument::new(&unsafe { text_arg(text, len) });
+    Box::into_raw(Box::new(TlSource::Own(Box::new(doc))))
 }
 
 /// # Safety
@@ -318,9 +317,9 @@ pub unsafe extern "C" fn tl_source_edit(
     let text = unsafe { text_arg(text, len) };
     let changing = unsafe { changing.as_ref() }.copied();
     let followed = |source: &mut TlSource| {
-        match &mut source.0 {
-            Source::Own(doc) => doc.edit(start, length, &text),
-            Source::Session(document) => document.edit(start, length, &text),
+        match source {
+            TlSource::Own(doc) => doc.edit(start, length, &text),
+            TlSource::Session(document) => document.edit(start, length, &text),
         }
         let delta = text.encode_utf16().count() as i64 - length as i64;
         source.with(|doc| {
@@ -330,7 +329,7 @@ pub unsafe extern "C" fn tl_source_edit(
             mirror.map(|edits| c_json(json!(edits).to_string()).into_raw())
         })
     };
-    unsafe { on_source(source, None, followed) }.unwrap_or(std::ptr::null_mut())
+    unsafe { on_source(source, followed) }.unwrap_or(std::ptr::null_mut())
 }
 
 /// # Safety
@@ -343,8 +342,7 @@ pub unsafe extern "C" fn tl_source_select(
     mirroring: bool,
 ) {
     let selection = TextRange { start, length };
-    let select = |source: &mut TlSource| source.with(|doc| doc.select(selection, mirroring));
-    unsafe { on_source(source, (), select) }
+    unsafe { on_source(source, |s| s.with(|doc| doc.select(selection, mirroring))) }
 }
 
 /// # Safety
@@ -354,7 +352,7 @@ pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) 
     let Some(len) = (unsafe { len.as_mut() }) else {
         return std::ptr::null_mut();
     };
-    let text = unsafe { on_source(source, String::new(), |s| s.with(|doc| doc.text())) };
+    let text = unsafe { on_source(source, |s| s.with(|doc| doc.text())) };
     let bytes = text.into_bytes().into_boxed_slice();
     *len = bytes.len();
     Box::into_raw(bytes).cast()
@@ -375,33 +373,32 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8, len: usize) {
     let text = unsafe { text_arg(text, len) };
-    unsafe {
-        on_source(source, (), |source| match &mut source.0 {
-            Source::Own(doc) => **doc = SourceDocument::new(&text),
-            Source::Session(document) => document.reload(&text),
-        });
-    }
+    let reload = |source: &mut TlSource| match source {
+        TlSource::Own(doc) => **doc = SourceDocument::new(&text),
+        TlSource::Session(document) => document.reload(&text),
+    };
+    unsafe { on_source(source, reload) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_at(source: *mut TlSource, offset: u32) -> u32 {
-    unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_at(offset))) }
+    unsafe { on_source(source, |s| s.with(|doc| doc.line_at(offset))) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_start(source: *mut TlSource, line: u32) -> u32 {
-    unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_start(line))) }
+    unsafe { on_source(source, |s| s.with(|doc| doc.line_start(line))) }
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_count(source: *mut TlSource) -> u32 {
-    unsafe { on_source(source, 0, |source| source.with(|doc| doc.line_count())) }
+    unsafe { on_source(source, |s| s.with(|doc| doc.line_count())) }
 }
 
 /// # Safety
@@ -418,11 +415,11 @@ pub unsafe extern "C" fn tl_source_highlights(
     };
     let highlights = |source: &mut TlSource| {
         let runs = source.with(|doc| doc.highlights(start, length));
-        let runs = runs.into_iter();
-        runs.flat_map(|h| [h.start, h.length, h.kind as u32])
+        runs.into_iter()
+            .flat_map(|h| [h.start, h.length, h.kind as u32])
             .collect()
     };
-    let runs: Box<[u32]> = unsafe { on_source(source, Box::default(), highlights) };
+    let runs: Box<[u32]> = unsafe { on_source(source, highlights) };
     *count = runs.len();
     Box::into_raw(runs).cast()
 }
@@ -447,9 +444,15 @@ pub unsafe extern "C" fn tl_source_call(
 ) -> *mut c_char {
     let call = |source: &mut TlSource| {
         let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
-        source.with(|doc| doc.call(command, args))
+        match source {
+            // The session counts a document's edits, not the syntax module.
+            TlSource::Session(document) if command == "version" => {
+                Some(document.version().to_string())
+            }
+            _ => source.with(|doc| doc.call(command, args)),
+        }
     };
-    let answer = unsafe { on_source(source, None, call) };
+    let answer = unsafe { on_source(source, call) };
     answer.map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
 }
 

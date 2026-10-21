@@ -38,18 +38,12 @@ extension NSColor {
         return [color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent].map { Double($0) }
     }
 
-    static func srgb(_ rgba: [Double]) -> NSColor {
+    nonisolated static func srgb(_ rgba: [Double]) -> NSColor {
         NSColor(srgbRed: CGFloat(rgba[0]), green: CGFloat(rgba[1]), blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3]))
     }
 
-    nonisolated func resolved(in appearance: NSAppearance) -> NSColor {
-        var color = self
-        appearance.performAsCurrentDrawingAppearance { color = usingColorSpace(.sRGB) ?? self }
-        return color
-    }
-
     /// PDFKit tints a system colour it's given with the wallpaper, which would set it a shade apart from the editor's.
-    static let untintedTextBackground = NSColor(name: nil) { NSColor.textBackgroundColor.resolved(in: $0) }
+    static let untintedTextBackground = NSColor(name: nil) { srgb(NSColor.textBackgroundColor.rgba(in: $0)) }
 }
 
 /// A theme of the core's by its id, its colours made legible in each appearance; an id the core no longer has reads as none.

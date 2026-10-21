@@ -21,7 +21,6 @@ final class WorkspaceController: DetentSplitViewController {
     private var appeared = false, joining = false
     private var panelHeight: CGFloat = 0
     private var paneAnimations = 0, quieting = 0
-    private var paneFrames: CADisplayLink?
     private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
@@ -35,8 +34,7 @@ final class WorkspaceController: DetentSplitViewController {
         toolbar.workspace = self
         // Not "Workspace", whose saved sidebar is the earlier opening width's.
         if app.savesLayout {
-            for (split, name) in [(splitView, "Workspace 2"), (sidebar.splitView, "Sidebar"), (columns.splitView, "Columns"),
-                                  (area.splitView, "Area")] {
+            for (split, name) in zip(splitViews, ["Workspace 2", "Sidebar", "Columns", "Area"]) {
                 split.autosaveName = name
             }
         }
@@ -155,7 +153,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// A pane opens at its view's frame as it's added, and a collapsed one shows there first.
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
-        filesItem.minimumThickness = ColumnMetrics.filesMinimum
+        filesItem.minimumThickness = 100
         // Never hidden before its first layout, when it would still inset its pane (27.2).
         let header = hostingView(OutlineHeader())
         header.translatesAutoresizingMaskIntoConstraints = false
@@ -169,8 +167,8 @@ final class WorkspaceController: DetentSplitViewController {
         // The files draw the edge (`HeaderEdge`); the accessory's own would lay AppKit's glass over them.
         outlineBar = accessory(bar, edge: .soft)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
-        outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * ColumnMetrics.outlineShare).rounded()))
-        outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
+        outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
+        outlineItem.minimumThickness = 80
         // It keeps its height as the window resizes; the files take the change.
         outlineItem.holdingPriority = .defaultLow + 1
         sidebar.addSplitViewItem(filesItem)
@@ -181,7 +179,7 @@ final class WorkspaceController: DetentSplitViewController {
         sidebar.header = outlineBar
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
+        sidebarItem.minimumThickness = 222
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(hostingView(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField)))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
@@ -194,15 +192,13 @@ final class WorkspaceController: DetentSplitViewController {
         let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
         let panes = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.sourceMinimum)
-        panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded())
+        panelHeight = max(ColumnMetrics.panelMinimum, (size.height * 0.25).rounded())
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
-        let findMount = Mount(false)
-        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find), mount: findMount))
-        mounts[ObjectIdentifier(pdfFind)] = findMount
+        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find), mounted: false))
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
@@ -235,7 +231,7 @@ final class WorkspaceController: DetentSplitViewController {
         // As Xcode's debug area: dragged under its least height it closes.
         panelItem.canCollapse = true
         let columnsItem = NSSplitViewItem(viewController: columns)
-        columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
+        columnsItem.minimumThickness = 200
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
@@ -252,12 +248,14 @@ final class WorkspaceController: DetentSplitViewController {
         let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
-        if let mount { mounts[ObjectIdentifier(host)] = mount }
+        if let mount { mounts[ObjectIdentifier(host.view)] = mount }
         return host
     }
 
-    private func hostingView(_ content: some View, mount: Mount? = nil) -> NSHostingView<some View> {
+    private func hostingView(_ content: some View, mounted: Bool? = nil) -> NSHostingView<some View> {
+        let mount = mounted.map(Mount.init)
         let host = NSHostingView(rootView: Pane(project: project, mount: mount, content: content).environment(app))
+        if let mount { mounts[ObjectIdentifier(host)] = mount }
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -278,7 +276,7 @@ final class WorkspaceController: DetentSplitViewController {
     private func outlineBarHeight(folded: Bool) -> CGFloat { folded ? BarMetrics.height : OutlineHeader.openHeight }
 
     private func mount(_ controller: NSViewController, _ shown: Bool) {
-        guard let mount = mounts[ObjectIdentifier(controller)], mount.shown != shown else { return }
+        guard let mount = mounts[ObjectIdentifier(controller.view)], mount.shown != shown else { return }
         mount.shown = shown
         if shown { controller.view.layoutSubtreeIfNeeded() }
     }
@@ -331,43 +329,31 @@ final class WorkspaceController: DetentSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
-        nonisolated(unsafe) let item = item
         if !collapsed { mount(item.viewController, true) }
         paneAnimation(true)
-        NSAnimationContext.runAnimationGroup { context in
-            if !animates { context.duration = 0 }
-            // One animation carries the outline's pane and its header's height.
-            if item === outlineItem {
-                context.allowsImplicitAnimation = true
-                outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { context in
+                if !animates { context.duration = 0 }
+                // One animation carries the outline's pane and its header's height.
+                if item === outlineItem {
+                    context.allowsImplicitAnimation = true
+                    outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+                }
+                item.animator().isCollapsed = collapsed
+                if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
             }
-            item.animator().isCollapsed = collapsed
-            if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                if item.isCollapsed { self?.mount(item.viewController, false) }
-                self?.paneAnimation(false)
-                done()
-            }
+            if item.isCollapsed { mount(item.viewController, false) }
+            paneAnimation(false)
+            done()
         }
     }
 
-    /// 27.2: with nothing else waking the run loop, a split's animation holds still, then jumps to its end.
     private func paneAnimation(_ running: Bool) {
         // It puts every pane in live resize, which shows their overlay scrollers too.
         quiet(running)
         paneAnimations += running ? 1 : -1
-        if running, paneFrames == nil {
-            paneFrames = view.displayLink(target: self, selector: #selector(paneFrame))
-            paneFrames?.add(to: .main, forMode: .common)
-        } else if paneAnimations == 0 {
-            paneFrames?.invalidate()
-            paneFrames = nil
-            fitColumns()
-        }
+        if paneAnimations == 0 { fitColumns() }
     }
-
-    @objc private func paneFrame(_ link: CADisplayLink) { for split in splitViews { split.needsLayout = true } }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
 
@@ -393,16 +379,13 @@ final class WorkspaceController: DetentSplitViewController {
             return
         }
         paneAnimation(true)
-        NSAnimationContext.runAnimationGroup { _ in
-            accessory.animator().isHidden = hidden
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                if hidden, accessory.isHidden {
-                    accessory.view.isHidden = true
-                    self?.mount(accessory, false)
-                }
-                self?.paneAnimation(false)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
+            if hidden, accessory.isHidden {
+                accessory.view.isHidden = true
+                mount(accessory, false)
             }
+            paneAnimation(false)
         }
     }
 
@@ -434,8 +417,6 @@ final class WorkspaceController: DetentSplitViewController {
     /// A split animation still running finishes after its window has gone and would save its frames over the next window's.
     func close() {
         for split in splitViews { split.autosaveName = nil }
-        paneFrames?.invalidate()
-        paneFrames = nil
         watches.forEach { $0.cancel() }
         app.performPDF = nil
         // The next workspace's columns are AppKit's to fold afresh.

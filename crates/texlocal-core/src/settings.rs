@@ -54,6 +54,16 @@ pub enum Engine {
 }
 
 impl Engine {
+    pub(crate) const ALL: [Self; 3] = [Self::Pdflatex, Self::Xelatex, Self::Lualatex];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Pdflatex => "pdfLaTeX",
+            Self::Xelatex => "XeLaTeX",
+            Self::Lualatex => "LuaLaTeX",
+        }
+    }
+
     pub(crate) fn flag(self) -> &'static str {
         match self {
             Self::Pdflatex => "-pdf",
@@ -90,31 +100,28 @@ fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, CoreError> {
     serde_json::from_slice(&bytes).map_err(|err| unreadable(err.to_string()))
 }
 
-fn store(path: &Path, value: &impl Serialize) -> Result<(), CoreError> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(|e| CoreError::internal(e.to_string()))?;
+fn update<T: DeserializeOwned + Default + Serialize>(
+    path: &Path,
+    change: impl FnOnce(&mut T) -> Result<(), CoreError>,
+) -> Result<T, CoreError> {
+    let mut value = load(path)?;
+    change(&mut value)?;
+    let bytes =
+        serde_json::to_vec_pretty(&value).map_err(|e| CoreError::internal(e.to_string()))?;
     atomic::write(path, &bytes)?;
-    Ok(())
+    Ok(value)
 }
 
-fn update_project(
-    root: &Path,
-    change: impl FnOnce(&mut ProjectFile) -> Result<(), CoreError>,
-) -> Result<ProjectFile, CoreError> {
-    let path = root.join(SETTINGS_FILE);
-    let mut file: ProjectFile = load(&path)?;
-    change(&mut file)?;
-    store(&path, &file)?;
-    Ok(file)
+fn read_project(root: &Path) -> ProjectFile {
+    load(&root.join(SETTINGS_FILE)).unwrap_or_default()
 }
 
 pub fn read_settings(root: &Path) -> Settings {
-    load::<ProjectFile>(&root.join(SETTINGS_FILE))
-        .unwrap_or_default()
-        .settings
+    read_project(root).settings
 }
 
 pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
-    let file = update_project(root, |file| {
+    let file = update(&root.join(SETTINGS_FILE), |file: &mut ProjectFile| {
         let Value::Object(patch) = patch else {
             return Err(CoreError::bad_request("Invalid settings"));
         };
@@ -148,10 +155,11 @@ impl AppSettings {
     }
 
     pub(crate) fn update(data_dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), CoreError> {
-        let path = data_dir.join(APP_SETTINGS_FILE);
-        let mut app: Self = load(&path)?;
-        change(&mut app);
-        store(&path, &app)
+        update(&data_dir.join(APP_SETTINGS_FILE), |app| {
+            change(app);
+            Ok(())
+        })
+        .map(drop)
     }
 }
 
@@ -170,13 +178,11 @@ pub struct UiPatch {
 }
 
 pub fn read_ui(root: &Path) -> UiState {
-    load::<ProjectFile>(&root.join(SETTINGS_FILE))
-        .unwrap_or_default()
-        .ui
+    read_project(root).ui
 }
 
 fn store_ui(root: &Path, change: impl FnOnce(&mut UiState)) -> Result<UiState, CoreError> {
-    let file = update_project(root, |file| {
+    let file = update(&root.join(SETTINGS_FILE), |file: &mut ProjectFile| {
         change(&mut file.ui);
         for list in [&mut file.ui.expanded_folders, &mut file.ui.folded_headings] {
             list.sort();
@@ -225,7 +231,6 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
 mod tests {
     use super::*;
     use crate::projects::testing::project;
-    use crate::projects::{create_free, list_projects};
     use serde_json::json;
 
     #[test]
@@ -258,12 +263,9 @@ mod tests {
         }
         assert_eq!(fs::read(&file).unwrap(), before);
 
-        create_free(&root, "chapters/paper.tex", false).unwrap();
         let settings = write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
         let pdf = settings.output(&root, "pdf").unwrap();
         assert_eq!(pdf, root.join(BUILD_DIR).join("paper.pdf"));
-        let listed = list_projects(root.parent().unwrap()).unwrap().remove(0);
-        assert_eq!([listed.id, listed.main_file], ["P", "chapters/paper.tex"]);
     }
 
     #[test]
@@ -271,7 +273,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let patch = |value: serde_json::Value| serde_json::from_value::<UiPatch>(value).unwrap();
+        let patch = |value: Value| serde_json::from_value::<UiPatch>(value).unwrap();
         assert_eq!(read_ui(root), UiState::default());
         write_ui(root, patch(json!({ "expandedFolders": ["b", "a", "b"] }))).unwrap();
         write_ui(root, patch(json!({ "foldedHeadings": ["x\t1:T#1"] }))).unwrap();

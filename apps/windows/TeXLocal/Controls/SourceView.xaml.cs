@@ -26,35 +26,69 @@ public sealed record CompletionRow(Completion Item, int Count, string Glyph)
 {
     public string Typed => Item.Label[..Math.Clamp(Count, 0, Item.Label.Length)];
     public string Rest => Item.Label[Math.Clamp(Count, 0, Item.Label.Length)..];
+    public bool HasDetail => Item.Detail is not null;
 }
 
+/// An issue's label at its line's end, as Visual Studio 2022's inline diagnostics: the message where there is room, then
+/// the core's fewer words that keep an undefined command's name, then cut at the tail, and the badge alone where fewer
+/// than ten characters would show.
 public sealed class IssueMark(IssueLine issue)
 {
-    public string Label => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
+    const int Least = 10;
+    static readonly TextBlock measure = new() { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
+    string Whole => (issue.Short.Length > 0 ? issue.Short : issue.Message) + (issue.Others.Length > 0 ? $" +{issue.Others.Length}" : "");
+    string Shortest => issue.Compact ?? Whole;
+    /// The whole label's width, and the least the shortest takes: whole, or cut to its first ten characters.
+    (double Whole, double Shortest)? widths;
+
+    /// The label for this much room after the badge.
+    public string Fit(double room)
+    {
+        static double Width(string text)
+        {
+            measure.Text = text;
+            measure.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            return measure.DesiredSize.Width;
+        }
+        if (widths is null)
+        {
+            var cut = Shortest.Length < Least ? double.PositiveInfinity : Width(Shortest[..Least].TrimEnd() + "…");
+            widths = (Width(Whole), Math.Min(Width(Shortest), cut));
+        }
+        var (whole, shortest) = widths.Value;
+        return whole <= room ? Whole : shortest <= room ? Shortest : "";
+    }
+
     public string Tip => string.Join("\n", [issue.Message, .. issue.Others]);
     public Style Badge => (Style)Application.Current.Resources[issue.Error ? "CriticalIconInfoBadgeStyle" : "CautionIconInfoBadgeStyle"];
 }
 
 public sealed partial class SourceView : UserControl
 {
-    // LabelInset: the list's border, padding, glyph and spacing before a label.
-    const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12;
+    // RowHeight: ListViewItemMinHeight, for a row not yet laid out. LabelInset: the list's border, padding, glyph and spacing
+    // before a label. Badge: an icon InfoBadge's width.
+    const int RowHeight = 32, ShownRows = 8, LabelInset = 1 + 12 + 16 + 12, Badge = 16;
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly List<(IssueLine Issue, FrameworkElement Mark)> marks = [];
+    readonly List<(IssueLine Issue, IssueMark Label, Grid Mark, Polyline[] Squiggles)> marks = [];
     readonly DispatcherQueueTimer partnerTimer;
+    readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
     ScrollViewer? scroller;
     bool setting, changed, undoing, restoring, composing, loading, stale, mirroring, reoffer, queued, moved;
-    int loads, lastEnd = -1, edits;
+    int loads, lastEnd = -1;
     double advance = 8.4;
     (int Start, int End) placed = (-1, -1);
     SourceRange before = new(0, 0);
     Completions? offered;
-    (int Caret, int Edits, MathPreview? Value)? lastMath;
+    /// A drag in the gutter: what it extends, and the line it started on.
+    (SourceRange Anchor, SourceRange First)? dragging;
+    /// A Ctrl+click's offset until its release.
+    int? pressedAt;
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
+    SolidColorBrush numbers = new();
     ElementTheme inked;
     string theme = "overleaf";
 
@@ -63,10 +97,22 @@ public sealed partial class SourceView : UserControl
     public Color Ink { get; private set; }
     public bool AutoPair { get; set; } = true;
     public bool AutoComplete { get; set; } = true;
+    public bool LineNumbers { get; set { field = value; Invalidate(false); } } = true;
     public event Action<bool>? Composing;
     /// Once per dispatcher turn, after the edit is mirrored, so the caret's line is the new text's.
     public event Action? CaretMoved;
+    public event Action? Scrolled;
     public event Action<IssueLine>? IssueInvoked;
+    /// Files dropped on the text, by their absolute paths, and the offset they were dropped at.
+    public event Action<string[], int>? FilesDropped;
+    /// The first place the project defines a name the reader asked after.
+    public event Action<Place>? DefinitionFound;
+    /// A label or citation to rename, and the name's rectangle in the view.
+    public event Action<Definition, Rect>? RenameAsked;
+
+    /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
+    /// to the project again.
+    public const string FileFormat = "TeXLocal.File";
 
     RichEditTextDocument Document => Editor.Document;
 
@@ -120,13 +166,32 @@ public sealed partial class SourceView : UserControl
             {
                 CloseCompletions();
                 Invalidate(false);
+                Scrolled?.Invoke();
             };
             if (Editor.ActualWidth > 0) ready.TrySetResult();
         };
+        // Handled ones too, so a drag RichEdit answers for itself still reaches FilesDropped.
+        AddHandler(DragOverEvent, new DragEventHandler(OnDragOver), true);
+        AddHandler(DropEvent, new DragEventHandler(OnDrop), true);
+        // RichEdit marks its presses and releases handled.
+        Editor.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
+        Editor.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
-        Loaded += (_, _) => Recolour(ActualTheme != inked);
+        Loaded += (_, _) =>
+        {
+            system.ColorValuesChanged += OnColoursChanged;
+            Recolour(ActualTheme != inked);
+        };
+        Unloaded += (_, _) => system.ColorValuesChanged -= OnColoursChanged;
     }
+
+    /// Off the UI thread. A switch into, out of or between high-contrast themes may raise no ActualThemeChanged; kinds are
+    /// none in high contrast.
+    void OnColoursChanged(Windows.UI.ViewManagement.UISettings sender, object? args) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (kinds.Length == 0 || new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) Recolour(true);
+    });
 
     public void SetLook(string family, double size, string themeId)
     {
@@ -159,12 +224,15 @@ public sealed partial class SourceView : UserControl
         });
     }
 
-    Color Of(Rectangle r) => Over(((SolidColorBrush)r.Fill).Color, ((SolidColorBrush)PaperInk.Fill).Color);
+    internal static Color Fill(Rectangle r) => ((SolidColorBrush)r.Fill).Color;
+
+    /// Opaque, as RichEdit needs, and raised by the core to the text's contrast on the paper and the current line.
+    Color Legible(Rectangle ink) => Opaque(Source.SyntaxCall<double[]>("legible",
+        new { color = Rgba(Fill(ink)), background = Rgba(Fill(PaperInk)), fill = Rgba(Fill(CurrentLine)) })!);
 
     /// None in high contrast, where every kind is drawn in the window's text colour.
     public static Color[] SyntaxColors(string theme, bool dark, Color paper, Color line, Color secondary)
     {
-        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
         var colours = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast ? null
             : Source.SyntaxCall<double[][]>("theme_colors", new
             {
@@ -174,16 +242,16 @@ public sealed partial class SourceView : UserControl
                 fill = Rgba(line),
                 system = new Dictionary<string, double[]> { ["secondaryLabelColor"] = Rgba(secondary) },
             });
-        return [.. (colours ?? []).Select(c => Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2])))];
+        return [.. (colours ?? []).Select(Opaque)];
     }
 
     public static double[] Rgba(Color c) => [c.R / 255.0, c.G / 255.0, c.B / 255.0, c.A / 255.0];
 
-    /// RichEdit ignores alpha.
-    public static Color Over(Color c, Color under)
+    /// The core composites what it answers over the paper.
+    static Color Opaque(double[] c)
     {
-        byte Mix(byte a, byte b) => (byte)((a * c.A + b * (255 - c.A)) / 255);
-        return Color.FromArgb(255, Mix(c.R, under.R), Mix(c.G, under.G), Mix(c.B, under.B));
+        static byte Byte(double v) => (byte)Math.Round(Math.Clamp(v, 0, 1) * 255);
+        return Color.FromArgb(255, Byte(c[0]), Byte(c[1]), Byte(c[2]));
     }
 
     /// RichEdit drops the text's colours if it gets them before its template is applied and it has
@@ -191,19 +259,18 @@ public sealed partial class SourceView : UserControl
     public async Task Show(string path, Source src)
     {
         await ready.Task;
+        scroller!.ChangeView(0, 0, null, true);
+        await Swap(path, src, src.Text);
+    }
+
+    public void Clear() => _ = Swap(null, null, "");
+
+    Task Swap(string? path, Source? src, string text)
+    {
         source?.Dispose();
         (Path, source) = (path, src);
         SetIssues([]);
-        scroller!.ChangeView(0, 0, null, true);
-        await SetText(src.Text);
-    }
-
-    public void Clear()
-    {
-        source?.Dispose();
-        (Path, source) = (null, null);
-        _ = SetText("");
-        SetIssues([]);
+        return SetText(text);
     }
 
     public async void Reload(string content)
@@ -225,13 +292,12 @@ public sealed partial class SourceView : UserControl
         var generation = ++loads;
         CloseCompletions();
         HidePartner();
-        (lastMath, shownMath, dismissedMath) = (null, null, null);
+        (shownMath, dismissedMath) = (null, null);
         MathPopup.IsOpen = false;
         source?.Call<bool>("end_snippet", new { });
         Document.EndUndoGroup();
-        (Ink, inked, stale) = (Of(TextInk), ActualTheme, !IsLoaded);
-        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, ((SolidColorBrush)PaperInk.Fill).Color,
-            ((SolidColorBrush)CurrentLine.Fill).Color, Of(SecondaryInk));
+        (Ink, numbers, inked, stale) = (Legible(TextInk), new SolidColorBrush(Legible(NumberInk)), ActualTheme, !IsLoaded);
+        kinds = SyntaxColors(theme, ActualTheme == ElementTheme.Dark, Fill(PaperInk), Fill(CurrentLine), Fill(SecondaryInk));
         var split = source is { LineCount: > 200 } s ? s.LineStart(201) : content.Length;
         setting = true;
         Document.SetText(TextSetOptions.FormatRtf, Rtf(content, 0, split));
@@ -336,6 +402,8 @@ public sealed partial class SourceView : UserControl
         else if (source is null || composing) return;
         else if (ctrl && !alt && !shift && e.Key == VirtualKey.Space) Complete(true);
         else if (alt && !ctrl && !shift && e.Key is VirtualKey.Up or VirtualKey.Down) MoveLines(e.Key == VirtualKey.Up);
+        // Ctrl+] and Ctrl+[: the keys of ] and [ on a US layout (VK_OEM_6, VK_OEM_4), as Visual Studio reads them.
+        else if (ctrl && !alt && !shift && (int)e.Key is 219 or 221) ShiftLines((int)e.Key == 221 ? 1 : -1);
         else
         {
             e.Handled = offered is not null && plain && Completing(e.Key)
@@ -373,7 +441,6 @@ public sealed partial class SourceView : UserControl
         var mirrors = source!.Edit(start, removed, inserted, mirroring);
         Text = string.Concat(Text.AsSpan(0, start), inserted, Text.AsSpan(start + removed));
         lastEnd = start + inserted.Length;
-        edits++;
         if (colour) Colour(source.LineAt(start), source.LineAt(start + inserted.Length));
         if (mirrors is not { Length: > 0 }) return;
         // The typing stays where it was, moved only by copies put in before it.
@@ -402,19 +469,29 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
+    /// Edits in the text's order, as one undo step, with the selection moved by them.
     bool Apply(TextEdit[]? edits) => edits is { Length: > 0 } && Apply(new Change(edits,
         source!.Call<SourceRange[]>("map_selections", new { edits, selections = new[] { Selected } }) ?? []));
 
+    /// A replace's or rename's edits of the open document, at once as one undo step; not into another file shown meanwhile,
+    /// or this one typed in since, whose offsets they aren't. RichEdit's own edit, not yet mirrored, is typing too.
+    public void Apply(DocumentEdits? edits)
+    {
+        if (changed) OnEdited();
+        if (edits is not null && edits.Path == Path && edits.Version == source?.Call<ulong?>("version", new { })) Apply(edits.Edits);
+    }
+
+    /// One edit as an undo step, with the caret after it unless the selection is given.
+    bool Apply(TextEdit edit, SourceRange? selection = null) =>
+        Apply(new Change([edit], [selection ?? new(edit.Start + edit.Text.Length, 0)]));
+
+    /// The insertion, then its snippet's first field selected.
     void Insert(Insertion? insertion)
     {
         if (insertion is null) return;
-        Apply(new Change([insertion.Edit], [new(insertion.Caret, 0)]));
-        StartSnippet(insertion.Fields, insertion.Edit.Start);
-    }
-
-    void StartSnippet(SnippetField[] fields, int at)
-    {
-        if (source!.Call<SourceRange>("start_snippet", new { fields, at }) is { } first) Place(first);
+        Apply(insertion.Edit, new(insertion.Caret, 0));
+        var snippet = new { fields = insertion.Fields, at = insertion.Edit.Start };
+        if (source!.Call<SourceRange>("start_snippet", snippet) is { } first) Place(first);
     }
 
     /// A word's letters are one undo step.
@@ -443,7 +520,7 @@ public sealed partial class SourceView : UserControl
     bool Newline()
     {
         if (source!.Call<Keystroke>("insert_newline", new { selection = Selected }) is not { Edit: { } edit } stroke) return false;
-        Apply(new Change([edit], [stroke.Selection ?? new(edit.Start + edit.Text.Length, 0)]));
+        Apply(edit, stroke.Selection);
         Finish(stroke);
         return true;
     }
@@ -456,7 +533,7 @@ public sealed partial class SourceView : UserControl
             reoffer = completing;
             return false;
         }
-        Apply(new Change([edit], [new(edit.Start + edit.Text.Length, 0)]));
+        Apply(edit);
         if (completing) Complete(false);
         else CloseCompletions();
         return true;
@@ -482,6 +559,13 @@ public sealed partial class SourceView : UserControl
         else return false;
         return true;
     }
+
+    /// Shift right and Shift left: the lines, even from within a snippet's field, which Tab would leave for the next.
+    public void ShiftLines(int step) => Command(() =>
+    {
+        source!.Call<bool>("end_snippet", new { });
+        Tab(step);
+    });
 
     public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up }));
 
@@ -567,17 +651,22 @@ public sealed partial class SourceView : UserControl
             "label" => "\uE8EC",
             "citation" => "\uE8F1",
             "entryType" => "\uE8A5",
+            "file" => "\uE7C3",
             _ => "\uE943",
         };
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph)).ToList();
         CompletionList.SelectedIndex = 0;
-        // The surface's padding and border are the 10 past the rows; above the line when there's no room below. Near the
-        // text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
-        var height = Math.Min(found.Items.Length, ShownRows) * RowHeight + 10;
+        // Near the text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
         CompletionPopup.HorizontalOffset = Math.Max(-Gutter.ActualWidth, at.X - LabelInset);
-        CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
+        // Laid out open, before it is drawn, so a row is measured: text scaling makes rows taller.
         CompletionPopup.IsOpen = true;
-        Announce(found.Items[0].Label);
+        CompletionList.UpdateLayout();
+        var row = CompletionList.ContainerFromIndex(0) is FrameworkElement { ActualHeight: > 0 } shown ? shown.ActualHeight : RowHeight;
+        CompletionList.MaxHeight = ShownRows * row;
+        // The surface's padding and border are the 10 past the rows; above the line when there's no room below.
+        var height = Math.Min(found.Items.Length, ShownRows) * row + 10;
+        CompletionPopup.VerticalOffset = at.Bottom + 4 + height <= ActualHeight || at.Y - height - 4 < 0 ? at.Bottom + 4 : at.Y - height - 4;
+        Announce(found.Items[0]);
     }
 
     void CloseCompletions()
@@ -604,7 +693,7 @@ public sealed partial class SourceView : UserControl
             var i = CompletionList.SelectedIndex + step;
             CompletionList.SelectedIndex = Math.Abs(step) == 1 ? (i + count) % count : Math.Clamp(i, 0, count - 1);
             CompletionList.ScrollIntoView(CompletionList.SelectedItem);
-            Announce(offered.Items[CompletionList.SelectedIndex].Label);
+            Announce(offered.Items[CompletionList.SelectedIndex]);
             return true;
         }
         if (key is VirtualKey.Enter or VirtualKey.Tab) Accept(CompletionList.SelectedIndex);
@@ -625,28 +714,20 @@ public sealed partial class SourceView : UserControl
         CloseCompletions();
         if (caret < o.Start) return;
         var item = o.Items[index];
-        Apply(new Change([new(o.Start, caret - o.Start, item.Text)], [new(o.Start + item.Text.Length, 0)]));
-        StartSnippet(item.Fields, o.Start);
+        Insert(new Insertion(new(o.Start, caret - o.Start, item.Text), o.Start + item.Text.Length, item.Fields));
     }
 
-    /// The list never has the keyboard, so Narrator hears the chosen item from the editor.
-    void Announce(string label)
+    /// The list never has the keyboard, so Narrator hears the chosen item, and its detail, from the editor.
+    void Announce(Completion item)
     {
         var peer = FrameworkElementAutomationPeer.FromElement(Editor) ?? FrameworkElementAutomationPeer.CreatePeerForElement(Editor);
-        peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent, label, "completion");
-    }
-
-    MathPreview? MathAt(int caret)
-    {
-        if (lastMath is { } last && last.Caret == caret && last.Edits == edits) return last.Value;
-        var value = source?.Call<MathPreview>("math_at", new { caret });
-        lastMath = (caret, edits, value);
-        return value;
+        peer.RaiseNotificationEvent(AutomationNotificationKind.ItemAdded, AutomationNotificationProcessing.MostRecent,
+            item.Detail is { } detail ? $"{item.Label}, {detail}" : item.Label, "completion");
     }
 
     async void PreviewMath()
     {
-        var maths = source is null || loading || Selected.Length > 0 ? null : MathAt(CaretOffset);
+        var maths = source is null || loading || Selected.Length > 0 ? null : source.Call<MathPreview>("math_at", new { caret = CaretOffset });
         if (maths?.Start != dismissedMath) dismissedMath = null;
         if (maths is null || dismissedMath is not null || Editor.FocusState == FocusState.Unfocused)
         {
@@ -716,6 +797,9 @@ public sealed partial class SourceView : UserControl
 
     public int LineCount => source?.LineCount ?? 1;
 
+    /// The line at the view's top, in view in part or whole; once a file shows.
+    public int TopLine => source!.LineAt(Document.GetRangeFromPoint(new Point(0, scroller!.VerticalOffset), PointOptions.ClientCoordinates).StartPosition);
+
     public void GoTo(int line, int column = 0, int length = 0)
     {
         line = Math.Clamp(line, 1, source!.LineCount);
@@ -759,8 +843,92 @@ public sealed partial class SourceView : UserControl
         if (source is null || !content.Contains(StandardDataFormats.Text)) return;
         var pasted = (await content.GetTextAsync()).Replace("\r\n", "\n").Replace('\r', '\n');
         var at = Selected;
-        Apply(new Change([new(at.Start, at.Length, pasted)], [new(at.Start + pasted.Length, 0)]));
+        Apply(new TextEdit(at.Start, at.Length, pasted));
     }
+
+    static bool HasFiles(DataPackageView data) => data.Contains(StandardDataFormats.StorageItems) || data.Contains(FileFormat);
+
+    void OnDragOver(object sender, DragEventArgs e)
+    {
+        if (source is null || !HasFiles(e.DataView)) return;
+        e.AcceptedOperation = DataPackageOperation.Copy;
+        e.Handled = true;
+    }
+
+    /// The offset is read before the paths, while the drop's point holds.
+    async void OnDrop(object sender, DragEventArgs e)
+    {
+        if (source is null || !HasFiles(e.DataView)) return;
+        e.Handled = true;
+        var at = OffsetAt(e.GetPosition(Editor));
+        var deferral = e.GetDeferral();
+        var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
+            : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
+        deferral.Complete();
+        FilesDropped?.Invoke(paths, at);
+    }
+
+    /// The text's offset at a point of the editor's: RichEdit's points are the scrolled text's, inside its padding.
+    int OffsetAt(Point p) => Document.GetRangeFromPoint(new Point(Math.Max(0, p.X - Editor.Padding.Left + scroller!.HorizontalOffset),
+        Math.Max(0, p.Y - Editor.Padding.Top + scroller.VerticalOffset)), PointOptions.ClientCoordinates).StartPosition;
+
+    /// Ctrl+click, Visual Studio's and VS Code's Go to definition, taken on a release where it was pressed, as VS Code
+    /// does: a selection made during the press would follow RichEdit's drag from it.
+    void OnPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(Editor);
+        pressedAt = e.KeyModifiers == Windows.System.VirtualKeyModifiers.Control && point.Properties.IsLeftButtonPressed ? OffsetAt(point.Position) : null;
+    }
+
+    void OnReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (pressedAt is { } at && OffsetAt(e.GetCurrentPoint(Editor).Position) == at) Define(at);
+        pressedAt = null;
+    }
+
+    /// F12, at the caret.
+    public void GoToDefinition() => Define(CaretOffset);
+
+    /// The first of the places, as Visual Studio goes with one; where nothing is defined, nothing changes.
+    void Define(int at)
+    {
+        if (DefinitionAt(at) is { Places: [var first, ..] }) DefinitionFound?.Invoke(first);
+    }
+
+    Definition? DefinitionAt(int at) => source?.Call<Definition>("definition", new { at });
+
+    /// F2, VS Code's Rename Symbol: only a label or a citation, the names the core renames, its box under the name.
+    public void RenameSymbol()
+    {
+        var caret = CaretOffset;
+        if (DefinitionAt(caret) is not { Kind: "label" or "citation" } symbol) return;
+        // The name the caret is in or just after: the first that starts no further back than its length.
+        var start = Text.IndexOf(symbol.Name, Math.Max(0, caret - symbol.Name.Length), StringComparison.Ordinal);
+        if (RectOf(start, start + symbol.Name.Length) is { } r)
+            RenameAsked?.Invoke(symbol, new Rect(Gutter.ActualWidth + r.X, r.Y, r.Width, r.Height));
+    }
+
+    /// Visual Studio's Go to definition and VS Code's Rename Symbol after the text commands, which the menu makes again
+    /// each time it opens.
+    void OnContextOpening(object sender, object e)
+    {
+        var commands = ((TextCommandBarFlyout)sender).SecondaryCommands;
+        var defined = DefinitionAt(CaretOffset);
+        void Add(string label, string key, bool enabled, Action invoked)
+        {
+            var item = new AppBarButton { Label = label, KeyboardAcceleratorTextOverride = key, IsEnabled = enabled };
+            // Once the menu has closed and handed the editor its focus back, so the rename box keeps the keys.
+            item.Click += (_, _) => DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => invoked());
+            commands.Add(item);
+        }
+        commands.Add(new AppBarSeparator());
+        Add("Go to definition", "F12", defined is { Places.Length: > 0 }, GoToDefinition);
+        Add("Rename symbol", "F2", defined is { Kind: "label" or "citation" }, RenameSymbol);
+    }
+
+    /// A dropped file's text, put in where it was dropped and selected, as on the Mac. Not Drop, UIElement's event.
+    public void InsertDropped(int at, string text) =>
+        Command(() => Apply(new TextEdit(at, 0, text), new(at, text.Length)));
 
     int End(int line) => line < source!.LineCount ? source.LineStart(line + 1) - 1 : Text.Length;
 
@@ -830,6 +998,48 @@ public sealed partial class SourceView : UserControl
             : new Rect(r.X + Editor.Padding.Left - scroller.HorizontalOffset, r.Y + Editor.Padding.Top - scroller.VerticalOffset, Math.Max(r.Width, 0), r.Height);
     }
 
+    /// The line under the pointer with its line break, scrolled to where the pointer is past the text's edge.
+    SourceRange LineUnder(PointerRoutedEventArgs e)
+    {
+        var y = e.GetCurrentPoint(Editor).Position.Y;
+        var at = Document.GetRangeFromPoint(new Point(0, Math.Max(0, y - Editor.Padding.Top + scroller!.VerticalOffset)), PointOptions.ClientCoordinates);
+        if (y < Editor.Padding.Top || y > Editor.ActualHeight - Editor.Padding.Bottom) at.ScrollIntoView(PointOptions.None);
+        var line = source!.LineAt(at.StartPosition);
+        var start = source.LineStart(line);
+        return new(start, (line < source.LineCount ? source.LineStart(line + 1) : Text.Length) - start);
+    }
+
+    /// The Mac's gutter: a press selects its line, a drag the lines it crosses, Shift extends the selection to them.
+    void OnGutterPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (source is null || !e.GetCurrentPoint(Gutter).Properties.IsLeftButtonPressed) return;
+        var first = LineUnder(e);
+        dragging = (Down(VirtualKey.Shift) ? Selected : first, first);
+        Gutter.CapturePointer(e.Pointer);
+        Editor.Focus(FocusState.Pointer);
+        OnGutterMoved(sender, e);
+        e.Handled = true;
+    }
+
+    void OnGutterMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragging is not { Anchor: var anchor }) return;
+        var line = LineUnder(e);
+        Document.Selection.SetRange(Math.Min(anchor.Start, line.Start), Math.Max(anchor.End, line.End));
+    }
+
+    /// A press that selected only its line opens that line's issue, as a click on its box does.
+    void OnGutterReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragging is not { First: var first }) return;
+        Gutter.ReleasePointerCapture(e.Pointer);
+        dragging = null;
+        var line = source!.LineAt(first.Start);
+        if (Selected == first && marks.Where(m => m.Issue.Line == line).Select(m => m.Issue).FirstOrDefault() is { } issue) IssueInvoked?.Invoke(issue);
+    }
+
+    void OnGutterCaptureLost(object sender, PointerRoutedEventArgs e) => dragging = null;
+
     /// One refresh, CaretMoved and maths preview per dispatcher turn. RichEdit can raise TextChanged after
     /// SelectionChanged, so an edit of its own is mirrored first.
     void Invalidate(bool caret = true)
@@ -857,16 +1067,16 @@ public sealed partial class SourceView : UserControl
         Gutter.Visibility = Backdrop.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (!shown) return;
         var y = scroller!.VerticalOffset;
-        var first = source!.LineAt(Document.GetRangeFromPoint(new Point(0, y), PointOptions.ClientCoordinates).StartPosition);
-        var last = source.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
+        var first = TopLine;
+        var last = source!.LineAt(Document.GetRangeFromPoint(new Point(Editor.ActualWidth, y + Editor.ActualHeight), PointOptions.ClientCoordinates).StartPosition);
         var caret = source.LineAt(CaretOffset);
-        Gutter.Width = Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8);
+        Gutter.Width = LineNumbers ? Math.Ceiling(16 + Math.Max(3, source.LineCount.ToString().Length) * advance + 8) : 16;
         // Only beside the text's viewport, so nothing shows in the find bar's band.
         var view = new Rect(0, Editor.Padding.Top, Gutter.Width + Editor.ActualWidth, Math.Max(0, Editor.ActualHeight - Editor.Padding.Top - Editor.Padding.Bottom));
         foreach (var layer in (UIElement[])[Gutter, Backdrop, Overlay]) layer.Clip = new RectangleGeometry { Rect = view };
 
         var used = 0;
-        for (var line = first; line <= last; line++)
+        for (var line = first; LineNumbers && line <= last; line++)
         {
             if (RectOf(source.LineStart(line), source.LineStart(line)) is not { } r) continue;
             if (used == Gutter.Children.Count)
@@ -878,7 +1088,7 @@ public sealed partial class SourceView : UserControl
             // The editor's font and size at the line's top: the number sits on the text's baseline.
             var number = (TextBlock)Gutter.Children[used++];
             (number.FontFamily, number.FontSize, number.Width) = (Editor.FontFamily, Editor.FontSize, Gutter.Width - 8);
-            (number.Text, number.Foreground) = (line.ToString(), (line == caret ? TextInk : NumberInk).Fill);
+            (number.Text, number.Foreground) = (line.ToString(), line == caret ? TextInk.Fill : numbers);
             number.Visibility = Visibility.Visible;
             Canvas.SetTop(number, r.Y);
         }
@@ -891,29 +1101,60 @@ public sealed partial class SourceView : UserControl
         }
 
         var right = Overlay.ActualWidth - Editor.Padding.Right;
-        foreach (var (issue, mark) in marks)
+        foreach (var (issue, label, mark, squiggles) in marks)
         {
-            var end = issue.Line >= first && issue.Line <= last ? RectOf(End(issue.Line), End(issue.Line)) : null;
+            var seen = issue.Line >= first && issue.Line <= last;
+            var start = seen ? source.LineStart(issue.Line) : 0;
+            for (var i = 0; i < squiggles.Length; i++)
+            {
+                var token = seen ? RectOf(start + issue.Tokens[i].Start, start + issue.Tokens[i].End) : null;
+                squiggles[i].Visibility = token is null ? Visibility.Collapsed : Visibility.Visible;
+                if (token is not { } t) continue;
+                Squiggle(squiggles[i].Points, t.Width);
+                Canvas.SetLeft(squiggles[i], t.X);
+                // In the line's descent, under the baseline, as Visual Studio draws it.
+                Canvas.SetTop(squiggles[i], t.Bottom - 3);
+            }
+            var end = seen ? RectOf(End(issue.Line), End(issue.Line)) : null;
             var x = (end?.X ?? 0) + 16;
-            mark.Visibility = end is not null && right - x >= 16 ? Visibility.Visible : Visibility.Collapsed;
-            if (end is not { } r) continue;
-            (mark.MaxWidth, mark.Height) = (Math.Max(0, right - x), r.Height);
+            if (end is not { } r || right - x < Badge)
+            {
+                mark.Visibility = Visibility.Collapsed;
+                continue;
+            }
+            mark.Visibility = Visibility.Visible;
+            // The template's label, past its badge and spacing.
+            ((TextBlock)mark.Children[1]).Text = label.Fit(right - x - Badge - 8);
+            (mark.MaxWidth, mark.Height) = (right - x, r.Height);
             Canvas.SetLeft(mark, x);
             Canvas.SetTop(mark, r.Y);
         }
     }
 
+    /// A zigzag 2 px deep every 4 px, redrawn only when the token's width changes.
+    static void Squiggle(PointCollection points, double width)
+    {
+        if (points.Count > 0 && points[points.Count - 1].X == width) return;
+        points.Clear();
+        for (var x = 0.0; x < width; x += 2) points.Add(new Point(x, x % 4));
+        points.Add(new Point(width, 2 - Math.Abs(width % 4 - 2)));
+    }
+
     public void SetIssues(IssueLine[] lines)
     {
-        marks.ForEach(m => Overlay.Children.Remove(m.Mark));
+        foreach (var (_, _, mark, squiggles) in marks)
+            foreach (var shown in (FrameworkElement[])[mark, .. squiggles]) Overlay.Children.Remove(shown);
         marks.Clear();
         foreach (var issue in lines)
         {
-            var mark = (FrameworkElement)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
-            (mark.DataContext, mark.Visibility) = (new IssueMark(issue), Visibility.Collapsed);
+            var label = new IssueMark(issue);
+            var mark = (Grid)((DataTemplate)Resources["IssueTemplate"]).LoadContent();
+            (mark.DataContext, mark.Visibility) = (label, Visibility.Collapsed);
             mark.Tapped += (_, _) => IssueInvoked?.Invoke(issue);
-            Overlay.Children.Add(mark);
-            marks.Add((issue, mark));
+            var style = (Style)Resources[issue.Error ? "ErrorSquiggleStyle" : "WarningSquiggleStyle"];
+            Polyline[] squiggles = [.. issue.Tokens.Select(_ => new Polyline { Style = style, Visibility = Visibility.Collapsed })];
+            foreach (var shown in (FrameworkElement[])[mark, .. squiggles]) Overlay.Children.Add(shown);
+            marks.Add((issue, label, mark, squiggles));
         }
         Invalidate(false);
     }

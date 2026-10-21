@@ -4,11 +4,9 @@ using Windows.Foundation.Collections;
 
 namespace TeXLocal;
 
-public sealed record SyntaxTheme(string Id, string Title);
-
 /// The host's preferences, typed, in LocalSettings (the registry, under HKCU\Software\Classes\Local Settings\Software\TeXLocal)
 /// until the core keeps validated shared ones; a run on a scratch library (TEXLOCAL_DATA) keeps its own, as "TeXLocal Dev".
-/// Settings › Editor's five raise EditorChanged.
+/// Settings › Editor's six raise EditorChanged.
 public static unsafe partial class Prefs
 {
     static readonly IPropertySet values = Microsoft.Windows.Storage.ApplicationData.GetForUnpackaged("TeXLocal",
@@ -19,6 +17,7 @@ public static unsafe partial class Prefs
     public static double SplitRatio { get => Get("splitRatio", 0.5); set => values["splitRatio"] = value; }
     public static double IssuesHeight { get => Get("issuesHeight", 200.0); set => values["issuesHeight"] = value; }
     public static bool AutoCompile { get => Get("autoCompile", true); set => values["autoCompile"] = value; }
+    public static bool SyncAfterCompile { get => Get("syncAfterCompile", false); set => values["syncAfterCompile"] = value; }
     internal static int Theme { get => Get("theme", 0); set => values["theme"] = value; }
     internal static string Bounds { get => Get("bounds", ""); set => values["bounds"] = value; }
     internal static bool Maximized { get => Get("maximized", false); set => values["maximized"] = value; }
@@ -28,10 +27,11 @@ public static unsafe partial class Prefs
     public static string EditorTheme { get => Get("editorTheme", "overleaf"); set => Set("editorTheme", value, EditorTheme); }
     public static bool AutoPair { get => Get("editorAutoPair", true); set => Set("editorAutoPair", value, AutoPair); }
     public static bool AutoComplete { get => Get("editorAutoComplete", true); set => Set("editorAutoComplete", value, AutoComplete); }
+    public static bool LineNumbers { get => Get("editorLineNumbers", true); set => Set("editorLineNumbers", value, LineNumbers); }
 
     public static event Action? EditorChanged;
 
-    public static SyntaxTheme[] Themes => field ??= Source.SyntaxCall<SyntaxTheme[]>("themes", new { }) ?? [];
+    public static Choice[] Themes => field ??= Source.SyntaxCall<Choice[]>("themes", new { }) ?? [];
 
     static T Get<T>(string key, T fallback) => values.TryGetValue(key, out var v) && v is T t ? t : fallback;
 

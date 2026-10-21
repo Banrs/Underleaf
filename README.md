@@ -31,8 +31,9 @@ Clicking in the PDF takes you to that place in the source, and you can go the ot
 Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background.
 
-There's also a file tree, an outline of the current file, a word count, search across the project
-and export to ZIP. Deleted files go to the Trash or the Recycle Bin.
+There's also a file tree, an outline of the current file, a word count, search and replace across
+the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go
+to the Trash or the Recycle Bin.
 
 ## Requirements
 

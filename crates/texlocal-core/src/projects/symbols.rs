@@ -1,70 +1,54 @@
-//! The labels and citation keys a project defines, for completion.
+//! What a project's files define and refer to, for completion and definitions.
 
-use std::collections::{BTreeMap, HashSet};
-use std::fs;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use std::sync::LazyLock;
-
-use regex::Regex;
+use std::sync::Arc;
 
 use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
+use crate::analyze::{Facts, Files, Named};
 use crate::error::CoreError;
-use crate::syntax::scan::strip_comment;
+pub use crate::syntax::Symbols;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Symbols {
-    pub citations: Vec<String>,
-    pub labels: Vec<String>,
-}
-
-// Matched on the decoded text, not the raw bytes: in Unicode mode a byte that
-// isn't UTF-8 (a Latin-1 umlaut) drops its entry, and `(?-u)` narrows `\s` to
-// ASCII, which swallows a non-breaking space into the key.
-static BIB_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]*[^}:])\}").unwrap());
-static BIBITEM: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
-
-fn parse_symbols(bytes: &[u8], kind: &str) -> Symbols {
-    let mut citations = Vec::new();
-    let mut labels = Vec::new();
-    let text = String::from_utf8_lossy(bytes);
-    let found = |re: &Regex, text: &str, out: &mut Vec<String>| {
-        out.extend(re.captures_iter(text).map(|m| m[1].to_string()));
-    };
-    if kind == "bib" {
-        found(&BIB_KEY, &text, &mut citations);
-    } else {
-        for line in text.lines().map(strip_comment) {
-            if !line.contains('\\') {
-                continue;
-            }
-            found(&LABEL, line, &mut labels);
-            found(&BIBITEM, line, &mut citations);
-        }
-    }
-    Symbols { citations, labels }
-}
-
-pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
+/// Their union over the project's .tex and .bib files, each read again only once it changes;
+/// one an editor has open from its text in `open`.
+pub fn scan_symbols(
+    root: &Path,
+    facts: &Files,
+    open: &HashMap<String, String>,
+) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
         let kind = file_kind(rel);
-        if (kind == "bib" || kind == "tex")
-            && let Some(bytes) = skip_unreadable(fs::read(abs))?
-        {
-            files.insert(rel.to_owned(), parse_symbols(&bytes, kind));
+        if !matches!(kind, "tex" | "bib") {
+            return Ok(true);
         }
+        let found = match open.get(rel) {
+            Some(text) => Some(Arc::new(Facts::read(text, kind))),
+            None => skip_unreadable(facts.facts(abs, rel))?,
+        };
+        files.extend(found.map(|found| (rel.to_owned(), found)));
         Ok(true)
     })?;
-    fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
+    facts.keep(files.keys());
+    /// The first of each name, in the files' order.
+    fn firsts<'a, T: Clone>(
+        all: impl Iterator<Item = &'a T>,
+        name: fn(&'a T) -> &'a str,
+    ) -> Vec<T> {
         let mut seen = HashSet::new();
-        symbols.filter(|s| seen.insert(*s)).cloned().collect()
+        all.filter(|item| seen.insert(name(item)))
+            .cloned()
+            .collect()
     }
+    let all = || files.values().map(|facts| &**facts);
+    let names = |named: Vec<Named>| named.into_iter().map(|named| named.name).collect();
     Ok(Symbols {
-        citations: dedup(files.values().flat_map(|s| &s.citations)),
-        labels: dedup(files.values().flat_map(|s| &s.labels)),
+        citations: firsts(all().flat_map(|f| &f.citations), |c| &c.name),
+        labels: names(firsts(all().flat_map(|f| &f.labels), |l| &l.name)),
+        commands: firsts(all().flat_map(|f| &f.commands), |c| &c.name),
+        environments: names(firsts(all().flat_map(|f| &f.environments), |e| &e.name)),
+        by_file: files,
+        ..Symbols::default()
     })
 }

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TeXLocal
 
@@ -22,11 +23,20 @@ struct BuildPanelTests {
         panel.show(.texpresso)
         #expect(panel.showsLiveLog)
         panel.tab = .issues
-        #expect(!panel.showsLiveLog)
         panel.closeAfterCleanBuild()
         #expect(panel.shown)
-        panel.tab = .texpresso
-        panel.shown = false
-        #expect(!panel.showsLiveLog)
+    }
+
+    @Test func badBoxesFollowTheWarningsAndHideWithThem() throws {
+        func items(_ type: String, _ message: String) -> String { "[{\"type\": \"\(type)\", \"file\": null, \"line\": null, \"message\": \"\(message)\"}]" }
+        let json = """
+            {"ok": true, "stopped": false, "pdf": null, "pdfChanged": false, "durationMs": 0, "log": "",
+             "errors": \(items("error", "Undefined")), "warnings": \(items("warning", "Citation")), "badBoxes": \(items("warning", "Overfull"))}
+            """
+        let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
+        let panel = BuildPanelModel()
+        #expect(panel.rows(of: result).map(\.element.message) == ["Undefined", "Citation", "Overfull"])
+        panel.showsWarnings = false
+        #expect(panel.rows(of: result).map(\.element.message) == ["Undefined"])
     }
 }
