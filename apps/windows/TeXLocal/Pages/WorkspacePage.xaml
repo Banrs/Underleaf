@@ -275,7 +275,7 @@
                     <AppBarButton.Flyout>
                         <MenuFlyout x:Name="EquationMenu" Placement="BottomEdgeAlignedLeft">
                             <MenuFlyoutItem Click="OnInlineMaths" KeyboardAcceleratorTextOverride="Alt+=" Text="Inline maths" />
-                            <MenuFlyoutItem x:Name="EquationAnchor" Click="OnDisplayMaths" Text="Display maths" />
+                            <MenuFlyoutItem Click="OnDisplayMaths" Text="Display maths" />
                             <MenuFlyoutSeparator />
                         </MenuFlyout>
                     </AppBarButton.Flyout>

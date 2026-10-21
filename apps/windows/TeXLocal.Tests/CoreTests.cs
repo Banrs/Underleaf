@@ -79,12 +79,12 @@ public sealed class CoreTests : IDisposable
         var untitled = analysis.Outline.Last();
         Assert.True(untitled.Untitled);
         Assert.Contains(analysis.HeadingStyles, s => s.Command == "chapter");
-        var current = await core.CallAsync<int?>("session_outline_current", new { session, path = "main.tex", line = 5 });
-        Assert.Equal<int?>(untitled.Index, current);
+        var at = new { session, path = "main.tex", line = 5 };
+        Assert.Equal<int?>(untitled.Index, await core.CallAsync<int?>("session_outline_current", at));
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Search's hits by file; Replace's edits of the open document, at its source's version, and the other files counted.
+    /// Search's hits by file; Replace's edits of the open document at its version, and the other files counted.
     [Fact]
     public async Task SearchAndReplaceDecode()
     {
