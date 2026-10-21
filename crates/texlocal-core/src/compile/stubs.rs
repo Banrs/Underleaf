@@ -169,13 +169,13 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     promptly(started);
 }
 
-/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project; the user's rc comes before every option it could override.
+/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project; the user's rc comes before every option it could override; the glossary rules are given either way.
 #[tokio::test]
 async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     let (_dir, service, root) =
         setup("mkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n");
     let cases: [(_, &[&str], &[&str]); 3] = [
-        (json!({}), &["-f", "-norc"], &["-g", "-halt-on-error"]),
+        (json!({}), &["-f", "-norc", "-e"], &["-g", "-halt-on-error"]),
         (
             json!({ "stopOnFirstError": true }),
             &["-halt-on-error"],
@@ -183,7 +183,7 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
         ),
         (
             json!({ "shellEscape": true }),
-            &["-shell-escape"],
+            &["-shell-escape", "-e"],
             &["-norc"],
         ),
     ];

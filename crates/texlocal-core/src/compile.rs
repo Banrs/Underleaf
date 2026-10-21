@@ -26,6 +26,25 @@ const LOG_TAIL: usize = 200_000;
 const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
 /// The outputs whose stamps tell whether a run wrote them.
 const STAMPED: [&str; 4] = ["log", "pdf", "blg", "aux"];
+/// latexmk's rules for glossaries, acronyms, bib2gls and nomencl, which it lacks and Overleaf
+/// adds: they run TeX's own programs on the build folder's files, and a rule the user's or the
+/// project's latexmkrc made for the same files wins. bib2gls may write beside the project, and
+/// its log names the .bib files a rebuild watches. One line with only single quotes, as
+/// Windows' latexmk wrapper passes it on.
+const GLOSSARY_RULES: &str = "\
+    sub tl_rule { my ($from, $to) = @_; \
+        add_cus_dep($from, $to, 0, 'tl_'.$to) unless grep { /^$from $to / } @cus_dep_list } \
+    sub tl_gls { my ($name, $dir) = fileparse($_[0]); system('makeglossaries', '-d', $dir, $name) } \
+    sub tl_acr { tl_gls(@_) } \
+    sub tl_nls { system('makeindex', '-s', 'nomencl.ist', '-t', $_[0].'.nlg', \
+        '-o', $_[0].'.nls', $_[0].'.nlo') } \
+    sub tl_glstex { my ($name, $dir) = fileparse($_[0]); \
+        my $failed = system('bib2gls', '--group', $_[0]); \
+        rename($name.'.glstex', $_[0].'.glstex') if $dir; \
+        if (open(my $log, $_[0].'.glg')) { while (my $line = readline($log)) { \
+            rdb_ensure_file($rule, $1) if $line =~ /^Reading (.*\\.bib)\\s$/ } } \
+        $failed } \
+    tl_rule('glo', 'gls'); tl_rule('acn', 'acr'); tl_rule('nlo', 'nls'); tl_rule('aux', 'glstex');";
 
 /// `pdf`: the PDF a good build, or a failed one compiling past errors, wrote.
 #[derive(Debug, Default, Serialize)]
@@ -195,6 +214,7 @@ impl CompileManager {
                     "-f"
                 },
             ]);
+            command.arg("-e").arg(GLOSSARY_RULES);
             // No build folder is made here: one made before the stop check could ghost a
             // project renamed meanwhile.
             command
@@ -413,5 +433,43 @@ mod tests {
         let windows = move |key: &str| (key == "USERPROFILE").then(|| profile.clone());
         let found = user_latexmkrc(windows);
         assert_eq!(found, rc(&config).filter(|_| cfg!(windows)));
+    }
+
+    /// TeX Live on the PATH: `cargo test -p texlocal-core thesis -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs TeX Live"]
+    async fn a_thesis_builds_its_glossary_acronyms_nomenclature_and_index() {
+        let (_dir, service) = crate::projects::testing::library();
+        crate::projects::create_project(&service.data_dir, "My Thesis", "blank", None).unwrap();
+        let root = service.project_root("My Thesis").unwrap();
+        std::fs::write(
+            root.join("main.tex"),
+            r"\documentclass{report}
+\usepackage[acronym]{glossaries}
+\usepackage{nomencl,makeidx}
+\makeglossaries\makenomenclature\makeindex
+\newglossaryentry{tex}{name={TeX},description={a typesetting system}}
+\newacronym{pdf}{PDF}{Portable Document Format}
+\begin{document}
+\gls{tex} makes a \gls{pdf}. Zebra\index{Zebra}\nomenclature{$c$}{Speed of light}
+\printglossaries\printnomenclature\printindex
+\end{document}
+",
+        )
+        .unwrap();
+        let path = std::env::var("PATH").unwrap();
+        let result = service.compile.compile(&root, &path).await.unwrap();
+        assert!(result.ok, "{}", result.log);
+        for (ext, entry) in [
+            ("gls", r"\glossentry{tex}"),
+            ("acr", r"\glossentry{pdf}"),
+            ("nls", "Speed of light"),
+            ("ind", "Zebra"),
+        ] {
+            let list = std::fs::read_to_string(
+                root.join(crate::BUILD_DIR).join("main").with_extension(ext),
+            );
+            assert!(list.unwrap().contains(entry), "{ext}");
+        }
     }
 }

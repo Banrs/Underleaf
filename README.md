@@ -20,10 +20,11 @@ The editor completes LaTeX commands and environments, `\cite{}` keys from your `
 cursor in a small preview. Its colours can follow Overleaf, TeXstudio or the system.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
-needed. As on Overleaf, a build doesn't stop at the first error. You get the PDF along with every
-error and warning, each marked on its line in the source. If you'd rather it stopped, turn on Stop
-on First Error for that project. TeXLocal saves and compiles on its own when you pause typing;
-Settings can turn that off.
+needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
+nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
+first error. You get the PDF along with every error and warning, each marked on its line in the
+source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
+compiles on its own when you pause typing; Settings can turn that off.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
 (SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.

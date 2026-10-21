@@ -252,6 +252,9 @@ editor's thread.
 - **Builds**: one at a time; a request during one queues one more (manual wins over
   automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting,
   and run only once `status` has found TeX (both hosts ask it as they start).
+  latexmk is given rules (`-e`) for makeglossaries (`.glo`, `.acn`), makeindex with
+  `nomencl.ist` (`.nlo`) and bib2gls (`.glstex`), which a user's or trusted project's own
+  latexmkrc overrides.
   `outdated`: edits since the shown PDF's build began. Issues mark a document's lines only if
   it hasn't been edited since that build began, closed and opened again since or not.
 - **Live preview**: keys go to TeXpresso as made; one its copy can't take sends the whole text
