@@ -15,8 +15,8 @@ use tokio::task::JoinHandle;
 use super::CompileResult;
 use crate::logparse::SHELL_ESCAPE;
 use crate::paths::Project;
-use crate::projects::create_project;
-use crate::projects::testing::with_project;
+use crate::projects::testing::{names_in, with_project};
+use crate::projects::{create_project, open_path};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::synctex::synctex_inverse;
@@ -208,6 +208,27 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
             "{passed:?}"
         );
     }
+}
+
+/// A folder opened where it is builds beside the library, where `-outdir` says, writing
+/// nothing in the folder.
+#[tokio::test]
+async fn an_opened_folders_build_lands_in_its_store() {
+    let (dir, service, _) = setup(
+        "for arg; do case $arg in -outdir=*) out=${arg#-outdir=};; esac; done\nmkdir -p \"$out\" && printf 'fake' > \"$out/main.pdf\"\n",
+    );
+    let folder = dir.path().join("My Thesis");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("main.tex"), "").unwrap();
+    let id = open_path(&service, &folder).unwrap().project.id;
+    let project = service.project(&id).unwrap();
+    let result = service.compile.compile(&project, &stubs(&service)).await;
+    let pdf = project.build.join("main.pdf");
+    assert_eq!(
+        result.unwrap().pdf,
+        Some(pdf.to_string_lossy().into_owned())
+    );
+    assert_eq!(names_in(&folder), ["main.tex"]);
 }
 
 /// A failure the engine's log doesn't explain names its cause: bibtex's own

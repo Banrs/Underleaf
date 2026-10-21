@@ -2,6 +2,7 @@
 
 mod files;
 mod library;
+mod opened;
 mod search;
 mod symbols;
 #[cfg(test)]
@@ -20,6 +21,8 @@ pub use library::{
     ProjectInfo, create_project, free_project_name, list_projects, locate, rename_project,
 };
 pub(crate) use library::{guess_main_file, new_project};
+pub(crate) use opened::{find as find_opened, is_opened};
+pub use opened::{forget_folder, open_path};
 pub(crate) use search::replace_in_files;
 pub use search::{Query, search_groups, search_project};
 pub use symbols::{Symbols, scan_symbols};

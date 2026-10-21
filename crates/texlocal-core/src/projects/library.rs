@@ -1,6 +1,7 @@
-//! The library: the projects under the data dir, made, listed, named, renamed and found again by
-//! their paths.
+//! The library: the projects under the data dir and the folders opened where they are, made,
+//! listed, named, renamed and found again by their paths.
 
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -11,6 +12,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::files::occupied;
+use super::opened::{self, is_opened};
 use super::skip_unreadable;
 use super::tree::{entries, file_kind};
 use crate::SETTINGS_FILE;
@@ -20,6 +22,8 @@ use crate::settings::{read_settings, write_settings};
 use crate::syntax::SourceDocument;
 use crate::templates;
 
+/// `missing`: an opened folder that isn't where it was (moved, deleted, its volume away), dated
+/// 0 so it is listed last.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectInfo {
@@ -27,18 +31,27 @@ pub struct ProjectInfo {
     pub name: String,
     pub mtime: u64,
     pub main_file: String,
+    pub path: String,
+    pub opened: bool,
+    pub missing: bool,
 }
 
 impl ProjectInfo {
     fn read(data_dir: &Path, id: &str) -> io::Result<Self> {
-        let root = data_dir.join(id);
-        let meta = fs::metadata(&root)?;
-        Ok(Self {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            mtime: newest(&root, &meta),
-            main_file: read_settings(&root.join(SETTINGS_FILE)).main_file,
-        })
+        let root = dunce::canonicalize(data_dir.join(id))?;
+        Ok(Self::of(id.to_owned(), &Project::in_folder(&root)))
+    }
+
+    pub(super) fn of(id: String, project: &Project) -> Self {
+        Self {
+            opened: is_opened(&id),
+            id,
+            name: project.name(),
+            mtime: newest(&project.root),
+            main_file: read_settings(&project.settings).main_file,
+            path: project.root.to_string_lossy().into_owned(),
+            missing: !project.root.is_dir(),
+        }
     }
 }
 
@@ -58,7 +71,7 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
 /// A project's date: the newest of its folders' and top-level files', without a stat of every
 /// file. The app's saves rename into place and so move the folder's date; another app's in-place
 /// save moves only the file's.
-fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
+fn newest(root: &Path) -> u64 {
     fn walk(root: &Path, dir: &Path, newest: &mut u64) {
         for entry in entries(root, dir).into_iter().flatten() {
             if (entry.dir || dir == root)
@@ -71,10 +84,8 @@ fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
             }
         }
     }
-    let mut newest = mtime_ms(meta);
-    if let Ok(root) = dunce::canonicalize(root) {
-        walk(&root, &root, &mut newest);
-    }
+    let mut newest = fs::metadata(root).map_or(0, |meta| mtime_ms(&meta));
+    walk(root, root, &mut newest);
     newest
 }
 
@@ -87,6 +98,7 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             projects.extend(skip_unreadable(ProjectInfo::read(data_dir, &name))?);
         }
     }
+    projects.extend(opened::list(data_dir));
     projects.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.id.cmp(&b.id)));
     Ok(projects)
 }
@@ -183,6 +195,11 @@ pub fn rename_project(
     new_name: &str,
     before_move: impl FnOnce(&Path) -> Result<(), CoreError>,
 ) -> Result<ProjectInfo, CoreError> {
+    if is_opened(id) {
+        return Err(CoreError::bad_request(
+            "A folder opened where it is can't be renamed here.",
+        ));
+    }
     let root = Project::find(data_dir, id)?.root;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
@@ -201,7 +218,7 @@ pub fn rename_project(
 fn real_path(path: &Path) -> PathBuf {
     let (mut head, mut tail) = (path, Vec::new());
     loop {
-        if let Ok(real) = fs::canonicalize(head) {
+        if let Ok(real) = dunce::canonicalize(head) {
             return tail.iter().rev().fold(real, |real, name| real.join(name));
         }
         let (Some(parent), Some(name)) = (head.parent(), head.file_name()) else {
@@ -212,29 +229,39 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
+/// The project `path` is in: a library project's folder, else the innermost opened folder. Both
+/// sides are resolved by `dunce`, which spells a Windows path as the list keeps it, without
+/// `\\?\`.
 pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
-    let library = fs::canonicalize(data_dir)?;
-    let real = real_path(path);
-    let rest = match real.strip_prefix(&library) {
-        Ok(rest) if path.is_absolute() => rest,
-        _ => return Ok(None),
-    };
-    let names: Option<Vec<String>> = rest
-        .components()
-        .map(|part| match part {
-            Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
-    let Some([id, inside @ ..]) = names.as_deref() else {
-        return Ok(None);
-    };
-    if id.starts_with('.') || !data_dir.join(id).is_dir() {
+    if !path.is_absolute() {
         return Ok(None);
     }
-    Ok(Some(Located {
-        id: id.clone(),
-        path: inside.join("/"),
+    let real = real_path(path);
+    // Its names in a folder, as the disk spells them.
+    let segments = |rest: &Path| -> Option<Vec<String>> {
+        (rest.components())
+            .map(|part| match part {
+                Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    if let Ok(rest) = real.strip_prefix(dunce::canonicalize(data_dir)?) {
+        let segments = segments(rest);
+        let Some([id, inside @ ..]) = segments.as_deref() else {
+            return Ok(None);
+        };
+        if id.starts_with('.') || !data_dir.join(id).is_dir() {
+            return Ok(None);
+        }
+        let (id, path) = (id.clone(), inside.join("/"));
+        return Ok(Some(Located { id, path }));
+    }
+    let mut folders = opened::folders(data_dir);
+    folders.sort_by_key(|(_, folder)| Reverse(folder.path.as_os_str().len()));
+    Ok(folders.into_iter().find_map(|(id, folder)| {
+        let path = segments(real.strip_prefix(&folder.path).ok()?)?.join("/");
+        Some(Located { id, path })
     }))
 }
 

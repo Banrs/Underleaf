@@ -25,8 +25,9 @@ pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
     pub texpresso: Arc<texpresso::Manager>,
-    /// Edits, settings read/modify/write, renames and deletes run one at a time.
-    edits: Mutex<()>,
+    /// Edits, settings read/modify/write, renames, deletes and the list of opened folders change
+    /// one at a time.
+    pub(crate) edits: Mutex<()>,
     /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
     /// then, and one waiting builds once it is. None found before the first look.
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
@@ -95,6 +96,12 @@ impl Service {
         let s = |key: &str| string_arg(args, key);
         let project = || self.project(s("id")?);
         let folder = || arg::<Option<String>>(args, "dir");
+        // A build or live preview would go on in a folder moved or taken off the list, and
+        // report back from the old path.
+        let stop = |root: &Path| {
+            self.compile.stop(root);
+            self.texpresso.stop(root)
+        };
         match command {
             "status" => out(self.status().await),
             "set_texpresso_dir" => {
@@ -141,12 +148,6 @@ impl Service {
             "rename_project" => {
                 let (id, name) = (s("id")?, s("name")?);
                 out(self.with_project(id, |_| {
-                    // A build or live preview would go on in the moved folder, and report back
-                    // from the old path.
-                    let stop = |root: &Path| {
-                        self.compile.stop(root);
-                        self.texpresso.stop(root)
-                    };
                     projects::rename_project(&self.data_dir, id, name, stop)
                 })?)
             }
@@ -197,7 +198,6 @@ impl Service {
                     settings::read_settings(&project.settings).output(&project.build, "pdf")?;
                 Ok(json!(pdf.to_string_lossy()))
             }
-            "project_root" => Ok(json!(project()?.root.to_string_lossy())),
             "export_zip" => out(zipexport::export_zip(
                 &project()?.root,
                 Path::new(s("dest")?),
@@ -218,7 +218,12 @@ impl Service {
                 arg(args, "conflict")?,
                 projects::discard,
             )?),
-            "import_project" => out(import::import_project(self, Path::new(s("src")?))?),
+            "open_path" => out(projects::open_path(self, Path::new(s("path")?))?),
+            "forget_folder" => {
+                let _edits = lock(&self.edits);
+                projects::forget_folder(&self.data_dir, s("id")?, stop)?;
+                Ok(Value::Null)
+            }
             "set_ui_state" => out(self.with_project(s("id")?, |project| {
                 settings::write_ui(&project.ui, arg(args, "patch")?)
             })?),

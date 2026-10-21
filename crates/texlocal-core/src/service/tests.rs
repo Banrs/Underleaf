@@ -89,7 +89,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
             json!({ "id": "P", "path": "../../etc/passwd" }),
         ),
         ("file_tree", json!({ "id": "../P" })),
-        ("project_root", json!({ "id": "../x" })),
     ] {
         assert_eq!(status_of(&service, command, args).await, 400, "{command}");
     }
@@ -197,7 +196,8 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
         let answer = sessions.call(command, &args).await;
         answer.unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
     };
-    ask("session_open", json!({ "id": "P", "session": 1 })).await;
+    let opened = ask("session_open", json!({ "id": "P", "session": 1 })).await;
+    assert_eq!(opened["name"], "P");
 
     let args = json!({ "session": 1, "patch": { "mainFile": "ch/a.tex" } });
     ask("session_set_settings", args).await;

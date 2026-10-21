@@ -478,4 +478,48 @@ mod tests {
             assert!(list.unwrap().contains(entry), "{ext}");
         }
     }
+
+    /// TeX Live's `openout_any = p` lets TeX write to `-outdir`, bibtex finds the folder's .bib
+    /// from it, and SyncTeX maps the folder's files both ways: `cargo test -p texlocal-core
+    /// opened_folder -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs TeX Live"]
+    async fn an_opened_folder_builds_beside_the_library_and_syncs_with_its_files() {
+        use crate::synctex::{synctex_forward_at, synctex_inverse};
+        let (dir, service) = crate::projects::testing::library();
+        let folder = dir.path().join("My Paper");
+        std::fs::create_dir_all(folder.join("ch")).unwrap();
+        let main = r"\documentclass{article}
+\begin{document}
+See \cite{knuth}.
+
+\input{ch/intro}
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}
+";
+        let bib = "@book{knuth, author={Donald Knuth}, title={The TeXbook}, year={1984}}";
+        for (file, text) in [
+            ("main.tex", main),
+            ("ch/intro.tex", "An introduction.\n"),
+            ("refs.bib", bib),
+        ] {
+            std::fs::write(folder.join(file), text).unwrap();
+        }
+        let opened = crate::projects::open_path(&service, &folder).unwrap();
+        let project = service.project(&opened.project.id).unwrap();
+        let path = std::env::var("PATH").unwrap();
+        let result = service.compile.compile(&project, &path).await.unwrap();
+        assert!(result.ok, "{}", result.log);
+        let bbl = std::fs::read_to_string(project.build.join("main.bbl")).unwrap();
+        assert!(bbl.contains("The TeXbook"), "{bbl}");
+        let names = crate::projects::testing::names_in(&folder);
+        assert_eq!(names, ["ch", "main.tex", "refs.bib"]);
+
+        let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None, None, &path).await;
+        let shown = shown.unwrap();
+        let (x, y) = (shown.h.unwrap() + 5.0, shown.v.unwrap() - 2.0);
+        let clicked = synctex_inverse(&project, shown.page, x, y, None, None, &path).await;
+        assert_eq!(clicked.unwrap().file, "ch/intro.tex");
+    }
 }

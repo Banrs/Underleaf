@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::CoreError;
+use crate::projects::{self, is_opened};
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
 /// A relative path's segments, `.` dropped and `..` popped; popping past the
@@ -41,16 +42,26 @@ pub struct Project {
 
 impl Project {
     /// A project in the library is one folder directly under `data_dir`, resolved so a build
-    /// stops by the root it started with.
+    /// stops by the root it started with; an id with a leading dot is a folder opened where it
+    /// is.
     pub fn find(data_dir: &Path, id: &str) -> Result<Self, CoreError> {
         let [name] = normalize_segments(id, "Bad project id")?[..] else {
             return Err(CoreError::bad_request("Bad project id"));
         };
+        if is_opened(name) {
+            return projects::find_opened(data_dir, name);
+        }
         let root = data_dir.join(name);
         if !root.is_dir() {
             return Err(CoreError::not_found(format!("No such project: {id}")));
         }
         Ok(Self::in_folder(&dunce::canonicalize(root)?))
+    }
+
+    /// Its folder's name, as Home and a window's title show it.
+    pub fn name(&self) -> String {
+        let name = self.root.file_name().unwrap_or(self.root.as_os_str());
+        name.to_string_lossy().into_owned()
     }
 
     /// One that keeps everything in its own folder, as a project in the library does.
