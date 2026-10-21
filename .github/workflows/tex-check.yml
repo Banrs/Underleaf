@@ -20,7 +20,7 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
-      TEX_PACKAGES: glossaries nomencl makeindex koma-script
+      TEX_PACKAGES: glossaries nomencl makeindex koma-script synctex
       TEXPRESSO: ${{ github.workspace }}/.texpresso
     steps:
       - uses: actions/checkout@v7
