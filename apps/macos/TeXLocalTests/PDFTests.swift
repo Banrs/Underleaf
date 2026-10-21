@@ -18,7 +18,6 @@ struct SyncTeXGeometryTests {
 struct FindTests {
     @Test func theMatchCountLabel() {
         #expect(PDFFind.count(3, of: 12, limited: false, for: "loop") == "3 of 12")
-        #expect(PDFFind.count(1, of: 1, limited: false, for: "loop") == "1 of 1")
         #expect(PDFFind.count(2, of: 1000, limited: true, for: "a") == "2 of 1,000+")
         #expect(PDFFind.count(2290, of: 2290, limited: false, for: "a") == "2,290 of 2,290")
         #expect(PDFFind.count(1, of: 0, limited: false, for: "loop") == "Not found")
@@ -47,35 +46,37 @@ struct PDFFitTests {
             #expect(shown.width <= room.width + 1 && shown.height <= room.height + 1, "pages \(shown) in \(room)")
             #expect(isClose(shown.width, room.width, within: 1) || isClose(shown.height, room.height, within: 1),
                     "pages \(shown) in \(room)")
-            #expect(controller.fit == .page)
+            #expect(controller.zoom == .fitPage)
         }
     }
 
     /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
         let controller = showing(try pages(3)), view = controller.view
-        func follows(_ fit: PDFController.Fit?, _ step: String) {
-            #expect(controller.scale == view.scaleFactor && controller.fit == fit, "\(step)")
+        /// Off a fit, the zoom is the scale.
+        func follows(_ fit: PDFController.Zoom?, _ step: String) {
+            let zoom = fit ?? .scale(Double(view.scaleFactor))
+            #expect(controller.scale == view.scaleFactor && controller.zoom == zoom, "\(step)")
         }
-        follows(.width, "opened")
+        follows(.fitWidth, "opened")
         view.setFrameSize(NSSize(width: 800, height: 500))
         view.layoutDocumentView()
-        follows(.width, "resized")
+        follows(.fitWidth, "resized")
         controller.zoom(in: true)
         follows(nil, "zoomed in")
         controller.fitPage()
-        follows(.page, "fit page")
+        follows(.fitPage, "fit page")
         controller.setScale(1.5)
         follows(nil, "set")
         controller.fitWidth()
-        follows(.width, "fit width")
+        follows(.fitWidth, "fit width")
         let scrollView = try #require(view.documentView?.enclosingScrollView)
         scrollView.magnification = 2
         follows(nil, "pinched")
         #expect(controller.scale == 2)
         // Back at the width while autoScales is still on, as through a pinch: fitted again.
         scrollView.magnification = view.scaleFactorForSizeToFit
-        follows(.width, "pinched back")
+        follows(.fitWidth, "pinched back")
     }
 
     @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {

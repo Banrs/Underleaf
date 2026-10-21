@@ -6,6 +6,8 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     static let maxQuery = 256
     static let maxMatches = 5000
     static let debounce: Duration = .milliseconds(200)
+    /// Past Live Preview's gap between keys, so the search runs again as the typing pauses.
+    private static let rerunDelay: Duration = .milliseconds(350)
 
     static func normalize(_ query: String) -> String { String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery)) }
 
@@ -42,8 +44,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     @ObservationIgnored private var running: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
     @ObservationIgnored private var rerunning: Task<Void, Never>?
-    /// Past Live Preview's gap between keys, so the search runs again as the typing pauses.
-    static let rerunDelay: Duration = .milliseconds(350)
 
     init(view: SyncPDFView) { self.view = view }
 
