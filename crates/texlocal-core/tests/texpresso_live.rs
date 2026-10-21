@@ -166,7 +166,7 @@ async fn run(library: &Path) {
         .await
         .unwrap();
     let id = project["id"].as_str().unwrap().to_owned();
-    let root = service.project_root(&id).unwrap();
+    let root = service.project(&id).unwrap().root;
     let sessions = Sessions::new(Arc::clone(&service));
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);
@@ -180,8 +180,10 @@ async fn run(library: &Path) {
         std::fs::write(root.join(path), text).unwrap();
     }
 
-    let opened = client.call("session_open", json!({ "id": id, "session": 1 }));
-    let a = opened.await["session"].as_u64().unwrap();
+    let a = 1;
+    client
+        .call("session_open", json!({ "id": id, "session": a }))
+        .await;
     let main_doc = client.document(a, "main.tex").await;
     client
         .ask(a, "live_view", json!({ "first": 1, "last": 1 }))
@@ -222,8 +224,25 @@ async fn run(library: &Path) {
             .is_some_and(|log| log.contains("! Undefined"))
     };
     client.event(&mut from, a, "live", error).await;
+    // The error on its line once the run has lasted, and on the line it moves to.
+    let on = |line: u32| {
+        move |e: &Value| {
+            let issue = &e["lines"][0];
+            e["path"] == "main.tex"
+                && issue["line"] == line
+                && issue["compact"] == "Undefined: \\UnderleafInvalidCommand"
+        }
+    };
+    client.event(&mut from, a, "live_issues", on(4)).await;
+    // Typed at the file's start, it starts TeX again from nothing, and the next edit comes as
+    // that TeX starts.
+    main_doc.edit(0, 0, "%\n");
+    client.event(&mut from, a, "live_issues", on(5)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
     retype(&main_doc, &recovered);
+    let cleared = |e: &Value| e["path"] == "main.tex" && e["lines"] == json!([]);
+    client.event(&mut from, a, "live_issues", cleared).await;
     client
         .shows(a, "UL_MAIN_RECOVERED", "Recovery without a restart")
         .await;

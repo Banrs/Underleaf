@@ -38,9 +38,13 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
   (`CompletionList`) is Liquid Glass at a system menu's measures, a view in the window.
 - **Issues** as Xcode's: a band over the paragraph and an `IssueBox` at the line's end with the
   core's message (or its `compact` form, or the symbol alone); a click opens the build panel on it.
+  Live Preview's look the same, as Xcode's live issues do (dimming would read as disabled), give
+  way to a build's on their line, and open the Live Preview Log.
 - **Status bar**: one 36 pt bar (`BarMetrics`) across the source and PDF, as Xcode's editor bar,
   over each pane's hard scroll edge, with text and pages ghosting through. After a failed save it
   says Not Saved and saves on a click.
+  While live pages show and the project's engine isn't Live Preview's, Live Preview On names
+  XeLaTeX, dimmed, as Build Succeeded its time; its help says line breaks may differ.
 - **Build panel** below the columns, resized and dragged shut from the status bar's line; its foot
   bar as Xcode's console: Issues, Build Log, Live Preview Log, then Warnings or Copy Log, then a
   filter.
@@ -52,6 +56,8 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
 - **Dim, not hidden**, where hiding would make things jump.
 - **Settings**: General, Editor, Compiling, PDF, Live Preview.
 - **Home**: template cards and every project in the library, as Word's gallery and Overleaf's list.
+  A folder opens where it is; its row shows its path, as Xcode's welcome window, dims when it's not
+  found, and offers Remove from List, never Rename or Move to Trash. A bookmark follows its moves.
 - **Builds** as Overleaf's: they run past errors listing every issue, a project can Stop on First
   Error, and a pause in typing saves and compiles.
 - **Changed on disk** with unsaved edits: an AppKit alert (Save Anyway, Revert, Cancel) with no
@@ -105,6 +111,8 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 - Windows: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke` exits 0 once
   a new blank project's session is open. Dev builds run with a scratch `TEXLOCAL_DATA`.
 - Live Preview end to end needs the patched engine: `docs/texpresso.md`, Verify.
+- Tests that need TeX Live and TeXpresso run in `.github/workflows/tex-check.yml`: nightly, from
+  Actions' Run workflow, or on a push to a `claude/tex-check/<name>` branch.
 
 ## Build and install
 

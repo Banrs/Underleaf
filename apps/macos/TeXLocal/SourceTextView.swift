@@ -126,7 +126,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         defer {
             top.map(scroll(toShownTop:))
             // The issues' rows are placed anew once the new font is laid out.
-            if !issues.lines.isEmpty {
+            if !issues.isEmpty {
                 Task { [weak self] in self?.textLayoutManager?.textViewportLayoutController.layoutViewport() }
             }
         }
@@ -514,7 +514,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             if next.type != .periodic { current = next }
         } while current.type != .leftMouseUp
         let number = document.line(at: first.location)
-        if selectedRange() == first, issues.lines[number] != nil { issueClicked(number) }
+        if selectedRange() == first, issues.issue(on: number) != nil { issueClicked(number) }
     }
 
     // MARK: file drops open, or insert a figure
@@ -565,9 +565,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func rotor(_ rotor: NSAccessibilityCustomRotor,
                resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
-        var items = rotor.type == .heading ? headings() : issues.lines.sorted { $0.key < $1.key }.map { line, issue in
-            let place = issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
-            return (line, String(localized: "\(place): \(issue.message)"))
+        var items = rotor.type == .heading ? headings() : Set(issues.lines.keys).union(issues.live.keys).sorted().compactMap { line in
+            issues.issue(on: line).map { issue, live in
+                let place = live ? String(localized: "Live Preview error on line \(line)")
+                    : issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
+                return (line, String(localized: "\(place): \(issue.message)"))
+            }
         }
         if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
         let current = search.currentItem.map { document.line(at: min($0.targetRange.location, text.length)) }

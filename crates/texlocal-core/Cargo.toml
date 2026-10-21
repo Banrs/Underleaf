@@ -16,6 +16,8 @@ regex = "1.12.1"
 trash = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Checks TinyTeX's download against the sum GitHub gives it.
+sha2 = "0.11"
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 # zip's `deflate` feature also brings zopfli, used only past level 9, and the
@@ -27,6 +29,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 ratex-font = "=0.1.14"
 ratex-katex-fonts = "=0.1.14"
 ratex-layout = "=0.1.14"
+ratex-lexer = "=0.1.14"
 ratex-parser = "=0.1.14"
 # Glyphs as outlines from the KaTeX fonts compiled in; text those fonts
 # haven't (CJK, Cyrillic) comes from its system-font fallback (render.rs).
@@ -42,6 +45,8 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 same-file = "1"
+# An opened folder's identity (volume serial and file index), which `std` keeps unstable.
+winapi-util = "0.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]

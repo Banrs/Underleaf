@@ -419,6 +419,7 @@ mod tests {
                 column: 0,
                 length: 0,
             },
+            tex: None,
         };
         let symbols = || Symbols {
             commands: vec![defined("\\pair", 2), defined("\\frac", 1)],

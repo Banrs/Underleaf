@@ -12,6 +12,7 @@ mod error;
 pub mod events;
 mod import;
 mod logparse;
+mod packages;
 mod paths;
 mod process;
 mod projects;
@@ -24,6 +25,7 @@ pub mod syntax;
 mod templates;
 mod tex;
 mod texpresso;
+mod tinytex;
 mod wordmatch;
 mod zipexport;
 

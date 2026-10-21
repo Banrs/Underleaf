@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::process::run;
 use crate::settings::AppSettings;
+use crate::tinytex;
 
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
     std::fs::read_dir(dir)
@@ -52,9 +53,9 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
 }
 
 /// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
-/// link and Homebrew's folders, or MiKTeX's for one user and for all.
+/// link and Homebrew's folders, or MiKTeX's for one user and for all; then TinyTeX's.
 fn usual_tex_dirs() -> Vec<PathBuf> {
-    if cfg!(windows) {
+    let mut dirs: Vec<PathBuf> = if cfg!(windows) {
         let under = |var, dir| Some(PathBuf::from(std::env::var_os(var)?).join(dir));
         [
             under("LOCALAPPDATA", r"Programs\MiKTeX\miktex\bin\x64"),
@@ -67,12 +68,14 @@ fn usual_tex_dirs() -> Vec<PathBuf> {
         ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
             .map(PathBuf::from)
             .into()
-    }
+    };
+    dirs.extend(tinytex::root().map(|root| tinytex::bin(&root)));
+    dirs
 }
 
 /// Folders as a PATH, in the platform's form. A folder whose name holds the
 /// separator can't be one of them, and is left out.
-fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
+pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
     let dirs = dirs
         .into_iter()
         .filter(|dir| std::env::join_paths([dir]).is_ok());
@@ -110,7 +113,6 @@ static LATEXMK_VERSION: LazyLock<Regex> =
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
-    pub version: Option<String>,
     pub latexmk_version: Option<String>,
     pub tex_dir: Option<String>,
     pub found: Option<String>,
@@ -122,31 +124,20 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     let Ok((0, stdout)) = run("latexmk", &["-version"], None, path_env).await else {
         return TexStatus::default();
     };
-    let version = version_line(&stdout);
     TexStatus {
         available: true,
         latexmk_version: LATEXMK_VERSION
-            .captures(&version)
+            .captures(&stdout)
             .map(|found| found[1].to_owned()),
-        version: Some(version),
         found: find_tool("latexmk", path_env)
             .and_then(|latexmk| Some(latexmk.parent()?.to_string_lossy().into_owned())),
         ..TexStatus::default()
     }
 }
 
-fn version_line(stdout: &str) -> String {
-    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
-    let first = lines.clone().next().unwrap_or("");
-    lines
-        .find(|l| l.starts_with("Latexmk"))
-        .unwrap_or(first)
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{absolute_dirs, version_line};
+    use super::absolute_dirs;
     use std::path::Path;
 
     #[test]
@@ -156,14 +147,5 @@ mod tests {
         let path = std::env::join_paths([&first, Path::new(""), Path::new("."), &last]).unwrap();
         let dirs: Vec<_> = absolute_dirs(&path).collect();
         assert_eq!(dirs, [first, last]);
-    }
-
-    #[test]
-    fn the_version_names_latexmk() {
-        assert_eq!(
-            version_line("Latexmk, John Collins, 1 Jan 2025. Version 4.86\n"),
-            "Latexmk, John Collins, 1 Jan 2025. Version 4.86"
-        );
-        assert_eq!(version_line("something else\n"), "something else");
     }
 }

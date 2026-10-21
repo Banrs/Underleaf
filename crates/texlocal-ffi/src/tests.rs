@@ -67,12 +67,11 @@ fn open(data: &Path) -> *mut TlHandle {
 }
 
 fn open_main(handle: *const TlHandle) -> u64 {
-    let opened = call(handle, "session_open", json!({ "id": "P", "session": 1 }));
-    let session = opened["ok"]["session"].as_u64().unwrap();
-    let args = json!({ "session": session, "path": "main.tex" });
+    call(handle, "session_open", json!({ "id": "P", "session": 1 }));
+    let args = json!({ "session": 1, "path": "main.tex" });
     let opened = call(handle, "session_open_document", args);
     assert_eq!(opened, json!({ "ok": null }));
-    session
+    1
 }
 
 unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *mut TlSource {
@@ -303,7 +302,7 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let (sink, answers) = mpsc::channel();
     let seven = json!({ "id": "P", "session": 7 });
     call_async(handle, "session_open", seven, &sink);
-    assert_eq!(until(&answers, |_| true)["ok"]["session"], 7);
+    assert_eq!(until(&answers, |_| true)["ok"]["name"], "P");
     let main = json!({ "session": 7, "path": "main.tex" });
     let commands = ["session_open_document", "session_close_document"];
     for round in 0..50 {

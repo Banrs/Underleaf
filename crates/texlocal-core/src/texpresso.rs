@@ -17,11 +17,14 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::mpsc;
 
+use crate::paths::{self, Project};
 use crate::process::{self, Tree};
 use crate::tex::{find_tool, program_at};
-use crate::{BUILD_DIR, CoreError, lock, paths, settings, tail};
+use crate::{CoreError, lock, settings, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
+/// TeX's log is kept whole for its errors' files, which only its start opens.
+const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 /// How long TeXpresso may leave what it was sent unread before the session is given up:
 /// it reads nothing while it makes its TeX formats, five seconds and more the first time.
@@ -72,6 +75,8 @@ pub enum LiveEvent {
         changed: Option<Vec<[u32; 2]>>,
     },
     Done(String),
+    /// TeXpresso has read every change sent before the mark of this number.
+    Synced(u64),
     Log,
     Ended(Option<String>),
 }
@@ -79,13 +84,13 @@ pub enum LiveEvent {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of the project at `root` for the session `owner`, in place of any the owner
-    /// had. A patched build writes the document for the `pane` instead of opening a window;
-    /// upstream opens its window all the same.
+    /// A preview of `project` for the session `owner`, in place of any the owner had. A
+    /// patched build writes the document for the `pane` instead of opening a window; upstream
+    /// opens its window all the same.
     fn start(
         &self,
         owner: u64,
-        root: &Path,
+        project: &Project,
         files: &[FileBuffer],
         path_env: &str,
         pane: &Pane,
@@ -106,16 +111,30 @@ pub(crate) trait Preview: Send + Sync {
     fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError>;
     fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError>;
     fn rescan(&self, owner: u64) -> Result<(), CoreError>;
+    /// Numbers the changes sent before it, for `LiveEvent::Synced`.
+    fn mark(&self, owner: u64, mark: u64) -> Result<(), CoreError>;
+    /// TeX's log, whole: None once its start was dropped.
+    fn tex_log(&self, owner: u64) -> Option<String>;
     fn status(&self, owner: u64) -> Result<Status, CoreError>;
     fn stop_request(&self, owner: u64) -> Status;
     fn stop(&self, root: &Path) -> Result<(), CoreError>;
 }
 
-/// A buffer TeXpresso writes by byte offset, of which the last `MAX_OUTPUT` bytes are kept.
-#[derive(Default)]
+/// A buffer TeXpresso writes by byte offset, of which the last `max` bytes are kept.
 struct Output {
     base: u64,
     bytes: Vec<u8>,
+    max: usize,
+}
+
+impl Default for Output {
+    fn default() -> Self {
+        Self {
+            base: 0,
+            bytes: Vec::new(),
+            max: MAX_OUTPUT,
+        }
+    }
 }
 
 impl Output {
@@ -137,12 +156,14 @@ impl Output {
             self.base = offset;
         }
         self.bytes.extend_from_slice(text);
-        let excess = self.bytes.len().saturating_sub(MAX_OUTPUT);
+        let excess = self.bytes.len().saturating_sub(self.max);
         self.bytes.drain(..excess);
         self.base += excess as u64;
     }
+    /// The last `MAX_OUTPUT` bytes, to show.
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.bytes).into_owned()
+        let start = self.bytes.len().saturating_sub(MAX_OUTPUT);
+        String::from_utf8_lossy(&self.bytes[start..]).into_owned()
     }
 }
 
@@ -281,14 +302,15 @@ impl Preview for Manager {
     fn start(
         &self,
         owner: u64,
-        root: &Path,
+        project: &Project,
         files: &[FileBuffer],
         path_env: &str,
         pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
-        let root = dunce::canonicalize(root)?;
-        let main = paths::safe_path(&root, &settings::read_settings(&root).main_file)?;
+        let root = dunce::canonicalize(&project.root)?;
+        let main = settings::read_settings(&project.settings).main_file;
+        let main = paths::safe_path(&root, &main)?;
         if !main.is_file() {
             return Err(CoreError::bad_request("The main file does not exist."));
         }
@@ -317,9 +339,8 @@ impl Preview for Manager {
         let Some(executable) = discover(path_env) else {
             return failed(MISSING.into());
         };
-        let build = paths::safe_path(&root, BUILD_DIR)?;
-        fs::create_dir_all(&build)?;
-        let build = dunce::canonicalize(build)?;
+        fs::create_dir_all(&project.build)?;
+        let build = dunce::canonicalize(&project.build)?;
         if let Some(previous) = lock(&self.sessions).get(&owner) {
             previous.stop(None);
         }
@@ -370,6 +391,10 @@ impl Preview for Manager {
             sink,
             state: Mutex::new(State {
                 tree: Some(tree),
+                log: Output {
+                    max: MAX_LOG,
+                    ..Output::default()
+                },
                 ..State::default()
             }),
         });
@@ -452,6 +477,15 @@ impl Preview for Manager {
             session.send(&[json!(["rescan"])]);
         }
         Ok(())
+    }
+    fn mark(&self, owner: u64, mark: u64) -> Result<(), CoreError> {
+        self.owned(owner)?.send(&[json!(["mark", mark])]);
+        Ok(())
+    }
+    fn tex_log(&self, owner: u64) -> Option<String> {
+        let session = self.owned(owner).ok()?;
+        let log = &lock(&session.state).log;
+        (log.base == 0).then(|| String::from_utf8_lossy(&log.bytes).into_owned())
     }
     fn status(&self, owner: u64) -> Result<Status, CoreError> {
         Ok(self.owned(owner)?.status())
@@ -623,6 +657,10 @@ fn apply_message(session: &Session, message: &Value) {
             Some(run) => LiveEvent::Done(run.to_owned()),
             None => return,
         },
+        "synced" => match message[1].as_u64() {
+            Some(mark) => LiveEvent::Synced(mark),
+            None => return,
+        },
         // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
         "truncate" | "append" => {
             let mut state = lock(&session.state);
@@ -750,6 +788,7 @@ while IFS= read -r line; do
     *EXIT_CLEAN*) exit 0;;
     *EXIT_STUB*) exit 7;;
     *TEX_ERROR*) printf '["append","log",0,"! Undefined control sequence."]\n';;
+    '["mark",'*) printf '["synced",%s\n' "${line#*,}";;
     '["change",'*) n=$((n + 1))
       printf '["page",1,"%s/page-1-%s.pdf",0]\n' "$pages" "$n";;
     *rerun-once*)
@@ -828,7 +867,8 @@ done
                     text: text.into(),
                 })
                 .collect();
-            let status = manager.start(OWNER, root, &files, path_env, pane, sink);
+            let project = Project::in_folder(root);
+            let status = manager.start(OWNER, &project, &files, path_env, pane, sink);
             (status.unwrap(), events)
         }
 
@@ -841,8 +881,8 @@ done
             use std::os::unix::fs::PermissionsExt;
             let (tmp, root, path_env) = setup();
             let manager = Manager::default();
-            fs::create_dir_all(root.join(BUILD_DIR)).unwrap();
-            let normal = root.join(BUILD_DIR).join("texpresso-live.pdf");
+            fs::create_dir_all(root.join("build")).unwrap();
+            let normal = root.join("build/texpresso-live.pdf");
             fs::write(&normal, "normal build").unwrap();
             let (first, mut events) =
                 start(&manager, &root, &path_env, Some("abc"), &Pane::default());
@@ -932,6 +972,7 @@ done
             lock(&session.state).stderr.append(0, diagnostic.as_bytes());
             apply_message(&session, &json!(["append", "log", 0, diagnostic]));
             assert!(session.status().log.contains(diagnostic));
+            assert_eq!(manager.tex_log(OWNER).as_deref(), Some(diagnostic));
             apply_message(&session, &json!(["truncate", "log", 0]));
             assert!(!session.status().log.contains(diagnostic));
 
@@ -1026,6 +1067,8 @@ done
             assert_eq!(next(&mut events, shown).await, whole);
             let done = next(&mut events, shown).await;
             assert_eq!(done, LiveEvent::Done("complete".into()));
+            manager.mark(OWNER, 3).unwrap();
+            assert_eq!(next(&mut events, shown).await, LiveEvent::Synced(3));
             manager.stop(&root).unwrap();
             assert_eq!(next(&mut events, shown).await, LiveEvent::Ended(None));
         }

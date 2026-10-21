@@ -1,5 +1,5 @@
-//! Per-project settings in `<project>/.texlocal.json`, and the app's own
-//! beside the projects.
+//! A project's settings and ui state, each in the file its `Project` names (`.texlocal.json`
+//! in a library project), and the app's own beside the projects.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -12,7 +12,6 @@ use serde_json::Value;
 use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::safe_rel_file;
-use crate::{BUILD_DIR, SETTINGS_FILE};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -35,12 +34,13 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Where a build writes its output with extension `ext`, named as latexmk names it after the main file.
-    pub fn output(&self, root: &Path, ext: &str) -> Result<PathBuf, CoreError> {
+    /// Where a build writes its output with extension `ext` in the folder `build`, named as
+    /// latexmk names it after the main file.
+    pub fn output(&self, build: &Path, ext: &str) -> Result<PathBuf, CoreError> {
         let main = safe_rel_file(&self.main_file)?;
         let base = Path::new(&main).file_stem().unwrap_or_default();
         let name = format!("{}.{ext}", base.to_string_lossy());
-        Ok(root.join(BUILD_DIR).join(name))
+        Ok(build.join(name))
     }
 }
 
@@ -112,16 +112,16 @@ fn update<T: DeserializeOwned + Default + Serialize>(
     Ok(value)
 }
 
-fn read_project(root: &Path) -> ProjectFile {
-    load(&root.join(SETTINGS_FILE)).unwrap_or_default()
+fn read_project(file: &Path) -> ProjectFile {
+    load(file).unwrap_or_default()
 }
 
-pub fn read_settings(root: &Path) -> Settings {
-    read_project(root).settings
+pub fn read_settings(file: &Path) -> Settings {
+    read_project(file).settings
 }
 
-pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
-    let file = update(&root.join(SETTINGS_FILE), |file: &mut ProjectFile| {
+pub fn write_settings(file: &Path, patch: &Value) -> Result<Settings, CoreError> {
+    let file = update(file, |file: &mut ProjectFile| {
         let Value::Object(patch) = patch else {
             return Err(CoreError::bad_request("Invalid settings"));
         };
@@ -177,12 +177,12 @@ pub struct UiPatch {
     pub folded_headings: Option<Vec<String>>,
 }
 
-pub fn read_ui(root: &Path) -> UiState {
-    read_project(root).ui
+pub fn read_ui(file: &Path) -> UiState {
+    read_project(file).ui
 }
 
-fn store_ui(root: &Path, change: impl FnOnce(&mut UiState)) -> Result<UiState, CoreError> {
-    let file = update(&root.join(SETTINGS_FILE), |file: &mut ProjectFile| {
+fn store_ui(file: &Path, change: impl FnOnce(&mut UiState)) -> Result<UiState, CoreError> {
+    let file = update(file, |file: &mut ProjectFile| {
         change(&mut file.ui);
         for list in [&mut file.ui.expanded_folders, &mut file.ui.folded_headings] {
             list.sort();
@@ -193,8 +193,8 @@ fn store_ui(root: &Path, change: impl FnOnce(&mut UiState)) -> Result<UiState, C
     Ok(file.ui)
 }
 
-pub fn write_ui(root: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
-    store_ui(root, |state| {
+pub fn write_ui(file: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
+    store_ui(file, |state| {
         if let Some(folders) = patch.expanded_folders {
             state.expanded_folders = folders;
         }
@@ -207,8 +207,8 @@ pub fn write_ui(root: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
 /// Move the saved state of a renamed entry with it, as `moved` gives each
 /// project path's new one (None: unmoved): folders by their path, folds by the
 /// file their key starts with. Best effort: the state is a convenience.
-pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
-    let before = read_ui(root);
+pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
+    let before = read_ui(file);
     let mut state = before.clone();
     for folder in &mut state.expanded_folders {
         if let Some(new) = moved(folder) {
@@ -223,7 +223,7 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
         }
     }
     if state != before {
-        let _ = store_ui(root, |saved| *saved = state);
+        let _ = store_ui(file, |saved| *saved = state);
     }
 }
 
@@ -231,6 +231,7 @@ pub(crate) fn move_ui(root: &Path, moved: impl Fn(&str) -> Option<String>) {
 mod tests {
     use super::*;
     use crate::projects::testing::project;
+    use crate::{BUILD_DIR, SETTINGS_FILE};
     use serde_json::json;
 
     #[test]
@@ -238,12 +239,12 @@ mod tests {
         let (_dir, root) = project();
         let file = root.join(SETTINGS_FILE);
         fs::write(&file, r#"{ "engine": "xelatex" }"#).unwrap();
-        let written = write_settings(&root, &json!({ "shellEscape": true, "unknown": 1 })).unwrap();
+        let written = write_settings(&file, &json!({ "shellEscape": true, "unknown": 1 })).unwrap();
         let expected = json!({
             "mainFile": "main.tex", "engine": "xelatex", "shellEscape": true, "stopOnFirstError": false
         });
         assert_eq!(json!(written), expected);
-        assert_eq!(json!(read_settings(&root)), expected);
+        assert_eq!(json!(read_settings(&file)), expected);
 
         let before = fs::read(&file).unwrap();
         for (bad, why) in [
@@ -257,33 +258,33 @@ mod tests {
             ),
             (json!([1]), "Invalid settings"),
         ] {
-            let err = write_settings(&root, &bad).unwrap_err();
+            let err = write_settings(&file, &bad).unwrap_err();
             assert_eq!(err.status, 400, "{}", err.message);
             assert!(err.message.contains(why), "{:?} lacks {why:?}", err.message);
         }
         assert_eq!(fs::read(&file).unwrap(), before);
 
-        let settings = write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
-        let pdf = settings.output(&root, "pdf").unwrap();
+        let settings = write_settings(&file, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
+        let pdf = settings.output(&root.join(BUILD_DIR), "pdf").unwrap();
         assert_eq!(pdf, root.join(BUILD_DIR).join("paper.pdf"));
     }
 
     #[test]
     fn interface_state_replaces_each_list_it_names_and_survives_settings_changes() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
+        let file = &dir.path().join(SETTINGS_FILE);
         let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
         let patch = |value: Value| serde_json::from_value::<UiPatch>(value).unwrap();
-        assert_eq!(read_ui(root), UiState::default());
-        write_ui(root, patch(json!({ "expandedFolders": ["b", "a", "b"] }))).unwrap();
-        write_ui(root, patch(json!({ "foldedHeadings": ["x\t1:T#1"] }))).unwrap();
-        write_settings(root, &json!({ "engine": "lualatex" })).unwrap();
-        let state = read_ui(root);
+        assert_eq!(read_ui(file), UiState::default());
+        write_ui(file, patch(json!({ "expandedFolders": ["b", "a", "b"] }))).unwrap();
+        write_ui(file, patch(json!({ "foldedHeadings": ["x\t1:T#1"] }))).unwrap();
+        write_settings(file, &json!({ "engine": "lualatex" })).unwrap();
+        let state = read_ui(file);
         assert_eq!(state.expanded_folders, list(&["a", "b"]));
         assert_eq!(state.folded_headings, list(&["x\t1:T#1"]));
-        write_ui(root, patch(json!({ "expandedFolders": [] }))).unwrap();
-        assert_eq!(read_ui(root).folded_headings, list(&["x\t1:T#1"]));
-        assert_eq!(read_settings(root).engine, Engine::Lualatex);
+        write_ui(file, patch(json!({ "expandedFolders": [] }))).unwrap();
+        assert_eq!(read_ui(file).folded_headings, list(&["x\t1:T#1"]));
+        assert_eq!(read_settings(file).engine, Engine::Lualatex);
     }
 
     #[test]
@@ -294,14 +295,14 @@ mod tests {
         let broken = "{ \"mainFile\": \"thesis.tex\", }";
         fs::write(&file, broken).unwrap();
         fs::write(&app_file, broken).unwrap();
-        let err = write_settings(root, &json!({ "engine": "lualatex" })).unwrap_err();
+        let err = write_settings(&file, &json!({ "engine": "lualatex" })).unwrap_err();
         assert_eq!(err.status, 409);
         assert!(err.message.contains(SETTINGS_FILE), "{}", err.message);
         let chosen = AppSettings::update(root, |app| app.tex_dir = Some("/tex".into()));
         assert_eq!(chosen.unwrap_err().status, 409);
         assert_eq!(fs::read_to_string(&file).unwrap(), broken);
         assert_eq!(fs::read_to_string(&app_file).unwrap(), broken);
-        assert_eq!(read_settings(root).main_file, "main.tex");
+        assert_eq!(read_settings(&file).main_file, "main.tex");
         assert_eq!(AppSettings::read(root).tex_dir, None);
     }
 }

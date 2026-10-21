@@ -124,7 +124,7 @@ extension ProjectModel {
     /// The core archives the files on disk, so the edits are saved first.
     func exportZip() async throws -> URL {
         guard await save() else {
-            let name = openPath?.fileName ?? id
+            let name = openPath?.fileName ?? self.name
             throw CocoaError(.fileWriteUnknown, userInfo: [
                 NSLocalizedDescriptionKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
             ])
@@ -133,7 +133,7 @@ extension ProjectModel {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
-        let url = folder.appending(path: "\(id).zip")
+        let url = folder.appending(path: "\(name).zip")
         try await core.call("export_zip", ["id": id, "dest": url.path(percentEncoded: false)])
         return url
     }

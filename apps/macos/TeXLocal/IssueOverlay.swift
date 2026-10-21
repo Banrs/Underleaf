@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The build's issues on the lines laid out: a band over each paragraph with one, a box at the end of its first line
-/// (`IssueBox`), help tags for words the box doesn't show, and the undefined command underlined.
+/// The build's issues and Live Preview's on the lines laid out: a band over each paragraph with one, a box at the end of
+/// its first line (`IssueBox`), help tags for words the box doesn't show, and the undefined command underlined.
 final class IssueOverlay {
     struct Row {
         let line: Int
@@ -16,13 +16,21 @@ final class IssueOverlay {
 
     init(in view: SourceTextView) { self.view = view }
 
-    var lines: [Int: IssuesEvent.Line] = [:] {
-        didSet {
-            guard lines != oldValue else { return }
-            labels.removeAll()
-            place()
-            view.redrawLineAndGutter()
-        }
+    var lines: [Int: IssuesEvent.Line] = [:] { didSet { if lines != oldValue { changed() } } }
+    /// Live Preview's, drawn as the build's are, as Xcode draws its live issues: of a run a moment behind the text, and in its log rather than the build panel's list.
+    var live: [Int: IssuesEvent.Line] = [:] { didSet { if live != oldValue { changed() } } }
+    var isEmpty: Bool { lines.isEmpty && live.isEmpty }
+
+    /// A line's one issue: the build's, which is of the text shown (an edit clears it) and listed, over Live Preview's,
+    /// which takes its place at the first edit.
+    func issue(on number: Int) -> (issue: IssuesEvent.Line, live: Bool)? {
+        lines[number].map { ($0, false) } ?? live[number].map { ($0, true) }
+    }
+
+    private func changed() {
+        labels.removeAll()
+        place()
+        view.redrawLineAndGutter()
     }
 
     private(set) var rows: [Row] = []
@@ -39,13 +47,13 @@ final class IssueOverlay {
     }
 
     func place() {
-        guard !lines.isEmpty || !rows.isEmpty else { return }
+        guard !isEmpty || !rows.isEmpty else { return }
         // Each line keeps its box's view.
         var views = Dictionary(rows.compactMap { row in row.message.map { (row.line, $0.view) } }) { $1 }
         rows.forEach { view.setNeedsDisplay($0.band) }
         rows.removeAll()
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
-            guard let reported = lines[number] else { return }
+            guard let reported = issue(on: number)?.issue else { return }
             let former = views.removeValue(forKey: number)
             let placed = row(number, reported, on: view.lines(of: fragment, extra: extra), of: fragment, in: former)
             if placed?.message?.view !== former { former?.removeFromSuperview() }
@@ -56,7 +64,7 @@ final class IssueOverlay {
         for (offset, fragment) in view.fragments {
             let number = view.document.line(at: offset)
             place(number, on: fragment)
-            if lines[number + 1] != nil, view.extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
+            if issue(on: number + 1) != nil, view.extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
         }
         views.values.forEach { $0.removeFromSuperview() }
         updateTips()
@@ -82,8 +90,8 @@ final class IssueOverlay {
         if width <= room {
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
             let rect = NSRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
-            let box = IssueBox(isError: reported.error, issues: issues, text: fitted?.text, cutAtTail: fitted != nil && fitted?.width == nil,
-                               font: font, fill: Color(nsColor: view.backgroundColor),
+            let box = IssueBox(isError: reported.error, issues: issues, text: fitted?.text,
+                               cutAtTail: fitted != nil && fitted?.width == nil, font: font, fill: Color(nsColor: view.backgroundColor),
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let message = former ?? IssueMessageView(box)
             if message.rootView != box { message.rootView = box }

@@ -15,21 +15,28 @@ You start a project from a template (blank, article, report or Beamer presentati
 folder, `.tex` file or `.zip` you already have. The source sits on the left and the PDF on the
 right.
 
+A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
+and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
+projects folder.
+
 The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files and
 `\ref{}` labels from the document. It closes brackets as you type and shows the maths under the
 cursor in a small preview. Its colours can follow Overleaf, TeXstudio or the system.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
-needed. As on Overleaf, a build doesn't stop at the first error. You get the PDF along with every
-error and warning, each marked on its line in the source. If you'd rather it stopped, turn on Stop
-on First Error for that project. TeXLocal saves and compiles on its own when you pause typing;
-Settings can turn that off.
+needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
+nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
+first error. You get the PDF along with every error and warning, each marked on its line in the
+source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
+compiles on its own when you pause typing; Settings can turn that off. When a package is missing,
+the Mac app can install it with TeX Live's tlmgr and compile again.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
 (SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.
 
 Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
-save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background.
+save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
+brings it new citations and references.
 
 There's also a file tree, an outline of the current file, a word count, search and replace across
 the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go
@@ -37,14 +44,18 @@ to the Trash or the Recycle Bin.
 
 ## Requirements
 
-You need a TeX distribution that includes latexmk, pdflatex and synctex. On macOS, install
-[MacTeX](https://tug.org/mactex/), or run `brew install --cask mactex-no-gui`. On Windows, install
-[TeX Live](https://tug.org/texlive/windows.html); MiKTeX's installer doesn't come with the Perl
-that latexmk needs.
+You need a TeX distribution that includes latexmk, pdflatex and synctex. If TeXLocal finds none,
+it offers to install [TinyTeX](https://yihui.org/tinytex/), a small TeX Live of about 260 MB that
+goes in your user folder without asking for a password, and adds the packages a document needs
+when you click Install beside the error. For the full distribution instead, install
+[MacTeX](https://tug.org/mactex/) on macOS, or run `brew install --cask mactex-no-gui`. On
+Windows, install [TeX Live](https://tug.org/texlive/windows.html); MiKTeX's installer doesn't come
+with the Perl that latexmk needs.
 
 TeXLocal looks for TeX on your `PATH` and in the places installers usually put it:
-`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>` and MiKTeX's
-folders. If yours is somewhere else, choose its folder in Settings (on the Mac, under Compiling).
+`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>`, MiKTeX's
+folders and TinyTeX's. If yours is somewhere else, choose its folder in Settings (on the Mac,
+under Compiling).
 
 On macOS 27, MacTeX 2026's biber fails with an error from `lipo`. Running
 `sudo tlmgr update biber` fixes it.

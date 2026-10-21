@@ -7,10 +7,10 @@ events (`docs/core-api.md`).
 
 With Underleaf's patch TeXpresso opens no window: it writes each page in view as it changes, the
 Mac app draws it in the PDF pane, and the whole document follows when typing pauses. Errors show
-in the Live Preview Log, which follows TeX's at most five times a second. When Live Preview stops,
-the last build's PDF returns. A restart the session makes itself (after a rename, a new main file,
-a file gone, or TeXpresso ending after 10 s) stays `starting` and keeps the live document until
-the new run's first replaces it. Compile still uses latexmk and the project's engine; automatic
+on their lines once typing pauses, and in the Live Preview Log, which follows TeX's at most five
+times a second. When Live Preview stops, the last build's PDF returns. A restart the session makes
+itself (after a rename, a new main file, a file gone, or TeXpresso ending after 10 s) stays
+`starting` and keeps the live document until the new run's first replaces it. Compile still uses latexmk and the project's engine; automatic
 builds pause meanwhile without changing the setting.
 
 ## Install
@@ -48,15 +48,26 @@ the app quits or crashes.
   `["pdf", path, pages, run, changed, mark]`: the pages that changed, and whether TeX reached the
   end or stopped on an error.
 - A client may number its edits (`["mark", n]`): pages and documents then carry the last number
-  they show, and `["synced", n]` says when the pages in view show it. The core sends none, so
-  `mark` is 0.
+  they show, and `["synced", n]` says when the pages in view show it, or the run's end. The core
+  numbers each change with its count of edits, and puts TeX's log's errors on their lines only
+  from a run that has its last number.
 - Finishing passes, which bring references and contents up to date, run in a second TeX that
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle reruns
   stay off.
+- A change that takes TeX back to the main file's start launches a new worker. A second change
+  before it has answered (10 ms) kills it as stuck, and upstream then kept the dead worker, which
+  left the run stopped, with an empty log, until a restart: the rollback now drops a dead worker
+  too, and the next step launches another.
+- With or without the variable, a run that TeX stops (an emergency stop, a source without
+  `\end{document}`, 100 errors) ends `texpresso-xetex` with exit status 1 where upstream's calls
+  `abort()`, which left a macOS crash report for each one while typing. TeXpresso sees the run end
+  as before, and the error is in TeX's log. TeX's `confusion()`, its own invariant failing, still
+  aborts.
 
-Without the variable it behaves as upstream's but for one change, in `texpresso-xetex` too: TeX
-Live's `doc` and `source` folders are left out of what TeX can read, since a package's example
-`color.cfg`, `graphics.cfg` or `hyperref.cfg` there would be found before the real one.
+Without the variable it behaves as upstream's but for that exit status and one change, in
+`texpresso-xetex` too: TeX Live's `doc` and `source` folders are left out of what TeX can read,
+since a package's example `color.cfg`, `graphics.cfg` or `hyperref.cfg` there would be found
+before the real one.
 
 Edits go to TeXpresso as the UTF-8 range they replaced; a file's whole text is sent only when it
 is opened, changed by another app, or an edit didn't fit the core's copy.
@@ -73,6 +84,9 @@ TEXLOCAL_TEXPRESSO=/absolute/path/to/texpresso \
 
 Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --workspace`.
 
+CI has no TeX, so `.github/workflows/tex-check.yml` runs this nightly on macOS, with TinyTeX and
+the engine built from `tools/texpresso`, beside the core's other tests that need TeX Live.
+
 ## Boundaries
 
 - Live Preview uses XeTeX whatever the project's engine.
@@ -81,7 +95,7 @@ Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --w
 - The live document has no links (MuPDF's PDF device carries no annotations); a build's PDF has
   them.
 - Final output and bibliography tools need a Compile; live sessions read the build folder's
-  auxiliary files.
+  auxiliary files, again after each Compile, so its citations and references fill in live.
 - Closing the project stops its preview; an app opens one session of a project at a time.
 - A file TeXpresso can't be sent (a path outside the project, a folder, text with a NUL) is
   reported until it is accepted, and doesn't block other files.

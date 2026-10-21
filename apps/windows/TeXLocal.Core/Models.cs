@@ -3,7 +3,10 @@ using System.Text.Json;
 namespace TeXLocal.Bridge;
 
 /// <param name="Mtime">Milliseconds since the epoch; list_projects sorts newest first.</param>
-public sealed record ProjectInfo(string Id, string Name, long Mtime, string MainFile)
+/// <param name="Path">The project's folder.</param>
+/// <param name="Opened">A folder opened where it is rather than one of the library's.</param>
+/// <param name="Missing">An opened folder that isn't where it was.</param>
+public sealed record ProjectInfo(string Id, string Name, long Mtime, string MainFile, string Path, bool Opened, bool Missing)
 {
     public override string ToString() => Name;
 }
@@ -17,24 +20,30 @@ public sealed record Catalogue(Choice[] Templates);
 /// <param name="Path">"" for the project's folder.</param>
 public sealed record Located(string Id, string Path);
 
+/// <param name="File">The project path to show, or null for the main file.</param>
+public sealed record OpenedPath(ProjectInfo Project, string? File);
+
 /// <param name="Type">file or dir.</param>
 /// <param name="Kind">tex, bib, image, pdf, text or other; null for a folder.</param>
 /// <param name="Main">The core's mark, as latexmk finds the main file.</param>
 public sealed record TreeNode(string Type, string Name, string Path, string? Kind, TreeNode[]? Children, bool Main);
 
+/// <param name="LatexmkVersion">The number latexmk's version line names ("4.86").</param>
 /// <param name="Found">The folder the working latexmk runs from.</param>
-public sealed record TexStatus(bool Available, string? Version, string? TexDir, string? Found);
+public sealed record TexStatus(bool Available, string? LatexmkVersion, string? TexDir, string? Found);
 
+/// <param name="Name">For titles: an opened folder's id isn't one.</param>
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
 /// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
-public sealed record SessionOpened(ulong Session, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
+public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
 
 public sealed record Clash(string Path);
 
 public sealed record Imported(Clash[] Existing);
 
 /// <param name="Type">error or warning.</param>
-public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short);
+/// <param name="Missing">The package or class file LaTeX didn't find (“foo.sty”), for install_package.</param>
+public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Missing);
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>

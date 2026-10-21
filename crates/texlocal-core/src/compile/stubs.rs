@@ -14,14 +14,15 @@ use tokio::task::JoinHandle;
 
 use super::CompileResult;
 use crate::logparse::SHELL_ESCAPE;
-use crate::projects::create_project;
-use crate::projects::testing::with_project;
+use crate::paths::Project;
+use crate::projects::testing::{names_in, with_project};
+use crate::projects::{create_project, open_path};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::synctex::synctex_inverse;
 use crate::tex::tex_available;
 
-fn stub(dir: &Path, name: &str, script: &str) {
+pub(crate) fn stub(dir: &Path, name: &str, script: &str) {
     let path = dir.join("bin").join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, format!("#!/bin/sh\n{script}")).unwrap();
@@ -31,7 +32,7 @@ fn stub(dir: &Path, name: &str, script: &str) {
 fn setup(script: &str) -> (TempDir, Arc<Service>, PathBuf) {
     let (dir, service) = with_project();
     stub(dir.path(), "latexmk", script);
-    let root = service.project_root("P").unwrap();
+    let root = service.project("P").unwrap().root;
     (dir, Arc::new(service), root)
 }
 
@@ -42,7 +43,8 @@ fn stubs(service: &Service) -> String {
 
 async fn compile(service: &Service, root: &Path) -> CompileResult {
     let path = stubs(service);
-    service.compile.compile(root, &path).await.unwrap()
+    let project = Project::in_folder(root);
+    service.compile.compile(&project, &path).await.unwrap()
 }
 
 async fn built(script: &str) -> CompileResult {
@@ -169,13 +171,13 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     promptly(started);
 }
 
-/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project; the user's rc comes before every option it could override.
+/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project; the user's rc comes before every option it could override; the glossary rules are given either way.
 #[tokio::test]
 async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     let (_dir, service, root) =
         setup("mkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n");
     let cases: [(_, &[&str], &[&str]); 3] = [
-        (json!({}), &["-f", "-norc"], &["-g", "-halt-on-error"]),
+        (json!({}), &["-f", "-norc", "-e"], &["-g", "-halt-on-error"]),
         (
             json!({ "stopOnFirstError": true }),
             &["-halt-on-error"],
@@ -183,12 +185,12 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
         ),
         (
             json!({ "shellEscape": true }),
-            &["-shell-escape"],
+            &["-shell-escape", "-e"],
             &["-norc"],
         ),
     ];
     for (settings, given, not_given) in cases {
-        write_settings(&root, &settings).unwrap();
+        write_settings(&root.join(".texlocal.json"), &settings).unwrap();
         compile(&service, &root).await;
         let args = fs::read_to_string(root.join("build/args")).unwrap();
         let passed: Vec<_> = args.split_whitespace().collect();
@@ -206,6 +208,27 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
             "{passed:?}"
         );
     }
+}
+
+/// A folder opened where it is builds beside the library, where `-outdir` says, writing
+/// nothing in the folder.
+#[tokio::test]
+async fn an_opened_folders_build_lands_in_its_store() {
+    let (dir, service, _) = setup(
+        "for arg; do case $arg in -outdir=*) out=${arg#-outdir=};; esac; done\nmkdir -p \"$out\" && printf 'fake' > \"$out/main.pdf\"\n",
+    );
+    let folder = dir.path().join("My Thesis");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("main.tex"), "").unwrap();
+    let id = open_path(&service, &folder).unwrap().project.id;
+    let project = service.project(&id).unwrap();
+    let result = service.compile.compile(&project, &stubs(&service)).await;
+    let pdf = project.build.join("main.pdf");
+    assert_eq!(
+        result.unwrap().pdf,
+        Some(pdf.to_string_lossy().into_owned())
+    );
+    assert_eq!(names_in(&folder), ["main.tex"]);
 }
 
 /// A failure the engine's log doesn't explain names its cause: bibtex's own
@@ -262,7 +285,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     for id in ids {
         create_project(&service.data_dir, id, "blank", None).unwrap();
     }
-    let build = |id: &str| in_flight(&service, &service.project_root(id).unwrap());
+    let build = |id: &str| in_flight(&service, &service.project(id).unwrap().root);
     let [one, two, three] = ids.map(&build);
     for id in ids {
         let started = service.data_dir.join(id).join("started");
@@ -270,7 +293,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     }
 
     let started = Instant::now();
-    let stop = |id: &str| service.compile.stop(&service.project_root(id).unwrap());
+    let stop = |id: &str| service.compile.stop(&service.project(id).unwrap().root);
     assert!(stop("one"));
     let one = one.await.unwrap();
     assert!(one.stopped && !one.ok);
@@ -350,7 +373,8 @@ async fn inverse_sync_finds_the_source_and_the_clicked_letters_column() {
         (Some(("theword", 4)), 6, Some(1)),
         (Some(("absent", 0)), 7, None),
     ] {
-        let found = synctex_inverse(&root, 1.0, 10.0, 20.0, click, None, &path);
+        let project = Project::in_folder(&root);
+        let found = synctex_inverse(&project, 1.0, 10.0, 20.0, click, None, &path);
         let loc = found.await.unwrap();
         assert_eq!(
             (loc.file.as_str(), loc.line, loc.column),
@@ -376,13 +400,14 @@ async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     let (_dir, service, root) = setup("echo 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
     let status = tex_available(&stubs(&service)).await;
     assert!(status.available);
-    assert!(status.version.unwrap().starts_with("Latexmk"));
+    assert_eq!(status.latexmk_version.as_deref(), Some("4.85"));
     compile(&service, &root).await;
 
     let none = "/nonexistent-dir-for-test";
     let status = tex_available(none).await;
-    assert!(!status.available && status.version.is_none());
-    let result = service.compile.compile(&root, none).await.unwrap();
+    assert!(!status.available && status.latexmk_version.is_none());
+    let project = Project::in_folder(&root);
+    let result = service.compile.compile(&project, none).await.unwrap();
     let message = &result.errors[0].message;
     assert!(message.starts_with("Couldn't start latexmk"), "{message}");
     assert_eq!(FORKS.with(Cell::get), before);

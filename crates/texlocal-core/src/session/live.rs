@@ -3,16 +3,20 @@
 //! `Msg::Live` and goes on to the host as events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
-use crate::CoreError;
+use super::build::issue_lines;
+use crate::logparse::{LogItem, parse_live_log};
 use crate::projects::is_text;
+use crate::settings::Engine;
 use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
+use crate::{CoreError, paths};
 
 /// TeXpresso's own limit on a file sent to it; one larger it reads from the disk at the rescan.
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
@@ -27,6 +31,14 @@ pub(crate) enum Phase {
     Starting,
     Running,
     Stopping,
+}
+
+/// An error of the last run TeXpresso had every edit for, on a project file's line.
+struct Issue {
+    /// `line` follows the edits since.
+    item: LogItem,
+    /// A UTF-16 offset in the line, while its document is open.
+    at: u32,
 }
 
 #[derive(Default)]
@@ -54,6 +66,10 @@ pub(crate) struct Live {
     generation: u64,
     pub document_seen: bool,
     shown: Value,
+    /// The session's count of edits as the last change was sent, and as TeXpresso last read.
+    mark_sent: u64,
+    mark_read: u64,
+    issues: Vec<Issue>,
 }
 
 impl Live {
@@ -80,6 +96,8 @@ impl Actor {
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         json!({
             "phase": live.phase,
+            // Whatever the project's: TeXpresso has only XeTeX.
+            "engine": Engine::Xelatex,
             "halted": live.halted,
             "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
             "failure": failure,
@@ -128,7 +146,7 @@ impl Actor {
     }
 
     fn live_reset(&mut self) {
-        for timer in [Timer::Caret, Timer::Halting, Timer::Retry] {
+        for timer in [Timer::Caret, Timer::Halting, Timer::Retry, Timer::Issues] {
             self.timers.remove(&timer);
         }
         let live = &mut self.live;
@@ -137,6 +155,9 @@ impl Actor {
         live.synced.clear();
         live.sent.clear();
         (live.halted, live.sent_view, live.caret) = (false, None, None);
+        (live.mark_sent, live.mark_read) = (0, 0);
+        live.issues.clear();
+        self.show_all_live_issues();
     }
 
     fn live_cancel_work(&mut self) {
@@ -201,7 +222,7 @@ impl Actor {
             let _ = tx.send(Msg::Live(generation, event));
         });
         let path_env = self.service.tool_paths().1;
-        match (self.preview).start(self.id, &self.root, &files, &path_env, &pane, sink) {
+        match (self.preview).start(self.id, &self.project, &files, &path_env, &pane, sink) {
             Ok(status) => {
                 self.live.synced = versions.keys().cloned().collect();
                 self.live.sent = versions;
@@ -264,7 +285,7 @@ impl Actor {
                 .edit(self.id, path, start, length, &edit.text)
                 .is_ok()
         {
-            return;
+            return self.mark_sent();
         }
         self.live.pending.insert(path.to_owned(), None);
         self.flush_pending();
@@ -303,6 +324,7 @@ impl Actor {
                         self.live.sent.insert(path.clone(), version);
                     }
                     self.live.synced.insert(path);
+                    self.mark_sent();
                     self.publish_live(false);
                 }
                 // This text can't be taken, whenever it is sent: its error stays until the file is edited.
@@ -388,7 +410,7 @@ impl Actor {
                 continue;
             }
             others = true;
-            let file = self.root.join(&path);
+            let file = self.project.root.join(&path);
             let name = path.rsplit('/').next().unwrap_or(&path);
             if !name.starts_with('.')
                 && is_text(name)
@@ -437,6 +459,7 @@ impl Actor {
                 }
             }
             LiveEvent::Done(run) => self.run_ended(&run),
+            LiveEvent::Synced(mark) => self.live.mark_read = mark,
             LiveEvent::Log if self.live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
@@ -457,6 +480,7 @@ impl Actor {
     }
 
     fn run_ended(&mut self, run: &str) {
+        self.after(Timer::Issues);
         match run {
             "partial" => {}
             // A brace or a dollar half typed stops TeX for a moment at every other key, so a
@@ -473,6 +497,102 @@ impl Actor {
         if self.live.halted != halted {
             self.live.halted = halted;
             self.publish_live(false);
+        }
+    }
+}
+
+// MARK: - Issues
+
+impl Actor {
+    fn mark_sent(&mut self) {
+        self.live.mark_sent = self.edits;
+        let _ = self.preview.mark(self.id, self.edits);
+    }
+
+    /// A run has lasted: once TeXpresso has read every change sent, TeX's log is of the
+    /// documents as they are, and its errors replace the issues.
+    pub fn live_issues_settled(&mut self) {
+        let live = &self.live;
+        if live.phase != Phase::Running || live.mark_read != live.mark_sent {
+            return;
+        }
+        let (Some(log), Some(main)) = (self.preview.tex_log(self.id), &self.tree.main) else {
+            return;
+        };
+        // TeX names a file from the main file's folder, in the case it was asked for.
+        let folder = main.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let files = self.tree.files.iter();
+        let files: HashMap<String, &String> = files.map(|f| (paths::fold_case(f), f)).collect();
+        let ours = |name: &str| {
+            let path = paths::rel_key(&Path::new(folder).join(name).to_string_lossy()).ok()?;
+            files
+                .get(&paths::fold_case(&path))
+                .map(|&file| file.clone())
+        };
+        let errors = parse_live_log(&log, main, &ours);
+        let placed = errors.into_iter().filter_map(|item| {
+            let at = match (&item.file, item.line) {
+                (Some(file), Some(line)) => self
+                    .docs
+                    .get(file)
+                    .map_or(0, |doc| doc.doc.with(|source| source.line_start(line))),
+                _ => return None,
+            };
+            Some(Issue { item, at })
+        });
+        self.live.issues = placed.collect();
+        self.show_all_live_issues();
+    }
+
+    /// An edit moves the issues after it in its document, and drops one whose line's start it
+    /// replaces; a whole new text drops them all.
+    pub fn live_issues_edited(&mut self, path: &str, edit: Option<&TextEdit>) {
+        let doc = &self.docs[path].doc;
+        let inserted = edit.map_or(0, |edit| edit.text.encode_utf16().count() as u32);
+        self.live.issues.retain_mut(|issue| {
+            if issue.item.file.as_deref() != Some(path) {
+                return true;
+            }
+            let Some(edit) = edit else {
+                return false;
+            };
+            if edit.start + edit.length <= issue.at {
+                issue.at = issue.at - edit.length + inserted;
+                issue.item.line = Some(doc.with(|source| source.line_at(issue.at)));
+                true
+            } else {
+                edit.start > issue.at
+            }
+        });
+        self.show_live_issues(path);
+    }
+
+    pub fn live_issues_opened(&mut self, path: &str) {
+        let doc = &self.docs[path].doc;
+        let issues = self.live.issues.iter_mut();
+        for issue in issues.filter(|issue| issue.item.file.as_deref() == Some(path)) {
+            let line = issue.item.line.unwrap_or_default();
+            issue.at = doc.with(|source| source.line_start(line));
+        }
+        self.show_live_issues(path);
+    }
+
+    fn show_all_live_issues(&mut self) {
+        let paths: Vec<String> = self.docs.keys().cloned().collect();
+        for path in paths {
+            self.show_live_issues(&path);
+        }
+    }
+
+    fn show_live_issues(&mut self, path: &str) {
+        let Some(doc) = self.docs.get_mut(path) else {
+            return;
+        };
+        let items = self.live.issues.iter().map(|issue| &issue.item);
+        let lines = issue_lines(items, path, &doc.doc);
+        if lines != doc.live_issues {
+            doc.live_issues.clone_from(&lines);
+            self.emit("live_issues", json!({ "path": path, "lines": lines }));
         }
     }
 }

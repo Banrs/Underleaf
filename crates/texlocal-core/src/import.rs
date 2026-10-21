@@ -1,6 +1,7 @@
-//! Bringing outside files into the library: a Finder drop onto a project, and File › Open of a
-//! folder, a .zip or a .tex made a new project. Both read host-chosen absolute paths and block
-//! on the disk; hosts call them off their UI thread, as they do every `tl_call`.
+//! Bringing outside files into the library: a Finder drop onto a project, and a .zip, or a file
+//! whose folder doesn't open where it is (`open_path`), made a new project. Both read host-chosen
+//! absolute paths and block on the disk; hosts call them off their UI thread, as they do every
+//! `tl_call`.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -10,7 +11,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
@@ -19,7 +20,7 @@ use crate::projects::{self, ProjectInfo, Trash};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
-use crate::{BUILD_DIR, CoreError, atomic, templates};
+use crate::{CoreError, SETTINGS_FILE, atomic, templates};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,11 +48,6 @@ enum Source {
     Zip(usize),
 }
 
-/// A .tex brings its folder only while that is no larger than a project: Overleaf's limit on a
-/// project's files, and 100 MB.
-const TEX_FOLDER_ENTRIES: usize = 2000;
-const TEX_FOLDER_BYTES: u64 = 100 << 20;
-
 static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
 });
@@ -65,30 +61,23 @@ fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
-/// The files under a path, each by its path from there, named from `rel`: the path's own name
-/// for a drop, none for a folder made a project, whose top-level build folder stays behind.
-/// Links inside a folder stay behind too: a drop imports what was dropped.
+/// The files under a dropped path, each by its path named from the path's own name `rel`.
+/// Links inside a folder stay behind: a drop imports what was dropped.
 fn collect(
     abs: &Path,
     rel: String,
     meta: &fs::Metadata,
     files: &mut Vec<(String, PathBuf)>,
-    entries_left: &mut usize,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
         files.push((rel, abs.to_path_buf()));
     } else if meta.is_dir() {
         for entry in fs::read_dir(abs).map_err(CoreError::at(abs))? {
-            *entries_left = (entries_left.checked_sub(1))
-                .ok_or_else(|| CoreError::bad_request("Too many files"))?;
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !projects::is_litter(&name)
-                && !(rel.is_empty() && name.eq_ignore_ascii_case(BUILD_DIR))
-            {
+            if !projects::is_litter(&name) {
                 let meta = entry.metadata()?;
-                let rel = in_folder(&rel, &name);
-                collect(&entry.path(), rel, &meta, files, entries_left)?;
+                collect(&entry.path(), in_folder(&rel, &name), &meta, files)?;
             }
         }
     }
@@ -111,11 +100,9 @@ pub fn import_files(
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
-        collect(abs, name.into_owned(), &meta, &mut files, &mut {
-            usize::MAX
-        })?;
+        collect(abs, name.into_owned(), &meta, &mut files)?;
     }
-    let root = service.project_root(id)?;
+    let root = service.project(id)?.root;
     let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
@@ -213,7 +200,7 @@ fn save(
     source: &Path,
     replace: Option<Trash>,
 ) -> Result<(), CoreError> {
-    let root = service.project_root(id)?;
+    let root = service.project(id)?.root;
     // Beside the target, so the rename stays on one volume.
     let abs = paths::safe_write_path(&root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
@@ -222,13 +209,14 @@ fn save(
     io::copy(&mut origin, &mut file)?;
     file.sync_all()?;
     drop(file);
-    service.with_project(id, |root| {
+    service.with_project(id, |project| {
+        let root = &project.root;
         let abs = paths::safe_write_path(root, rel)?;
         if let Some(taken) = occupant(root, &rel_key(rel)?) {
             let Some(trash) = replace else {
                 return Err(CoreError::conflict(format!("“{taken}” already exists")));
             };
-            projects::discard_replaced(root, &taken, trash)?;
+            projects::discard_replaced(project, &taken, trash)?;
         }
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
         Ok(atomic::persist(temp, &abs)?)
@@ -245,18 +233,6 @@ struct Opened {
 }
 
 impl Opened {
-    fn of_files(base: String, files: Vec<(String, PathBuf)>, main: Option<String>) -> Self {
-        let files = files
-            .into_iter()
-            .map(|(path, abs)| (path, Source::File(abs)));
-        Self {
-            base,
-            zip: None,
-            files: files.collect(),
-            main,
-        }
-    }
-
     /// A zip's visible files; the contents of its one top folder if it has one, as a zipped
     /// project folder unpacks.
     fn of_zip(base: String, mut zip: ZipArchive<File>) -> Result<Self, CoreError> {
@@ -290,34 +266,8 @@ impl Opened {
     }
 }
 
-fn folder_files(dir: &Path, mut entries_left: usize) -> Result<Vec<(String, PathBuf)>, CoreError> {
-    let meta = fs::metadata(dir).map_err(CoreError::at(dir))?;
-    let mut found = Vec::new();
-    collect(dir, String::new(), &meta, &mut found, &mut entries_left)?;
-    Ok(found)
-}
-
-/// A .tex's folder, unless that can't be read, is larger than a project or lacks the .tex (just
-/// moved).
-fn tex_folder(tex: &Path) -> Option<Opened> {
-    let dir = tex.parent()?;
-    paths::sanitize_name(&file_name(dir)).ok()?;
-    let files = folder_files(dir, TEX_FOLDER_ENTRIES).ok()?;
-    let sizes = files.iter().filter_map(|(_, abs)| fs::metadata(abs).ok());
-    if sizes.map(|meta| meta.len()).sum::<u64>() > TEX_FOLDER_BYTES {
-        return None;
-    }
-    let main = file_name(tex);
-    let found = files.iter().any(|(path, _)| *path == main);
-    found.then(|| Opened::of_files(file_name(dir), files, Some(main)))
-}
-
+/// A .zip's files, or any other file alone.
 fn open(src: &Path) -> Result<Opened, CoreError> {
-    let meta = fs::metadata(src).map_err(CoreError::at(src))?;
-    if meta.is_dir() {
-        let files = folder_files(src, usize::MAX)?;
-        return Ok(Opened::of_files(file_name(src), files, None));
-    }
     let stem = src
         .file_stem()
         .unwrap_or_default()
@@ -337,19 +287,13 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         })?;
         return Opened::of_zip(stem, zip);
     }
-    if ext.as_deref() == Some("tex")
-        && let Some(opened) = tex_folder(src)
-    {
-        return Ok(opened);
-    }
-    // Any other file comes alone, and so does a .tex whose folder does not qualify.
     let path = file_name(src);
-    let main = (projects::file_kind(&path) == "tex").then(|| path.clone());
-    Ok(Opened::of_files(
-        stem,
-        vec![(path, src.to_path_buf())],
-        main,
-    ))
+    Ok(Opened {
+        base: stem,
+        zip: None,
+        main: (projects::file_kind(&path) == "tex").then(|| path.clone()),
+        files: vec![(path, Source::File(src.to_path_buf()))],
+    })
 }
 
 fn file_name(path: &Path) -> String {
@@ -383,10 +327,40 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
     found
 }
 
-/// A .tex brings its folder, for what it inputs, includes and cites. The main file is the root
-/// the chosen .tex names, else that .tex, else the likeliest top-level one, else the blank
-/// template's main.tex; the engine is the one the chosen .tex or the main file names.
-pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
+/// The settings a folder's sources name, `chosen` the top-level .tex opened: the main file is
+/// the root that .tex names, else that .tex, else the likeliest top-level one, else none; the
+/// engine is the one the chosen .tex or the main file names.
+pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
+    // latexmk would read a name starting with "-" as an option.
+    let chosen = chosen.filter(|main| !main.starts_with('-'));
+    let (named_root, program) = chosen
+        .map(|chosen| magic_comments(&root.join(chosen)))
+        .unwrap_or_default();
+    let named_root = named_root
+        .and_then(|named| paths::safe_rel_file(&named).ok())
+        .filter(|rel| root.join(rel).is_file());
+    let main = match named_root.or(chosen.map(str::to_owned)) {
+        Some(main) => Some(main),
+        None => projects::guess_main_file(root)?,
+    };
+    let program = program.or_else(|| magic_comments(&root.join(main.as_ref()?)).1);
+    let program = program.unwrap_or_default().to_lowercase();
+    let engine = ["xelatex", "lualatex", "pdflatex"]
+        .into_iter()
+        .find(|engine| program.contains(engine));
+    let mut settings = json!({});
+    if let Some(main) = main {
+        settings["mainFile"] = main.into();
+    }
+    if let Some(engine) = engine {
+        settings["engine"] = engine.into();
+    }
+    Ok(settings)
+}
+
+/// A .zip's files, or a file alone, made a new project, with the settings they name; a project
+/// without a .tex gets the blank template's main file.
+pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     let Opened {
         base,
         mut zip,
@@ -414,34 +388,13 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
             }
             dest.flush()?;
         }
-        // latexmk would read a name starting with "-" as an option.
-        let chosen = main.filter(|main| !main.starts_with('-'));
-        let (named_root, program) = (chosen.as_deref())
-            .map(|chosen| magic_comments(&root.join(chosen)))
-            .unwrap_or_default();
-        // The chosen .tex is at the project's top, so the root it names is relative to that.
-        let named_root = named_root
-            .and_then(|named| paths::safe_rel_file(&named).ok())
-            .filter(|rel| root.join(rel).is_file());
-        let main = if let Some(main) = named_root.or(chosen) {
-            main
-        } else if let Some(main) = projects::guess_main_file(root)? {
-            main
-        } else {
+        let mut settings = guessed_settings(root, main.as_deref())?;
+        if settings.get("mainFile").is_none() {
             let (file, content) = templates::files("blank")[0];
             fs::write(root.join(file), content)?;
-            file.to_string()
-        };
-        let program = program.or_else(|| magic_comments(&root.join(&main)).1);
-        let program = program.unwrap_or_default().to_lowercase();
-        let engine = ["xelatex", "lualatex", "pdflatex"]
-            .into_iter()
-            .find(|engine| program.contains(engine));
-        let mut settings = json!({ "mainFile": main });
-        if let Some(engine) = engine {
-            settings["engine"] = engine.into();
+            settings["mainFile"] = file.into();
         }
-        write_settings(root, &settings)?;
+        write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())
     })
 }
@@ -449,9 +402,9 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::Project;
     use crate::projects::testing::{library, with_project};
     use crate::projects::{TreeNode, file_tree};
-    use crate::settings::{Engine, read_settings};
 
     fn files_in(root: &Path) -> Vec<String> {
         fn walk(nodes: Vec<TreeNode>, out: &mut Vec<String>) {
@@ -463,7 +416,7 @@ mod tests {
             }
         }
         let mut out = Vec::new();
-        walk(file_tree(root).unwrap(), &mut out);
+        walk(file_tree(&Project::in_folder(root)).unwrap(), &mut out);
         out.sort();
         out
     }
@@ -506,7 +459,7 @@ mod tests {
     #[test]
     fn files_are_validated_as_a_batch_before_any_write() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         assert!(validate(&root, "img", ["a.png", "b.png"].into_iter()).is_ok());
         for batch in [
             ["a.png", "a.png"],
@@ -524,7 +477,7 @@ mod tests {
     #[test]
     fn a_file_reports_what_it_would_land_on_and_never_overwrites_unasked() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         let there = [
             ("figs/a.png", "old"),
             ("figs/a 2.png", "older"),
@@ -567,7 +520,11 @@ mod tests {
         // import spells it on a volume that ignores case.
         fs::create_dir(root.join("ch")).unwrap();
         fs::rename(root.join("main.tex"), root.join("ch/main.tex")).unwrap();
-        write_settings(&root, &json!({ "mainFile": "ch/main.tex" })).unwrap();
+        write_settings(
+            &root.join(SETTINGS_FILE),
+            &json!({ "mainFile": "ch/main.tex" }),
+        )
+        .unwrap();
         assert_eq!(put(&service, "ch", b"x", true).unwrap_err().status, 409);
         assert_eq!(put(&service, "CH", b"x", true).unwrap_err().status, 409);
         assert!(root.join("ch/main.tex").is_file());
@@ -583,7 +540,7 @@ mod tests {
     #[test]
     fn replace_discards_what_is_there_and_brings_the_incoming_file() {
         let (dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         write_all(&root, &[("figs/a.png", "old")]);
         let drop = dir.path().join("drop");
         write_all(&drop, &[("figs/a.png", "new"), ("figs/b.png", "b")]);
@@ -609,8 +566,9 @@ mod tests {
     fn a_replaced_file_goes_to_the_trash_without_asking_finder() {
         let (_dir, service) = with_project();
         let file = service
-            .project_root("P")
+            .project("P")
             .unwrap()
+            .root
             .join("replaced by import.txt");
         fs::write(&file, "old").unwrap();
         projects::discard(&file).unwrap();
@@ -621,7 +579,7 @@ mod tests {
     #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
         let (_dir, service) = with_project();
-        let root = service.project_root("P").unwrap();
+        let root = service.project("P").unwrap().root;
         fs::create_dir(root.join("figs")).unwrap();
         std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
         let (rels, taken) = validate(&root, "", ["link/a.png"].into_iter()).unwrap();
@@ -662,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_or_a_zip_of_one_brings_all_but_what_an_export_leaves_out() {
+    fn a_zip_of_a_folder_brings_all_but_what_an_export_leaves_out() {
         // Into a library folder that doesn't exist yet, as on a first import.
         let dir = tempfile::tempdir().unwrap();
         let service = Service::new(dir.path().join("data"));
@@ -681,28 +639,26 @@ mod tests {
             // What macOS adds to a zip of it.
             ("__MACOSX/Thesis/._doc.tex", "fork"),
         ];
-        write_all(dir.path(), &files);
         zip_of(&dir.path().join("Thesis.zip"), &files);
+        fs::create_dir_all(service.data_dir.join("Thesis")).unwrap();
 
         // A taken name gets a number, as Finder's copies do.
-        for (src, id) in [("Thesis", "Thesis"), ("Thesis.zip", "Thesis 2")] {
-            let info = import_project(&service, &dir.path().join(src)).unwrap();
-            // No main.tex: the first file that starts a document, not in a comment, in settings
-            // of its own.
-            assert_eq!([info.id, info.main_file], [id, "doc.tex"]);
-            let root = service.data_dir.join(id);
-            assert_eq!(files_in(&root), ["aaa.tex", "doc.tex", "figs/a.png"]);
-            // The author's own dotfile comes, though the tree hides it.
-            let latexmkrc = fs::read_to_string(root.join(".latexmkrc")).unwrap();
-            assert_eq!(latexmkrc, "$pdf_mode = 1;");
-            for left in [".git", "build", "figs/.DS_Store"] {
-                assert!(!root.join(left).exists(), "{left}");
-            }
+        let info = import_project(&service, &dir.path().join("Thesis.zip")).unwrap();
+        // No main.tex: the first file that starts a document, not in a comment, in settings of
+        // its own.
+        assert_eq!([info.id, info.main_file], ["Thesis 2", "doc.tex"]);
+        let root = service.data_dir.join("Thesis 2");
+        assert_eq!(files_in(&root), ["aaa.tex", "doc.tex", "figs/a.png"]);
+        // The author's own dotfile comes, though the tree hides it.
+        let latexmkrc = fs::read_to_string(root.join(".latexmkrc")).unwrap();
+        assert_eq!(latexmkrc, "$pdf_mode = 1;");
+        for left in [".git", "build", "figs/.DS_Store"] {
+            assert!(!root.join(left).exists(), "{left}");
         }
     }
 
     #[test]
-    fn a_tex_brings_its_folder_while_that_is_no_larger_than_a_project() {
+    fn a_file_comes_alone_with_a_main_file() {
         let (dir, service) = library();
         let src = dir.path().join("Paper");
         write_all(
@@ -710,40 +666,26 @@ mod tests {
             &[
                 ("main.tex", "\\documentclass{article}"),
                 ("paper.tex", "\\documentclass{article}\\input{chapters/a}"),
-                ("chapters/a.tex", "\\section{A}"),
+                ("-draft.tex", "\\documentclass{article}"),
                 ("refs.bib", "@book{k,}"),
             ],
         );
-        // Sparse: past a project's bytes without writing them.
-        let past_a_project = |path: &str| {
-            let file = File::create(src.join(path)).unwrap();
-            file.set_len(TEX_FOLDER_BYTES + 1).unwrap();
-        };
-        let imports = |file: &str, main: &str, files: &[&str]| {
+        for (file, main, files) in [
+            ("paper.tex", "paper.tex", &["paper.tex"][..]),
+            // One whose name latexmk would read as an option comes but isn't the main file.
+            ("-draft.tex", "main.tex", &["-draft.tex", "main.tex"]),
+            // Any other file comes with the blank template's main file.
+            ("refs.bib", "main.tex", &["main.tex", "refs.bib"]),
+        ] {
             let info = import_project(&service, &src.join(file)).unwrap();
             assert_eq!(info.main_file, main, "{file}");
             assert_eq!(files_in(&service.data_dir.join(&info.id)), files, "{file}");
-            info.id
-        };
-        // Build output stays behind, and so doesn't count.
-        fs::create_dir(src.join("Build")).unwrap();
-        past_a_project("Build/main.pdf");
-        let files = ["chapters/a.tex", "main.tex", "paper.tex", "refs.bib"];
-        assert_eq!(imports("paper.tex", "paper.tex", &files), "Paper");
-
-        // In a folder larger than a project, the .tex comes alone.
-        past_a_project("big.dmg");
-        imports("paper.tex", "paper.tex", &["paper.tex"]);
-        // One whose name latexmk would read as an option comes but isn't the main file.
-        fs::write(src.join("-draft.tex"), "\\documentclass{article}").unwrap();
-        imports("-draft.tex", "main.tex", &["-draft.tex", "main.tex"]);
-        // Any other file comes alone, with the blank template's main file.
-        imports("refs.bib", "main.tex", &["main.tex", "refs.bib"]);
+        }
     }
 
     #[test]
-    fn a_tex_naming_its_root_and_program_imports_with_them_where_they_hold() {
-        let (dir, service) = library();
+    fn the_settings_guessed_are_the_root_and_program_a_tex_names_where_they_hold() {
+        let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("Book");
         write_all(&src, &[("parts/book.tex", "\\documentclass{book}")]);
         fs::write(dir.path().join("main.tex"), "\\documentclass{book}").unwrap();
@@ -751,22 +693,21 @@ mod tests {
             (
                 "%!TEX TS-program = LuaLaTeX\n% !TeX root = parts/../parts/book.tex\n",
                 "parts/book.tex",
-                Engine::Lualatex,
+                Some("lualatex"),
             ),
-            // A root outside what comes, or not there, is ignored; the program still holds.
+            // A root outside the folder, or not there, is ignored; the program still holds.
             (
                 "% !TEX root = ../main.tex\n% !tex program = xelatex\n",
                 "chapter.tex",
-                Engine::Xelatex,
+                Some("xelatex"),
             ),
-            ("% !TEX root = gone.tex\n", "chapter.tex", Engine::Pdflatex),
+            ("% !TEX root = gone.tex\n", "chapter.tex", None),
         ] {
             let chapter = format!("{chapter_head}\\chapter{{A}}");
             fs::write(src.join("chapter.tex"), chapter).unwrap();
-            let info = import_project(&service, &src.join("chapter.tex")).unwrap();
-            assert_eq!(info.main_file, main);
-            let root = service.data_dir.join(&info.id);
-            assert_eq!(read_settings(&root).engine, engine);
+            let settings = guessed_settings(&src, Some("chapter.tex")).unwrap();
+            assert_eq!(settings["mainFile"], main);
+            assert_eq!(settings.get("engine").and_then(Value::as_str), engine);
         }
     }
 
@@ -793,21 +734,6 @@ mod tests {
         bytes[at.unwrap()] = b'X';
         fs::write(&src, bytes).unwrap();
         assert!(import_project(&service, &src).is_err());
-
-        // A folder holding a file that can't be read.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let src = dir.path().join("Locked");
-            write_all(&src, &[("a.tex", "fine"), ("b.tex", "unreadable")]);
-            fs::set_permissions(src.join("b.tex"), fs::Permissions::from_mode(0o000)).unwrap();
-            let err = import_project(&service, &src).unwrap_err();
-            // Not a bug of the core's, and it says which file.
-            if File::open(src.join("b.tex")).is_err() {
-                assert_eq!(err.status, 403, "{}", err.message);
-                assert!(err.message.contains("b.tex"), "{}", err.message);
-            }
-        }
         assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
     }
 

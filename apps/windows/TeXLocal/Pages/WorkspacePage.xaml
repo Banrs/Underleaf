@@ -631,6 +631,7 @@
                                             <ColumnDefinition Width="16" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xEB90;" Visibility="{x:Bind IsError}" />
                                         <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" Visibility="{x:Bind IsWarning}" />
@@ -642,6 +643,20 @@
                                             Text="{x:Bind Place}"
                                             Typography.NumeralAlignment="Tabular"
                                             Visibility="{x:Bind HasPlace}" />
+                                        <!-- The Microsoft Store's inline Install; the ring keeps its slot, so the button never moves. -->
+                                        <StackPanel
+                                            Grid.Column="3"
+                                            VerticalAlignment="Center"
+                                            Orientation="Horizontal"
+                                            Spacing="8"
+                                            Visibility="{x:Bind Installable}">
+                                            <ProgressRing Width="16" Height="16" IsActive="{x:Bind Installing}" />
+                                            <Button
+                                                AutomationProperties.Name="{x:Bind InstallName}"
+                                                Click="OnInstall"
+                                                Content="Install"
+                                                IsEnabled="{x:Bind Idle}" />
+                                        </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>

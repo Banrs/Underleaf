@@ -101,7 +101,7 @@ struct FilesList: View {
             // Return renames after the key event, through which the list keeps the keyboard from the field.
             .onKeyPress(.return) {
                 guard rename.id == nil, let node = selection.flatMap({ project.tree.node(at: $0) }) else { return .ignored }
-                Task { actions(node).rename() }
+                Task { actions(node).rename?() }
                 return .handled
             }
             .focused($listFocused)

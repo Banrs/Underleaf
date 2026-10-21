@@ -15,22 +15,23 @@ use crate::CoreError;
 use crate::analyze::disk_spelling;
 use crate::compile::{CompileManager, CompileResult};
 use crate::logparse::{LogItem, SHELL_ESCAPE, Severity};
+use crate::paths::Project;
 use crate::service::Service;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 pub(crate) trait Engine: Send + Sync {
-    fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>>;
+    fn compile(&self, project: Project) -> Fut<Result<CompileResult, CoreError>>;
     fn stop_compile(&self, root: &Path);
-    fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>>;
+    fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
 impl Engine for Arc<Service> {
-    fn compile(&self, root: PathBuf) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, project: Project) -> Fut<Result<CompileResult, CoreError>> {
         let service = Self::clone(self);
         Box::pin(async move {
             let tex_path = service.tool_paths().0;
-            service.compile.compile(&root, &tex_path).await
+            service.compile.compile(&project, &tex_path).await
         })
     }
 
@@ -38,9 +39,9 @@ impl Engine for Arc<Service> {
         self.compile.stop(root);
     }
 
-    fn clean(&self, root: PathBuf) -> Fut<Result<(), CoreError>> {
+    fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>> {
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || CompileManager::clean(&root))
+            tokio::task::spawn_blocking(move || CompileManager::clean(&build))
                 .await
                 .map_err(|err| CoreError::internal(err.to_string()))?
         })
@@ -91,7 +92,7 @@ impl Actor {
         (self.builds.compiling, self.builds.auto) = (true, auto);
         self.builds.built = self.edits;
         self.publish_build();
-        let (build, tx) = (self.engine.compile(self.root.clone()), self.tx.clone());
+        let (build, tx) = (self.engine.compile(self.project.clone()), self.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });
@@ -101,7 +102,7 @@ impl Actor {
     pub fn stop_compile(&mut self) {
         if self.builds.compiling {
             self.builds.queued = None;
-            self.engine.stop_compile(&self.root);
+            self.engine.stop_compile(&self.project.root);
         }
     }
 
@@ -117,7 +118,7 @@ impl Actor {
             .chain(&mut result.bad_boxes)
             .filter_map(|item| item.file.as_mut());
         for file in files {
-            let disk = || disk_spelling(&self.root, file).unwrap_or_else(|| file.clone());
+            let disk = || disk_spelling(&self.project.root, file).unwrap_or_else(|| file.clone());
             *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
         }
         let builds = &mut self.builds;
@@ -139,6 +140,11 @@ impl Actor {
         let announce = !result.stopped && (!auto || builds.error_count != before);
         let outdated = builds.outdated;
         self.mark_issues();
+        // Live Preview reads the build folder's .aux and .bbl; TeXpresso goes back only as far
+        // as their first changed byte. A stopped build may have left them half written.
+        if !result.stopped {
+            self.live_rescan();
+        }
         let fields =
             json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });
         self.emit("build_finished", fields);
@@ -187,7 +193,10 @@ impl Actor {
 
     fn start_clean(&mut self) {
         self.builds.cleaning = Some((self.live.active(), self.live.intent));
-        let (clean, tx) = (self.engine.clean(self.root.clone()), self.tx.clone());
+        let (clean, tx) = (
+            self.engine.clean(self.project.build.clone()),
+            self.tx.clone(),
+        );
         tokio::spawn(async move {
             let _ = tx.send(Msg::Cleaned(clean.await));
         });
@@ -280,10 +289,14 @@ impl Actor {
 /// Each line's first issue, with the messages of the others there. An undefined command's
 /// issue has where the line has the command (`tokens`), and a `compact` message that names it
 /// in fewer words; so does one that needs shell escape.
-fn issue_lines(issues: &[LogItem], path: &str, doc: &Document) -> Vec<Value> {
+pub(super) fn issue_lines<'a>(
+    issues: impl IntoIterator<Item = &'a LogItem>,
+    path: &str,
+    doc: &Document,
+) -> Vec<Value> {
     let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
-        .iter()
+        .into_iter()
         .filter(|item| item.file.as_deref() == Some(path))
     {
         if let Some(line) = item.line {

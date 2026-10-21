@@ -48,17 +48,7 @@
 
                     <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="TeX" />
                     <!-- Collapsed while closed, so a closed bar leaves no gap. -->
-                    <InfoBar
-                        x:Name="TexMissing"
-                        Title="TeX isn't installed"
-                        IsClosable="False"
-                        Message="TeXLocal compiles with TeX Live."
-                        Severity="Warning"
-                        Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}">
-                        <InfoBar.ActionButton>
-                            <HyperlinkButton Content="Get TeX Live" NavigateUri="https://tug.org/texlive/windows.html" />
-                        </InfoBar.ActionButton>
-                    </InfoBar>
+                    <controls:TexBar x:Name="TexMissing" Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}" />
                     <controls:Card Glyph="&#xE838;" Header="TeX location">
                         <controls:Card.Description>
                             <TextBlock

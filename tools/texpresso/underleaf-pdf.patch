@@ -469,6 +469,35 @@ index 0000000..e580acc
 +  }
 +  return last->cff ? last->cff : font;
 +}
+diff --git a/src/engine/engine/xetex-errors.c b/src/engine/engine/xetex-errors.c
+index fb6c9d3..15bf4ab 100644
+--- a/src/engine/engine/xetex-errors.c
++++ b/src/engine/engine/xetex-errors.c
+@@ -150,7 +150,8 @@ confusion(const char* s)
+     }
+ 
+     post_error_message(1);
+-    _tt_abort("halted on confusion()");
++    // TeX's own invariant failed: unlike the stops that end in _tt_abort, a crash report is wanted.
++    abort();
+ }
+ 
+ 
+diff --git a/src/engine/main/main.c b/src/engine/main/main.c
+index 333408e..5ee2032 100644
+--- a/src/engine/main/main.c
++++ b/src/engine/main/main.c
+@@ -62,7 +62,9 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
+   vfprintf(stderr, format, ap);
+   va_end(ap);
+   fprintf(stderr, "\n");
+-  do_abort();
++  // TeX stopping on the document (an emergency stop, no \end, too many errors) is not a crash:
++  // its log is written, and an abort would leave a crash report for every one while typing.
++  exit(EXIT_FAILURE);
+ }
+ 
+ int ttstub_shell_escape(const unsigned short *cmd, size_t len)
 diff --git a/src/frontend/driver.c b/src/frontend/driver.c
 index 9337b08..f67bcf3 100644
 --- a/src/frontend/driver.c
@@ -742,7 +771,7 @@ index 13e945d..ccd29ca 100644
                                    const char *dvi_path,
                                    dvi_reshooks hooks);
 diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
-index 5866b1b..2558e51 100644
+index 5866b1b..22c2c27 100644
 --- a/src/frontend/engine_tex.c
 +++ b/src/frontend/engine_tex.c
 @@ -102,8 +102,21 @@ struct tex_engine
@@ -869,7 +898,19 @@ index 5866b1b..2558e51 100644
  
    fprintf(
      stderr,
-@@ -1066,6 +1114,7 @@ static bool possible_fence(trace_entry_t *te)
+@@ -1018,7 +1066,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
+             p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
+   }
+ 
+-  while (self->process_count > 0 && get_process(self)->trace_len > trace)
++  // A worker killed as stuck can't go on, though nothing is reverted past it (the first, still
++  // starting when a change came): back to a live one, or to none, which the next step starts.
++  while (self->process_count > 0 &&
++         (get_process(self)->trace_len > trace || get_process(self)->fd == -1))
+     pop_process(ctx, self);
+ 
+   int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
+@@ -1066,6 +1117,7 @@ static bool possible_fence(trace_entry_t *te)
  static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
  {
    self->fence_pos = -1;
@@ -877,7 +918,7 @@ index 5866b1b..2558e51 100644
  
    if (trace <= 0)
      return trace;
-@@ -1074,6 +1123,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
+@@ -1074,6 +1126,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
      mabort();
  
    self->fence_pos = 0;
@@ -887,7 +928,7 @@ index 5866b1b..2558e51 100644
  
    offset = (offset - 64) & ~(64 - 1);
    if (offset < self->trace[trace].seen)
-@@ -1169,7 +1221,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
+@@ -1169,7 +1224,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
      int fd = get_process(self)->fd;
      if (fd == -1)
        return 0;
@@ -896,7 +937,7 @@ index 5866b1b..2558e51 100644
        return 0;
      if (!read_query(self, self->c, &q))
      {
-@@ -1609,6 +1661,186 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
+@@ -1609,6 +1664,186 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
    return filesystem_lookup_or_create(ctx, self->fs, path);
  }
  

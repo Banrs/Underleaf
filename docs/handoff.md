@@ -6,6 +6,13 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - The haptic as the source|PDF divider stops at the even split (the stop itself is checked).
 - Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
   path through the popover is unverified.
+- An opened folder's menu on Home, and Install's password dialog with MacTeX (the rows, the
+  button, its progress and a failure are checked).
+- A click on a Live Preview issue opening the Live Preview Log (its look and a build's issue over
+  one on its line are checked).
+- Install TinyTeX from Settings, and its alert when offline. The PDF pane's button, its
+  progress and a build once it is done are checked on the QA copy with TeX hidden by
+  `sandbox-exec` and `HOME` pointed at a scratch folder; tlmgr adds a package there unelevated.
 
 ## 27.2 workarounds
 
@@ -20,4 +27,8 @@ it works around.
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
   then the custom one stays (the look is decided).
+- Windows, on a machine: Home's rows for an opened and a missing folder, and Install's UAC
+  elevation (allowed and cancelled), which GitHub's runner can't show.
+- Windows, on a machine with no TeX: Install TinyTeX from Home's bar and from Settings into
+  `%APPDATA%\TinyTeX`, its ring, a build after it, and Install adding a package to it.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).

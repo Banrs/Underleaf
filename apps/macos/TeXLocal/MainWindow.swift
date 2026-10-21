@@ -82,8 +82,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         titleWatch?.cancel()
         titleWatch = track({ [project] in project.openPath }) { [weak self, project] path in
             guard let window = self?.window else { return }
-            window.title = path?.fileName ?? project.id
-            window.subtitle = path == nil ? "" : project.id
+            window.title = path?.fileName ?? project.name
+            window.subtitle = path == nil ? "" : project.name
             window.representedURL = path.flatMap { project.url($0) }
         }
     }
@@ -226,12 +226,12 @@ private struct WindowModals: View {
             Color.clear
                 .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
                     switch result {
-                    case .success(let url): Task { await app.importProject(from: url) }
+                    case .success(let url): Task { await app.open(url) }
                     case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
                     }
                 }
                 .fileDialogConfirmationLabel("Open")
-                .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into the projects folder.")
+                .fileDialogMessage("A folder, or a .tex file’s folder, opens where it is. A .zip is copied into the projects folder.")
         }
         .sheet(item: $app.newProjectDraft) { NewProjectSheet(draft: $0) }
         .alert($app.alert)

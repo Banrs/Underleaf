@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::skip_unreadable;
 use crate::BUILD_DIR;
 use crate::error::CoreError;
-use crate::paths::fold_case;
+use crate::paths::{Project, fold_case};
 use crate::settings::read_settings;
 
 #[derive(Debug, Serialize)]
@@ -112,7 +112,7 @@ pub(super) fn visit_files(
 }
 
 /// The main file is marked however the settings spell it, as latexmk finds it.
-pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
+pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     fn walk(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
         for entry in entries(root, dir)? {
@@ -140,7 +140,8 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         });
         Ok(nodes)
     }
-    walk(root, root, &fold_case(&read_settings(root).main_file))
+    let main = read_settings(&project.settings).main_file;
+    walk(&project.root, &project.root, &fold_case(&main))
 }
 
 /// What the editor edits as text besides .tex and .bib, by extension.
@@ -214,7 +215,7 @@ mod tests {
         for file in ["c.tex", "B.tex", "Zeta/z.png", "beta/y.tex", ".hidden.tex"] {
             create_free(&root, file, false).unwrap();
         }
-        let tree = file_tree(&root).unwrap();
+        let tree = file_tree(&Project::in_folder(&root)).unwrap();
         let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, ["beta", "Zeta", "B.tex", "c.tex", "main.tex"]);
         let json = serde_json::to_value(&tree[1]).unwrap();

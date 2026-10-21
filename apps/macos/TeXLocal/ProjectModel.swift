@@ -5,6 +5,8 @@ import Observation
 @Observable
 final class ProjectModel {
     let id: String
+    /// The listing's until the session answers with its own; an opened folder's id is no name.
+    private(set) var name: String
     var settings: ProjectSettings?
     let tree: FileTree
     private(set) var initialLoadComplete = false
@@ -32,12 +34,15 @@ final class ProjectModel {
     /// Why a document held after Cancel in an alert isn't saved.
     private var heldReasons: [String: String] = [:]
     @ObservationIgnored private var lineIssues: [String: [Int: IssuesEvent.Line]] = [:]
+    @ObservationIgnored private var liveIssues: [String: [Int: IssuesEvent.Line]] = [:]
     @ObservationIgnored private var composingPath: String?
     /// A `tree` event came before the session's open answered with an older tree.
     @ObservationIgnored private var treeChanged = false
 
     var compiling = false
     var outdated = false
+    /// The missing file whose package is installing: one at a time, as tlmgr takes one.
+    var installing: String?
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
@@ -91,6 +96,7 @@ final class ProjectModel {
 
     init(id: String, app: AppModel) {
         self.id = id
+        name = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
         tree = FileTree(id: id)
         // The session sends the log while the panel shows it.
@@ -129,7 +135,7 @@ final class ProjectModel {
     }
 
     /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
-    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath ?? id).fileName)” Wasn’t Saved") }
+    func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath)?.fileName ?? name)” Wasn’t Saved") }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -164,6 +170,7 @@ final class ProjectModel {
                                              as: SessionOpened.self)
             guard !closed else { throw CancellationError() }
             self.session = session
+            name = opened.name
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
             settings = opened.settings
             showUIState(opened.ui)
@@ -177,7 +184,7 @@ final class ProjectModel {
             core.send("session_close", ["session": session])
             // Home stays, with the alert over it.
             guard !closed else { return }
-            app?.report(error, "Couldn’t Open “\(id)”")
+            app?.report(error, "Couldn’t Open “\(name)”")
             if app?.project === self { await app?.close() }
             return
         }
@@ -208,9 +215,14 @@ final class ProjectModel {
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.issueClicked = { [weak self] line in
-            guard let self, let place = issues.firstIndex(where: { $0.file == self.openPath && $0.line == line }) else { return }
-            panel.show(.issues)
-            chooseIssue(place, focus: false, open: false)
+            guard let self else { return }
+            if let place = issues.firstIndex(where: { $0.file == self.openPath && $0.line == line }) {
+                panel.show(.issues)
+                chooseIssue(place, focus: false, open: false)
+            } else if editor.textView.issues.live[line] != nil {
+                // Its log has TeX's own words round the error.
+                panel.show(.texpresso)
+            }
         }
         editor.textView.headings = { [weak self] in
             guard let self else { return [] }
@@ -243,7 +255,7 @@ final class ProjectModel {
 
     // MARK: - The session's events
 
-    private func handle(_ event: SessionEvent) {
+    func handle(_ event: SessionEvent) {
         guard !closed else { return }
         switch event {
         case .document(let state): documentChanged(state)
@@ -251,19 +263,22 @@ final class ProjectModel {
         case .reload(let reloaded): reload(reloaded)
         case .closed(let gone):
             // One this model closed has the next file shown already.
-            (documents[gone.path], heldReasons[gone.path], lineIssues[gone.path]) = (nil, nil, nil)
+            (documents[gone.path], heldReasons[gone.path], lineIssues[gone.path], liveIssues[gone.path]) = (nil, nil, nil, nil)
             if openPath == gone.path, gone.reason != "closed" { clearOpenFile() }
         case .renamed(let renamed):
             // The editor follows the rename's own answer (`performRename`).
             documents[renamed.to] = documents.removeValue(forKey: renamed.from)
             heldReasons[renamed.to] = heldReasons.removeValue(forKey: renamed.from)
             lineIssues[renamed.to] = lineIssues.removeValue(forKey: renamed.from)
+            liveIssues[renamed.to] = liveIssues.removeValue(forKey: renamed.from)
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .issues(let marked):
-            let lines = Dictionary(marked.lines.map { ($0.line, $0) }) { $1 }
-            lineIssues[marked.path] = lines.isEmpty ? nil : lines
-            if editor.path == marked.path { editor.textView.issues.lines = lines }
+            lineIssues[marked.path] = marked.byLine
+            if editor.path == marked.path { editor.textView.issues.lines = marked.byLine }
+        case .liveIssues(let marked):
+            liveIssues[marked.path] = marked.byLine
+            if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
@@ -355,6 +370,7 @@ final class ProjectModel {
         guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
         editor.textView.issues.lines = lineIssues[path] ?? [:]
+        editor.textView.issues.live = liveIssues[path] ?? [:]
     }
 
     /// Saved first; false, staying open, if that failed or asks about the disk.

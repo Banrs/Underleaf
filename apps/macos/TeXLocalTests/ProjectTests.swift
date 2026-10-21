@@ -11,7 +11,7 @@ private extension SourceTextView.FileDrop {
 
 @Suite(.serialized, .timeLimit(.minutes(2)))
 final class ProjectFlowTests {
-    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
+    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.folderBookmarks]
     private let kept: [Any?]
     private var folders: [URL] = []
     let files = FileManager.default
@@ -202,10 +202,29 @@ final class ProjectFlowTests {
         try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
         await app.refresh()
         let count = app.projects.count
-        await app.importProject(from: folder.appending(path: "notes.tex"))
+        await app.open(folder.appending(path: "notes.tex"))
         #expect(app.project?.id == info.id && app.project?.openPath == "notes.tex")
         #expect(app.projects.count == count && app.alert == nil)
         await app.close()
+    }
+
+    @Test func aFolderOpensWhereItIsFollowsAMoveAndLeavesTheListWithoutHarm() async throws {
+        let folder = files.temporaryDirectory.appending(path: "Opened \(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let moved = folder.deletingLastPathComponent().appending(path: "\(folder.lastPathComponent) Moved", directoryHint: .isDirectory)
+        folders += [folder, moved]
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "text".write(to: folder.appending(path: "paper.tex"), atomically: true, encoding: .utf8)
+        await app.open(folder.appending(path: "paper.tex"))
+        let project = try #require(app.project)
+        #expect(project.openPath == "paper.tex" && project.name == folder.lastPathComponent && project.id != project.name)
+        await app.close()
+        try files.moveItem(at: folder, to: moved)
+        await app.refresh()
+        let info = try #require(app.projects.first { $0.id == project.id })
+        #expect(info.opened && !info.missing && info.name == moved.lastPathComponent)
+        await app.forget(info)
+        #expect(!app.projects.contains { $0.id == info.id } && app.alert == nil)
+        #expect(try files.contentsOfDirectory(atPath: moved.path(percentEncoded: false)) == ["paper.tex"])
     }
 
     /// Live Preview from a TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched
@@ -481,6 +500,33 @@ final class ProjectFlowTests {
         await settle()
         #expect(!emptied.withLock { $0 } && project.hasPDF && project.pdf.pageCount == 3)
         #expect(project.pdf.view.document === shown)
+        await app.close()
+    }
+
+    /// Live Preview's issues as the core sends them: each event replaces a document's, an edit keeps them (the core moves
+    /// them), `[]` ends them, and a document opened later shows its own.
+    @Test func liveIssuesAreEachDocumentsLatestApartFromTheBuilds() async throws {
+        let project = try await opened("a\nb\nc\n", with: ["other.tex": "x\ny\n"]).project
+        func send(_ type: String, _ lines: [Int], in path: String = "main.tex") throws {
+            let issues = lines.map { #"{"line":\#($0),"error":true,"message":"Undefined control sequence.","short":"Undefined.","compact":null,"tokens":[],"others":[]}"# }
+            let json = #"{"session":1,"type":"\#(type)","path":"\#(path)","lines":[\#(issues.joined(separator: ","))]}"#
+            project.handle(try #require(try JSONDecoder().decode(EventRead.self, from: Data(json.utf8)).event))
+        }
+        let text = project.editor.textView
+        try send("live_issues", [1, 2])
+        try send("live_issues", [3])
+        text.insertText("z", replacementRange: .caret(0))
+        await settle()
+        #expect(text.issues.live.keys.sorted() == [3] && text.issues.issue(on: 3)?.live == true)
+        text.issueClicked(3)
+        #expect(project.panel.shown && project.panel.tab == .texpresso)
+        try send("issues", [3])
+        #expect(text.issues.issue(on: 3)?.live == false)
+        try send("live_issues", [])
+        #expect(text.issues.live.isEmpty)
+        try send("live_issues", [2], in: "other.tex")
+        await project.open("other.tex")
+        #expect(text.issues.live.keys.sorted() == [2])
         await app.close()
     }
 

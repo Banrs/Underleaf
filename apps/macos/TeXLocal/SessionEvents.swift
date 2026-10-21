@@ -9,6 +9,7 @@ nonisolated enum SessionEvent: Sendable {
     case renamed(RenamedEvent)
     case conflict(ConflictEvent)
     case issues(IssuesEvent)
+    case liveIssues(IssuesEvent)
     case build(BuildState)
     case buildFinished(BuildFinished)
     case buildCleaned
@@ -29,6 +30,7 @@ nonisolated enum SessionEvent: Sendable {
         case "document_renamed": self = .renamed(try fields())
         case "conflict": self = .conflict(try fields())
         case "issues": self = .issues(try fields())
+        case "live_issues": self = .liveIssues(try fields())
         case "build": self = .build(try fields())
         case "build_finished": self = .buildFinished(try fields())
         case "build_cleaned": self = .buildCleaned
@@ -43,7 +45,7 @@ nonisolated enum SessionEvent: Sendable {
 }
 
 nonisolated struct SessionOpened: Decodable, Sendable {
-    let root: String
+    let name, root: String
     let tree: [TreeNode]
     let settings: ProjectSettings
     let ui: UIState
@@ -89,4 +91,6 @@ nonisolated struct IssuesEvent: Decodable {
 
     let path: String
     let lines: [Line]
+
+    var byLine: [Int: Line] { Dictionary(lines.map { ($0.line, $0) }) { $1 } }
 }
