@@ -24,7 +24,7 @@ Without the screen:
 - Never drive the installed app (`com.texlocal.mac`) or `~/TeXLocal`: `qa` targets
   `com.texlocal.mac.qa` with data in `$QA_SCRATCH/qa-library`.
 - One launch per check, only the steps it needs; settle in a unit test what a unit test can.
-- `QA_BG=1` while the owner is at the Mac: the app opens behind, and commands that post real keys
+- `QA_BG=1` while the Mac is in use: the app opens behind, and commands that post real keys
   or pointer events refuse. A look (glass, scroll edges, accents) needs a fronted, key window: say
   so first and keep it short.
 - Foreground scripts source `fg-guard.zsh`, which runs them only after five idle minutes and never
