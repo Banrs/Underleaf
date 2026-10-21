@@ -37,6 +37,7 @@ public sealed partial class WorkspacePage : Page
     readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", issueFilter = "", logFilter = "";
+    string? name;
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
@@ -159,8 +160,7 @@ public sealed partial class WorkspacePage : Page
         (id, var file) = ((string, string?))e.Parameter;
         MenuSlot.Child = null;
         App.Window.SetMenu(MainMenu);
-        App.Window.SetTitle(id, Editor.Path);
-        Search.PlaceholderText = $"Search {id}";
+        App.Window.SetTitle(name, Editor.Path);
         CheckTex();
         if (session != 0) return;
         Core.Event += OnEvent;
@@ -212,7 +212,9 @@ public sealed partial class WorkspacePage : Page
             if (IsLoaded) App.ExitSmoke(null);
             else Loaded += (_, _) => App.ExitSmoke(null);
         }
-        root = opened.Root;
+        (name, root) = (opened.Name, opened.Root);
+        App.Window.SetTitle(name);
+        Search.PlaceholderText = $"Search {name}";
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
         ReadFolds(opened.Ui);
@@ -235,7 +237,7 @@ public sealed partial class WorkspacePage : Page
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
             case "document_renamed" when ev.From == Editor.Path:
                 Editor.Path = ev.To;
-                App.Window.SetTitle(id, ev.To);
+                App.Window.SetTitle(name, ev.To);
                 break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
@@ -287,7 +289,7 @@ public sealed partial class WorkspacePage : Page
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
             await Editor.Show(path, source);
-            App.Window.SetTitle(id, path);
+            App.Window.SetTitle(name, path);
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
@@ -328,7 +330,7 @@ public sealed partial class WorkspacePage : Page
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
-        App.Window.SetTitle(id);
+        App.Window.SetTitle(name);
         (Editor.Visibility, NoFile.Visibility) = (Visibility.Collapsed, Visibility.Visible);
         ShowSide();
         ShowSaved();
@@ -707,7 +709,7 @@ public sealed partial class WorkspacePage : Page
     async void OnExportPdf(object sender, RoutedEventArgs e)
     {
         if (Pdf.FilePath is not { } path) return;
-        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = id };
+        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = name! };
         picker.FileTypeChoices.Add("PDF document", [".pdf"]);
         if (await picker.PickSaveFileAsync() is not { } picked) return;
         try { File.Copy(path, picked.Path, true); }

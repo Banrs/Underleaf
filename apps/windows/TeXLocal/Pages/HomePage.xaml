@@ -20,18 +20,21 @@
             <MenuFlyoutItem Click="OnOpenItem" Text="Open">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>
-            <MenuFlyoutItem Click="OnRenameItem" KeyboardAcceleratorTextOverride="F2" Text="Rename">
+            <MenuFlyoutItem x:Name="RenameItem" Click="OnRenameItem" KeyboardAcceleratorTextOverride="F2" Text="Rename">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>
-            <MenuFlyoutItem Click="OnRevealItem" Text="Show in File Explorer">
+            <MenuFlyoutItem x:Name="RevealItem" Click="OnRevealItem" Text="Show in File Explorer">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEC50;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>
-            <MenuFlyoutItem Click="OnExportItem" Text="Export as ZIP…">
+            <MenuFlyoutItem x:Name="ExportItem" Click="OnExportItem" Text="Export as ZIP…">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7B8;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>
             <MenuFlyoutSeparator />
-            <MenuFlyoutItem Click="OnDeleteItem" KeyboardAcceleratorTextOverride="Del" Text="Delete">
+            <MenuFlyoutItem x:Name="DeleteItem" Click="OnDeleteItem" KeyboardAcceleratorTextOverride="Del" Text="Delete">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+            </MenuFlyoutItem>
+            <MenuFlyoutItem x:Name="ForgetItem" Click="OnDeleteItem" KeyboardAcceleratorTextOverride="Del" Text="Remove from list">
+                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE738;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>
         </MenuFlyout>
 
@@ -187,15 +190,24 @@
                                     <ColumnDefinition Width="32" />
                                 </Grid.ColumnDefinitions>
                                 <FontIcon FontSize="24" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Glyph="&#xE8B7;" />
-                                <TextBlock
-                                    x:Name="NameText"
-                                    Grid.Column="1"
-                                    VerticalAlignment="Center"
-                                    Style="{StaticResource BodyTextBlockStyle}"
-                                    Text="{x:Bind Name}"
-                                    TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap"
-                                    ToolTipService.ToolTip="{x:Bind Name}" />
+                                <!-- Word's Recent: an opened folder's path under its name. -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock
+                                        x:Name="NameText"
+                                        Style="{x:Bind local:HomePage.NameStyle(Missing)}"
+                                        Text="{x:Bind Name}"
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="NoWrap"
+                                        ToolTipService.ToolTip="{x:Bind Name}" />
+                                    <TextBlock
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="{x:Bind Path}"
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="NoWrap"
+                                        ToolTipService.ToolTip="{x:Bind Path}"
+                                        Visibility="{x:Bind Opened}" />
+                                </StackPanel>
                                 <TextBlock
                                     Grid.Column="2"
                                     VerticalAlignment="Center"
@@ -209,7 +221,7 @@
                                     VerticalAlignment="Center"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource BodyTextBlockStyle}"
-                                    Text="{x:Bind local:HomePage.Modified(Mtime)}"
+                                    Text="{x:Bind local:HomePage.Modified(Mtime, Missing)}"
                                     TextWrapping="NoWrap"
                                     Typography.NumeralAlignment="Tabular" />
                                 <Button

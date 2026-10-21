@@ -8,6 +8,10 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <ResourceDictionary Source="/Themes/Generic.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <!-- Home's name of an opened folder that isn't where it was, looked up by HomePage.NameStyle. -->
+            <Style x:Key="MissingNameStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

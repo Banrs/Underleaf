@@ -30,7 +30,11 @@ public sealed partial class HomePage : Page
 
     public HomePage() => InitializeComponent();
 
-    public static string Modified(long mtime) => $"{DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
+    /// A missing folder is dated 0, so its date says it isn't there.
+    public static string Modified(long mtime, bool missing) => missing ? "Not found" : $"{DateTimeOffset.FromUnixTimeMilliseconds(mtime).LocalDateTime:g}";
+
+    /// A style, not a brush: a ThemeResource in a setter follows the row's theme, which a brush looked up here wouldn't.
+    public static Style NameStyle(bool missing) => (Style)Application.Current.Resources[missing ? "MissingNameStyle" : "BodyTextBlockStyle"];
 
     public static string MoreName(string name) => $"More options for {name}";
 
@@ -117,8 +121,8 @@ public sealed partial class HomePage : Page
         if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy;
     }
 
-    /// Folders, .tex and .zip files from File Explorer, imported as from the Open menu.
-    async void OnDrop(object sender, DragEventArgs e) => await App.Window.Import(await App.Dropped(e));
+    /// Folders, .tex and .zip files from File Explorer, opened as from the Open menu.
+    async void OnDrop(object sender, DragEventArgs e) => await App.Window.Open(await App.Dropped(e));
 
     void OnItemClick(object sender, ItemClickEventArgs e) => App.Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
@@ -162,7 +166,14 @@ public sealed partial class HomePage : Page
         if (await App.Show(dialog) == ContentDialogResult.Primary && id is not null) App.Window.OpenProject(id);
     }
 
-    void OnMenuOpening(object sender, object e) => target = ProjectOf(((MenuFlyout)sender).Target);
+    /// An opened folder is the author's: it is never renamed or recycled from here.
+    void OnMenuOpening(object sender, object e)
+    {
+        var p = target = ProjectOf(((MenuFlyout)sender).Target)!;
+        RenameItem.Visibility = DeleteItem.Visibility = p.Opened ? Visibility.Collapsed : Visibility.Visible;
+        ForgetItem.Visibility = p.Opened ? Visibility.Visible : Visibility.Collapsed;
+        RevealItem.IsEnabled = ExportItem.IsEnabled = !p.Missing;
+    }
 
     void OnKey(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
@@ -176,7 +187,7 @@ public sealed partial class HomePage : Page
 
     void OnRenameItem(object sender, RoutedEventArgs e) => Rename(target!);
 
-    async void OnRevealItem(object sender, RoutedEventArgs e) => App.Reveal(await Root(target!));
+    void OnRevealItem(object sender, RoutedEventArgs e) => App.Reveal(target!.Path);
 
     void OnDeleteItem(object sender, RoutedEventArgs e) => Delete(target!);
 
@@ -190,18 +201,17 @@ public sealed partial class HomePage : Page
         catch (CoreException ex) { await App.Alert("Can't export", ex.Message); }
     }
 
-    static async Task<string> Root(ProjectInfo p) => (await Core.CallAsync("project_root", new { id = p.Id })).GetString()!;
-
     /// Renames in place, at the row's name, as File Explorer does.
     void Rename(ProjectInfo p)
     {
-        if ((List.ContainerFromItem(p) as ListViewItem)?.ContentTemplateRoot is FrameworkElement row && row.FindName("NameText") is FrameworkElement name)
+        if (!p.Opened && (List.ContainerFromItem(p) as ListViewItem)?.ContentTemplateRoot is FrameworkElement row && row.FindName("NameText") is FrameworkElement name)
             rename.Show(name, p.Name, async to => Reload((await Core.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name = to })).Id));
     }
 
+    /// An opened folder is the author's, so it only leaves the list, without asking, as from Word's Recent.
     async void Delete(ProjectInfo p)
     {
-        if (await App.Show(new ContentDialog
+        if (!p.Opened && await App.Show(new ContentDialog
         {
             Title = $"Delete “{p.Name}”?",
             Content = "The project folder moves to the Recycle Bin.",
@@ -209,8 +219,8 @@ public sealed partial class HomePage : Page
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         }) != ContentDialogResult.Primary) return;
-        try { await App.Recycle(await Root(p)); }
-        catch (Exception ex) { await App.Alert("Can't delete this project", ex.Message); }
+        try { await (p.Opened ? Core.CallAsync("forget_folder", new { id = p.Id }) : App.Recycle(p.Path)); }
+        catch (Exception ex) { await App.Alert(p.Opened ? "Can't remove this folder from the list" : "Can't delete this project", ex.Message); }
         Reload();
     }
 }

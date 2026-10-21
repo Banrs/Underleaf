@@ -77,7 +77,7 @@ apps/windows/
 | Navigation pane | `SplitView` (inline from 1008, overlay on acrylic below) with Word's search box, VS Code's replace toggle and Replace all under it, a `SelectorBar` and three `TreeView`s | NavigationView is not a file tree |
 | Splitters | `Sizer`, ~90 lines: the gap between layers, a grip under the pointer, a thumb to UI Automation | Toolkit 8.2 pulls the 1.6 metapackage; move when 8.3 is stable |
 | Settings cards | `Card`, a `ContentControl` styled in Generic.xaml | No Community Toolkit |
-| Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView` | A `GridView` of templates would select |
+| Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView`, an opened folder's path under its name as in Word's | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
 | Dialogs | `ContentDialog` through `App.Show` | Each dialog setting its own root, theme and style |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem` with `SendToRecycleBin` | `DeleteAsync` deletes outright unpackaged |

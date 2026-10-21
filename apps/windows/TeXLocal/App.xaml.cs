@@ -94,7 +94,7 @@ public partial class App : Application
         Window = new MainWindow();
         Window.Activate();
         shown.SetResult(Window);
-        _ = Window.Import(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
+        _ = Window.Open(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
         if (Core is null) ExitSmoke(error);
