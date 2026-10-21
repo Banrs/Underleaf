@@ -9,8 +9,8 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - Home's rows for an opened folder and a missing one, and their menu.
 - Install in an issue row with `missing` (a `\usepackage` of one not installed): the button, its
   progress, and the password dialog with MacTeX.
-- Live Preview's issues: the dimmed box and underline, a build's issue over one on its line, and
-  a click opening the Live Preview Log.
+- A click on a Live Preview issue opening the Live Preview Log (its look and a build's issue over
+  one on its line are checked).
 
 ## 27.2 workarounds
 
@@ -36,7 +36,6 @@ The core opens a folder where it is (`docs/core-api.md`, Opened folders); `impor
 - Install for a missing package: the core and the Mac's build panel have it; Windows' Install is
   left, and its elevated install (UAC through PowerShell) has not yet run on Windows.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
-- Windows doesn't yet draw `live_issues` (`docs/core-api.md`).
 - TeXpresso's frontend (`texpresso`, not `texpresso-xetex`) is still to be rebuilt with the
   patch's fix for a worker killed as it starts (`docs/texpresso.md`). It needs MuPDF and SDL2
   (`brew install mupdf sdl2`). Until then `texpresso_live` fails at "Recovery without a restart".

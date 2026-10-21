@@ -7,7 +7,6 @@ final class IssueOverlay {
     struct Row {
         let line: Int
         let band: NSRect
-        let live: Bool
         var message: (view: IssueMessageView, rect: NSRect, cut: Bool)?
         var tip: String?
         var tokens: [NSRect] = []
@@ -18,7 +17,7 @@ final class IssueOverlay {
     init(in view: SourceTextView) { self.view = view }
 
     var lines: [Int: IssuesEvent.Line] = [:] { didSet { if lines != oldValue { changed() } } }
-    /// Live Preview's, dimmed: of a run a moment behind the text, and in its log rather than the build panel's list.
+    /// Live Preview's, drawn as the build's are, as Xcode draws its live issues: of a run a moment behind the text, and in its log rather than the build panel's list.
     var live: [Int: IssuesEvent.Line] = [:] { didSet { if live != oldValue { changed() } } }
     var isEmpty: Bool { lines.isEmpty && live.isEmpty }
 
@@ -54,9 +53,9 @@ final class IssueOverlay {
         rows.forEach { view.setNeedsDisplay($0.band) }
         rows.removeAll()
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
-            guard let (reported, live) = issue(on: number) else { return }
+            guard let reported = issue(on: number)?.issue else { return }
             let former = views.removeValue(forKey: number)
-            let placed = row(number, reported, live: live, on: view.lines(of: fragment, extra: extra), of: fragment, in: former)
+            let placed = row(number, reported, on: view.lines(of: fragment, extra: extra), of: fragment, in: former)
             if placed?.message?.view !== former { former?.removeFromSuperview() }
             guard let placed else { return }
             view.setNeedsDisplay(placed.band)
@@ -71,11 +70,11 @@ final class IssueOverlay {
         updateTips()
     }
 
-    private func row(_ number: Int, _ reported: IssuesEvent.Line, live: Bool, on lines: ArraySlice<NSTextLineFragment>,
+    private func row(_ number: Int, _ reported: IssuesEvent.Line, on lines: ArraySlice<NSTextLineFragment>,
                      of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> Row? {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)
-        var issue = Row(line: number, band: band, live: live)
+        var issue = Row(line: number, band: band)
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = [reported.message] + reported.others
@@ -91,7 +90,7 @@ final class IssueOverlay {
         if width <= room {
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
             let rect = NSRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
-            let box = IssueBox(isError: reported.error, live: live, issues: issues, text: fitted?.text,
+            let box = IssueBox(isError: reported.error, issues: issues, text: fitted?.text,
                                cutAtTail: fitted != nil && fitted?.width == nil, font: font, fill: Color(nsColor: view.backgroundColor),
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let message = former ?? IssueMessageView(box)
@@ -141,7 +140,7 @@ final class IssueOverlay {
                 NSColor.tertiarySystemFill.setFill()
                 NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
             }
-            NSColor.systemRed.withAlphaComponent(issue.live ? IssueBox.Metrics.dimmed : 1).setFill()
+            NSColor.systemRed.setFill()
             issue.tokens.forEach { $0.fill() }
         }
     }
