@@ -1,8 +1,9 @@
 name: TeX check
 
 # Runs the core's ignored tests that need TeX Live, which ci.yml has none of: a thesis built through
-# latexmk, and Live Preview end to end with the patched TeXpresso (docs/texpresso.md). Nightly, by
-# hand, or from a push to a claude/tex-check/<name> branch.
+# latexmk, Live Preview end to end with the patched TeXpresso (docs/texpresso.md), and TinyTeX
+# installed into a temporary folder as the app installs it. Nightly, by hand, or from a push to a
+# claude/tex-check/<name> branch.
 on:
   schedule:
     - cron: '17 3 * * *'
