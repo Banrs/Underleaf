@@ -41,7 +41,8 @@ public sealed record Clash(string Path);
 public sealed record Imported(Clash[] Existing);
 
 /// <param name="Type">error or warning.</param>
-public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short);
+/// <param name="Missing">The package or class file LaTeX didn't find (“foo.sty”), for install_package.</param>
+public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Missing);
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
