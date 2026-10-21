@@ -119,46 +119,38 @@ impl SourceDocument {
         let split = comment_start(line);
         let code = &String::from_utf16_lossy(&line[..split]);
         let comment = String::from_utf16_lossy(&line[split..]);
-        let (before, title, rest, marks, closed) = match HEADING.captures(code) {
+        // What comes before the heading, its star and short title, the title, and what follows its closing brace.
+        let (before, marks, title, rest) = match HEADING.captures(code) {
             Some(c) => {
                 let open = c.get_match();
                 let body = &code[open.end()..];
                 let marks = format!("{}{}", &c[2], c.get(3).map_or("", |m| m.as_str()));
-                let (title, rest) = match closing_brace(body) {
-                    Some(close) => (&body[..close], Some(&body[close + 1..])),
-                    None => (body, None),
-                };
-                (
-                    &code[..open.start()],
-                    title,
-                    rest.unwrap_or(""),
-                    marks,
-                    rest.is_some(),
-                )
+                let close = closing_brace(body);
+                let title = close.map_or(body, |close| &body[..close]);
+                let rest = close.map(|close| &body[close + 1..]);
+                (&code[..open.start()], marks, title, rest)
             }
             None => {
                 let title = code.trim();
                 let indentation = &code[..code.len() - code.trim_start().len()];
                 let after = &code[code.trim_end().len()..];
-                (
-                    indentation,
-                    title,
-                    if title.is_empty() { "" } else { after },
-                    String::new(),
-                    true,
-                )
+                let rest = if title.is_empty() { "" } else { after };
+                (indentation, String::new(), title, Some(rest))
             }
         };
-        let (new, cursor) = if !command.is_empty() {
-            let head = format!("{before}\\{command}{marks}{{");
-            let cursor = utf16(&head) + utf16(title);
-            let close = if closed { "}" } else { "" };
-            (format!("{head}{title}{close}{rest}{comment}"), cursor)
-        } else if closed {
-            let plain = format!("{before}{title}{rest}");
-            (format!("{plain}{comment}"), utf16(&plain))
-        } else {
-            (format!("{code}{comment}"), (caret - start) as usize)
+        let (new, cursor) = match rest {
+            _ if !command.is_empty() => {
+                let head = format!("{before}\\{command}{marks}{{");
+                let close = if rest.is_some() { "}" } else { "" };
+                let tail = rest.unwrap_or_default();
+                let cursor = utf16(&head) + utf16(title);
+                (format!("{head}{title}{close}{tail}{comment}"), cursor)
+            }
+            Some(rest) => {
+                let plain = format!("{before}{title}{rest}");
+                (format!("{plain}{comment}"), utf16(&plain))
+            }
+            None => (format!("{code}{comment}"), (caret - start) as usize),
         };
         Insertion {
             edit: edit(start, length, new),

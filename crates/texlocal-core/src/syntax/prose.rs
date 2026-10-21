@@ -289,12 +289,20 @@ mod tests {
                 "«\\usepackage»{«amsmath,»% Speling }«\n amssymb»}",
             ),
             (
-                "Before $x + \\text{Speling stays} + y$ after\n\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}",
-                "Before «$x + \\text{»Speling stays«} + y$» after\n«\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}»",
+                "Before $x + \\text{Speling stays} + y$ after",
+                "Before «$x + \\text{»Speling stays«} + y$» after",
             ),
             (
-                "$x % Speling stays prose\n y$ \\begin{verbatim}\nSpeling code\n\\end{verbatim}\n\\begin{lstlisting}\nopen code",
-                "«$x »% Speling stays prose\n« y$» «\\begin{verbatim}\nSpeling code\n\\end{verbatim}»\n«\\begin{lstlisting}\nopen code»",
+                "\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}",
+                "«\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}»",
+            ),
+            (
+                "$x % Speling stays prose\n y$",
+                "«$x »% Speling stays prose\n« y$»",
+            ),
+            (
+                "\\begin{verbatim}\nSpeling code\n\\end{verbatim}\n\\begin{lstlisting}\nopen code",
+                "«\\begin{verbatim}\nSpeling code\n\\end{verbatim}»\n«\\begin{lstlisting}\nopen code»",
             ),
             (
                 "\\verb|Speling|\n\\verb|Speling\nprose \\cite{key}",

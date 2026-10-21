@@ -400,6 +400,8 @@ fn lines_move_up_and_down_with_their_selections() {
         bool,
         Option<(&'a str, &'a [(u32, u32)])>,
     );
+    // Several selections move together.
+    const SIX: &str = "1\n2\n3\n4\n5\n6";
     #[rustfmt::skip]
     let cases: [Case; 11] = [
         ("a\nb\nc\nd", &[(2, 0)], true, Some(("b\na\nc\nd", &[(0, 0)]))),
@@ -410,9 +412,9 @@ fn lines_move_up_and_down_with_their_selections() {
         ("a\n", &[(2, 0)], true, None),
         ("a\r\nb", &[(4, 0)], true, Some(("b\r\na", &[(1, 0)]))),
         ("😀\nb", &[(3, 0)], true, Some(("b\n😀", &[(0, 0)]))),
-        ("1\n2\n3\n4\n5\n6", &[(2, 4), (8, 1)], true, Some(("2\n3\n1\n5\n4\n6", &[(0, 4), (6, 1)]))),
-        ("1\n2\n3\n4\n5\n6", &[(8, 1), (2, 1), (8, 0)], true, Some(("2\n1\n3\n5\n4\n6", &[(6, 1), (0, 1), (6, 0)]))),
-        ("1\n2\n3\n4\n5\n6", &[(8, 1), (2, 4)], true, Some(("2\n3\n1\n5\n4\n6", &[(6, 1), (0, 4)]))),
+        (SIX, &[(2, 4), (8, 1)], true, Some(("2\n3\n1\n5\n4\n6", &[(0, 4), (6, 1)]))),
+        (SIX, &[(8, 1), (2, 1), (8, 0)], true, Some(("2\n1\n3\n5\n4\n6", &[(6, 1), (0, 1), (6, 0)]))),
+        (SIX, &[(8, 1), (2, 4)], true, Some(("2\n3\n1\n5\n4\n6", &[(6, 1), (0, 4)]))),
     ];
     for (text, selections, up, after) in cases {
         let mut e = Editor::open(text, caret(0));
@@ -432,7 +434,7 @@ fn lines_move_up_and_down_with_their_selections() {
     }
 }
 
-/// Not an escaped bracket/// Not an escaped bracket, nor one in a comment, which has no partner of its own; an escaped one pairs only with
+/// Not an escaped bracket, nor one in a comment, which has no partner of its own; an escaped one pairs only with
 /// the escaped, and the next line is no comment, nor is an escaped percent one.
 #[test]
 fn a_bracket_finds_its_partner() {
