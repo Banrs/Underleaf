@@ -38,6 +38,8 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
   (`CompletionList`) is Liquid Glass at a system menu's measures, a view in the window.
 - **Issues** as Xcode's: a band over the paragraph and an `IssueBox` at the line's end with the
   core's message (or its `compact` form, or the symbol alone); a click opens the build panel on it.
+  Live Preview's are the same, dimmed, give way to a build's on their line, and open the Live
+  Preview Log.
 - **Status bar**: one 36 pt bar (`BarMetrics`) across the source and PDF, as Xcode's editor bar,
   over each pane's hard scroll edge, with text and pages ghosting through. After a failed save it
   says Not Saved and saves on a click.

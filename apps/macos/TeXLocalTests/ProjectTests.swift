@@ -503,6 +503,33 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Live Preview's issues as the core sends them: each event replaces a document's, an edit keeps them (the core moves
+    /// them), `[]` ends them, and a document opened later shows its own.
+    @Test func liveIssuesAreEachDocumentsLatestApartFromTheBuilds() async throws {
+        let project = try await opened("a\nb\nc\n", with: ["other.tex": "x\ny\n"]).project
+        func send(_ type: String, _ lines: [Int], in path: String = "main.tex") throws {
+            let issues = lines.map { #"{"line":\#($0),"error":true,"message":"Undefined control sequence.","short":"Undefined.","compact":null,"tokens":[],"others":[]}"# }
+            let json = #"{"session":1,"type":"\#(type)","path":"\#(path)","lines":[\#(issues.joined(separator: ","))]}"#
+            project.handle(try #require(try JSONDecoder().decode(EventRead.self, from: Data(json.utf8)).event))
+        }
+        let text = project.editor.textView
+        try send("live_issues", [1, 2])
+        try send("live_issues", [3])
+        text.insertText("z", replacementRange: .caret(0))
+        await settle()
+        #expect(text.issues.live.keys.sorted() == [3] && text.issues.issue(on: 3)?.live == true)
+        text.issueClicked(3)
+        #expect(project.panel.shown && project.panel.tab == .texpresso)
+        try send("issues", [3])
+        #expect(text.issues.issue(on: 3)?.live == false)
+        try send("live_issues", [])
+        #expect(text.issues.live.isEmpty)
+        try send("live_issues", [2], in: "other.tex")
+        await project.open("other.tex")
+        #expect(text.issues.live.keys.sorted() == [2])
+        await app.close()
+    }
+
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
         let (project, folder) = try await opened(with: ["build/main.aux": "x"])
         await project.cleanBuildFolder()

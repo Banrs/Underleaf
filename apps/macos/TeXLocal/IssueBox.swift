@@ -14,12 +14,14 @@ final class IssueMessageView: NSHostingView<IssueBox> {
 }
 
 /// An issue at its line's end, as Xcode sets it: the symbol in a segment of its own, a divider and the message on the
-/// source line's baseline, or the symbol alone. VoiceOver has the issues from the text view's rotor.
+/// source line's baseline, or the symbol alone; Live Preview's dimmed. VoiceOver has the issues from the text view's rotor.
 struct IssueBox: View, Equatable {
     /// Xcode 27's at 13 pt: the symbol's segment twice the text's size, 5 pt after the divider, 20 after a whole message, 12
     /// more for a count; on whole points, so the box's edges are the band's pixels.
     nonisolated enum Metrics {
         static let segment: CGFloat = 2, padding: CGFloat = 5, trailing: CGFloat = 20, count: CGFloat = 12, divider: CGFloat = 1
+        /// Live Preview's issue's content, over the box's opaque fill: secondary, as a label's.
+        static let dimmed: CGFloat = 0.5
 
         /// The symbol's and the line numbers' size: Xcode's 12.35 pt at 13 pt.
         static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
@@ -33,6 +35,7 @@ struct IssueBox: View, Equatable {
     }
 
     let isError: Bool
+    let live: Bool
     let issues: Int
     let text: String?
     let cutAtTail: Bool
@@ -64,6 +67,7 @@ struct IssueBox: View, Equatable {
         }
         .font(Font(font as CTFont))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .opacity(live ? Metrics.dimmed : 1)
         .background(fill, in: shape)
         .overlay(shape.strokeBorder(separator, lineWidth: 1))
         .accessibilityHidden(true)

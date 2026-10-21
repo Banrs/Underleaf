@@ -173,7 +173,7 @@ final class Core {
     func forget(_ session: UInt64) { observers[session] = nil }
 }
 
-private nonisolated struct EventRead: Decodable {
+nonisolated struct EventRead: Decodable {
     let session: UInt64
     let event: SessionEvent?
 
