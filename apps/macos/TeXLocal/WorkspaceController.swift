@@ -2,13 +2,13 @@ import AppKit
 import SwiftUI
 
 /// AppKit's splits, as only they give the editor and PDFKit's view the system's scroll edges under one status bar.
-final class WorkspaceController: DetentSplitViewController {
+final class WorkspaceController: ThinSplitViewController {
     let app: AppModel
     let project: ProjectModel
     var pdf: PDFController { project.pdf }
     let toolbar: WorkspaceToolbar
 
-    let columns = DetentSplitViewController(splitView: ColumnsSplitView())
+    let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = AreaSplitViewController(isVertical: false)
     private let sidebar = SidebarSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
@@ -92,8 +92,6 @@ final class WorkspaceController: DetentSplitViewController {
         if !app.showPDF { pdfItem.isCollapsed = true }
         fitColumns()
     }
-
-    override func detent(at divider: Int) -> CGFloat? { divider == 0 && !sidebarItem.isCollapsed ? ColumnMetrics.sidebarIdeal : nil }
 
     /// AppKit's fixed inspector takes no drag.
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect, forDrawnRect drawnRect: NSRect,
@@ -449,7 +447,7 @@ final class WorkspaceController: DetentSplitViewController {
 }
 
 /// The build panel opens and resizes from the status bar's line, as Xcode's debug area. A split view is flipped.
-private final class AreaSplitViewController: DetentSplitViewController {
+private final class AreaSplitViewController: ThinSplitViewController {
     override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
         let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
         return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)

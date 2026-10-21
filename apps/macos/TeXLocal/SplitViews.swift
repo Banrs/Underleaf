@@ -42,22 +42,16 @@ extension NSView {
 
 /// AppKit tracks a divider's drag within the press on it, the only place a split view itself is hit.
 class DraggedSplitView: NSSplitView {
-    private(set) var dragging = false
-
     override func mouseDown(with event: NSEvent) {
         let workspace = window?.contentViewController as? WorkspaceController
-        dragging = true
         workspace?.quiet(true)
-        defer {
-            dragging = false
-            workspace?.quiet(false)
-        }
+        defer { workspace?.quiet(false) }
         super.mouseDown(with: event)
     }
 }
 
-/// Thin dividers, and the detents AppKit lacks: a drag near a divider's opening position stops there, with the haptic.
-class DetentSplitViewController: NSSplitViewController {
+/// Thin dividers, AppKit's default, which a split view of its own would otherwise lose.
+class ThinSplitViewController: NSSplitViewController {
     init(splitView: DraggedSplitView = DraggedSplitView(), isVertical: Bool = true) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = isVertical
@@ -66,24 +60,10 @@ class DetentSplitViewController: NSSplitViewController {
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    func detent(at divider: Int) -> CGFloat? { (splitView as? ColumnsSplitView)?.openingPosition }
-
-    /// Only while dragged: a position set in code goes where it is set. 27.2: NSSplitViewController has no super for this.
-    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
-                            ofSubviewAt dividerIndex: Int) -> CGFloat {
-        guard (splitView as? DraggedSplitView)?.dragging == true, let detent = detent(at: dividerIndex),
-              abs(proposedPosition - detent) <= 8 else { return proposedPosition }
-        let pane = splitView.arrangedSubviews[dividerIndex].frame
-        if abs((splitView.isVertical ? pane.maxX : pane.maxY) - detent) >= 0.5 {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
-        }
-        return detent
-    }
 }
 
 /// Files over the File Outline. AppKit has no thin divider without a line: the files' scroll edge stands for it.
-final class SidebarSplitViewController: DetentSplitViewController {
+final class SidebarSplitViewController: ThinSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
     private final class SplitView: DraggedSplitView { override func drawDivider(in rect: NSRect) {} }
@@ -106,17 +86,6 @@ final class ColumnsSplitView: DraggedSplitView {
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }
-
-    /// A double-click on the divider (2 pt either side) restores the even split. 27.2: preferred fractions land it elsewhere.
-    override func mouseDown(with event: NSEvent) {
-        let past = convert(event.locationInWindow, from: nil).x - (arrangedSubviews.first?.frame.maxX ?? 0)
-        guard event.clickCount == 2, -2...dividerThickness + 2 ~= past, arrangedSubviews.allSatisfy({ !isSubviewCollapsed($0) }) else {
-            return super.mouseDown(with: event)
-        }
-        setPosition(openingPosition, ofDividerAt: 0)
-    }
-
-    var openingPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 
 extension NSScrollView {
