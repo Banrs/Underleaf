@@ -53,7 +53,7 @@ the call.
 ## Lifecycle
 
 ```
-session_open {id, session, autoCompile} -> {session, name, root, pdf, tree, settings, ui}
+session_open {id, session, autoCompile} -> {name, root, pdf, tree, settings, ui}
   session_open_document {session, path} -> null
   tl_session_source(h, session, path)   -> TlSource     tl_source_text: load into the editor verbatim
                                                         every editor edit: tl_source_edit
@@ -72,7 +72,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{session, name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
@@ -162,7 +162,7 @@ Service commands (`tl_call`):
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
 | `open_path` | `path` | `{project, file}` | What File › Open, Finder and a drop on the Dock open, in one call. `project` as `list_projects` lists it, `file` the project path to show or null. A path in a project is that project (a folder inside an opened folder opens as one of its own). A folder opens where it is; a .tex opens its folder where it is, at the .tex, its main file guessed from it if the folder is new to the list. A .tex whose folder is refused (it holds the library, or has more than 20,000 files: both 400 for a folder) comes alone into a new library project, as a .zip's files or any other file do. 404 if not there. |
 | `forget_folder` | `id` | null | Takes an opened folder off the list, stopping its build and preview, and removes its settings and build output; the folder stays as it is. A library project's id is 400. |
-| `status` | | `{available, version, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
+| `status` | | `{available, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
 Syntax commands (`tl_syntax_call`), JSON in, JSON out; `math_svg` and `glyph_svg` are as
 `texlocal.h` describes them:

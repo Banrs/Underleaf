@@ -238,9 +238,9 @@ impl Rig {
         sessions.set_listener(Some(Box::new(move |event| {
             lock(&sink).push(event.clone());
         })));
-        let args = json!({ "id": "P", "session": 1, "autoCompile": auto_compile });
-        let opened = sessions.call("session_open", &args).await.unwrap();
-        let session = opened["session"].as_u64().unwrap();
+        let session = 1;
+        let args = json!({ "id": "P", "session": session, "autoCompile": auto_compile });
+        sessions.call("session_open", &args).await.unwrap();
         Self {
             _data: data,
             root,

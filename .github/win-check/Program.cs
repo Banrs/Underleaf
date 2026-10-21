@@ -6,6 +6,7 @@ using System.Text;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
+using FlaUI.Core.WindowsAPI;
 using FlaUI.UIA3;
 using Microsoft.Win32;
 
@@ -53,6 +54,8 @@ static class Program
                     app.Wait("More options for Test Errors and Warnings", ControlType.Button);
                     app.Shot($"home-{theme}");
                 });
+                // Ctrl+F before any project has opened.
+                if (theme == "light") FindOnHome(app, "home-find-first-light");
                 Step($"home-menu-{theme}", () =>
                 {
                     app.Press(app.Wait("More options for Test Errors and Warnings", ControlType.Button));
@@ -89,6 +92,7 @@ static class Program
                     app.ScrollToEnd();
                     app.Shot($"settings-end-{theme}");
                 });
+                if (theme == "light") Flows(app);
             }
         }
 
@@ -126,10 +130,159 @@ static class Program
                 app.Wait(e => boxes.Contains(e.Properties.ControlType.ValueOrDefault), "the build log", 30_000, cf => cf.ByName("Build log"));
                 app.Shot("tex-log-light");
             });
+            if (theme == "light") PdfFlows(app);
         }
 
         Log($"done, {failures} failed");
         return failures;
+    }
+
+    /// After Settings: back to the project, then Home, its keys, the project again, and typing and replacing in its
+    /// editor. The menu bar is the project's only while it is shown.
+    static void Flows(App app)
+    {
+        Step("settings-back-light", () =>
+        {
+            app.Press(app.Wait("Back", ControlType.Button));
+            app.Wait("Compile", ControlType.Button);
+            app.Wait("View", ControlType.MenuItem);
+            app.Shot("settings-back-light");
+        });
+        Step("home-again-light", () =>
+        {
+            app.Press(app.Wait("Back", ControlType.Button));
+            app.Wait("More options for Test Errors and Warnings", ControlType.Button);
+            app.Shot("home-again-light");
+        });
+        // Ctrl+F again, after a project has come and gone.
+        FindOnHome(app, "home-find-light");
+        Step("home-new-light", () =>
+        {
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.SHIFT, VirtualKeyShort.KEY_N);
+            app.Wait("New article project", ControlType.Text);
+            app.Shot("home-new-light");
+            app.Keys(VirtualKeyShort.ESCAPE);
+        });
+        Step("reopen-light", () =>
+        {
+            app.Press(app.Wait("More options for Test Errors and Warnings", ControlType.Button));
+            app.Press(app.Wait("Open", ControlType.MenuItem));
+            app.WaitTitle("main.tex - Test Errors and Warnings");
+            app.Wait("View", ControlType.MenuItem);
+            app.Shot("reopen-light");
+        });
+        // Last, so no Home above shows the time of its save. A completion asked for and accepted into its snippet; a
+        // newline and a backspace; a mirrored field typed in and undone; then Replace in the find bar.
+        Step("completions-light", () =>
+        {
+            app.Wait("Source", ControlType.Edit).Focus();
+            // After \end{document}: not in a comment, where nothing completes.
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.END);
+            app.Type("\\sec");
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.SPACE);
+            app.Wait("Completions", ControlType.List);
+            app.Shot("completions-light");
+        });
+        Step("typed-light", () =>
+        {
+            app.Keys(VirtualKeyShort.ENTER);
+            app.Type("Intro");
+            app.Keys(VirtualKeyShort.ESCAPE);
+            app.Keys(VirtualKeyShort.END);
+            app.Keys(VirtualKeyShort.ENTER);
+            app.Type("xy");
+            app.Keys(VirtualKeyShort.BACK);
+            app.Shot("typed-light");
+        });
+        // A word typed in a completion's mirrored field goes in both its places, and one Undo takes it back from both.
+        Step("mirrored-light", () =>
+        {
+            app.Keys(VirtualKeyShort.END);
+            app.Keys(VirtualKeyShort.ENTER);
+            app.Type("\\beg");
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.SPACE);
+            app.Wait("Completions", ControlType.List);
+            app.Keys(VirtualKeyShort.ENTER);
+            app.Type("mirrored");
+            app.SourceHas("\\begin{mirrored}", "\\end{mirrored}");
+            app.Shot("mirrored-light");
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_Z);
+            app.SourceHas("\\begin{env}", "\\end{env}");
+        });
+        Step("replaced-light", () =>
+        {
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_H);
+            app.Wait("Find", ControlType.Edit).Focus();
+            app.Type("Intro");
+            app.Wait("Replace", ControlType.Edit).Focus();
+            app.Type("Outro");
+            app.Press(app.Wait("Replace", ControlType.Button, e => e.Properties.IsEnabled.ValueOrDefault));
+            app.Shot("replaced-light");
+        });
+    }
+
+    /// Ctrl+F, then a name typed, which filters the list only if the search box has the keys.
+    static void FindOnHome(App app, string name) => Step(name, () =>
+    {
+        app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_F);
+        app.Type("Article");
+        app.Wait("Search projects", ControlType.Edit, e => e.Patterns.Value.Pattern.Value.ValueOrDefault == "Article");
+        app.Shot(name);
+        app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.KEY_A);
+        app.Keys(VirtualKeyShort.BACK);
+        app.Wait("More options for Test Errors and Warnings", ControlType.Button);
+    });
+
+    /// The PDF hidden and shown by its key, its button and its View menu item, each telling the others; then Go to PDF
+    /// position with the PDF shown and with it hidden.
+    static void PdfFlows(App app)
+    {
+        Step("pdf-key-off-light", () =>
+        {
+            app.Wait("Source", ControlType.Edit).Focus();
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.ALT, VirtualKeyShort.KEY_P);
+            app.WaitPdfButton(false);
+            app.Shot("pdf-key-off-light");
+        });
+        Step("pdf-button-on-light", () =>
+        {
+            app.Click(app.WaitPdfButton(false));
+            app.WaitPdfButton(true);
+            app.Shot("pdf-button-on-light");
+        });
+        Step("pdf-menu-off-light", () =>
+        {
+            app.Click(app.WaitPdfButton(true));
+            app.WaitPdfButton(false);
+            app.Expand(app.Wait("View", ControlType.MenuItem));
+            app.Wait("PDF", ControlType.MenuItem);
+            app.Shot("pdf-menu-off-light");
+        });
+        Step("pdf-menu-on-light", () =>
+        {
+            app.Click(app.Wait("PDF", ControlType.MenuItem));
+            app.WaitPdfButton(true);
+            app.Shot("pdf-menu-on-light");
+        });
+        Step("forward-shown-light", () =>
+        {
+            app.Wait("Source", ControlType.Edit).Focus();
+            // The last section, a few lines up from the end.
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.END);
+            app.Keys(VirtualKeyShort.UP);
+            app.Keys(VirtualKeyShort.UP);
+            app.Keys(VirtualKeyShort.UP);
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.ALT, VirtualKeyShort.KEY_J);
+            app.Shot("forward-shown-light");
+        });
+        Step("forward-hidden-light", () =>
+        {
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.ALT, VirtualKeyShort.KEY_P);
+            app.WaitPdfButton(false);
+            app.Keys(VirtualKeyShort.CONTROL, VirtualKeyShort.ALT, VirtualKeyShort.KEY_J);
+            app.WaitPdfButton(true);
+            app.Shot("forward-hidden-light");
+        });
     }
 
     static App? Launch(string name, string? texBin)
@@ -402,13 +555,45 @@ static class Program
             else Press(element);
         }
 
-        void Click(AutomationElement element)
+        public void Click(AutomationElement element)
         {
-            Log($"clicking {element.Properties.Name.ValueOrDefault}: it has no pattern to use");
-            Foreground();
+            Log($"clicking {element.Properties.Name.ValueOrDefault}");
+            Front();
             Mouse.Click(element.GetClickablePoint());
             Native.SetCursorPos(Native.GetSystemMetrics(0) - 1, Native.GetSystemMetrics(1) - 1);
         }
+
+        /// Not when a popup of the app's has the foreground: activating the window would close it.
+        void Front()
+        {
+            Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out var front);
+            if (front != process.Id) Foreground();
+        }
+
+        /// Keys pressed together, as a person would, then a moment for the app to take them.
+        public void Keys(params VirtualKeyShort[] chord)
+        {
+            Front();
+            Keyboard.TypeSimultaneously(chord);
+            Thread.Sleep(400);
+        }
+
+        public void Type(string text)
+        {
+            Front();
+            Keyboard.Type(text);
+            Thread.Sleep(400);
+        }
+
+        public void SourceHas(params string[] parts)
+        {
+            var text = Wait("Source", ControlType.Edit).Patterns.Text.Pattern.DocumentRange.GetText(-1);
+            if (parts.FirstOrDefault(p => !text.Contains(p)) is { } missing) throw new InvalidOperationException($"no {missing} in the source, which ends {text[^80..]}");
+        }
+
+        public AutomationElement WaitPdfButton(bool on) =>
+            Wait(e => e.Patterns.Toggle.IsSupported && e.Patterns.Toggle.Pattern.ToggleState.ValueOrDefault == (on ? ToggleState.On : ToggleState.Off),
+                $"the PDF button {(on ? "on" : "off")}", 10_000, cf => cf.ByAutomationId("PdfButton"));
 
         /// The scroll viewer that shows the most, scrolled to its end.
         public void ScrollToEnd()
@@ -423,9 +608,7 @@ static class Program
         /// The window once it has stopped changing, as <name>.png, with its tree as <name>.txt.
         public void Shot(string name, bool settle = true)
         {
-            // Not when a popup of the app's has the foreground: activating the window would close it.
-            Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out var front);
-            if (front != process.Id) Foreground();
+            Front();
             var clock = Stopwatch.StartNew();
             var image = Capture();
             for (var same = 0; settle && same < 3 && clock.ElapsedMilliseconds < 20_000;)

@@ -99,7 +99,8 @@ public sealed partial class WorkspacePage
         return view.ContainerFromItem(item) as FrameworkElement;
     }
 
-    /// The project's files. The core sends the tree with each change, often the same one (core gap 24).
+    /// The project's files. The watcher's tree after a RefreshTree is often the one it read, which shown again would take
+    /// away a new file's row as its name is typed (core gap 24).
     void ShowTree(TreeNode[] nodes, bool force = false)
     {
         var json = JsonSerializer.Serialize(nodes, Core.Json);

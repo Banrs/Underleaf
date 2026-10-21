@@ -160,9 +160,10 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
 | PDF | Print, scroll to the caret after compiling | Scroll to the caret after compiling; no print | UI |
+| PDF | Paper white, dark or automatic | White | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane, log, restarts | None | Core 12 |
-| Settings | Template, engine, sync after compile, Live Preview | Sync after compile; raw latexmk line | Core 7, 12; UI |
+| Settings | Template, engine, sync after compile, Live Preview | Sync after compile | Core 7, 12 |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
 ZIP export on Home and F6 region cycling. Also to come: multiple windows and the zip and winget

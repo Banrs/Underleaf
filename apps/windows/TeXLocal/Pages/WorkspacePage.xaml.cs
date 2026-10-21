@@ -188,7 +188,19 @@ public sealed partial class WorkspacePage : Page
         if (e.SourcePageType == typeof(SettingsPage)) return;
         Prefs.EditorChanged -= ShowLook;
         Core.Event -= OnEvent;
+        // WinUI 2.3.9 keeps a menu's accelerators after its bar has left the window: kept, this page's would take Home's
+        // Ctrl+F and the next project's keys.
+        ClearKeys(MainMenu.Items.SelectMany(m => m.Items));
         if (session != 0) _ = Core.CallAsync("session_close", new { session });
+    }
+
+    static void ClearKeys(IEnumerable<MenuFlyoutItemBase> items)
+    {
+        foreach (var item in items)
+        {
+            item.KeyboardAccelerators.Clear();
+            if (item is MenuFlyoutSubItem sub) ClearKeys(sub.Items);
+        }
     }
 
     /// Before the project goes, as on the Mac: session_close saves quietly, so edits a conflict's Cancel held or a write
@@ -413,7 +425,8 @@ public sealed partial class WorkspacePage : Page
             : result.Stopped ? "Build stopped"
             : result.Ok ? $"Built in {result.DurationMs / 1000.0:0.0} s"
             : "Build failed";
-        BuildState.Text = outdated && !compiling && result is not null ? $"{state} · Preview out of date" : state;
+        // As on the Mac, only when no automatic build is coming to bring it up to date.
+        BuildState.Text = outdated && !compiling && result is not null && !Prefs.AutoCompile ? $"{state} · PDF out of date" : state;
     }
 
     /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
@@ -575,6 +588,7 @@ public sealed partial class WorkspacePage : Page
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
         Prefs.AutoCompile = AutoCompileItem.IsChecked;
+        ShowBuild();
         Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
     }
 

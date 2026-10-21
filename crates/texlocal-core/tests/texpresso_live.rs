@@ -180,8 +180,10 @@ async fn run(library: &Path) {
         std::fs::write(root.join(path), text).unwrap();
     }
 
-    let opened = client.call("session_open", json!({ "id": id, "session": 1 }));
-    let a = opened.await["session"].as_u64().unwrap();
+    let a = 1;
+    client
+        .call("session_open", json!({ "id": id, "session": a }))
+        .await;
     let main_doc = client.document(a, "main.tex").await;
     client
         .ask(a, "live_view", json!({ "first": 1, "last": 1 }))

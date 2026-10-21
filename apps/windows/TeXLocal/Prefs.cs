@@ -24,7 +24,8 @@ public static unsafe partial class Prefs
 
     public static string EditorFont { get => Get("editorFont", "Cascadia Mono"); set => Set("editorFont", value, EditorFont); }
     public static double EditorFontSize { get => Get("editorFontSize", 14.0); set => Set("editorFontSize", Math.Clamp(value, 10, 28), EditorFontSize); }
-    public static string EditorTheme { get => Get("editorTheme", "overleaf"); set => Set("editorTheme", value, EditorTheme); }
+    /// A saved theme the core no longer lists is the default.
+    public static string EditorTheme { get => Themes.FirstOrDefault(t => t.Id == Get("editorTheme", ""))?.Id ?? "overleaf"; set => Set("editorTheme", value, EditorTheme); }
     public static bool AutoPair { get => Get("editorAutoPair", true); set => Set("editorAutoPair", value, AutoPair); }
     public static bool AutoComplete { get => Get("editorAutoComplete", true); set => Set("editorAutoComplete", value, AutoComplete); }
     public static bool LineNumbers { get => Get("editorLineNumbers", true); set => Set("editorLineNumbers", value, LineNumbers); }
