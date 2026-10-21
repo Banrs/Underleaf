@@ -241,9 +241,7 @@ impl SourceDocument {
         let units = self.text.line(index);
         // TeX's letters, with `@` as in a class's or a package's own source.
         let tex_letter = |u: u16| letter(u) || is(u, '@');
-        let end = (0..units.len())
-            .find(|&i| is(units[i], '%') && !escaped(units, i))
-            .unwrap_or(units.len());
+        let end = comment_start(units);
         let word = name.get(1).is_some_and(|&u| tex_letter(u));
         let (mut found, mut from) = (vec![], 0);
         while let Some(at) = units[from..end].windows(name.len()).position(|w| w == name) {
@@ -274,6 +272,12 @@ fn escaped(units: &[u16], at: usize) -> bool {
         .take_while(|&&u| is(u, '\\'))
         .count();
     slashes % 2 == 1
+}
+
+/// A line alone can't tell a `%` that \verb or a verbatim environment holds.
+fn comment_start(line: &[u16]) -> usize {
+    let percent = |&i: &usize| is(line[i], '%') && !escaped(line, i);
+    (0..line.len()).find(percent).unwrap_or(line.len())
 }
 
 const NAME: usize = 64;

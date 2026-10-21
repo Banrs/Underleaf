@@ -23,8 +23,6 @@ pub struct MathSvg {
 /// No larger than this, in ems: `\rule{1e9pt}{1pt}` would otherwise ask the host for an image of millions of points.
 const MAX_EM: f64 = 1000.0;
 
-const SIZES: std::ops::RangeInclusive<f64> = 1.0..=512.0;
-
 fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, String> {
     let nodes = ratex_parser::parse(tex).map_err(|e| e.to_string())?;
     let style = if display {
@@ -51,10 +49,10 @@ fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, St
     Ok(list)
 }
 
-fn path_values(command: &mut PathCommand) -> Vec<&mut f64> {
-    match command {
-        PathCommand::MoveTo { x, y } | PathCommand::LineTo { x, y } => vec![x, y],
-        PathCommand::QuadTo { x1, y1, x, y } => vec![x1, y1, x, y],
+fn path_points(command: &PathCommand) -> Vec<(f64, f64)> {
+    match *command {
+        PathCommand::MoveTo { x, y } | PathCommand::LineTo { x, y } => vec![(x, y)],
+        PathCommand::QuadTo { x1, y1, x, y } => vec![(x1, y1), (x, y)],
         PathCommand::CubicTo {
             x1,
             y1,
@@ -62,7 +60,7 @@ fn path_values(command: &mut PathCommand) -> Vec<&mut f64> {
             y2,
             x,
             y,
-        } => vec![x1, y1, x2, y2, x, y],
+        } => vec![(x1, y1), (x2, y2), (x, y)],
         PathCommand::Close => vec![],
     }
 }
@@ -89,7 +87,7 @@ fn svg(list: &DisplayList, size: f64) -> Result<String, String> {
 
 fn checked_size(size: f64) -> Result<f64, String> {
     if size.is_finite() {
-        Ok(size.clamp(*SIZES.start(), *SIZES.end()))
+        Ok(size.clamp(1.0, 512.0))
     } else {
         Err("No such size".into())
     }
@@ -155,12 +153,8 @@ fn ink(list: &DisplayList) -> Option<(f64, f64, f64, f64)> {
                 ..
             } => add(*x, *y, x + width, y + height),
             DisplayItem::Path { x, y, commands, .. } => {
-                for command in commands {
-                    let mut command = *command;
-                    let values = path_values(&mut command);
-                    for point in values.chunks(2) {
-                        add(x + *point[0], y + *point[1], x + *point[0], y + *point[1]);
-                    }
+                for (px, py) in commands.iter().flat_map(path_points) {
+                    add(x + px, y + py, x + px, y + py);
                 }
             }
         }

@@ -7,19 +7,6 @@ use std::ops::Range;
 use super::stack::Stack;
 use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter};
 
-/// A line alone can't tell a `%` that \verb or a verbatim environment holds.
-pub(crate) fn strip_comment(line: &str) -> &str {
-    let mut slashes = 0;
-    for (i, b) in line.bytes().enumerate() {
-        match b {
-            b'\\' => slashes += 1,
-            b'%' if slashes % 2 == 0 => return &line[..i],
-            _ => slashes = 0,
-        }
-    }
-    line
-}
-
 pub(crate) fn closing_brace(body: &str) -> Option<usize> {
     let (mut depth, mut slashes) = (1, 0);
     body.find(|c| {
@@ -132,10 +119,6 @@ impl Group {
             command: None,
         }
     }
-
-    pub fn brace(&self) -> bool {
-        self.end == "}"
-    }
 }
 
 /// What a scan reports as it reads; callers merge the ranges.
@@ -192,7 +175,7 @@ impl Scanner {
                 probe += 1;
             }
             let answered = !probes.is_empty() && probe == probes.len();
-            if answered && (paragraph_ended || !self.stack.iter().any(Group::brace)) {
+            if answered && (paragraph_ended || !self.stack.iter().any(|g| g.end == "}")) {
                 break;
             }
             let pending = self.last_command.take();
@@ -416,16 +399,5 @@ mod tests {
         assert!(probed_read(&source) < 100);
         let words = "More {words}.\n".repeat(1_000);
         assert!(probed_read(&format!("{{ stray\n\\textbf{{a b}} c\n\n{words}")) < 40);
-    }
-
-    #[test]
-    fn a_comment_starts_at_a_percent_no_backslash_escapes() {
-        assert_eq!(strip_comment("a % b"), "a ");
-        assert_eq!(strip_comment("50\\% off % note"), "50\\% off ");
-        assert_eq!(
-            strip_comment("a \\\\% line break, then a comment"),
-            "a \\\\"
-        );
-        assert_eq!(strip_comment("no comment\n"), "no comment\n");
     }
 }
