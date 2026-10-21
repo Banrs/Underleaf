@@ -220,6 +220,10 @@ fn a_closer_left_on_a_line_above_is_not_stepped_over() {
 #[test]
 fn without_typing_assistance_an_opener_goes_alone() {
     let mut e = Editor::open("", caret(0));
+    e.auto_pair = false;
+    e.keys("{");
+    assert_eq!(e.doc.text(), "{");
+    let mut e = Editor::open("", caret(0));
     e.keys("{");
     e.auto_pair = false;
     e.keys("⌫");

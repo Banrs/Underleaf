@@ -174,6 +174,9 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         assert!(!source.is_null());
         let partner = c("partner");
         assert!(tl_source_call(source, partner.as_ptr(), c("{not json").as_ptr()).is_null());
+        // An edit past the text lands at its end.
+        edit(source, 99, 99, b"ab");
+        assert_eq!(text_of(source), "ab");
         assert_eq!(tl_source_line_start(source, 99), 0);
         tl_source_free(source);
     }
