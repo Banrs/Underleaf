@@ -121,22 +121,3 @@ fn a_command_is_found_on_its_line() {
     assert!(doc.command_ranges(2, "\\foo").is_empty(), "no such line");
     assert!(doc.command_ranges(1, "").is_empty());
 }
-
-/// Both checkers pass over command names, an escape's too, and what
-/// isn't prose; only spelling checks a comment.
-#[test]
-fn checkers_leave_code_alone() {
-    let text = "Prose \\emph{word} $x$ 50\\% % note";
-    let mut doc = SourceDocument::new(text);
-    let all = range(0, utf16(text) as u32);
-    let mut ranges = |checker| -> Vec<(u32, u32)> {
-        let found = doc.code_ranges(all, checker);
-        found.iter().map(|r| (r.start, r.length)).collect()
-    };
-    let code = [(6, 5), (18, 3), (24, 2)];
-    assert_eq!(ranges(Checker::Spelling), code);
-    assert_eq!(
-        ranges(Checker::WritingTools),
-        [&code[..], &[(27, 6)]].concat()
-    );
-}

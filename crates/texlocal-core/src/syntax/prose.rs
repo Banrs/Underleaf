@@ -165,43 +165,44 @@ fn count(prose: &[u16]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::{Checker, SourceDocument, TextRange, range, utf16};
+    use crate::syntax::{Checker, SourceDocument, range, utf16};
 
-    fn code(doc: &mut SourceDocument, start: u32, length: u32) -> Vec<TextRange> {
-        doc.code_ranges(range(start, length), Checker::Spelling)
-    }
-
-    fn whole(text: &str) -> Vec<TextRange> {
-        code(&mut SourceDocument::new(text), 0, utf16(text) as u32)
-    }
-
-    fn names(source: &str) -> Vec<String> {
-        let units: Vec<u16> = source.encode_utf16().collect();
-        let text = |r: &TextRange| {
-            String::from_utf16_lossy(&units[r.start as usize..(r.start + r.length) as usize])
+    /// The text with what `checker` passes over in «», of the whole text or of the character after `‸`.
+    fn marked(source: &str, checker: Checker) -> String {
+        let text = source.replace('‸', "");
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let selection = match source.find('‸') {
+            Some(at) => {
+                let next = text[at..].chars().next().map_or(0, char::len_utf16);
+                range(utf16(&text[..at]) as u32, next as u32)
+            }
+            None => range(0, units.len() as u32),
         };
-        let ranges = whole(source);
-        let names = ranges.iter().map(text);
-        names.filter(|name| !name.starts_with('\\')).collect()
+        let ranges = SourceDocument::new(&text).code_ranges(selection, checker);
+        let (mut marked, mut at) = (String::new(), 0);
+        for r in ranges {
+            let (start, end) = (r.start as usize, (r.start + r.length) as usize);
+            marked += &String::from_utf16_lossy(&units[at..start]);
+            marked.push('«');
+            marked += &String::from_utf16_lossy(&units[start..end]);
+            marked.push('»');
+            at = end;
+        }
+        marked + &String::from_utf16_lossy(&units[at..])
     }
 
-    fn find(text: &str, needle: &str) -> std::ops::Range<u32> {
-        let start = utf16(&text[..text.find(needle).unwrap()]) as u32;
-        start..start + utf16(needle) as u32
+    fn spelling(source: &str) -> String {
+        marked(source, Checker::Spelling)
     }
 
-    fn covered(ranges: &[TextRange], text: &str, needle: &str) -> bool {
-        let found = find(text, needle);
+    /// What a command takes as names, not prose.
+    fn names(source: &str) -> Vec<String> {
+        let marked = spelling(source);
+        let ranges = marked.split('«').skip(1).filter_map(|r| r.split_once('»'));
         ranges
-            .iter()
-            .any(|r| r.start <= found.start && found.end <= r.start + r.length)
-    }
-
-    fn prose(ranges: &[TextRange], text: &str, needle: &str) -> bool {
-        let found = find(text, needle);
-        ranges
-            .iter()
-            .all(|r| r.start + r.length <= found.start || found.end <= r.start)
+            .map(|(name, _)| name.to_owned())
+            .filter(|name| !name.starts_with('\\'))
+            .collect()
     }
 
     #[test]
@@ -239,78 +240,73 @@ mod tests {
         assert_eq!(names("😀 \\cite\n{𐐀key}"), ["𐐀key"]);
     }
 
+    /// Both checkers pass over command names, an escape's too, and what isn't prose; only spelling checks a comment.
     #[test]
-    fn from_the_paragraph_start() {
-        let source = "\\usepackage{amsmath,\n  amssymb}\n\nText";
-        let mut doc = SourceDocument::new(source);
-        let found = code(&mut doc, 25, 1); // in "amssymb"
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].start, 12);
-        assert_eq!(found[0].start + found[0].length, 26);
-        assert!(code(&mut doc, 36, 2).is_empty()); // in "Text"
+    fn checkers_leave_code_alone() {
+        let text = "Prose \\emph{word} $x$ 50\\% % note";
+        assert_eq!(spelling(text), "Prose «\\emph»{word} «$x$» 50«\\%» % note");
+        let writing = marked(text, Checker::WritingTools);
+        assert_eq!(writing, "Prose «\\emph»{word} «$x$» 50«\\%» «% note»");
     }
 
+    /// A question reads from the paragraph's start, and what started before it keeps its own start.
     #[test]
-    fn comments_inside_arguments_stay_prose_and_do_not_close_the_argument() {
-        let text = "\\usepackage{amsmath,% Speling }\n amssymb}";
-        let ranges = whole(text);
-        assert!(prose(&ranges, text, "Speling"));
-        assert!(covered(&ranges, text, "amssymb"));
+    fn a_question_answers_from_where_its_ranges_start() {
+        let cases = [
+            (
+                "\\usepackage{amsmath,\n  amss‸ymb}\n\nText",
+                "\\usepackage{«amsmath,\n  amssy»mb}\n\nText",
+            ),
+            (
+                "\\usepackage{amsmath,\n  amssymb}\n\nT‸ext",
+                "\\usepackage{amsmath,\n  amssymb}\n\nText",
+            ),
+            (
+                "first\n\\begin{equation}\n‸𐐀 + x",
+                "first\n«\\begin{equation}\n𐐀» + x",
+            ),
+            (
+                "$x$ \\begin{verbatim}\n‸Speling code\n\\end{verbatim}",
+                "$x$ «\\begin{verbatim}\nS»peling code\n\\end{verbatim}",
+            ),
+            (
+                "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\n‸Speling prose",
+                "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose",
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(spelling(source), expected, "{source:?}");
+        }
     }
 
+    /// A comment stays prose and closes nothing, maths' text commands hold prose, and literal code runs to its end
+    /// or the text's, holding no commands.
     #[test]
-    fn math_and_code_are_not_prose_but_math_text_commands_are() {
-        let text = "Before $x + \\text{Speling stays} + y$ after\n\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}\n\\verb|Speling|";
-        let ranges = whole(text);
-        assert!(covered(&ranges, text, "$x + "));
-        assert!(prose(&ranges, text, "Speling stays"));
-        assert!(covered(&ranges, text, "y$"));
-        assert!(covered(&ranges, text, "a&=b"));
-        assert!(covered(&ranges, text, "\\verb|Speling|"));
-    }
-
-    #[test]
-    fn ranges_started_before_the_checked_slice_remain_absolute() {
-        let text = "first\n\\begin{equation}\n𐐀 + x";
-        let start = find(text, "𐐀").start;
-        let found = code(&mut SourceDocument::new(text), start, 1);
-        assert!(found.iter().any(|r| r.start == find(text, "\\begin").start));
-        let to_it = |r: &TextRange| r.start <= start && r.start + r.length == start + 1;
-        assert!(found.iter().any(to_it));
-    }
-
-    #[test]
-    fn comments_and_unclosed_literal_code_keep_their_boundaries() {
-        let text = "$x % Speling stays prose\n y$ \\begin{verbatim}\nSpeling code\n\\end{verbatim}\n\\begin{lstlisting}\nopen code";
-        let ranges = whole(text);
-        assert!(covered(&ranges, text, "x"));
-        assert!(prose(&ranges, text, "Speling stays"));
-        assert!(covered(&ranges, text, "y$"));
-        assert!(covered(&ranges, text, "Speling code"));
-        assert!(covered(&ranges, text, "open code"));
-
-        let code_start = find(text, "Speling code").start;
-        let inside_code = code(&mut SourceDocument::new(text), code_start, 1);
-        let verbatim_start = find(text, "\\begin{verbatim}").start;
-        assert!(
-            inside_code
-                .iter()
-                .any(|r| r.start == verbatim_start && r.start + r.length == code_start + 1)
-        );
-
-        let text = "\\verb|Speling\nprose \\cite{key}";
-        let ranges = whole(text);
-        assert!(covered(&ranges, text, "Speling"));
-        assert!(prose(&ranges, text, "prose"));
-        assert!(covered(&ranges, text, "key"));
-    }
-
-    #[test]
-    fn commands_inside_literal_code_do_not_suppress_following_prose() {
-        let text = "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose";
-        let mut doc = SourceDocument::new(text);
-        let ranges = code(&mut doc, 0, utf16(text) as u32);
-        assert!(prose(&ranges, text, "Speling"));
-        assert!(code(&mut doc, find(text, "Speling").start, 1).is_empty());
+    fn maths_and_code_are_not_prose() {
+        let cases = [
+            (
+                "\\usepackage{amsmath,% Speling }\n amssymb}",
+                "«\\usepackage»{«amsmath,»% Speling }«\n amssymb»}",
+            ),
+            (
+                "Before $x + \\text{Speling stays} + y$ after\n\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}",
+                "Before «$x + \\text{»Speling stays«} + y$» after\n«\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}»",
+            ),
+            (
+                "$x % Speling stays prose\n y$ \\begin{verbatim}\nSpeling code\n\\end{verbatim}\n\\begin{lstlisting}\nopen code",
+                "«$x »% Speling stays prose\n« y$» «\\begin{verbatim}\nSpeling code\n\\end{verbatim}»\n«\\begin{lstlisting}\nopen code»",
+            ),
+            (
+                "\\verb|Speling|\n\\verb|Speling\nprose \\cite{key}",
+                "«\\verb|Speling|»\n«\\verb|Speling»\nprose «\\cite»{«key»}",
+            ),
+            (
+                "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose",
+                "«\\begin{verbatim}\n\\input{raw\n\\end{verbatim}»\nSpeling prose",
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(spelling(source), expected, "{source:?}");
+        }
     }
 }
