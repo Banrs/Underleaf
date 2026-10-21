@@ -10,6 +10,10 @@
     Background="Transparent"
     DragOver="OnDragOver"
     Drop="OnDrop">
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator Invoked="OnNewArticle" Key="N" Modifiers="Control,Shift" />
+        <KeyboardAccelerator Invoked="OnFindKey" Key="F" Modifiers="Control" />
+    </Page.KeyboardAccelerators>
     <Page.Resources>
         <!-- One menu for a row's right-click or context key and for its More button; F2 and Del are the list's. -->
         <MenuFlyout x:Key="ProjectMenu" Opening="OnMenuOpening" Placement="BottomEdgeAlignedRight">
