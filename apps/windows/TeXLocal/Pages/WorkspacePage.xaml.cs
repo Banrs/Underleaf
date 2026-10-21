@@ -18,8 +18,12 @@ using VirtualKey = Windows.System.VirtualKey;
 namespace TeXLocal.Pages;
 
 /// An issues panel row: a build's error or warning, by its index among the build's issues, or a bad box, which is none.
-public sealed record IssueItem(int? Index, LogItem Item)
+/// <param name="Installing">Its missing file's package is being installed.</param>
+public sealed record IssueItem(int? Index, LogItem Item, bool Installing = false)
 {
+    public bool Installable => Item.Missing is not null;
+    public bool Idle => !Installing;
+    public string InstallName => $"Install the package with {Item.Missing}";
     public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
     public bool HasPlace => Item.File is not null;
@@ -34,9 +38,10 @@ public sealed partial class WorkspacePage : Page
 
     static ulong sessions;
     readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
-    readonly HashSet<string> unsaved = [];
+    readonly HashSet<string> unsaved = [], installing = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", issueFilter = "", logFilter = "";
+    string? name;
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
@@ -159,8 +164,7 @@ public sealed partial class WorkspacePage : Page
         (id, var file) = ((string, string?))e.Parameter;
         MenuSlot.Child = null;
         App.Window.SetMenu(MainMenu);
-        App.Window.SetTitle(id, Editor.Path);
-        Search.PlaceholderText = $"Search {id}";
+        App.Window.SetTitle(name, Editor.Path);
         CheckTex();
         if (session != 0) return;
         Core.Event += OnEvent;
@@ -212,7 +216,9 @@ public sealed partial class WorkspacePage : Page
             if (IsLoaded) App.ExitSmoke(null);
             else Loaded += (_, _) => App.ExitSmoke(null);
         }
-        root = opened.Root;
+        (name, root) = (opened.Name, opened.Root);
+        App.Window.SetTitle(name);
+        Search.PlaceholderText = $"Search {name}";
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
         ReadFolds(opened.Ui);
@@ -235,7 +241,7 @@ public sealed partial class WorkspacePage : Page
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
             case "document_renamed" when ev.From == Editor.Path:
                 Editor.Path = ev.To;
-                App.Window.SetTitle(id, ev.To);
+                App.Window.SetTitle(name, ev.To);
                 break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
@@ -287,7 +293,7 @@ public sealed partial class WorkspacePage : Page
             if (Core.SessionSource(session, path) is not { } source) return false;
             (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
             await Editor.Show(path, source);
-            App.Window.SetTitle(id, path);
+            App.Window.SetTitle(name, path);
             Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
             ShowSaved();
             ShowCaret();
@@ -328,7 +334,7 @@ public sealed partial class WorkspacePage : Page
         OutlineTree.ItemsSource = null;
         Words.Text = "";
         Editor.Clear();
-        App.Window.SetTitle(id);
+        App.Window.SetTitle(name);
         (Editor.Visibility, NoFile.Visibility) = (Visibility.Collapsed, Visibility.Visible);
         ShowSide();
         ShowSaved();
@@ -413,7 +419,7 @@ public sealed partial class WorkspacePage : Page
     /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
     void ShowIssues()
     {
-        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item)).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
+        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item, item.Missing is { } file && installing.Contains(file))).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
             .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
@@ -489,6 +495,22 @@ public sealed partial class WorkspacePage : Page
     void OnIssuesPane(object sender, RoutedEventArgs e) => ShowPanel(IssuesItem.IsChecked);
     void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
     void OnCloseIssues(object sender, RoutedEventArgs e) => ShowPanel(false);
+
+    /// tlmgr takes minutes, behind UAC for a TeX Live installed for all users, whose Cancel (403) needs no alert. The
+    /// build runs again with its refusal ignored, since the project may have closed meanwhile.
+    async void OnInstall(object sender, RoutedEventArgs e)
+    {
+        var file = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Missing!;
+        installing.Add(file);
+        ShowIssues();
+        CoreException? failure = null;
+        try { await Core.CallAsync("install_package", new { file }); }
+        catch (CoreException ex) { failure = ex; }
+        installing.Remove(file);
+        ShowIssues();
+        if (failure is null) Run(null, () => Core.CallAsync("session_compile", new { session }));
+        else if (failure.Status != 403) await App.Alert($"Can't install {file}", failure.Message);
+    }
 
     /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during
     /// InitializeComponent.
@@ -707,7 +729,7 @@ public sealed partial class WorkspacePage : Page
     async void OnExportPdf(object sender, RoutedEventArgs e)
     {
         if (Pdf.FilePath is not { } path) return;
-        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = id };
+        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = name! };
         picker.FileTypeChoices.Add("PDF document", [".pdf"]);
         if (await picker.PickSaveFileAsync() is not { } picked) return;
         try { File.Copy(path, picked.Path, true); }

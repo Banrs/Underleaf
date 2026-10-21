@@ -8,6 +8,7 @@ namespace TeXLocal.Tests;
 public sealed class CoreTests : IDisposable
 {
     readonly string dir = Directory.CreateTempSubdirectory("tl-test-").FullName;
+    readonly string outside = Directory.CreateTempSubdirectory("tl-folder-").FullName;
     readonly Core core;
 
     public CoreTests() => core = Core.Open(dir, a => a());
@@ -15,7 +16,8 @@ public sealed class CoreTests : IDisposable
     public void Dispose()
     {
         core.Dispose();
-        try { Directory.Delete(dir, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        foreach (var folder in (string[])[dir, outside])
+            try { Directory.Delete(folder, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
     [Fact]
@@ -34,6 +36,20 @@ public sealed class CoreTests : IDisposable
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name });
         Assert.Equal(name, made.Name);
         Assert.Contains(await core.CallAsync<ProjectInfo[]>("list_projects"), p => p.Id == made.Id && p.Name == name);
+    }
+
+    /// open_path's project and file, and session_open's name, which titles an opened folder.
+    [Fact]
+    public async Task OpenedFoldersDecode()
+    {
+        var tex = Path.Combine(outside, "main.tex");
+        File.WriteAllText(tex, "\\documentclass{article}\n");
+        var opened = await core.CallAsync<OpenedPath>("open_path", new { path = tex });
+        Assert.Equal(("main.tex", true, false), (opened.File, opened.Project.Opened, opened.Project.Missing));
+        Assert.Equal(Path.GetFileName(outside), Path.GetFileName(opened.Project.Path));
+        const ulong session = 5;
+        Assert.Equal(Path.GetFileName(outside), (await core.CallAsync<SessionOpened>("session_open", new { id = opened.Project.Id, session })).Name);
+        await core.CallAsync("session_close", new { session });
     }
 
     /// Home draws a page for each of these ids (PagePreview).
