@@ -69,8 +69,11 @@ final class TeXpressoSession {
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
+    /// The setting's as this session started: a change waits for the next.
+    private var viewer = LiveViewer.pane
 
     var active: Bool { phase == .starting || phase == .running }
+    var inWindow: Bool { active && viewer == .window }
     var needsAttention: Bool { halted || !acknowledged && failed }
     var title: LocalizedStringResource {
         switch phase {
@@ -84,8 +87,8 @@ final class TeXpressoSession {
     // MARK: - The session's state
 
     /// At once, not when the session says so: the toggle that asked follows the click.
-    func starting() {
-        phase = .starting
+    func starting(in viewer: LiveViewer) {
+        (phase, self.viewer) = (.starting, viewer)
         acknowledged = false
     }
 

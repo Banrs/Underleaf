@@ -39,7 +39,6 @@ extension Picker where Label == TupleView<(Text, Text)> {
 }
 
 private struct GeneralSettings: View {
-    @AppStorage(DefaultsKey.newProjectTemplate) private var template = ProjectTemplate.standard
     @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
 
     var body: some View {
@@ -56,7 +55,6 @@ private struct GeneralSettings: View {
                 Text("New and imported projects are kept here.").frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("New Projects") {
-                Picker("Template", selection: $template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
                 Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $engine) {
                     ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
                 }

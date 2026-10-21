@@ -8,7 +8,7 @@ enum MenuCommand: CaseIterable {
     case editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
-    case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage, viewTextBigger, viewTextSmaller
+    case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
     case compileRun, compileStop, compileClean, syncForward, syncInverse, issueNext, issuePrevious
 
     var title: String { spec.title }
@@ -53,9 +53,6 @@ enum MenuCommand: CaseIterable {
         case .viewActualSize: ("Actual Size", KeyboardShortcut("0"))
         case .viewFitWidth: ("Fit Width", KeyboardShortcut("9"))
         case .viewFitPage: ("Fit Page", KeyboardShortcut("9", modifiers: [.command, .option]))
-        // None: ⌥⌘= and ⌥⌘− are the system's own screen zoom.
-        case .viewTextBigger: ("Make Text Bigger", nil)
-        case .viewTextSmaller: ("Make Text Smaller", nil)
         case .compileRun: ("Compile", KeyboardShortcut(.return))
         case .compileStop: ("Stop", KeyboardShortcut("."))
         case .compileClean: ("Clean Build Folder", KeyboardShortcut("k", modifiers: [.command, .shift]))
@@ -106,9 +103,7 @@ extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
-        case .projectSearch: project != nil || (self.project == nil && mainWindowIsKey)
-        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .jumpToDefinition,
-             .viewTextBigger, .viewTextSmaller:
+        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .jumpToDefinition:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
@@ -132,7 +127,6 @@ extension AppModel {
     }
 
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
-        if command == .projectSearch, self.project == nil { return "Find Project…" }
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarShown
         case .viewTogglePDF: showPDF
@@ -160,7 +154,7 @@ extension AppModel {
         case .projectClose: Task { await close() }
         case .projectExport: if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
-            if project != nil { sidebarShown = true }
+            sidebarShown = true
             searchFocusToken += 1
         case .fileNew, .fileNewFolder:
             sidebarShown = true
@@ -194,8 +188,6 @@ extension AppModel {
         case .viewActualSize: requestPDF(.actualSize)
         case .viewFitWidth: requestPDF(.fitWidth)
         case .viewFitPage: requestPDF(.fitPage)
-        case .viewTextBigger: EditorPrefs.stepFontSize(by: 1)
-        case .viewTextSmaller: EditorPrefs.stepFontSize(by: -1)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .compileClean: Task { await project?.cleanBuildFolder() }
@@ -272,8 +264,6 @@ struct AppCommands: Commands {
             items(.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()
             items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
-            Divider()
-            items(.viewTextBigger, .viewTextSmaller)
         }
         CommandMenu("Go") {
             items(.editGotoLine, .pdfGotoPage)

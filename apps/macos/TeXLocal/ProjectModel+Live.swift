@@ -14,10 +14,10 @@ extension ProjectModel {
 
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
-        texpresso.starting()
+        texpresso.starting(in: LiveViewer.current)
         if let pages = pdf.visiblePages { liveView(pages) }
         liveCaret()
-        core.send("session_live_start", ["session": session, "window": LiveViewer.current == .window])
+        core.send("session_live_start", ["session": session, "window": texpresso.inWindow])
     }
 
     func stopTeXpresso() {

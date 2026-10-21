@@ -7,14 +7,12 @@ struct HomeView: View {
     @FocusState private var listFocused: Bool
     @FocusState private var searching: Bool
     @State private var query = ""
-    @AppStorage(DefaultsKey.dismissedTeXTip) private var dismissedTeXTip = false
     /// Still at work 300 ms on: a quick open or copy shows no spinner.
     @State private var slowOpening: String?
     @State private var slowImports: [URL] = []
 
     var body: some View {
         Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
-        .safeAreaBar(edge: .top) { if app.tex?.available == false, !dismissedTeXTip { texMissing } }
         .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.importProjects(urls) } }
         .navigationTitle("Projects")
         .toolbar {
@@ -139,21 +137,6 @@ struct HomeView: View {
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
-
-    private var texMissing: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Label("MacTeX isn’t installed. Install it to compile; TeXLocal finds it afterwards.",
-                  systemImage: "exclamationmark.triangle.fill")
-                .symbolRenderingMode(.multicolor)
-            Spacer()
-            LinkButton(title: "Get MacTeX", url: Links.mactex)
-            Button("Dismiss", systemImage: "xmark") { dismissedTeXTip = true }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("Hide this message")
-        }
-        .padding()
-    }
 }
 
 private struct ProjectRow: View {
@@ -210,8 +193,6 @@ struct LinkButton: View {
 
 enum ProjectTemplate: String, CaseIterable, Identifiable {
     case blank, article, report, beamer
-
-    static let standard = ProjectTemplate.article
 
     var id: String { rawValue }
 
