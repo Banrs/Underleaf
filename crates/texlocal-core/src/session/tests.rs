@@ -63,6 +63,7 @@ fn issue(line: u32, message: &str) -> LogItem {
         message: message.into(),
         short: message.into(),
         command: None,
+        missing: None,
     }
 }
 

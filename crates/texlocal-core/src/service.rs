@@ -14,7 +14,7 @@ use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, lock, paths, templates, wordmatch, zipexport};
+use crate::{CoreError, import, lock, packages, paths, templates, wordmatch, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
@@ -202,6 +202,9 @@ impl Service {
                 self.kill_all();
                 Ok(Value::Null)
             }
+            "install_package" => Ok(json!({
+                "package": packages::install_package(s("file")?, &self.tool_paths().0).await?
+            })),
             "import_files" => out(import::import_files(
                 self,
                 s("id")?,
