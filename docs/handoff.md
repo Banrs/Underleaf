@@ -10,6 +10,10 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
   button, its progress and a failure are checked).
 - A click on a Live Preview issue opening the Live Preview Log (its look and a build's issue over
   one on its line are checked).
+- Install TinyTeX on a Mac with no TeX (a user account without MacTeX, and no `~/Library/TinyTeX`):
+  the PDF pane's and Settings' button, the progress, a build once it is done, Install adding a
+  package to it, and a failure's alert (offline). The core's install itself is tested into a
+  temporary folder.
 
 ## 27.2 workarounds
 
@@ -26,4 +30,6 @@ it works around.
   then the custom one stays (the look is decided).
 - Windows, on a machine: Home's rows for an opened and a missing folder, and Install's UAC
   elevation (allowed and cancelled), which GitHub's runner can't show.
+- Windows, on a machine with no TeX: Install TinyTeX from Home's bar and from Settings into
+  `%APPDATA%\TinyTeX`, its ring, a build after it, and Install adding a package to it.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
