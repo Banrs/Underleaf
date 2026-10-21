@@ -4,6 +4,9 @@
 
 use ratex_font::FontId;
 use ratex_layout::{LayoutOptions, layout, to_display_list};
+use ratex_lexer::token::Token;
+use ratex_parser::macro_expander::{MacroDefinition, MacroExpander};
+use ratex_parser::{ParseResult, Parser};
 use ratex_svg::{SvgColorSyntax, SvgOptions, render_to_svg_with_color_syntax};
 use ratex_types::color::Color;
 use ratex_types::display_item::{DisplayItem, DisplayList};
@@ -23,8 +26,31 @@ pub struct MathSvg {
 /// No larger than this, in ems: `\rule{1e9pt}{1pt}` would otherwise ask the host for an image of millions of points.
 const MAX_EM: f64 = 1000.0;
 
+/// `\texlocal@optional\name@{default}`: `\name@` given the bracketed option that follows, else
+/// the default, as a project's `\newcommand` with an optional first argument is previewed.
+fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
+    let name = gullet.pop_token();
+    let mut option = gullet.consume_arg(None)?.tokens;
+    gullet.consume_spaces();
+    if gullet.future().text == "[" {
+        gullet.pop_token();
+        option = gullet.consume_arg(Some(&["]"]))?.tokens;
+    }
+    // Reversed, as the gullet's stack holds them.
+    let brace = |text| Token::new(text, name.loc.start, name.loc.end);
+    let mut tokens = vec![brace("}")];
+    tokens.extend(option);
+    tokens.extend([brace("{"), name]);
+    Ok(tokens)
+}
+
 fn display_list(tex: &str, display: bool, color: Rgba) -> Result<DisplayList, String> {
-    let nodes = ratex_parser::parse(tex).map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tex);
+    let optional = MacroDefinition::Function(optional);
+    parser
+        .gullet
+        .set_macro("\\texlocal@optional".into(), optional);
+    let nodes = parser.parse().map_err(|e| e.to_string())?;
     let style = if display {
         MathStyle::Display
     } else {

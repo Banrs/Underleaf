@@ -1151,6 +1151,7 @@ dependencies = [
  "ratex-font",
  "ratex-katex-fonts",
  "ratex-layout",
+ "ratex-lexer",
  "ratex-parser",
  "ratex-svg",
  "ratex-types",

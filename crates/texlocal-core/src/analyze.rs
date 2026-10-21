@@ -121,6 +121,9 @@ pub struct Defined {
     pub name: String,
     pub arguments: usize,
     pub place: Place,
+    /// The definition as the maths preview gives it to RaTeX; none without its body, or for a
+    /// `\def` with parameters.
+    pub tex: Option<String>,
 }
 
 /// A file read in place after the first `before` headings of the file that names it.
@@ -254,12 +257,15 @@ impl Visit for Names<'_> {
             "documentclass" if facts.class.is_none() => {
                 facts.class = headings::class_at(&text.units, name_end);
             }
-            "newcommand" | "DeclareMathOperator" => {
-                let command = defined(text, name_end).filter(|d| d.name.starts_with('\\'));
+            "newcommand" | "renewcommand" | "providecommand" | "DeclareMathOperator" | "def" => {
+                let command = defined(text, name, name_end);
+                let command = command
+                    .filter(|d| d.name.starts_with('\\') && (name != "def" || d.tex.is_some()));
                 facts.commands.extend(command);
             }
             "newenvironment" => {
-                let environment = defined(text, name_end).filter(|d| !d.name.starts_with('\\'));
+                let environment =
+                    defined(text, name, name_end).filter(|d| !d.name.starts_with('\\'));
                 let environment = environment.map(|Defined { name, place, .. }| Named {
                     kind: SymbolKind::Environment,
                     name,
@@ -601,9 +607,10 @@ fn walk(
     into.words += facts.words;
 }
 
-/// What \newcommand, \DeclareMathOperator or \newenvironment defines, named braced or not, with
-/// the arguments it takes in braces: as many as its first option counts, but for an optional one.
-fn defined(text: &Text, name_end: usize) -> Option<Defined> {
+/// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named
+/// braced or not, with the arguments it takes in braces: as many as its first option counts, but
+/// for an optional one.
+fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
     let units = &text.units;
     let (name, at, stop) = match braced(units, name_end) {
         (Some((name, at)), stop) => (name.trim().to_owned(), at, stop),
@@ -619,9 +626,11 @@ fn defined(text: &Text, name_end: usize) -> Option<Defined> {
     if name.trim_start_matches('\\').is_empty() {
         return None;
     }
-    let mut options = Vec::new();
-    scan::arguments(units, stop, |piece, braced| {
-        if !braced {
+    let (mut options, mut body) = (Vec::new(), Vec::new());
+    let (_, closed) = scan::arguments(units, stop, |piece, braced| {
+        if braced {
+            body.extend_from_slice(&units[piece]);
+        } else {
             options.push(String::from_utf16_lossy(&units[piece]));
         }
     });
@@ -629,10 +638,32 @@ fn defined(text: &Text, name_end: usize) -> Option<Defined> {
     let arguments = count
         .unwrap_or(0_usize)
         .saturating_sub(usize::from(options.len() > 1));
+    // As \def, which RaTeX takes whether or not the name is defined; an optional first argument,
+    // which RaTeX's \newcommand lacks, comes through the preview's \texlocal@optional.
+    let body = String::from_utf16_lossy(&body);
+    let parameters = |count| (1..=count).map(|n| format!("#{n}")).collect::<String>();
+    let tex = match (command, options.get(1)) {
+        _ if !closed => None,
+        ("def", _) if !options.is_empty() => None,
+        ("DeclareMathOperator", _) => {
+            let star = if units.get(name_end) == Some(&(b'*' as u16)) {
+                "*"
+            } else {
+                ""
+            };
+            Some(format!("\\def{name}{{\\operatorname{star}{{{body}}}}}"))
+        }
+        (_, Some(default)) => Some(format!(
+            "\\def{name}{{\\texlocal@optional{name}@{{{default}}}}}\\def{name}@{}{{{body}}}",
+            parameters(arguments + 1)
+        )),
+        _ => Some(format!("\\def{name}{}{{{body}}}", parameters(arguments))),
+    };
     Some(Defined {
         name,
         arguments,
         place: Place::of(text, at),
+        tex,
     })
 }
 
