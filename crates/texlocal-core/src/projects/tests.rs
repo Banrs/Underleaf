@@ -270,16 +270,35 @@ fn the_symbol_scan_reads_the_commands_and_environments_a_project_defines() {
     let main = "\\newcommand{\\R}{\\mathbb{R}}\n\\newcommand*\\pair[2]{(#1, #2)}\n\
         \\newcommand{\\opt}[2][x]{#1#2} \\DeclareMathOperator*{\\argmax}{arg\\,max}\n\
         \\newenvironment{thm}[1]{}{} % \\newcommand{\\gone}{}\n\
-        \\newenvironment{\\bad}{}{} \\newcommand{}{} \\newcommand{\\R}[1]{}\n";
+        \\newenvironment{\\bad}{}{} \\newcommand{}{} \\newcommand{\\R}[1]{}\n\
+        \\renewcommand{\\epsilon}{\\varepsilon} \\providecommand\\half{\\frac12} \\def\\d{\\mathrm{d}}\n\
+        \\def\\pt#1{} \\newcommand{\\typing}";
     fs::write(root.join("main.tex"), main).unwrap();
     let found = scan(&root).unwrap();
     let commands = found
         .commands
         .iter()
-        .map(|c| (c.name.as_str(), c.arguments));
+        .map(|c| (c.name.as_str(), c.arguments, c.tex.as_deref()));
     assert_eq!(
         commands.collect::<Vec<_>>(),
-        [("\\R", 0), ("\\pair", 2), ("\\opt", 1), ("\\argmax", 0)]
+        [
+            ("\\R", 0, Some("\\def\\R{\\mathbb{R}}")),
+            ("\\pair", 2, Some("\\def\\pair#1#2{(#1, #2)}")),
+            (
+                "\\opt",
+                1,
+                Some("\\def\\opt{\\texlocal@optional\\opt@{x}}\\def\\opt@#1#2{#1#2}")
+            ),
+            (
+                "\\argmax",
+                0,
+                Some("\\def\\argmax{\\operatorname*{arg\\,max}}")
+            ),
+            ("\\epsilon", 0, Some("\\def\\epsilon{\\varepsilon}")),
+            ("\\half", 0, Some("\\def\\half{\\frac12}")),
+            ("\\d", 0, Some("\\def\\d{\\mathrm{d}}")),
+            ("\\typing", 0, None),
+        ]
     );
     assert_eq!(found.environments, ["thm"]);
 }

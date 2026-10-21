@@ -27,6 +27,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 ratex-font = "=0.1.14"
 ratex-katex-fonts = "=0.1.14"
 ratex-layout = "=0.1.14"
+ratex-lexer = "=0.1.14"
 ratex-parser = "=0.1.14"
 # Glyphs as outlines from the KaTeX fonts compiled in; text those fonts
 # haven't (CJK, Cyrillic) comes from its system-font fallback (render.rs).

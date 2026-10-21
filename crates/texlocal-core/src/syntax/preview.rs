@@ -1,5 +1,6 @@
 //! The maths at the caret, to preview, read by the scanner spelling and symbols use, so display maths is paired as TeX pairs it.
 
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::LazyLock;
 
@@ -20,6 +21,7 @@ pub struct MathPreview {
 static LABELS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:label|tag)\{[^}]*\}").unwrap());
 static NUMBERING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\(?:nonumber|notag)(?-u:\b)").unwrap());
+static CONTROL_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[A-Za-z@]+").unwrap());
 
 const AHEAD: usize = 20_000;
 
@@ -91,9 +93,30 @@ impl SourceDocument {
         );
         (!tex.is_empty()).then(|| MathPreview {
             start: group.open as u32,
-            tex,
+            tex: self.with_definitions(tex),
             display: display(&group),
         })
+    }
+
+    /// The project's definitions the maths uses, itself or through theirs, before it: only those,
+    /// so what RaTeX reads grows with the maths, not with the project.
+    fn with_definitions(&self, tex: String) -> String {
+        fn words(tex: &str) -> impl Iterator<Item = &str> {
+            CONTROL_WORD.find_iter(tex).map(|word| word.as_str())
+        }
+        let mut wanted: Vec<&str> = words(&tex).collect();
+        let (mut seen, mut definitions) = (HashSet::new(), String::new());
+        while let Some(name) = wanted.pop() {
+            if !seen.insert(name) {
+                continue;
+            }
+            let command = self.symbols.commands.iter().find(|c| c.name == name);
+            if let Some(definition) = command.and_then(|c| c.tex.as_deref()) {
+                wanted.extend(words(definition));
+                definitions.push_str(definition);
+            }
+        }
+        definitions + &tex
     }
 }
 
