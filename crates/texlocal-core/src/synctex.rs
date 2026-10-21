@@ -35,11 +35,9 @@ fn pdf_for(root: &Path, live: Option<&Path>) -> Result<PathBuf, CoreError> {
     if let Some(live) = live {
         return Ok(live.to_path_buf());
     }
-    let pdf = read_settings(root).output(root, "pdf")?;
-    if !pdf.exists() {
-        return Err(CoreError::not_found("No compiled PDF yet"));
-    }
-    Ok(pdf)
+    Some(read_settings(root).output(root, "pdf")?)
+        .filter(|pdf| pdf.exists())
+        .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))
 }
 
 async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, CoreError> {
@@ -150,11 +148,10 @@ pub async fn synctex_inverse(
         let source = crate::lossy_string(std::fs::read(root.join(&rel)).ok()?);
         find_in_source(&source, line, text, at)
     });
-    let (line, column) = found.map_or((line, None), |(line, column)| (line, Some(column)));
     Ok(InverseLoc {
         file: rel,
-        line,
-        column,
+        line: found.map_or(line, |(line, _)| line),
+        column: found.map(|(_, column)| column),
     })
 }
 

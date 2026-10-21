@@ -384,7 +384,7 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogItem, Severity, latexmk_errors, parse_blg, parse_log};
+    use super::*;
 
     fn described(items: &[LogItem]) -> Vec<String> {
         let place = |part: Option<String>| part.unwrap_or_else(|| "-".into());
@@ -406,12 +406,16 @@ mod tests {
     }
 
     #[test]
-    fn an_error_without_its_own_line_names_no_place() {
+    fn an_error_takes_the_line_tex_echoes_after_it_or_names_no_place() {
         let error = "./main.tex:12: Undefined control sequence.\nl.12 \\foo\n";
         let fatal = "==> Fatal error occurred, no output PDF file produced!";
         let undefined = "error main.tex:12 Undefined control sequence: \\foo";
         let alone = format!("error -:- {fatal}");
-        let cases: [(String, &[&str]); 4] = [
+        let cases: [(String, &[&str]); 5] = [
+            (
+                "! Emergency stop.\nl.9 \\end\n".into(),
+                &["error main.tex:9 Emergency stop."],
+            ),
             // A "!" error doesn't take the next error's "l.<n>".
             (
                 format!("! Emergency stop.\n{error}"),
@@ -430,26 +434,6 @@ mod tests {
         for (log, expected) in cases {
             assert_eq!(parsed(&log), expected, "{log}");
         }
-    }
-
-    #[test]
-    fn crlf_logs_parse_like_lf_logs() {
-        let lf = "./main.tex:3: Undefined control sequence.\n\
-                  <recently read> \\foo\n\
-                  l.3 \\foo\n\
-                  \n\
-                  ! Emergency stop.\n\
-                  l.9 \\end\n\
-                  Package hyperref Warning: Token not allowed\n\
-                  (hyperref) removing `math shift' on input line 44.\n";
-        assert_eq!(
-            parsed(&lf.replace('\n', "\r\n")),
-            [
-                "error main.tex:3 Undefined control sequence: \\foo",
-                "error main.tex:9 Emergency stop.",
-                "warning main.tex:44 Token not allowed removing `math shift' on input line 44.",
-            ]
-        );
     }
 
     #[test]
@@ -500,7 +484,7 @@ mod tests {
             "x.sty: Undefined control sequence: \\a",
             "Undefined control sequence: \\ab-c",
         ] {
-            assert_eq!(super::undefined_command(message), None, "{message}");
+            assert_eq!(undefined_command(message), None, "{message}");
         }
     }
 
@@ -685,6 +669,13 @@ mod tests {
                 "warning -:- Overfull \\vbox (3.0pt too high) has occurred while \\output is active",
             ]
         );
+    }
+
+    #[test]
+    fn crlf_logs_parse_like_lf_logs() {
+        for log in [NESTED, FONTSPEC, LUALATEX] {
+            assert_eq!(parsed(&log.replace('\n', "\r\n")), parsed(log));
+        }
     }
 
     #[test]
