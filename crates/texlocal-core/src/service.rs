@@ -134,12 +134,9 @@ impl Service {
                     engine.as_deref(),
                 )?)
             }
-            "free_project_name" => Ok(json!({
-                "name": projects::free_project_name(
-                    &self.data_dir,
-                    arg::<Option<String>>(args, "name")?.as_deref(),
-                )?
-            })),
+            "free_project_name" => {
+                Ok(json!({ "name": projects::free_project_name(&self.data_dir)? }))
+            }
             "rename_project" => {
                 let (id, name) = (s("id")?, s("name")?);
                 out(self.with_project(id, |_| {

@@ -157,7 +157,7 @@ fn syntax_commands_round_trip_through_the_c_abi() {
     unsafe {
         let args = c(&light.to_string());
         let colors = take_json(tl_syntax_call(c("theme_colors").as_ptr(), args.as_ptr()));
-        assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(9));
+        assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(5));
         assert!(tl_syntax_call(ptr::null(), c("{}").as_ptr()).is_null());
     }
 }

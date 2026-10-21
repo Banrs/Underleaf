@@ -32,9 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// After state restoration, which may have made the window.
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindow.start()
-        #if DEBUG
-        QASnapshot.install()
-        #endif
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }

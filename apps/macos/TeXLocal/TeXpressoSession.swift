@@ -100,21 +100,3 @@ final class TeXpressoSession {
         if let log = state.log { self.log = log }
     }
 }
-
-/// Read as a session starts.
-nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
-    case pane, window
-
-    static var current: Self {
-        UserDefaults.standard.string(forKey: DefaultsKey.liveViewer).flatMap(Self.init) ?? .pane
-    }
-
-    var id: Self { self }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .pane: "PDF Pane"
-        case .window: "TeXpresso’s Window"
-        }
-    }
-}

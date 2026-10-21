@@ -177,10 +177,8 @@ fn keys_type_as_the_editor_assists() {
         ("\\", caret(1), "{⌫", "\\", caret(1)),
         ("\\", caret(1), "[⏎", "\\[\n\n\\]", caret(3)),
         ("\\\\", caret(2), "[", "\\\\[]", caret(3)),
-        // An emoji after an opening bracket is occupied text, and a bracket
-        // with a mark on it is no bracket.
+        // An emoji after an opening bracket is occupied text.
         ("😀", caret(0), "(", "(😀", caret(1)),
-        ("}\u{301}", caret(0), "{", "{}\u{301}", caret(1)),
         ("  a", caret(3), "⏎", "  a\n  ", caret(6)),
         ("  a{}", caret(4), "⏎", "  a{\n  \n  }", caret(7)),
         ("\ta  b", caret(2), "⏎", "\ta\n\tb", caret(4)),

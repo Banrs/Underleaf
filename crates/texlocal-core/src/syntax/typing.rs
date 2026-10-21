@@ -4,12 +4,9 @@
 use std::collections::BTreeSet;
 
 use serde::Serialize;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::snippet::Snippet;
-use super::{
-    SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice, utf16,
-};
+use super::{SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice};
 
 /// What a key does instead of the editor: an edit typed as a key types (so it undoes with the typing around it),
 /// and where the selection goes.
@@ -38,52 +35,28 @@ pub(crate) struct Typing {
 }
 
 /// An opening bracket is closed for the user before these, or space, or the end.
-const CLOSE_BEFORE: [&str; 6] = [")", "]", "}", ":", ";", ">"];
+const CLOSE_BEFORE: &str = ")]}:;>";
 
 const PARTNER_WITHIN: usize = 10_000;
 
-const PAIRS: [(&str, &str); 3] = [("(", ")"), ("[", "]"), ("{", "}")];
+const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
 
-fn closing_of(c: &str) -> Option<&'static str> {
-    PAIRS.iter().find(|pair| pair.0 == c).map(|pair| pair.1)
+fn closing_of(u: u16) -> Option<char> {
+    PAIRS.iter().find(|pair| is(u, pair.0)).map(|pair| pair.1)
 }
 
-pub(super) fn is_closing(c: &str) -> bool {
-    PAIRS.iter().any(|pair| pair.1 == c)
-}
-
-/// As NSString's composed character sequence.
-fn character(units: &[u16], at: usize) -> Option<String> {
-    if at >= units.len() {
-        return None;
-    }
-    let mut from = at.saturating_sub(32);
-    while from > 0 && (0xdc00..0xe000).contains(&units[from]) {
-        from -= 1;
-    }
-    let to = (at + 32).min(units.len());
-    let window = String::from_utf16_lossy(&units[from..to]);
-    let mut offset = from;
-    for cluster in window.graphemes(true) {
-        offset += utf16(cluster);
-        if at < offset {
-            return Some(cluster.to_owned());
-        }
-    }
-    None
+pub(super) fn is_closing(u: u16) -> bool {
+    PAIRS.iter().any(|pair| is(u, pair.1))
 }
 
 fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
     let opener = caret.checked_sub(1)?;
-    let close = character(units, opener).and_then(|c| closing_of(&c))?;
-    let at = |i| character(units, i);
-    if at(caret).as_deref() == Some(close) {
+    let close = closing_of(units[opener])?;
+    let at = |i, c| units.get(i).is_some_and(|&u| is(u, c));
+    if at(caret, close) {
         return Some(1);
     }
-    (escaped(units, opener)
-        && at(caret).as_deref() == Some("\\")
-        && at(caret + 1).as_deref() == Some(close))
-    .then_some(2)
+    (escaped(units, opener) && at(caret, '\\') && at(caret + 1, close)).then_some(2)
 }
 
 impl SourceDocument {
@@ -92,22 +65,25 @@ impl SourceDocument {
         typing.pending = None;
         let units = &self.text.units[..];
         // More than a character, as an input method commits, goes in as it is.
-        if typed.graphemes(true).count() != 1 {
+        let Some(key) = typed
+            .encode_utf16()
+            .next()
+            .filter(|_| typed.chars().count() == 1)
+        else {
             return Keystroke {
                 completions: Completing::Close,
                 ..Keystroke::default()
             };
-        }
+        };
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let length = end - start;
-        let next = character(units, start);
-        let next = next.as_deref();
-        if length == 0 && typing.closers.contains(&start) && is_closing(typed) {
+        let next = units.get(start).copied();
+        if length == 0 && typing.closers.contains(&start) && is_closing(key) {
             // A closer put in as \] or \}: its bracket steps over both, and a backslash typed for it goes. A
             // backslash alone is typed in, being a command's as often as the closer's.
             let escaped_closer =
-                next == Some("\\") && character(units, start + 1).as_deref() == Some(typed);
-            if next == Some(typed) || escaped_closer {
+                next.is_some_and(|u| is(u, '\\')) && units.get(start + 1) == Some(&key);
+            if next == Some(key) || escaped_closer {
                 typing.closers.remove(&start);
                 let mut bracket = start + escaped_closer as usize;
                 let mut keystroke = Keystroke::default();
@@ -121,7 +97,7 @@ impl SourceDocument {
                 return keystroke;
             }
         }
-        if let Some(close) = closing_of(typed).filter(|_| auto_pair) {
+        if let Some(close) = closing_of(key).filter(|_| auto_pair) {
             if length > 0 {
                 let selected = String::from_utf16_lossy(&units[start..end]);
                 typing.pending = Some((start, end + 1));
@@ -131,8 +107,8 @@ impl SourceDocument {
                     ..Keystroke::default()
                 };
             }
-            let space = |n: &str| n.starts_with(char::is_whitespace);
-            if next.is_none_or(|n| space(n) || CLOSE_BEFORE.contains(&n)) {
+            let before = |c: char| c.is_whitespace() || CLOSE_BEFORE.contains(c);
+            if next.is_none_or(|n| char::from_u32(n.into()).is_some_and(before)) {
                 let slash = if escaped(units, start) { "\\" } else { "" };
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
@@ -144,7 +120,7 @@ impl SourceDocument {
             }
         }
         Keystroke {
-            partner: is_closing(typed).then_some(start as u32),
+            partner: is_closing(key).then_some(start as u32),
             completions: Completing::Offer,
             ..Keystroke::default()
         }
@@ -265,12 +241,11 @@ impl SourceDocument {
         let at = at as usize;
         let units = &self.text.units[..];
         let start = *units.get(at)?;
-        let bracket = String::from_utf16_lossy(&[start]);
         let &(open, close) = PAIRS
             .iter()
-            .find(|pair| pair.0 == bracket || pair.1 == bracket)?;
-        let opens = open == bracket;
-        let partner = u16::from(if opens { close } else { open }.as_bytes()[0]);
+            .find(|pair| is(start, pair.0) || is(start, pair.1))?;
+        let opens = is(start, open);
+        let partner = if opens { close } else { open } as u16;
         let near = at.saturating_sub(PARTNER_WITHIN)..(at + PARTNER_WITHIN + 1).min(units.len());
         let escaped_here = escaped(units, at);
         // A comment is known from its line's start, so reading starts there.

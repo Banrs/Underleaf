@@ -113,8 +113,9 @@ impl SourceDocument {
         // A bracket closing an empty field is the snippet's own, put in for
         // the user like one auto-closed: typing it steps over.
         for field in snippet.fields.iter().filter(|f| f.length == 0) {
-            let next = self.text.units.get(field.start..field.start + 1);
-            if next.is_some_and(|u| is_closing(&String::from_utf16_lossy(u))) {
+            if let Some(&u) = self.text.units.get(field.start)
+                && is_closing(u)
+            {
                 self.typing.closers.insert(field.start);
             }
         }

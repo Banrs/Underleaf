@@ -1,39 +1,24 @@
-//! Highlighting by the rules of CodeMirror's stex mode, whose token names the kinds keep, except where stex reads
-//! TeX otherwise than TeX does (\verb and verbatim are plain, a `%` after a number starts a comment, any letter in
-//! maths is a letter). Lines keep their start states, so an edit re-reads only from its line.
+//! Highlighting by the rules of CodeMirror's stex mode, except where stex reads TeX otherwise than TeX does (\verb
+//! and verbatim are plain, a `%` after a number starts a comment, any letter in maths is a letter).
+//! Lines keep their start states, so an edit re-reads only from its line.
 
 use super::catalog::CATALOG;
 use super::scan::blank_line;
 use super::stack::Stack;
 use super::{NAME, Text, ascii, letter};
 
+/// One per colour a theme has, numbered in the C ABI as a theme's colours are ordered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HighlightKind {
+    /// `\command`, `\begin`, `\end`, escapes.
     Command,
+    /// Environment, label, reference, citation, file and package-option names; numbers outside maths.
     Argument,
-    /// `$ $$ \( \) \[ \]` (keyword).
-    MathDelimiter,
-    MathIdentifier,
-    Number,
+    /// Maths' delimiters, letters and numbers.
+    Maths,
     Comment,
-    /// A stray closing brace, or what maths can't hold (error).
+    /// A stray closing brace, or what maths can't hold.
     Invalid,
-    StringLiteral,
-    Builtin,
-}
-
-impl HighlightKind {
-    pub const ALL: [Self; 9] = [
-        Self::Command,
-        Self::Argument,
-        Self::MathDelimiter,
-        Self::MathIdentifier,
-        Self::Number,
-        Self::Comment,
-        Self::Invalid,
-        Self::StringLiteral,
-        Self::Builtin,
-    ];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,7 +115,6 @@ use HighlightKind::*;
 
 fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
     match ascii(name, &mut [0; NAME]) {
-        "importmodule" => &[Some(StringLiteral), Some(Builtin)],
         "documentclass" => &[None, Some(Argument)],
         "usepackage" | "begin" | "end" | "label" | "ref" | "eqref" | "cite" | "bibitem"
         | "Bibitem" | "RBibitem" => &[Some(Argument)],
@@ -195,7 +179,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     for (open, close) in [("\\[", "\\]"), ("\\(", "\\)"), ("$$", "$$"), ("$", "$")] {
         if s.eat(open) {
             state.mode = Mode::Math(close);
-            return Some(MathDelimiter);
+            return Some(Maths);
         }
     }
     let c = s.next();
@@ -233,7 +217,7 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
     }
     if s.eat(end) {
         state.mode = Mode::Normal;
-        return Some(MathDelimiter);
+        return Some(Maths);
     }
     let c = s.peek()?;
     let next = s.at(1);
@@ -244,7 +228,7 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
     }
     if math_letter(c) {
         s.eat_while(math_letter);
-        return Some(MathIdentifier);
+        return Some(Maths);
     }
     if c == b'\\' as u16 && next.is_some_and(|u| one_of(u, "$&%#{}_,;!/")) {
         s.pos += 2;
@@ -265,7 +249,7 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
             s.pos += 1;
             s.eat_while(is_digit);
         }
-        return Some(Number);
+        return Some(Maths);
     }
     s.pos += 1;
     if one_of(c, "{}[]()") {
@@ -435,12 +419,12 @@ mod tests {
     #[test]
     fn maths() {
         let expected = [
-            "$ MathDelimiter",
-            "x MathIdentifier",
+            "$ Maths",
+            "x Maths",
             "^ Command",
-            "2 Number",
+            "2 Maths",
             "\\alpha Command",
-            "$ MathDelimiter",
+            "$ Maths",
         ];
         assert_eq!(runs("$x^2 + \\alpha$"), expected);
         // stex's own reading: a line break in \[ \] is an error.
@@ -455,13 +439,13 @@ mod tests {
             .into_iter()
             .map(|h| (h.start, h.kind))
             .collect();
-        assert_eq!(kinds, [(0, MathDelimiter), (3, MathIdentifier)]);
+        assert_eq!(kinds, [(0, Maths), (3, Maths)]);
         doc.edit(0, 0, "$$"); // "$$$$\nx…": opened and closed on line 1
         assert_eq!(doc.highlights(5, 1).len(), 0);
         // A blank line may hold spaces, or a Windows line ending's return.
         for blank in ["\r", "  \t"] {
             let source = format!("$$ x\n{blank}\ny");
-            assert_eq!(runs(&source), ["$$ MathDelimiter", "x MathIdentifier"]);
+            assert_eq!(runs(&source), ["$$ Maths", "x Maths"]);
         }
     }
 
@@ -471,15 +455,15 @@ mod tests {
         assert_eq!(
             runs("$\\text{größe} + α$"),
             [
-                "$ MathDelimiter",
+                "$ Maths",
                 "\\text Command",
-                "größe MathIdentifier",
-                "α MathIdentifier",
-                "$ MathDelimiter"
+                "größe Maths",
+                "α Maths",
+                "$ Maths"
             ]
         );
         let listing = "\\begin{lstlisting}\n$ make all # shell\n\nx = 5 % 3\n\\end{lstlisting} $y$";
-        let after = ["$ MathDelimiter", "y MathIdentifier", "$ MathDelimiter"];
+        let after = ["$ Maths", "y Maths", "$ Maths"];
         let around = ["\\begin Command", "lstlisting Argument", "\\end Command"];
         assert_eq!(
             runs(listing),
@@ -493,13 +477,6 @@ mod tests {
             runs("\\verb*|$x\n$y$"),
             [&["\\verb* Command"][..], &after].concat()
         );
-    }
-
-    #[test]
-    fn every_kind_in_the_c_abi_s_order() {
-        for (i, kind) in super::HighlightKind::ALL.into_iter().enumerate() {
-            assert_eq!(kind as usize, i);
-        }
     }
 
     #[test]

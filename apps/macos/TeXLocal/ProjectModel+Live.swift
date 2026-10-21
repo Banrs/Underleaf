@@ -17,7 +17,7 @@ extension ProjectModel {
         texpresso.starting()
         if let pages = pdf.visiblePages { liveView(pages) }
         liveCaret()
-        core.send("session_live_start", ["session": session, "window": LiveViewer.current == .window])
+        core.send("session_live_start", ["session": session])
     }
 
     func stopTeXpresso() {

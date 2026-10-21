@@ -41,8 +41,7 @@ pub(crate) enum Conflict {
     Gone,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reload {
     Disk,
     Revert,
@@ -431,10 +430,7 @@ impl Actor {
                     self.reload_tree();
                 }
             }
-            "live_start" => {
-                let window = arg::<Option<bool>>(args, "window")?.unwrap_or(false);
-                return Ok(self.live_start_asked(window));
-            }
+            "live_start" => return Ok(self.live_start_asked()),
             "live_stop" => {
                 self.live_stop();
                 return Ok(self.live_state());
@@ -761,8 +757,7 @@ impl Actor {
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.reload = Some(reason);
-            let reload = json!({ "path": path, "text": text, "reason": reason });
-            self.emit("document_reload", reload);
+            self.emit("document_reload", json!({ "path": path, "text": text }));
         }
     }
 
@@ -787,12 +782,17 @@ impl Actor {
         if self.live.active() {
             self.live.disk_paths.extend(meaning.listed.iter().cloned());
         }
-        if meaning.tree || meaning.settings {
-            let main = self.tree.main.clone();
+        let main = self.tree.main.clone();
+        if meaning.tree {
             self.reload_tree();
-            // Another app chose another main file: builds and Live Preview follow it as they
-            // follow the app's own choice.
-            if meaning.settings && self.tree.main != main {
+        }
+        // Another app chose another main file: builds and Live Preview follow it as they follow
+        // the app's own choice. Each fold and folder opened writes the settings too, so the
+        // folder is walked again only for another mark.
+        if meaning.settings {
+            let chosen = paths::fold_case(&settings::read_settings(&self.root).main_file);
+            let mut files = self.tree.files.iter();
+            if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
                 self.main_file_changed();
             }
         }
@@ -931,13 +931,8 @@ impl Actor {
 
     fn replace(&self, args: &Value) -> Result<Value, CoreError> {
         let (query, to) = (query(args)?, string_arg(args, "replacement")?);
-        let files = arg::<Option<Vec<String>>>(args, "files")?;
         let open = self.texts_to_edit("replaced")?;
-        let chosen = |rel: &str| {
-            let listed = files.as_ref();
-            projects::is_text(rel) && listed.is_none_or(|files| files.iter().any(|f| f == rel))
-        };
-        self.edit_project(&open, &chosen, &|_, text| query.places(text), to)
+        self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
     }
 
     /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
@@ -1148,9 +1143,7 @@ fn definitions(facts: &Facts, kind: SymbolKind) -> &[Named] {
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {
-    let option = |key| arg::<Option<bool>>(args, key).map(Option::unwrap_or_default);
-    let text = string_arg(args, "query")?;
-    Ok(Query::new(text, option("matchCase")?, option("wholeWord")?))
+    string_arg(args, "query").map(Query::new)
 }
 
 /// The open documents' text as the editor has it, each taken without holding the others.

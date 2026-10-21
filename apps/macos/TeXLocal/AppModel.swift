@@ -13,10 +13,8 @@ nonisolated enum DefaultsKey {
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
     static let syncAfterCompile = "syncAfterCompile"
-    static let newProjectTemplate = "newProjectTemplate"
     static let newProjectEngine = "newProjectEngine"
     static let settingsPane = "settingsPane"
-    static let dismissedTeXTip = "dismissedTeXTip"
     static let editorFontName = "editorFontName"
     static let editorFontSize = "editorFontSize"
     static let editorSyntaxTheme = "editorSyntaxTheme"
@@ -25,7 +23,6 @@ nonisolated enum DefaultsKey {
     static let editorAutoComplete = "editorAutoComplete"
     static let editorSpellCheck = "editorSpellCheck"
     static let pdfPaper = "pdfPaper"
-    static let liveViewer = "liveViewer"
 }
 
 enum Links {
@@ -143,10 +140,8 @@ final class AppModel {
     }
 
     /// The sheet opens once the core has named the project.
-    func newProject(_ template: ProjectTemplate? = nil) {
+    func newProject(_ template: ProjectTemplate = .article) {
         guard libraryProblem == nil else { return }
-        let template = template ?? defaults.string(forKey: DefaultsKey.newProjectTemplate)
-            .flatMap(ProjectTemplate.init(rawValue:)) ?? .standard
         Task {
             let free = try? await core.call("free_project_name", as: FreeName.self)
             newProjectDraft = NewProjectDraft(template: template, name: free?.name ?? "Untitled")

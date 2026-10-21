@@ -29,7 +29,6 @@ struct Fake {
     calls: Mutex<Vec<String>>,
     builds: Mutex<VecDeque<oneshot::Sender<Result<CompileResult, CoreError>>>>,
     starts: Mutex<Vec<Vec<String>>>,
-    panes: Mutex<Vec<bool>>,
     updates: Mutex<Vec<(String, String)>>,
     edits: Mutex<Vec<(String, usize, usize, String)>>,
     /// The next edit's refusal.
@@ -127,11 +126,10 @@ impl Preview for Fake {
         _root: &Path,
         files: &[FileBuffer],
         _path_env: &str,
-        pane: Option<&Pane>,
+        _pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
         self.note("live_start");
-        lock(&self.panes).push(pane.is_some());
         lock(&self.starts).push(files.iter().map(|f| f.path.clone()).collect());
         *lock(&self.sink) = Some(sink);
         Ok(status(true))
@@ -563,7 +561,6 @@ async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_o
     let reloads = rig.of_type("document_reload").await;
     assert_eq!(reloads.len(), 1);
     assert_eq!(reloads[0]["text"], "From elsewhere");
-    assert_eq!(reloads[0]["reason"], "disk");
     doc.reload("From elsewhere");
     let state = rig.state().await;
     assert_eq!(state["documents"][0]["dirty"], false);
@@ -615,7 +612,6 @@ async fn revert_shows_and_writes_back_the_disks_text() {
     let doc = in_conflict(&rig).await;
     rig.resolve("revert").await;
     let reloads = rig.of_type("document_reload").await;
-    assert_eq!(reloads[0]["reason"], "revert");
     assert_eq!(reloads[0]["text"], "theirs");
     doc.reload("theirs");
     let state = rig.state().await;
@@ -702,6 +698,13 @@ async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_
     let paper = (json!("paper.tex"), Some(json!(true)));
     assert_eq!(marks, [(json!("main.tex"), None), paper]);
     let builds = rig.fake.called("compile");
+    // A fold's write keeps the main file, so the folder isn't walked for files it didn't hear of.
+    fs::write(rig.root.join("unheard.tex"), "").unwrap();
+    let folds = r#"{ "mainFile": "paper.tex", "ui": { "foldedHeadings": ["a"] } }"#;
+    fs::write(rig.root.join(".texlocal.json"), folds).unwrap();
+    rig.changed(".texlocal.json", false);
+    wait(300).await;
+    assert!(rig.of_type("tree").await.is_empty());
     let settings = r#"{ "mainFile": "main.tex" }"#;
     fs::write(rig.root.join(".texlocal.json"), settings).unwrap();
     rig.changed(".texlocal.json", false);
@@ -1107,21 +1110,6 @@ async fn the_caret_is_told_once_it_settles() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn texpressos_own_window_is_kept_through_the_sessions_restarts() {
-    let rig = Rig::new(false).await;
-    fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
-    let started = rig.ok("live_start", json!({ "window": true })).await;
-    assert_eq!(started["phase"], "running");
-    rig.ok("rename", json!({ "from": "ch.tex", "to": "one.tex" }))
-        .await;
-    wait(200).await;
-    rig.state().await;
-    rig.ok("live_stop", json!({})).await;
-    live(&rig).await;
-    assert_eq!(*lock(&rig.fake.panes), [false, false, true]);
-}
-
-#[tokio::test(start_paused = true)]
 async fn closing_saves_and_stops_the_preview() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
@@ -1283,33 +1271,28 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     assert_eq!(answer["places"][0]["file"], "b.tex");
 }
 
-/// Every match in a file goes, and only in the files asked for; one that isn't UTF-8 refuses
-/// them all, as writing it would change its bytes.
+/// Every match in a file goes; one that isn't UTF-8 refuses them all, as writing it would change
+/// its bytes.
 #[tokio::test(start_paused = true)]
 async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
     let rig = Rig::new(false).await;
     // Each line as it ended, though the first's ending isn't the second's.
     fs::write(rig.root.join("ch.tex"), "a cat\nand a cat\r\n").unwrap();
-    fs::write(rig.root.join("notes.txt"), "cat").unwrap();
     fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
     let doc = rig.open("main.tex").await;
     doc.edit(5, 0, " cat");
-    let replace = |files: Value| {
-        let args = json!({ "query": "Cat", "replacement": "dog", "files": files });
-        rig.call("replace", args)
-    };
-    let refused = replace(Value::Null).await.unwrap_err();
+    let replace = || rig.call("replace", json!({ "query": "Cat", "replacement": "dog" }));
+    let refused = replace().await.unwrap_err();
     assert!(refused.status == 400 && refused.message.contains("latin.tex"));
     assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
-    let replaced = replace(json!(["ch.tex", "main.tex"])).await.unwrap();
+    fs::remove_file(rig.root.join("latin.tex")).unwrap();
     let edit = json!({ "start": 6, "length": 3, "text": "dog" });
     let answer = json!({
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
         "written": [{ "file": "ch.tex", "count": 2 }],
     });
-    assert_eq!(replaced, answer);
+    assert_eq!(replace().await.unwrap(), answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
-    assert_eq!(rig.disk("notes.txt"), "cat");
 }
 
 /// A citation's .bib entry, the key of a list that names it and an entry's crossref; refused

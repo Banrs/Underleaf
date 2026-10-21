@@ -112,8 +112,8 @@ struct FormatPanel: View {
         .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
-    /// Notes' half-point separator, where SwiftUI's `Divider` takes a point here.
-    private var separator: some View { Divider().frame(height: 0.5) }
+    /// Notes' half-point separator: a `Divider` framed to half a point still inks a whole one.
+    private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
         Toggle(command.title, systemImage: command.style!.symbol, isOn: Binding(get: { on }, set: { _ in

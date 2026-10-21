@@ -69,14 +69,15 @@ final class ProjectFlowTests {
         try await waitUntil(timeout: .seconds(60)) { project.finishedBuilds > before && !project.compiling }
     }
 
-    @Test func theMainFileOnDiskStaysOutOfTheTrash() async throws {
+    @Test func aMainFileChosenOnDiskIsShownAndStaysOutOfTheTrash() async throws {
         let (project, folder) = try await opened(with: ["second.tex": "x"])
         let settings = folder.appending(path: ".texlocal.json")
         var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
         json["mainFile"] = "second.tex"
         try JSONSerialization.data(withJSONObject: json).write(to: settings)
         await project.deleteEntry("second.tex")
-        #expect(exists(folder.appending(path: "second.tex")) && project.settings?.mainFile == "second.tex")
+        try await waitUntil { project.settings?.mainFile == "second.tex" }
+        #expect(exists(folder.appending(path: "second.tex")))
     }
 
     @Test func theLastOpenHasTheEditor() async throws {
