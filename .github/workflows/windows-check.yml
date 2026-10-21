@@ -1,0 +1,77 @@
+name: Windows check
+
+# Builds and tests the Windows app as ci.yml's Windows job does, then captures its screens and UI Automation trees
+# (.github/win-check) for comparing two commits: push each to its own claude/win-check/<name> branch and diff the
+# artifacts with tools/qa/shotdiff.py.
+on:
+  push:
+    branches: ['claude/win-check/**']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      OUT: ${{ github.workspace }}\win-check-out
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-wincheck-${{ hashFiles('apps/windows/**/*.csproj', 'apps/windows/Directory.Build.props', '.github/win-check/*.csproj') }}
+      # First, so a mistake in the harness fails in a minute.
+      - name: Build the capture tool
+        run: dotnet build .github/win-check/Capture.csproj -c Release -o "$env:RUNNER_TEMP\capture"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-app
+      - run: cargo rustc -p texlocal-ffi --lib --release --crate-type cdylib
+      - id: build
+        run: dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64 -p:SkipCargo=true
+      - if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet test apps/windows/TeXLocal.Tests -c Debug -p:SkipCargo=true
+      - name: Smoke
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          TEXLOCAL_DATA: ${{ runner.temp }}\tl-smoke
+        run: |
+          $exe = Get-ChildItem apps/windows/TeXLocal/bin -Recurse -Filter TeXLocal.exe | Select-Object -First 1
+          if (-not (Test-Path (Join-Path $exe.DirectoryName 'texlocal_ffi.dll'))) { throw 'texlocal_ffi.dll missing' }
+          New-Item -ItemType Directory -Force "$env:OUT\logs" | Out-Null
+          $err = Join-Path $env:OUT logs\smoke-stderr.txt
+          $p = Start-Process $exe.FullName -ArgumentList '--smoke' -PassThru -RedirectStandardError $err
+          $null = $p.Handle  # else ExitCode can read null once it has exited
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'smoke timed out' }
+          if ($p.ExitCode -ne 0) { Get-Content $err; throw "smoke exited $($p.ExitCode)" }
+      # A pinned TinyTeX, outside the folders the core searches: only the launches given its PATH find TeX.
+      - name: TinyTeX
+        id: tex
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          $sfx = Join-Path $env:RUNNER_TEMP tinytex.exe
+          Invoke-WebRequest https://github.com/rstudio/tinytex-releases/releases/download/v2026.10/TinyTeX-1-windows-v2026.10.exe -OutFile $sfx
+          & 7z x $sfx "-o$env:RUNNER_TEMP\tinytex" -y | Out-Null
+          $bin = Get-ChildItem "$env:RUNNER_TEMP\tinytex" -Recurse -Filter latexmk.exe | Select-Object -First 1
+          if (-not $bin) { throw 'no latexmk in TinyTeX' }
+          "TEX_BIN=$($bin.DirectoryName)" >> $env:GITHUB_ENV
+      - name: Captures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          $exe = Get-ChildItem apps/windows/TeXLocal/bin -Recurse -Filter TeXLocal.exe | Select-Object -First 1
+          & "$env:RUNNER_TEMP\capture\Capture.exe" --exe $exe.FullName --seed tools/qa/library-seed --out $env:OUT --tex "$env:TEX_BIN"
+          if ($LASTEXITCODE -ne 0) { throw "capture exited $LASTEXITCODE" }
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: win-check
+          path: ${{ env.OUT }}
+          if-no-files-found: warn
+          retention-days: 14
