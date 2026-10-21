@@ -41,8 +41,7 @@ pub(crate) enum Conflict {
     Gone,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reload {
     Disk,
     Revert,
@@ -761,8 +760,7 @@ impl Actor {
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.reload = Some(reason);
-            let reload = json!({ "path": path, "text": text, "reason": reason });
-            self.emit("document_reload", reload);
+            self.emit("document_reload", json!({ "path": path, "text": text }));
         }
     }
 

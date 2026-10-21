@@ -563,7 +563,6 @@ async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_o
     let reloads = rig.of_type("document_reload").await;
     assert_eq!(reloads.len(), 1);
     assert_eq!(reloads[0]["text"], "From elsewhere");
-    assert_eq!(reloads[0]["reason"], "disk");
     doc.reload("From elsewhere");
     let state = rig.state().await;
     assert_eq!(state["documents"][0]["dirty"], false);
@@ -615,7 +614,6 @@ async fn revert_shows_and_writes_back_the_disks_text() {
     let doc = in_conflict(&rig).await;
     rig.resolve("revert").await;
     let reloads = rig.of_type("document_reload").await;
-    assert_eq!(reloads[0]["reason"], "revert");
     assert_eq!(reloads[0]["text"], "theirs");
     doc.reload("theirs");
     let state = rig.state().await;
