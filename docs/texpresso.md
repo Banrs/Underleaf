@@ -55,10 +55,16 @@ the app quits or crashes.
 - Finishing passes, which bring references and contents up to date, run in a second TeX that
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle reruns
   stay off.
+- With or without the variable, a run that TeX stops (an emergency stop, a source without
+  `\end{document}`, 100 errors) ends `texpresso-xetex` with exit status 1 where upstream's calls
+  `abort()`, which left a macOS crash report for each one while typing. TeXpresso sees the run end
+  as before, and the error is in TeX's log. TeX's `confusion()`, its own invariant failing, still
+  aborts.
 
-Without the variable it behaves as upstream's but for one change, in `texpresso-xetex` too: TeX
-Live's `doc` and `source` folders are left out of what TeX can read, since a package's example
-`color.cfg`, `graphics.cfg` or `hyperref.cfg` there would be found before the real one.
+Without the variable it behaves as upstream's but for that exit status and one change, in
+`texpresso-xetex` too: TeX Live's `doc` and `source` folders are left out of what TeX can read,
+since a package's example `color.cfg`, `graphics.cfg` or `hyperref.cfg` there would be found
+before the real one.
 
 Edits go to TeXpresso as the UTF-8 range they replaced; a file's whole text is sent only when it
 is opened, changed by another app, or an edit didn't fit the core's copy.

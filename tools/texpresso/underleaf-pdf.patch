@@ -469,6 +469,35 @@ index 0000000..e580acc
 +  }
 +  return last->cff ? last->cff : font;
 +}
+diff --git a/src/engine/engine/xetex-errors.c b/src/engine/engine/xetex-errors.c
+index fb6c9d3..15bf4ab 100644
+--- a/src/engine/engine/xetex-errors.c
++++ b/src/engine/engine/xetex-errors.c
+@@ -150,7 +150,8 @@ confusion(const char* s)
+     }
+ 
+     post_error_message(1);
+-    _tt_abort("halted on confusion()");
++    // TeX's own invariant failed: unlike the stops that end in _tt_abort, a crash report is wanted.
++    abort();
+ }
+ 
+ 
+diff --git a/src/engine/main/main.c b/src/engine/main/main.c
+index 333408e..5ee2032 100644
+--- a/src/engine/main/main.c
++++ b/src/engine/main/main.c
+@@ -62,7 +62,9 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
+   vfprintf(stderr, format, ap);
+   va_end(ap);
+   fprintf(stderr, "\n");
+-  do_abort();
++  // TeX stopping on the document (an emergency stop, no \end, too many errors) is not a crash:
++  // its log is written, and an abort would leave a crash report for every one while typing.
++  exit(EXIT_FAILURE);
+ }
+ 
+ int ttstub_shell_escape(const unsigned short *cmd, size_t len)
 diff --git a/src/frontend/driver.c b/src/frontend/driver.c
 index 9337b08..f67bcf3 100644
 --- a/src/frontend/driver.c
