@@ -83,6 +83,11 @@ pub struct Facts {
     /// ended, and graphics included.
     pub uses: Vec<Named>,
     pub class: Option<headings::DocumentClass>,
+    /// What `\usepackage` and `\RequirePackage` load.
+    pub packages: Vec<String>,
+    /// Where a new `\usepackage` goes: at the end of the line where the last one's argument ends,
+    /// else `\documentclass`'s, which a package can't come before.
+    pub new_package: Option<Place>,
 }
 
 /// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
@@ -256,6 +261,15 @@ impl Visit for Names<'_> {
             }
             "documentclass" if facts.class.is_none() => {
                 facts.class = headings::class_at(&text.units, name_end);
+                facts.new_package = Some(after_line(text, name_end));
+            }
+            "usepackage" | "RequirePackage" => {
+                let packages = listed(&text.units, name_end, true).into_iter();
+                let packages = packages.map(|at| String::from_utf16_lossy(&text.units[at]));
+                facts.packages.extend(packages);
+                if name == "usepackage" {
+                    facts.new_package = Some(after_line(text, name_end));
+                }
             }
             "newcommand" | "renewcommand" | "providecommand" | "DeclareMathOperator" | "def" => {
                 let command = defined(text, name, name_end);
@@ -665,6 +679,13 @@ fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
         place: Place::of(text, at),
         tex,
     })
+}
+
+/// The end of the line a command's arguments end on.
+fn after_line(text: &Text, name_end: usize) -> Place {
+    let (_, stop) = braced(&text.units, name_end);
+    let end = text.around(stop - 1).end;
+    Place::of(text, end..end)
 }
 
 fn joined(folder: &str, name: &str) -> String {
