@@ -16,7 +16,6 @@ use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
 use super::build::Builds;
-use super::history::HistoryQueue;
 use super::live::Live;
 use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
@@ -24,7 +23,7 @@ use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
 use crate::logparse::LogItem;
 use crate::paths::{self, Project, within};
-use crate::projects::{self, Query, Symbols, file_kind};
+use crate::projects::{self, History, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
@@ -163,7 +162,7 @@ pub(crate) struct Actor {
     deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub history: HistoryQueue,
+    pub history: Arc<Mutex<History>>,
     pub trail: Trail,
     closed: bool,
 }
@@ -199,7 +198,7 @@ impl Actor {
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
         }
-        let history = HistoryQueue::new(&project);
+        let history = Arc::new(Mutex::new(History::of(&project)));
         let actor = Self {
             id,
             project_id,
