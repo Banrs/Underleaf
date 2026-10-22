@@ -26,6 +26,10 @@ struct RootView: View {
             Text(app.alert?.message ?? "")
         }
         .sheet(isPresented: $settingsShown) { SettingsView() }
+        // A .zip or folder another app or the Dock hands over, as the Mac's Finder and Dock do.
+        .onOpenURL { url in
+            if AppModel.canOpen(url) { Task { await app.open([url]) } }
+        }
         // The menus act on the project while its window is in front.
         .onChange(of: scenePhase, initial: true) {
             app.mainWindowIsKey = scenePhase == .active

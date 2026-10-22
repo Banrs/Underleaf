@@ -30,6 +30,21 @@ targets:
     configFiles:
       Debug: TeXLocal.xcconfig
       Release: TeXLocal.xcconfig
+    # What Files, the Dock and other apps can hand the app, as Home's Open takes them: a .zip or a
+    # folder (Files lets the app into a .tex file alone, not the folder it would open). Alternate,
+    # so TeXLocal never becomes their default app. Outside the synced folder, which would bundle it.
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: ZIP Archive
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive]
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.folder]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TEXLOCAL_APP_IDENTIFIER)
