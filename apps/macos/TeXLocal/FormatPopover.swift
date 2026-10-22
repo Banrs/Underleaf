@@ -124,7 +124,8 @@ struct FormatPanel: View {
     }
 
     /// Notes' style toggles, read through Accessibility (27.2), at AppKit's accessory-bar height and corner, one width for the
-    /// three: lit in the levels' accent while on and under the pointer, grey while on under it, the click's result to come.
+    /// three: lit in the levels' accent while on and under the pointer, grey while one that's on is pressed, the click's
+    /// result to come.
     fileprivate struct StyleTile: ToggleStyle {
         func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
 
@@ -133,27 +134,30 @@ struct FormatPanel: View {
             @State private var hovering = false
 
             var body: some View {
-                let on = configuration.isOn, lit = on != hovering
                 Button { configuration.isOn.toggle() } label: {
                     configuration.label
                         .labelStyle(.iconOnly)
                         .imageScale(.large)
                         .foregroundStyle(.primary)
                         .frame(width: 36, height: 24)
-                        .background(lit ? AnyShapeStyle(.tint) : on ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.clear),
-                                    in: .rect(cornerRadius: 5))
-                        .environment(\.backgroundProminence, lit ? .increased : .standard)
-                        .contentShape(.rect)
                 }
-                .buttonStyle(Steady())
+                .buttonStyle(Fill(on: configuration.isOn, hovering: hovering))
                 .onHover { hovering = $0 }
-                .accessibilityAddTraits(on ? [.isToggle, .isSelected] : .isToggle)
+                .accessibilityAddTraits(configuration.isOn ? [.isToggle, .isSelected] : .isToggle)
             }
         }
 
-        /// A plain button would pale while pressed.
-        private struct Steady: ButtonStyle {
-            func makeBody(configuration: Configuration) -> some View { configuration.label }
+        private struct Fill: ButtonStyle {
+            let on: Bool, hovering: Bool
+
+            func makeBody(configuration: Configuration) -> some View {
+                let grey = on && configuration.isPressed, lit = (on || hovering) && !grey
+                configuration.label
+                    .background(lit ? AnyShapeStyle(.tint) : grey ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.clear),
+                                in: .rect(cornerRadius: 5))
+                    .environment(\.backgroundProminence, lit ? .increased : .standard)
+                    .contentShape(.rect)
+            }
         }
     }
 
