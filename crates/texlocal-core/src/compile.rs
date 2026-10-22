@@ -552,10 +552,9 @@ See \cite{knuth}.
         let names = crate::projects::testing::names_in(&folder);
         assert_eq!(names, ["ch", "main.tex", "refs.bib"]);
 
-        let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None, None, &path).await;
-        let shown = shown.unwrap();
+        let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None).unwrap();
         let (x, y) = (shown.h.unwrap() + 5.0, shown.v.unwrap() - 2.0);
-        let clicked = synctex_inverse(&project, shown.page, x, y, None, None, &path).await;
+        let clicked = synctex_inverse(&project, shown.page, x, y, None, None);
         assert_eq!(clicked.unwrap().file, "ch/intro.tex");
     }
 }

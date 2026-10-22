@@ -45,7 +45,7 @@ to the Trash or the Recycle Bin.
 
 ## Requirements
 
-You need a TeX distribution that includes latexmk, pdflatex and synctex. If TeXLocal finds none,
+You need a TeX distribution that includes latexmk and pdflatex. If TeXLocal finds none,
 it offers to install [TinyTeX](https://yihui.org/tinytex/), a small TeX Live of about 260 MB that
 goes in your user folder without asking for a password, and adds the packages a document needs
 when you click Install beside the error. For the full distribution instead, install

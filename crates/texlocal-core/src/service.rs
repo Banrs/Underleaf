@@ -171,11 +171,8 @@ impl Service {
                 &project()?,
                 s("file")?,
                 arg(args, "line")?,
-                arg(args, "column")?,
                 self.live_pdf(args)?.as_deref(),
-                &self.tool_paths().0,
-            )
-            .await?),
+            )?),
             "synctex_inverse" => {
                 let project = project()?;
                 let click =
@@ -187,9 +184,7 @@ impl Service {
                     arg(args, "y")?,
                     click.as_ref().map(|(text, at)| (text.as_str(), *at)),
                     self.live_pdf(args)?.as_deref(),
-                    &self.tool_paths().0,
-                )
-                .await?)
+                )?)
             }
             "synctex_match" => out(synctex::match_forward(
                 &project()?.root,

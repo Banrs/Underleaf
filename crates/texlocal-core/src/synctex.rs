@@ -1,4 +1,7 @@
-//! SyncTeX queries: editor line to PDF position and back; words are placed by `wordmatch`.
+//! SyncTeX queries: editor line to PDF position and back, from the SyncTeX TeX writes beside the
+//! PDF (`parser`); words are placed by `wordmatch`.
+
+mod parser;
 
 use std::path::{Path, PathBuf};
 
@@ -7,12 +10,13 @@ use serde::Serialize;
 use crate::analyze::disk_spelling;
 use crate::error::CoreError;
 use crate::paths::{Project, safe_path, safe_rel_file, source_rel};
-use crate::process::run;
 use crate::settings::read_settings;
 use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
-/// Only `page` is always given: the rest are null where synctex reported none,
-/// for the host to fall back on rather than draw an invisible zero-size box.
+use parser::SyncTex;
+
+/// Only `page` is always given: the rest are null where SyncTeX has no finite value, for the
+/// host to fall back on rather than draw an invisible zero-size box.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ForwardLoc {
     pub page: f64,
@@ -20,7 +24,7 @@ pub struct ForwardLoc {
     pub v: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
-    /// All matching boxes in reading order; the top-level fields keep the CLI's first match.
+    /// All matching boxes in reading order; the top-level fields keep SyncTeX's first.
     pub matches: Vec<Self>,
 }
 
@@ -40,67 +44,49 @@ fn pdf_for(project: &Project, live: Option<&Path>) -> Result<PathBuf, CoreError>
         .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))
 }
 
-async fn synctex(root: &Path, args: &[&str], path_env: &str) -> Result<String, CoreError> {
-    match run("synctex", args, Some(root), path_env).await {
-        Ok((0, stdout)) => Ok(stdout),
-        Ok(_) => Err(CoreError::internal(format!("synctex {} failed", args[0]))),
-        // TeX's own program, which a TeX install brings: not a fault to report as one.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(CoreError::not_found(
-            "SyncTeX is not available: TeX's synctex program was not found.",
-        )),
-        Err(err) => Err(CoreError::internal(format!(
-            "Couldn't start synctex: {err}"
-        ))),
-    }
+fn sync_for(project: &Project, live: Option<&Path>) -> Result<SyncTex, CoreError> {
+    SyncTex::beside(&pdf_for(project, live)?)
+        .map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
 }
 
-/// The optional column is zero-based, as in an inverse result. Some TeX
-/// engines only record lines, so retain every box even when given a column.
-pub async fn synctex_forward_at(
+/// The project's file TeX opened as `name`, as the disk spells it; generated files and anything
+/// outside the project are none.
+fn source_file(root: &Path, name: &str) -> Option<String> {
+    source_rel(root, name).and_then(|rel| disk_spelling(root, &rel))
+}
+
+/// Every box of the line, as some TeX engines record lines but not columns.
+pub fn synctex_forward_at(
     project: &Project,
     file: &str,
     line: u32,
-    column: Option<u32>,
     live: Option<&Path>,
-    path_env: &str,
 ) -> Result<ForwardLoc, CoreError> {
-    let pdf = pdf_for(project, live)?;
-    // synctex wants the input path as TeX saw it: ./-prefixed, forward slashes.
     let rel = safe_rel_file(file)?;
     if line < 1 {
         return Err(CoreError::bad_request("Invalid source line"));
     }
-    let column = column.unwrap_or(0).saturating_add(1);
-    let input = format!("{line}:{column}:./{rel}");
-    let args: [&str; 5] = ["view", "-i", &input, "-o", &pdf.to_string_lossy()];
-    parse_forward(&synctex(&project.root, &args, path_env).await?)
-}
-
-fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
-    const KEYS: [&str; 5] = ["Page", "h", "v", "W", "H"];
-    let mut matches = Vec::new();
-    let mut values = [None; 5];
-    let mut finish = |[page, h, v, width, height]: [Option<f64>; 5]| {
-        if let Some(page) = page.filter(|page| *page >= 1.0) {
-            matches.push(ForwardLoc {
-                page,
-                h,
-                v,
-                width,
-                height,
-                matches: Vec::new(),
-            });
-        }
-    };
-    for (key, value) in stdout.split('\n').filter_map(|ln| ln.split_once(':')) {
-        if let Some(i) = KEYS.iter().position(|k| *k == key) {
-            if i == 0 {
-                finish(std::mem::take(&mut values));
-            }
-            values[i] = value.trim().parse().ok().filter(|v: &f64| v.is_finite());
-        }
-    }
-    finish(values);
+    let sync = sync_for(project, live)?;
+    let tag = sync
+        .inputs()
+        .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(rel.as_str()))
+        .map(|(tag, _)| tag);
+    let line = i32::try_from(line).unwrap_or(i32::MAX);
+    let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
+    let mut matches: Vec<_> = tag
+        .map(|tag| sync.forward(tag, line))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|shown| shown.page >= 1)
+        .map(|shown| ForwardLoc {
+            page: f64::from(shown.page),
+            h: finite(shown.h),
+            v: finite(shown.v),
+            width: finite(shown.width),
+            height: finite(shown.height),
+            matches: Vec::new(),
+        })
+        .collect();
     let mut first = matches
         .first()
         .cloned()
@@ -116,34 +102,24 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
     Ok(first)
 }
 
-pub async fn synctex_inverse(
+pub fn synctex_inverse(
     project: &Project,
     page: f64,
     x: f64,
     y: f64,
     click: Option<(&str, usize)>,
     live: Option<&Path>,
-    path_env: &str,
 ) -> Result<InverseLoc, CoreError> {
     if !(page.is_finite() && x.is_finite() && y.is_finite()) || page < 1.0 {
         return Err(CoreError::bad_request("Invalid PDF location"));
     }
     let root = &project.root;
-    let pdf = pdf_for(project, live)?;
-    let target = format!("{page}:{x}:{y}:{}", pdf.to_string_lossy());
-    let stdout = synctex(root, &["edit", "-o", &target], path_env).await?;
-    let field = |key: &str| stdout.split('\n').find_map(|ln| ln.strip_prefix(key));
-    let file = field("Input:").map(str::trim).filter(|s| !s.is_empty());
-    let line = field("Line:").and_then(|s| s.trim().parse::<u32>().ok());
-    let (Some(file), Some(line)) = (file, line) else {
-        return Err(CoreError::not_found(
-            "Nothing in the source matches this spot.",
-        ));
-    };
-
-    // Generated files and anything outside the project report no match.
-    let rel = source_rel(root, file)
-        .and_then(|rel| disk_spelling(root, &rel))
+    let sync = sync_for(project, live)?;
+    let (name, line) = sync
+        .inverse(page as i32, x as f32, y as f32)
+        .and_then(|(name, line)| Some((name, u32::try_from(line).ok()?)))
+        .ok_or_else(|| CoreError::not_found("Nothing in the source matches this spot."))?;
+    let rel = source_file(root, name)
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
     let found = click.and_then(|(text, at)| {
         let source = crate::lossy_string(std::fs::read(root.join(&rel)).ok()?);
@@ -172,28 +148,209 @@ pub fn match_forward(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::io::Write;
 
-    #[tokio::test]
-    async fn sync_without_a_synctex_program_says_it_is_not_available() {
-        let pdf = Some(Path::new("live.pdf"));
-        let project = Project::in_folder(Path::new("P"));
-        let err = synctex_inverse(&project, 1.0, 1.0, 1.0, None, pdf, "/none").await;
-        let err = err.unwrap_err();
-        assert_eq!(err.status, 404);
-        assert!(err.message.contains("not available"), "{err}");
+    use super::*;
+    use crate::projects::testing::project;
+
+    /// main.tex's line 3 and chapter.tex's line 7, each an hbox of words, on page 1.
+    const SYNCTEX: &str = "SyncTeX Version:1
+Input:1:{root}/./main.tex
+Input:2:{root}/./chapter.tex
+Output:pdf
+Magnification:1000
+Unit:1
+X Offset:0
+Y Offset:0
+Content:
+!120
+{1
+[1,1:4736286,46220574:26673152,41484288,0
+(1,3:8799518,8865054:22609920,655359,0
+x1,3:9330359,8865054
+g1,3:10392041,8865054
+x1,3:11377265,8865054
+)
+(2,7:8799518,10300473:22609920,455111,127431
+x2,7:10274081,10300473
+g2,7:12000000,10300473
+x2,7:14000000,10300473
+)
+]
+}1
+";
+    const POSTAMBLE: &str = "Postamble:\nCount:12\n!600\nPost scriptum:\n";
+
+    /// Whether `found` is `sp` scaled points, in PDF points.
+    fn at(found: Option<f64>, sp: i32) -> bool {
+        found.is_some_and(|found| (found - f64::from(sp) / 65781.76).abs() < 1e-3)
+    }
+
+    fn setup() -> (tempfile::TempDir, Project, String) {
+        let (dir, root) = project();
+        std::fs::write(
+            root.join("chapter.tex"),
+            "\n\n\n\nÜnï words \\word, the\nword next\nfinal\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("build")).unwrap();
+        std::fs::write(root.join("build/main.pdf"), "a PDF").unwrap();
+        let synctex = SYNCTEX.replace("{root}", &root.to_string_lossy());
+        (dir, Project::in_folder(&root), synctex)
     }
 
     #[test]
-    fn forward_keeps_all_boxes_in_page_order_without_changing_the_legacy_match() {
-        let output = "Page:2\nh:10\nv:80\nW:100\nH:9\nPage:1\nh:10\nv:60\nW:100\nH:9\nPage:2\nh:10\nv:40\nW:100\nH:9\nPage:2\nh:10\nv:40\nW:100\nH:9\n";
-        let result = parse_forward(output).unwrap();
-        assert_eq!((result.page, result.v), (2.0, Some(80.0)));
-        let boxes: Vec<_> = result.matches.iter().map(|r| (r.page, r.v)).collect();
-        assert_eq!(
-            boxes,
-            [(1.0, Some(60.0)), (2.0, Some(40.0)), (2.0, Some(80.0))]
-        );
-        assert!(result.matches.iter().all(|r| r.matches.is_empty()));
+    fn a_line_and_a_spot_map_both_ways_through_the_synctex_beside_the_pdf_zipped_or_not() {
+        let (_dir, project, synctex) = setup();
+        let text = format!("{synctex}{POSTAMBLE}");
+        let plain = project.build.join("main.synctex");
+        std::fs::write(&plain, &text).unwrap();
+        for zipped in [false, true] {
+            if zipped {
+                std::fs::remove_file(&plain).unwrap();
+                let file = std::fs::File::create(project.build.join("main.synctex.gz")).unwrap();
+                let mut gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+                gz.write_all(text.as_bytes()).unwrap();
+                gz.finish().unwrap();
+            }
+            let shown = synctex_forward_at(&project, "chapter.tex", 7, None).unwrap();
+            assert_eq!(
+                (shown.page, shown.matches.len()),
+                (1.0, 1),
+                "zipped: {zipped}"
+            );
+            let (bottom, height) = (10300473 + 127431, 455111 + 127431);
+            assert!(at(shown.h, 8799518) && at(shown.v, bottom) && at(shown.height, height));
+            // A line with nothing on the page shows the nearest that has something.
+            let nearest = synctex_forward_at(&project, "main.tex", 4, None).unwrap();
+            assert!(at(nearest.v, 8865054), "{nearest:?}");
+            for (click, line, column) in [
+                (None, 7, None),
+                (Some(("theword", 4)), 6, Some(1)),
+                (Some(("absent", 0)), 7, None),
+            ] {
+                let loc = synctex_inverse(&project, 1.0, 200.0, 155.0, click, None).unwrap();
+                assert_eq!(
+                    (loc.file.as_str(), loc.line, loc.column),
+                    ("chapter.tex", line, column)
+                );
+            }
+        }
     }
+
+    /// TeX writes the Postamble at the end of its run, which Live Preview's may not have reached.
+    #[test]
+    fn a_synctex_without_its_postamble_answers_as_far_as_it_goes() {
+        let (_dir, project, synctex) = setup();
+        let live = project.build.join("live.pdf");
+        std::fs::write(&live, "a PDF").unwrap();
+        std::fs::write(live.with_extension("synctex"), synctex).unwrap();
+        let loc = synctex_inverse(&project, 1.0, 200.0, 135.0, None, Some(&live)).unwrap();
+        assert_eq!((loc.file.as_str(), loc.line), ("main.tex", 3));
+    }
+
+    /// For every line of a document and points across its pages, the reader answers as TeX
+    /// Live's synctex program: `cargo test -p texlocal-core synctex -- --ignored`.
+    #[test]
+    #[ignore = "needs TeX Live"]
+    fn answers_as_tex_lives_synctex_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let document = DOCUMENT.trim_start();
+        std::fs::write(dir.path().join("main.tex"), document).unwrap();
+        let tex = std::process::Command::new("pdflatex")
+            .args(["-interaction=batchmode", "-synctex=1", "main.tex"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(tex.success());
+        let pdf = dir.path().join("main.pdf");
+        let sync = SyncTex::beside(&pdf).unwrap();
+        let (tag, name) = sync
+            .inputs()
+            .find(|(_, name)| name.ends_with("main.tex"))
+            .unwrap();
+        let program = |args: &[&str]| {
+            let out = std::process::Command::new("synctex")
+                .args(args)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let values = |out: &str, key: &str| -> Vec<f32> {
+            out.lines()
+                .filter_map(|line| line.strip_prefix(key)?.parse().ok())
+                .collect()
+        };
+        let pdf = pdf.to_string_lossy();
+        for line in 1..=document.lines().count() as i32 + 2 {
+            let out = program(&["view", "-i", &format!("{line}:0:{name}"), "-o", &pdf]);
+            let ours = sync.forward(tag, line);
+            let theirs = values(&out, "Page:").len();
+            assert_eq!(ours.len(), theirs, "line {line}");
+            for (key, ours) in [
+                ("h:", ours.iter().map(|s| s.h).collect::<Vec<_>>()),
+                ("v:", ours.iter().map(|s| s.v).collect()),
+            ] {
+                for (a, b) in ours.iter().zip(values(&out, key)) {
+                    assert!((a - b).abs() < 0.001, "line {line} {key} {a} {b}");
+                }
+            }
+        }
+        for page in 1..=2 {
+            for (x, y) in
+                (0..32).flat_map(|y| (0..25).map(move |x| (x as f32 * 25.0, y as f32 * 25.0)))
+            {
+                let out = program(&["edit", "-o", &format!("{page}:{x}:{y}:{pdf}")]);
+                let theirs = out
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Line:"))
+                    .map(|line| line.parse().unwrap());
+                assert_eq!(
+                    sync.inverse(page, x, y).map(|(_, line)| line),
+                    theirs,
+                    "page {page} at {x}, {y}"
+                );
+            }
+        }
+    }
+
+    const DOCUMENT: &str = r"
+\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+\section{Opening}
+A paragraph with a footnote\footnote{Its text, long enough to wrap onto a second line in the
+footnotes at the bottom of the page.} and words after it, wrapping across
+several lines, with \textbf{bold} and \textit{italic} words and maths $\int_0^1 x\,dx$.
+
+\begin{align}
+  e^{i\pi} + 1 &= 0\\
+  \sum_{k=1}^{n} k &= \frac{n(n+1)}{2}
+\end{align}
+\begin{enumerate}
+  \item One
+  \begin{itemize}
+    \item Nested, with a longer text that wraps onto the next line of the list, surely.
+  \end{itemize}
+  \item Two
+\end{enumerate}
+\begin{tabular}{|l|r|}
+  \hline
+  Left & Right \\
+  alpha & beta \\
+  \hline
+\end{tabular}
+\begin{figure}[b]
+  \centering\rule{4cm}{2cm}
+  \caption{A black box.}
+\end{figure}
+\newpage
+\noindent\begin{minipage}{0.45\textwidth}
+A minipage whose text wraps a few times within its width.
+\end{minipage}\hfill
+\begin{minipage}{0.45\textwidth}
+\[ f(x) = \sum_n a_n x^n \]
+\end{minipage}
+\end{document}
+";
 }

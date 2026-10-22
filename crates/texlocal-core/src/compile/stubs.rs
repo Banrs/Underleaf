@@ -19,7 +19,6 @@ use crate::projects::testing::{names_in, with_project};
 use crate::projects::{create_project, open_path};
 use crate::service::Service;
 use crate::settings::write_settings;
-use crate::synctex::synctex_inverse;
 use crate::tex::tex_available;
 
 pub(crate) fn stub(dir: &Path, name: &str, script: &str) {
@@ -355,32 +354,6 @@ async fn a_stopped_build_removes_the_aux_and_pdf_it_cut_short_and_leaves_the_res
     assert!(task.await.unwrap().stopped);
     assert_eq!(fs::read(root.join("build/main.aux")).unwrap(), b"whole");
     assert_eq!(fs::read(root.join("build/main.pdf")).unwrap(), b"whole");
-}
-
-#[tokio::test]
-async fn inverse_sync_finds_the_source_and_the_clicked_letters_column() {
-    let (dir, service, root) = setup("exit 0\n");
-    fs::create_dir_all(root.join("build")).unwrap();
-    fs::write(root.join("build/main.pdf"), "fake").unwrap();
-    let text = "\n\n\n\nÜnï words \\word, the\nword next\nfinal\n";
-    fs::write(root.join("chapter.tex"), text).unwrap();
-    let synctex =
-        "printf 'SyncTeX result begin\\nInput:%s/./chapter.tex\\nLine:7\\n' \"$(pwd -P)\"\n";
-    stub(dir.path(), "synctex", synctex);
-    let path = stubs(&service);
-    for (click, line, column) in [
-        (None, 7, None),
-        (Some(("theword", 4)), 6, Some(1)),
-        (Some(("absent", 0)), 7, None),
-    ] {
-        let project = Project::in_folder(&root);
-        let found = synctex_inverse(&project, 1.0, 10.0, 20.0, click, None, &path);
-        let loc = found.await.unwrap();
-        assert_eq!(
-            (loc.file.as_str(), loc.line, loc.column),
-            ("chapter.tex", line, column)
-        );
-    }
 }
 
 thread_local! {

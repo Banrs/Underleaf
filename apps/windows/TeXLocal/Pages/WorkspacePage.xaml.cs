@@ -725,8 +725,8 @@ public sealed partial class WorkspacePage : Page
 
     async Task SyncToCaret()
     {
-        var (line, column) = Editor.Caret;
-        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line, column }));
+        var (line, _) = Editor.Caret;
+        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line }));
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));

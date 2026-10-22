@@ -105,9 +105,11 @@ The service's other commands (`id` is the project's): `list_projects` (Opened fo
 `rename_project {id, name}` (400 for an opened folder), `get_settings {id}`, `file_tree {id}`,
 `pdf_path {id}` (a new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest}`,
 `import_files {id, dir?, paths?, conflict}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
-`synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
+`synctex_forward {id, file, line}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
-`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`.
+`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`. The
+core reads the SyncTeX file TeX writes beside the PDF and searches it as TeX Live's `synctex`
+program does, which it never runs.
 
 ## Opened folders
 
@@ -141,8 +143,7 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   depth, and a top-level `build` and `.texlocal.json` (an import makes the new project's own).
   Other dotfiles (`.latexmkrc`) are the author's and go both ways, though the file tree hides
   every dotfile.
-- SyncTeX without TeX's `synctex` program is 404 “SyncTeX is not available: TeX's synctex
-  program was not found.”
+- SyncTeX for a PDF without its SyncTeX file is 404 “This PDF has no SyncTeX: compile it again.”
 - A session a panic ended: the command that was running, and any queued behind it, answer 500
   “The project stopped after an internal error. Close it and open it again.” The session then
   sends a `document` event with an `error` for each open document (what was typed is saved as
@@ -170,7 +171,6 @@ own) and ICU_DATA in its environment, as `tools/texpresso-ios/README.md` says.
   end a program at its next file access.
 - **Live Preview** runs one session at a time: a start stops another project's (its `live`
   event says why) and begins once that has ended.
-- **SyncTeX** queries need TeX's synctex program, so they are 404 there.
 
 ## Commands that fill small gaps
 
@@ -183,7 +183,7 @@ Service commands (`tl_call`):
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
 | `install_package` | `file` | `{package}` | Installs the TeX Live package with the file `file` (a build error's `missing`), through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 403 when the dialog is cancelled; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. It takes minutes: ask with `tl_call_async`. |
-| `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`; on Windows `%APPDATA%\TinyTeX`, or `%ProgramData%\TinyTeX` where that path has a space or a letter past ASCII), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
+| `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`; on Windows `%APPDATA%\TinyTeX`, or `%ProgramData%\TinyTeX` where that path has a space or a letter past ASCII), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
 | `open_path` | `path` | `{project, file}` | What File › Open, Finder and a drop on the Dock open, in one call. `project` as `list_projects` lists it, `file` the project path to show or null. A path in a project is that project (a folder inside an opened folder opens as one of its own). A folder opens where it is; a .tex opens its folder where it is, at the .tex, its main file guessed from it if the folder is new to the list. A .tex whose folder is refused (it holds the library, or has more than 20,000 files: both 400 for a folder) comes alone into a new library project, as a .zip's files or any other file do. 404 if not there. |

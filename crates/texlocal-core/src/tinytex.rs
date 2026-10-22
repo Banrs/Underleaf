@@ -22,7 +22,7 @@ const BUNDLE: (&str, &str) = if cfg!(windows) {
 };
 /// The Presentation template's class, and programs builds run that Install can't add, as it
 /// adds only the package of a file LaTeX didn't find.
-const PACKAGES: [&str; 3] = ["beamer", "synctex", "makeindex"];
+const PACKAGES: [&str; 2] = ["beamer", "makeindex"];
 /// An install's folder until it is complete, beside where it goes: a quit leaves it, and the
 /// next install removes it.
 const UNFINISHED: &str = ".texlocal-tinytex-";
@@ -256,7 +256,7 @@ mod tests {
         eprintln!("installed in {:?}", started.elapsed());
         assert_eq!(crate::tex::tex_bin_dir(&root), Some(bin(&root)));
         let path = join_path(std::iter::once(bin(&root)).chain(std::env::split_paths(&user)));
-        assert!(find_tool("synctex", &path).unwrap().starts_with(&root));
+        assert!(find_tool("makeindex", &path).unwrap().starts_with(&root));
 
         let (_dir, service) = crate::projects::testing::library();
         let builds = crate::templates::TEMPLATES

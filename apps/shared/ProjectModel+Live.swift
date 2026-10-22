@@ -78,7 +78,7 @@ extension ProjectModel {
     func forwardSync(quietly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column) = (editor.currentLine, editor.currentColumn)
-        let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line, "column": column])
+        let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line])
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             // A rebuild may have moved it.
