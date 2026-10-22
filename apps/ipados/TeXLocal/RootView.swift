@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Home, or the open project's workspace.
 struct RootView: View {
@@ -26,7 +27,10 @@ struct RootView: View {
         }
         .sheet(isPresented: $settingsShown) { SettingsView() }
         // The menus act on the project while its window is in front.
-        .onChange(of: scenePhase, initial: true) { app.mainWindowIsKey = scenePhase == .active }
+        .onChange(of: scenePhase, initial: true) {
+            app.mainWindowIsKey = scenePhase == .active
+            if scenePhase != .active { saveEdits() }
+        }
         .onChange(of: app.project?.saved) { _, saved in restoration = saved.flatMap { try? JSONEncoder().encode($0) } }
         .task {
             app.undoSource = { [undoManager] in undoManager }
@@ -40,6 +44,18 @@ struct RootView: View {
             if let id = app.launchProject.take() ?? saved?.project, app.project == nil, !app.isOpening {
                 await app.open(id, restoring: saved)
             }
+        }
+    }
+
+    /// iPadOS ends an app put away, or closed from the app switcher, without a word, so what was typed is saved as the
+    /// window stops being active, as the Mac's is at Quit, in the time a background task gives.
+    private func saveEdits() {
+        guard let project = app.project else { return }
+        let application = UIApplication.shared
+        let task = application.beginBackgroundTask(withName: "Save")
+        Task {
+            await project.save()
+            application.endBackgroundTask(task)
         }
     }
 }
