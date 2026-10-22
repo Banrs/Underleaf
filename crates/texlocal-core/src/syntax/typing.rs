@@ -133,11 +133,7 @@ impl SourceDocument {
             // In maths a dollar closes it, and \$ is one in the text.
             let literal = dollar && (innermost.is_some_and(|g| g.math) || escaped(units, start));
             if next.is_none_or(|n| char::from_u32(n.into()).is_some_and(before)) && !literal {
-                let slash = if !dollar && escaped(units, start) {
-                    "\\"
-                } else {
-                    ""
-                };
+                let slash = if escaped(units, start) { "\\" } else { "" };
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
                     edit: Some(splice(start, 0, format!("{typed}{slash}{close}"))),
