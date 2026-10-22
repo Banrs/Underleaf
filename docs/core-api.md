@@ -288,7 +288,8 @@ editor's thread.
   move with the edit. It answers NULL, or, while a snippet's field is typed in, the edits that
   put what was typed in the field's other places (a JSON array, from the last; free with
   `tl_free`): the editor applies them with `mirroring` true, which answers NULL, then selects
-  what it had. A brace typed in a field ends the snippet, going in that place alone.
+  what it had. A brace or line break typed in a field ends the snippet, going in that place
+  alone.
 - `tl_source_select(source, start, length, mirroring)`: the (first) selection moved; a snippet
   ends once it leaves its fields, unless `mirroring`. With none open, a selection in the name of
   a `\begin` or `\end` that has its partner makes the two names a snippet's one field, so what's
