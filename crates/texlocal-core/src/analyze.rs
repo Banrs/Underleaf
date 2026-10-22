@@ -616,6 +616,9 @@ pub struct Analysis {
     pub tree: Vec<OutlineNode>,
     pub words: usize,
     pub heading_styles: Vec<headings::Level>,
+    /// What `\bibliography` and `\addbibresource` name, as written, for an export to arXiv.
+    #[serde(skip)]
+    pub bibliographies: Vec<String>,
 }
 
 /// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
@@ -712,6 +715,7 @@ fn walk(
     }
     into.outline.extend(facts.headings[at..].iter().map(placed));
     into.words += facts.words;
+    into.bibliographies.extend_from_slice(&facts.bibliographies);
 }
 
 /// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named

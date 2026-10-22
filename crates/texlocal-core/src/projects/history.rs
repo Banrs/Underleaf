@@ -380,7 +380,7 @@ mod tests {
         let found = search_project(root, &HashMap::new(), &is_text, &secret, 100);
         assert!(found.unwrap().is_empty());
         let zip = dir.path().join("P.zip");
-        export_zip(root, &zip).unwrap();
+        export_zip(root, &zip, &[]).unwrap();
         assert!(zip_names(&zip).iter().all(|name| !name.contains("history")));
     }
 }

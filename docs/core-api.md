@@ -109,11 +109,20 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 The service's other commands (`id` is the project's): `list_projects` (Opened folders, below),
 `rename_project {id, name}` (400 for an opened folder), `file_tree {id}`, `pdf_path {id}` (a
-new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest}`,
+new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest, forArxiv?}`,
 `import_files {id, dir?, paths?, conflict}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
 `synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
 `live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`.
+
+`export_zip`'s `forArxiv: true` makes the ZIP arXiv takes: the main file's `.bbl` from the build
+folder goes beside the main file with its stem, and `00README.json` at the root names the
+compiler and the main file as the top-level source (`{"spec_version": 1, "process": {"compiler":
+"pdflatex"}, "sources": [{"filename": "main.tex", "usage": "toplevel"}]}`), each in place of a
+project file of that path. It is 409 with a sentence saying what to do while shell escape is on
+(arXiv compiles without it), and when the document the main file reads names a bibliography
+(`\bibliography` or `\addbibresource`) but the build folder has no `.bbl` for the main file, or
+one older than a `.bib` it names in the project.
 
 The ui state is what a host keeps of a project's interface: `{expandedFolders, foldedHeadings,
 file, line, page, zoom, panel, livePreview}`. `file` is the project path shown, `line` the caret's
