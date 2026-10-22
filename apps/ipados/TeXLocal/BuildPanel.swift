@@ -57,33 +57,50 @@ private struct BuildPanelBar: View {
     let project: ProjectModel
 
     var body: some View {
-        @Bindable var panel = project.panel
-        HStack(spacing: 12) {
-            Picker("Show", selection: $panel.tab) {
-                ForEach(PanelTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab).selectionDisabled(tab == .texpresso && !project.texpresso.used)
-                }
+        // One row where it fits, else the tabs above their controls.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                tabs
+                Spacer(minLength: 0)
+                controls
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            Spacer(minLength: 0)
-            if panel.tab == .issues {
-                Toggle(isOn: $panel.showsWarnings) { Label("Warnings", systemImage: "exclamationmark.triangle") }
-                    .toggleStyle(.button)
-                    .labelStyle(.iconOnly)
-                    .disabled(project.warningCount == 0 && project.result?.badBoxes.isEmpty != false)
-                filter($panel.issueFilter)
-            } else {
-                let text = panel.tab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
-                Button("Copy Log", systemImage: "document.on.document") { UIPasteboard.general.string = text }
-                    .labelStyle(.iconOnly)
-                    .disabled(text.isEmpty)
-                filter($panel.logFilter)
+            VStack(alignment: .leading, spacing: 8) {
+                tabs
+                HStack(spacing: 12) { controls }
             }
+            .padding(.vertical, 8)
         }
         .padding(.horizontal, 16)
         .frame(minHeight: 52)
+    }
+
+    private var tabs: some View {
+        @Bindable var panel = project.panel
+        return Picker("Show", selection: $panel.tab) {
+            ForEach(PanelTab.allCases, id: \.self) { tab in
+                Text(tab.rawValue).tag(tab).selectionDisabled(tab == .texpresso && !project.texpresso.used)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    @ViewBuilder private var controls: some View {
+        @Bindable var panel = project.panel
+        if panel.tab == .issues {
+            Toggle(isOn: $panel.showsWarnings) { Label("Warnings", systemImage: "exclamationmark.triangle") }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+                .disabled(project.warningCount == 0 && project.result?.badBoxes.isEmpty != false)
+            filter($panel.issueFilter)
+        } else {
+            let text = panel.tab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
+            Button("Copy Log", systemImage: "document.on.document") { UIPasteboard.general.string = text }
+                .labelStyle(.iconOnly)
+                .disabled(text.isEmpty)
+            filter($panel.logFilter)
+        }
     }
 
     private func filter(_ text: Binding<String>) -> some View {
@@ -91,7 +108,7 @@ private struct BuildPanelBar: View {
             .textFieldStyle(.roundedBorder)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
-            .frame(maxWidth: 200)
+            .frame(minWidth: 120, maxWidth: 200)
     }
 }
 

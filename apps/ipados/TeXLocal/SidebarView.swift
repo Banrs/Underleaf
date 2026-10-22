@@ -4,13 +4,16 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
+    /// Back to the source, where the split has collapsed to one column.
+    let showSource: () -> Void
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var renaming: TreeNode?
     @State private var newName = ""
 
     var body: some View {
         @Bindable var search = project.search
         Group {
-            if project.search.isSearching { SearchResults(project: project) } else { files }
+            if project.search.isSearching { SearchResults(project: project, showSource: showSource) } else { files }
         }
         .navigationTitle(project.name)
         .searchable(text: $search.query, placement: .sidebar, prompt: "Find in Project")
@@ -20,6 +23,9 @@ struct SidebarView: View {
             await project.search.run(in: project.session)
         }
         .toolbar {
+            if sizeClass == .compact {
+                ToolbarItem(placement: .topBarLeading) { CloseProjectButton() }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu("Add", systemImage: "plus") { addItems(in: "") }
             }
@@ -47,7 +53,7 @@ struct SidebarView: View {
             }
             if project.isLaTeX {
                 Section("Outline", isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
-                    OutlineRows(nodes: project.outlineTree, project: project)
+                    OutlineRows(nodes: project.outlineTree, project: project, showSource: showSource)
                 }
             }
         }
@@ -73,7 +79,9 @@ struct SidebarView: View {
 
     private func row(_ node: TreeNode) -> some View {
         Button {
-            if !node.isDirectory { Task { await project.open(node.path) } }
+            guard !node.isDirectory else { return }
+            showSource()
+            Task { await project.open(node.path) }
         } label: {
             Label {
                 HStack {
@@ -169,6 +177,7 @@ private struct TreeRows<Row: View>: View {
 private struct OutlineRows: View {
     let nodes: [OutlineNode]
     let project: ProjectModel
+    let showSource: () -> Void
 
     var body: some View {
         ForEach(nodes) { node in
@@ -176,7 +185,7 @@ private struct OutlineRows: View {
                 DisclosureGroup(isExpanded: Binding(get: { !project.foldedHeadings.contains(node.foldKey) }, set: { open in
                     if open { project.foldedHeadings.remove(node.foldKey) } else { project.foldedHeadings.insert(node.foldKey) }
                 })) {
-                    OutlineRows(nodes: children, project: project)
+                    OutlineRows(nodes: children, project: project, showSource: showSource)
                 } label: {
                     heading(node.item)
                 }
@@ -187,7 +196,10 @@ private struct OutlineRows: View {
     }
 
     private func heading(_ item: OutlineItem) -> some View {
-        Button { project.reveal(item) } label: {
+        Button {
+            showSource()
+            project.reveal(item)
+        } label: {
             Text(item.title).lineLimit(1).foregroundStyle(item.untitled ? .secondary : .primary)
         }
         .listRowBackground(item.id == project.currentHeading ? Color.accentColor.opacity(0.12) : nil)
@@ -198,6 +210,7 @@ private struct OutlineRows: View {
 
 private struct SearchResults: View {
     let project: ProjectModel
+    let showSource: () -> Void
 
     var body: some View {
         @Bindable var search = project.search
@@ -215,6 +228,7 @@ private struct SearchResults: View {
                 Section {
                     ForEach(group.hits) { hit in
                         Button {
+                            showSource()
                             Task { await project.open(hit.file, line: hit.line, column: hit.column, length: hit.length) }
                         } label: {
                             HStack(alignment: .firstTextBaseline) {

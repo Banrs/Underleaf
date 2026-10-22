@@ -10,10 +10,13 @@ struct WorkspaceView: View {
     /// iPadOS's own choice at first, which floats the sidebar over the panes where they need the width; View ▸ Sidebar
     /// sets it.
     @State private var columns = NavigationSplitViewVisibility.automatic
+    /// Where the split collapses to one column (a narrow window): the source and PDF, which the sidebar's back button
+    /// leaves and a file or heading chosen there returns to.
+    @State private var compactColumn = NavigationSplitViewColumn.detail
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            SidebarView(project: project)
+        NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
+            SidebarView(project: project) { compactColumn = .detail }
         } detail: {
             DetailView(project: project)
         }
@@ -48,8 +51,9 @@ private struct DetailView: View {
             panes
             if project.panel.shown, panelBelow {
                 Divider()
-                // A share of the height, so the source keeps most of what the software keyboard leaves.
-                BuildPanel(project: project).frame(height: min(240, size.height * 0.3))
+                // A share of the height, so the source keeps most of what the software keyboard leaves, but never less
+                // than the panel's bar and two rows.
+                BuildPanel(project: project).frame(height: min(240, max(140, size.height * 0.3)))
             }
         }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
@@ -160,11 +164,12 @@ private struct WorkspaceToolbar: ToolbarContent {
     let project: ProjectModel
     let sideBySide: Bool
     @Binding var pane: Pane
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button("Projects", systemImage: "chevron.backward") { Task { await app.close() } }
-                .help("Close the project and show all projects")
+        // Collapsed, the bar's back button is the sidebar's, which has this one.
+        if sizeClass == .regular {
+            ToolbarItem(placement: .topBarLeading) { CloseProjectButton() }
         }
         ToolbarItemGroup(placement: .secondaryAction) {
             FormatMenu(project: project)
@@ -192,6 +197,16 @@ private struct WorkspaceToolbar: ToolbarContent {
             Toggle("Inspector", systemImage: "info.circle", isOn: Bindable(app).inspectorVisible)
             CompileButton(project: project, wide: sideBySide)
         }
+    }
+}
+
+/// Back to every project, closing this one.
+struct CloseProjectButton: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Button("Projects", systemImage: "chevron.backward") { Task { await app.close() } }
+            .help("Close the project and show all projects")
     }
 }
 
