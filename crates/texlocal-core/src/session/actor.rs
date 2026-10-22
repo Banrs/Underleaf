@@ -1077,7 +1077,8 @@ impl Actor {
     /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
     /// file loads the package already.
     fn add_package(&self, name: &str) -> Result<Value, CoreError> {
-        let main = settings::read_settings(&self.project.settings).main_file;
+        // As the disk spells it, which the walk compares, however the settings do.
+        let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
         self.snapshot_before("Before Adding a Package")?;
         let found = |_: &str, text: &str| {
@@ -1086,7 +1087,7 @@ impl Actor {
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
         let line = format!("\n\\usepackage{{{name}}}");
-        self.edit_project(&open, &|rel| rel == main, &found, &line)
+        self.edit_project(&open, &|rel| Some(rel) == main, &found, &line)
     }
 
     /// The open documents' paths, text and versions, unless one has a change on disk still to
