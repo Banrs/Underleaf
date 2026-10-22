@@ -73,7 +73,5 @@ works around.
 - Checks: environments a project declares verbatim (`\lstnewenvironment`, `\newminted`,
   `\DefineVerbatimEnvironment`) are checked as LaTeX; their declarations usually sit in another
   file than their bodies, which each file's own check can't see.
-- Quick Help numbers a label from the main file's `.aux` only, so one in an `\include`d file
-  says to compile.
 - Not this round: the PDF's text on Windows (PDFium, core gap 6), folding, several cursors, and
   spell checking on Windows.
