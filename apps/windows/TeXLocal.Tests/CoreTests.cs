@@ -122,6 +122,18 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
+    /// session_history_list's entries and session_history_compare's texts, as docs/core-api.md has them.
+    [Fact]
+    public void HistoryDecodes()
+    {
+        const string listed = """[{"id":"a1","time":"2026-10-22T09:41:00Z","name":null,"reason":"Before Replace All","changed":[{"path":"main.tex","change":"changed"}]}]""";
+        var snapshot = Assert.Single(JsonSerializer.Deserialize<Snapshot[]>(listed, Core.Json)!);
+        Assert.Equal(("a1", null, "Before Replace All"), (snapshot.Id, snapshot.Name, snapshot.Reason));
+        Assert.Equal(new DateTimeOffset(2026, 10, 22, 9, 41, 0, TimeSpan.Zero), snapshot.Time);
+        Assert.Equal(new SnapshotChange("main.tex", "changed"), Assert.Single(snapshot.Changed));
+        Assert.Equal(new Compared(null, "x\n"), JsonSerializer.Deserialize<Compared>("""{"old":null,"new":"x\n"}""", Core.Json));
+    }
+
     [Fact]
     public async Task ConcurrentCallsComplete()
     {

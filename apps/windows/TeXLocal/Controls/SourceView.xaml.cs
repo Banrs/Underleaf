@@ -196,9 +196,12 @@ public sealed partial class SourceView : UserControl
         if (kinds.Length == 0 || new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) Recolour(true);
     });
 
+    /// A family from Settings › Editor, with the monospaced ones Windows has behind it.
+    public static FontFamily Font(string family) => new($"{family}, Cascadia Mono, Consolas");
+
     public void SetLook(string family, double size, string themeId)
     {
-        var font = new FontFamily($"{family}, Cascadia Mono, Consolas");
+        var font = Font(family);
         if (Editor.FontFamily.Source == font.Source && Editor.FontSize == size && theme == themeId) return;
         (Editor.FontFamily, Editor.FontSize, theme) = (font, size, themeId);
         // The rows' container style sets Segoe, so the editor's font goes there rather than on the list.

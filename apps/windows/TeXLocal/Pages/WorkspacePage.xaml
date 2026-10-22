@@ -100,6 +100,8 @@
                     </MenuFlyoutSubItem>
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Click="OnSave" Text="Save" />
+                    <MenuFlyoutItem AccessKey="V" Click="OnSaveVersion" Text="Save version…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+H" AccessKey="R" Click="OnHistory" Text="Version history" />
                     <MenuFlyoutSeparator />
                     <!-- The PDF shown, as the Mac's Export as PDF and Share, and the project's files, as Home's Export as ZIP. -->
                     <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
