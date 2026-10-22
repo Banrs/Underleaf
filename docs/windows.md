@@ -58,8 +58,8 @@ apps/windows/
 - **Sources** are used from the UI thread only; offsets are UTF-16 on both sides.
 - **Close.** Remove the listener, `kill_all`, wait for calls in flight, `tl_close`.
 - **Preferences** (theme, window bounds, pane sizes, Compile automatically, sync after compile,
-  the engine for new projects, the project to reopen, the editor's font, size, theme and typing
-  switches, which raise `EditorChanged`) are `Prefs`' typed properties over
+  the PDF's page colour, the engine for new projects, the project to reopen, the editor's font,
+  size, theme and typing switches, which raise `EditorChanged`) are `Prefs`' typed properties over
   `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry,
   `HKCU\Software\Classes\Local Settings\Software\TeXLocal`). With `TEXLOCAL_DATA` set a run
   keeps its own, "TeXLocal Dev", so a dev build never moves the installed app's window.
@@ -90,7 +90,8 @@ apps/windows/
 | Issues | `ListView`; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a missing package's row an Install button, a `ProgressRing` beside it while tlmgr runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 | The metapackage adds ~60 MB |
-| PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions |
+| PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come. Dark paper turns each page's pixels over (c + 1 − 2Y, the Mac's invert and half-turn of hue) off the UI thread | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions; composition's colour effects need Win2D |
+| Print | XAML's `PrintDocument` through `PrintManagerInterop` on the window's handle, each page a PNG from `Windows.Data.Pdf` at the printer's dpi up to 600 | XAML holds every sheet until the job spools; bitmaps would take hundreds of MB a page |
 
 **The editor gate** (a 5,000-line `.tex`, Debug, 200%): highlights go in as RTF, the first 200
 lines first (first frame in 12–53 ms, the rest by 0.6 s); a keystroke recolours in 6–7 ms. WinUI's
@@ -153,11 +154,9 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 | Workspace | Inspector with the engine | Build menu: Engine and toggles | Design |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; the outline follows the scroll | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
-| Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`; undo cleared on switch | UI |
+| Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`, double-click to the PDF; undo cleared on switch | UI |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
-| PDF | Print, scroll to the caret after compiling | Scroll to the caret after compiling; no print | UI |
-| PDF | Paper white, dark or automatic | White | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane, log, restarts | None | Core 12 |
 | Settings | Live Preview | None | Core 12 |
@@ -192,10 +191,11 @@ tests and installing are in AGENTS.md. `install.ps1` also adds Open with for .te
   runs per library).
 - `--smoke` exits 1 with the reason on stderr when it fails.
 - Drive dev builds with UI Automation, not clicks. Issue rows have the Invoke pattern, and inverse
-  SyncTeX is in the PDF's context menu (Go to source position), so only the PDF double-click needs
-  a real mouse: send it to a point `WindowFromPoint` confirms is in the dev build's window. A
-  `ToggleButton` toggled through UIA raises `Checked`/`Unchecked`, not `Click`, so handlers listen
-  to those.
+  SyncTeX is in the PDF's context menu (Go to source position), so only the double-clicks, the
+  PDF's to the source and the source's to the PDF, need a real mouse: send them to a point
+  `WindowFromPoint` confirms is in the dev build's window. Print needs a printer, or Microsoft
+  Print to PDF. A `ToggleButton` toggled through UIA raises `Checked`/`Unchecked`, not `Click`, so
+  handlers listen to those.
 - With the display asleep a new WinUI window never presents and captures come out black: wake it
   (`SetThreadExecutionState` with `ES_DISPLAY_REQUIRED`) first. Flyouts and dialogs are separate
   windows, which `PrintWindow` leaves out; capture the screen region for those.
