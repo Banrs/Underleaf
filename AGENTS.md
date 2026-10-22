@@ -49,7 +49,8 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
   bar as Xcode's console: Issues, Build Log, Live Preview Log, then Warnings or Copy Log, then a
   filter.
 - **Splits**: AppKit's thin dividers, dragged freely as Xcode's and Mail's are, except that the
-  source|PDF divider stops, with the alignment haptic, at the even split. A double-click does nothing.
+  source|PDF divider stops, with the alignment haptic, at the even split, and where the toolbar's
+  separator can follow it no further. A double-click does nothing.
 - **File Outline** at the sidebar's foot, dim and folded on a file that isn't LaTeX.
 - **PDF**: a rebuild's pages replace those showing in place; fitted pages keep PDFKit's margins,
   as Preview's; paper is white, dark or automatic.
