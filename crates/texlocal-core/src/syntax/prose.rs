@@ -1,10 +1,17 @@
 //! What isn't prose: maths, literal code, command names and the names commands take (and, for Writing Tools,
 //! comments). What's left is the text's words, which the status bar counts.
 
+use std::ops::Range;
+
 use super::scan::{Scanner, Visit, arguments};
 use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
 impl SourceDocument {
+    pub fn words(&self, selection: TextRange) -> usize {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        prose(&self.text, |_, _, _| {}).words(start..end)
+    }
+
     pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let (text, mut point) = (&self.text, self.scans.resume(&self.text, start, end));
@@ -132,21 +139,51 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
     }
 }
 
-/// A file's words: runs of prose that hold a letter, prose being what Writing Tools is given. Each command outside
-/// maths and code goes to `command` too, so the outline finds its headings and inputs in the same reading.
-pub(crate) fn words(text: &Text, command: impl FnMut(&Text, &str, usize)) -> usize {
+/// A text read for its words: its prose is what Writing Tools is given, the runs between what
+/// `skipped` holds.
+pub(crate) struct Prose<'a> {
+    units: &'a [u16],
+    skipped: Vec<TextRange>,
+}
+
+/// Each command outside maths and code goes to `command` too, so the outline finds its headings
+/// and inputs in the same reading.
+pub(crate) fn prose<'a>(text: &'a Text, command: impl FnMut(&Text, &str, usize)) -> Prose<'a> {
     let len = text.units.len();
     let writing = Checker::WritingTools;
     let mut reading = Reading::new(text, len, Names::default(), writing, command);
     Scanner::default().run(&text.units, len, &[], &mut reading);
     let mut skipped = reading.ranges;
     skipped.extend(reading.others);
-    let (mut words, mut at) = (0, 0);
-    for r in merged(skipped).iter().chain([&span(len, 0)]) {
-        words += count(&text.units[at..r.start as usize]);
-        at = (r.start + r.length) as usize;
+    Prose {
+        units: &text.units,
+        skipped: merged(skipped),
     }
-    words
+}
+
+impl Prose<'_> {
+    /// The runs of prose in `range` that hold a letter; one the range cuts counts on each side.
+    pub fn words(&self, range: Range<usize>) -> usize {
+        let end = |r: &TextRange| (r.start + r.length) as usize;
+        // Merged, so ordered by their ends too: those before the range are passed over.
+        let first = self.skipped.partition_point(|r| end(r) <= range.start);
+        let mut at = first.checked_sub(1).map_or(0, |i| end(&self.skipped[i]));
+        let mut words = 0;
+        for r in self.skipped[first..]
+            .iter()
+            .chain([&span(self.units.len(), 0)])
+        {
+            let (from, to) = (at.max(range.start), (r.start as usize).min(range.end));
+            if from < to {
+                words += count(&self.units[from..to]);
+            }
+            if to == range.end {
+                break;
+            }
+            at = end(r);
+        }
+        words
+    }
 }
 
 fn count(prose: &[u16]) -> usize {
@@ -316,5 +353,15 @@ mod tests {
         for (source, expected) in cases {
             assert_eq!(spelling(source), expected, "{source:?}");
         }
+    }
+
+    /// Read in the whole text, so a range that starts in maths knows it.
+    #[test]
+    fn a_range_counts_its_prose_words_alone() {
+        let text = "Before $x + y$ one \\textbf{two} \\cite{key} three. After";
+        let (start, end) = (text.find("+ y").unwrap(), text.find(". After").unwrap());
+        let args = format!(r#"{{"start": {start}, "length": {}}}"#, end - start);
+        let words = SourceDocument::new(text).call("words", &args);
+        assert_eq!(words.as_deref(), Some(r#"{"words":3}"#));
     }
 }
