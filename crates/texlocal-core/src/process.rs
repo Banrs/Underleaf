@@ -146,7 +146,7 @@ pub(crate) async fn run(
 ) -> io::Result<(i32, String)> {
     let mut cmd = command(program, cwd, path_env)?;
     let (mut child, tree) = Tree::spawn(cmd.args(args))?;
-    let (code, stdout, ..) = drive(&mut child, &tree, PROBE_TIMEOUT).await;
+    let (code, stdout, ..) = drive(&mut child, &tree, Some(PROBE_TIMEOUT)).await;
     Ok((code, stdout))
 }
 
@@ -154,7 +154,7 @@ pub(crate) async fn run(
 pub(crate) async fn drive(
     child: &mut Child,
     tree: &Tree,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> (i32, String, String, bool) {
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
@@ -165,6 +165,9 @@ pub(crate) async fn drive(
             tokio::join!(read_capped(stdout, &mut out), read_capped(stderr, &mut err));
         };
         let wait = async {
+            let Some(timeout) = timeout else {
+                return (child.wait().await.ok(), false);
+            };
             match tokio::time::timeout(timeout, child.wait()).await {
                 Ok(status) => (status.ok(), false),
                 Err(_) => {

@@ -21,17 +21,17 @@ use crate::service::Service;
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 pub(crate) trait Engine: Send + Sync {
-    fn compile(&self, project: Project) -> Fut<Result<CompileResult, CoreError>>;
+    fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>>;
     fn stop_compile(&self, root: &Path);
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
 impl Engine for Arc<Service> {
-    fn compile(&self, project: Project) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         let service = Self::clone(self);
         Box::pin(async move {
             let tex_path = service.tool_paths().0;
-            service.compile.compile(&project, &tex_path).await
+            service.compile.compile(&project, &tex_path, auto).await
         })
     }
 
@@ -92,7 +92,10 @@ impl Actor {
         (self.builds.compiling, self.builds.auto) = (true, auto);
         self.builds.built = self.edits;
         self.publish_build();
-        let (build, tx) = (self.engine.compile(self.project.clone()), self.tx.clone());
+        let (build, tx) = (
+            self.engine.compile(self.project.clone(), auto),
+            self.tx.clone(),
+        );
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });

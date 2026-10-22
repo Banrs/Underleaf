@@ -95,7 +95,7 @@ impl Fake {
 }
 
 impl Engine for Fake {
-    fn compile(&self, _project: Project) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, _project: Project, _auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         self.note("compile");
         let (tx, rx) = oneshot::channel();
         lock(&self.builds).push_back(tx);
