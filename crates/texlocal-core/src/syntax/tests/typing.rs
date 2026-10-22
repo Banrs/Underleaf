@@ -223,6 +223,9 @@ fn dollars_pair_as_brackets_do() {
         ("$x", caret(2), "$", "$x$", caret(3)),
         ("\\", caret(1), "$", "\\$", caret(2)),
         ("\\\\", caret(2), "$", "\\\\$$", caret(3)),
+        ("", caret(0), "$\\$5", "$\\$5$", caret(4)),
+        // A display opened before is closed by hand.
+        ("$$ x ", caret(5), "$$", "$$ x $$", caret(7)),
         // An empty pair becomes a display's, whose closers are stepped over too.
         ("", caret(0), "$$x$$", "$$x$$", caret(5)),
         ("", caret(0), "$⌫", "", caret(0)),
@@ -262,6 +265,7 @@ fn return_in_a_list_goes_on_with_it() {
         (&one, caret(end), "⏎⏎", &list("\\item a\n  "), caret(end + 3)),
         (&one, caret(end - 1), "⏎", &list("\\item \n  a"), caret(end + 2)),
         ("\\item a", caret(7), "⏎", "\\item a\n", caret(8)),
+        (&list("\\item"), caret(end - 2), "⏎", &list("\\item\n  "), caret(end + 1)),
         (&list("\\itemsep"), caret(end + 1), "⏎", &list("\\itemsep\n  "), caret(end + 4)),
     ];
     assists(cases);

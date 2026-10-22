@@ -104,7 +104,7 @@ impl SourceDocument {
             // backslash alone is typed in, being a command's as often as the closer's.
             let escaped_closer =
                 next.is_some_and(|u| is(u, '\\')) && units.get(start + 1) == Some(&key);
-            if next == Some(key) || escaped_closer {
+            if next == Some(key) && !(dollar && escaped(units, start)) || escaped_closer {
                 typing.closers.remove(&start);
                 let mut bracket = start + escaped_closer as usize;
                 let mut keystroke = Keystroke::default();
@@ -130,8 +130,13 @@ impl SourceDocument {
                 };
             }
             let before = |c: char| c.is_whitespace() || CLOSE_BEFORE.contains(c);
-            // In maths a dollar closes it, and \$ is one in the text.
-            let literal = dollar && (innermost.is_some_and(|g| g.math) || escaped(units, start));
+            // In maths a dollar closes it, and \$ is one in the text. One just after a dollar closes a display: the scan,
+            // reading only to the caret, took that first one as closing it.
+            let literal = dollar
+                && (innermost.is_some_and(|g| g.math)
+                    || escaped(units, start)
+                    || units[..start].last().is_some_and(|&u| is(u, '$'))
+                        && !escaped(units, start - 1));
             if next.is_none_or(|n| char::from_u32(n.into()).is_some_and(before)) && !literal {
                 let slash = if escaped(units, start) { "\\" } else { "" };
                 typing.pending = Some((start, start + 1));
@@ -242,8 +247,9 @@ impl SourceDocument {
         let item = content.strip_prefix("\\item");
         if matches!(list, Some("itemize" | "enumerate" | "description"))
             && blank_line(rest)
+            // A bare \item is left to Return, as some write its text on the next line.
             && let Some(after) =
-                item.filter(|after| !after.starts_with(|c: char| c.is_ascii_alphabetic()))
+                item.filter(|after| after.starts_with(|c: char| !c.is_ascii_alphabetic()))
         {
             // An empty item ends the list, as a word processor's empty bullet does.
             if after.trim().is_empty() {
