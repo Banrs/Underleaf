@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using System.Text.Json;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Input;
 using Microsoft.UI.Text;
@@ -897,6 +898,10 @@ public sealed partial class SourceView : UserControl
         if (pressedAt is { } at && OffsetAt(e.GetCurrentPoint(Editor).Position) == at) Define(at);
         pressedAt = null;
     }
+
+    /// The prose words selected, counted as the document's are; null with nothing selected.
+    public int? SelectedWords => Selected is { Length: > 0 } s && source is not null
+        ? source.Call<JsonElement>("words", new { start = s.Start, length = s.Length }).GetProperty("words").GetInt32() : null;
 
     /// F12, at the caret.
     public void GoToDefinition() => Define(CaretOffset);

@@ -23,6 +23,9 @@
             <MenuFlyoutItem x:Name="RenameItem" Click="OnRenameItem" KeyboardAcceleratorTextOverride="F2" Text="Rename">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>
+            <MenuFlyoutItem x:Name="DuplicateItem" Click="OnDuplicateItem" Text="Duplicate">
+                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutItem.Icon>
+            </MenuFlyoutItem>
             <MenuFlyoutItem x:Name="RevealItem" Click="OnRevealItem" Text="Show in File Explorer">
                 <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEC50;" /></MenuFlyoutItem.Icon>
             </MenuFlyoutItem>

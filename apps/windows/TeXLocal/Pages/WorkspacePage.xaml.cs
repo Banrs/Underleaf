@@ -877,7 +877,7 @@ public sealed partial class WorkspacePage : Page
 
     async void OnExportZip(object sender, RoutedEventArgs e)
     {
-        if (await Save()) await App.ExportZip(id, name!);
+        if (await Save()) await App.ExportZip(id, name!, ReferenceEquals(sender, ArxivItem));
     }
 
     /// Windows' share sheet, which a desktop app opens through its window.

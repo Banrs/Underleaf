@@ -106,6 +106,7 @@
                     <!-- The PDF shown, as the Mac's Export as PDF and Share, and the project's files, as Home's Export as ZIP. -->
                     <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
                     <MenuFlyoutItem AccessKey="Z" Click="OnExportZip" Text="Export project as ZIP…" />
+                    <MenuFlyoutItem x:Name="ArxivItem" AccessKey="X" Click="OnExportZip" Text="Export for arXiv…" />
                     <MenuFlyoutItem x:Name="OpenPdfItem" AccessKey="D" Click="OnOpenPdf" Text="Open PDF in default app" />
                     <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
                     <MenuFlyoutItem x:Name="PrintItem" controls:Shortcut.Keys="Ctrl+P" AccessKey="R" Click="{x:Bind Pdf.Print}" Text="Print…" />
@@ -752,7 +753,7 @@
                     <TextBlock x:Name="CaretText" Style="{StaticResource CaptionTextBlockStyle}" Text="Ln 1, Col 1" Typography.NumeralAlignment="Tabular" />
                 </Button>
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
-                <TextBlock x:Name="Words" MinWidth="88" Style="{StaticResource StatusTextStyle}" TextAlignment="Center" />
+                <TextBlock x:Name="Words" MinWidth="128" Style="{StaticResource StatusTextStyle}" TextAlignment="Center" />
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
                 <Button MinWidth="96" Click="OnGoToPage" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
                     <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="No PDF" Typography.NumeralAlignment="Tabular" />
