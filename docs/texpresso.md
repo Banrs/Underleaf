@@ -41,8 +41,8 @@ the app quits or crashes.
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as far
   as those, and each page that changed is written at once with MuPDF's PDF writer as a one-page
   PDF beside the document and reported (`["page", index, path, mark]`). TeX's Type 1 fonts are
-  written as CFF copies (`src/dvi/type1_cff.c`): MuPDF's writer would embed them as PDF doesn't
-  allow, and PDFKit would draw the wrong glyphs.
+  written as OpenType copies around a CID-keyed CFF (`src/dvi/type1_cff.c`): MuPDF's writer
+  would embed them as PDF doesn't allow, and PDFKit would draw the wrong glyphs.
 - When typing pauses the rest is typeset and the whole document is written (to a `.part` file,
   renamed when complete) with its SyncTeX beside it (`live.synctex`), reported as
   `["pdf", path, pages, run, changed, mark]`: the pages that changed, and whether TeX reached the
