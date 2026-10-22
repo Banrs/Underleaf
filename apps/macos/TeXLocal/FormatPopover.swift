@@ -115,50 +115,18 @@ struct FormatPanel: View {
     /// Notes' half-point separator: a `Divider` framed to half a point still inks a whole one.
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
+    /// Notes' style toggles, as the accessory bar's, which draw their own hover, press and on; one size for the three, 36 by
+    /// 23 pt in its padding, where its own would differ by the symbol.
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
-        Toggle(command.title, systemImage: command.style!.symbol, isOn: Binding(get: { on }, set: { _ in
-            app.perform(command, on: project)
-        }))
-        .toggleStyle(StyleTile())
+        Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: project) })) {
+            Label(command.title, systemImage: command.style!.symbol)
+                .labelStyle(.iconOnly)
+                .imageScale(.large)
+                .frame(width: 12, height: 15)
+        }
+        .toggleStyle(.button)
+        .buttonStyle(.accessoryBar)
         .help(command.style!.help)
-    }
-
-    /// Notes' style toggles, read through Accessibility (27.2), at AppKit's accessory-bar height and corner, one width for the
-    /// three: lit in the levels' accent while on and under the pointer, grey while one that's on is pressed, the click's
-    /// result to come.
-    fileprivate struct StyleTile: ToggleStyle {
-        func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
-
-        private struct Tile: View {
-            let configuration: Configuration
-            @State private var hovering = false
-
-            var body: some View {
-                Button { configuration.isOn.toggle() } label: {
-                    configuration.label
-                        .labelStyle(.iconOnly)
-                        .imageScale(.large)
-                        .foregroundStyle(.primary)
-                        .frame(width: 36, height: 24)
-                }
-                .buttonStyle(Fill(on: configuration.isOn, hovering: hovering))
-                .onHover { hovering = $0 }
-                .accessibilityAddTraits(configuration.isOn ? [.isToggle, .isSelected] : .isToggle)
-            }
-        }
-
-        private struct Fill: ButtonStyle {
-            let on: Bool, hovering: Bool
-
-            func makeBody(configuration: Configuration) -> some View {
-                let grey = on && configuration.isPressed, lit = (on || hovering) && !grey
-                configuration.label
-                    .background(lit ? AnyShapeStyle(.tint) : grey ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.clear),
-                                in: .rect(cornerRadius: 5))
-                    .environment(\.backgroundProminence, lit ? .increased : .standard)
-                    .contentShape(.rect)
-            }
-        }
     }
 
     private func row(_ style: HeadingStyle, layout: Layout, checked: Bool) -> some View {
