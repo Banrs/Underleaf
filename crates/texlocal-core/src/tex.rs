@@ -170,6 +170,7 @@ fn installed_beside(program: &Path) -> Installed {
             Some((name, "sty")) => (name, &mut installed.packages),
             Some((name, "cls")) => (name, &mut installed.classes),
             Some((name, "bst")) => (name, &mut installed.styles),
+            Some((name, "tex")) => (name, &mut installed.inputs),
             _ => continue,
         };
         list.push(name.to_owned());
@@ -178,6 +179,7 @@ fn installed_beside(program: &Path) -> Installed {
         &mut installed.packages,
         &mut installed.classes,
         &mut installed.styles,
+        &mut installed.inputs,
     ] {
         list.sort_unstable();
         list.dedup();
@@ -200,13 +202,15 @@ mod tests {
         let ls_r = "% ls-R -- filename database for kpathsea; do not change this line.\n\
             ./:\nls-R\ntex\n\n./tex/latex/amsmath:\namsthm.sty\namsmath.sty\n\n\
             ./tex/latex-dev/amsmath:\namsmath.sty\n\n./tex/latex/base:\narticle.cls\nsize10.clo\n\n\
-            ./bibtex/bst/base:\nplain.bst\n\n./doc/latex/amsmath:\nexample.sty\n";
+            ./bibtex/bst/base:\nplain.bst\n\n./tex/generic/pdftex:\nglyphtounicode.tex\n\n\
+            ./doc/latex/amsmath:\nexample.sty\nexample.tex\n";
         std::fs::write(root.path().join("texmf-dist").join("ls-R"), ls_r).unwrap();
         let names = |names: &[&str]| names.iter().map(|&n| n.into()).collect();
         let installed = Installed {
             packages: names(&["amsmath", "amsthm"]),
             classes: names(&["article"]),
             styles: names(&["plain"]),
+            inputs: names(&["glyphtounicode"]),
         };
         assert_eq!(installed_beside(&bin.join("latexmk")), installed);
     }

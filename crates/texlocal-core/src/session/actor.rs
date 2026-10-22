@@ -20,13 +20,14 @@ use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Named, Place};
+use crate::logparse::LogItem;
 use crate::paths::{self, Project, within};
 use crate::projects::{self, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{SymbolKind, Text, TextEdit};
-use crate::{CoreError, lf, lock, tex};
+use crate::{CoreError, checks, lf, lock, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -308,7 +309,7 @@ impl Actor {
             Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
-            Msg::Symbols(seq, result) => self.symbols_done(seq, result),
+            Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
             Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
@@ -880,24 +881,40 @@ impl Actor {
         let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
-        let service = Arc::clone(&self.service);
+        let (service, main, edits) = (
+            Arc::clone(&self.service),
+            self.tree.main.clone(),
+            self.edits,
+        );
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let installed = tex::installed(|| service.tool_paths().0);
-            let symbols = symbols.map(|symbols| Symbols {
-                files,
-                installed,
-                ..symbols
+            let result = symbols.map(|symbols| {
+                let symbols = Symbols {
+                    files,
+                    installed,
+                    ..symbols
+                };
+                let checks = main.map_or_else(Vec::new, |main| {
+                    checks::check(&symbols.by_file, &symbols.files, &main, &symbols.installed)
+                });
+                (symbols, checks)
             });
-            let _ = tx.send(Msg::Symbols(seq, symbols));
+            let _ = tx.send(Msg::Symbols { seq, edits, result });
         });
     }
 
-    fn symbols_done(&mut self, seq: u64, result: Result<Symbols, CoreError>) {
-        if let Ok(symbols) = result
+    fn symbols_done(
+        &mut self,
+        seq: u64,
+        edits: u64,
+        result: Result<(Symbols, Vec<LogItem>), CoreError>,
+    ) {
+        if let Ok((symbols, checks)) = result
             && seq == self.symbols_seq
         {
             *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
+            self.checks_done(checks, edits);
         }
     }
 

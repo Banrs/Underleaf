@@ -31,7 +31,12 @@ pub struct LogItem {
 }
 
 impl LogItem {
-    fn new(kind: Severity, file: Option<String>, line: Option<u32>, message: String) -> Self {
+    pub(crate) fn new(
+        kind: Severity,
+        file: Option<String>,
+        line: Option<u32>,
+        message: String,
+    ) -> Self {
         let flat = message.split_whitespace().collect::<Vec<_>>().join(" ");
         let short = flat
             .strip_prefix("LaTeX Error: ")

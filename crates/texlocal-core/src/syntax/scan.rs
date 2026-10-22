@@ -119,6 +119,11 @@ impl Group {
             command: None,
         }
     }
+
+    /// Maths a paragraph's end closes: an environment's goes on past it.
+    pub fn delimited(&self) -> bool {
+        matches!(self.end.as_ref(), "$" | "$$" | "\\)" | "\\]")
+    }
 }
 
 /// What a scan reports as it reads; callers merge the ranges.
@@ -130,6 +135,10 @@ pub(crate) trait Visit {
     fn comment(&mut self, _from: usize, _to: usize) {}
     fn at(&mut self, _groups: Vec<Group>) {}
     fn closed(&mut self, _group: &Group, _close: Range<usize>) {}
+    /// Every brace TeX groups with, matched or not.
+    fn brace(&mut self, _at: usize, _open: bool) {}
+    /// Maths a paragraph's end finds open, which TeX ends with an error.
+    fn unclosed(&mut self, _group: &Group) {}
 }
 
 impl Visit for () {}
@@ -192,6 +201,7 @@ impl Scanner {
                 }
                 '$' => self.dollar(src, start, visit),
                 '{' => {
+                    visit.brace(start, true);
                     let math = !self.text_argument && self.in_math();
                     self.stack.push(Group {
                         command: pending,
@@ -199,7 +209,10 @@ impl Scanner {
                     });
                     self.text_argument = false;
                 }
-                '}' => self.close(start..self.i, "}", visit),
+                '}' => {
+                    visit.brace(start, false);
+                    self.close(start..self.i, "}", visit);
+                }
                 '\\' if self.i < src.len() => (code, read) = self.control(src, start, visit),
                 _ => {
                     let space = tex_space(src[start]);
@@ -249,8 +262,8 @@ impl Scanner {
         self.reach = self.reach.max(next + 1);
         let ends = src.get(next) == Some(&NEWLINE);
         if ends {
-            let delimited = |g: &Group| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]");
-            self.stack.pop_to(true, delimited, |_| {});
+            self.stack
+                .pop_to(true, Group::delimited, |group| visit.unclosed(group));
             self.text_argument = false;
         } else {
             self.last_command = pending;

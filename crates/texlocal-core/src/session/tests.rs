@@ -546,6 +546,65 @@ async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() 
     assert_eq!(issues[0]["lines"][0]["line"], 2);
 }
 
+/// The events up to one of `kind`, which a scan beside the session sends perhaps a scan or two
+/// later.
+async fn until_sent(rig: &mut Rig, kind: &str) -> Vec<Value> {
+    let mut events = Vec::new();
+    for _ in 0..500 {
+        events.extend(rig.events().await);
+        if events.iter().any(|e| e["type"] == kind) {
+            return events;
+        }
+        wait(10).await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("no {kind} came");
+}
+
+/// They come as the session opens and as they change, by file and then line; they follow the
+/// build's issues in the session's list and on a line, and come back after an edit's save.
+#[tokio::test(start_paused = true)]
+async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved() {
+    let mut rig = Rig::new(false).await;
+    let checks = |events: Vec<Value>| -> Vec<Value> {
+        let checks = events.into_iter().filter(|e| e["type"] == "checks");
+        checks.map(|e| e["items"].clone()).collect()
+    };
+    assert_eq!(checks(until_sent(&mut rig, "checks").await), [json!([])]);
+    fs::write(rig.root.join("main.tex"), "\\input{a}\n\\ref{nowhere}\n").unwrap();
+    fs::write(rig.root.join("a.tex"), "x}\n").unwrap();
+    rig.changed("a.tex", true);
+    let items = checks(until_sent(&mut rig, "checks").await).remove(0);
+    let undefined = "No label “nowhere” is defined.";
+    let check = json!({ "type": "warning", "file": "main.tex", "line": 2, "message": undefined, "short": undefined });
+    assert_eq!(items[0]["file"], "a.tex");
+    assert_eq!(items[1], check);
+    let doc = rig.open("main.tex").await;
+    rig.ok("compile", json!({})).await;
+    rig.fake
+        .finish_build(built(true, vec![issue(2, "Undefined")]));
+    let issues = rig.of_type("issues").await;
+    let line = &issues.last().unwrap()["lines"][0];
+    assert_eq!(
+        (&line["message"], &line["others"]),
+        (&json!("Undefined"), &json!([undefined]))
+    );
+    for (index, file) in [(0, "main.tex"), (1, "a.tex"), (2, "main.tex")] {
+        let chosen = rig.ok("choose_issue", json!({ "index": index })).await;
+        assert_eq!(chosen["issue"]["file"], file);
+    }
+    doc.edit(24, 0, "x");
+    assert_eq!(rig.of_type("issues").await[0]["lines"], json!([]));
+    wait(850).await;
+    let events = until_sent(&mut rig, "issues").await;
+    let issues = events.iter().find(|e| e["type"] == "issues").unwrap();
+    let line = &issues["lines"][0];
+    assert_eq!(
+        (&line["message"], &line["others"]),
+        (&json!(undefined), &json!([]))
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_automatic_build_announces_only_when_its_errors_change_and_a_stopped_one_never() {
     let mut rig = Rig::new(false).await;
@@ -1003,7 +1062,10 @@ async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_bef
     });
     rig.fake.tell(page("/tmp/page.pdf"));
     let events = rig.events().await;
-    let shown: Vec<&Value> = events.iter().filter(|e| e["type"] != "live").collect();
+    let shown = events
+        .iter()
+        .filter(|e| e["type"].as_str().is_some_and(|t| t.starts_with("live_")));
+    let shown: Vec<&Value> = shown.collect();
     let session = rig.session;
     assert_eq!(
         shown,
