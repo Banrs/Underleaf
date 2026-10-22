@@ -131,12 +131,16 @@ pub(crate) fn new_project(
     fs::create_dir_all(data_dir)?;
     let temp = atomic::temp_builder(0o777).tempdir_in(data_dir)?;
     fill(temp.path())?;
-    // Passing over anything there, a dangling link or case alias too.
+    // Passing over anything there, a dangling link or case alias too, and what another create
+    // of the name moved there since. Once it is moved, its drop finds nothing to remove.
+    let taken = |id: &str| fs::symlink_metadata(data_dir.join(id)).is_ok();
     let id = project_names(&name)
-        .find(|id| fs::symlink_metadata(data_dir.join(id)).is_err())
-        .expect("a free name");
-    // Once it is moved, its drop finds nothing to remove.
-    fs::rename(temp.path(), data_dir.join(&id))?;
+        .filter(|id| !taken(id))
+        .find_map(|id| match fs::rename(temp.path(), data_dir.join(&id)) {
+            Err(_) if taken(&id) => None,
+            moved => Some(moved.map(|()| id)),
+        })
+        .expect("a free name")?;
     Ok(ProjectInfo::read(data_dir, &id)?)
 }
 
