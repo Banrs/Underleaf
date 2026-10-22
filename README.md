@@ -45,6 +45,12 @@ There's also a file tree, an outline of the current file, a word count, search a
 the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go
 to the Trash or the Recycle Bin.
 
+TeXLocal keeps a local history of each project, which you can compare files with and restore from.
+It takes a snapshot every ten minutes or so while you work and just before a change across files,
+such as Replace All, and you can save one under a name of your own. The history stays on your
+computer for as long as 90 days, or for good once named. A folder you opened keeps its history
+outside it, so nothing is added to the folder or its git repository.
+
 ## Requirements
 
 You need a TeX distribution that includes latexmk, pdflatex and synctex. If TeXLocal finds none,

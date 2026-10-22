@@ -88,6 +88,10 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_replace` | `query`, `replacement` | `{edits, written}` | `replacement` in place of every match `session_search` would find (all on a line) in every text file. `edits`: the open document's, `{path, version, edits: [{start, length, text}]}` in UTF-16 against its text at `version`, or null; the host applies them at once as one undoable edit, as `toggle_style`'s, if its source still answers that `version` (typed in since, the edits no longer fit and it drops them), and the session saves it as any: the core doesn't write that file. `written`: `[{file, count}]`, the other files changed, by path, each read again and written under the project's lock, each line keeping its own ending. 409 while the open document's change on disk isn't settled (its `conflict` asked or cancelled, a `document_reload` not yet applied), as saves wait then, and with two open documents to edit; 400, writing nothing, for a file with a match that isn't UTF-8. It changes every file or none: one that can't be written answers the file system's error, as a save's, and the files written before it are put back. There is no undo across files. |
 | `session_rename_symbol` | `kind` (`label` or `citation`), `from`, `to` | as `session_replace` | `to` in place of `from` in the .tex and .bib files, the open document as the editor has it, wherever it is defined (`\label`; `\bibitem` or a .bib entry's key) and wherever a `\ref` or `\cite` kin or a .bib entry's `crossref` names it (`\nocite`, natbib's and biblatex's, `\nameref` and cleveref's too; alone of a list's keys), but not in comments or literal code. A `to` empty or with a space, comma, brace, `%` or `\` is 400, a `from` nothing defines 404 and a `to` defined already 409; and 409 or 400 as for `session_replace`. |
 | `session_add_package` | `name` | as `session_replace` | `\usepackage{name}` on a line of its own in the main file, after the line its last `\usepackage`'s argument ends on, else `\documentclass`'s; nothing (`edits` null, `written` `[]`) when the main file has neither or loads the package already (`\usepackage` or `\RequirePackage`, not in a comment). The host applies `edits` as `session_replace`'s; 409 as for `session_replace`. |
+| `session_history_list` | | `[{id, time, name, reason, changed}]` | The project's snapshots (History, below), newest first. `id` a string naming it to the commands below; `time` ISO 8601 in UTC to the second (`2026-10-22T09:41:00Z`); `name` the author's or null; `reason` null, or why the core took it (`Before Replace All`, `Before Rename`, `Before Adding a Package`, `Before Restore`); `changed` `[{path, change}]`, `change` `added`, `deleted` or `changed`, the files that differ from the snapshot before it, by path (the oldest's are all `added`). |
+| `session_history_save` | `name` | an entry, as listed | A snapshot of the files as they are, named; when nothing changed since the last, that one is named instead. A `name` empty once trimmed is 400. |
+| `session_history_compare` | `id`, `path` | `{old, new}` | `old`: the file's text in that snapshot; `new`: its text now, the open document's as edited, else the disk's; each null where there is no such file, with line feeds alone. Text files only (`tex`, `bib` and `text` kinds): another is 400. The host draws the comparison. |
+| `session_history_restore` | `id`, `paths?` | `{edits, written}` | Takes a `Before Restore` snapshot, then puts the snapshot's files back as they were, or those of them `paths` names, making those deleted since; files added since are left alone. `edits`: the open document's, as `session_replace`'s (one edit, around what differs), to apply the same way; `written`: the paths of the other files written, those as they were already left out. All or none, as `session_replace`, and 409 as for it. A snapshot no longer kept is 404. |
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. The session's issues are the last build's errors, then its warnings, then the `checks` items: a host numbers its list's rows the same way. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter; `index` as `session_issue` numbers them. |
@@ -127,8 +131,8 @@ A folder opened where it is (`open_path`) stays where it is; the library lists i
 `<library>/.opened/<key>/`, under the id `.<key>`, which no library project can have. The store
 holds `folder.json` (its path and identity), `project.json` (its ui state, and its settings unless
 the folder has a `.texlocal.json` of its own, which then holds them as it is when the project is
-resolved) and `build/`: latexmk's `-outdir` and `-auxdir` are absolute, so nothing is written in
-the folder but the author's files. Its top-level `build` and `.texlocal.json` keep the rules of a
+resolved), `build/` and `history/` (History, below): latexmk's `-outdir` and `-auxdir` are
+absolute, so nothing is written in the folder but the author's files. Its top-level `build` and `.texlocal.json` keep the rules of a
 library project's. Opened again, or found again at another path after a move (by its volume and
 file number), it keeps its id, settings and ui state.
 
@@ -136,6 +140,28 @@ file number), it keeps its id, settings and ui state.
 project's folder, `opened` for an opened folder, `missing` for one not where it was (moved,
 deleted, its volume away), dated 0 so it comes last. Commands on a missing folder are 404, with
 the path it was at.
+
+## History
+
+Autosave, Replace All and Rename write over the author's files, so the core keeps each project's
+history, locally and with no limit but pruning's: never in the folder's files or its git
+repository. An opened folder's is in its store (`history/`); a library project's in a hidden
+`.texlocal-history` in its folder, outside `build/`, which Clean Build Folder deletes. The tree,
+search, the outline and checks' scans, export ZIP and import leave it out, as they leave out the
+build folder and `.git`.
+
+- **A snapshot** records every file the tree lists (not `build/`, `.git` or dotfiles, so not
+  `.texlocal.json`) as it is on disk: an open document's text as saved. Each file is stored once
+  by its contents' SHA-256, so a file unchanged since another snapshot costs nothing; a file over
+  20 MB isn't kept.
+- **Taken** as the session opens and after each save, when the last snapshot is more than 10
+  minutes old and something changed since it; always just before `session_replace`,
+  `session_rename_symbol`, `session_add_package` and `session_history_restore`, with its
+  `reason`; and when asked, named (`session_history_save`). Those after a save are taken beside
+  the session, so no save waits on them; those before a change, before it.
+- **Pruned** after each snapshot: named ones are kept; of the others, all from the last day, the
+  last of each hour for a week and of each day for 90 days, none older. Stored files no snapshot
+  names are removed.
 
 ## Errors
 
