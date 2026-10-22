@@ -129,20 +129,22 @@ struct FormatPanel: View {
 
         func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
 
-        /// Lit in the accent the levels light in, while on and under the pointer, as Notes' are.
+        /// As Notes': lit in the accent the levels light in while on, and an off one under the pointer; an on one greys under
+        /// it, the click's result to come.
         private struct Tile: View {
             let configuration: Configuration
             @State private var hovering = false
 
             var body: some View {
                 let on = configuration.isOn, lit = on || hovering
+                let fill = on && hovering ? AnyShapeStyle(.fill) : lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear)
                 Button { configuration.isOn.toggle() } label: {
                     configuration.label
                         .labelStyle(.iconOnly)
                         .imageScale(.large)
                         .foregroundStyle(.primary)
                         .frame(width: StyleTile.side, height: StyleTile.side)
-                        .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                        .background(fill, in: .rect(cornerRadius: FormatPanel.highlightRadius))
                         .environment(\.backgroundProminence, lit ? .increased : .standard)
                         .contentShape(.rect)
                 }
