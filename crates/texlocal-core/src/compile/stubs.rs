@@ -42,15 +42,11 @@ fn stubs(service: &Service) -> String {
 }
 
 async fn compile(service: &Service, root: &Path) -> CompileResult {
-    compile_auto(service, root, false).await
-}
-
-async fn compile_auto(service: &Service, root: &Path, auto: bool) -> CompileResult {
     let path = stubs(service);
     let project = Project::in_folder(root);
     service
         .compile
-        .compile(&project, &path, auto)
+        .compile(&project, &path, false)
         .await
         .unwrap()
 }
@@ -154,10 +150,13 @@ async fn a_timed_out_automatic_build_is_killed_and_reported_failed_with_the_outp
     let (_dir, service, root) = setup("echo 'Running pdflatex'\ntouch printed\nsleep 20\n");
     let started = Instant::now();
     // Once the stub has printed, tokio's clock jumps straight to the build's time limit.
-    let (result, ()) = tokio::join!(compile_auto(&service, &root, true), async {
+    let (project, path) = (Project::in_folder(&root), stubs(&service));
+    let auto = service.compile.compile(&project, &path, true);
+    let (result, ()) = tokio::join!(auto, async {
         appears(&root.join("printed"), "latexmk did not print").await;
         tokio::time::pause();
     });
+    let result = result.unwrap();
 
     assert!(!result.ok);
     assert!(!result.stopped, "a timeout is a failure, not a Stop");
