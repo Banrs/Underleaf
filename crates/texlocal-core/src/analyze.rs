@@ -99,6 +99,8 @@ pub struct Facts {
     pub bibliographies: Vec<String>,
     /// What TeX would find unbalanced in it.
     pub slips: Vec<Slip>,
+    /// Where TeX stops reading it, if before its end.
+    pub end: Option<Place>,
 }
 
 /// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
@@ -267,7 +269,7 @@ impl Facts {
         let mut scanner = Scanner::default();
         scanner.run(&text.units, text.units.len(), &[], &mut names);
         let Names(.., structure) = names;
-        facts.slips = structure.finish(&text, &scanner.groups());
+        (facts.slips, facts.end) = structure.finish(&text, &scanner.groups());
         facts
     }
 }

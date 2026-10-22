@@ -34,13 +34,15 @@ pub(crate) struct Structure {
     environments: Vec<(String, usize)>,
     braces: Vec<usize>,
     slips: Vec<Slip>,
+    /// The first `\end{document}` outside braces, whose `\enddocument` ends TeX's run.
+    end: Option<usize>,
 }
 
 impl Structure {
     /// In braces, a `\begin` or `\end` is most often a definition's, split across its arguments
     /// and paired only where it is used.
     pub fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
-        if !matches!(name, "begin" | "end") || !self.braces.is_empty() {
+        if !matches!(name, "begin" | "end") || !self.braces.is_empty() || !self.read(start) {
             return;
         }
         let Some((environment, _)) = scan::environment_name(&text.units, name_end) else {
@@ -50,6 +52,9 @@ impl Structure {
         if name == "begin" {
             self.environments.push((environment, start));
             return;
+        }
+        if environment == "document" {
+            self.end = Some(start);
         }
         let begun = self
             .environments
@@ -71,6 +76,9 @@ impl Structure {
     }
 
     pub fn brace(&mut self, text: &Text, at: usize, open: bool) {
+        if !self.read(at) {
+            return;
+        }
         if open {
             self.braces.push(at);
         } else if self.braces.pop().is_none() {
@@ -80,6 +88,9 @@ impl Structure {
     }
 
     pub fn unclosed(&mut self, text: &Text, group: &Group) {
+        if !self.read(group.open) {
+            return;
+        }
         let open = &text.units[group.open..group.open + group.end.len()];
         let message = format!(
             "This {} is still open where the paragraph ends.",
@@ -88,8 +99,8 @@ impl Structure {
         self.slip(text, group.open, message, Kind::Unbalanced);
     }
 
-    /// With what the scanner still has open at the text's end.
-    pub fn finish(mut self, text: &Text, open: &[Group]) -> Vec<Slip> {
+    /// With what the scanner still has open at the text's end; and where TeX stops reading.
+    pub fn finish(mut self, text: &Text, open: &[Group]) -> (Vec<Slip>, Option<Place>) {
         for group in open.iter().filter(|group| group.delimited()) {
             self.unclosed(text, group);
         }
@@ -105,7 +116,11 @@ impl Structure {
         }
         // For the walk to pair environments with other files' as TeX reads them.
         self.slips.sort_by_key(|slip| slip.place);
-        self.slips
+        (self.slips, self.end.map(|end| Place::of(text, end..end)))
+    }
+
+    fn read(&self, at: usize) -> bool {
+        self.end.is_none_or(|end| at < end)
     }
 
     fn slip(&mut self, text: &Text, at: usize, message: String, kind: Kind) {
@@ -125,6 +140,13 @@ fn line(text: &Text, at: usize) -> u32 {
 /// A name written out, not made by a macro or a definition's parameter.
 fn literal(name: &str) -> bool {
     !name.is_empty() && !name.contains(['\\', '#'])
+}
+
+/// What of a file's `names` TeX reads.
+fn read<'a>(facts: &'a Facts, names: &'a [Named]) -> impl Iterator<Item = &'a Named> {
+    names
+        .iter()
+        .filter(|n| facts.end.is_none_or(|end| n.place < end))
 }
 
 /// The files the main file reaches, as TeX reads them.
@@ -150,9 +172,10 @@ impl<'a> Walk<'a> {
             return;
         }
         self.files.push((file, facts));
-        let mut labels = facts.labels.iter().peekable();
+        let mut labels = read(facts, &facts.labels).peekable();
         let mut slips = facts.slips.iter().peekable();
-        for input in &facts.inputs {
+        let inputs = facts.inputs.iter();
+        for input in inputs.filter(|i| facts.end.is_none_or(|end| i.place < end)) {
             while let Some(label) = labels.next_if(|label| label.place < input.place) {
                 self.labels.push((file, label));
             }
@@ -221,7 +244,8 @@ pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     walk.read(main, "");
     let reached = || walk.files.iter().copied();
     let undefined = |kind, noun: &str, defined: &HashSet<&str>| -> Vec<LogItem> {
-        let uses = reached().flat_map(|(file, facts)| facts.uses.iter().map(move |u| (file, u)));
+        let uses =
+            reached().flat_map(|(file, facts)| read(facts, &facts.uses).map(move |u| (file, u)));
         let uses = uses.filter(|(_, used)| used.kind == kind && literal(&used.name));
         let undefined = uses.filter(|(_, used)| !defined.contains(&*used.name));
         let item = |(file, used): (&str, &Named)| {
@@ -266,7 +290,7 @@ pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     items.extend(twice(entries.iter().copied(), "citation"));
     // One outside the project, perhaps in TeX's own folders, may define any key.
     if bibliographies.iter().all(Option::is_some) {
-        let bibitems = reached().flat_map(|(_, facts)| &facts.citations);
+        let bibitems = reached().flat_map(|(_, facts)| read(facts, &facts.citations));
         let mut keys: HashSet<&str> = bibitems.map(|c| c.name.as_str()).collect();
         keys.extend(entries.iter().map(|(_, c)| c.name.as_str()));
         // `\nocite{*}` cites every entry.
@@ -423,6 +447,14 @@ mod tests {
         let gone = warned("main.tex", 1, "No file “gone” is in the project.");
         assert_eq!(checked(&files, &["glyphtounicode"]), [gone]);
         assert_eq!(checked(&files, &[]), []);
+    }
+
+    /// \enddocument ends TeX's run, so notes below it are no document's.
+    #[test]
+    fn nothing_after_the_documents_end_is_checked() {
+        let main = "\\begin{document}\\label{a}\n\\end{document}\n\
+            Notes: \\begin{todo} { $x \\ref{b} \\label{a} \\input{gone}";
+        assert_eq!(checked(&[("main.tex", main)], &["tex"]), []);
     }
 
     /// Where TeX would complain; not in comments, literal code, escapes, a URL's address or
