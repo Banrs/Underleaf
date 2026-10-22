@@ -3,35 +3,12 @@
 //! files the main file reaches.
 
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
 
 use crate::analyze::{Facts, Input, Named, Place};
 use crate::logparse::{LogItem, Severity};
-use crate::paths;
 use crate::syntax::scan::{self, Group};
-use crate::syntax::{Installed, SymbolKind, Text};
-
-/// Commands whose arguments define others: `\begin` and `\end` in them are often split across
-/// the arguments, and pair only where the definition is used.
-const DEFINITIONS: &[&str] = &[
-    "newcommand",
-    "renewcommand",
-    "providecommand",
-    "DeclareRobustCommand",
-    "newenvironment",
-    "renewenvironment",
-    "NewDocumentCommand",
-    "RenewDocumentCommand",
-    "ProvideDocumentCommand",
-    "DeclareDocumentCommand",
-    "NewDocumentEnvironment",
-    "RenewDocumentEnvironment",
-    "def",
-    "gdef",
-    "edef",
-    "xdef",
-];
+use crate::syntax::{SymbolKind, Symbols, Text};
 
 /// Something one file leaves unbalanced, on its 1-based line.
 pub struct Slip {
@@ -56,18 +33,14 @@ enum Kind {
 pub(crate) struct Structure {
     environments: Vec<(String, usize)>,
     braces: Vec<usize>,
-    /// Where the last definition's arguments end.
-    defining: usize,
     slips: Vec<Slip>,
 }
 
 impl Structure {
+    /// In braces, a `\begin` or `\end` is most often a definition's, split across its arguments
+    /// and paired only where it is used.
     pub fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
-        if DEFINITIONS.contains(&name) {
-            self.defining = self.defining.max(definition_end(&text.units, name_end));
-            return;
-        }
-        if !matches!(name, "begin" | "end") || start < self.defining {
+        if !matches!(name, "begin" | "end") || !self.braces.is_empty() {
             return;
         }
         let Some((environment, _)) = scan::environment_name(&text.units, name_end) else {
@@ -107,13 +80,11 @@ impl Structure {
     }
 
     pub fn unclosed(&mut self, text: &Text, group: &Group) {
-        let open = match group.end.as_ref() {
-            "$" => "$",
-            "$$" => "$$",
-            "\\)" => "\\(",
-            _ => "\\[",
-        };
-        let message = format!("This {open} is still open where the paragraph ends.");
+        let open = &text.units[group.open..group.open + group.end.len()];
+        let message = format!(
+            "This {} is still open where the paragraph ends.",
+            String::from_utf16_lossy(open)
+        );
         self.slip(text, group.open, message, Kind::Unbalanced);
     }
 
@@ -125,6 +96,8 @@ impl Structure {
         for at in std::mem::take(&mut self.braces) {
             let message = "This { is never closed.".into();
             self.slip(text, at, message, Kind::Unbalanced);
+            // The `\end`s after it went unpaired.
+            self.environments.clear();
         }
         for (environment, at) in std::mem::take(&mut self.environments) {
             let message = format!("\\begin{{{environment}}} is never ended.");
@@ -147,34 +120,6 @@ fn line(text: &Text, at: usize) -> u32 {
     text.line_index(at as u32) as u32 + 1
 }
 
-/// Where a definition's name, parameters and arguments end: a name or parameter only before
-/// its first braced argument, as `\def\name#1{…}` has them.
-fn definition_end(units: &[u16], mut i: usize) -> usize {
-    let blank = |u: &&u16| scan::tex_space(**u) || **u == u16::from(b'\n');
-    let mut braced = false;
-    loop {
-        let next = i + units[i..].iter().take_while(blank).count();
-        i = match units.get(next).and_then(|&u| u8::try_from(u).ok()) {
-            Some(b'\\') if !braced => {
-                let name = units[next + 1..].iter();
-                let letters =
-                    name.take_while(|&&u| u8::try_from(u).is_ok_and(|u| u.is_ascii_alphabetic()));
-                (next + 1 + letters.count().max(1)).min(units.len())
-            }
-            Some(b'#') if !braced => (next + 2).min(units.len()),
-            Some(b'*') => next + 1,
-            Some(b'[' | b'{') => match scan::arguments(units, next, |_, _| {}) {
-                (stop, true) => {
-                    braced = true;
-                    stop
-                }
-                _ => return i,
-            },
-            _ => return i,
-        };
-    }
-}
-
 /// A name written out, not made by a macro or a definition's parameter.
 fn literal(name: &str) -> bool {
     !name.is_empty() && !name.contains(['\\', '#'])
@@ -182,9 +127,7 @@ fn literal(name: &str) -> bool {
 
 /// The files the main file reaches, as TeX reads them.
 struct Walk<'a> {
-    by_file: &'a BTreeMap<String, Arc<Facts>>,
-    found: &'a dyn Fn(&str) -> Option<String>,
-    seen: HashSet<String>,
+    symbols: &'a Symbols,
     /// Each once, in the order TeX first reads it, and whether another file inputs it.
     files: Vec<(&'a str, &'a Facts, bool)>,
     /// In the order TeX reads them, through the inputs.
@@ -194,11 +137,12 @@ struct Walk<'a> {
 
 impl<'a> Walk<'a> {
     fn read(&mut self, file: &str, within: &str, included: bool) {
-        let Some((file, facts)) = self.by_file.get_key_value(file) else {
+        let symbols = self.symbols;
+        let Some((file, facts)) = symbols.by_file.get_key_value(file) else {
             return;
         };
         let file = file.as_str();
-        if !self.seen.insert(paths::fold_case(file)) {
+        if self.files.iter().any(|(read, ..)| *read == file) {
             return;
         }
         self.files.push((file, facts, included));
@@ -208,7 +152,7 @@ impl<'a> Walk<'a> {
             while let Some(label) = labels.next_if(|label| at(label.place) < at(input.place)) {
                 self.labels.push((file, label));
             }
-            match input.resolve(file, within, self.found) {
+            match input.resolve(file, within, |rel| symbols.spelt(rel)) {
                 Some((input, within)) => self.read(&input, &within, true),
                 None => self.missing.push((file, input)),
             }
@@ -243,33 +187,25 @@ fn warning(file: &str, line: u32, message: String) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
-/// What the files `main` reaches get wrong, as a build's issues, by file and then line. `files`
-/// are the project's, `by_file` the facts of its .tex and .bib files.
-pub(crate) fn check(
-    by_file: &BTreeMap<String, Arc<Facts>>,
-    files: &[String],
-    main: &str,
-    installed: &Installed,
-) -> Vec<LogItem> {
-    let spelt: HashMap<String, &String> = files.iter().map(|f| (paths::fold_case(f), f)).collect();
-    let found = |rel: &str| {
-        let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
-        spelt.get(&rel).map(|file| (*file).clone())
-    };
+/// What the files `main` reaches get wrong, as a build's issues, by file and then line.
+pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     let mut walk = Walk {
-        by_file,
-        found: &found,
-        seen: HashSet::new(),
+        symbols,
         files: Vec::new(),
         labels: Vec::new(),
         missing: Vec::new(),
     };
     walk.read(main, "", false);
     let reached = || walk.files.iter().map(|&(file, facts, _)| (file, facts));
-    let used = |kind| {
-        let uses =
-            reached().flat_map(move |(file, facts)| facts.uses.iter().map(move |u| (file, u)));
-        uses.filter(move |(_, used)| used.kind == kind && literal(&used.name))
+    let undefined = |kind, noun: &str, defined: &HashSet<&str>| -> Vec<LogItem> {
+        let uses = reached().flat_map(|(file, facts)| facts.uses.iter().map(move |u| (file, u)));
+        let uses = uses.filter(|(_, used)| used.kind == kind && literal(&used.name));
+        let undefined = uses.filter(|(_, used)| !defined.contains(&*used.name));
+        let item = |(file, used): (&str, &Named)| {
+            let message = format!("No {noun} “{}” is defined.", used.name);
+            warning(file, used.place.line, message)
+        };
+        undefined.map(item).collect()
     };
     let packages: HashSet<&str> = reached()
         .flat_map(|(_, facts)| &facts.packages)
@@ -283,24 +219,24 @@ pub(crate) fn check(
         if packages.contains("lastpage") {
             labels.extend(["LastPage", "VeryLastPage"]);
         }
-        let undefined = used(SymbolKind::Label).filter(|(_, used)| !labels.contains(&*used.name));
-        items.extend(undefined.map(|(file, used)| {
-            let message = format!("No label “{}” is defined.", used.name);
-            warning(file, used.place.line, message)
-        }));
+        items.extend(undefined(SymbolKind::Label, "label", &labels));
     }
 
     // BibTeX appends .bib to a name; biblatex takes it as written.
     let named = reached().flat_map(|(_, facts)| &facts.bibliographies);
     let bibliographies: Vec<Option<String>> = named
-        .map(|name| found(&format!("{name}.bib")).or_else(|| found(name)))
+        .map(|name| {
+            symbols
+                .spelt(&format!("{name}.bib"))
+                .or_else(|| symbols.spelt(name))
+        })
         .collect();
     let mut seen = HashSet::new();
     let bibs = bibliographies
         .iter()
         .flatten()
         .filter(|bib| seen.insert(*bib));
-    let entries = bibs.filter_map(|bib| by_file.get_key_value(bib));
+    let entries = bibs.filter_map(|bib| symbols.by_file.get_key_value(bib));
     let entries: Vec<(&str, &Named)> = entries
         .flat_map(|(bib, facts)| facts.citations.iter().map(move |c| (bib.as_str(), c)))
         .collect();
@@ -310,19 +246,16 @@ pub(crate) fn check(
         let bibitems = reached().flat_map(|(_, facts)| &facts.citations);
         let mut keys: HashSet<&str> = bibitems.map(|c| c.name.as_str()).collect();
         keys.extend(entries.iter().map(|(_, c)| c.name.as_str()));
-        let undefined = used(SymbolKind::Citation)
-            .filter(|(_, used)| used.name != "*" && !keys.contains(&*used.name));
-        items.extend(undefined.map(|(file, used)| {
-            let message = format!("No citation “{}” is defined.", used.name);
-            warning(file, used.place.line, message)
-        }));
+        // `\nocite{*}` cites every entry.
+        keys.insert("*");
+        items.extend(undefined(SymbolKind::Citation, "citation", &keys));
     }
 
     // Without TeX's list of its own files (MiKTeX keeps none), an input may be one of them.
     let in_tex = |name: &str| {
         let name = name.rsplit('/').next().unwrap_or(name);
         let name = name.strip_suffix(".tex").unwrap_or(name);
-        let inputs = &installed.inputs;
+        let inputs = &symbols.installed.inputs;
         inputs.is_empty() || inputs.binary_search_by(|i| i.as_str().cmp(name)).is_ok()
     };
     let missing = walk.missing.iter();
@@ -358,28 +291,38 @@ pub(crate) fn check(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::projects::file_kind;
+    use crate::syntax::Installed;
 
     type Item = (String, u32, String, bool);
     type Files<'a> = &'a [(&'a str, &'a str)];
 
-    /// What `check` finds in a project of `files` whose main file is main.tex: each item's file,
-    /// line, message and whether it is an error.
-    fn checked(files: Files, installed: &Installed) -> Vec<Item> {
+    /// What `check` finds in a project of `files` whose main file is main.tex, with TeX's own
+    /// `inputs`: each item's file, line, message and whether it is an error.
+    fn checked(files: Files, inputs: &[&str]) -> Vec<Item> {
         let read = |&(rel, text): &(&str, &str)| {
             let kind = file_kind(rel);
             matches!(kind, "tex" | "bib")
                 .then(|| (rel.to_owned(), Arc::new(Facts::read(text, kind))))
         };
-        let by_file = files.iter().filter_map(read).collect();
-        let names: Vec<String> = files.iter().map(|(rel, _)| (*rel).to_owned()).collect();
-        let items = check(&by_file, &names, "main.tex", installed);
+        let inputs = inputs.iter().map(|&input| input.into()).collect();
+        let symbols = Symbols {
+            by_file: files.iter().filter_map(read).collect(),
+            files: files.iter().map(|(rel, _)| (*rel).to_owned()).collect(),
+            installed: Arc::new(Installed {
+                inputs,
+                ..Installed::default()
+            }),
+            ..Symbols::default()
+        };
         let item = |i: LogItem| {
             let error = i.kind == Severity::Error;
             (i.file.unwrap(), i.line.unwrap(), i.message, error)
         };
-        items.into_iter().map(item).collect()
+        check(&symbols, "main.tex").into_iter().map(item).collect()
     }
 
     fn warned(file: &str, line: u32, message: &str) -> Item {
@@ -397,7 +340,7 @@ mod tests {
             ("loose.tex", "\\label{loose}\\ref{e}"),
         ];
         assert_eq!(
-            checked(&files, &Installed::default()),
+            checked(&files, &[]),
             [
                 warned("ch.tex", 1, "No label “d” is defined."),
                 warned("main.tex", 3, "No label “b” is defined."),
@@ -405,7 +348,7 @@ mod tests {
             ]
         );
         let xr = format!("\\usepackage{{xr}}\\externaldocument{{other}}\n{main}");
-        assert_eq!(checked(&[("main.tex", &xr)], &Installed::default()), []);
+        assert_eq!(checked(&[("main.tex", &xr)], &[]), []);
     }
 
     /// Only while every bibliography named is in the project: TeX's own folders may hold another.
@@ -425,11 +368,7 @@ mod tests {
         ];
         for (end, expected) in cases {
             let main = format!("{cite}{end}");
-            assert_eq!(
-                checked(&[("main.tex", &main), bib], &Installed::default()),
-                expected,
-                "{end}"
-            );
+            assert_eq!(checked(&[("main.tex", &main), bib], &[]), expected, "{end}");
         }
     }
 
@@ -448,7 +387,7 @@ mod tests {
             format!("The {noun} “{name}” is defined already, on line 1 of {first}.")
         };
         assert_eq!(
-            checked(&files, &Installed::default()),
+            checked(&files, &[]),
             [
                 warned("ch.tex", 2, &twice("label", "a", "main.tex")),
                 warned("main.tex", 3, &twice("label", "b", "ch.tex")),
@@ -462,17 +401,14 @@ mod tests {
     fn an_input_in_neither_the_project_nor_tex_is_reported() {
         let main = "\\input{ch/one}\\include{gone}\n\\input{glyphtounicode}\\subfile{data.csv}\\input{\\dir/x}";
         let files = [("main.tex", main), ("ch/one.tex", ""), ("data.csv", "")];
-        let installed = Installed {
-            inputs: vec!["glyphtounicode".into()],
-            ..Installed::default()
-        };
         let gone = warned("main.tex", 1, "No file “gone” is in the project.");
-        assert_eq!(checked(&files, &installed), [gone]);
-        assert_eq!(checked(&files, &Installed::default()), []);
+        assert_eq!(checked(&files, &["glyphtounicode"]), [gone]);
+        assert_eq!(checked(&files, &[]), []);
     }
 
-    /// Where TeX would complain; not in comments, literal code, escapes or definitions, nor an
-    /// environment that a file inputting this one, or one it inputs, ends.
+    /// Where TeX would complain; not in comments, literal code, escapes, a URL's address or
+    /// braces, nor an environment that a file inputting this one, or one it inputs, ends, or that
+    /// a brace left open hides the end of.
     #[test]
     fn environments_braces_and_maths_left_open_or_closed_twice_are_reported() {
         let error = |line, message: &str| ("main.tex".to_owned(), line, message.to_owned(), true);
@@ -485,7 +421,7 @@ mod tests {
         };
         let none = "% \\begin{x} {\n\\verb|{$|\n\\begin{verbatim}\n\\end{x} }\n\\end{verbatim}\n\
             \\begin{lstlisting}\n{\n\\end{lstlisting}\n\\begin{minted}{py}\n}\n\\end{minted}\n\
-            \\{ \\} \\$ 50\\%\n\\newcommand{\\bc}{\\begin{center}}\n\\renewcommand*\\ee{\\end{flushleft}}\n\
+            \\{ \\} \\$ 50\\% \\url{a%20b} \\href{c%d}{e}\n\\newcommand{\\bc}{\\begin{center}}\n\\renewcommand*\\ee{\\end{flushleft}}\n\
             \\newenvironment{bx}[1][x]{\\end{quote}}{\\begin{quote}}\n\\def\\x#1{\\end{itemize}}\n\
             \\begin{document}$a$ \\(b\\) $$c$$ \\begin{equation}{d}\\end{equation}\n\\end{document}";
         let cases: [(Files, Vec<Item>); 8] = [
@@ -512,7 +448,7 @@ mod tests {
                 vec![open(1, "$"), open(3, "\\[")],
             ),
             (
-                &[("main.tex", "\\textbf{a\n\nb")],
+                &[("main.tex", "\\begin{x}\\textbf{a\n\nb\\end{x}")],
                 vec![warned("main.tex", 1, "This { is never closed.")],
             ),
             (
@@ -529,7 +465,7 @@ mod tests {
             ),
         ];
         for (files, expected) in cases {
-            assert_eq!(checked(files, &Installed::default()), expected, "{files:?}");
+            assert_eq!(checked(files, &[]), expected, "{files:?}");
         }
     }
 }

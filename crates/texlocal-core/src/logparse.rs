@@ -41,7 +41,7 @@ pub struct LogItem {
 pub enum Fix {
     /// A package or class file LaTeX didn't find.
     Install(String),
-    /// A package that defines what TeX doesn't know, while the main file doesn't load it.
+    /// A package that defines what TeX doesn't know.
     AddPackage(String),
     Xelatex,
     ShellEscape,
@@ -49,37 +49,34 @@ pub enum Fix {
 
 impl Serialize for Fix {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let (title, help, command, args) = match self {
-            Self::Install(file) => (
-                "Install".to_owned(),
-                format!("Installs the TeX Live package that has {file}, then compiles again."),
-                "install_package",
-                json!({ "file": file }),
-            ),
-            Self::AddPackage(name) => (
-                format!("Add \\usepackage{{{name}}}"),
-                format!("Loads {name} in the main file's preamble, then compiles again."),
-                "session_add_package",
-                json!({ "name": name }),
-            ),
-            Self::Xelatex => (
-                "Use XeLaTeX".to_owned(),
-                "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.".to_owned(),
-                "session_set_settings",
-                json!({ "patch": { "engine": "xelatex" } }),
-            ),
-            Self::ShellEscape => (
-                "Turn On Shell Escape".to_owned(),
-                "Lets the project's packages run programs as it compiles, then compiles again.".to_owned(),
-                "session_set_settings",
-                json!({ "patch": { "shellEscape": true } }),
-            ),
-        };
-        let mut fix = json!({ "title": title, "help": help, "command": command, "args": args });
-        if *self == Self::ShellEscape {
-            fix["confirm"] = "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.".into();
+        match self {
+            Self::Install(file) => json!({
+                "title": "Install",
+                "help": format!("Installs the TeX Live package that has {file}, then compiles again."),
+                "command": "install_package",
+                "args": { "file": file },
+            }),
+            Self::AddPackage(name) => json!({
+                "title": format!("Add \\usepackage{{{name}}}"),
+                "help": format!("Loads {name} in the main file's preamble, then compiles again."),
+                "command": "session_add_package",
+                "args": { "name": name },
+            }),
+            Self::Xelatex => json!({
+                "title": "Use XeLaTeX",
+                "help": "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.",
+                "command": "session_set_settings",
+                "args": { "patch": { "engine": "xelatex" } },
+            }),
+            Self::ShellEscape => json!({
+                "title": "Turn On Shell Escape",
+                "help": "Lets the project's packages run programs as it compiles, then compiles again.",
+                "command": "session_set_settings",
+                "args": { "patch": { "shellEscape": true } },
+                "confirm": "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.",
+            }),
         }
-        fix.serialize(serializer)
+        .serialize(serializer)
     }
 }
 
@@ -205,29 +202,14 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
             r"This command only works before \begin{document}. Move it to the preamble.",
         ),
         (
-            r"Lonely \\item",
-            Nothing,
-            r"An \item is outside a list. Put it inside an itemize, enumerate or description environment.",
-        ),
-        (
             r"There's no line here to end",
             Nothing,
             r"A \\ or \newline comes where no line has begun, such as at a paragraph's start or after a heading. Remove it, or use \vspace for space between paragraphs.",
         ),
         (
-            r"Double (?:superscript|subscript)",
-            Nothing,
-            "Two superscripts or two subscripts follow each other, as in x^2^3. Group one in braces: x^{2^3} or {x^2}^3.",
-        ),
-        (
             r"Option clash for package",
             Nothing,
             r"The package is loaded twice with different options, perhaps once by the class or another package. Load it once with all its options, or give them earlier with \PassOptionsToPackage.",
-        ),
-        (
-            r"I can't write on file",
-            Nothing,
-            "TeX couldn't write one of its output files. On Windows this is often the PDF open in another app, which locks it: close it there and compile again.",
         ),
         (
             r"Emergency stop|no legal \\end found",
@@ -240,11 +222,6 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
             r"No bibliography entry or \bibitem has this key. Check its spelling against the .bib file's, and that the document names that file with \bibliography or \addbibresource.",
         ),
         (
-            r"^Reference .* undefined",
-            Nothing,
-            r"No \label has this name. Check the spelling of the \ref and of the \label it should name.",
-        ),
-        (
             r"Unicode character .* not set up for use with LaTeX",
             Xelatex,
             "pdfLaTeX's fonts have no letter for this character. XeLaTeX typesets it with a font that has one; or write it as a LaTeX command.",
@@ -255,19 +232,9 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
             "This package needs XeLaTeX or LuaLaTeX, and the project compiles with pdfLaTeX. Compile it with XeLaTeX.",
         ),
         (
-            r#"The font "[^"]*" cannot be found"#,
-            Nothing,
-            "The font isn't installed on this computer, or is installed under another name. Check its name in the computer's list of fonts, or choose one that is installed.",
-        ),
-        (
             r"Command \\\S+ already defined",
             Nothing,
             r"\newcommand names a command that exists already, perhaps one a package defines. Choose another name, or use \renewcommand to replace it.",
-        ),
-        (
-            r"Missing number, treated as zero",
-            Nothing,
-            r"TeX expected a number or a length here, such as 2cm or 0.5\linewidth, and found something else. Check this command's arguments.",
         ),
     ]
     .into_iter()
