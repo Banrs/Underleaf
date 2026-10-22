@@ -109,6 +109,8 @@ public sealed partial class SourceView : UserControl
     public event Action<Place>? DefinitionFound;
     /// A label or citation to rename, and the name's rectangle in the view.
     public event Action<Definition, Rect>? RenameAsked;
+    /// A double-click in the text, once RichEdit has selected its word.
+    public event Action? DoubleClicked;
 
     /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
     /// to the project again.
@@ -173,9 +175,10 @@ public sealed partial class SourceView : UserControl
         // Handled ones too, so a drag RichEdit answers for itself still reaches FilesDropped.
         AddHandler(DragOverEvent, new DragEventHandler(OnDragOver), true);
         AddHandler(DropEvent, new DragEventHandler(OnDrop), true);
-        // RichEdit marks its presses and releases handled.
+        // RichEdit marks its presses, releases and double-taps handled.
         Editor.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         Editor.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
+        Editor.AddHandler(DoubleTappedEvent, new DoubleTappedEventHandler((_, _) => DoubleClicked?.Invoke()), true);
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
         Loaded += (_, _) =>

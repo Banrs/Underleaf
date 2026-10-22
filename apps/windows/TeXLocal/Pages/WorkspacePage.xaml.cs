@@ -132,6 +132,11 @@ public sealed partial class WorkspacePage : Page
             if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
         };
         Editor.FilesDropped += OnFilesDropped;
+        // The Mac's double-click to the PDF; where the PDF is hidden, selecting a word doesn't open it.
+        Editor.DoubleClicked += () =>
+        {
+            if (PdfItem.IsChecked && Editor.Path is not null && Pdf.PageCount > 0) Run(null, SyncToCaret);
+        };
         Editor.DefinitionFound += place => _ = Reveal(place.File, place.Line, place.Column, place.Length);
         // The core's refusal shows in the flyout.
         Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Editor.Apply((await Core.CallAsync<Replaced>("session_rename_symbol",
