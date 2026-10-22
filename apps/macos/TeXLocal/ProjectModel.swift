@@ -488,16 +488,29 @@ final class ProjectModel {
                               named: String(localized: "Rename"))
     }
 
+    /// The snapshot's `paths`, or all its files, after the core keeps the project as it is in a snapshot of its own. A refusal
+    /// is the core's sentence, for the history sheet to show.
+    func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
+        guard let session else { return }
+        var args: [String: any Sendable] = ["session": session, "id": snapshot.id]
+        if let paths { args["paths"] = paths }
+        apply(try await core.call("session_history_restore", args, as: Restored.self).edits, named: String(localized: "Restore"))
+    }
+
     /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
     /// session saves as any.
     @discardableResult
     private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
         let answer = try await core.call(command, args, as: ProjectEdits.self)
-        // A file shown since has text of its own, as one typed in since does.
-        if let edits = answer.edits, edits.path == editor.path, edits.version == editor.textView.document.version {
+        apply(answer.edits, named: name)
+        return answer
+    }
+
+    /// A file shown since has text of its own, as one typed in since does.
+    private func apply(_ edits: ProjectEdits.Document?, named name: String) {
+        if let edits, edits.path == editor.path, edits.version == editor.textView.document.version {
             editor.textView.apply(edits.edits, named: name)
         }
-        return answer
     }
 
     // MARK: - Changes on disk
@@ -600,3 +613,6 @@ private nonisolated struct ProjectEdits: Decodable {
     var edits: Document?
     var written: [Written]
 }
+
+/// `session_history_restore`'s, whose files written the app doesn't count.
+private nonisolated struct Restored: Decodable { var edits: ProjectEdits.Document? }

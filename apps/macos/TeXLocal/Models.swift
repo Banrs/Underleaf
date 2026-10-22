@@ -158,6 +158,38 @@ nonisolated struct RenameResult: Decodable {
     let ui: UIState
 }
 
+/// One of `session_history_list`'s: what it was taken for, and the files that differ from the one before it.
+nonisolated struct Snapshot: Decodable, Identifiable, Hashable {
+    nonisolated struct Change: Decodable, Hashable {
+        nonisolated enum Kind: String, Decodable { case added, deleted, changed }
+
+        let path: String
+        let change: Kind
+    }
+
+    let id: String
+    let time: Date
+    let name, reason: String?
+    let changed: [Change]
+
+    private enum Keys: CodingKey { case id, time, name, reason, changed }
+
+    /// `time` is ISO 8601, which `Core`'s plain decoder doesn't read.
+    init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Keys.self)
+        id = try fields.decode(String.self, forKey: .id)
+        time = try Date(fields.decode(String.self, forKey: .time), strategy: .iso8601)
+        name = try fields.decodeIfPresent(String.self, forKey: .name)
+        reason = try fields.decodeIfPresent(String.self, forKey: .reason)
+        changed = try fields.decode([Change].self, forKey: .changed)
+    }
+
+    var title: String { name ?? reason ?? String(localized: "Automatic") }
+}
+
+/// `session_history_compare`'s: the file's text in the snapshot and now, nil where it is absent.
+nonisolated struct Comparison: Decodable { let old, new: String? }
+
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }
     if path.hasPrefix(from + "/") { return to + path.dropFirst(from.count) }

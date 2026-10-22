@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
-    case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, pdfOpen, filePrint
+    case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
@@ -27,6 +27,8 @@ enum MenuCommand: CaseIterable {
         case .fileNewFolder: ("New Folder", KeyboardShortcut("n", modifiers: [.command, .shift, .option]))
         case .fileUpload: ("Add Files…", nil)
         case .fileSave: ("Save", KeyboardShortcut("s"))
+        case .fileSaveVersion: ("Save Version…", nil)
+        case .fileBrowseVersions: ("Browse Version History…", KeyboardShortcut("h", modifiers: [.command, .option, .control]))
         case .pdfSave: ("Export as PDF…", nil)
         case .pdfOpen: ("Open PDF in Default App", KeyboardShortcut("o", modifiers: [.command, .option]))
         case .filePrint: ("Print…", KeyboardShortcut("p"))
@@ -87,7 +89,7 @@ enum MenuCommand: CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoLine, gotoPage, rename(Definition)
+    case gotoLine, gotoPage, rename(Definition), saveVersion, versionHistory
 
     var id: Self { self }
 }
@@ -170,6 +172,8 @@ extension AppModel {
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
+        case .fileSaveVersion: prompt = .saveVersion
+        case .fileBrowseVersions: prompt = .versionHistory
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
         case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
@@ -238,7 +242,9 @@ struct AppCommands: Commands {
             items(.fileUpload)
         }
         CommandGroup(after: .saveItem) {
-            items(.fileSave)
+            items(.fileSave, .fileSaveVersion)
+            // As the document apps' Revert To, which lists Browse All Versions.
+            Menu("Revert To") { items(.fileBrowseVersions) }
             Divider()
             items(.projectClose)
             Divider()
