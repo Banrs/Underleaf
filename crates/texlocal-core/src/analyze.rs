@@ -51,6 +51,10 @@ pub struct Heading {
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    /// Its own prose words: up to the next heading or input of its file, and in an outline up
+    /// to the next heading the document reads.
+    #[serde(skip)]
+    pub words: usize,
 }
 
 impl Heading {
@@ -64,6 +68,7 @@ impl Heading {
             title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
             file: None,
+            words: 0,
         }
     }
 }
@@ -143,6 +148,8 @@ pub struct Input {
     pub(crate) name: String,
     folder: Folder,
     pub(crate) place: Place,
+    /// The prose words after it, up to the next heading or input.
+    words: usize,
 }
 
 /// Where an input's name is looked for, as the import package has it.
@@ -219,7 +226,9 @@ impl Facts {
         }
         // Found as the words are counted, so none is in a comment, maths or literal code.
         let mut heading_line = None;
-        facts.words = prose::words(&text, |text, name, name_end| {
+        // Where each heading and input is, in the file's order, and whether it is a heading.
+        let mut cuts = Vec::new();
+        let prose = prose::prose(&text, |text, name, name_end| {
             let line = text.line_index(name_end as u32) + 1;
             let units = &text.units;
             if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
@@ -228,6 +237,7 @@ impl Facts {
                 {
                     let heading = Heading::new(depth, plain_title(&title), line);
                     facts.headings.push(heading);
+                    cuts.push((name_end, true));
                 }
                 heading_line = Some(line);
             } else if let Some((name, folder, at)) = input(units, name, name_end) {
@@ -236,9 +246,23 @@ impl Facts {
                     name,
                     folder,
                     place: Place::of(text, at),
+                    words: 0,
                 });
+                cuts.push((name_end, false));
             }
         });
+        let len = text.units.len();
+        facts.words = prose.words(0..len);
+        let (mut headings, mut inputs) = (facts.headings.iter_mut(), facts.inputs.iter_mut());
+        for (i, &(from, heading)) in cuts.iter().enumerate() {
+            let to = cuts.get(i + 1).map_or(len, |cut| cut.0);
+            let counted = if heading {
+                &mut headings.next().expect("a heading for each cut").words
+            } else {
+                &mut inputs.next().expect("an input for each cut").words
+            };
+            *counted = prose.words(from..to);
+        }
         let mut names = Names(&text, &mut facts, None, Structure::default());
         let mut scanner = Scanner::default();
         scanner.run(&text.units, text.units.len(), &[], &mut names);
@@ -562,6 +586,8 @@ pub struct OutlineNode {
     #[serde(flatten)]
     pub heading: Heading,
     pub fold_key: String,
+    /// Its words and its children's: up to the next heading at its level or above.
+    pub words: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Self>,
 }
@@ -591,11 +617,14 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let key = format!("{file}\t{}:{title}", heading.depth);
             let count = seen.entry(key.clone()).or_default();
             *count += 1;
+            let fold_key = format!("{key}#{count}");
+            let children = nest(outline, next, Some(heading.depth), seen);
             nodes.push(OutlineNode {
                 index,
                 heading: heading.clone(),
-                fold_key: format!("{key}#{count}"),
-                children: nest(outline, next, Some(heading.depth), seen),
+                fold_key,
+                words: heading.words + children.iter().map(|c| c.words).sum::<usize>(),
+                children,
             });
         }
         nodes
@@ -626,6 +655,9 @@ pub struct Analysis {
     pub tree: Vec<OutlineNode>,
     pub words: usize,
     pub heading_styles: Vec<headings::Level>,
+    /// What `\bibliography` and `\addbibresource` name, as written, for an export to arXiv.
+    #[serde(skip)]
+    pub bibliographies: Vec<String>,
 }
 
 /// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
@@ -702,6 +734,15 @@ fn walk(
         path.is_ok_and(|path| path.is_file())
             .then(|| rel.to_owned())
     };
+    // Words before a file's first heading, or after an input, are the last heading's read.
+    fn credit(outline: &mut [Heading], words: usize) {
+        if let Some(last) = outline.last_mut() {
+            last.words += words;
+        }
+    }
+    let headed: usize = facts.headings.iter().map(|h| h.words).sum();
+    let after_inputs: usize = facts.inputs.iter().map(|input| input.words).sum();
+    credit(&mut into.outline, facts.words - headed - after_inputs);
     let mut at = 0;
     for input in &facts.inputs {
         let before = &facts.headings[at..input.before];
@@ -710,9 +751,11 @@ fn walk(
         if let Some((input, within)) = input.resolve(&file, within, found) {
             walk(root, files, &input, &within, seen, into);
         }
+        credit(&mut into.outline, input.words);
     }
     into.outline.extend(facts.headings[at..].iter().map(placed));
     into.words += facts.words;
+    into.bibliographies.extend_from_slice(&facts.bibliographies);
 }
 
 /// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named
@@ -915,7 +958,8 @@ mod tests {
             ),
         ];
         for (line, expected) in cases {
-            let words = prose::words(&Text::new(line), |_, _, _| {});
+            let text = Text::new(line);
+            let words = prose::prose(&text, |_, _, _| {}).words(0..text.units.len());
             assert_eq!(words, expected, "{line:?}");
         }
     }
@@ -1161,7 +1205,7 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "index": 0, "depth": 3, "command": "subsection", "level": "Subsection", "title": "Early",
-                "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+                "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1", "words": 0 })
         );
         let untitled = serde_json::to_value(&tree[4]).unwrap();
         assert_eq!(untitled["title"], "Untitled Chapter");
@@ -1217,6 +1261,23 @@ mod tests {
         let loose = analyzed("loose.tex");
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
+    }
+
+    /// Through the files it inputs; the words before the first heading are none's.
+    #[test]
+    fn a_heading_counts_its_words_and_its_childrens_up_to_the_next_of_its_level() {
+        let dir = project(&[
+            (
+                "main.tex",
+                "Before any\n\\section{Intro}\nHello world\n\\subsection{Detail}\nthree more words\n\\input{ch}\nafter it $x + y$\n\\section{End}\nlast",
+            ),
+            ("ch.tex", "chapter \\emph{text} here"),
+        ]);
+        let analysis = analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
+        let words = |nodes: &[OutlineNode]| nodes.iter().map(|n| n.words).collect::<Vec<_>>();
+        assert_eq!(words(&analysis.tree), [12, 2]);
+        assert_eq!(words(&analysis.tree[0].children), [9]);
+        assert_eq!(analysis.words, 16);
     }
 
     #[test]

@@ -389,7 +389,7 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     labels.sort();
     assert_eq!(labels, ["linked", "shared"]);
     let dest = root.with_file_name("out.zip");
-    export_zip(&root, &dest).unwrap();
+    export_zip(&root, &dest, &[]).unwrap();
     let zipped = [
         "external.tex",
         "figures/",
@@ -407,6 +407,6 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     // The destination spelled through a link into the project, as when a Save panel hands back
     // /private/var for a data folder under /var: a lexical comparison would archive the ZIP's
     // own half-written temporary file.
-    export_zip(&root, &alias.join("again.zip")).unwrap();
+    export_zip(&root, &alias.join("again.zip"), &[]).unwrap();
     assert_eq!(zip_names(&root.join("again.zip")), zip_names(&dest));
 }
