@@ -72,7 +72,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` the ui state (below): all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
@@ -94,8 +94,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Ends the hold on saves under `path`; when `trashed`, closes documents under it and reads the tree again. |
-| `session_live_start` | | live state | The user's Start. |
-| `session_live_stop` | | live state | |
+| `session_live_start` | | live state | The user's Start. Sets the ui state's `livePreview`. |
+| `session_live_stop` | | live state | Clears the ui state's `livePreview`. |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
@@ -107,6 +107,18 @@ The service's other commands (`id` is the project's): `list_projects` (Opened fo
 `synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
 `live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`.
+
+The ui state is what a host keeps of a project's interface: `{expandedFolders, foldedHeadings,
+file, line, page, zoom, panel, livePreview}`. `file` is the project path shown, `line` the caret's
+line (from 1), `page` the PDF page at the top of the view (from 1), `zoom` `"fitWidth"`,
+`"fitPage"` or a scale (1 is 100%), each null when there is none; `panel` whether the build panel
+shows. A host sends them in `set_ui_state` as it leaves a project (closing it, opening another,
+quitting) and shows them again from `session_open`'s `ui`, ignoring a file, line or page that is
+no longer there. `set_ui_state`'s `patch` replaces the keys it names and keeps the others; it
+answers the ui state. `livePreview` is the core's alone: true once `session_live_start` is asked,
+false once `session_live_stop` is, kept as the session closes, so a host starts Live Preview as
+the project opens when it is true. A renamed or moved entry takes `expandedFolders`' paths,
+`foldedHeadings`' files and `file` with it.
 
 ## Opened folders
 

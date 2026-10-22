@@ -229,7 +229,7 @@ impl Service {
                 Ok(Value::Null)
             }
             "set_ui_state" => out(self.with_project(s("id")?, |project| {
-                settings::write_ui(&project.ui, arg(args, "patch")?)
+                settings::write_ui(&project.ui, &arg(args, "patch")?)
             })?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
