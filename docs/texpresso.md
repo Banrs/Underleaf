@@ -87,6 +87,13 @@ Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --w
 CI has no TeX, so `.github/workflows/tex-check.yml` runs this nightly on macOS, with TinyTeX and
 the engine built from `tools/texpresso`, beside the core's other tests that need TeX Live.
 
+## iPad
+
+iPadOS starts no processes, so the iPad app links TeXpresso's in-process engine instead:
+`tools/texpresso-ios` builds it, from TeXpresso's `eclipse` branch with this patch's behaviour
+carried over, as an XCFramework whose Live Preview speaks the same protocol over pipes and which
+also runs Compile's programs.
+
 ## Boundaries
 
 - Live Preview uses XeTeX whatever the project's engine.
