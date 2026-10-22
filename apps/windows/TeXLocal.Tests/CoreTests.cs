@@ -52,13 +52,14 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Home draws a page for each of these ids (PagePreview).
+    /// Home draws a page for each of these ids (PagePreview); Prefs' engine for new projects is pdflatex until one is chosen.
     [Fact]
-    public async Task CatalogueNamesHomesTemplates()
+    public async Task CatalogueNamesHomesTemplatesAndEngines()
     {
-        var templates = (await core.CallAsync<Catalogue>("catalogue")).Templates;
+        var (templates, engines) = await core.CallAsync<Catalogue>("catalogue");
         Assert.Equal(new[] { "blank", "article", "report", "beamer" }, templates.Select(t => t.Id));
         Assert.Equal("Presentation", templates[3].Title);
+        Assert.Contains(engines, e => e.Id == "pdflatex");
     }
 
     [Fact]

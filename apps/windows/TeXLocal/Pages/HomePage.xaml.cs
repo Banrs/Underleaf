@@ -68,7 +68,7 @@ public sealed partial class HomePage : Page
             {
                 listed = await Core.CallAsync<ProjectInfo[]>("list_projects");
                 if (templates.Length == 0)
-                    Templates.ItemsSource = templates = [.. (await Core.CallAsync<Catalogue>("catalogue")).Templates.Select(t => new ProjectTemplate(t.Id, t.Title))];
+                    Templates.ItemsSource = templates = [.. (await App.Catalogue()).Templates.Select(t => new ProjectTemplate(t.Id, t.Title))];
             }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != loads) return;
@@ -139,12 +139,17 @@ public sealed partial class HomePage : Page
     {
         if (App.Core is null) return;
         var box = new TextBox { Header = "Name", Width = 360 };
+        var engine = new ComboBox
+        {
+            Header = "Engine", Width = 360, ItemsSource = (await App.Catalogue()).Engines, DisplayMemberPath = "Title", SelectedValuePath = "Id",
+            SelectedValue = Prefs.Engine,
+        };
         try { box.Text = (await Core.CallAsync("free_project_name")).GetProperty("name").GetString() ?? ""; }
         catch (CoreException) { }
         var dialog = new ContentDialog
         {
             Title = $"New {template.Title.ToLowerInvariant()} project",
-            Content = box,
+            Content = new StackPanel { Spacing = 12, Children = { box, engine } },
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -155,7 +160,10 @@ public sealed partial class HomePage : Page
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             var deferral = args.GetDeferral();
-            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id })).Id; }
+            try
+            {
+                id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id, engine = engine.SelectedValue })).Id;
+            }
             catch (CoreException ex)
             {
                 args.Cancel = true;

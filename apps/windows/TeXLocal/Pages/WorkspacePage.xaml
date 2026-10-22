@@ -184,6 +184,8 @@
                     <MenuFlyoutItem x:Name="StopItem" controls:Shortcut.Keys="Shift+F5" AccessKey="S" Click="OnStop" IsEnabled="False" Text="Stop" />
                     <MenuFlyoutItem AccessKey="L" Click="OnClean" Text="Clean build folder" />
                     <MenuFlyoutSeparator />
+                    <!-- The catalogue's engines, filled as the session opens. -->
+                    <MenuFlyoutSubItem x:Name="EngineMenu" AccessKey="N" Text="Engine" />
                     <ToggleMenuFlyoutItem x:Name="AutoCompileItem" AccessKey="A" Click="OnAutoCompile" IsChecked="{x:Bind app:Prefs.AutoCompile, Mode=OneTime}" Text="Compile automatically" />
                     <ToggleMenuFlyoutItem x:Name="ShellEscapeItem" AccessKey="E" Click="OnBuildSetting" Text="Shell escape" />
                     <ToggleMenuFlyoutItem x:Name="StopOnErrorItem" AccessKey="F" Click="OnBuildSetting" Text="Stop on first error" />

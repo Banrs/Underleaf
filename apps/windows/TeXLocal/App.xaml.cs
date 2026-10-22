@@ -14,6 +14,7 @@ public partial class App : Application
     public static MainWindow Window { get; private set; } = null!;
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
     static readonly TaskCompletionSource<MainWindow> shown = new();
+    static Catalogue? catalogue;
 
     public App()
     {
@@ -25,6 +26,9 @@ public partial class App : Application
             if (Smoke) Environment.Exit(1);
         };
     }
+
+    /// The core's templates and engines, which don't change while the app runs.
+    public static async Task<Catalogue> Catalogue() => catalogue ??= await Core!.CallAsync<Catalogue>("catalogue");
 
     /// Why the library can't open, or null once it has.
     public static string? OpenCore()

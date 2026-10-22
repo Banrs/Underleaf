@@ -11,11 +11,12 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
     public override string ToString() => Name;
 }
 
-/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template.
+/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template, an engine.
 public sealed record Choice(string Id, string Title);
 
-/// What a new project may start from, in the order Home shows it; each id is create_project's `template`.
-public sealed record Catalogue(Choice[] Templates);
+/// What a new project may start from, in the order Home shows it: each template's id is create_project's `template`,
+/// and each engine's its `engine` and a project's setting.
+public sealed record Catalogue(Choice[] Templates, Choice[] Engines);
 
 /// <param name="Path">"" for the project's folder.</param>
 public sealed record Located(string Id, string Path);

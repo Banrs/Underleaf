@@ -18,6 +18,8 @@ public static unsafe partial class Prefs
     public static double IssuesHeight { get => Get("issuesHeight", 200.0); set => values["issuesHeight"] = value; }
     public static bool AutoCompile { get => Get("autoCompile", true); set => values["autoCompile"] = value; }
     public static bool SyncAfterCompile { get => Get("syncAfterCompile", false); set => values["syncAfterCompile"] = value; }
+    /// The catalogue's id of the engine a new project starts with.
+    public static string Engine { get => Get("engine", "pdflatex"); set => values["engine"] = value; }
     internal static int Theme { get => Get("theme", 0); set => values["theme"] = value; }
     internal static string Bounds { get => Get("bounds", ""); set => values["bounds"] = value; }
     internal static bool Maximized { get => Get("maximized", false); set => values["maximized"] = value; }

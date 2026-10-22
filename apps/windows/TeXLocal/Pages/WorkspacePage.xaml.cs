@@ -166,7 +166,12 @@ public sealed partial class WorkspacePage : Page
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(name, Editor.Path);
         CheckTex();
-        if (session != 0) return;
+        if (session != 0)
+        {
+            // Settings › Compiling may have changed it while the page waited underneath.
+            if (AutoCompileItem.IsChecked != Prefs.AutoCompile) SetAutoCompile();
+            return;
+        }
         Core.Event += OnEvent;
         try { await OpenSession(file); }
         catch (CoreException ex)
@@ -233,12 +238,24 @@ public sealed partial class WorkspacePage : Page
         Search.PlaceholderText = $"Search {name}";
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
+        await ShowEngines(opened.Settings.GetProperty("engine").GetString()!);
         ReadFolds(opened.Ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
         if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
         ShowBuild();
         Select(FilesTree, i => i.Key == (file ?? opened.Settings.GetProperty("mainFile").GetString()));
         if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
+    }
+
+    /// Build › Engine, the catalogue's, checked at the project's.
+    async Task ShowEngines(string engine)
+    {
+        foreach (var choice in (await App.Catalogue()).Engines)
+        {
+            var item = new RadioMenuFlyoutItem { Text = choice.Title, GroupName = "engine", IsChecked = choice.Id == engine };
+            item.Click += (_, _) => Run("Can't change the engine", () => Core.CallAsync("session_set_settings", new { session, patch = new { engine = choice.Id } }));
+            EngineMenu.Items.Add(item);
+        }
     }
 
     void OnEvent(CoreEvent e)
@@ -588,6 +605,13 @@ public sealed partial class WorkspacePage : Page
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
         Prefs.AutoCompile = AutoCompileItem.IsChecked;
+        SetAutoCompile();
+    }
+
+    /// The menu and the session follow Prefs, which the menu or Settings set.
+    void SetAutoCompile()
+    {
+        AutoCompileItem.IsChecked = Prefs.AutoCompile;
         ShowBuild();
         Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
     }
