@@ -1,17 +1,9 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
-
-/// 27.2: TextKit's selection view would cover a box drawn in the text view's background, so the box is a view above the
-/// text's, which takes no click.
-final class IssueMessageView: NSHostingView<IssueBox> {
-    convenience init(_ box: IssueBox) {
-        self.init(rootView: box)
-        sizingOptions = []
-        safeAreaRegions = []
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
 
 /// An issue at its line's end, as Xcode sets it: the symbol in a segment of its own, a divider and the message on the
 /// source line's baseline, or the symbol alone. VoiceOver has the issues from the text view's rotor.
@@ -24,10 +16,10 @@ struct IssueBox: View, Equatable {
         /// The symbol's and the line numbers' size: Xcode's 12.35 pt at 13 pt.
         static func small(_ size: CGFloat) -> CGFloat { size * 0.95 }
 
-        static func segment(_ font: NSFont, issues: Int) -> CGFloat { (segment * font.pointSize).rounded() + (issues > 1 ? count : 0) }
+        static func segment(_ font: PlatformFont, issues: Int) -> CGFloat { (segment * font.pointSize).rounded() + (issues > 1 ? count : 0) }
 
         /// The box's width for a message this wide, or for the symbol alone.
-        static func width(ofText text: CGFloat?, font: NSFont, issues: Int) -> CGFloat {
+        static func width(ofText text: CGFloat?, font: PlatformFont, issues: Int) -> CGFloat {
             segment(font, issues: issues) + (text.map { divider + (padding + $0 + trailing).rounded(.up) } ?? 0)
         }
     }
@@ -36,14 +28,18 @@ struct IssueBox: View, Equatable {
     let issues: Int
     let text: String?
     let cutAtTail: Bool
-    let font: NSFont
+    let font: PlatformFont
     let fill: Color
     /// The source line's baseline under the box's top.
     let baseline: CGFloat
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 4)
+        #if os(macOS)
         let separator = Color(nsColor: .separatorColor)
+        #else
+        let separator = Color(uiColor: .separator)
+        #endif
         HStack(spacing: 0) {
             if issues > 1 {
                 onBaseline(Text(verbatim: "\(issues)"))
@@ -86,7 +82,7 @@ struct IssueLabel {
     let width: CGFloat
     static let least = 10
 
-    init(_ message: String, compact: String?, font: NSFont) {
+    init(_ message: String, compact: String?, font: PlatformFont) {
         whole = message
         width = typeset(message, in: font).width
         short = compact.map { ($0, typeset($0, in: font).width) }
@@ -105,7 +101,7 @@ struct IssueLabel {
 }
 
 /// One line of `string` in `font`, coloured as the context draws, and its width.
-func typeset(_ string: String, in font: NSFont) -> (line: CTLine, width: CGFloat) {
+func typeset(_ string: String, in font: PlatformFont) -> (line: CTLine, width: CGFloat) {
     let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [
         .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]))
     return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))

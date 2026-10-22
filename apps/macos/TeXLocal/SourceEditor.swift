@@ -118,23 +118,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var currentLine: Int { textView.document.line(at: caret) }
     var currentColumn: Int { caret - textView.document.lineStart(currentLine) }
 
-    /// The match `length` long at `column`, or the word there. The find indicator bounces, so not with Reduce Motion, where
-    /// the selection is the mark.
+    /// The find indicator bounces, so not with Reduce Motion, where the selection is the mark.
     func reveal(line: Int, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) {
-        let document = textView.document
-        let start = document.lineStart(line)
-        let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : textView.text.length
-        let found = column.map { column in
-            let at = min(start + column, end)
-            return length.map { NSRange(location: at, length: min($0, end - at)) }
-                ?? textView.selectionRange(forProposedRange: .caret(at), granularity: .selectByWord)
-        }
-        textView.setSelectedRange(found ?? .caret(start))
-        atTop ? textView.scroll(toTop: start) : textView.centerSelectionInVisibleArea(nil)
+        let (selection, found) = revealed(line: line, column: column, length: length)
+        textView.setSelectedRange(selection)
+        atTop ? textView.scroll(toTop: textView.document.lineStart(line)) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
-        let shown = found ?? NSRange(location: start, length: end - start)
         // Once the scroll's layout is done.
-        if shown.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: shown) } }
+        if found.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: found) } }
     }
 
     private func reportTop() { if let line = textView.topLine { onScroll(line) } }
@@ -187,61 +178,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var command: (MenuCommand) -> Void = { _ in }
 
     @objc private func choose(_ item: NSMenuItem) { (item.representedObject as? MenuCommand).map(command) }
-
-    /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
-    func jumpToDefinition() {
-        guard let place = textView.document.definition(at: textView.selectedRange().location)?.places.first else { return NSSound.beep() }
-        textView.openDefinition(place)
-    }
-
-    /// The label or citation at the selection's start, which Rename renames everywhere. Read through `changes`, so a menu
-    /// showing it follows the caret.
-    var renamable: Definition? {
-        _ = changes.count
-        guard let found = textView.document.definition(at: textView.selectedRange().location),
-              ["label", "citation"].contains(found.kind) else { return nil }
-        return found
-    }
-
-    @discardableResult
-    func perform(_ command: EditorCommand) -> Bool {
-        guard path != nil, textView.isEditable else { return false }
-        let document = textView.document, selection = textView.selectedRange(), selections = textView.selectedRanges.map(\.rangeValue)
-        switch command {
-        case .bold: textView.apply(document.toggle(.bold, selections), named: String(localized: "Bold"))
-        case .italic: textView.apply(document.toggle(.italic, selections), named: String(localized: "Italic"))
-        case .underline: textView.apply(document.toggle(.underline, selections), named: String(localized: "Underline"))
-        case .math: textView.apply(document.wrap(selections, in: "$$0$"), named: String(localized: "Inline Math"))
-        case .displayMath: textView.apply(document.wrap(selections, in: "\\[$0\\]"), named: String(localized: "Display Math"))
-        case .inline(let template, let title):
-            textView.apply(document.wrap(selections, in: template), named: Self.insertion(titled: title))
-            // Empty braces: their labels or citations, once the menu has closed.
-            if selection.length == 0 { Task { self.textView.complete(nil) } }
-        case .comment:
-            textView.apply(document.toggleComment(selections), named: String(localized: "Comment"))
-        case .moveLineUp, .moveLineDown:
-            let up = command == .moveLineUp
-            let name = up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")
-            guard textView.apply(document.moveLines(selections, up: up), named: name) else { return false }
-        case .heading(let command):
-            let level = document.setHeading(caret: selection.location, command: command)
-            guard textView.insert(level, named: String(localized: "Section Level")) else { return false }
-        case .symbol(let command):
-            let symbol = document.insertSymbol(command, replacing: selection)
-            guard textView.insert(symbol, named: String(localized: "Insert Symbol")) else { return false }
-        case .block(let id, let title):
-            let block = document.insertBlock(id, replacing: selection)
-            guard textView.insert(block, named: Self.insertion(titled: title)) else { return false }
-        }
-        focus()
-        return true
-    }
-
-    private static func insertion(titled title: String?) -> String {
-        title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
-    }
-
-    var textStyles: TextStyles { path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange()) }
 }
 
 struct EditorView: NSViewRepresentable {

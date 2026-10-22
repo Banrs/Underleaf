@@ -26,3 +26,11 @@ enum EditorPrefs {
 }
 
 @Observable final class EditorChanges { var count = 0 }
+
+#if os(macOS)
+typealias PlatformFont = NSFont
+typealias PlatformImage = NSImage
+#else
+typealias PlatformFont = UIFont
+typealias PlatformImage = UIImage
+#endif

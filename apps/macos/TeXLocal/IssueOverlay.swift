@@ -55,7 +55,7 @@ final class IssueOverlay {
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
             guard let reported = issue(on: number)?.issue else { return }
             let former = views.removeValue(forKey: number)
-            let placed = row(number, reported, on: view.lines(of: fragment, extra: extra), of: fragment, in: former)
+            let placed = row(number, reported, on: fragment.lines(extra: extra), of: fragment, in: former)
             if placed?.message?.view !== former { former?.removeFromSuperview() }
             guard let placed else { return }
             view.setNeedsDisplay(placed.band)
@@ -64,7 +64,7 @@ final class IssueOverlay {
         for (offset, fragment) in view.fragments {
             let number = view.document.line(at: offset)
             place(number, on: fragment)
-            if issue(on: number + 1) != nil, view.extraLine(of: fragment) != nil { place(number + 1, on: fragment, extra: true) }
+            if issue(on: number + 1) != nil, fragment.extraLine != nil { place(number + 1, on: fragment, extra: true) }
         }
         views.values.forEach { $0.removeFromSuperview() }
         updateTips()
@@ -144,4 +144,16 @@ final class IssueOverlay {
             issue.tokens.forEach { $0.fill() }
         }
     }
+}
+
+/// 27.2: TextKit's selection view would cover a box drawn in the text view's background, so the box is a view above the
+/// text's, which takes no click.
+final class IssueMessageView: NSHostingView<IssueBox> {
+    convenience init(_ box: IssueBox) {
+        self.init(rootView: box)
+        sizingOptions = []
+        safeAreaRegions = []
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

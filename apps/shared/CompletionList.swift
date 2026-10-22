@@ -1,14 +1,19 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 /// The core's completions under the caret, a view over the editor: 27.2's glass in a borderless panel that isn't key
-/// draws flat, and AppKit's own completion list is still its square box. Typing stays in the document.
+/// draws flat, and AppKit's own completion list is still its square box; UIKit has none. Typing stays in the document.
 final class CompletionList {
     private unowned let editor: SourceTextView
     /// Nil while the list is closed.
     private(set) var offered: Completions?
 
     private let rows = CompletionRows()
+    #if os(macOS)
     private lazy var surface: Surface = {
         let surface = Surface(rootView: CompletionRowsView(rows: rows) { [unowned self] in accept($0) })
         surface.sizingOptions = []
@@ -25,6 +30,21 @@ final class CompletionList {
 
     /// A click chooses a row and leaves the keyboard in the document.
     private final class Surface: NSHostingView<CompletionRowsView> { override var acceptsFirstResponder: Bool { false } }
+    #else
+    /// A tap chooses a row and leaves the keyboard in the document: no view of SwiftUI's takes it.
+    private lazy var hosting: UIHostingController<CompletionRowsView> = {
+        let hosting = UIHostingController(rootView: CompletionRowsView(rows: rows) { [unowned self] in accept($0) })
+        hosting.sizingOptions = []
+        hosting.safeAreaRegions = []
+        hosting.view.backgroundColor = .clear
+        // A menu's shadow.
+        hosting.view.layer.shadowOffset = CGSize(width: 0, height: 4)
+        hosting.view.layer.shadowRadius = 11
+        hosting.view.layer.shadowOpacity = 0.22
+        return hosting
+    }()
+    private var surface: UIView { hosting.view }
+    #endif
 
     init(for editor: SourceTextView) { self.editor = editor }
 
@@ -33,7 +53,7 @@ final class CompletionList {
 
     /// `explicit` (Escape, or Complete) offers what typing alone wouldn't.
     func complete(explicit: Bool) {
-        guard editor.isEditable, editor.selectedRange().length == 0, editor.selectedRanges.count == 1, !editor.hasMarkedText(),
+        guard editor.isEditable, editor.selection.length == 0, editor.selections.count == 1, !editor.hasMarkedText(),
               let found = editor.document.completions(caret: editor.caret, explicit: explicit), !found.items.isEmpty
         else { return close() }
         offered = found
@@ -62,19 +82,28 @@ final class CompletionList {
         editor.insert(inserted, named: String(localized: "Completion"))
     }
 
-    /// Under the start of what it completes, in the editor's scroll view.
+    /// Under the start of what it completes, in the editor's scroll view, or on the iPad in the view holding the editor.
     private func show(reload: Bool) {
+        #if os(macOS)
         guard let offered, let window = editor.window, let host = editor.enclosingScrollView else { return }
         let start = host.convert(window.convertFromScreen(editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
+        #else
+        guard let offered, let host = editor.superview else { return }
+        let start = host.convert(editor.caretRect(at: offered.start), from: editor)
+        #endif
         let shown = host.convert(editor.shownRect, from: editor)
-        guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return close() }
+        guard shown.contains(CGPoint(x: start.minX, y: start.midY)) else { return close() }
         guard reload else { return place(under: start, in: shown) }
         let count = rows.items.count
-        let font = editor.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let font = editor.font ?? .monospacedSystemFont(ofSize: PlatformFont.systemFontSize, weight: .regular)
         (rows.items, rows.kind, rows.font) = (offered.items, offered.kind, font)
         rows.typed = editor.caret - offered.start
+        #if os(macOS)
         rows.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-        rows.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
+        #else
+        rows.boldFont = font.fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? font
+        #endif
+        rows.height = max(CompletionRowsView.leastRowHeight, (font.ascender - font.descender + font.leading).rounded(.up) + 8)
         rows.selection = 0
         rows.reveal()
         let opening = surface.superview == nil
@@ -98,7 +127,7 @@ final class CompletionList {
     }
 
     private static let textStart = CompletionRowsView.margin + CompletionRowsView.textInset
-    private var size = NSSize.zero
+    private var size = CGSize.zero
 
     private func fit() {
         let labels = rows.items.map(\.label)
@@ -111,7 +140,7 @@ final class CompletionList {
         // not a bibliography's thousands: a row truncates a wider one.
         let details = rows.items.compactMap(\.detail).max { $0.utf16.count < $1.utf16.count }
             .map { ($0 as NSString).size(withAttributes: [.font: rows.detailFont]).width + CompletionRowsView.detailSpacing } ?? 0
-        size = NSSize(width: (widest + details + 2 * Self.textStart).rounded(.up),
+        size = CGSize(width: (widest + details + 2 * Self.textStart).rounded(.up),
                       height: CGFloat(min(labels.count, 8)) * rows.height + 2 * CompletionRowsView.margin)
     }
 
@@ -125,10 +154,10 @@ final class CompletionList {
     private(set) var isAbove = false
 
     /// An editor too short for either side has it on the one with more room, cut to whole rows.
-    private func place(under start: NSRect, in editor: NSRect) {
+    private func place(under start: CGRect, in editor: CGRect) {
         guard let host = surface.superview else { return }
-        var frame = NSRect(origin: NSPoint(x: start.minX - Self.textStart, y: 0), size: size)
-        frame.size.width = min(size.width, max(160, editor.maxX - frame.minX))
+        var frame = CGRect(origin: CGPoint(x: start.minX - Self.textStart, y: 0), size: size)
+        frame.size.width = min(size.width, editor.width, max(160, editor.maxX - frame.minX))
         frame.origin.x = max(editor.minX, min(frame.minX, editor.maxX - frame.width))
         let under = editor.maxY - start.maxY, over = start.minY - editor.minY
         isAbove = under < frame.height && over > under
@@ -140,14 +169,25 @@ final class CompletionList {
         }
         frame.origin.y = isAbove ? start.minY - frame.height : start.maxY
         // The text's start is between pixels, and the glass's edge would blur.
+        #if os(macOS)
         frame = host.backingAlignedRect(frame, options: .alignAllEdgesNearest)
+        #else
+        let scale = host.traitCollection.displayScale
+        frame = CGRect(x: (frame.minX * scale).rounded() / scale, y: (frame.minY * scale).rounded() / scale,
+                       width: (frame.width * scale).rounded() / scale, height: (frame.height * scale).rounded() / scale)
+        #endif
         guard frame != surface.frame else { return }
         let shorter = frame.height != surface.frame.height
         surface.frame = frame
+        #if os(iOS)
+        surface.layer.shadowPath = UIBezierPath(roundedRect: surface.bounds, cornerRadius: CompletionRowsView.corner).cgPath
+        #endif
         if shorter { rows.reveal() }
     }
 
+    #if os(macOS)
     func contains(_ point: NSPoint) -> Bool { surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil)) }
+    #endif
 
     func move(_ step: Int) {
         rows.selection = max(0, min(rows.items.count - 1, rows.selection + step))
@@ -161,9 +201,9 @@ final class CompletionList {
     /// The UTF-16 units typed, which are bold.
     var typed = 0
     var kind = CompletionKind.command
-    var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-    var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
-    var detailFont: NSFont { .systemFont(ofSize: font.pointSize) }
+    var font = PlatformFont.monospacedSystemFont(ofSize: PlatformFont.systemFontSize, weight: .regular)
+    var boldFont = PlatformFont.monospacedSystemFont(ofSize: PlatformFont.systemFontSize, weight: .bold)
+    var detailFont: PlatformFont { .systemFont(ofSize: font.pointSize) }
     var height: CGFloat = 24
     var selection = 0
     /// Bumped to scroll the chosen row into view.
@@ -173,11 +213,21 @@ final class CompletionList {
 }
 
 /// An NSMenu's measures on 27.2: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.
+/// On the iPad a UIMenu's: rows a touch's 44 pt, in its larger corners.
 struct CompletionRowsView: View {
     let rows: CompletionRows
     let clicked: (Int) -> Void
 
-    static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20
+    #if os(macOS)
+    static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20, corner: CGFloat = 13, rowCorner: CGFloat = 8
+    static let leastRowHeight: CGFloat = 0
+    private static let text = Color(nsColor: .labelColor), chosenText = Color(nsColor: .alternateSelectedControlTextColor)
+    private static let accent = Color(nsColor: .controlAccentColor)
+    #else
+    static let margin: CGFloat = 8, textInset: CGFloat = 12, detailSpacing: CGFloat = 20, corner: CGFloat = 24, rowCorner: CGFloat = 16
+    static let leastRowHeight: CGFloat = 44
+    private static let text = Color.primary, chosenText = Color.white, accent = Color.accentColor
+    #endif
 
     var body: some View {
         ScrollViewReader { scroller in
@@ -197,11 +247,11 @@ struct CompletionRowsView: View {
                         }
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .foregroundStyle(Color(nsColor: chosen ? .alternateSelectedControlTextColor : .labelColor))
+                        .foregroundStyle(chosen ? Self.chosenText : Self.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Self.textInset)
                         .frame(height: rows.height)
-                        .background(chosen ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 8))
+                        .background(chosen ? Self.accent : .clear, in: .rect(cornerRadius: Self.rowCorner))
                         .padding(.horizontal, Self.margin)
                         .contentShape(.rect)
                         .onTapGesture { clicked(row) }
@@ -217,7 +267,7 @@ struct CompletionRowsView: View {
             .padding(.vertical, Self.margin)
             .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 13))
+        .glassEffect(.regular, in: .rect(cornerRadius: Self.corner))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Completions")
     }

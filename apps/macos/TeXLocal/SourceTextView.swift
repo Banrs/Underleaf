@@ -202,6 +202,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     var caret: Int { selectedRange().location }
+    var selection: NSRange { selectedRange() }
+    var selections: [NSRange] { selectedRanges.map(\.rangeValue) }
+    var length: Int { text.length }
+    func word(at offset: Int) -> NSRange { selectionRange(forProposedRange: .caret(offset), granularity: .selectByWord) }
 
     /// Whether the text has the window's keyboard, told as it takes and gives it up.
     var keyboardChanged: (Bool) -> Void = { _ in }
