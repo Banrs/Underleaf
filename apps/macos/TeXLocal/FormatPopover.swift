@@ -115,43 +115,43 @@ struct FormatPanel: View {
     /// Notes' half-point separator: a `Divider` framed to half a point still inks a whole one.
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
+    /// Notes' style toggles are AppKit buttons, read through Accessibility (27.2): AppKit's own toggle draws their hover, on
+    /// and off in the system's accent, at Notes' 24 pt within our own pitch.
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
-        Toggle(command.title, systemImage: command.style!.symbol, isOn: Binding(get: { on }, set: { _ in
-            app.perform(command, on: project)
-        }))
-        .toggleStyle(StyleTile())
-        .help(command.style!.help)
+        StyleButton(command: command, on: on) { [app, project] in app.perform(command, on: project) }
+            .frame(width: 24, height: 24)
+            .frame(width: 29)
     }
 
-    /// Notes' style toggles, AppKit checkboxes read through Accessibility (27.2): 24 pt squares, here at our own pitch.
-    fileprivate struct StyleTile: ToggleStyle {
-        static let side: CGFloat = 24, width: CGFloat = 29
+    private struct StyleButton: NSViewRepresentable {
+        let command: MenuCommand
+        let on: Bool
+        let toggle: () -> Void
 
-        func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
+        func makeNSView(context: Context) -> NSButton {
+            let image = NSImage(systemSymbolName: command.style!.symbol, accessibilityDescription: command.title)?
+                .withSymbolConfiguration(.init(scale: .large))
+            let button = NSButton(image: image ?? NSImage(), target: context.coordinator, action: #selector(Coordinator.click(_:)))
+            button.setButtonType(.pushOnPushOff)
+            button.bezelStyle = .accessoryBar
+            button.toolTip = command.style!.help
+            return button
+        }
 
-        /// As Notes': lit in the accent the levels light in while on, and an off one under the pointer; an on one greys under
-        /// it, the click's result to come.
-        private struct Tile: View {
-            let configuration: Configuration
-            @State private var hovering = false
+        func updateNSView(_ button: NSButton, context: Context) {
+            context.coordinator.toggle = toggle
+            button.state = on ? .on : .off
+        }
 
-            var body: some View {
-                let on = configuration.isOn, lit = on || hovering
-                let fill = on && hovering ? AnyShapeStyle(.fill) : lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear)
-                Button { configuration.isOn.toggle() } label: {
-                    configuration.label
-                        .labelStyle(.iconOnly)
-                        .imageScale(.large)
-                        .foregroundStyle(.primary)
-                        .frame(width: StyleTile.side, height: StyleTile.side)
-                        .background(fill, in: .rect(cornerRadius: FormatPanel.highlightRadius))
-                        .environment(\.backgroundProminence, lit ? .increased : .standard)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering = $0 }
-                .frame(width: StyleTile.width)
-                .accessibilityAddTraits(on ? [.isToggle, .isSelected] : .isToggle)
+        func makeCoordinator() -> Coordinator { Coordinator(toggle: toggle) }
+
+        final class Coordinator: NSObject {
+            var toggle: () -> Void
+            init(toggle: @escaping () -> Void) { self.toggle = toggle }
+            /// Back as it was until the editor's styles say: a click that changes no text changes nothing.
+            @objc func click(_ button: NSButton) {
+                button.state = button.state == .on ? .off : .on
+                toggle()
             }
         }
     }
