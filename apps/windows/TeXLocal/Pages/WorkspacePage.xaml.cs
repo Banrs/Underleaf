@@ -713,15 +713,13 @@ public sealed partial class WorkspacePage : Page
         ShowIssues();
         if (failure is not null)
         {
-            await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
+            // install_package's 403 is its UAC prompt cancelled, which needs no alert.
+            if (failure.Status != 403 || fix.Command != "install_package") await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
             return;
         }
-        if (answer.ValueKind == JsonValueKind.Object)
-        {
-            if (answer.TryGetProperty("edits", out var edits)) Editor.Apply(edits.Deserialize<DocumentEdits?>(Core.Json));
-            // The menus send the settings they show, so they show the fix's.
-            if (fix.Command == "session_set_settings") ShowSettings(answer);
-        }
+        if (answer.TryGetProperty("edits", out var edits)) Editor.Apply(edits.Deserialize<DocumentEdits?>(Core.Json));
+        // The menus send the settings they show, so they show the fix's.
+        if (fix.Command == "session_set_settings") ShowSettings(answer);
         Run(null, () => Core.CallAsync("session_compile", new { session }));
     }
 
