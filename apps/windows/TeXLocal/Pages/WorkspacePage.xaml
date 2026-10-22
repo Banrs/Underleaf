@@ -106,6 +106,7 @@
                     <MenuFlyoutItem AccessKey="Z" Click="OnExportZip" Text="Export project as ZIP…" />
                     <MenuFlyoutItem x:Name="OpenPdfItem" AccessKey="D" Click="OnOpenPdf" Text="Open PDF in default app" />
                     <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
+                    <MenuFlyoutItem x:Name="PrintItem" controls:Shortcut.Keys="Ctrl+P" AccessKey="R" Click="{x:Bind Pdf.Print}" Text="Print…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
                     <MenuFlyoutSeparator />

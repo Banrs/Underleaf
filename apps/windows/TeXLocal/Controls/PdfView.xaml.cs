@@ -6,11 +6,13 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Printing;
 using Microsoft.UI.Xaml.Shapes;
 using TeXLocal.Bridge;
 using Windows.Data.Pdf;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
+using Windows.Graphics.Printing;
 using Windows.Storage.Streams;
 using Windows.System;
 
@@ -32,7 +34,7 @@ public sealed partial class PdfView : UserControl
     Fit fit = Fit.Width;
     (int Number, Point At)? source;
     int loads;
-    bool rendering, again;
+    bool rendering, again, dark;
 
     public event Action? ViewMoved;
     /// A page from 1 and a point on it in TeX points from its top left: a double-click, or Go to source position.
@@ -63,7 +65,12 @@ public sealed partial class PdfView : UserControl
             item.Click += (_, _) => ZoomTo(percent / 100.0);
             Menu.Items.Add(item);
         }
-        Loaded += (_, _) => XamlRoot.Changed += OnRootChanged;
+        Loaded += (_, _) =>
+        {
+            XamlRoot.Changed += OnRootChanged;
+            Repaper();
+        };
+        ActualThemeChanged += (_, _) => Repaper();
         Unloaded += (_, _) => XamlRoot?.Changed -= OnRootChanged;
     }
 
@@ -102,15 +109,52 @@ public sealed partial class PdfView : UserControl
         {
             if (i < first - 1 || i > last + 1) on[i].Image.Source = null;
             var width = (int)Math.Min(Math.Ceiling(on[i].Size.Width * zoom * (XamlRoot?.RasterizationScale ?? 1)), 4096);
-            if (i < first || i > last || ((on[i].Image.Source as BitmapImage)?.DecodePixelWidth ?? 0) == width) continue;
+            if (i < first || i > last || ((on[i].Image.Source as BitmapImage)?.DecodePixelWidth ?? 0) == width && Equals(on[i].Image.Tag, dark)) continue;
             using var page = doc.GetPage((uint)i);
             using var stream = new InMemoryRandomAccessStream();
             await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width, BitmapEncoderId = BitmapEncoder.BmpEncoderId });
+            var ink = dark;
+            using var darkened = ink ? await Darken(stream) : null;
             // At the drawn width: XAML would otherwise decode to the layout size, which leaves out the zoom.
             var bitmap = new BitmapImage { DecodePixelType = DecodePixelType.Physical, DecodePixelWidth = width };
-            await bitmap.SetSourceAsync(stream);
-            on[i].Image.Source = bitmap;
+            await bitmap.SetSourceAsync(darkened ?? stream);
+            (on[i].Image.Source, on[i].Image.Tag) = (bitmap, ink);
         }
+    }
+
+    /// The Mac's dark paper: inverted, then turned 180° in hue, which together turn each colour's luma over and keep its
+    /// chroma, c + 1 − 2Y. Per pixel off the UI thread, as Windows.Data.Pdf has no filter and composition's need Win2D.
+    static async Task<InMemoryRandomAccessStream> Darken(IRandomAccessStream page)
+    {
+        page.Seek(0);
+        var decoder = await BitmapDecoder.CreateAsync(BitmapDecoder.BmpDecoderId, page);
+        var pixels = (await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, new BitmapTransform(),
+            ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage)).DetachPixelData();
+        await Task.Run(() =>
+        {
+            for (var i = 0; i < pixels.Length; i += 4)
+            {
+                var turn = 255 - ((29 * pixels[i] + 150 * pixels[i + 1] + 77 * pixels[i + 2]) >> 7);
+                for (var c = i; c < i + 3; c++) pixels[c] = (byte)Math.Clamp(pixels[c] + turn, 0, 255);
+            }
+        });
+        var stream = new InMemoryRandomAccessStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.BmpEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, decoder.PixelWidth, decoder.PixelHeight, decoder.DpiX, decoder.DpiY, pixels);
+        await encoder.FlushAsync();
+        stream.Seek(0);
+        return stream;
+    }
+
+    /// Follows Settings' page colour and, for its Use app theme, the app's; the pages showing are drawn again.
+    void Repaper()
+    {
+        var colour = Prefs.PageColour;
+        var now = colour == PageColour.Dark || colour == PageColour.App && ActualTheme == ElementTheme.Dark;
+        if (now == dark) return;
+        dark = now;
+        Pages.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
+        Render();
     }
 
     /// Draws for the view as it is now, one pass at a time: a call during a pass runs another after it.
@@ -273,6 +317,55 @@ public sealed partial class PdfView : UserControl
         (shown.Interval, shown.IsRepeating) = (TimeSpan.FromSeconds(2), false);
         shown.Tick += (_, _) => page.Marks.Children.Remove(box);
         shown.Start();
+    }
+
+    /// Windows' print dialog for the build's pages, on white, each fitted to the sheet and drawn at the printer's
+    /// resolution up to 600 dpi: XAML holds every sheet until the job is spooled, and PNG keeps them small until then.
+    public async void Print()
+    {
+        if (document is not { } doc) return;
+        var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
+        var printing = new PrintDocument();
+        var source = printing.DocumentSource;
+        var paper = new Size();
+        printing.Paginate += (_, e) =>
+        {
+            paper = e.PrintTaskOptions.GetPageDescription(0).PageSize;
+            printing.SetPreviewPageCount((int)doc.PageCount, PreviewPageCountType.Final);
+        };
+        printing.GetPreviewPage += async (_, e) =>
+            printing.SetPreviewPage(e.PageNumber, await Sheet(doc, e.PageNumber - 1, paper, 96 * (XamlRoot?.RasterizationScale ?? 1)));
+        printing.AddPages += async (_, e) =>
+        {
+            var sheet = e.PrintTaskOptions.GetPageDescription(0);
+            for (var i = 0; i < doc.PageCount; i++) printing.AddPage(await Sheet(doc, i, sheet.PageSize, Math.Min(sheet.DpiX, 600)));
+            printing.AddPagesComplete();
+        };
+        var title = System.IO.Path.GetFileNameWithoutExtension(FilePath);
+        // The interop throws when Windows has no printing for the window, which unhandled would end the app.
+        PrintManager? manager = null;
+        try
+        {
+            manager = PrintManagerInterop.GetForWindow(window);
+            manager.PrintTaskRequested += Requested;
+            await PrintManagerInterop.ShowPrintUIForWindowAsync(window);
+        }
+        catch (Exception ex) { await App.Alert("Can't print", ex.Message); }
+        finally { manager?.PrintTaskRequested -= Requested; }
+
+        void Requested(PrintManager sender, PrintTaskRequestedEventArgs e) => e.Request.CreatePrintTask(title, r => r.SetSource(source));
+    }
+
+    /// A page fitted to a sheet of paper in DIPs, drawn at a resolution in dpi.
+    static async Task<Image> Sheet(PdfDocument doc, int index, Size paper, double dpi)
+    {
+        using var page = doc.GetPage((uint)index);
+        var width = (int)Math.Ceiling(page.Size.Width * Math.Min(paper.Width / page.Size.Width, paper.Height / page.Size.Height) / 96 * dpi);
+        using var stream = new InMemoryRandomAccessStream();
+        await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width });
+        var bitmap = new BitmapImage { DecodePixelType = DecodePixelType.Physical, DecodePixelWidth = width };
+        await bitmap.SetSourceAsync(stream);
+        return new Image { Source = bitmap, Width = paper.Width, Height = paper.Height };
     }
 
     // At the right-click, or from the keyboard a third of the way down the view's centre.

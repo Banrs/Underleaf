@@ -19,6 +19,7 @@ public sealed partial class SettingsPage : Page
         InitializeComponent();
         About.Description = $"Version {typeof(App).Assembly.GetName().Version?.ToString(3)} · MIT License";
         ThemeBox.SelectedIndex = Prefs.Theme;
+        PageColourBox.SelectedIndex = (int)Prefs.PageColour;
         var families = Prefs.MonospaceFamilies();
         FontBox.ItemsSource = families.Contains(Prefs.EditorFont) ? families : [.. families, Prefs.EditorFont];
         FontBox.SelectedItem = Prefs.EditorFont;
@@ -32,6 +33,7 @@ public sealed partial class SettingsPage : Page
             Prefs.Theme = ThemeBox.SelectedIndex;
             App.Window.ApplyTheme((ElementTheme)Prefs.Theme);
         };
+        PageColourBox.SelectionChanged += (_, _) => Prefs.PageColour = (PageColour)PageColourBox.SelectedIndex;
         FontBox.SelectionChanged += OnLook;
         SizeBox.SelectionChanged += OnLook;
         SyntaxBox.SelectionChanged += OnLook;
