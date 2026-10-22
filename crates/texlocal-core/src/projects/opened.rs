@@ -1,8 +1,8 @@
 //! Folders opened where they are. The library lists each in its store, `.opened/<key>/`, which
 //! holds where the folder is (`folder.json`), its ui state and the settings it has no
-//! `.texlocal.json` of its own for (`project.json`), and its build output (`build/`): nothing is
-//! written in the folder but the author's files. Its id is `.<key>`, which no project in the
-//! library can have.
+//! `.texlocal.json` of its own for (`project.json`), its build output (`build/`) and its history
+//! (`history/`): nothing is written in the folder but the author's files. Its id is `.<key>`,
+//! which no project in the library can have.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,6 +69,7 @@ fn project(root: &Path, store: &Path) -> Project {
         settings: if own.is_file() { own } else { sidecar.clone() },
         ui: sidecar,
         build: store.join(BUILD_DIR),
+        history: store.join("history"),
         root: root.to_path_buf(),
     }
 }
@@ -264,6 +265,7 @@ mod tests {
         assert_eq!(found.settings, found.ui);
         assert_eq!(read_ui(&found.ui).expanded_folders, ["chapters"]);
         assert!(found.build.starts_with(service.data_dir.join(STORE)));
+        assert!(found.history.starts_with(service.data_dir.join(STORE)));
         assert_eq!(names_in(&folder), [".git", "chapters", "main.tex"]);
 
         // Opened again it is the same; a folder in it is a project of its own, and a path is

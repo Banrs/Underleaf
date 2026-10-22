@@ -1574,3 +1574,81 @@ async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     assert!(told.is_some());
     assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
 }
+
+// MARK: - History
+
+#[tokio::test(start_paused = true)]
+async fn a_replace_all_keeps_the_files_as_they_were_first() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "a cat").unwrap();
+    rig.ok("replace", json!({ "query": "cat", "replacement": "dog" }))
+        .await;
+    let before = &rig.ok("history_list", json!({})).await[0];
+    assert_eq!(before["reason"], "Before Replace All");
+    let compare = json!({ "id": before["id"], "path": "ch.tex" });
+    let compared = rig.ok("history_compare", compare).await;
+    assert_eq!(compared, json!({ "old": "a cat", "new": "a dog" }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "one").unwrap();
+    let draft = rig.ok("history_save", json!({ "name": " Draft " })).await;
+    assert_eq!(draft["name"], "Draft");
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " world");
+    fs::write(rig.root.join("new.tex"), "new").unwrap();
+    fs::remove_file(rig.root.join("ch.tex")).unwrap();
+    let compare = |path: &str| {
+        let args = json!({ "id": draft["id"], "path": path });
+        rig.call("history_compare", args)
+    };
+    for (path, old, new) in [
+        ("main.tex", json!("Hello"), json!("Hello world")),
+        ("new.tex", Value::Null, json!("new")),
+        ("ch.tex", json!("one"), Value::Null),
+    ] {
+        let compared = compare(path).await.unwrap();
+        assert_eq!(compared, json!({ "old": old, "new": new }), "{path}");
+    }
+    assert_eq!(compare("figure.png").await.unwrap_err().status, 400);
+}
+
+/// A file added since is left alone, and one as it was already isn't written.
+#[tokio::test(start_paused = true)]
+async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_they_were() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("ch.tex"), "one").unwrap();
+    fs::write(rig.root.join("gone.tex"), "gone").unwrap();
+    let draft = rig.ok("history_save", json!({ "name": "Draft" })).await;
+    fs::write(rig.root.join("ch.tex"), "two").unwrap();
+    fs::remove_file(rig.root.join("gone.tex")).unwrap();
+    fs::write(rig.root.join("new.tex"), "new").unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " world");
+
+    let restore = |paths: Option<[&str; 1]>| {
+        let args = json!({ "id": draft["id"], "paths": paths });
+        rig.ok("history_restore", args)
+    };
+    let gone = restore(Some(["gone.tex"])).await;
+    assert_eq!(gone, json!({ "edits": null, "written": ["gone.tex"] }));
+    let edit = json!({ "start": 5, "length": 6, "text": "" });
+    let edits = json!({ "path": "main.tex", "version": 1, "edits": [edit] });
+    let all = restore(None).await;
+    assert_eq!(all, json!({ "edits": edits, "written": ["ch.tex"] }));
+    let disk = ["ch.tex", "gone.tex", "new.tex"].map(|path| rig.disk(path));
+    assert_eq!(disk, ["one", "gone", "new"]);
+
+    let list = rig.ok("history_list", json!({})).await;
+    let change = |path: &str, change: &str| json!({ "path": path, "change": change });
+    let changed = json!([
+        change("ch.tex", "changed"),
+        change("gone.tex", "deleted"),
+        change("new.tex", "added"),
+    ]);
+    assert_eq!(list[1]["reason"], "Before Restore");
+    assert_eq!(list[1]["changed"], changed);
+    assert_eq!(list[0]["changed"], json!([change("gone.tex", "added")]));
+}

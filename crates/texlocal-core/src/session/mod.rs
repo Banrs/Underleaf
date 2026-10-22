@@ -1,11 +1,12 @@
 //! Project sessions: what a host would keep per open project (open files' text, autosave,
-//! conflicts, builds and issues, live preview, the folder's watcher), kept once here.
+//! conflicts, builds and issues, live preview, the folder's watcher, history), kept once here.
 //! Each session is one task (`actor.rs`) taking messages one at a time; a host numbers its
 //! sessions, so it listens for one before opening it. docs/core-api.md is the contract.
 
 mod actor;
 mod build;
 mod document;
+mod history;
 mod live;
 #[cfg(test)]
 mod tests;

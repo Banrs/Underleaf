@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
 use super::build::Builds;
+use super::history::HistoryQueue;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
@@ -32,6 +33,8 @@ use crate::{CoreError, checks, lf, lock, tex};
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
 const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
+pub(super) const ONE_DOCUMENT: &str =
+    "Only one open document can be edited at once: close the others first.";
 const NOT_UTF8: &str =
     "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
 
@@ -159,6 +162,7 @@ pub(crate) struct Actor {
     deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
+    pub history: HistoryQueue,
     closed: bool,
 }
 
@@ -193,6 +197,7 @@ impl Actor {
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
         }
+        let history = HistoryQueue::new(&project);
         let actor = Self {
             id,
             project_id,
@@ -222,8 +227,10 @@ impl Actor {
             deleting: BTreeSet::new(),
             live: Live::default(),
             later,
+            history,
             closed: false,
         };
+        actor.snapshot_soon();
         Ok((actor, opened))
     }
 
@@ -377,6 +384,9 @@ impl Actor {
                 Ok(query) => self.search(query, reply),
                 Err(err) => reply.send(Err(err)),
             },
+            "history_list" | "history_save" | "history_compare" => {
+                self.history_command(name, args, reply);
+            }
             #[cfg(test)]
             "panic" => panic!("a bug in the session"),
             _ => {
@@ -424,6 +434,7 @@ impl Actor {
             "replace" => return self.replace(args),
             "rename_symbol" => return self.rename_symbol(args),
             "add_package" => return self.add_package(string_arg(args, "name")?),
+            "history_restore" => return self.history_restore(args),
             "set_settings" => return self.set_settings(&arg(args, "patch")?),
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
@@ -605,7 +616,7 @@ impl Actor {
     }
 
     /// On its way to the Trash, alone or in a folder.
-    fn deleting(&self, path: &str) -> bool {
+    pub fn deleting(&self, path: &str) -> bool {
         self.deleting.iter().any(|entry| within(path, entry))
     }
 
@@ -654,6 +665,7 @@ impl Actor {
                     (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
                     self.after(Timer::Symbols);
+                    self.snapshot_soon();
                     self.emit("saved", json!({ "path": path }));
                     Ok(true)
                 }
@@ -858,7 +870,7 @@ impl Actor {
         }
     }
 
-    fn reload_tree(&mut self) {
+    pub fn reload_tree(&mut self) {
         let Ok(tree) = projects::file_tree(&self.project) else {
             return;
         };
@@ -963,6 +975,7 @@ impl Actor {
     fn replace(&self, args: &Value) -> Result<Value, CoreError> {
         let (query, to) = (query(args)?, string_arg(args, "replacement")?);
         let open = self.texts_to_edit("replaced")?;
+        self.snapshot_before("Before Replace All")?;
         self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
     }
 
@@ -1004,6 +1017,7 @@ impl Actor {
                 "A {noun} “{to}” exists already."
             )));
         }
+        self.snapshot_before("Before Rename")?;
         let tex = |rel: &str| matches!(file_kind(rel), "tex" | "bib");
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
@@ -1023,6 +1037,7 @@ impl Actor {
     fn add_package(&self, name: &str) -> Result<Value, CoreError> {
         let main = settings::read_settings(&self.project.settings).main_file;
         let open = self.texts_to_edit("added")?;
+        self.snapshot_before("Before Adding a Package")?;
         let found = |_: &str, text: &str| {
             let facts = Facts::read(text, "tex");
             let loaded = facts.packages.iter().any(|package| package == name);
@@ -1034,7 +1049,7 @@ impl Actor {
 
     /// The open documents' paths, text and versions, unless one has a change on disk still to
     /// settle, when nothing is edited, as nothing is saved.
-    fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
+    pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
         let unsettled =
             |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || doc.reload.is_some();
@@ -1078,9 +1093,7 @@ impl Actor {
             })
             .collect();
         if edits.len() > 1 {
-            return Err(CoreError::conflict(
-                "Only one open document can be edited at once: close the others first.",
-            ));
+            return Err(CoreError::conflict(ONE_DOCUMENT));
         }
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
         let written = self.service.with_project(&self.project_id, |project| {
