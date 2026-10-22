@@ -13,6 +13,12 @@ PACKAGES = [
     'collection-basic', 'collection-latex', 'collection-latexrecommended',
     'pgf', 'xetex', 'fontspec', 'unicode-math', 'lm', 'lm-math', 'biblatex',
     'hyphen-english', 'babel-english',
+    # Beyond LaTeX's recommended set: what articles most often load, and lipsum and mwe's example
+    # images for the test projects.
+    'lipsum', 'mwe', 'enumitem', 'siunitx', 'cleveref', 'csquotes',
+    # T1's Computer Modern as Type 1 fonts, which [T1]{fontenc} without lmodern needs: the iPad can't
+    # make the bitmap fonts a Mac's TeX would fall back to.
+    'cm-super',
 ]
 
 root, out = sys.argv[1], sys.argv[2]
