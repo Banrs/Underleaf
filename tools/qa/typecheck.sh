@@ -8,7 +8,7 @@ PLAT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform
 SDK=$PLAT/Developer/SDKs/MacOSX.sdk
 out=$(mktemp -d)
 # The main actor is the default isolation of the app target and of the tests (project.yml).
-common=(-Onone -DDEBUG -swift-version 6 -I $root/crates/texlocal-ffi/include -parse-as-library -default-isolation=MainActor -enable-upcoming-feature InferIsolatedConformances -enable-upcoming-feature NonisolatedNonsendingByDefault)
+common=(-Onone -DDEBUG -swift-version 6 -I $root/crates/texlocal-ffi/include -parse-as-library -default-isolation=MainActor -enable-upcoming-feature InferIsolatedConformances -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature MemberImportVisibility -enable-upcoming-feature ExistentialAny)
 flags=($common -sdk $SDK -target arm64-apple-macos27.0)
 show() { grep -E "(error|warning):" | sed "s#$root/##" | sort -u }
 xcrun swiftc -emit-module -emit-module-path $out/TeXLocal.swiftmodule -module-name TeXLocal -enable-testing \

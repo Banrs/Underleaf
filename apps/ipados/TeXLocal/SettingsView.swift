@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The Mac's Settings panes as sections of one sheet, with Done (HIG, Sheets).
 struct SettingsView: View {
@@ -6,11 +7,18 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
+    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
     @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
     @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
     @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
     @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
     @AppStorage(DefaultsKey.syncAfterCompile) private var syncAfterCompile = false
+
+    private static let families = UIFont.familyNames.filter { family in
+        UIFont.fontNames(forFamilyName: family).first.flatMap { UIFont(name: $0, size: 12) }?
+            .fontDescriptor.symbolicTraits.contains(.traitMonoSpace) == true
+    }.sorted()
 
     var body: some View {
         @Bindable var app = app
@@ -30,9 +38,19 @@ struct SettingsView: View {
                         ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
                     }
                 }
-                Section("Editor") {
+                Section("Text") {
+                    Picker("Font", selection: $fontName) {
+                        Text("System Monospaced").tag("")
+                        ForEach(Self.families, id: \.self) { Text($0).tag($0) }
+                    }
                     Stepper("Font Size: \(fontSize) pt", value: $fontSize, in: EditorPrefs.fontSizes)
+                    Picker("Theme", detail: "Colours for commands, math and comments. All follow light and dark appearance.",
+                           selection: $syntaxTheme) {
+                        ForEach(SyntaxTheme.all) { Text($0.title).tag($0) }
+                    }
                     Toggle("Show Line Numbers", isOn: $lineNumbers)
+                }
+                Section("Typing") {
                     Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $autoPair)
                     Toggle("Suggest Completions While Typing", isOn: $autoComplete)
                 }
