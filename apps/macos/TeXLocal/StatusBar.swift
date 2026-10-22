@@ -38,9 +38,7 @@ struct StatusBar: View {
             .help(showingIssues ? "Hide issues" : "Show issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 // As the build's time after its result: the engine whose breaks the pages show, when the PDF's differ.
-                let title = project.texpresso.engine.flatMap { engine in
-                    project.livePDF && engine != project.settings?.engine ? TeXEngine(rawValue: engine)?.title ?? engine : nil
-                }
+                let title = project.liveEngine
                 Button { project.panel.show(.texpresso) } label: {
                     Label {
                         if let title {

@@ -15,6 +15,14 @@ extension ProjectModel {
 
     var canSwitchLivePreview: Bool { app?.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
 
+    /// The engine Live Preview typesets with, while its pages show and it isn't the project's: their line breaks may
+    /// differ from the compiled PDF's.
+    var liveEngine: String? {
+        texpresso.engine.flatMap { engine in
+            livePDF && engine != settings?.engine ? TeXEngine(rawValue: engine)?.title ?? engine : nil
+        }
+    }
+
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
         texpresso.starting()

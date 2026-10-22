@@ -118,7 +118,10 @@ private struct BuildStatus {
     var text: Text {
         if project.saveFailure != nil { return Text("Not Saved") }
         if project.compiling { return Text("Compiling…") }
-        if project.texpresso.phase != .stopped { return Text(project.texpresso.title) }
+        if project.texpresso.phase != .stopped {
+            // As the Mac's status bar: the engine whose breaks the pages show, when the compiled PDF's differ.
+            return project.liveEngine.map { Text("\(Text(project.texpresso.title)) · \($0)") } ?? Text(project.texpresso.title)
+        }
         guard let result = project.result else { return Text(app.tex?.available == false ? "TeX Not Found" : "No Build Yet") }
         if result.stopped { return Text("Build Stopped") }
         if result.ok {
