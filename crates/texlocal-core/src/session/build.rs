@@ -59,12 +59,23 @@ pub(crate) struct Builds {
     outdated: bool,
     issues: Vec<LogItem>,
     error_count: usize,
+    /// None until the first scan has checked the project.
+    checks: Option<Vec<LogItem>>,
+    /// The session's count of edits as the checks' scan began.
+    checked: u64,
     chosen: Option<usize>,
     result_edits: u64,
     pub cleaners: Vec<Reply>,
     /// Whether live preview ran as the clean began, and the Start it ran for.
     cleaning: Option<(bool, u64)>,
     shown: Value,
+}
+
+impl Builds {
+    /// The session's issues: the last build's errors, then its warnings, then the checks.
+    fn listed(&self) -> impl Iterator<Item = &LogItem> {
+        self.issues.iter().chain(self.checks.iter().flatten())
+    }
 }
 
 impl Actor {
@@ -227,6 +238,15 @@ impl Actor {
 
     // MARK: - Issues
 
+    pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {
+        self.builds.checked = edits;
+        if self.builds.checks.as_ref() != Some(&checks) {
+            self.emit("checks", json!({ "items": checks }));
+            self.builds.checks = Some(checks);
+        }
+        self.mark_issues();
+    }
+
     pub fn clear_issues(&mut self, path: &str) {
         if let Some(doc) = self.docs.get_mut(path)
             && !doc.issues.is_empty()
@@ -236,16 +256,20 @@ impl Actor {
         }
     }
 
-    /// A document edited since the last build began isn't marked: its lines may have moved.
+    /// A document edited since the last build or check began isn't marked with its issues: its
+    /// lines may have moved.
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
+        let builds = &self.builds;
         for (path, doc) in &mut self.docs {
             let edits = self.last_edits.get(path).copied().unwrap_or(0);
-            let lines = if edits <= self.builds.result_edits {
-                issue_lines(&self.builds.issues, path, &doc.doc)
-            } else {
-                Vec::new()
-            };
+            let built = builds
+                .issues
+                .iter()
+                .filter(|_| edits <= builds.result_edits);
+            let checks = builds.checks.iter().flatten();
+            let checks = checks.filter(|_| edits <= builds.checked);
+            let lines = issue_lines(built.chain(checks), path, &doc.doc);
             if lines != doc.issues {
                 doc.issues.clone_from(&lines);
                 changed.push(json!({ "path": path, "lines": lines }));
@@ -258,18 +282,19 @@ impl Actor {
 
     pub fn choose_issue(&mut self, index: Option<usize>) -> Value {
         self.builds.chosen = index;
-        let issues = &self.builds.issues;
-        let Some(index) = index.filter(|i| *i < issues.len()) else {
-            return Value::Null;
-        };
-        json!({ "index": index, "issue": issues[index] })
+        let issue = index.and_then(|index| self.builds.listed().nth(index));
+        match (index, issue) {
+            (Some(index), Some(issue)) => json!({ "index": index, "issue": issue }),
+            _ => Value::Null,
+        }
     }
 
     /// The next or previous issue with a place, round the list's ends.
     pub fn next_issue(&mut self, next: bool) -> Value {
-        let issues = &self.builds.issues;
-        let places: Vec<usize> = (0..issues.len())
-            .filter(|&i| issues[i].file.is_some())
+        let issues = self.builds.listed().enumerate();
+        let places: Vec<usize> = issues
+            .filter(|(_, issue)| issue.file.is_some())
+            .map(|(i, _)| i)
             .collect();
         let chosen = self.builds.chosen;
         let place = if next {

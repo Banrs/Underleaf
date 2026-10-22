@@ -58,12 +58,15 @@ pub struct Symbols {
     pub installed: Arc<Installed>,
 }
 
-/// The names, without their extensions, of the .sty, .cls and .bst files the installed TeX has.
+/// The names, without their extensions, of the .sty, .cls, .bst and .tex files the installed TeX
+/// has, each list sorted.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Installed {
     pub packages: Vec<String>,
     pub classes: Vec<String>,
     pub styles: Vec<String>,
+    /// What `\input` finds outside the project.
+    pub inputs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -478,6 +481,7 @@ mod tests {
                     packages: names(&["amsmath", "amsthm", "graphicx"]),
                     classes: names(&["article"]),
                     styles: names(&["plain"]),
+                    ..Installed::default()
                 }),
                 ..Symbols::default()
             };

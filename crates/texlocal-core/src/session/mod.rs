@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::analyze::{self, Heading};
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
+use crate::logparse::LogItem;
 use crate::projects::Symbols;
 use crate::service::{Service, arg, out, string_arg};
 use crate::syntax::TextEdit;
@@ -45,7 +46,13 @@ pub(crate) enum Msg {
     },
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
-    Symbols(u64, Result<Symbols, CoreError>),
+    /// A symbol scan's, numbered, with what the project's checks found and the session's count
+    /// of edits as the scan began.
+    Symbols {
+        seq: u64,
+        edits: u64,
+        result: Result<(Symbols, Vec<LogItem>), CoreError>,
+    },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
 }

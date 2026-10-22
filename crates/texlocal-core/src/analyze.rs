@@ -12,10 +12,11 @@ use std::sync::{Arc, LazyLock, Mutex};
 use regex::Regex;
 use serde::Serialize;
 
+use crate::checks::{Slip, Structure};
 use crate::projects::file_kind;
 use crate::stamp::Stamp;
 use crate::syntax::catalog::CATALOG;
-use crate::syntax::scan::{Scanner, Visit};
+use crate::syntax::scan::{Group, Scanner, Visit};
 use crate::syntax::{SymbolKind, Text, headings, prose, scan};
 use crate::{lock, paths};
 
@@ -83,6 +84,12 @@ pub struct Facts {
     /// ended, and graphics included.
     pub uses: Vec<Named>,
     pub class: Option<headings::DocumentClass>,
+    /// What \usepackage and \RequirePackage load.
+    pub packages: Vec<String>,
+    /// What \bibliography and \addbibresource name, as written.
+    pub bibliographies: Vec<String>,
+    /// What TeX would find unbalanced in it.
+    pub slips: Vec<Slip>,
 }
 
 /// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
@@ -235,20 +242,28 @@ impl Facts {
                 });
             }
         });
-        let mut names = Names(&text, &mut facts, None);
-        Scanner::default().run(&text.units, text.units.len(), &[], &mut names);
+        let mut names = Names(&text, &mut facts, None, Structure::default());
+        let mut scanner = Scanner::default();
+        scanner.run(&text.units, text.units.len(), &[], &mut names);
+        let Names(.., structure) = names;
+        facts.slips = structure.finish(&text, &scanner.groups());
         facts
     }
 }
 
 /// What a text names for others to refer to, and the names it refers to, outside comments and
 /// literal code; and the last caption's or heading's title, with where its argument closes, for
-/// a label just after it to say what it labels.
-struct Names<'a>(&'a Text, &'a mut Facts, Option<(usize, String)>);
+/// a label just after it to say what it labels; and what TeX would find unbalanced.
+struct Names<'a>(&'a Text, &'a mut Facts, Option<(usize, String)>, Structure);
 
 impl Visit for Names<'_> {
     fn command(&mut self, name: &str, start: usize, name_end: usize) {
         let (text, facts) = (self.0, &mut *self.1);
+        self.3.command(text, name, start, name_end);
+        let names = |list| {
+            let names = listed(&text.units, name_end, list).into_iter();
+            names.map(|at| String::from_utf16_lossy(&text.units[at]))
+        };
         match name {
             "bibitem" => {
                 let keys = listed(&text.units, name_end, false).into_iter();
@@ -257,6 +272,10 @@ impl Visit for Names<'_> {
             }
             "documentclass" if facts.class.is_none() => {
                 facts.class = headings::class_at(&text.units, name_end);
+            }
+            "usepackage" | "RequirePackage" => facts.packages.extend(names(true)),
+            "bibliography" | "addbibresource" => {
+                facts.bibliographies.extend(names(name == "bibliography"));
             }
             "newcommand" | "renewcommand" | "providecommand" | "DeclareMathOperator" | "def" => {
                 let command = defined(text, name, name_end);
@@ -279,11 +298,27 @@ impl Visit for Names<'_> {
                 let (title, _) = braced(&text.units, name_end);
                 self.2 = title.and_then(|(title, at)| Some((at.end, plain_title(&title)?)));
             }
-            _ => self.math_command(name, start, name_end),
+            _ => self.used(name, start, name_end),
         }
     }
 
     fn math_command(&mut self, name: &str, start: usize, name_end: usize) {
+        self.3.command(self.0, name, start, name_end);
+        self.used(name, start, name_end);
+    }
+
+    fn brace(&mut self, at: usize, open: bool) {
+        self.3.brace(self.0, at, open);
+    }
+
+    fn unclosed(&mut self, group: &Group) {
+        self.3.unclosed(self.0, group);
+    }
+}
+
+impl Names<'_> {
+    /// A label's definition, or a name that refers to something, in prose or maths.
+    fn used(&mut self, name: &str, start: usize, name_end: usize) {
         let (text, catalog) = (self.0, &*CATALOG);
         let kind = match name {
             "begin" | "end" => SymbolKind::Environment,

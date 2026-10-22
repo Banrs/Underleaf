@@ -7,6 +7,7 @@
 
 mod analyze;
 mod atomic;
+mod checks;
 mod compile;
 mod error;
 pub mod events;
