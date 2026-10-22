@@ -40,13 +40,20 @@ works around.
   and Xcode's debugger stops on their faults unless told to pass EXC_BAD_ACCESS. Live Preview peaks
   at 550 MB, 780 MB with a build beside it.
 - A folder opened from Files: its security-scoped access and bookmark are checked only in the
-  simulator, which isn't sandboxed as a device is.
-- Packages beyond the bundled tree (`tools/texpresso-ios/tree.py`): downloads into the container,
-  listed in a second `ls-R` (`TEXPRESSO_LSR` takes several), aren't built. No LuaLaTeX, biber,
-  glossaries or bib2gls.
+  simulator, which isn't sandboxed as a device is; so are a .zip or folder handed over by Files,
+  the Dock or another app (`onOpenURL`).
+- Built, never seen on screen: dark paper (SwiftUI's `contrast(-1)` and `hueRotation(180°)` over
+  the PDF view, which leaves its background clear for the pane's; the find yellow is chosen to come
+  through the inversion), a forward sync selecting the source's word, and the save as the window
+  stops being active (closing from the app switcher, putting the app away).
+- Packages beyond the bundled tree (`tools/texpresso-ios/tree.py`) can't be added, so the build
+  panel has no Install. It needs the engine to read its `ls-R` files again (TeXpresso's
+  `texlive_provider.c` lists them once per process), downloads from CTAN into the container
+  (`texlive.tlpdb`'s files, dependencies and checksums; the archives are `.tar.xz`), a second
+  `ls-R` (`TEXPRESSO_LSR` takes several) and the new fonts' maps in a `pdftex.map` found first. No
+  LuaLaTeX, biber, glossaries or bib2gls.
 - Stop and the time limit reach a build at its next file access, so a TeX loop that reads and
   writes nothing runs on.
-- Dark paper: the Mac inverts pages with layer filters, which UIKit lacks; Settings leaves it out.
 - A file dragged from the sidebar into the source is known at once only if its drag item sets
   `localObject` to the file's URL, which SwiftUI's `draggable` can't.
 - No iOS test target: the screenshots were taken by a scratch UI test (rotations, the software

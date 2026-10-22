@@ -33,9 +33,10 @@ compiles on its own when you pause typing; Settings can turn that off. When a pa
 the Mac app can install it with TeX Live's tlmgr and compile again.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
-(SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.
+(SyncTeX). The Mac and iPad apps find the exact word and can also search the PDF. Windows finds
+the line.
 
-Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
+Live Preview, on the Mac and iPad and still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
 brings it new citations and references.
 
