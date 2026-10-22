@@ -58,10 +58,11 @@ apps/windows/
 - **Sources** are used from the UI thread only; offsets are UTF-16 on both sides.
 - **Close.** Remove the listener, `kill_all`, wait for calls in flight, `tl_close`.
 - **Preferences** (theme, window bounds, pane sizes, Compile automatically, sync after compile,
-  the editor's font, size, theme and typing switches, which raise `EditorChanged`) are `Prefs`'
-  typed properties over `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings`
-  (the registry, `HKCU\Software\Classes\Local Settings\Software\TeXLocal`). With `TEXLOCAL_DATA`
-  set a run keeps its own, "TeXLocal Dev", so a dev build never moves the installed app's window.
+  the engine for new projects, the project to reopen, the editor's font, size, theme and typing
+  switches, which raise `EditorChanged`) are `Prefs`' typed properties over
+  `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry,
+  `HKCU\Software\Classes\Local Settings\Software\TeXLocal`). With `TEXLOCAL_DATA` set a run
+  keeps its own, "TeXLocal Dev", so a dev build never moves the installed app's window.
 - **The DLL.** `TeXLocal.Core.csproj` runs `cargo rustc -p texlocal-ffi --lib --release
   --crate-type cdylib` at the repository root (incremental on `crates/**/*.rs`, `Cargo.lock` and
   `Cargo.toml`; skipped with `-p:SkipCargo=true`) and copies `target/release/texlocal_ffi.dll` to
@@ -104,7 +105,7 @@ later WindowsAppSDK.
 ## Core gaps
 
 Logic the app needs that belongs in a crate, not C#. The numbers are those the app's comments
-cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
+cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
@@ -137,8 +138,6 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 27. **Maths size**: both hosts keep the 1.21 ratio; a `math_preview {caret, size, color}` would
     take it.
 28. **Compositing**: Windows still pre-composites its secondary ink (`Over`).
-29. **The workspace's place**: the ui state keeps the file shown, the caret line, the PDF page and
-    zoom (fitWidth, fitPage or a scale).
 30. **Nearest-line inverse SyncTeX**: `synctex_inverse {nearest: true}`, for Go to source position
     in whitespace.
 31. **Default library**: `tl_open(NULL)` resolves the default folder (`TEXLOCAL_DATA`, else
@@ -150,10 +149,8 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 
 | Area | Mac | Windows | Why |
 |---|---|---|---|
-| App | Reopens the last project at its file, caret, panel, page and zoom | Home, main file, Fit width | Core 29 |
 | App | Open Recent, Dock menu, opens files from Finder | Open with and the command line; no jump list | UI |
-| Home | Engine for new projects, search, drop to import | No engine | Core 7 |
-| Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
+| Workspace | Inspector with the engine | Build menu: Engine and toggles | Design |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; the outline follows the scroll | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
 | Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`; undo cleared on switch | UI |
@@ -163,12 +160,12 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 | PDF | Paper white, dark or automatic | White | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane, log, restarts | None | Core 12 |
-| Settings | Template, engine, sync after compile, Live Preview | Sync after compile | Core 7, 12 |
+| Settings | Live Preview | None | Core 12 |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
-ZIP export on Home and F6 region cycling. Also to come: multiple windows and the zip and winget
-release. Still to check by eye: a high-contrast theme, touch, and a real pointer over the sizers'
-grips.
+ZIP export on Home, the engine in the New project dialog, Open PDF in default app and F6 region
+cycling. Also to come: multiple windows and the zip and winget release. Still to check by eye: a
+high-contrast theme, touch, and a real pointer over the sizers' grips.
 
 ## Live Preview on Windows
 
