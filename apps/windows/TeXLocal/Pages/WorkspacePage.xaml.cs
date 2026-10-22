@@ -21,14 +21,12 @@ namespace TeXLocal.Pages;
 
 /// An issues panel row: a build's error or warning or a check, by its index among the session's issues, or a bad box,
 /// which is none.
-/// <param name="Fixing">The key of the fix that runs, if one does: its rows' rings turn and every fix waits.</param>
+/// <param name="Fixing">The id of the fix that runs, if one does: its rows' rings turn and every fix waits. A list rebuilt
+/// meanwhile, by a build or new checks, has new items with the same fix.</param>
 public sealed record IssueItem(int? Index, LogItem Item, string? Fixing = null)
 {
-    /// A list rebuilt meanwhile, by a build or new checks, has new items with the same fix.
-    public static string Key(Fix fix) => fix.Command + fix.Args.GetRawText();
-
     public bool HasFix => Item.Fix is not null;
-    public bool Running => Item.Fix is { } fix && Key(fix) == Fixing;
+    public bool Running => Item.Fix is { } fix && fix.Id == Fixing;
     public bool Idle => Fixing is null;
     public string FixName => $"{Item.Fix?.Title}: {Item.Fix?.Help}";
     public bool HasExplain => Item.Explain is not null;
@@ -698,25 +696,24 @@ public sealed partial class WorkspacePage : Page
             {
                 Title = fix.Title, Content = confirm, PrimaryButtonText = fix.Title, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
             }) != ContentDialogResult.Primary) return;
-        var args = fix.Args.Deserialize<Dictionary<string, JsonElement>>(Core.Json)!;
-        if (fix.Command.StartsWith("session_")) args["session"] = JsonSerializer.SerializeToElement(session);
-        fixing = IssueItem.Key(fix);
+        fixing = fix.Id;
         ShowIssues();
         JsonElement answer = default;
         CoreException? failure = null;
-        try { answer = await Core.CallAsync(fix.Command, args); }
+        try { answer = await Core.CallAsync("session_fix", new { session, id = fix.Id }); }
         catch (CoreException ex) { failure = ex; }
         fixing = null;
         ShowIssues();
         if (failure is not null)
         {
-            // install_package's 403 is its UAC prompt cancelled, which needs no alert.
-            if (failure.Status != 403 || fix.Command != "install_package") await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
+            await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
             return;
         }
-        if (answer.TryGetProperty("edits", out var edits)) Editor.Apply(edits.Deserialize<DocumentEdits?>(Core.Json));
+        // Null: the UAC prompt was cancelled.
+        if (answer.ValueKind == JsonValueKind.Null) return;
+        Editor.Apply(answer.GetProperty("edits").Deserialize<DocumentEdits?>(Core.Json));
         // The menus send the settings they show, so they show the fix's.
-        if (fix.Command == "session_set_settings") ShowSettings(answer);
+        ShowSettings(answer.GetProperty("settings"));
         Run(null, () => Core.CallAsync("session_compile", new { session }));
     }
 

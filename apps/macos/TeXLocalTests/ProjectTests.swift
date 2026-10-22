@@ -564,12 +564,20 @@ final class ProjectFlowTests {
         let project = try await opened("\\label{a} \\ref{a}").project
         project.editor.textView.setSelectedRange(.caret(7))
         await project.findUsages()
-        #expect(project.search.usages?.heading == "Usages of \\label{a}" && project.search.query == "a")
+        #expect(project.search.usages?.name == "\\label{a}" && project.search.query == "\\label{a}")
         await project.search.run(in: project.session)
         #expect(project.search.usages != nil && project.search.hitCount == 1)
         project.search.query = "ref"
         await project.search.run(in: project.session)
         #expect(project.search.usages == nil && project.search.hitCount == 1)
+        await app.close()
+    }
+
+    /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.
+    @Test func aRefusedFixIsAnAlertAndEndsItsProgress() async throws {
+        let project = try await opened().project
+        await project.run(LogItem.Fix(id: "install:-foo.sty", title: "Install", help: "", confirm: nil))
+        #expect(app.alert?.title == "Couldn’t Install" && project.fixing == nil)
         await app.close()
     }
 

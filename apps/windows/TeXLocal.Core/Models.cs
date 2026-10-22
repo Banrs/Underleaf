@@ -52,9 +52,9 @@ public sealed record Imported(Clash[] Existing);
 /// <param name="Explain">What TeX's message means here and what usually fixes it.</param>
 public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Explain, Fix? Fix);
 
-/// A button an issue offers, run as any command: Command with Args, the session added for a session_* command.
+/// A button an issue offers, which the session runs by its id (session_fix).
 /// <param name="Confirm">Asked first, when there.</param>
-public sealed record Fix(string Title, string Help, string Command, JsonElement Args, string? Confirm);
+public sealed record Fix(string Id, string Title, string Help, string? Confirm);
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
@@ -142,18 +142,8 @@ public sealed record SearchHit(string File, int Line, int Column, int Length, st
 public sealed record SearchFile(string File, SearchHit[] Hits);
 
 /// Every line that defines or uses a name, as a search's hits (session_usages).
-/// <param name="Kind">label, citation, environment, command or file.</param>
-public sealed record Usages(string Kind, string Name, SearchFile[] Groups)
-{
-    /// What was searched for, the name as the source writes it.
-    public string Heading => Kind switch
-    {
-        "label" => $"Usages of \\label{{{Name}}}",
-        "citation" => $"Usages of \\cite{{{Name}}}",
-        "environment" => $"Usages of \\begin{{{Name}}}",
-        _ => $"Usages of {Name}",
-    };
-}
+/// <param name="Name">As the source writes it: \label{x}, \foo, a file's path.</param>
+public sealed record Usages(string Name, SearchFile[] Groups);
 
 /// The open document's edits, against its text at Version, to apply at once as one undoable edit.
 public sealed record DocumentEdits(string Path, ulong Version, TextEdit[] Edits);

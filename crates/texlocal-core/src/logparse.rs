@@ -35,8 +35,8 @@ pub struct LogItem {
     pub fix: Option<Fix>,
 }
 
-/// One action that usually ends an error, which a host offers as a button and runs as any
-/// command, then compiles again.
+/// One action that usually ends an error, which a host offers as a button and has the session
+/// run by its id (`session_fix`), then compiles again.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Fix {
     /// A package or class file LaTeX didn't find.
@@ -47,32 +47,42 @@ pub enum Fix {
     ShellEscape,
 }
 
+impl Fix {
+    /// The id a host sends back: the fix and its argument, which only this reads, so no table of
+    /// the issues is kept for it.
+    pub(crate) fn parse(id: &str) -> Option<Self> {
+        match id.split_once(':') {
+            Some(("install", file)) => Some(Self::Install(file.into())),
+            Some(("package", name)) => Some(Self::AddPackage(name.into())),
+            Some(("engine", "xelatex")) => Some(Self::Xelatex),
+            None if id == "shellEscape" => Some(Self::ShellEscape),
+            _ => None,
+        }
+    }
+}
+
 impl Serialize for Fix {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Install(file) => json!({
+                "id": format!("install:{file}"),
                 "title": "Install",
                 "help": format!("Installs the TeX Live package that has {file}, then compiles again."),
-                "command": "install_package",
-                "args": { "file": file },
             }),
             Self::AddPackage(name) => json!({
+                "id": format!("package:{name}"),
                 "title": format!("Add \\usepackage{{{name}}}"),
                 "help": format!("Loads {name} in the main file's preamble, then compiles again."),
-                "command": "session_add_package",
-                "args": { "name": name },
             }),
             Self::Xelatex => json!({
+                "id": "engine:xelatex",
                 "title": "Use XeLaTeX",
                 "help": "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.",
-                "command": "session_set_settings",
-                "args": { "patch": { "engine": "xelatex" } },
             }),
             Self::ShellEscape => json!({
+                "id": "shellEscape",
                 "title": "Turn On Shell Escape",
                 "help": "Lets the project's packages run programs as it compiles, then compiles again.",
-                "command": "session_set_settings",
-                "args": { "patch": { "shellEscape": true } },
                 "confirm": "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.",
             }),
         }
@@ -788,10 +798,23 @@ mod tests {
         assert_eq!(found, expected);
         let shell_escape = serde_json::to_value(LogItem::error(SHELL_ESCAPE)).unwrap();
         let fix = &shell_escape["fix"];
-        assert_eq!(fix["command"], "session_set_settings");
-        assert_eq!(fix["args"], json!({ "patch": { "shellEscape": true } }));
+        assert_eq!(fix["id"], "shellEscape");
         assert!(fix["confirm"].as_str().unwrap().contains("trust"));
         assert_eq!(shell_escape["explain"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_fixs_id_names_it_and_its_argument() {
+        let fixes = [
+            Fix::Install("a.sty".into()),
+            Fix::AddPackage("tikz".into()),
+            Fix::Xelatex,
+            Fix::ShellEscape,
+        ];
+        for fix in fixes {
+            let id = &serde_json::to_value(&fix).unwrap()["id"];
+            assert_eq!(Fix::parse(id.as_str().unwrap()), Some(fix));
+        }
     }
 
     #[test]

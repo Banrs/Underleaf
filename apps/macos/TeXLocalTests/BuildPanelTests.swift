@@ -43,14 +43,4 @@ struct BuildPanelTests {
         project.panel.showsWarnings = false
         #expect(project.panel.rows(of: project.listed).map(\.element.message) == ["Undefined"])
     }
-
-    /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.
-    @Test func aRefusedFixIsAnAlertAndEndsItsProgress() async throws {
-        let defaults = TestDefaults()
-        let app = AppModel(defaults: defaults.store)
-        let project = ProjectModel(id: "BuildPanelTests", app: app)
-        let json = #"{"title": "Install", "help": "", "command": "install_package", "args": {"file": "-foo.sty"}}"#
-        await project.run(try JSONDecoder().decode(LogItem.Fix.self, from: Data(json.utf8)))
-        #expect(app.alert?.title == "Couldn’t Install" && project.fixing == nil)
-    }
 }
