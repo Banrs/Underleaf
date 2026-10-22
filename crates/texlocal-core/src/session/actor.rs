@@ -20,14 +20,14 @@ use super::history::HistoryQueue;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
-use crate::analyze::{self, Facts, Named, Place};
+use crate::analyze::{self, Facts, Place};
 use crate::logparse::LogItem;
 use crate::paths::{self, Project, within};
 use crate::projects::{self, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::{SymbolKind, Text, TextEdit};
+use crate::syntax::{self, SymbolKind, Text, TextEdit};
 use crate::{CoreError, checks, lf, lock, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -386,6 +386,13 @@ impl Actor {
             },
             "history_list" | "history_save" | "history_compare" => {
                 self.history_command(name, args, reply);
+            }
+            "usages" => {
+                let path = string_arg(args, "path").and_then(paths::rel_key);
+                match path.and_then(|path| Ok((path, arg::<u32>(args, "offset")?))) {
+                    Ok((path, offset)) => self.usages(&path, offset, reply),
+                    Err(err) => reply.send(Err(err)),
+                }
             }
             #[cfg(test)]
             "panic" => panic!("a bug in the session"),
@@ -967,7 +974,9 @@ impl Actor {
     fn search(&self, query: Query, reply: Reply) {
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
-            let hits = projects::search_project(&root, &query, &texts(&docs), 100);
+            let found = |_: &str, text: &str| query.places(text);
+            let open = texts(&docs);
+            let hits = projects::search_project(&root, &open, &projects::is_text, &found, 100);
             reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
         });
     }
@@ -977,6 +986,38 @@ impl Actor {
         let open = self.texts_to_edit("replaced")?;
         self.snapshot_before("Before Replace All")?;
         self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
+    }
+
+    /// Where the project defines or uses the name at `offset` in the open document `path`, as
+    /// a search's hits: worked out beside the session, as a search is.
+    fn usages(&self, path: &str, offset: u32, reply: Reply) {
+        let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
+            return reply.send(Ok(Value::Null));
+        };
+        let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
+        tokio::task::spawn_blocking(move || {
+            let symbol = doc.with(|source| {
+                let own = Facts::read(&source.text(), file_kind(&source.path));
+                source.symbol_at(&own, offset)
+            });
+            // A file by the project's name for it, which every input of it elsewhere resolves to.
+            let named = symbol.and_then(|(kind, name, file)| match kind {
+                SymbolKind::File => Some((kind, file?)),
+                kind => Some((kind, name)),
+            });
+            let Some((kind, name)) = named else {
+                return reply.send(Ok(Value::Null));
+            };
+            let symbols = doc.symbols();
+            let found = |rel: &str, text: &str| {
+                let facts = Facts::read(text, file_kind(rel));
+                syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
+            };
+            let hits = projects::search_project(&root, &texts(&docs), &tex, &found, usize::MAX);
+            let groups = hits.map(projects::search_groups);
+            reply
+                .send(groups.map(|groups| json!({ "name": name, "kind": kind, "groups": groups })));
+        });
     }
 
     /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
@@ -1005,7 +1046,7 @@ impl Actor {
         let symbols = projects::scan_symbols(&self.project.root, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = symbols.by_file.values();
-            files.any(|facts| definitions(facts, kind).iter().any(|n| n.name == name))
+            files.any(|facts| !syntax::definitions(facts, kind, name).is_empty())
         };
         if !defines(from) {
             return Err(CoreError::not_found(format!(
@@ -1018,16 +1059,9 @@ impl Actor {
             )));
         }
         self.snapshot_before("Before Rename")?;
-        let tex = |rel: &str| matches!(file_kind(rel), "tex" | "bib");
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
-            let used = facts.uses.iter().filter(|u| u.kind == kind);
-            let named = definitions(&facts, kind).iter().map(|n| (&n.name, n.place));
-            let named = named.chain(used.map(|u| (&u.name, u.place)));
-            let mut places: Vec<Place> =
-                named.filter(|(n, _)| *n == from).map(|(_, p)| p).collect();
-            places.sort_by_key(|place| (place.line, place.column));
-            places
+            syntax::usages(&facts, rel, kind, from, |_| None)
         };
         self.edit_project(&open, &tex, &found, to)
     }
@@ -1191,13 +1225,9 @@ impl Actor {
     }
 }
 
-/// What `facts` defines as a label, or as a citation (a `\bibitem` or a .bib entry's key).
-fn definitions(facts: &Facts, kind: SymbolKind) -> &[Named] {
-    if kind == SymbolKind::Label {
-        &facts.labels
-    } else {
-        &facts.citations
-    }
+/// The files a symbol is defined and used in.
+fn tex(rel: &str) -> bool {
+    matches!(file_kind(rel), "tex" | "bib")
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {

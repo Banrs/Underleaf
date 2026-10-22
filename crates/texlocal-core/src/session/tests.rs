@@ -1460,6 +1460,36 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
 }
 
+/// A label's definition and each reference to it, the open document's as the editor has it, but
+/// not one in a comment, by file as a search's hits.
+#[tokio::test(start_paused = true)]
+async fn usages_are_where_the_name_at_an_offset_is_defined_and_used_as_a_search_lists_them() {
+    let rig = Rig::new(false).await;
+    fs::write(
+        rig.root.join("ch.tex"),
+        "% \\ref{fig:a}\nSee \\ref{fig:a}.\n",
+    )
+    .unwrap();
+    let doc = rig.open("main.tex").await;
+    doc.edit(5, 0, " \\label{fig:a}");
+    let usages = rig
+        .ok("usages", json!({ "path": "main.tex", "offset": 15 }))
+        .await;
+    let hit = |file, line, column, before, after| {
+        let hit = json!({
+            "file": file, "line": line, "column": column, "length": 5,
+            "before": before, "match": "fig:a", "after": after,
+        });
+        json!({ "file": file, "hits": [hit] })
+    };
+    let groups = [
+        hit("ch.tex", 2, 9, "See \\ref{", "}."),
+        hit("main.tex", 1, 13, "Hello \\label{", "}"),
+    ];
+    let answer = json!({ "name": "fig:a", "kind": "label", "groups": groups });
+    assert_eq!(usages, answer);
+}
+
 /// A citation's .bib entry, the key of a list that names it and an entry's crossref; refused
 /// for a key TeX couldn't read, one nothing defines and one taken.
 #[tokio::test(start_paused = true)]

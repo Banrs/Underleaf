@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::files::{Planned, write_all};
 use super::skip_unreadable;
-use super::tree::{file_kind, is_text, visit_files};
+use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
 use crate::{lf, lossy_string};
@@ -142,21 +142,20 @@ fn read_capped(abs: &Path, rel: &str) -> Result<Option<Vec<u8>>, CoreError> {
     Ok((len as u64 <= cap).then_some(bytes))
 }
 
-/// The first `limit` lines with a match, each with its first; a file `open` holds is read
-/// as the editor has it there. A line ends where the editor's does, at a carriage return
-/// alone too.
+/// The first of `found`'s places on each line, which it gives in order, of each text file
+/// `chosen` takes, given its text with line feeds alone, up to `limit` lines; a file `open`
+/// holds is read as the editor has it there. A line ends where the editor's does, at a carriage
+/// return alone too.
 pub fn search_project(
     root: &Path,
-    query: &Query,
     open: &HashMap<String, String>,
+    chosen: &dyn Fn(&str) -> bool,
+    found: &dyn Fn(&str, &str) -> Vec<Place>,
     limit: usize,
 ) -> Result<Vec<SearchHit>, CoreError> {
-    if query.text.is_empty() {
-        return Ok(Vec::new());
-    }
-    let (mut hits, mut folded) = (Vec::new(), String::new());
+    let mut hits = Vec::new();
     visit_files(root, &mut |abs, rel| {
-        if !is_text(rel) {
+        if !chosen(rel) {
             return Ok(true);
         }
         let text = match open.get(rel) {
@@ -166,14 +165,29 @@ pub fn search_project(
                 None => return Ok(true),
             },
         };
-        for (i, line) in text.split('\n').enumerate() {
+        let places = found(rel, &text);
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut last = 0;
+        for place in places {
             if hits.len() >= limit {
                 break;
             }
-            let Some(at) = query.in_line(line, &mut folded).into_iter().next() else {
+            if place.line == last {
                 continue;
+            }
+            last = place.line;
+            let chars: Vec<char> = lines[place.line as usize - 1].chars().collect();
+            // The char `units` UTF-16 units into the line starts.
+            let char_at = |units: u32| {
+                let mut seen = 0;
+                let before = |c: &&char| {
+                    let before = seen < units;
+                    seen += c.len_utf16() as u32;
+                    before
+                };
+                chars.iter().take_while(before).count()
             };
-            let chars: Vec<char> = line.chars().collect();
+            let at = char_at(place.column)..char_at(place.column + place.length);
             let text = |range: Range<usize>| chars[range].iter().collect::<String>();
             let start = at.start.saturating_sub(24);
             let ellipsis = if start > 0 { "…" } else { "" };
@@ -181,9 +195,9 @@ pub fn search_project(
             let after = text(at.end..(at.end + 60).min(chars.len()));
             hits.push(SearchHit {
                 file: rel.to_owned(),
-                line: i as u32 + 1,
-                column: utf16(&chars[..at.start]),
-                length: utf16(&chars[at.clone()]),
+                line: place.line,
+                column: place.column,
+                length: place.length,
                 before: before.trim_start().to_string(),
                 matched: text(at),
                 after: after.trim_end().to_string(),
@@ -278,6 +292,7 @@ fn replaced(file: &str, places: &[Place], to: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projects::is_text;
     use crate::projects::testing::project;
     use std::fs;
 
@@ -293,8 +308,8 @@ mod tests {
         fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
         let bib = fs::File::options().write(true).open(root.join("big.bib"));
         bib.unwrap().set_len(SEARCH_FILE_MAX + 1).unwrap();
-        let needle = Query::new("needle");
-        let hits = search_project(&root, &needle, &HashMap::new(), 10).unwrap();
+        let needle = |_: &str, text: &str| Query::new("needle").places(text);
+        let hits = search_project(&root, &HashMap::new(), &is_text, &needle, 10).unwrap();
         let mut files: Vec<&str> = hits.iter().map(|hit| hit.file.as_str()).collect();
         files.sort_unstable();
         assert_eq!(files, ["big.bib", "notes.tex"]);

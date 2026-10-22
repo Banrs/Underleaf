@@ -171,7 +171,21 @@ struct FilesList: View {
         .onChange(of: project.search.query, initial: true) { hit = nil }
         .onChange(of: hit) { _, id in open(id, focus: false) }
         .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
-        .safeAreaBar(edge: .top, spacing: 0) { replaceBar }
+        // Usages aren't the query's matches, which Replace All would replace.
+        .safeAreaBar(edge: .top, spacing: 0) {
+            if let usages = project.search.usages {
+                Text(usages.heading)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 9)
+            } else {
+                replaceBar
+            }
+        }
         .overlay {
             if let failure = project.search.failure {
                 ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",

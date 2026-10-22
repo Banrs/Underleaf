@@ -559,6 +559,20 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Find Usages puts its name in the field, and its hits stay, under their heading, until the query changes.
+    @Test func usagesShowUntilTheQueryChanges() async throws {
+        let project = try await opened("\\label{a} \\ref{a}").project
+        project.editor.textView.setSelectedRange(.caret(7))
+        await project.findUsages()
+        #expect(project.search.usages?.heading == "Usages of \\label{a}" && project.search.query == "a")
+        await project.search.run(in: project.session)
+        #expect(project.search.usages != nil && project.search.hitCount == 1)
+        project.search.query = "ref"
+        await project.search.run(in: project.session)
+        #expect(project.search.usages == nil && project.search.hitCount == 1)
+        await app.close()
+    }
+
     /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
     @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
         let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])

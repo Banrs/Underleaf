@@ -54,8 +54,8 @@ brings it new citations and references. Once on for a project, it starts with it
 off.
 
 There's also a file tree, an outline of the current file, a word count, search and replace across
-the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go
-to the Trash or the Recycle Bin.
+the project, a list of every place a label, citation, command or file is used, renaming a label or
+citation everywhere it's used, and export to ZIP. Deleted files go to the Trash or the Recycle Bin.
 
 TeXLocal keeps a local history of each project, which you can compare files with and restore from.
 It takes a snapshot every ten minutes or so while you work and just before a change across files,

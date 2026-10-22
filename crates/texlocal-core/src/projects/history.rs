@@ -287,7 +287,7 @@ mod tests {
     use super::*;
     use crate::HISTORY_DIR;
     use crate::projects::testing::{names_in, project, with_project, zip_names};
-    use crate::projects::{Query, file_tree, search_project};
+    use crate::projects::{Query, file_tree, is_text, search_project};
     use crate::zipexport::export_zip;
 
     fn history(root: &Path) -> History {
@@ -376,7 +376,8 @@ mod tests {
         fs::remove_file(root.join("secret.tex")).unwrap();
         let tree = file_tree(&project).unwrap();
         assert!(tree.iter().all(|node| node.name != HISTORY_DIR));
-        let found = search_project(root, &Query::new("secret"), &HashMap::new(), 100);
+        let secret = |_: &str, text: &str| Query::new("secret").places(text);
+        let found = search_project(root, &HashMap::new(), &is_text, &secret, 100);
         assert!(found.unwrap().is_empty());
         let zip = dir.path().join("P.zip");
         export_zip(root, &zip).unwrap();
