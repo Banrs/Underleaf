@@ -219,7 +219,7 @@ struct EnginePicker: View {
             if let project, let new { Task.immediate { await project.patchSettings(.engine(new)) } }
         })) {
             ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
-            if project != nil, engine.flatMap(TeXEngine.init) == nil { Text(engine ?? "").tag(engine) }
+            if project != nil, !TeXEngine.allCases.contains(where: { $0.id == engine }) { Text(engine ?? "").tag(engine) }
         }
         .disabled(engine == nil)
     }

@@ -63,6 +63,11 @@ nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
 enum TeXEngine: String, CaseIterable, Identifiable {
     case pdflatex, xelatex, lualatex
 
+    #if os(iOS)
+    /// The iPad's TeX has no LuaTeX: a project set to it shows it unlisted, and its build says why.
+    static let allCases: [Self] = [.pdflatex, .xelatex]
+    #endif
+
     var id: String { rawValue }
 
     var title: String {

@@ -316,7 +316,7 @@ private struct PDFPane: View {
                 ContentUnavailableView {
                     Label("No PDF Yet", systemImage: "richtext.page")
                 } description: {
-                    Text(app.tex?.available == false ? "TeX isn’t available on this iPad yet." : "Compile to preview your document.")
+                    Text(app.tex?.available == false ? "This build of TeXLocal doesn’t include TeX." : "Compile to preview your document.")
                 } actions: {
                     Button("Compile") { app.perform(.compileRun, on: project) }
                         .buttonStyle(.borderedProminent)
