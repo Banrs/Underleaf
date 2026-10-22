@@ -153,16 +153,3 @@ struct ScaleMenuItems: View {
     }
 }
 
-enum PDFPaper: String, CaseIterable, Identifiable {
-    case white, dark, auto
-
-    var id: Self { self }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .white: "White"
-        case .dark: "Dark"
-        case .auto: "Match Appearance"
-        }
-    }
-}

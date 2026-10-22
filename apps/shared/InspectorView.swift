@@ -29,6 +29,7 @@ struct InspectorView: View {
                            : "Live Preview needs TeXpresso. Install it, or choose its folder in Settings.",
                        isOn: Bindable(project).livePreview)
                 .disabled(!project.canSwitchLivePreview)
+                #if os(macOS)
                 if !app.canPreviewLive {
                     HStack {
                         LinkButton(title: "Install Guide", url: Links.texpressoGuide)
@@ -36,6 +37,7 @@ struct InspectorView: View {
                         SettingsLink { Text("Open Settings…") }
                     }
                 }
+                #endif
             }
         }
         .formStyle(.grouped)

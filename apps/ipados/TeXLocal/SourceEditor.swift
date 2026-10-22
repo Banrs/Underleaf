@@ -31,7 +31,8 @@ final class SourceEditor: NSObject, UITextViewDelegate {
     func reload(text: String) { textView.reload(text) }
     func forget(path: String) {}
     func rename(from: String, to: String) { path = path.map { remapPath($0, from: from, to: to) } }
-    func focus() { textView.becomeFirstResponder() }
+    /// Once in a window: a text view out of one that takes the keyboard is moved into it with the keyboard animating.
+    func focus() { if textView.window != nil { textView.becomeFirstResponder() } }
 
     var caret: Int { textView.selectedRange.location }
     var currentLine: Int { textView.document.line(at: caret) }
