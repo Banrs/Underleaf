@@ -1687,3 +1687,121 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
     assert_eq!(list[1]["changed"], changed);
     assert_eq!(list[0]["changed"], json!([change("gone.tex", "added")]));
 }
+
+// MARK: - Navigation
+
+fn at(path: &str, line: u32) -> Value {
+    json!({ "path": path, "line": line })
+}
+
+/// A jump from where the last left adds no place; Forward retraces what Back undid until a
+/// new jump.
+#[tokio::test(start_paused = true)]
+async fn back_and_forward_retrace_the_last_fifty_places_jumps_left() {
+    let rig = Rig::new(false).await;
+    for line in (1..=52).chain([52]) {
+        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
+            .await;
+    }
+    let back = rig.ok("back", json!({ "at": at("main.tex", 60) })).await;
+    let answer = json!({ "to": at("main.tex", 52), "back": true, "forward": true });
+    assert_eq!(back, answer);
+    let forward = rig.ok("forward", json!({ "at": at("main.tex", 52) })).await;
+    let answer = json!({ "to": at("main.tex", 60), "back": true, "forward": false });
+    assert_eq!(forward, answer);
+    let mut lines = Vec::new();
+    loop {
+        let back = rig.ok("back", json!({ "at": at("main.tex", 1) })).await;
+        let Some(line) = back["to"]["line"].as_u64() else {
+            assert_eq!(back, json!({ "to": null, "back": false, "forward": true }));
+            break;
+        };
+        lines.push(line);
+    }
+    assert_eq!(lines, (3..=52).rev().collect::<Vec<_>>());
+    let jump = rig
+        .ok("navigate", json!({ "from": at("main.tex", 1) }))
+        .await;
+    assert_eq!(jump, json!({ "back": true, "forward": false }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn back_follows_a_rename_and_skips_a_file_gone() {
+    let rig = Rig::new(false).await;
+    for file in ["a.tex", "b.tex"] {
+        fs::write(rig.root.join(file), "").unwrap();
+        rig.ok("navigate", json!({ "from": at(file, 1) })).await;
+    }
+    rig.ok("rename", json!({ "from": "a.tex", "to": "c.tex" }))
+        .await;
+    fs::remove_file(rig.root.join("b.tex")).unwrap();
+    let back = rig.ok("back", json!({ "at": at("main.tex", 1) })).await;
+    let answer = json!({ "to": at("c.tex", 1), "back": false, "forward": true });
+    assert_eq!(back, answer);
+}
+
+/// Every file, and the headings and labels of the files the main file reaches; a match at a
+/// word's start before one inside a word, though its title is longer.
+#[tokio::test(start_paused = true)]
+async fn open_quickly_lists_files_headings_and_labels_best_first() {
+    let rig = Rig::new(false).await;
+    fs::write(rig.root.join("main.tex"), "\\input{ch}\n").unwrap();
+    let ch = "\\section{Introduction}\\label{sec:intro}\n";
+    fs::write(rig.root.join("ch.tex"), ch).unwrap();
+    fs::create_dir(rig.root.join("chapters")).unwrap();
+    fs::write(rig.root.join("chapters/intro.tex"), "").unwrap();
+    rig.changed("chapters", true);
+    wait(300).await;
+    let listed = rig.ok("quick_open", json!({ "query": "" })).await;
+    let listed = listed.as_array().unwrap().iter();
+    let paths: Vec<&str> = listed.map(|item| item["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["ch.tex", "chapters/intro.tex", "main.tex"]);
+    let found = rig.ok("quick_open", json!({ "query": "IN" })).await;
+    let answer = json!([
+        { "kind": "label", "title": "sec:intro", "detail": "Introduction",
+            "path": "ch.tex", "line": 1 },
+        { "kind": "heading", "title": "Introduction", "detail": "Section · ch.tex",
+            "path": "ch.tex", "line": 1 },
+        { "kind": "file", "title": "intro.tex", "detail": "chapters",
+            "path": "chapters/intro.tex", "line": null },
+        { "kind": "file", "title": "main.tex", "detail": "", "path": "main.tex", "line": null },
+    ]);
+    assert_eq!(found, answer);
+}
+
+#[tokio::test(start_paused = true)]
+async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
+    let rig = Rig::new(false).await;
+    let bib = "@book{knuth,\n  author = {Knuth, Donald E. and Lamport, Leslie},\n  \
+        title = {The {TeX}book},\n  year = 1984,\n  publisher = {Addison-Wesley},\n}\n";
+    fs::write(rig.root.join("refs.bib"), bib).unwrap();
+    rig.changed("refs.bib", true);
+    let doc = rig.open("main.tex").await;
+    let text = "\\newcommand{\\R}{\\mathbb{R}}\n\\section{Intro}\\label{sec:a}\n\
+        See \\ref{sec:a}, \\cite{knuth}, \\R and \\toprule.";
+    doc.edit(0, 5, text);
+    assert!(until(&doc, |symbols| symbols.by_file.contains_key("refs.bib")).await);
+    let help = async |name: &str| {
+        let offset = text.rfind(name).unwrap() + 1;
+        let args = json!({ "path": "main.tex", "offset": offset });
+        rig.ok("quick_help", args).await
+    };
+    fn help_of(title: &str, detail: &str, place: Value) -> Value {
+        json!({ "title": title, "detail": detail, "place": place })
+    }
+    let entry = "Donald E. Knuth, Leslie Lamport\nThe TeXbook\n1984\nAddison-Wesley";
+    let cited = help_of("knuth", entry, at("refs.bib", 1));
+    assert_eq!(help("knuth").await, cited);
+    let label = |number| help_of("sec:a", &format!("{number}\nIntro"), at("main.tex", 2));
+    assert_eq!(help("sec:a").await, label("Compile to number it"));
+    fs::create_dir(rig.root.join("build")).unwrap();
+    let aux = "\\relax\n\\newlabel{sec:a@cref}{{[section][1][]1}{[1][3][]3}}\n\
+        \\newlabel{sec:a}{{1}{3}{Intro}{section.1}{}}\n";
+    fs::write(rig.root.join("build/main.aux"), aux).unwrap();
+    assert_eq!(help("sec:a").await, label("1 on page 3"));
+    let defined = help_of("\\R", "\\newcommand{\\R}{\\mathbb{R}}", at("main.tex", 1));
+    assert_eq!(help("\\R ").await, defined);
+    let known = help_of("\\toprule", "From the booktabs package", Value::Null);
+    assert_eq!(help("\\toprule").await, known);
+    assert_eq!(help("See").await, Value::Null);
+}

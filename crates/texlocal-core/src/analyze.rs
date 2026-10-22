@@ -191,7 +191,6 @@ impl Facts {
         let text = Text::new(source);
         let mut facts = Self::default();
         if kind == "bib" {
-            let mut entries = BIB_KEY.captures_iter(source).peekable();
             let (mut byte, mut unit) = (0, 0);
             // Each is after the last, so counted on from it.
             let mut cited = |at: Range<usize>| {
@@ -200,18 +199,12 @@ impl Facts {
                 let units = unit..unit + source[at].encode_utf16().count();
                 named(&text, SymbolKind::Citation, units)
             };
-            while let Some(entry) = entries.next() {
+            for (entry, body) in entries(source) {
                 let kind = entry[1].to_ascii_lowercase();
                 if matches!(kind.as_str(), "comment" | "string" | "preamble") {
                     continue;
                 }
-                // Read to the next entry at most, so one left unbalanced takes nothing of those
-                // after it.
-                let next = entries
-                    .peek()
-                    .map_or(source.len(), |next| next.get_match().start());
                 let start = entry.get_match().end();
-                let body = &source[start..next];
                 facts.citations.push(Named {
                     detail: detail(&fields(body)),
                     ..cited(entry.get(2).expect("an entry has a key").range())
@@ -378,6 +371,20 @@ fn named(text: &Text, kind: SymbolKind, at: Range<usize>) -> Named {
     }
 }
 
+/// Each .bib entry and what follows its key, read to the next entry at most, so one left
+/// unbalanced takes nothing of those after it.
+fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>, &str)> {
+    let mut found = BIB_KEY.captures_iter(source).peekable();
+    std::iter::from_fn(move || {
+        let entry = found.next()?;
+        let next = found
+            .peek()
+            .map_or(source.len(), |next| next.get_match().start());
+        let body = &source[entry.get_match().end()..next];
+        Some((entry, body))
+    })
+}
+
 /// A .bib entry's fields from just after its key, each named in lower case, with its value as
 /// written but for the braces or quotes around it and any `#` joining its parts. Braces nest
 /// and hold quotes; the entry ends at the brace or parenthesis that closes it, or, unbalanced,
@@ -417,15 +424,21 @@ fn fields(body: &str) -> Vec<(String, String)> {
     fields
 }
 
+fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    let mut named = fields.iter().filter(|(n, _)| n == name);
+    named.next().map(|(_, value)| value.as_str())
+}
+
+/// Its year, or biblatex's date's.
+fn year(fields: &[(String, String)]) -> Option<String> {
+    let date = || field(fields, "date").and_then(|date| date.get(..4));
+    field(fields, "year").or_else(date).and_then(plain_title)
+}
+
 /// What completion says of a .bib entry, "Knuth · 1984 · The TeXbook", as far as its fields
-/// tell: its authors' last names, its year (or biblatex's date's) and its title.
+/// tell: its authors' last names, its year and its title.
 fn detail(fields: &[(String, String)]) -> Option<String> {
-    let field = |name: &str| {
-        fields
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.as_str())
-    };
+    let field = |name| field(fields, name);
     // A last name comes first before a comma, else last.
     let last = |name: &str| {
         let name = name.trim();
@@ -448,14 +461,37 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
             [one, ..] => Some(format!("{one} et al.")),
         }
     });
-    let year = field("year").or_else(|| field("date").and_then(|date| date.get(..4)));
-    let parts = [
-        authors,
-        year.and_then(plain_title),
-        field("title").and_then(plain_title),
-    ];
+    let parts = [authors, year(fields), field("title").and_then(plain_title)];
     let parts: Vec<String> = parts.into_iter().flatten().collect();
     (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// What Quick Help says of the entry `key` in a .bib file's `source`, a line for each of what
+/// its fields tell: its authors' whole names, its title, its year and where it was published.
+pub(crate) fn bib_entry(source: &str, key: &str) -> Option<String> {
+    let (_, body) = entries(source).find(|(entry, _)| &entry[2] == key)?;
+    let fields = fields(body);
+    let field = |name| field(&fields, name);
+    // "Knuth, Donald" is Donald Knuth.
+    let author = |name: &str| match parted(name.trim(), ",").as_slice() {
+        [last, first, ..] => plain_title(&format!("{first} {last}")),
+        _ => plain_title(name),
+    };
+    let authors = field("author").map(|authors| {
+        let authors = SPACES.replace_all(authors, " ");
+        let names = parted(&authors, " and ").into_iter().filter_map(author);
+        names.collect::<Vec<_>>().join(", ")
+    });
+    let published = ["journal", "publisher", "booktitle"]
+        .into_iter()
+        .find_map(field);
+    let lines = [
+        authors.filter(|authors| !authors.is_empty()),
+        field("title").and_then(plain_title),
+        year(&fields),
+        published.and_then(plain_title),
+    ];
+    Some(lines.into_iter().flatten().collect::<Vec<_>>().join("\n"))
 }
 
 /// `text` parted at each `at` outside braces, which hold a name's own spaces, commas and
@@ -584,6 +620,9 @@ pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<u
 pub struct Analysis {
     #[serde(skip)]
     pub outline: Vec<Heading>,
+    /// The files read, each once, in the order read.
+    #[serde(skip)]
+    pub files: Vec<String>,
     pub tree: Vec<OutlineNode>,
     pub words: usize,
     pub heading_styles: Vec<headings::Level>,
@@ -653,6 +692,7 @@ fn walk(
     let Some(facts) = files.at(root, &file) else {
         return;
     };
+    into.files.push(file.clone());
     let placed = |heading: &Heading| Heading {
         file: Some(file.clone()),
         ..heading.clone()

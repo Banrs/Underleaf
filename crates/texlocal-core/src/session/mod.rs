@@ -8,6 +8,7 @@ mod build;
 mod document;
 mod history;
 mod live;
+mod navigate;
 #[cfg(test)]
 mod tests;
 mod watch;

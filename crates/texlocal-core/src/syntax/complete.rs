@@ -214,11 +214,21 @@ impl SourceDocument {
         let (kind, name, file) = self.symbol_at(&own, at)?;
         let places = match kind {
             SymbolKind::File => {
-                let start = |file| json!({ "file": file, "line": 1, "column": 0, "length": 0 });
-                file.map(start).into_iter().collect()
+                let start = Place {
+                    line: 1,
+                    column: 0,
+                    length: 0,
+                };
+                file.map(|file| (file, start)).into_iter().collect()
             }
             kind => self.defined(&own, kind, &name),
         };
+        let places: Vec<Value> = places
+            .into_iter()
+            .map(|(file, at)| {
+                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
+            })
+            .collect();
         (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
     }
 
@@ -254,7 +264,12 @@ impl SourceDocument {
 
     /// Where each file defines `name` as a `kind`, the files in the order of their names, this
     /// one as it is now, `own`.
-    fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<Value> {
+    pub(crate) fn defined(
+        &self,
+        own: &Facts,
+        kind: SymbolKind,
+        name: &str,
+    ) -> Vec<(String, Place)> {
         let others = self.symbols.by_file.iter();
         let others = others.filter(|(file, _)| **file != self.path);
         let mut files: Vec<(&str, &Facts)> =
@@ -262,9 +277,8 @@ impl SourceDocument {
         files.push((&self.path, own));
         files.sort_by_key(|&(file, _)| file);
         let places = files.into_iter().flat_map(|(file, facts)| {
-            definitions(facts, kind, name).into_iter().map(move |at| {
-                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
-            })
+            let places = definitions(facts, kind, name).into_iter();
+            places.map(move |at| (file.to_owned(), at))
         });
         places.collect()
     }
