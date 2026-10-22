@@ -120,7 +120,7 @@ impl Actor {
         if !written.is_empty() {
             self.reload_tree();
         }
-        Ok(json!({ "edits": edits.pop(), "written": written }))
+        Ok(json!({ "edits": edits.pop() }))
     }
 }
 

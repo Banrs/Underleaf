@@ -1653,7 +1653,7 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
     assert_eq!(compare("figure.png").await.unwrap_err().status, 400);
 }
 
-/// A file added since is left alone, and one as it was already isn't written.
+/// A file added since is left alone.
 #[tokio::test(start_paused = true)]
 async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_they_were() {
     let rig = Rig::new(false).await;
@@ -1671,11 +1671,11 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
         rig.ok("history_restore", args)
     };
     let gone = restore(Some(["gone.tex"])).await;
-    assert_eq!(gone, json!({ "edits": null, "written": ["gone.tex"] }));
+    assert_eq!(gone, json!({ "edits": null }));
     let edit = json!({ "start": 5, "length": 6, "text": "" });
     let edits = json!({ "path": "main.tex", "version": 1, "edits": [edit] });
     let all = restore(None).await;
-    assert_eq!(all, json!({ "edits": edits, "written": ["ch.tex"] }));
+    assert_eq!(all, json!({ "edits": edits }));
     let disk = ["ch.tex", "gone.tex", "new.tex"].map(|path| rig.disk(path));
     assert_eq!(disk, ["one", "gone", "new"]);
 
