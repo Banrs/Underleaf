@@ -14,6 +14,7 @@ use crate::paths;
 use crate::projects::{self, History, Taken};
 use crate::service::{arg, out, string_arg};
 use crate::syntax::TextEdit;
+use crate::texpresso::delta;
 use crate::{CoreError, lf, lock, lossy_string};
 
 type Job = Box<dyn FnOnce(&History) -> Result<Value, CoreError> + Send>;
@@ -201,25 +202,17 @@ fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
     folded
 }
 
-/// One edit making `text` into `to`: what lies between their common start and end, in UTF-16
-/// units, so the editor keeps its place around it.
+/// One edit making `text` into `to`, in UTF-16 units, so the editor keeps its place around it.
 fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
     if text == to {
         return None;
     }
-    let same = |a: char, b: char| (a == b).then_some(a.len_utf8());
-    let start: usize = text
-        .chars()
-        .zip(to.chars())
-        .map_while(|(a, b)| same(a, b))
-        .sum();
-    let ends = text[start..].chars().rev().zip(to[start..].chars().rev());
-    let end: usize = ends.map_while(|(a, b)| same(a, b)).sum();
+    let (start, length, inserted) = delta(text, to);
     let units = |s: &str| s.encode_utf16().count() as u32;
     Some(TextEdit {
         start: units(&text[..start]),
-        length: units(&text[start..text.len() - end]),
-        text: to[start..to.len() - end].to_owned(),
+        length: units(&text[start..start + length]),
+        text: inserted.to_owned(),
     })
 }
 
