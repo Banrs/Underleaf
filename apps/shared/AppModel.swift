@@ -266,7 +266,12 @@ final class AppModel {
     private static let recentLimit = 10
     #endif
 
+    #if os(macOS)
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
+    #else
+    /// Files lets the app into a chosen file alone, not the folder a .tex file would open.
+    static let openableTypes: [UTType] = [.folder, .zip]
+    #endif
 
     static func canOpen(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
@@ -299,14 +304,28 @@ final class AppModel {
     }
 
     private func openPath(_ url: URL) async throws -> Opening {
+        #if os(iOS)
+        // Files' URLs are the way out of the sandbox: a folder opened where it is keeps it, as the app reads the folder
+        // while it's listed; a copied .zip lets go.
+        let scoped = url.startAccessingSecurityScopedResource()
+        var kept = false
+        defer { if scoped, !kept { url.stopAccessingSecurityScopedResource() } }
+        #endif
         let opening = try await core.call("open_path", ["path": url.path(percentEncoded: false)], as: Opening.self)
         if opening.project.opened {
+            #if os(iOS)
+            kept = true
+            // The chosen URL's, which carries its access to the next launch.
+            bookmarks[opening.project.id] = try? url.bookmarkData()
+            #else
             bookmarks[opening.project.id] = try? opening.project.folder.bookmarkData()
+            #endif
         }
         return opening
     }
 
-    /// Plain bookmarks, as the app isn't sandboxed: they find an opened folder again after a move.
+    /// They find an opened folder again after a move: plain on the Mac, which isn't sandboxed; on the iPad, the way back
+    /// into a folder from Files, which reads as missing at each launch until its bookmark is followed.
     private var bookmarks: [String: Data] {
         get { defaults.dictionary(forKey: DefaultsKey.folderBookmarks) as? [String: Data] ?? [:] }
         set { defaults.set(newValue, forKey: DefaultsKey.folderBookmarks) }
@@ -317,8 +336,13 @@ final class AppModel {
     private func follow(_ project: ProjectInfo) async -> Bool {
         var stale = false, trashed = FileManager.URLRelationship.other
         guard let bookmark = bookmarks[project.id],
-              let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale),
-              (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return false }
+              let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale)
+        else { return false }
+        #if os(iOS)
+        // Held while the folder is listed, as openPath holds a newly chosen one's.
+        _ = url.startAccessingSecurityScopedResource()
+        #endif
+        guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return false }
         try? FileManager.default.getRelationship(&trashed, of: .trashDirectory, in: .userDomainMask, toItemAt: url)
         guard trashed != .contains else { return false }
         return (try? await openPath(url)) != nil
