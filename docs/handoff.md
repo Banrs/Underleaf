@@ -33,6 +33,28 @@ header row is 19 pt under 10, and Compile's word goes 2 pt before AppKit would t
 now keeps Compile down to 533 pt and Back to 481, under the 542 minimum. Each comment says what it
 works around.
 
+## iPad
+
+- On an iPad: the engine has run only in the simulator. Each wasm instance reserves 2 GB of address
+  space, two at a time; signal handling for its copy-on-write snapshots is unverified on a device,
+  and Xcode's debugger stops on their faults unless told to pass EXC_BAD_ACCESS. Live Preview peaks
+  at 550 MB, 780 MB with a build beside it.
+- A folder opened from Files: its security-scoped access and bookmark are checked only in the
+  simulator, which isn't sandboxed as a device is.
+- Packages beyond the bundled tree (`tools/texpresso-ios/tree.py`): downloads into the container,
+  listed in a second `ls-R` (`TEXPRESSO_LSR` takes several), aren't built. No LuaLaTeX, biber,
+  glossaries or bib2gls.
+- Stop and the time limit reach a build at its next file access, so a TeX loop that reads and
+  writes nothing runs on.
+- Dark paper: the Mac inverts pages with layer filters, which UIKit lacks; Settings leaves it out.
+- A file dragged from the sidebar into the source is known at once only if its drag item sets
+  `localObject` to the file's URL, which SwiftUI's `draggable` can't.
+- No iOS test target: the screenshots were taken by a scratch UI test (rotations, the software
+  keyboard, the build panel, Compile), not committed.
+- CI builds the app without the engine; `tools/texpresso-ios/build.sh` takes hours from source.
+- Licences: with its TeX the app is distributed under the AGPL (MuPDF) and GPL (pdfTeX,
+  xdvipdfmx); whether the App Store allows that is disputed.
+
 ## Left
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
