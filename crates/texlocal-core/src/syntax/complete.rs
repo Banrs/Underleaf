@@ -48,13 +48,22 @@ pub enum SymbolKind {
 #[derive(Default)]
 pub struct Symbols {
     pub citations: Vec<Named>,
-    pub labels: Vec<String>,
+    pub labels: Vec<Named>,
     pub commands: Vec<Defined>,
     pub environments: Vec<String>,
     /// The project's, from its folder, to complete a file's name.
     pub files: Vec<String>,
     /// Each .tex and .bib file's, by its name.
     pub by_file: BTreeMap<String, Arc<Facts>>,
+    pub installed: Arc<Installed>,
+}
+
+/// The names, without their extensions, of the .sty, .cls and .bst files the installed TeX has.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Installed {
+    pub packages: Vec<String>,
+    pub classes: Vec<String>,
+    pub styles: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -76,7 +85,7 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    pub fn completions(&self, caret: u32, explicit: bool) -> Option<Completions> {
+    pub fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         let from = text.lines[line].max(caret.saturating_sub(250));
@@ -95,19 +104,38 @@ impl SourceDocument {
             let start = before.len() - before[start..].trim_start().len();
             let typed = &before[start..];
             let listed: Vec<String>;
+            let installed = &self.symbols.installed;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    let cited = matching(&self.symbols.citations, typed, |c| &c.name).into_iter();
-                    let items = cited.map(|c| word(c.name.clone(), c.detail.clone()));
-                    return offer(start, SymbolKind::Citation, items.collect());
+                    let cited = cited(&self.symbols.citations, typed);
+                    return offer(start, SymbolKind::Citation, described(cited));
                 }
-                c if catalog.ref_commands.contains(c) => (&self.symbols.labels, SymbolKind::Label),
+                c if catalog.ref_commands.contains(c) => {
+                    let labels = matching(&self.symbols.labels, typed, |l| &l.name);
+                    return offer(start, SymbolKind::Label, described(labels));
+                }
                 "begin" | "end" => {
+                    // The environment an \end closes comes first, for Return to complete.
+                    let mut open = None;
+                    if &c[1] == "end" {
+                        let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
+                        let mut scanner = self.scans.resume(text, at, at).scanner;
+                        scanner.run(&text.units[..at], at, &[], &mut ());
+                        let mut groups = scanner.groups().into_iter().rev();
+                        open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
+                    }
                     let own = &self.symbols.environments;
                     let others = catalog.environments.iter().filter(|e| !own.contains(e));
-                    listed = own.iter().chain(others).cloned().collect();
+                    let rest = own
+                        .iter()
+                        .chain(others)
+                        .filter(|e| Some(*e) != open.as_ref());
+                    listed = open.iter().chain(rest).cloned().collect();
                     (&listed, SymbolKind::Environment)
                 }
+                "usepackage" | "RequirePackage" => (&installed.packages, SymbolKind::File),
+                "documentclass" => (&installed.classes, SymbolKind::File),
+                "bibliographystyle" => (&installed.styles, SymbolKind::File),
                 command => {
                     // \input's and \bibliography's names go without their extension, as LaTeX
                     // takes them.
@@ -282,24 +310,73 @@ fn word(label: String, detail: Option<String>) -> Completion {
     }
 }
 
-fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
-    let (lower, ascii) = (typed.to_lowercase(), typed.is_ascii());
-    // ASCII names are compared in place: lowercasing a copy per key was most of a citation's offer. Others are
-    // lowercased by Unicode's full mapping, which may lower a character to ASCII (the kelvin sign).
-    let starts = |n: &str| {
-        if ascii && n.is_ascii() {
-            let head = n.as_bytes().get(..typed.len());
-            head.is_some_and(|head| head.eq_ignore_ascii_case(typed.as_bytes()))
+fn described(named: Vec<&Named>) -> Vec<Completion> {
+    let word = |n: &Named| word(n.name.clone(), n.detail.clone());
+    named.into_iter().map(word).collect()
+}
+
+/// Where in a name what was typed is found, regardless of case.
+enum At {
+    Start,
+    Word,
+    Anywhere,
+}
+
+/// ASCII names are compared in place: lowercasing a copy per key was most of a citation's offer. Others are
+/// lowercased by Unicode's full mapping, which may lower a character to ASCII (the kelvin sign).
+fn finder(typed: &str) -> impl Fn(&str, At) -> bool + '_ {
+    let lower = typed.to_lowercase();
+    move |name, at| {
+        let folded;
+        let (name, typed) = if typed.is_ascii() && name.is_ascii() {
+            (name, typed)
         } else {
-            n.to_lowercase().starts_with(&lower)
+            folded = name.to_lowercase();
+            (folded.as_str(), lower.as_str())
+        };
+        let here = |i: usize| {
+            let part = name.as_bytes().get(i..i + typed.len());
+            part.is_some_and(|part| part.eq_ignore_ascii_case(typed.as_bytes()))
+        };
+        let word = |i: usize| {
+            let before = name.get(..i).map(|before| before.chars().next_back());
+            before.is_some_and(|c| c.is_none_or(|c| !c.is_alphanumeric()))
+        };
+        match at {
+            At::Start => here(0),
+            At::Word => (0..=name.len()).any(|i| word(i) && here(i)),
+            At::Anywhere => (0..=name.len()).any(here),
         }
-    };
+    }
+}
+
+fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
+    let found = finder(typed);
     let (mut exact, folded): (Vec<_>, Vec<_>) = items
         .iter()
-        .filter(|i| starts(name(i)))
+        .filter(|i| found(name(i), At::Start))
         .partition(|i| name(i).starts_with(typed));
     exact.extend(folded);
     exact
+}
+
+/// Keys that start with what was typed, then those that hold it, then those whose entry's
+/// authors, year or title has a word that starts with it.
+fn cited<'a>(citations: &'a [Named], typed: &str) -> Vec<&'a Named> {
+    let found = finder(typed);
+    let mut cited = matching(citations, typed, |c| &c.name);
+    let mut others: Vec<(bool, &Named)> = citations
+        .iter()
+        .filter(|c| !found(&c.name, At::Start))
+        .filter_map(|c| {
+            let key = found(&c.name, At::Anywhere);
+            let detail = || c.detail.as_deref().is_some_and(|d| found(d, At::Word));
+            (key || detail()).then_some((!key, c))
+        })
+        .collect();
+    others.sort_by_key(|&(by_detail, _)| by_detail);
+    cited.extend(others.into_iter().map(|(_, c)| c));
+    cited
 }
 
 /// Fields named "#{name}" show their name as text, and fields with the same name are one; later lines take `at`'s
@@ -335,7 +412,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 mod tests {
     use std::sync::Arc;
 
-    use super::{Completion, Defined, Place, SnippetField, Symbols};
+    use super::{Completion, Defined, Installed, Place, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
     use crate::syntax::tests::cited;
 
@@ -384,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn a_files_argument_offers_the_projects_files_of_its_kind() {
+    fn a_files_argument_offers_the_projects_or_the_installed_files_of_its_kind() {
         let files = [
             "chapters/One.TEX",
             "figs/a.png",
@@ -393,9 +470,15 @@ mod tests {
             "notes.txt",
             "refs.bib",
         ];
+        let names = |names: &[&str]| names.iter().map(|&n| n.into()).collect();
         let offered = |before: &str| {
             let symbols = Symbols {
                 files: files.map(String::from).to_vec(),
+                installed: Arc::new(Installed {
+                    packages: names(&["amsmath", "amsthm", "graphicx"]),
+                    classes: names(&["article"]),
+                    styles: names(&["plain"]),
+                }),
                 ..Symbols::default()
             };
             labels(before, symbols)
@@ -406,7 +489,13 @@ mod tests {
         assert_eq!(graphics, ["figs/a.png", "figs/b.pdf"]);
         assert_eq!(offered("\\bibliography{main,"), ["refs"]);
         assert_eq!(offered("\\addbibresource{"), ["refs.bib"]);
-        assert!(offered("\\usepackage{").is_empty());
+        assert_eq!(
+            offered("\\usepackage[x]{graphicx,ams"),
+            ["amsmath", "amsthm"]
+        );
+        assert_eq!(offered("\\RequirePackage{g"), ["graphicx"]);
+        assert_eq!(offered("\\documentclass{"), ["article"]);
+        assert_eq!(offered("\\bibliographystyle{"), ["plain"]);
     }
 
     #[test]
@@ -440,6 +529,16 @@ mod tests {
     }
 
     #[test]
+    fn an_end_offers_the_environment_it_closes_first() {
+        let open =
+            "\\begin{document}\n\\begin{itemize}\\begin{center}\\end{center}\n\\item x\n\\end{";
+        assert_eq!(
+            labels(open, Symbols::default())[..2],
+            ["itemize", "document"]
+        );
+    }
+
+    #[test]
     fn case_matches_come_first() {
         let names = labels("\\s", Symbols::default());
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
@@ -462,6 +561,23 @@ mod tests {
         assert_eq!(offered("é"), ["émile2", "Émile"]);
         assert_eq!(offered("ÉMILE"), ["Émile", "émile2"]);
         assert_eq!(offered("\u{212a}n"), ["Knuth84", "knuth86", "Kn"]);
+    }
+
+    #[test]
+    fn a_citation_is_found_in_its_key_then_by_a_word_of_its_entry() {
+        let bib = "@book{knuth84, author = {Knuth}, year = 1984, title = {The TeXbook}}\n\
+            @book{texbook2, author = {Donald Knuth}, title = {Computers}}\n@misc{dk-knuth,}\n\
+            @misc{lamport94, author = {Lamport}, year = 1994, title = {LaTeX}}";
+        let offered = |typed: &str| {
+            let symbols = Symbols {
+                citations: crate::analyze::Facts::read(bib, "bib").citations,
+                ..Symbols::default()
+            };
+            labels(&format!("\\cite{{{typed}"), symbols)
+        };
+        assert_eq!(offered("knuth"), ["knuth84", "dk-knuth", "texbook2"]);
+        assert_eq!(offered("TEX"), ["texbook2", "knuth84"]);
+        assert_eq!(offered("199"), ["lamport94"]);
     }
 
     #[test]

@@ -113,6 +113,10 @@ final class SourceDocument {
     /// Nil when a line has nowhere to go.
     func moveLines(_ selections: [NSRange], up: Bool) -> Change? { call("move_lines", ["selections": selections.map(\.json), "up": up]) }
 
+    func duplicateLines(_ selections: [NSRange]) -> Change? { call("duplicate_lines", ["selections": selections.map(\.json)]) }
+
+    func deleteLines(_ selections: [NSRange]) -> Change? { call("delete_lines", ["selections": selections.map(\.json)]) }
+
     func toggle(_ style: TextStyle, _ selections: [NSRange]) -> Change? {
         call("toggle_style", ["selections": selections.map(\.json), "style": style.rawValue])
     }

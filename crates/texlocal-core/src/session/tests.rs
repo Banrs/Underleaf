@@ -1336,7 +1336,8 @@ async fn the_symbol_scan_and_a_search_read_an_open_document_as_the_editor_has_it
     doc.edit(5, 0, " \\label{typed}");
     fs::write(rig.root.join("b.tex"), "").unwrap();
     rig.changed("b.tex", true);
-    assert!(until(&doc, |symbols| symbols.labels == ["typed"]).await);
+    let typed = |symbols: &Symbols| matches!(&symbols.labels[..], [l] if l.name == "typed");
+    assert!(until(&doc, typed).await);
     let found = rig.ok("search", json!({ "query": "typed" })).await;
     assert_eq!(found[0]["hits"][0]["file"], "main.tex");
     assert_eq!(found[0]["hits"][0]["column"], 13);

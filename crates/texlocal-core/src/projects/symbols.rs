@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
-use crate::analyze::{Facts, Files, Named};
+use crate::analyze::{Facts, Files};
 use crate::error::CoreError;
 pub use crate::syntax::Symbols;
 
@@ -42,12 +42,12 @@ pub fn scan_symbols(
             .collect()
     }
     let all = || files.values().map(|facts| &**facts);
-    let names = |named: Vec<Named>| named.into_iter().map(|named| named.name).collect();
+    let environments = firsts(all().flat_map(|f| &f.environments), |e| &e.name);
     Ok(Symbols {
         citations: firsts(all().flat_map(|f| &f.citations), |c| &c.name),
-        labels: names(firsts(all().flat_map(|f| &f.labels), |l| &l.name)),
+        labels: firsts(all().flat_map(|f| &f.labels), |l| &l.name),
         commands: firsts(all().flat_map(|f| &f.commands), |c| &c.name),
-        environments: names(firsts(all().flat_map(|f| &f.environments), |e| &e.name)),
+        environments: environments.into_iter().map(|e| e.name).collect(),
         by_file: files,
         ..Symbols::default()
     })

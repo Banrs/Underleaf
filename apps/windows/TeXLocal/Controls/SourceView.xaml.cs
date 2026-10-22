@@ -402,6 +402,8 @@ public sealed partial class SourceView : UserControl
         else if (source is null || composing) return;
         else if (ctrl && !alt && !shift && e.Key == VirtualKey.Space) Complete(true);
         else if (alt && !ctrl && !shift && e.Key is VirtualKey.Up or VirtualKey.Down) MoveLines(e.Key == VirtualKey.Up);
+        else if (ctrl && !alt && !shift && e.Key == VirtualKey.D) ChangeLines("duplicate_lines");
+        else if (ctrl && !alt && shift && e.Key == VirtualKey.K) ChangeLines("delete_lines");
         // Ctrl+] and Ctrl+[: the keys of ] and [ on a US layout (VK_OEM_6, VK_OEM_4), as Visual Studio reads them.
         else if (ctrl && !alt && !shift && (int)e.Key is 219 or 221) ShiftLines((int)e.Key == 221 ? 1 : -1);
         else
@@ -568,6 +570,8 @@ public sealed partial class SourceView : UserControl
     });
 
     public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up }));
+
+    public bool ChangeLines(string command) => Apply(source?.Call<Change>(command, new { selections = new[] { Selected } }));
 
     public void ToggleComment() => Command(() => Apply(source!.Call<TextEdit[]>("toggle_comment", new { selections = new[] { Selected } })));
 

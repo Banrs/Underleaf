@@ -738,6 +738,8 @@ public sealed partial class WorkspacePage : Page
     void OnShiftLeft(object sender, RoutedEventArgs e) => Editor.ShiftLines(-1);
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
+    void OnDuplicateLine(object sender, RoutedEventArgs e) => Editor.ChangeLines("duplicate_lines");
+    void OnDeleteLine(object sender, RoutedEventArgs e) => Editor.ChangeLines("delete_lines");
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
 
     async void OnExportPdf(object sender, RoutedEventArgs e)

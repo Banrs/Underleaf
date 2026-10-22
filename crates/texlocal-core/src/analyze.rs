@@ -111,7 +111,7 @@ pub struct Named {
     pub name: String,
     pub place: Place,
     /// What completion says of a citation beside its key: its .bib entry's authors, year and
-    /// title.
+    /// title; or of a label, what it labels.
     pub detail: Option<String>,
 }
 
@@ -235,15 +235,16 @@ impl Facts {
                 });
             }
         });
-        let mut names = Names(&text, &mut facts);
+        let mut names = Names(&text, &mut facts, None);
         Scanner::default().run(&text.units, text.units.len(), &[], &mut names);
         facts
     }
 }
 
 /// What a text names for others to refer to, and the names it refers to, outside comments and
-/// literal code.
-struct Names<'a>(&'a Text, &'a mut Facts);
+/// literal code; and the last caption's or heading's title, with where its argument closes, for
+/// a label just after it to say what it labels.
+struct Names<'a>(&'a Text, &'a mut Facts, Option<(usize, String)>);
 
 impl Visit for Names<'_> {
     fn command(&mut self, name: &str, start: usize, name_end: usize) {
@@ -274,11 +275,15 @@ impl Visit for Names<'_> {
                 });
                 facts.environments.extend(environment);
             }
+            name if name == "caption" || headings::LEVELS.iter().any(|l| l.0 == name) => {
+                let (title, _) = braced(&text.units, name_end);
+                self.2 = title.and_then(|(title, at)| Some((at.end, plain_title(&title)?)));
+            }
             _ => self.math_command(name, start, name_end),
         }
     }
 
-    fn math_command(&mut self, name: &str, _: usize, name_end: usize) {
+    fn math_command(&mut self, name: &str, start: usize, name_end: usize) {
         let (text, catalog) = (self.0, &*CATALOG);
         let kind = match name {
             "begin" | "end" => SymbolKind::Environment,
@@ -286,8 +291,21 @@ impl Visit for Names<'_> {
             name if catalog.ref_commands.contains(name) => SymbolKind::Label,
             name if catalog.cite_commands.contains(name) => SymbolKind::Citation,
             "label" => {
+                // The title it is in or just after, else its line.
+                let after = |close: usize| {
+                    let between = text.units.get(close + 1..start).unwrap_or_default();
+                    String::from_utf16_lossy(between).trim().is_empty()
+                };
+                let line = || String::from_utf16_lossy(text.line(text.line_index(start as u32)));
+                let detail = match &self.2 {
+                    Some((close, title)) if after(*close) => Some(title.clone()),
+                    _ => plain_title(&line()),
+                };
                 let labels = listed(&text.units, name_end, false).into_iter();
-                let labels = labels.map(|at| named(text, SymbolKind::Label, at));
+                let labels = labels.map(|at| Named {
+                    detail: detail.clone(),
+                    ..named(text, SymbolKind::Label, at)
+                });
                 // One still being typed (`fig:`) isn't a label yet.
                 let labels = labels.filter(|label| !label.name.ends_with(':'));
                 self.1.labels.extend(labels);
@@ -930,6 +948,26 @@ mod tests {
             [
                 (Citation, "knuth84", at(2, 6, 7)),
                 (Citation, "é2", at(4, 7, 2))
+            ]
+        );
+    }
+
+    /// The caption or heading it follows or is in, else its line, as plain text.
+    #[test]
+    fn a_label_says_what_it_labels() {
+        let tex = "\\section{Intro}\\label{sec:intro}\n\
+            \\begin{figure}\\caption{A \\emph{plot}\n of x}\n  \\label{fig:plot}\\end{figure}\n\
+            \\caption{Inner\\label{fig:inner}}\n\
+            \\begin{equation}\n  E = mc^2 \\label{eq:e}\n\\end{equation}";
+        let labels = Facts::read(tex, "tex").labels;
+        let details = labels.iter().map(|l| (&*l.name, l.detail.as_deref()));
+        assert_eq!(
+            details.collect::<Vec<_>>(),
+            [
+                ("sec:intro", Some("Intro")),
+                ("fig:plot", Some("A plot of x")),
+                ("fig:inner", Some("Inner")),
+                ("eq:e", Some("E = mc^2")),
             ]
         );
     }

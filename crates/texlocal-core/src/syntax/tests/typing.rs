@@ -384,6 +384,17 @@ fn blocks_tab_through_their_fields() {
 }
 
 #[test]
+fn a_block_over_selected_text_holds_it_in_its_first_field() {
+    let mut e = Editor::open("one two", range(4, 3));
+    let insertion = e.doc.insert_block("itemize", e.selection()).unwrap();
+    e.put(insertion.edit.clone(), insertion.caret);
+    let first = e.doc.start_snippet(&insertion.fields, insertion.edit.start);
+    e.select(first.unwrap());
+    let list = "one \n\\begin{itemize}\n  \\item two\n\\end{itemize}\n";
+    e.shows(list, range(29, 3));
+}
+
+#[test]
 fn a_field_in_two_places_is_typed_in_both() {
     let mut e = Editor::open("\\beg", caret(4));
     let offer = e.doc.completions(4, false).unwrap();
@@ -513,6 +524,45 @@ fn lines_move_up_and_down_with_their_selections() {
             "{text:?} {up}"
         );
     }
+}
+
+type LinesCase<'a> = (&'a str, &'a [(u32, u32)], &'a str, &'a [(u32, u32)]);
+
+fn lines_changed(cases: &[LinesCase], change: fn(&SourceDocument, &[TextRange]) -> Change) {
+    for &(text, selections, after, selected) in cases {
+        let mut e = Editor::open(text, caret(0));
+        e.select_all(selections.iter().map(|&(s, l)| range(s, l)).collect());
+        e.apply(change(&e.doc, &e.selections));
+        let selections: Vec<_> = e.selections.iter().map(|r| (r.start, r.length)).collect();
+        assert_eq!(
+            (e.doc.text().as_str(), &selections[..]),
+            (after, selected),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn lines_are_duplicated_with_the_selection_on_the_copy() {
+    #[rustfmt::skip]
+    lines_changed(&[
+        ("a\nb\nc", &[(2, 1)], "a\nb\nb\nc", &[(4, 1)]),
+        ("a\r\nb", &[(3, 0)], "a\r\nb\r\nb", &[(6, 0)]),
+        ("a", &[(0, 1)], "a\na", &[(2, 1)]),
+        ("1\n2\n3\n4", &[(0, 0), (4, 0)], "1\n1\n2\n3\n3\n4", &[(2, 0), (8, 0)]),
+    ], SourceDocument::duplicate_lines);
+}
+
+#[test]
+fn lines_are_deleted_leaving_the_caret_on_the_next() {
+    #[rustfmt::skip]
+    lines_changed(&[
+        ("a\nb\nc", &[(2, 1)], "a\nc", &[(2, 0)]),
+        ("a\r\nb\r\nc", &[(3, 0)], "a\r\nc", &[(3, 0)]),
+        ("a\nb", &[(2, 1)], "a", &[(1, 0)]),
+        ("a", &[(0, 1)], "", &[(0, 0)]),
+        ("1\n2\n3\n4", &[(0, 0), (1, 0), (4, 0)], "2\n4", &[(0, 0), (2, 0)]),
+    ], SourceDocument::delete_lines);
 }
 
 /// Not an escaped bracket, nor one in a comment, which has no partner of its own; an escaped one pairs only with
