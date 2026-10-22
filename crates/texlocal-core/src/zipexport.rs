@@ -14,6 +14,7 @@ use zip::{CompressionMethod, ZipWriter};
 use crate::SETTINGS_FILE;
 use crate::analyze::{Files, analyze_project};
 use crate::atomic::{create_temp, persist};
+use crate::checks::bib_file;
 use crate::error::CoreError;
 use crate::paths::{Project, in_build_dir, safe_path, safe_rel_file};
 use crate::projects::is_litter;
@@ -62,19 +63,17 @@ pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, Cor
     let readme = serde_json::to_vec_pretty(&readme).expect("JSON from JSON");
     let mut added = vec![("00README.json".to_owned(), readme)];
     let root = &project.root;
-    let named = analyze_project(root, &Files::default(), &main, &main, None).bibliographies;
+    let files = Files::default();
+    let read = analyze_project(root, &files, &main, &main, None).files;
+    let facts = read.iter().filter_map(|file| files.at(root, file));
+    let named: Vec<String> = facts.flat_map(|f| f.bibliographies.clone()).collect();
     if named.is_empty() {
         return Ok(added);
     }
-    // BibTeX appends .bib to a name; biblatex takes it as written. One outside the project is
-    // left alone.
+    // One outside the project is left alone.
     let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
-    let mut bibs = named.iter().filter_map(|name| {
-        let names = [format!("{name}.bib"), name.clone()];
-        names
-            .into_iter()
-            .find_map(|rel| modified(&safe_path(root, &rel).ok()?))
-    });
+    let mut bibs = (named.iter())
+        .filter_map(|name| bib_file(name, |rel| modified(&safe_path(root, rel).ok()?)));
     let bbl = settings.output(&project.build, "bbl")?;
     if modified(&bbl).is_none_or(|compiled| bibs.any(|bib| bib > compiled)) {
         return Err(CoreError::conflict(

@@ -77,12 +77,14 @@ fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
-/// The files under a dropped path, each by its path named from the path's own name `rel`.
-/// Links inside a folder stay behind: a drop imports what was dropped.
+/// The files under a path, each by its path named from the path's own name `rel`. A drop leaves
+/// links inside a folder behind, as it imports what was dropped; a duplicate follows `links` to
+/// files, as the tree and an export do.
 fn collect(
     abs: &Path,
     rel: String,
     meta: &fs::Metadata,
+    links: bool,
     files: &mut Vec<(String, PathBuf)>,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
@@ -92,8 +94,14 @@ fn collect(
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !projects::is_litter(&name) {
-                let meta = entry.metadata()?;
-                collect(&entry.path(), in_folder(&rel, &name), &meta, files)?;
+                let path = entry.path();
+                // An entry's own metadata doesn't follow a link; a folder's could cycle.
+                let meta = if links && path.is_file() {
+                    fs::metadata(&path)?
+                } else {
+                    entry.metadata()?
+                };
+                collect(&path, in_folder(&rel, &name), &meta, links, files)?;
             }
         }
     }
@@ -116,7 +124,7 @@ pub fn import_files(
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
-        collect(abs, name.into_owned(), &meta, &mut files)?;
+        collect(abs, name.into_owned(), &meta, false, &mut files)?;
     }
     let root = service.project(id)?.root;
     let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
@@ -447,7 +455,8 @@ pub(crate) fn duplicate_project(
     }
     let root = service.project(id)?.root;
     let mut found = Vec::new();
-    collect(&root, String::new(), &fs::metadata(&root)?, &mut found)?;
+    let meta = fs::metadata(&root)?;
+    collect(&root, String::new(), &meta, true, &mut found)?;
     let files: Vec<_> = (found.into_iter())
         .filter(|(path, _)| !left_out(path))
         .map(|(path, abs)| (path, Source::File(abs)))
@@ -925,5 +934,16 @@ mod tests {
         let opened = projects::open_path(&service, &folder).unwrap().project.id;
         let refused = duplicate_project(&service, &opened, "Elsewhere copy").unwrap_err();
         assert_eq!(refused.status, 409);
+
+        // A link to a file, as to a shared .bib, is copied as what it points at.
+        #[cfg(unix)]
+        {
+            let shared = dir.path().join("shared.bib");
+            fs::write(&shared, "@book{k,}").unwrap();
+            std::os::unix::fs::symlink(&shared, root.join("refs.bib")).unwrap();
+            let linked = duplicate_project(&service, "P", "Linked").unwrap().id;
+            let bib = fs::read(service.data_dir.join(linked).join("refs.bib"));
+            assert_eq!(bib.unwrap(), b"@book{k,}");
+        }
     }
 }

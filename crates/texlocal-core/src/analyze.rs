@@ -99,10 +99,12 @@ pub struct Facts {
     pub bibliographies: Vec<String>,
     /// What TeX would find unbalanced in it.
     pub slips: Vec<Slip>,
+    /// Where TeX stops reading it, if before its end.
+    pub end: Option<Place>,
 }
 
 /// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -110,7 +112,7 @@ pub struct Place {
 }
 
 impl Place {
-    fn of(text: &Text, range: Range<usize>) -> Self {
+    pub(crate) fn of(text: &Text, range: Range<usize>) -> Self {
         let line = text.line_index(range.start as u32);
         Self {
             line: line as u32 + 1,
@@ -267,7 +269,7 @@ impl Facts {
         let mut scanner = Scanner::default();
         scanner.run(&text.units, text.units.len(), &[], &mut names);
         let Names(.., structure) = names;
-        facts.slips = structure.finish(&text, &scanner.groups());
+        (facts.slips, facts.end) = structure.finish(&text, &scanner.groups());
         facts
     }
 }
@@ -655,9 +657,6 @@ pub struct Analysis {
     pub tree: Vec<OutlineNode>,
     pub words: usize,
     pub heading_styles: Vec<headings::Level>,
-    /// What `\bibliography` and `\addbibresource` name, as written, for an export to arXiv.
-    #[serde(skip)]
-    pub bibliographies: Vec<String>,
 }
 
 /// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
@@ -755,7 +754,6 @@ fn walk(
     }
     into.outline.extend(facts.headings[at..].iter().map(placed));
     into.words += facts.words;
-    into.bibliographies.extend_from_slice(&facts.bibliographies);
 }
 
 /// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named
