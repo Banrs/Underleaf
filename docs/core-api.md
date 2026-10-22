@@ -72,7 +72,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` the ui state (below): all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings`: `{mainFile, engine, shellEscape, stopOnFirstError}`; `ui`: the ui state (below). All a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
@@ -91,7 +91,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
 | `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
 | `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `set_ui_state` answers it) with the entry's paths moved; a host sends its `set_ui_state` first. |
-| `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
+| `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `session_open` gives them. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Ends the hold on saves under `path`; when `trashed`, closes documents under it and reads the tree again. |
 | `session_live_start` | | live state | The user's Start. Sets the ui state's `livePreview`. |
@@ -101,8 +101,8 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
 The service's other commands (`id` is the project's): `list_projects` (Opened folders, below),
-`rename_project {id, name}` (400 for an opened folder), `get_settings {id}`, `file_tree {id}`,
-`pdf_path {id}` (a new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest}`,
+`rename_project {id, name}` (400 for an opened folder), `file_tree {id}`, `pdf_path {id}` (a
+new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest}`,
 `import_files {id, dir?, paths?, conflict}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
 `synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
