@@ -1728,6 +1728,19 @@ async fn back_and_forward_retrace_the_last_fifty_places_jumps_left() {
     assert_eq!(jump, json!({ "back": true, "forward": false }));
 }
 
+/// A jump that left the caret where it was keeps a place Back would show no move to.
+#[tokio::test(start_paused = true)]
+async fn back_passes_over_the_carets_own_place() {
+    let rig = Rig::new(false).await;
+    for line in [3, 5] {
+        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
+            .await;
+    }
+    let back = rig.ok("back", json!({ "at": at("main.tex", 5) })).await;
+    let answer = json!({ "to": at("main.tex", 3), "back": false, "forward": true });
+    assert_eq!(back, answer);
+}
+
 #[tokio::test(start_paused = true)]
 async fn back_follows_a_rename_and_skips_a_file_gone() {
     let rig = Rig::new(false).await;

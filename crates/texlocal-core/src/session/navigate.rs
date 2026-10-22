@@ -89,8 +89,8 @@ impl Actor {
         Ok(self.trail_state())
     }
 
-    /// Back, or Forward: the latest place whose file is there still, those that aren't dropped,
-    /// with the caret's place kept for the other way.
+    /// Back, or Forward: the latest place whose file is there still and that isn't the caret's,
+    /// those passed over dropped, with the caret's place kept for the other way.
     pub fn step(&mut self, args: &Value, back: bool) -> Result<Value, CoreError> {
         let at = place(args, "at")?;
         let (root, trail) = (&self.project.root, &mut self.trail);
@@ -99,7 +99,8 @@ impl Actor {
         } else {
             (&mut trail.forward, &mut trail.back)
         };
-        let to = std::iter::from_fn(|| from.pop()).find(|place| exists(root, place));
+        let to =
+            std::iter::from_fn(|| from.pop()).find(|place| *place != at && exists(root, place));
         if to.is_some() {
             push(other, at);
         }
