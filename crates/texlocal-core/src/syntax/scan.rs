@@ -191,7 +191,7 @@ impl Scanner {
             self.i += 1;
             let (mut code, mut read) = (false, self.i + 1);
             match char::from_u32(src[start] as u32).unwrap_or_default() {
-                '%' => {
+                '%' if !self.in_address(src) => {
                     self.comment(src, start, pending, visit);
                     continue;
                 }
@@ -234,6 +234,15 @@ impl Scanner {
         }
         #[cfg(test)]
         READ.with(|read| read.set(read.get() + (self.i - from)));
+    }
+
+    /// In `\url`'s or `\href`'s address, whose `%` is the address's, not a comment's.
+    fn in_address(&self, src: &[u16]) -> bool {
+        let command = self.stack.top().and_then(|group| group.command);
+        command.is_some_and(|(start, name_end)| {
+            let mut buf = [0; NAME];
+            matches!(ascii(&src[start + 1..name_end], &mut buf), "url" | "href")
+        })
     }
 
     /// Prose, which keeps a command's argument coming, as a line feed does.

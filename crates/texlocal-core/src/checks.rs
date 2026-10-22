@@ -406,9 +406,9 @@ mod tests {
         assert_eq!(checked(&files, &[]), []);
     }
 
-    /// Where TeX would complain; not in comments, literal code, escapes or braces, nor an
-    /// environment that a file inputting this one, or one it inputs, ends, or that a brace left
-    /// open hides the end of.
+    /// Where TeX would complain; not in comments, literal code, escapes, a URL's address or
+    /// braces, nor an environment that a file inputting this one, or one it inputs, ends, or that
+    /// a brace left open hides the end of.
     #[test]
     fn environments_braces_and_maths_left_open_or_closed_twice_are_reported() {
         let error = |line, message: &str| ("main.tex".to_owned(), line, message.to_owned(), true);
@@ -421,7 +421,7 @@ mod tests {
         };
         let none = "% \\begin{x} {\n\\verb|{$|\n\\begin{verbatim}\n\\end{x} }\n\\end{verbatim}\n\
             \\begin{lstlisting}\n{\n\\end{lstlisting}\n\\begin{minted}{py}\n}\n\\end{minted}\n\
-            \\{ \\} \\$ 50\\%\n\\newcommand{\\bc}{\\begin{center}}\n\\renewcommand*\\ee{\\end{flushleft}}\n\
+            \\{ \\} \\$ 50\\% \\url{a%20b} \\href{c%d}{e}\n\\newcommand{\\bc}{\\begin{center}}\n\\renewcommand*\\ee{\\end{flushleft}}\n\
             \\newenvironment{bx}[1][x]{\\end{quote}}{\\begin{quote}}\n\\def\\x#1{\\end{itemize}}\n\
             \\begin{document}$a$ \\(b\\) $$c$$ \\begin{equation}{d}\\end{equation}\n\\end{document}";
         let cases: [(Files, Vec<Item>); 8] = [
