@@ -134,6 +134,24 @@ public sealed class CoreTests : IDisposable
         Assert.Equal([new DiffRow(null, "a", null, null), new DiffRow(null, null, null, 2)], JsonSerializer.Deserialize<DiffRow[]>("""[{"removed":"a"},{"skipped":2}]""", Core.Json)!);
     }
 
+    /// The checks the session sends as it opens, as the issues panel lists them.
+    [Fact]
+    public async Task ChecksDecode()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Checks" });
+        File.WriteAllText(Path.Combine(dir, made.Id, "main.tex"), "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\end{document}\n");
+        const ulong session = 9;
+        var checks = new TaskCompletionSource<LogItem[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        core.Event += e =>
+        {
+            if (e.Type == "checks" && e.Session == session) checks.TrySetResult(e.Json.Deserialize<DocEvent>(Core.Json)!.Items!);
+        };
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        var check = Assert.Single(await checks.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(("warning", "main.tex", 3), (check.Type, check.File, check.Line));
+        await core.CallAsync("session_close", new { session });
+    }
+
     [Fact]
     public async Task ConcurrentCallsComplete()
     {
