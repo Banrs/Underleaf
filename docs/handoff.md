@@ -14,6 +14,36 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
   progress and a build once it is done are checked on the QA copy with TeX hidden by
   `sandbox-exec` and `HOME` pointed at a scratch folder; tlmgr adds a package there unelevated.
 
+This round's, built and tested by CI but not yet seen:
+- Typing: `$` pairs and steps over its closer, `$|$` and `$` make a display; Return after
+  `\begin{x}` closes it; an environment's name typed in its `\begin` changes its `\end`, and
+  Escape there reaches the window; Return after an `\item` starts another, and an empty one ends
+  the list.
+- Issues: the explanation under a message; Install, Add `\usepackage`, Use XeLaTeX and Turn On
+  Shell Escape (its sheet first), each compiling after; the checks after the build's warnings,
+  before a first build and through a clean, counted in the status bar.
+- Find Usages (⇧⌃⌘F) in the sidebar under its heading, a typed query searching again.
+- Save Version… and Revert To ▸ Browse Version History… (⌃⌥⌘H): the diff's tints in light and
+  dark, a restore as one undo.
+- Go Back and Forward (⌃⌘← ⌃⌘→) after each kind of jump; Open Quickly (⇧⌘O): its glass, keys and
+  focus; ⌥-click Quick Help, with ⌥-drag still selecting a column; Export for arXiv; Home's
+  Duplicate; the outline's word counts and "12 of 3,456 words" for a selection.
+- The first launch after updating may show Home rather than the last project.
+
+## Windows, on a machine
+
+This round's, built by CI but not yet seen:
+- Dark paper's look and speed at high zoom; a double-click in the source to the PDF; Print's
+  preview and output (Microsoft Print to PDF), and Ctrl+P with the editor focused.
+- The fixes and their confirmation, the checks' rows, Find all references (Shift+F12), Version
+  history's size and its Restore all cancelled.
+- Alt+Left and Alt+Right in the editor and the tree, the mouse's back and forward buttons, Go to
+  all (Ctrl+T), Quick info on hover and Ctrl+Shift+I, Export for arXiv, Duplicate, word counts.
+- Home's rows for an opened and a missing folder, and Install's UAC elevation (allowed and
+  cancelled), which GitHub's runner can't show.
+- With no TeX: Install TinyTeX from Home's bar and from Settings into `%APPDATA%\TinyTeX`, its
+  ring, a build after it, and Install adding a package to it.
+
 ## 27.2 workarounds
 
 Rechecked on the 27.2 RC (26B118, Xcode 27.2) in throwaway tests, each workaround turned off; none
@@ -37,8 +67,13 @@ works around.
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until
   then the custom one stays (the look is decided).
-- Windows, on a machine: Home's rows for an opened and a missing folder, and Install's UAC
-  elevation (allowed and cancelled), which GitHub's runner can't show.
-- Windows, on a machine with no TeX: Install TinyTeX from Home's bar and from Settings into
-  `%APPDATA%\TinyTeX`, its ring, a build after it, and Install adding a package to it.
 - Windows: Live Preview and the rest of what it lacks against the Mac (`docs/windows.md`).
+- arXiv's `00README.json`: written to its spec version 1 as remembered; info.arxiv.org couldn't be
+  reached to check it.
+- Checks: environments a project declares verbatim (`\lstnewenvironment`, `\newminted`,
+  `\DefineVerbatimEnvironment`) are checked as LaTeX; their declarations usually sit in another
+  file than their bodies, which each file's own check can't see.
+- Quick Help numbers a label from the main file's `.aux` only, so one in an `\include`d file
+  says to compile.
+- Not this round: the PDF's text on Windows (PDFium, core gap 6), folding, several cursors, and
+  spell checking on Windows.
