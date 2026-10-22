@@ -68,7 +68,6 @@
     "\\onehalfspacing": "setspace",
     "\\doublespacing": "setspace",
     "\\euro": "eurosym",
-    "\\sout": "ulem",
     "\\printindex": "imakeidx"
   },
   "previewEnvironments": ["equation","align","gather","multline","eqnarray","alignat","flalign","cases","split"],
