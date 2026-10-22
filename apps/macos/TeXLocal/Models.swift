@@ -96,36 +96,11 @@ nonisolated struct LogItem: Decodable {
 
     var isError: Bool { type == "error" }
 
-    /// A command the core names, run as it gives it (docs/core-api.md, Explanations and fixes): the app knows no fix by name.
+    /// Run by the session by its id (docs/core-api.md, Explanations and fixes): the app knows no fix by name.
     nonisolated struct Fix: Decodable, Equatable {
-        let title, help, command: String
-        let args: Arguments
+        let id, title, help: String
         /// Asked before it runs.
         let confirm: String?
-    }
-
-    /// A JSON object sent back as it came, of the objects, strings and booleans the fixes' arguments have.
-    nonisolated struct Arguments: Decodable, Equatable {
-        let json: [String: any Sendable]
-
-        init(from decoder: any Decoder) throws { json = try [String: Value](from: decoder).mapValues(\.json) }
-
-        private nonisolated struct Value: Decodable {
-            let json: any Sendable
-
-            init(from decoder: any Decoder) throws {
-                let value = try decoder.singleValueContainer()
-                if let flag = try? value.decode(Bool.self) {
-                    json = flag
-                } else if let text = try? value.decode(String.self) {
-                    json = text
-                } else {
-                    json = try value.decode(Arguments.self).json
-                }
-            }
-        }
-
-        static func == (a: Self, b: Self) -> Bool { NSDictionary(dictionary: a.json).isEqual(to: b.json) }
     }
 }
 

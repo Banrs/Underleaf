@@ -573,6 +573,14 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.
+    @Test func aRefusedFixIsAnAlertAndEndsItsProgress() async throws {
+        let project = try await opened().project
+        await project.run(LogItem.Fix(id: "install:-foo.sty", title: "Install", help: "", confirm: nil))
+        #expect(app.alert?.title == "Couldn’t Install" && project.fixing == nil)
+        await app.close()
+    }
+
     /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
     @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
         let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])

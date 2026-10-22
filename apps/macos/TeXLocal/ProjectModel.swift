@@ -560,22 +560,20 @@ final class ProjectModel {
         }
     }
 
-    /// Its command as the core gives it, then a build (docs/core-api.md, Explanations and fixes).
+    /// The session runs it, then a build (docs/core-api.md, Explanations and fixes).
     func run(_ fix: LogItem.Fix) async {
-        var args = fix.args.json
-        if fix.command.hasPrefix("session_") { args["session"] = session }
+        guard let session else { return }
         fixing = fix
         defer { fixing = nil }
-        let answer: Edited
+        let answer: Edited?
         do {
-            answer = try await core.call(fix.command, args, as: Edited.self)
+            answer = try await core.call("session_fix", ["session": session, "id": fix.id], as: Edited?.self)
         } catch {
-            // install_package's 403 is its password dialog cancelled, which needs no alert.
-            let cancelled = (error as? CoreError)?.status == 403 && fix.command == "install_package"
-            if !cancelled, !closed { app?.report(error, "Couldn’t \(fix.title)") }
+            if !closed { app?.report(error, "Couldn’t \(fix.title)") }
             return
         }
-        guard !closed else { return }
+        // None: the password dialog was cancelled.
+        guard let answer, !closed else { return }
         apply(answer.edits, named: fix.title)
         if let updated = answer.settings { settings = updated }
         await compile()
@@ -682,16 +680,8 @@ private nonisolated struct ProjectEdits: Decodable {
     var written: [Written]
 }
 
-/// What a restore or a fix's command answers that the window shows: the open document's edits, or `session_set_settings`'s
-/// settings.
+/// What a restore or a fix answers that the window shows: the open document's edits, and a fix's settings.
 private nonisolated struct Edited: Decodable {
     let edits: ProjectEdits.Document?
     let settings: ProjectSettings?
-
-    private enum Keys: CodingKey { case edits }
-
-    init(from decoder: any Decoder) throws {
-        edits = try decoder.container(keyedBy: Keys.self).decodeIfPresent(ProjectEdits.Document.self, forKey: .edits)
-        settings = try? ProjectSettings(from: decoder)
-    }
 }

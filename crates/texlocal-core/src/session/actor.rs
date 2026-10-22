@@ -21,14 +21,14 @@ use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
-use crate::logparse::LogItem;
+use crate::logparse::{Fix, LogItem};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, History, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{self, SymbolKind, Text, TextEdit};
-use crate::{CoreError, checks, lf, lock, tex};
+use crate::{CoreError, checks, lf, lock, packages, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -378,6 +378,7 @@ impl Actor {
     fn command(&mut self, name: &str, args: &Value, reply: Reply) {
         match name {
             "clean" => self.clean(reply),
+            "fix" => self.fix(args, reply),
             "analyze" => match string_arg(args, "path").and_then(paths::rel_key) {
                 Ok(path) => self.analyze(path, reply),
                 Err(err) => reply.send(Err(err)),
@@ -450,7 +451,6 @@ impl Actor {
             "forward" => return self.step(args, false),
             "replace" => return self.replace(args),
             "rename_symbol" => return self.rename_symbol(args),
-            "add_package" => return self.add_package(string_arg(args, "name")?),
             "history_restore" => return self.history_restore(args),
             "set_settings" => return self.set_settings(&arg(args, "patch")?),
             "prepare_delete" => return self.prepare_delete(&path()?),
@@ -1074,6 +1074,38 @@ impl Actor {
         self.edit_project(&open, &tex, &found, to)
     }
 
+    /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
+    /// analysis does; its password or UAC dialog cancelled answers null, nothing to do.
+    fn fix(&mut self, args: &Value, reply: Reply) {
+        let unknown = || CoreError::bad_request("There's no such fix.");
+        let fix = string_arg(args, "id").and_then(|id| Fix::parse(id).ok_or_else(unknown));
+        let edits = match fix {
+            Ok(Fix::Install(file)) => {
+                let (service, settings) =
+                    (Arc::clone(&self.service), self.project.settings.clone());
+                tokio::spawn(async move {
+                    let installed = packages::install_package(&file, &service.tool_paths().0).await;
+                    reply.send(match installed {
+                        Err(err) if err.status == 403 => Ok(Value::Null),
+                        installed => installed.map(|_| fixed(Value::Null, &settings)),
+                    });
+                });
+                return;
+            }
+            Ok(Fix::AddPackage(name)) => self
+                .add_package(&name)
+                .map(|mut added| added["edits"].take()),
+            Ok(Fix::Xelatex) => self
+                .set_settings(&json!({ "engine": "xelatex" }))
+                .map(|_| Value::Null),
+            Ok(Fix::ShellEscape) => self
+                .set_settings(&json!({ "shellEscape": true }))
+                .map(|_| Value::Null),
+            Err(err) => Err(err),
+        };
+        reply.send(edits.map(|edits| fixed(edits, &self.project.settings)));
+    }
+
     /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
     /// file loads the package already.
     fn add_package(&self, name: &str) -> Result<Value, CoreError> {
@@ -1233,6 +1265,11 @@ impl Actor {
         self.deleting.insert(path.to_owned());
         Ok(json!({ "ready": true }))
     }
+}
+
+/// The settings always, so a host shows the engine and toggles as a fix leaves them.
+fn fixed(edits: Value, settings: &Path) -> Value {
+    json!({ "edits": edits, "settings": settings::read_settings(settings) })
 }
 
 /// The files a symbol is defined and used in.

@@ -38,7 +38,7 @@ the call.
   (they never wait for a build or TeXpresso), but go through the session's queue: keep them off
   the UI thread or use `tl_call_async`. `session_analyze`, `session_search`, `session_usages`,
   `session_quick_open` and `session_quick_help` are taken in their turn but worked out beside
-  the session, which goes on with the commands after them.
+  the session, which goes on with the commands after them; so is an Install fix's `session_fix`.
   `session_outline_current` is answered at once from the outline kept, on no queue, so a host may
   call it with `tl_call` on the UI thread; so may `locate`, which reads only the path's folders
   and the list of opened folders, for a drag that asks it as it moves.
@@ -94,7 +94,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_quick_help` | `path`, `offset` | `{title, detail, place}` or null | What the name at `offset` (UTF-16) in the open document `path` is, the open documents as edited, for a popover; `place` is where it is defined, to go to, or null. A `\cite` kin's key: `title` the key, `detail` its .bib entry's authors, title, year and journal, publisher or booktitle, a line each (`""` for a `\bibitem`). A `\ref` kin's label: `title` the label, `detail` its number and page from the main file's .aux in the build folder (`3 on page 2`), or `Compile to number it`, then on a line of its own what it labels, as completion says. A command the project defines (`\newcommand` and its kin): `title` the command with its backslash, `detail` the definition's line as written. Another command the catalogue knows a package of: `detail` `From the booktabs package`, `place` null. Null for anything else, a label or key nothing defines, or a document that isn't open. |
 | `session_replace` | `query`, `replacement` | `{edits, written}` | `replacement` in place of every match `session_search` would find (all on a line) in every text file. `edits`: the open document's, `{path, version, edits: [{start, length, text}]}` in UTF-16 against its text at `version`, or null; the host applies them at once as one undoable edit, as `toggle_style`'s, if its source still answers that `version` (typed in since, the edits no longer fit and it drops them), and the session saves it as any: the core doesn't write that file. `written`: `[{file, count}]`, the other files changed, by path, each read again and written under the project's lock, each line keeping its own ending. 409 while the open document's change on disk isn't settled (its `conflict` asked or cancelled, a `document_reload` not yet applied), as saves wait then, and with two open documents to edit; 400, writing nothing, for a file with a match that isn't UTF-8. It changes every file or none: one that can't be written answers the file system's error, as a save's, and the files written before it are put back. There is no undo across files. |
 | `session_rename_symbol` | `kind` (`label` or `citation`), `from`, `to` | as `session_replace` | `to` in place of `from` in the .tex and .bib files, the open document as the editor has it, wherever it is defined (`\label`; `\bibitem` or a .bib entry's key) and wherever a `\ref` or `\cite` kin or a .bib entry's `crossref` names it (`\nocite`, natbib's and biblatex's, `\nameref` and cleveref's too; alone of a list's keys), but not in comments or literal code. A `to` empty or with a space, comma, brace, `%` or `\` is 400, a `from` nothing defines 404 and a `to` defined already 409; and 409 or 400 as for `session_replace`. |
-| `session_add_package` | `name` | as `session_replace` | `\usepackage{name}` on a line of its own in the main file, after the line its last `\usepackage`'s argument ends on, else `\documentclass`'s; nothing (`edits` null, `written` `[]`) when the main file has neither or loads the package already (`\usepackage` or `\RequirePackage`, not in a comment). The host applies `edits` as `session_replace`'s; 409 as for `session_replace`. |
+| `session_fix` | `id` | `{edits, settings}` or null | Runs a build issue's fix (Explanations and fixes). `edits`: the open document's, as `session_replace`'s, or null; `settings`: as `session_open` gives them, always. Null when an install's dialog was cancelled: nothing to do. An `id` the core doesn't know is 400. |
 | `session_history_list` | | `[{id, time, name, reason, changed}]` | The project's snapshots (History, below), newest first. `id` a string naming it to the commands below; `time` ISO 8601 in UTC to the second (`2026-10-22T09:41:00Z`); `name` the author's or null; `reason` null, or why the core took it (`Before Replace All`, `Before Rename`, `Before Adding a Package`, `Before Restore`); `changed` `[{path, change}]`, `change` `added`, `deleted` or `changed`, the files that differ from the snapshot before it, by path (the oldest's are all `added`). |
 | `session_history_save` | `name` | an entry, as listed | A snapshot of the files as they are, named; when nothing changed since the last, that one is named instead. A `name` empty once trimmed is 400. |
 | `session_history_compare` | `id`, `path` | `[row]` | The file's lines in that snapshot against now's (the open document's as edited, else the disk's; none where there is no such file), as a unified diff: each row `{same}`, `{removed}` or `{added}` with the line's text, removed before added where a block was replaced, and lines further than 3 from a change folded into `{skipped: n}`. Empty where the lines are the same. Text files only (`tex`, `bib` and `text` kinds): another is 400. |
@@ -172,9 +172,9 @@ build folder and `.git`.
   20 MB isn't kept.
 - **Taken** as the session opens and after each save, when the last snapshot is more than 10
   minutes old and something changed since it; always just before `session_replace`,
-  `session_rename_symbol`, `session_add_package` and `session_history_restore`, with its
-  `reason`; and when asked, named (`session_history_save`). Those after a save are taken beside
-  the session, so no save waits on them; those before a change, before it.
+  `session_rename_symbol`, a `session_fix` that adds a package and `session_history_restore`,
+  with its `reason`; and when asked, named (`session_history_save`). Those after a save are
+  taken beside the session, so no save waits on them; those before a change, before it.
 - **Pruned** after each snapshot: named ones are kept; of the others, all from the last day, the
   last of each hour for a week and of each day for 90 days, none older. Stored files no snapshot
   names are removed.
@@ -213,7 +213,6 @@ Service commands (`tl_call`):
 | `duplicate_project` | `id`, `name` | the new project, as `list_projects` lists it | A copy of a library project's folder with its settings, leaving out what an export does (the build folder and the history among it), named `name` or numbered past it as `create_project` is. Built beside and renamed into place, as a new or imported project is, so the list never shows half a copy. The host suggests the name in its system's words: the Mac “Paper copy”, Windows “Paper - Copy”. An opened folder is 409 with a sentence. |
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
-| `install_package` | `file` | `{package}` | Installs the TeX Live package with the file `file` (an Install fix's), through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 403 when the dialog is cancelled; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. It takes minutes: ask with `tl_call_async`. |
 | `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`; on Windows `%APPDATA%\TinyTeX`, or `%ProgramData%\TinyTeX` where that path has a space or a letter past ASCII), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
@@ -262,20 +261,20 @@ Each is `{"type", "session", …}`.
 A build's items (`errors`, `warnings`, and the issue `session_issue` and `session_choose_issue`
 answer) carry `explain`: one or two sentences on what TeX's message means here and what usually
 fixes it, for the build panel under the message, when there is one. And `fix`, when there is one:
-`{title, help, command, args, confirm?}`, which a host shows as a button titled `title`, with
-`help` as its tooltip, and runs as any command. On a click: when `confirm` is there, ask first
-with its text (Cancel does nothing); call `command` with `args` through `tl_call_async`, adding
-`session` for a `session_*` command; an error answer is shown as that command's would be, and
-ends it; else apply the answer's `edits`, if any, as `session_replace`'s, then compile
-(`session_compile`, a manual build).
+`{id, title, help, confirm?}`, which a host shows as a button titled `title`, with `help` as its
+tooltip. `id` names the fix and its argument for the core alone to read, so it stays good however
+the issues change. On a click: when `confirm` is there, ask first with its text (Cancel does
+nothing); send `session_fix` with `id` through `tl_call_async`; an error answer is shown, and
+ends it, as does null; else apply `edits`, if any, as `session_replace`'s, show `settings`, then
+compile (`session_compile`, a manual build).
 A host knows no fix by name. The fixes:
 
-| `title` | `command` | `args` | When |
+| `title` | `id` | When | Does |
 |---|---|---|---|
-| Install | `install_package` | `{file}` | A package or class file LaTeX didn't find (“foo.sty”). |
-| Add `\usepackage{name}` | `session_add_package` | `{name}` | An undefined command or environment that a package the catalogue knows defines. |
-| Use XeLaTeX | `session_set_settings` | `{patch: {engine: "xelatex"}}` | A Unicode character pdfLaTeX's fonts lack, or a package that needs XeTeX or LuaTeX (fontspec, unicode-math, polyglossia). |
-| Turn On Shell Escape | `session_set_settings` | `{patch: {shellEscape: true}}` | A build that needed shell escape; `confirm` says it lets the document run programs, for documents the user trusts. |
+| Install | `install:foo.sty` | A package or class file LaTeX didn't find (“foo.sty”). | Installs the TeX Live package with that file, through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. |
+| Add `\usepackage{name}` | `package:name` | An undefined command or environment that a package the catalogue knows defines. | `\usepackage{name}` on a line of its own in the main file, after the line its last `\usepackage`'s argument ends on, else `\documentclass`'s; nothing when the main file has neither or loads the package already (`\usepackage` or `\RequirePackage`, not in a comment). 409 as for `session_replace`. |
+| Use XeLaTeX | `engine:xelatex` | A Unicode character pdfLaTeX's fonts lack, or a package that needs XeTeX or LuaTeX (fontspec, unicode-math, polyglossia). | The engine, as `session_set_settings` sets it. |
+| Turn On Shell Escape | `shellEscape` | A build that needed shell escape; `confirm` says it lets the document run programs, for documents the user trusts. | Shell escape, as `session_set_settings` sets it. |
 
 ## The editor's source
 

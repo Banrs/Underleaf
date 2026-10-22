@@ -52,9 +52,9 @@ public sealed record Imported(Clash[] Existing);
 /// <param name="Explain">What TeX's message means here and what usually fixes it.</param>
 public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Explain, Fix? Fix);
 
-/// A button an issue offers, run as any command: Command with Args, the session added for a session_* command.
+/// A button an issue offers, which the session runs by its id (session_fix).
 /// <param name="Confirm">Asked first, when there.</param>
-public sealed record Fix(string Title, string Help, string Command, JsonElement Args, string? Confirm);
+public sealed record Fix(string Id, string Title, string Help, string? Confirm);
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
