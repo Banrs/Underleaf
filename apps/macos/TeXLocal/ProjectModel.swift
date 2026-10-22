@@ -41,8 +41,8 @@ final class ProjectModel {
 
     var compiling = false
     var outdated = false
-    /// The missing file whose package is installing: one at a time, as tlmgr takes one.
-    var installing: String?
+    /// One at a time, as tlmgr takes one and a fix is followed by a build.
+    var fixing: LogItem.Fix?
     var result: CompileResult?
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
@@ -493,11 +493,36 @@ final class ProjectModel {
     @discardableResult
     private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
         let answer = try await core.call(command, args, as: ProjectEdits.self)
+        apply(answer.edits, named: name)
+        return answer
+    }
+
+    private func apply(_ edits: ProjectEdits.Document?, named name: String) {
         // A file shown since has text of its own, as one typed in since does.
-        if let edits = answer.edits, edits.path == editor.path, edits.version == editor.textView.document.version {
+        if let edits, edits.path == editor.path, edits.version == editor.textView.document.version {
             editor.textView.apply(edits.edits, named: name)
         }
-        return answer
+    }
+
+    /// Its command as the core gives it, then a build (docs/core-api.md, Explanations and fixes).
+    func run(_ fix: LogItem.Fix) async {
+        var args = fix.args.json
+        if fix.command.hasPrefix("session_") { args["session"] = session }
+        fixing = fix
+        defer { fixing = nil }
+        let answer: FixAnswer
+        do {
+            answer = try await core.call(fix.command, args, as: FixAnswer.self)
+        } catch {
+            // install_package's 403 is its password dialog cancelled, which needs no alert.
+            let cancelled = (error as? CoreError)?.status == 403 && fix.command == "install_package"
+            if !cancelled, !closed { app?.report(error, "Couldn’t \(fix.title)") }
+            return
+        }
+        guard !closed else { return }
+        apply(answer.edits, named: fix.title)
+        if let updated = answer.settings { settings = updated }
+        await compile()
     }
 
     // MARK: - Changes on disk
@@ -599,4 +624,17 @@ private nonisolated struct ProjectEdits: Decodable {
 
     var edits: Document?
     var written: [Written]
+}
+
+/// What a fix's command answers that the window shows: `session_add_package`'s edits, `session_set_settings`'s settings.
+private nonisolated struct FixAnswer: Decodable {
+    let edits: ProjectEdits.Document?
+    let settings: ProjectSettings?
+
+    private enum Keys: CodingKey { case edits }
+
+    init(from decoder: any Decoder) throws {
+        edits = try decoder.container(keyedBy: Keys.self).decodeIfPresent(ProjectEdits.Document.self, forKey: .edits)
+        settings = try? ProjectSettings(from: decoder)
+    }
 }

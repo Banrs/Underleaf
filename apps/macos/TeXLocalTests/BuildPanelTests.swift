@@ -41,11 +41,21 @@ struct BuildPanelTests {
     }
 
     /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.
-    @Test func aRefusedInstallIsAnAlertAndEndsItsProgress() async {
+    @Test func aRefusedFixIsAnAlertAndEndsItsProgress() async throws {
         let defaults = TestDefaults()
         let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "BuildPanelTests", app: app)
-        await project.install("-foo.sty")
-        #expect(app.alert?.title == "Couldn’t Install “-foo.sty”" && project.installing == nil)
+        let json = #"{"title": "Install", "help": "", "command": "install_package", "args": {"file": "-foo.sty"}}"#
+        await project.run(try JSONDecoder().decode(LogItem.Fix.self, from: Data(json.utf8)))
+        #expect(app.alert?.title == "Couldn’t Install" && project.fixing == nil)
+    }
+
+    @Test func aFixInProgressIsItsTitlesVerbGoingOn() throws {
+        func progress(_ title: String) throws -> String {
+            let json = #"{"title": "\#(title)", "help": "", "command": "", "args": {}}"#
+            return try JSONDecoder().decode(LogItem.Fix.self, from: Data(json.utf8)).progress
+        }
+        #expect(try progress("Install") == "Installing…")
+        #expect(try progress("Use XeLaTeX") == "Using XeLaTeX…")
     }
 }

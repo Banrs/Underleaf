@@ -85,15 +85,68 @@ nonisolated struct SettingsChange {
     }
 }
 
-nonisolated struct LogItem: Decodable, Equatable {
+nonisolated struct LogItem: Decodable {
     let type: String
     let file: String?
     let line: Int?
     let message: String
-    /// The package or class file LaTeX didn't find, for Install.
-    let missing: String?
+    /// What TeX's message means here and what usually fixes it.
+    let explain: String?
+    let fix: Fix?
 
     var isError: Bool { type == "error" }
+
+    /// A command the core names, run as it gives it (docs/core-api.md, Explanations and fixes): the app knows no fix by name.
+    nonisolated struct Fix: Decodable, Equatable {
+        let title, help, command: String
+        let args: Arguments
+        /// Asked before it runs.
+        let confirm: String?
+
+        /// "Install" as "Installing…": an English title starts with its verb.
+        var progress: String {
+            var words = title.split(separator: " ", maxSplits: 1).map(String.init)
+            if words[0].hasSuffix("e"), !words[0].hasSuffix("ee") { words[0].removeLast() }
+            words[0] += "ing"
+            return words.joined(separator: " ") + "…"
+        }
+    }
+
+    /// A JSON object sent back as it came, of the objects, strings and booleans the fixes' arguments have.
+    nonisolated struct Arguments: Decodable, Equatable {
+        let json: [String: any Sendable]
+
+        private nonisolated struct Key: CodingKey {
+            let stringValue: String
+            var intValue: Int? { nil }
+            init(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
+
+        private nonisolated struct Value: Decodable {
+            let json: any Sendable
+
+            init(from decoder: any Decoder) throws {
+                if let object = try? decoder.container(keyedBy: Key.self) {
+                    json = try Arguments(object).json
+                } else if let flag = try? decoder.singleValueContainer().decode(Bool.self) {
+                    json = flag
+                } else {
+                    json = try decoder.singleValueContainer().decode(String.self)
+                }
+            }
+        }
+
+        private init(_ object: KeyedDecodingContainer<Key>) throws {
+            json = try Dictionary(uniqueKeysWithValues: object.allKeys.map {
+                ($0.stringValue, try object.decode(Value.self, forKey: $0).json)
+            })
+        }
+
+        init(from decoder: any Decoder) throws { try self.init(decoder.container(keyedBy: Key.self)) }
+
+        static func == (a: Self, b: Self) -> Bool { NSDictionary(dictionary: a.json).isEqual(to: b.json) }
+    }
 }
 
 /// A failed build may still have written a PDF; `stopped`: Stop, a newer build or quitting ended it.

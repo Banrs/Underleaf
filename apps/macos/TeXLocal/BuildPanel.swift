@@ -187,14 +187,16 @@ private struct IssueRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             label
-            if let file = item.missing { install(file) }
+            if let fix = item.fix { offer(fix) }
         }
     }
 
+    /// The explanation under the message, as Xcode shows an issue's note.
     private var label: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.message).lineLimit(chosen ? nil : 3)
+                if let explain = item.explain { Text(explain).foregroundStyle(.secondary) }
                 if let location = location(line: ":") {
                     Text(location)
                         .font(.subheadline)
@@ -205,27 +207,39 @@ private struct IssueRow: View {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
         }
-        .help(item.message)
+        .help([item.message, item.explain].compactMap(\.self).joined(separator: "\n"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
-        .accessibilityValue(location(line: ", line ") ?? "")
+        .accessibilityValue([item.explain, location(line: ", line ")].compactMap(\.self).joined(separator: " "))
     }
 
     /// As Xcode's Fix: a small button at the row's end, its progress in its place.
-    @ViewBuilder private func install(_ file: String) -> some View {
+    @ViewBuilder private func offer(_ fix: LogItem.Fix) -> some View {
         Spacer()
-        if project.installing == file {
+        if project.fixing == fix {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Installing…").foregroundStyle(.secondary)
+                Text(fix.progress).foregroundStyle(.secondary)
             }
             .accessibilityElement(children: .combine)
         } else {
-            Button("Install") { Task { await project.install(file) } }
+            Button(fix.title) { Task { if await confirmed(fix) { await project.run(fix) } } }
                 .controlSize(.small)
-                .disabled(project.installing != nil)
-                .help("Install the TeX Live package with \(file), then compile again")
+                .disabled(project.fixing != nil)
+                .help(fix.help)
         }
+    }
+
+    /// AppKit's, as the window's other questions are: the fix's title on the default button (HIG, Alerts).
+    private func confirmed(_ fix: LogItem.Fix) async -> Bool {
+        guard let confirm = fix.confirm else { return true }
+        let alert = NSAlert()
+        alert.messageText = "\(fix.title)?"
+        alert.informativeText = confirm
+        alert.addButton(withTitle: fix.title)
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        guard let window = project.editor.textView.window else { return alert.runModal() == .alertFirstButtonReturn }
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
 
     private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
