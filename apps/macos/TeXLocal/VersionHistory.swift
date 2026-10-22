@@ -123,9 +123,14 @@ struct VersionHistorySheet: View {
                 }
                 Spacer()
                 // Xcode's source control letters.
-                Text(verbatim: change.change.letter)
+                let (letter, spoken): (String, LocalizedStringKey) = switch change.change {
+                case .added: ("A", "Added")
+                case .deleted: ("D", "Deleted")
+                case .changed: ("M", "Changed")
+                }
+                Text(verbatim: letter)
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel(change.change.spoken)
+                    .accessibilityLabel(spoken)
             }
             .help(change.path)
         }
@@ -192,24 +197,6 @@ struct VersionHistorySheet: View {
                 alert = AppAlert(String(localized: "Couldn’t Restore “\(snapshot.title)”"), error)
             }
             restoring = false
-        }
-    }
-}
-
-private extension Snapshot.Change.Kind {
-    var letter: String {
-        switch self {
-        case .added: "A"
-        case .deleted: "D"
-        case .changed: "M"
-        }
-    }
-
-    var spoken: String {
-        switch self {
-        case .added: String(localized: "Added")
-        case .deleted: String(localized: "Deleted")
-        case .changed: String(localized: "Changed")
         }
     }
 }
