@@ -200,6 +200,24 @@ nonisolated struct ForwardLoc: Decodable {
 
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
+/// A line, from 1, of a project's file: where Back and Forward go, and where Quick Help's name is defined.
+nonisolated struct Place: Decodable {
+    let path: String
+    let line: Int
+}
+
+/// Whether Back and Forward have somewhere to go, and where one went (`session_navigate`, `session_back`).
+nonisolated struct Trail: Decodable {
+    var back = false, forward = false
+    var to: Place?
+}
+
+/// `session_quick_help`'s, for the popover.
+nonisolated struct QuickHelp: Decodable {
+    let title, detail: String
+    let place: Place?
+}
+
 /// Where a forward search began, for `synctex_match`; the column in UTF-16.
 nonisolated struct SyncSource: Sendable {
     let id, file: String

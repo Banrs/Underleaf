@@ -9,11 +9,6 @@ struct TeXLocalApp: App {
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
-            // No help book: the default item would only say so.
-            CommandGroup(replacing: .help) {
-                Link("Visit TeXLocal on GitHub", destination: Links.repository)
-                Link("Report Issue", destination: Links.issues)
-            }
         }
     }
 }

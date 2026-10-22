@@ -1,7 +1,7 @@
-//! Bringing outside files into the library: a Finder drop onto a project, and a .zip, or a file
-//! whose folder doesn't open where it is (`open_path`), made a new project. Both read host-chosen
-//! absolute paths and block on the disk; hosts call them off their UI thread, as they do every
-//! `tl_call`.
+//! Bringing files into the library: a Finder drop onto a project, and a .zip, a file whose folder
+//! doesn't open where it is (`open_path`) or a library project's files made a new project. They
+//! read host-chosen absolute paths and block on the disk; hosts call them off their UI thread, as
+//! they do every `tl_call`.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -395,23 +395,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     files.retain(|(path, _)| !left_out(path));
 
     projects::new_project(&service.data_dir, &base, |root| {
-        validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
-        for (path, source) in &files {
-            let abs = root.join(rel_key(path)?);
-            fs::create_dir_all(abs.parent().unwrap_or(root))?;
-            let mut dest = BufWriter::new(File::create_new(abs)?);
-            match source {
-                Source::File(path) => {
-                    let mut origin = File::open(path).map_err(CoreError::at(path))?;
-                    io::copy(&mut origin, &mut dest)?;
-                }
-                Source::Zip(i) => {
-                    let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                    io::copy(&mut entry, &mut dest)?;
-                }
-            }
-            dest.flush()?;
-        }
+        write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
         if settings.get("mainFile").is_none() {
             let (file, content) = templates::files("blank")[0];
@@ -420,6 +404,62 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         }
         write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())
+    })
+}
+
+/// A new project's files, each written at its path in `root` from where it comes.
+fn write_files(
+    root: &Path,
+    files: &[(String, Source)],
+    mut zip: Option<&mut ZipArchive<File>>,
+) -> Result<(), CoreError> {
+    validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
+    for (path, source) in files {
+        let abs = root.join(rel_key(path)?);
+        fs::create_dir_all(abs.parent().unwrap_or(root))?;
+        let mut dest = BufWriter::new(File::create_new(abs)?);
+        match source {
+            Source::File(path) => {
+                let mut origin = File::open(path).map_err(CoreError::at(path))?;
+                io::copy(&mut origin, &mut dest)?;
+            }
+            Source::Zip(i) => {
+                let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
+                io::copy(&mut entry, &mut dest)?;
+            }
+        }
+        dest.flush()?;
+    }
+    Ok(())
+}
+
+/// A library project's copy named `name`, made as an import is: what an export leaves out stays
+/// behind (the build folder and the history among it), but the settings come along.
+pub(crate) fn duplicate_project(
+    service: &Service,
+    id: &str,
+    name: &str,
+) -> Result<ProjectInfo, CoreError> {
+    if projects::is_opened(id) {
+        return Err(CoreError::conflict(
+            "A folder opened where it is can't be duplicated here. Copy the folder itself, then open the copy.",
+        ));
+    }
+    let root = service.project(id)?.root;
+    let mut found = Vec::new();
+    collect(&root, String::new(), &fs::metadata(&root)?, &mut found)?;
+    let files: Vec<_> = (found.into_iter())
+        .filter(|(path, _)| !left_out(path))
+        .map(|(path, abs)| (path, Source::File(abs)))
+        .collect();
+    projects::new_project(&service.data_dir, name, |copy| {
+        write_files(copy, &files, None)?;
+        // Copied apart, as the generic writes refuse it; a folder put in the library by hand may
+        // have none.
+        match fs::copy(root.join(SETTINGS_FILE), copy.join(SETTINGS_FILE)) {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            copied => Ok(copied.map(drop)?),
+        }
     })
 }
 
@@ -846,5 +886,44 @@ mod tests {
             assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
             assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
         }
+    }
+
+    #[test]
+    fn a_duplicate_leaves_the_build_and_history_keeps_the_settings_and_takes_a_free_name() {
+        let (dir, service) = with_project();
+        let root = service.data_dir.join("P");
+        write_all(
+            &root,
+            &[
+                ("chapters/a.tex", "a"),
+                (".latexmkrc", "$pdf_mode = 1;"),
+                ("build/main.pdf", "output"),
+                (".texlocal-history/snapshots/1.json", "{}"),
+            ],
+        );
+        write_settings(&root.join(SETTINGS_FILE), &json!({ "engine": "xelatex" })).unwrap();
+
+        assert_eq!(
+            duplicate_project(&service, "P", "P copy").unwrap().id,
+            "P copy"
+        );
+        let copy = service.data_dir.join("P copy");
+        assert_eq!(files_in(&copy), ["chapters/a.tex", "main.tex"]);
+        assert!(copy.join(".latexmkrc").is_file());
+        for left in ["build", crate::HISTORY_DIR] {
+            assert!(!copy.join(left).exists(), "{left}");
+        }
+        let engine = crate::settings::read_settings(&copy.join(SETTINGS_FILE)).engine;
+        assert_eq!(engine, crate::settings::Engine::Xelatex);
+        assert_eq!(
+            duplicate_project(&service, "P", "P copy").unwrap().id,
+            "P copy 2"
+        );
+
+        let folder = dir.path().join("Elsewhere");
+        write_all(&folder, &[("main.tex", "\\documentclass{article}")]);
+        let opened = projects::open_path(&service, &folder).unwrap().project.id;
+        let refused = duplicate_project(&service, &opened, "Elsewhere copy").unwrap_err();
+        assert_eq!(refused.status, 409);
     }
 }

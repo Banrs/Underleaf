@@ -18,6 +18,7 @@ use tokio::time::Instant;
 use super::build::Builds;
 use super::history::HistoryQueue;
 use super::live::Live;
+use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
@@ -145,7 +146,7 @@ pub(crate) struct Actor {
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
-    facts: Arc<analyze::Files>,
+    pub facts: Arc<analyze::Files>,
     pub edits: u64,
     /// Kept for the session's life: a document closed since isn't marked with a build's
     /// issues on lines that may have moved.
@@ -163,6 +164,7 @@ pub(crate) struct Actor {
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: HistoryQueue,
+    pub trail: Trail,
     closed: bool,
 }
 
@@ -228,6 +230,7 @@ impl Actor {
             live: Live::default(),
             later,
             history,
+            trail: Trail::default(),
             closed: false,
         };
         actor.snapshot_soon();
@@ -387,13 +390,18 @@ impl Actor {
             "history_list" | "history_save" | "history_compare" => {
                 self.history_command(name, args, reply);
             }
-            "usages" => {
+            "usages" | "quick_help" => {
                 let path = string_arg(args, "path").and_then(paths::rel_key);
                 match path.and_then(|path| Ok((path, arg::<u32>(args, "offset")?))) {
-                    Ok((path, offset)) => self.usages(&path, offset, reply),
+                    Ok((path, offset)) if name == "usages" => self.usages(&path, offset, reply),
+                    Ok((path, offset)) => self.quick_help(&path, offset, reply),
                     Err(err) => reply.send(Err(err)),
                 }
             }
+            "quick_open" => match string_arg(args, "query") {
+                Ok(query) => self.quick_open(query.to_owned(), reply),
+                Err(err) => reply.send(Err(err)),
+            },
             #[cfg(test)]
             "panic" => panic!("a bug in the session"),
             _ => {
@@ -438,6 +446,9 @@ impl Actor {
                 let from = paths::rel_key(string_arg(args, "from")?)?;
                 return self.rename(&from, string_arg(args, "to")?);
             }
+            "navigate" => return self.navigate(args),
+            "back" => return self.step(args, true),
+            "forward" => return self.step(args, false),
             "replace" => return self.replace(args),
             "rename_symbol" => return self.rename_symbol(args),
             "add_package" => return self.add_package(string_arg(args, "name")?),
@@ -1148,6 +1159,7 @@ impl Actor {
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
+        self.trail.moved(from, to);
         // Names compare without case, so a rename only in case leaves the entry itself at the
         // new name: that one moves rather than closes.
         for path in self.docs_within(to) {

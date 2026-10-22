@@ -45,6 +45,7 @@ impl SourceDocument {
             "math_at" => json(self.math_at(caret()?)),
             "text_styles" => json(self.text_styles(selection()?)),
             "code_ranges" => json(self.code_ranges(selection()?, get(a, "for")?)),
+            "words" => json(json!({ "words": self.words(TextRange::deserialize(a).ok()?) })),
             "type" => json(self.type_text(selection()?, &string("text")?, auto_pair()?)),
             "delete_backward" => json(self.delete_backward(selection()?, auto_pair()?)),
             "insert_newline" => json(self.insert_newline(selection()?)),

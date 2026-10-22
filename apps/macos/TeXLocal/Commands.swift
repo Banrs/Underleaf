@@ -2,10 +2,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum MenuCommand: CaseIterable {
-    case projectNew, projectOpen, projectClose, projectExport, projectSearch
+    case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectExportArxiv, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
-    case editDuplicateLine, editDeleteLine, editGotoLine, jumpToDefinition, findUsages, editRename
+    case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
@@ -20,8 +20,10 @@ enum MenuCommand: CaseIterable {
         switch self {
         case .projectNew: ("New Project…", KeyboardShortcut("n", modifiers: [.command, .shift]))
         case .projectOpen: ("Open…", KeyboardShortcut("o"))
+        case .openQuickly: ("Open Quickly…", KeyboardShortcut("o", modifiers: [.command, .shift]))
         case .projectClose: ("Close Project", KeyboardShortcut("w", modifiers: [.command, .shift]))
         case .projectExport: ("Export Project as ZIP…", nil)
+        case .projectExportArxiv: ("Export for arXiv…", nil)
         case .projectSearch: ("Find in Project…", KeyboardShortcut("f", modifiers: [.command, .shift]))
         case .fileNew: ("New File", KeyboardShortcut("n"))
         case .fileNewFolder: ("New Folder", KeyboardShortcut("n", modifiers: [.command, .shift, .option]))
@@ -44,8 +46,11 @@ enum MenuCommand: CaseIterable {
         case .editDuplicateLine: ("Duplicate Line", KeyboardShortcut("d"))
         case .editDeleteLine: ("Delete Line", KeyboardShortcut("k", modifiers: [.control, .shift]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
+        case .goBack: ("Go Back", KeyboardShortcut(.leftArrow, modifiers: [.command, .control]))
+        case .goForward: ("Go Forward", KeyboardShortcut(.rightArrow, modifiers: [.command, .control]))
         case .jumpToDefinition: ("Jump to Definition", KeyboardShortcut("j", modifiers: [.command, .control]))
         case .findUsages: ("Find Usages", KeyboardShortcut("f", modifiers: [.command, .control, .shift]))
+        case .quickHelp: ("Quick Help for Selected Item", KeyboardShortcut("?", modifiers: [.command, .control]))
         case .editRename: ("Rename…", nil)
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
@@ -73,7 +78,7 @@ enum MenuCommand: CaseIterable {
     var editsSelection: Bool {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
-             .editMoveLineDown, .editDuplicateLine, .editDeleteLine, .jumpToDefinition, .findUsages, .editRename: true
+             .editMoveLineDown, .editDuplicateLine, .editDeleteLine, .jumpToDefinition, .findUsages, .quickHelp, .editRename: true
         default: false
         }
     }
@@ -110,8 +115,10 @@ extension AppModel {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine,
-             .editGotoLine, .jumpToDefinition, .findUsages:
+             .editGotoLine, .jumpToDefinition, .findUsages, .quickHelp:
             project?.editsText == true
+        case .goBack: project.map { $0.openPath != nil && $0.trail.back } ?? false
+        case .goForward: project.map { $0.openPath != nil && $0.trail.forward } ?? false
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
         case .compileRun: tex?.available == true && project?.compiling == false
@@ -164,7 +171,14 @@ extension AppModel {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
         case .projectClose: Task { await close() }
-        case .projectExport: if let project { exporting = ExportFile(name: "\(project.name).zip", type: .zip, make: project.exportZip) }
+        case .projectExport, .projectExportArxiv:
+            let arxiv = command == .projectExportArxiv
+            if let project {
+                exporting = ExportFile(name: arxiv ? "\(project.name) arXiv.zip" : "\(project.name).zip", type: .zip) {
+                    try await project.exportZip(forArxiv: arxiv)
+                }
+            }
+        case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .projectSearch:
             sidebarShown = true
             searchFocusToken += 1
@@ -191,7 +205,9 @@ extension AppModel {
         case .editDuplicateLine: project?.editor.perform(.duplicateLine)
         case .editDeleteLine: project?.editor.perform(.deleteLine)
         case .editGotoLine: prompt = .gotoLine
+        case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .jumpToDefinition: project?.editor.jumpToDefinition()
+        case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
         case .findUsages: Task { await project?.findUsages() }
         case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
         case .pdfGotoPage: prompt = .gotoPage
@@ -240,6 +256,7 @@ struct AppCommands: Commands {
                 Button("Clear Menu") { app.recentProjects = [] }
                     .disabled(app.recents.isEmpty)
             }
+            items(.openQuickly)
             Divider()
             items(.fileUpload)
         }
@@ -254,7 +271,7 @@ struct AppCommands: Commands {
                 .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
-            items(.pdfSave, .pdfOpen, .projectExport)
+            items(.pdfSave, .pdfOpen, .projectExport, .projectExportArxiv)
             Divider()
             if let project, let url = project.buildPDF {
                 ShareLink(item: url)
@@ -286,6 +303,8 @@ struct AppCommands: Commands {
             items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
         }
         CommandMenu("Go") {
+            items(.goBack, .goForward)
+            Divider()
             items(.editGotoLine, .pdfGotoPage)
             Divider()
             items(.jumpToDefinition)
@@ -309,6 +328,13 @@ struct AppCommands: Commands {
             Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
             BuildOptionItems(app: app)
             SetMainFileItem(app: app)
+        }
+        // No help book: the default item would only say so.
+        CommandGroup(replacing: .help) {
+            items(.quickHelp)
+            Divider()
+            Link("Visit TeXLocal on GitHub", destination: Links.repository)
+            Link("Report Issue", destination: Links.issues)
         }
     }
 }

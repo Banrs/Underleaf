@@ -142,6 +142,7 @@ impl Service {
                     engine.as_deref(),
                 )?)
             }
+            "duplicate_project" => out(import::duplicate_project(self, s("id")?, s("name")?)?),
             "free_project_name" => {
                 Ok(json!({ "name": projects::free_project_name(&self.data_dir)? }))
             }
@@ -197,10 +198,15 @@ impl Service {
                     settings::read_settings(&project.settings).output(&project.build, "pdf")?;
                 Ok(json!(pdf.to_string_lossy()))
             }
-            "export_zip" => out(zipexport::export_zip(
-                &project()?.root,
-                Path::new(s("dest")?),
-            )?),
+            "export_zip" => {
+                let project = project()?;
+                let added = match arg::<Option<bool>>(args, "forArxiv")? {
+                    Some(true) => zipexport::for_arxiv(&project)?,
+                    _ => Vec::new(),
+                };
+                let dest = Path::new(s("dest")?);
+                out(zipexport::export_zip(&project.root, dest, &added)?)
+            }
             // On quit, while a compile may be in flight, stop the latexmk trees that would outlive the app.
             "kill_all" => {
                 self.kill_all();

@@ -85,6 +85,9 @@ struct HomeView: View {
                     Divider()
                     Button { Task { await app.forget(project) } } label: { Label("Remove from List", systemImage: "minus.circle") }
                 } else {
+                    Button { Task { if let copy = await app.duplicate(project) { selection = copy } } } label: {
+                        Label("Duplicate", systemImage: "plus.square.on.square")
+                    }
                     ItemMenuItems(actions: actions(project))
                 }
             }

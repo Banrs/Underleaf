@@ -51,6 +51,10 @@ pub struct Heading {
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    /// Its own prose words: up to the next heading or input of its file, and in an outline up
+    /// to the next heading the document reads.
+    #[serde(skip)]
+    pub words: usize,
 }
 
 impl Heading {
@@ -64,6 +68,7 @@ impl Heading {
             title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
             file: None,
+            words: 0,
         }
     }
 }
@@ -143,6 +148,8 @@ pub struct Input {
     pub(crate) name: String,
     folder: Folder,
     pub(crate) place: Place,
+    /// The prose words after it, up to the next heading or input.
+    words: usize,
 }
 
 /// Where an input's name is looked for, as the import package has it.
@@ -191,7 +198,6 @@ impl Facts {
         let text = Text::new(source);
         let mut facts = Self::default();
         if kind == "bib" {
-            let mut entries = BIB_KEY.captures_iter(source).peekable();
             let (mut byte, mut unit) = (0, 0);
             // Each is after the last, so counted on from it.
             let mut cited = |at: Range<usize>| {
@@ -200,18 +206,12 @@ impl Facts {
                 let units = unit..unit + source[at].encode_utf16().count();
                 named(&text, SymbolKind::Citation, units)
             };
-            while let Some(entry) = entries.next() {
+            for (entry, body) in entries(source) {
                 let kind = entry[1].to_ascii_lowercase();
                 if matches!(kind.as_str(), "comment" | "string" | "preamble") {
                     continue;
                 }
-                // Read to the next entry at most, so one left unbalanced takes nothing of those
-                // after it.
-                let next = entries
-                    .peek()
-                    .map_or(source.len(), |next| next.get_match().start());
                 let start = entry.get_match().end();
-                let body = &source[start..next];
                 facts.citations.push(Named {
                     detail: detail(&fields(body)),
                     ..cited(entry.get(2).expect("an entry has a key").range())
@@ -226,7 +226,9 @@ impl Facts {
         }
         // Found as the words are counted, so none is in a comment, maths or literal code.
         let mut heading_line = None;
-        facts.words = prose::words(&text, |text, name, name_end| {
+        // Where each heading and input is, in the file's order, and whether it is a heading.
+        let mut cuts = Vec::new();
+        let prose = prose::prose(&text, |text, name, name_end| {
             let line = text.line_index(name_end as u32) + 1;
             let units = &text.units;
             if let Some(depth) = headings::LEVELS.iter().position(|l| l.0 == name) {
@@ -235,6 +237,7 @@ impl Facts {
                 {
                     let heading = Heading::new(depth, plain_title(&title), line);
                     facts.headings.push(heading);
+                    cuts.push((name_end, true));
                 }
                 heading_line = Some(line);
             } else if let Some((name, folder, at)) = input(units, name, name_end) {
@@ -243,9 +246,23 @@ impl Facts {
                     name,
                     folder,
                     place: Place::of(text, at),
+                    words: 0,
                 });
+                cuts.push((name_end, false));
             }
         });
+        let len = text.units.len();
+        facts.words = prose.words(0..len);
+        let (mut headings, mut inputs) = (facts.headings.iter_mut(), facts.inputs.iter_mut());
+        for (i, &(from, heading)) in cuts.iter().enumerate() {
+            let to = cuts.get(i + 1).map_or(len, |cut| cut.0);
+            let counted = if heading {
+                &mut headings.next().expect("a heading for each cut").words
+            } else {
+                &mut inputs.next().expect("an input for each cut").words
+            };
+            *counted = prose.words(from..to);
+        }
         let mut names = Names(&text, &mut facts, None, Structure::default());
         let mut scanner = Scanner::default();
         scanner.run(&text.units, text.units.len(), &[], &mut names);
@@ -378,6 +395,20 @@ fn named(text: &Text, kind: SymbolKind, at: Range<usize>) -> Named {
     }
 }
 
+/// Each .bib entry and what follows its key, read to the next entry at most, so one left
+/// unbalanced takes nothing of those after it.
+fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>, &str)> {
+    let mut found = BIB_KEY.captures_iter(source).peekable();
+    std::iter::from_fn(move || {
+        let entry = found.next()?;
+        let next = found
+            .peek()
+            .map_or(source.len(), |next| next.get_match().start());
+        let body = &source[entry.get_match().end()..next];
+        Some((entry, body))
+    })
+}
+
 /// A .bib entry's fields from just after its key, each named in lower case, with its value as
 /// written but for the braces or quotes around it and any `#` joining its parts. Braces nest
 /// and hold quotes; the entry ends at the brace or parenthesis that closes it, or, unbalanced,
@@ -417,15 +448,21 @@ fn fields(body: &str) -> Vec<(String, String)> {
     fields
 }
 
+fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    let mut named = fields.iter().filter(|(n, _)| n == name);
+    named.next().map(|(_, value)| value.as_str())
+}
+
+/// Its year, or biblatex's date's.
+fn year(fields: &[(String, String)]) -> Option<String> {
+    let date = || field(fields, "date").and_then(|date| date.get(..4));
+    field(fields, "year").or_else(date).and_then(plain_title)
+}
+
 /// What completion says of a .bib entry, "Knuth · 1984 · The TeXbook", as far as its fields
-/// tell: its authors' last names, its year (or biblatex's date's) and its title.
+/// tell: its authors' last names, its year and its title.
 fn detail(fields: &[(String, String)]) -> Option<String> {
-    let field = |name: &str| {
-        fields
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.as_str())
-    };
+    let field = |name| field(fields, name);
     // A last name comes first before a comma, else last.
     let last = |name: &str| {
         let name = name.trim();
@@ -448,14 +485,37 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
             [one, ..] => Some(format!("{one} et al.")),
         }
     });
-    let year = field("year").or_else(|| field("date").and_then(|date| date.get(..4)));
-    let parts = [
-        authors,
-        year.and_then(plain_title),
-        field("title").and_then(plain_title),
-    ];
+    let parts = [authors, year(fields), field("title").and_then(plain_title)];
     let parts: Vec<String> = parts.into_iter().flatten().collect();
     (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// What Quick Help says of the entry `key` in a .bib file's `source`, a line for each of what
+/// its fields tell: its authors' whole names, its title, its year and where it was published.
+pub(crate) fn bib_entry(source: &str, key: &str) -> Option<String> {
+    let (_, body) = entries(source).find(|(entry, _)| &entry[2] == key)?;
+    let fields = fields(body);
+    let field = |name| field(&fields, name);
+    // "Knuth, Donald" is Donald Knuth.
+    let author = |name: &str| match parted(name.trim(), ",").as_slice() {
+        [last, first, ..] => plain_title(&format!("{first} {last}")),
+        _ => plain_title(name),
+    };
+    let authors = field("author").map(|authors| {
+        let authors = SPACES.replace_all(authors, " ");
+        let names = parted(&authors, " and ").into_iter().filter_map(author);
+        names.collect::<Vec<_>>().join(", ")
+    });
+    let published = ["journal", "publisher", "booktitle"]
+        .into_iter()
+        .find_map(field);
+    let lines = [
+        authors.filter(|authors| !authors.is_empty()),
+        field("title").and_then(plain_title),
+        year(&fields),
+        published.and_then(plain_title),
+    ];
+    Some(lines.into_iter().flatten().collect::<Vec<_>>().join("\n"))
 }
 
 /// `text` parted at each `at` outside braces, which hold a name's own spaces, commas and
@@ -526,6 +586,8 @@ pub struct OutlineNode {
     #[serde(flatten)]
     pub heading: Heading,
     pub fold_key: String,
+    /// Its words and its children's: up to the next heading at its level or above.
+    pub words: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Self>,
 }
@@ -555,11 +617,14 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let key = format!("{file}\t{}:{title}", heading.depth);
             let count = seen.entry(key.clone()).or_default();
             *count += 1;
+            let fold_key = format!("{key}#{count}");
+            let children = nest(outline, next, Some(heading.depth), seen);
             nodes.push(OutlineNode {
                 index,
                 heading: heading.clone(),
-                fold_key: format!("{key}#{count}"),
-                children: nest(outline, next, Some(heading.depth), seen),
+                fold_key,
+                words: heading.words + children.iter().map(|c| c.words).sum::<usize>(),
+                children,
             });
         }
         nodes
@@ -584,9 +649,15 @@ pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<u
 pub struct Analysis {
     #[serde(skip)]
     pub outline: Vec<Heading>,
+    /// The files read, each once, in the order read.
+    #[serde(skip)]
+    pub files: Vec<String>,
     pub tree: Vec<OutlineNode>,
     pub words: usize,
     pub heading_styles: Vec<headings::Level>,
+    /// What `\bibliography` and `\addbibresource` name, as written, for an export to arXiv.
+    #[serde(skip)]
+    pub bibliographies: Vec<String>,
 }
 
 /// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
@@ -653,6 +724,7 @@ fn walk(
     let Some(facts) = files.at(root, &file) else {
         return;
     };
+    into.files.push(file.clone());
     let placed = |heading: &Heading| Heading {
         file: Some(file.clone()),
         ..heading.clone()
@@ -662,6 +734,15 @@ fn walk(
         path.is_ok_and(|path| path.is_file())
             .then(|| rel.to_owned())
     };
+    // Words before a file's first heading, or after an input, are the last heading's read.
+    fn credit(outline: &mut [Heading], words: usize) {
+        if let Some(last) = outline.last_mut() {
+            last.words += words;
+        }
+    }
+    let headed: usize = facts.headings.iter().map(|h| h.words).sum();
+    let after_inputs: usize = facts.inputs.iter().map(|input| input.words).sum();
+    credit(&mut into.outline, facts.words - headed - after_inputs);
     let mut at = 0;
     for input in &facts.inputs {
         let before = &facts.headings[at..input.before];
@@ -670,9 +751,11 @@ fn walk(
         if let Some((input, within)) = input.resolve(&file, within, found) {
             walk(root, files, &input, &within, seen, into);
         }
+        credit(&mut into.outline, input.words);
     }
     into.outline.extend(facts.headings[at..].iter().map(placed));
     into.words += facts.words;
+    into.bibliographies.extend_from_slice(&facts.bibliographies);
 }
 
 /// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named
@@ -875,7 +958,8 @@ mod tests {
             ),
         ];
         for (line, expected) in cases {
-            let words = prose::words(&Text::new(line), |_, _, _| {});
+            let text = Text::new(line);
+            let words = prose::prose(&text, |_, _, _| {}).words(0..text.units.len());
             assert_eq!(words, expected, "{line:?}");
         }
     }
@@ -1121,7 +1205,7 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "index": 0, "depth": 3, "command": "subsection", "level": "Subsection", "title": "Early",
-                "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1" })
+                "untitled": false, "line": 1, "file": "a.tex", "foldKey": "a.tex\t3:Early#1", "words": 0 })
         );
         let untitled = serde_json::to_value(&tree[4]).unwrap();
         assert_eq!(untitled["title"], "Untitled Chapter");
@@ -1177,6 +1261,23 @@ mod tests {
         let loose = analyzed("loose.tex");
         assert_eq!(headings(&loose), [("Loose", Some("loose.tex"), 1)]);
         assert_eq!(loose.words, 2);
+    }
+
+    /// Through the files it inputs; the words before the first heading are none's.
+    #[test]
+    fn a_heading_counts_its_words_and_its_childrens_up_to_the_next_of_its_level() {
+        let dir = project(&[
+            (
+                "main.tex",
+                "Before any\n\\section{Intro}\nHello world\n\\subsection{Detail}\nthree more words\n\\input{ch}\nafter it $x + y$\n\\section{End}\nlast",
+            ),
+            ("ch.tex", "chapter \\emph{text} here"),
+        ]);
+        let analysis = analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
+        let words = |nodes: &[OutlineNode]| nodes.iter().map(|n| n.words).collect::<Vec<_>>();
+        assert_eq!(words(&analysis.tree), [12, 2]);
+        assert_eq!(words(&analysis.tree[0].children), [9]);
+        assert_eq!(analysis.words, 16);
     }
 
     #[test]

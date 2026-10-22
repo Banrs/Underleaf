@@ -56,6 +56,12 @@ off.
 There's also a file tree, an outline of the current file, a word count, search and replace across
 the project, a list of every place a label, citation, command or file is used, renaming a label or
 citation everywhere it's used, and export to ZIP. Deleted files go to the Trash or the Recycle Bin.
+The outline counts the words in each section, its subsections' included, and leaves out maths and
+commands as the document's count does. A project exported for arXiv takes its compiled
+bibliography and the 00README.json that tells arXiv which file to build and with which engine.
+You can go back and forward through the places you jumped from, open a file, section or label by
+typing a few letters of its name, see what a citation, reference or command is without leaving the
+text, and duplicate a project. Select some text and the word count counts it too.
 
 TeXLocal keeps a local history of each project, which you can compare files with and restore from.
 It takes a snapshot every ten minutes or so while you work and just before a change across files,

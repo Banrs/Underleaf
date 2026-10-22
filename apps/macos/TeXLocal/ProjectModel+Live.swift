@@ -102,7 +102,7 @@ extension ProjectModel {
                 let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "text": click?.text, "at": click?.at])
                 let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
                 guard !Task.isCancelled, !closed else { return }
-                await open(loc.file, line: loc.line, column: loc.column)
+                await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {
                 if !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Spot in the Source") }
             }

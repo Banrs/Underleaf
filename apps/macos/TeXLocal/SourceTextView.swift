@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// The source editor's text view: TextKit 2 only, with the core's document as the text's mirror.
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
@@ -26,6 +27,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     enum FileDrop { case open(() -> Void), insert(String) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
     var openDefinition: (Definition.Place) -> Void = { _ in }
+    var quickHelp: (Int) -> Void = { _ in }
     private(set) var loading = false
 
     /// `source` is the session's document holding `text`.
@@ -260,12 +262,39 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         // Escape's dismissal lasts while the caret is in that maths.
         let maths = loading ? nil : math(at: caret)
         if maths?.start != dismissedMath { dismissedMath = nil }
-        guard let window, hasKeyboard, let maths, dismissedMath == nil, enclosingScrollView != nil else { return mathPopover.close() }
-        // A point wide: NSPopover takes an empty rect for the whole view.
-        var rect = convert(window.convertFromScreen(firstRect(forCharacterRange: .caret(caret), actualRange: nil)), from: nil)
-        rect.size.width = max(rect.width, 1)
-        guard shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else { return mathPopover.close() }
+        guard hasKeyboard, let maths, dismissedMath == nil, enclosingScrollView != nil, let rect = popoverRect(at: caret),
+              shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else { return mathPopover.close() }
         mathPopover.show(maths, size: fontSize, at: rect, of: self, edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
+    }
+
+    /// A point wide: NSPopover takes an empty rect for the whole view.
+    private func popoverRect(at offset: Int) -> NSRect? {
+        guard let window else { return nil }
+        var rect = convert(window.convertFromScreen(firstRect(forCharacterRange: .caret(offset), actualRange: nil)), from: nil)
+        rect.size.width = max(rect.width, 1)
+        return rect
+    }
+
+    // MARK: Quick Help
+
+    private lazy var helpPopover: NSPopover = {
+        let popover = NSPopover()
+        // A click or a key elsewhere closes it, as Xcode's.
+        popover.behavior = .transient
+        return popover
+    }()
+
+    /// Under the name at `offset`.
+    func showQuickHelp(_ help: QuickHelp, at offset: Int, jump: @escaping (Place) -> Void) {
+        guard let rect = popoverRect(at: offset) else { return }
+        let bold = NSFontManager.shared.convert(font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular), toHaveTrait: .boldFontMask)
+        let content = NSHostingController(rootView: QuickHelpView(help: help, font: bold) { [helpPopover] place in
+            helpPopover.close()
+            jump(place)
+        })
+        content.sizingOptions = .preferredContentSize
+        helpPopover.contentViewController = content
+        helpPopover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
     }
 
     override func moveRight(_ sender: Any?) { stepCaret(1) { super.moveRight(sender) } }
@@ -477,6 +506,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
            release(of: event) != nil {
             return openDefinition(place)
         }
+        // ⌥-click, as Xcode's Quick Help; a drag is the text view's, a column of text.
+        if event.type == .leftMouseDown, held == .option, release(of: event) != nil {
+            return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
+        }
         super.mouseDown(with: event)
         if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync(true)?() }
     }
@@ -595,5 +628,26 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard let storage = textContentStorage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
               let end = storage.location(start, offsetBy: range.length) else { return nil }
         return NSTextRange(location: start, end: end)
+    }
+}
+
+/// Xcode's Quick Help: the name in the editor's font, what it is beneath, and a way to where it is defined.
+private struct QuickHelpView: View {
+    let help: QuickHelp
+    let font: NSFont
+    let jump: (Place) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(help.title).font(Font(font))
+            if !help.detail.isEmpty { Text(help.detail) }
+            if let place = help.place {
+                Button("Jump to Definition") { jump(place) }.buttonStyle(.link)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: 420, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding()
     }
 }
