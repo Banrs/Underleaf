@@ -55,6 +55,15 @@ pub struct Symbols {
     pub files: Vec<String>,
     /// Each .tex and .bib file's, by its name.
     pub by_file: BTreeMap<String, Arc<Facts>>,
+    pub installed: Arc<Installed>,
+}
+
+/// The names, without their extensions, of the .sty, .cls and .bst files the installed TeX has.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Installed {
+    pub packages: Vec<String>,
+    pub classes: Vec<String>,
+    pub styles: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -95,6 +104,7 @@ impl SourceDocument {
             let start = before.len() - before[start..].trim_start().len();
             let typed = &before[start..];
             let listed: Vec<String>;
+            let installed = &self.symbols.installed;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
                     let cited = cited(&self.symbols.citations, typed);
@@ -123,6 +133,9 @@ impl SourceDocument {
                     listed = open.iter().chain(rest).cloned().collect();
                     (&listed, SymbolKind::Environment)
                 }
+                "usepackage" | "RequirePackage" => (&installed.packages, SymbolKind::File),
+                "documentclass" => (&installed.classes, SymbolKind::File),
+                "bibliographystyle" => (&installed.styles, SymbolKind::File),
                 command => {
                     // \input's and \bibliography's names go without their extension, as LaTeX
                     // takes them.
@@ -399,7 +412,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 mod tests {
     use std::sync::Arc;
 
-    use super::{Completion, Defined, Place, SnippetField, Symbols};
+    use super::{Completion, Defined, Installed, Place, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
     use crate::syntax::tests::cited;
 
@@ -448,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn a_files_argument_offers_the_projects_files_of_its_kind() {
+    fn a_files_argument_offers_the_projects_or_the_installed_files_of_its_kind() {
         let files = [
             "chapters/One.TEX",
             "figs/a.png",
@@ -457,9 +470,15 @@ mod tests {
             "notes.txt",
             "refs.bib",
         ];
+        let names = |names: &[&str]| names.iter().map(|&n| n.into()).collect();
         let offered = |before: &str| {
             let symbols = Symbols {
                 files: files.map(String::from).to_vec(),
+                installed: Arc::new(Installed {
+                    packages: names(&["amsmath", "amsthm", "graphicx"]),
+                    classes: names(&["article"]),
+                    styles: names(&["plain"]),
+                }),
                 ..Symbols::default()
             };
             labels(before, symbols)
@@ -470,7 +489,13 @@ mod tests {
         assert_eq!(graphics, ["figs/a.png", "figs/b.pdf"]);
         assert_eq!(offered("\\bibliography{main,"), ["refs"]);
         assert_eq!(offered("\\addbibresource{"), ["refs.bib"]);
-        assert!(offered("\\usepackage{").is_empty());
+        assert_eq!(
+            offered("\\usepackage[x]{graphicx,ams"),
+            ["amsmath", "amsthm"]
+        );
+        assert_eq!(offered("\\RequirePackage{g"), ["graphicx"]);
+        assert_eq!(offered("\\documentclass{"), ["article"]);
+        assert_eq!(offered("\\bibliographystyle{"), ["plain"]);
     }
 
     #[test]

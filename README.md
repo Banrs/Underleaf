@@ -19,9 +19,11 @@ A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal ke
 and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
 projects folder.
 
-The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files and
-`\ref{}` labels from the document. It closes brackets as you type and shows the maths under the
-cursor in a small preview. Its colours can follow Overleaf, TeXstudio or the system.
+The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files (found
+by any part of the key or by an author, year or word of the title), `\ref{}` labels from the
+document with the caption or heading each one labels, and the packages and classes your TeX
+installation has. It closes brackets as you type and shows the maths under the cursor in a small
+preview. Its colours can follow Overleaf, TeXstudio or the system.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
 needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or

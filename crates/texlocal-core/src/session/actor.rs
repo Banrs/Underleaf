@@ -26,7 +26,7 @@ use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{SymbolKind, Text, TextEdit};
-use crate::{CoreError, lf, lock};
+use crate::{CoreError, lf, lock, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -883,9 +883,15 @@ impl Actor {
         let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
+        let service = Arc::clone(&self.service);
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
-            let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
+            let installed = tex::installed(|| service.tool_paths().0);
+            let symbols = symbols.map(|symbols| Symbols {
+                files,
+                installed,
+                ..symbols
+            });
             let _ = tx.send(Msg::Symbols(seq, symbols));
         });
     }
