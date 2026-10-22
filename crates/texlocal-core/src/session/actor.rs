@@ -422,6 +422,7 @@ impl Actor {
             }
             "replace" => return self.replace(args),
             "rename_symbol" => return self.rename_symbol(args),
+            "add_package" => return self.add_package(string_arg(args, "name")?),
             "set_settings" => return self.set_settings(&arg(args, "patch")?),
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
@@ -995,6 +996,20 @@ impl Actor {
             places
         };
         self.edit_project(&open, &tex, &found, to)
+    }
+
+    /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
+    /// file loads the package already.
+    fn add_package(&self, name: &str) -> Result<Value, CoreError> {
+        let main = settings::read_settings(&self.project.settings).main_file;
+        let open = self.texts_to_edit("added")?;
+        let found = |_: &str, text: &str| {
+            let facts = Facts::read(text, "tex");
+            let loaded = facts.packages.iter().any(|package| package == name);
+            facts.new_package.filter(|_| !loaded).into_iter().collect()
+        };
+        let line = format!("\n\\usepackage{{{name}}}");
+        self.edit_project(&open, &|rel| rel == main, &found, &line)
     }
 
     /// The open documents' paths, text and versions, unless one has a change on disk still to
