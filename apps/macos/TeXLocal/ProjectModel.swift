@@ -41,9 +41,11 @@ final class ProjectModel {
 
     var compiling = false
     var outdated = false
-    /// The missing file whose package is installing: one at a time, as tlmgr takes one.
-    var installing: String?
+    /// One at a time, as tlmgr takes one and a fix is followed by a build.
+    var fixing: LogItem.Fix?
     var result: CompileResult?
+    /// What the session finds wrong without TeX, kept through builds and cleans.
+    var checks: [LogItem] = []
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
     nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
@@ -55,7 +57,11 @@ final class ProjectModel {
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
-    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
+    /// In the session's order, which `session_choose_issue` numbers.
+    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) + checks }
+    /// The bad boxes after the issues, as Overleaf lists its typesetting warnings: numbered on from them, which the session
+    /// numbers alone.
+    var listed: [LogItem] { issues + (result?.badBoxes ?? []) }
 
     var openURL: URL? { openPath.flatMap(url) }
     var diskConflict: String?
@@ -137,8 +143,9 @@ final class ProjectModel {
     /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
     func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath)?.fileName ?? name)” Wasn’t Saved") }
 
-    var errorCount: Int { result?.errors.count ?? 0 }
-    var warningCount: Int { result?.warnings.count ?? 0 }
+    /// With the checks', as Xcode's counts include its live issues.
+    var errorCount: Int { issues.count(where: \.isError) }
+    var warningCount: Int { issues.count - errorCount }
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
 
@@ -293,6 +300,8 @@ final class ProjectModel {
         case .liveIssues(let marked):
             liveIssues[marked.path] = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
+        // After the build events before it, so the list numbers its rows as the session did then.
+        case .checks(let found): inOrder { self.checks = found.items }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
@@ -513,6 +522,27 @@ final class ProjectModel {
         }
     }
 
+    /// Its command as the core gives it, then a build (docs/core-api.md, Explanations and fixes).
+    func run(_ fix: LogItem.Fix) async {
+        var args = fix.args.json
+        if fix.command.hasPrefix("session_") { args["session"] = session }
+        fixing = fix
+        defer { fixing = nil }
+        let answer: FixAnswer
+        do {
+            answer = try await core.call(fix.command, args, as: FixAnswer.self)
+        } catch {
+            // install_package's 403 is its password dialog cancelled, which needs no alert.
+            let cancelled = (error as? CoreError)?.status == 403 && fix.command == "install_package"
+            if !cancelled, !closed { app?.report(error, "Couldn’t \(fix.title)") }
+            return
+        }
+        guard !closed else { return }
+        apply(answer.edits, named: fix.title)
+        if let updated = answer.settings { settings = updated }
+        await compile()
+    }
+
     // MARK: - Changes on disk
 
     /// `save`, `revert`, `close`, or `cancel` with the reason it is held, unsaved, until a save asks again.
@@ -616,3 +646,16 @@ private nonisolated struct ProjectEdits: Decodable {
 
 /// `session_history_restore`'s, whose files written the app doesn't count.
 private nonisolated struct Restored: Decodable { var edits: ProjectEdits.Document? }
+
+/// What a fix's command answers that the window shows: `session_add_package`'s edits, `session_set_settings`'s settings.
+private nonisolated struct FixAnswer: Decodable {
+    let edits: ProjectEdits.Document?
+    let settings: ProjectSettings?
+
+    private enum Keys: CodingKey { case edits }
+
+    init(from decoder: any Decoder) throws {
+        edits = try decoder.container(keyedBy: Keys.self).decodeIfPresent(ProjectEdits.Document.self, forKey: .edits)
+        settings = try? ProjectSettings(from: decoder)
+    }
+}
