@@ -2,7 +2,8 @@
 //! latexmk build and PDF continue to use saved project files.
 //!
 //! A build with Underleaf's patch (tools/texpresso) writes the pages the client says it
-//! shows as one-page PDFs when retypeset, and the whole document when a run ends.
+//! shows as one-page PDFs when retypeset, and the whole document when a run ends. Where TeX
+//! runs inside the app (`inprocess`), the engine it links speaks the same over pipes.
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,8 +14,7 @@ use std::time::Duration;
 
 use ropey::Rope;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
-use tokio::process::{Child, ChildStdin};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use crate::paths::{self, Project};
@@ -189,9 +189,16 @@ fn splice(text: &mut Rope, start: usize, remove: usize, inserted: &str) -> Optio
     Some((offset, removed))
 }
 
+/// A running session's way to TeXpresso: dropping it closes TeXpresso's input, which ends it.
+struct Link {
+    lines: mpsc::UnboundedSender<Vec<u8>>,
+    /// The program's and its engine's processes; none for the engine inside the app.
+    tree: Option<Tree>,
+}
+
 #[derive(Default)]
 struct State {
-    tree: Option<Tree>,
+    link: Option<Link>,
     output: Output,
     log: Output,
     protocol_seen: bool,
@@ -204,19 +211,20 @@ struct Session {
     pdf: PathBuf,
     state: Mutex<State>,
     files: Mutex<HashMap<String, Rope>>,
-    lines: mpsc::UnboundedSender<Vec<u8>>,
     sink: Sink,
 }
 
 impl Session {
     fn running(&self) -> bool {
-        lock(&self.state).tree.is_some()
+        lock(&self.state).link.is_some()
     }
     fn stop(&self, error: Option<String>) {
         let mut state = lock(&self.state);
-        if let Some(tree) = state.tree.take() {
+        if let Some(link) = state.link.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
-            tree.kill();
+            if let Some(tree) = link.tree {
+                tree.kill();
+            }
             remove_pdf_folder(&self.pdf);
             state.error.clone_from(&error);
             if let Ok(mut files) = self.files.try_lock() {
@@ -234,7 +242,7 @@ impl Session {
             log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
         Status {
-            running: state.tree.is_some(),
+            running: state.link.is_some(),
             output: state.output.text(),
             log: tail(&log, MAX_OUTPUT).to_owned(),
             error: state.error.clone(),
@@ -246,7 +254,9 @@ impl Session {
             serde_json::to_writer(&mut lines, message).expect("JSON values serialize");
             lines.push(b'\n');
         }
-        let _ = self.lines.send(lines);
+        if let Some(link) = &lock(&self.state).link {
+            let _ = link.lines.send(lines);
+        }
     }
 }
 
@@ -298,6 +308,59 @@ impl Manager {
     }
 }
 
+impl Manager {
+    /// The build folder and where the session's pages go, once the owner's last preview has
+    /// stopped.
+    fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
+        fs::create_dir_all(&project.build)?;
+        let build = dunce::canonicalize(&project.build)?;
+        if let Some(previous) = lock(&self.sessions).get(&owner) {
+            previous.stop(None);
+        }
+        // The session's own folder, for its owner alone; the session removes it as it stops.
+        let mut folder = tempfile::Builder::new();
+        folder.prefix("texlocal-texpresso-");
+        #[cfg(unix)]
+        folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        let pdf = dunce::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
+        Ok((build, pdf))
+    }
+
+    /// The owner's running session, and the lines it sends TeXpresso.
+    fn open(
+        &self,
+        owner: u64,
+        root: PathBuf,
+        pdf: PathBuf,
+        buffers: HashMap<String, Rope>,
+        sink: Sink,
+        tree: Option<Tree>,
+    ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
+        let (lines, queued) = mpsc::unbounded_channel();
+        let session = Arc::new(Session {
+            root,
+            pdf,
+            files: Mutex::new(buffers),
+            sink,
+            state: Mutex::new(State {
+                link: Some(Link { lines, tree }),
+                log: Output {
+                    max: MAX_LOG,
+                    ..Output::default()
+                },
+                ..State::default()
+            }),
+        });
+        let mut sessions = lock(&self.sessions);
+        // Under the map's lock, so `kill_all` stops it either way.
+        if self.shutdown.load(Ordering::Acquire) {
+            session.stop(None);
+        }
+        sessions.insert(owner, Arc::clone(&session));
+        (session, queued)
+    }
+}
+
 impl Preview for Manager {
     fn start(
         &self,
@@ -336,20 +399,31 @@ impl Preview for Manager {
                 ..Status::default()
             })
         };
+        #[cfg(unix)]
+        if crate::inprocess::IN_PROCESS {
+            let engine = match crate::inprocess::engine() {
+                Ok(engine) => engine,
+                Err(err) => return failed(err.message),
+            };
+            let (build, pdf) = self.prepare(owner, project)?;
+            // The engine runs one session at a time.
+            for (_, other) in lock(&self.sessions).iter().filter(|(o, _)| **o != owner) {
+                let why = "Live Preview stopped here as another project’s started: this device runs one at a time.";
+                other.stop(Some(why.into()));
+            }
+            let (session, queued) = self.open(owner, root, pdf.clone(), buffers, sink, None);
+            let args = ["texpresso", "-json", "-I"].map(std::ffi::OsString::from);
+            let args = args.into_iter();
+            let args = args.chain([build.into(), main.into()]).collect();
+            let weak = Arc::downgrade(&session);
+            tokio::spawn(live_in_app(engine, args, pdf, queued, weak));
+            session.send(&opening);
+            return Ok(session.status());
+        }
         let Some(executable) = discover(path_env) else {
             return failed(MISSING.into());
         };
-        fs::create_dir_all(&project.build)?;
-        let build = dunce::canonicalize(&project.build)?;
-        if let Some(previous) = lock(&self.sessions).get(&owner) {
-            previous.stop(None);
-        }
-        // The session's own folder, for its owner alone; the session removes it as it stops.
-        let mut folder = tempfile::Builder::new();
-        folder.prefix("texlocal-texpresso-");
-        #[cfg(unix)]
-        folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
-        let pdf = dunce::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
+        let (build, pdf) = self.prepare(owner, project)?;
         let mut command = process::tool(&executable, path_env);
         command
             .args(["-json", "-texlive", "-I"])
@@ -382,37 +456,20 @@ impl Preview for Manager {
                 ));
             }
         };
-        let (lines, queued) = mpsc::unbounded_channel();
-        let session = Arc::new(Session {
-            root,
-            pdf,
-            files: Mutex::new(buffers),
-            lines,
-            sink,
-            state: Mutex::new(State {
-                tree: Some(tree),
-                log: Output {
-                    max: MAX_LOG,
-                    ..Output::default()
-                },
-                ..State::default()
-            }),
-        });
-        {
-            let mut sessions = lock(&self.sessions);
-            // Under the map's lock, so `kill_all` stops it either way.
-            if self.shutdown.load(Ordering::Acquire) {
-                session.stop(None);
-            }
-            sessions.insert(owner, Arc::clone(&session));
-        }
+        let (session, queued) = self.open(owner, root, pdf, buffers, sink, Some(tree));
         let (stdin, stdout, stderr) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let weak = Arc::downgrade(&session);
         tokio::spawn(write_lines(stdin.unwrap(), queued, weak.clone()));
         tokio::spawn(read_output(stdout.unwrap(), Arc::clone(&session), true));
         tokio::spawn(read_output(stderr.unwrap(), Arc::clone(&session), false));
-        tokio::spawn(stop_on_exit(child, weak));
+        let exit = async move {
+            match child.wait().await {
+                Ok(status) if status.success() => None,
+                result => Some(result.map_or_else(|e| e.to_string(), |s| s.to_string())),
+            }
+        };
+        tokio::spawn(stop_on_exit(exit, weak));
         session.send(&opening);
         Ok(session.status())
     }
@@ -537,9 +594,9 @@ fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     )
 }
 
-/// Stops the session when TeXpresso exits, saying why unless it exited cleanly; also when
-/// the runtime drops this task first.
-async fn stop_on_exit(mut child: Child, session: Weak<Session>) {
+/// Stops the session when TeXpresso exits, saying why (`exit`'s status) unless it exited
+/// cleanly; also when the runtime drops this task first.
+async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<Session>) {
     struct Stop(Weak<Session>, Option<String>);
     impl Drop for Stop {
         fn drop(&mut self) {
@@ -549,19 +606,67 @@ async fn stop_on_exit(mut child: Child, session: Weak<Session>) {
         }
     }
     let mut stop = Stop(session, None);
-    stop.1 = match child.wait().await {
-        Ok(status) if status.success() => None,
-        result => Some(format!(
-            "TeXpresso exited ({}). Check its log and start TeXpresso again.",
-            result.map_or_else(|e| e.to_string(), |s| s.to_string())
-        )),
+    stop.1 = (exit.await).map(|status| {
+        format!("TeXpresso exited ({status}). Check its log and start TeXpresso again.")
+    });
+}
+
+/// Live Preview by the engine inside the app, which runs one session at a time: a start
+/// waits until the last session has ended.
+#[cfg(unix)]
+async fn live_in_app(
+    engine: &'static crate::inprocess::Engine,
+    args: Vec<std::ffi::OsString>,
+    pdf: PathBuf,
+    queued: mpsc::UnboundedReceiver<Vec<u8>>,
+    session: Weak<Session>,
+) {
+    use tokio::net::unix::pipe;
+    static ONE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let Ok(one) = ONE.acquire().await else {
+        return;
     };
+    let Some(running) = session.upgrade().filter(|session| session.running()) else {
+        return;
+    };
+    let Some((live, [commands, messages, log])) = engine.live_start(&args, &pdf) else {
+        return running.stop(Some("TeXpresso couldn’t start.".into()));
+    };
+    let pipes = (|| {
+        Ok::<_, std::io::Error>((
+            pipe::Sender::from_owned_fd(commands)?,
+            pipe::Receiver::from_owned_fd(messages)?,
+            pipe::Receiver::from_owned_fd(log)?,
+        ))
+    })();
+    match pipes {
+        Ok((commands, messages, log)) => {
+            tokio::spawn(write_lines(commands, queued, session.clone()));
+            tokio::spawn(read_output(messages, Arc::clone(&running), true));
+            tokio::spawn(read_output(log, running, false));
+        }
+        // The pipes are closed, which ends the session.
+        Err(err) => running.stop(Some(format!("TeXpresso couldn’t start: {err}."))),
+    }
+    let exit = async move {
+        let wait = tokio::task::spawn_blocking(move || {
+            let status = engine.wait(live);
+            drop(one);
+            status
+        });
+        match wait.await {
+            Ok(0) => None,
+            Ok(status) => Some(format!("exit status {status}")),
+            Err(err) => Some(err.to_string()),
+        }
+    };
+    stop_on_exit(exit, session).await;
 }
 
 /// The session's one writer to TeXpresso's stdin: a TeXpresso that has stopped reading
 /// stops the session instead of holding the queued lines.
 async fn write_lines(
-    mut stdin: ChildStdin,
+    mut stdin: impl AsyncWrite + Unpin,
     mut queued: mpsc::UnboundedReceiver<Vec<u8>>,
     session: Weak<Session>,
 ) {
@@ -753,7 +858,6 @@ mod tests {
             pdf: PathBuf::new(),
             state: Mutex::default(),
             files: Mutex::default(),
-            lines: mpsc::unbounded_channel().0,
             sink: Box::new(|_| {}),
         });
         let long = format!(r#"["append","out",3,"{}"]"#, "x".repeat(MAX_MESSAGE));

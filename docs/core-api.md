@@ -18,6 +18,7 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
+| `tl_set_engine(&engine)` | The iPad's TeX: a `tl_engine` of `txp_live_start`, `txp_session_wait` and `txp_run`, copied, set once before `tl_open` (see TeX inside the app). Unused elsewhere. |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
 the call.
@@ -146,6 +147,30 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   “The project stopped after an internal error. Close it and open it again.” The session then
   sends a `document` event with an `error` for each open document (what was typed is saved as
   far as it can be) and is gone: later commands for its number answer 404 “No such session”.
+
+## TeX inside the app
+
+iPadOS starts no processes, so there the core runs TeX through the engine the app links
+(TeXpresso's, `tools/texpresso-ios`) and registers with `tl_set_engine`. Before `tl_open` the app
+sets TEXMFCNF, TEXMFROOT, TEXMFDIST, TEXMFVAR, TEXPRESSO_LSR, TEXPRESSO_CACHE (writable, its
+own) and ICU_DATA in its environment, as `tools/texpresso-ios/README.md` says.
+
+- **`status`**: `available` when an engine is registered and TEXMFDIST holds LaTeX
+  (`tex/latex/base/latex.ltx`); `found` and `texpresso` are then TEXMFDIST, the rest null.
+  `install_tex` and `install_package` are 501: nothing can be added to the tree.
+- **Compile** makes the passes latexmk would: the engine (pdfLaTeX, or XeLaTeX with `-no-pdf`
+  and xdvipdfmx at the end) with the flags latexmk's gets, from the project's folder into the
+  build folder; BibTeX when the `.aux` names a bibliography and makeindex when there's a `.idx`,
+  each again only when its input changed, with the project's folder on BIBINPUTS, BSTINPUTS and
+  INDEXSTYLE; TeX again while its `.aux` changes or its log asks, five passes at most. The Build
+  Log has each program's command line and terminal output after TeX's log. A format is made for
+  each engine on the first build, into `$TEXPRESSO_CACHE/formats`; an app whose engine changes
+  clears that folder. LuaLaTeX is a 400; glossaries, bib2gls and biber aren't run, so their
+  warnings stay in the log; shell escape and latexmkrc files don't apply. Stop and the time limit
+  end a program at its next file access.
+- **Live Preview** runs one session at a time: a start stops another project's (its `live`
+  event says why) and begins once that has ended.
+- **SyncTeX** queries need TeX's synctex program, so they are 404 there.
 
 ## Commands that fill small gaps
 

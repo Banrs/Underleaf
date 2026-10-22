@@ -92,7 +92,9 @@ the engine built from `tools/texpresso`, beside the core's other tests that need
 iPadOS starts no processes, so the iPad app links TeXpresso's in-process engine instead:
 `tools/texpresso-ios` builds it, from TeXpresso's `eclipse` branch with this patch's behaviour
 carried over, as an XCFramework whose Live Preview speaks the same protocol over pipes and which
-also runs Compile's programs.
+also runs Compile's programs. The app hands its functions to the core with `tl_set_engine`
+(`docs/core-api.md`, TeX inside the app); the engine runs one Live Preview at a time, so a
+project's start ends another's.
 
 ## Boundaries
 

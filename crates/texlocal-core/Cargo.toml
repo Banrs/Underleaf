@@ -18,7 +18,7 @@ serde_json = "1"
 # Checks TinyTeX's download against the sum GitHub gives it.
 sha2 = "0.11"
 tempfile = "3"
-tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 # zip's `deflate` feature also brings zopfli, used only past level 9, and the
 # export writes level 6. Without it flate2 has no backend, so flate2 is named
 # here, used by no code, only to choose one: without its line it fails to build.

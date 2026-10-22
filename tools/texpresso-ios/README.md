@@ -39,6 +39,7 @@ Link `Texpresso.xcframework` with `-lz -lc++`. Before the first call, set in the
 `TEXPRESSO_LSR` (the tree's `ls-R` files, colon-separated), `TEXPRESSO_CACHE` (writable, for the
 formats made on first use) and `ICU_DATA` (the folder of `icudt78l.dat`, for XeTeX).
 
+The app gives the three functions to the core with `tl_set_engine` before `tl_open`.
 `txp_live_start` takes the arguments the core gives the program (`-json -I <build> main.tex`,
 relative to the working directory) and returns three pipes: commands in, protocol lines and log
 out. `txp_run` runs one program to its end on the calling thread, in a folder, as latexmk would

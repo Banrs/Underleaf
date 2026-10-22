@@ -69,6 +69,13 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
 }
 
 /// # Safety
+/// `engine` points to a `tl_engine` whose functions are the in-process engine's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_set_engine(engine: *const texlocal_core::inprocess::Engine) {
+    texlocal_core::inprocess::set_engine(unsafe { *engine });
+}
+
+/// # Safety
 /// `data_dir` is null or a NUL-terminated string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
