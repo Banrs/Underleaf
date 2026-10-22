@@ -436,6 +436,45 @@ fn lines_move_up_and_down_with_their_selections() {
     }
 }
 
+type LinesCase<'a> = (&'a str, &'a [(u32, u32)], &'a str, &'a [(u32, u32)]);
+
+fn lines_changed(cases: &[LinesCase], change: fn(&SourceDocument, &[TextRange]) -> Change) {
+    for &(text, selections, after, selected) in cases {
+        let mut e = Editor::open(text, caret(0));
+        e.select_all(selections.iter().map(|&(s, l)| range(s, l)).collect());
+        e.apply(change(&e.doc, &e.selections));
+        let selections: Vec<_> = e.selections.iter().map(|r| (r.start, r.length)).collect();
+        assert_eq!(
+            (e.doc.text().as_str(), &selections[..]),
+            (after, selected),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn lines_are_duplicated_with_the_selection_on_the_copy() {
+    #[rustfmt::skip]
+    lines_changed(&[
+        ("a\nb\nc", &[(2, 1)], "a\nb\nb\nc", &[(4, 1)]),
+        ("a\r\nb", &[(3, 0)], "a\r\nb\r\nb", &[(6, 0)]),
+        ("a", &[(0, 1)], "a\na", &[(2, 1)]),
+        ("1\n2\n3\n4", &[(0, 0), (4, 0)], "1\n1\n2\n3\n3\n4", &[(2, 0), (8, 0)]),
+    ], SourceDocument::duplicate_lines);
+}
+
+#[test]
+fn lines_are_deleted_leaving_the_caret_on_the_next() {
+    #[rustfmt::skip]
+    lines_changed(&[
+        ("a\nb\nc", &[(2, 1)], "a\nc", &[(2, 0)]),
+        ("a\r\nb\r\nc", &[(3, 0)], "a\r\nc", &[(3, 0)]),
+        ("a\nb", &[(2, 1)], "a", &[(1, 0)]),
+        ("a", &[(0, 1)], "", &[(0, 0)]),
+        ("1\n2\n3\n4", &[(0, 0), (1, 0), (4, 0)], "2\n4", &[(0, 0), (2, 0)]),
+    ], SourceDocument::delete_lines);
+}
+
 /// Not an escaped bracket, nor one in a comment, which has no partner of its own; an escaped one pairs only with
 /// the escaped, and the next line is no comment, nor is an escaped percent one.
 #[test]

@@ -5,7 +5,7 @@ enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
-    case editGotoLine, jumpToDefinition, editRename
+    case editDuplicateLine, editDeleteLine, editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
@@ -38,6 +38,8 @@ enum MenuCommand: CaseIterable {
         case .editShiftLeft: ("Shift Left", KeyboardShortcut("["))
         case .editMoveLineUp: ("Move Line Up", KeyboardShortcut(.upArrow, modifiers: [.command, .control]))
         case .editMoveLineDown: ("Move Line Down", KeyboardShortcut(.downArrow, modifiers: [.command, .control]))
+        case .editDuplicateLine: ("Duplicate Line", KeyboardShortcut("d"))
+        case .editDeleteLine: ("Delete Line", KeyboardShortcut("k", modifiers: [.control, .shift]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
         case .jumpToDefinition: ("Jump to Definition", KeyboardShortcut("j", modifiers: [.command, .control]))
         case .editRename: ("Rename…", nil)
@@ -67,7 +69,7 @@ enum MenuCommand: CaseIterable {
     var editsSelection: Bool {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
-             .editMoveLineDown, .jumpToDefinition, .editRename: true
+             .editMoveLineDown, .editDuplicateLine, .editDeleteLine, .jumpToDefinition, .editRename: true
         default: false
         }
     }
@@ -103,7 +105,8 @@ extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
-        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editGotoLine, .jumpToDefinition:
+        case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine,
+             .editGotoLine, .jumpToDefinition:
             project?.editsText == true
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
@@ -173,6 +176,8 @@ extension AppModel {
         case .editShiftLeft: project?.editor.textView.shiftLines(-1)
         case .editMoveLineUp: project?.editor.perform(.moveLineUp)
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
+        case .editDuplicateLine: project?.editor.perform(.duplicateLine)
+        case .editDeleteLine: project?.editor.perform(.deleteLine)
         case .editGotoLine: prompt = .gotoLine
         case .jumpToDefinition: project?.editor.jumpToDefinition()
         case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
@@ -248,7 +253,7 @@ struct AppCommands: Commands {
         CommandGroup(before: .textEditing) { items(.projectSearch, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
-            items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown)
+            items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine)
             Divider()
             items(.editRename)
         }

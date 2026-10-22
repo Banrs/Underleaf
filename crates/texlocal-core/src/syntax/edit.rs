@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::scan::{blank_line, closing_brace};
 use super::{
-    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, comment_start,
-    complete, edit, indentation, is, span, splice, utf16,
+    Insertion, Line, NEWLINE, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
+    comment_start, complete, edit, indentation, is, span, splice, utf16,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -41,6 +41,18 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
         lines.extend(text.line_index(from)..=text.line_index(end));
     }
     lines
+}
+
+/// The touched lines in runs of consecutive ones, each its first and last.
+fn runs(text: &Text, selections: &[TextRange]) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for line in touched_lines(text, selections) {
+        match runs.last_mut() {
+            Some(run) if line == run.1 + 1 => run.1 = line,
+            _ => runs.push((line, line)),
+        }
+    }
+    runs
 }
 
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
@@ -197,16 +209,9 @@ impl SourceDocument {
     pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
         let text = &self.text;
         let (units, len) = (&text.units[..], text.units.len());
-        let mut runs: Vec<(usize, usize)> = Vec::new();
-        for line in touched_lines(text, selections) {
-            match runs.last_mut() {
-                Some(run) if line == run.1 + 1 => run.1 = line,
-                _ => runs.push((line, line)),
-            }
-        }
         let mut edits = Vec::new();
         let mut moves = Vec::new();
-        for (first, last) in runs {
+        for (first, last) in runs(text, selections) {
             let (start, end) = (text.bounds(first).start, text.bounds(last).next);
             if end == start || (if up { first == 0 } else { end >= len }) {
                 return None;
@@ -255,6 +260,47 @@ impl SourceDocument {
             })
             .collect();
         Some(Change { edits, selections })
+    }
+
+    /// The copy goes above, so the selections, moved down with the lines, are on the copy.
+    pub fn duplicate_lines(&self, selections: &[TextRange]) -> Change {
+        let text = &self.text;
+        let edits: Vec<TextEdit> = runs(text, selections)
+            .into_iter()
+            .map(|(first, last)| {
+                let start = text.bounds(first).start;
+                let Line { end, next, .. } = text.bounds(last);
+                let mut copy = text.units[start..next].to_vec();
+                // The text's last line has no break of its own: the line before lends its.
+                if end == next {
+                    let before = last.checked_sub(1).map(|line| text.bounds(line));
+                    copy.extend(before.map_or(&[NEWLINE][..], |b| &text.units[b.end..b.next]));
+                }
+                splice(start, 0, String::from_utf16_lossy(&copy))
+            })
+            .collect();
+        Change {
+            selections: map_selections(&edits, selections),
+            edits,
+        }
+    }
+
+    /// The caret goes to the line after, or to the end of the line before when none is after.
+    pub fn delete_lines(&self, selections: &[TextRange]) -> Change {
+        let text = &self.text;
+        let edits: Vec<TextEdit> = runs(text, selections)
+            .into_iter()
+            .map(|(first, last)| {
+                let (mut start, next) = (text.bounds(first).start, text.bounds(last).next);
+                if next == text.units.len() && first > 0 {
+                    start = text.bounds(first - 1).end;
+                }
+                splice(start, next - start, "")
+            })
+            .collect();
+        let mut selections = map_selections(&edits, selections);
+        selections.dedup();
+        Change { edits, selections }
     }
 
     pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {

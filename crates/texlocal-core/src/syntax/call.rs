@@ -56,6 +56,8 @@ impl SourceDocument {
             "end_snippet" => json(self.end_snippet()),
             "tab" => json(self.tab(&selections()?, optional(a, "step", 1)?)),
             "move_lines" => json(self.move_lines(&selections()?, get(a, "up")?)),
+            "duplicate_lines" => json(self.duplicate_lines(&selections()?)),
+            "delete_lines" => json(self.delete_lines(&selections()?)),
             "toggle_style" => json(self.toggle_style(&selections()?, get(a, "style")?)),
             "wrap" => json(self.wrap(&selections()?, &string("template")?)),
             "map_selections" => json(map_selections(

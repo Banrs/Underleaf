@@ -232,6 +232,8 @@ editor's thread.
   | `end_snippet` | | whether one was open |
   | `tab` | `selections`, [`step` 1] | the next field, or the indent |
   | `move_lines` | `selections`, `up` | the edit, or null |
+  | `duplicate_lines` | `selections` | the change: each selection's whole lines copied, the selection on the copy below |
+  | `delete_lines` | `selections` | the change: each selection's whole lines gone, the caret on the line after (the last line takes the break before it) |
   | `toggle_comment` | `selections` | edits |
   | `toggle_style` | `selections`, `style` (`bold`, `italic`, `underline`) | the change |
   | `wrap` | `selections`, `template` | the change |
