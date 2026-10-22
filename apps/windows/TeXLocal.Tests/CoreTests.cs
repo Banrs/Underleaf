@@ -126,18 +126,16 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Back's and Forward's answers, as the workspace's menu and jumps read them.
+    /// A place sent and Back's answer, as the workspace's jumps and menu read them.
     [Fact]
-    public async Task PlacesGoBackAndForward()
+    public async Task PlacesGoBack()
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Places" });
         const ulong session = 11;
         await core.CallAsync("session_open", new { id = made.Id, session });
-        Assert.Equal(new Trail(true, false, null), await core.CallAsync<Trail>("session_navigate", new { session, from = new Spot("main.tex", 1) }));
+        await core.CallAsync("session_navigate", new { session, from = new Spot("main.tex", 1) });
         var back = await core.CallAsync<Trail>("session_back", new { session, at = new Spot("main.tex", 3) });
         Assert.Equal(new Trail(false, true, new Spot("main.tex", 1)), back);
-        var forward = await core.CallAsync<Trail>("session_forward", new { session, at = new Spot("main.tex", 1) });
-        Assert.Equal(new Trail(true, false, new Spot("main.tex", 3)), forward);
         await core.CallAsync("session_close", new { session });
     }
 

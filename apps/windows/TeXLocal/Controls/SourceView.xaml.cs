@@ -931,11 +931,7 @@ public sealed partial class SourceView : UserControl
     }
 
     /// Visual Studio's Quick info, at the caret.
-    public void ShowQuickInfo()
-    {
-        var at = CaretOffset;
-        if (RectOf(at, at) is { } r) HelpAsked?.Invoke(at, InView(r), false);
-    }
+    public void ShowQuickInfo() => HelpAsked?.Invoke(CaretOffset, CaretRect, false);
 
     /// The prose words selected, counted as the document's are; null with nothing selected.
     public int? SelectedWords => Selected is { Length: > 0 } s && source is not null
