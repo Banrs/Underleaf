@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::scan::{blank_line, closing_brace};
 use super::{
-    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, comment_start,
-    complete, edit, indentation, is, span, splice, utf16,
+    INDENT, Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
+    comment_start, complete, edit, indentation, is, span, splice, utf16,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -78,7 +78,7 @@ impl SourceDocument {
             .filter_map(|l| {
                 let start = text.lines[l];
                 if more {
-                    return Some(edit(start, 0, "  "));
+                    return Some(edit(start, 0, INDENT));
                 }
                 let line = text.line(l);
                 let indent = &line[..indentation(line)];
@@ -179,9 +179,7 @@ impl SourceDocument {
     pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
         let at = selection.start as usize;
-        let mut scanner = self.scans.resume(&self.text, at, at).scanner;
-        scanner.run(&self.text.units[..at], at, &[], &mut ());
-        let text = if scanner.in_math() {
+        let text = if self.scanned_to(at).in_math() {
             command.to_string()
         } else {
             format!("${command}$")

@@ -175,12 +175,13 @@ fn keys_type_as_the_editor_assists() {
         ("\\", caret(1), "(\\pi)", "\\(\\pi\\)", caret(7)),
         ("\\", caret(1), "{", "\\{\\}", caret(2)),
         ("\\", caret(1), "{⌫", "\\", caret(1)),
-        ("\\", caret(1), "[⏎", "\\[\n\n\\]", caret(3)),
+        ("\\", caret(1), "[⏎", "\\[\n  \n\\]", caret(5)),
         ("\\\\", caret(2), "[", "\\\\[]", caret(3)),
         // An emoji after an opening bracket is occupied text.
         ("😀", caret(0), "(", "(😀", caret(1)),
         ("  a", caret(3), "⏎", "  a\n  ", caret(6)),
-        ("  a{}", caret(4), "⏎", "  a{\n  \n  }", caret(7)),
+        // Between an opener and its closer the new line goes a step in.
+        ("  a{}", caret(4), "⏎", "  a{\n    \n  }", caret(9)),
         ("\ta  b", caret(2), "⏎", "\ta\n\tb", caret(4)),
         ("    x", caret(2), "⏎", "\n    x", caret(5)),
         ("\ta\t b", caret(2), "⏎", "\ta\n\tb", caret(4)),
@@ -192,7 +193,14 @@ fn keys_type_as_the_editor_assists() {
         ("     y", caret(5), "⌫", "    y", caret(4)),
         ("     y", caret(5), "⌫⌫", "  y", caret(2)),
     ];
-    for (text, selection, keys, after, selection_after) in cases {
+    assists(&cases);
+}
+
+/// A text with its selection, the keys typed in it, and the text and selection after them.
+type Case<'a> = (&'a str, TextRange, &'a str, &'a str, TextRange);
+
+fn assists(cases: &[Case]) {
+    for &(text, selection, keys, after, selection_after) in cases {
         let mut e = Editor::open(text, selection);
         e.keys(keys);
         let shown = (e.doc.text(), e.selection());
@@ -202,6 +210,79 @@ fn keys_type_as_the_editor_assists() {
             "{keys:?} in {text:?}"
         );
     }
+}
+
+/// As brackets, but only where they open maths: in it a dollar closes it, and `\$` is one in the text.
+#[test]
+fn dollars_pair_as_brackets_do() {
+    #[rustfmt::skip]
+    let cases: &[Case] = &[
+        ("ab", range(0, 2), "$", "$ab$", range(1, 2)),
+        ("", caret(0), "$x$", "$x$", caret(3)),
+        ("a", caret(0), "$", "$a", caret(1)),
+        ("$x", caret(2), "$", "$x$", caret(3)),
+        ("\\", caret(1), "$", "\\$", caret(2)),
+        ("\\\\", caret(2), "$", "\\\\$$", caret(3)),
+        // An empty pair becomes a display's, whose closers are stepped over too.
+        ("", caret(0), "$$x$$", "$$x$$", caret(5)),
+        ("", caret(0), "$⌫", "", caret(0)),
+        ("", caret(0), "$$⌫", "$$", caret(1)),
+        ("", caret(0), "$$⌫⌫", "", caret(0)),
+    ];
+    assists(cases);
+}
+
+/// Unclosed, it is closed on a line of its own; closed, the new line just goes a step in, as it does between a
+/// `\begin` and its `\end` on one line. A document's body isn't indented, and tabs stay tabs.
+#[test]
+fn return_after_a_begin_closes_its_environment() {
+    #[rustfmt::skip]
+    let cases: &[Case] = &[
+        ("\\begin{x}", caret(9), "⏎", "\\begin{x}\n  \n\\end{x}", caret(12)),
+        ("  \\begin{tabular}{ll} ", caret(21), "⏎", "  \\begin{tabular}{ll}\n    \n  \\end{tabular}", caret(26)),
+        ("\\begin{figure}[ht]", caret(18), "⏎", "\\begin{figure}[ht]\n  \n\\end{figure}", caret(21)),
+        ("\\begin{x}\n\\end{x}", caret(9), "⏎", "\\begin{x}\n  \n\\end{x}", caret(12)),
+        ("\\begin{x}\\end{x}", caret(9), "⏎", "\\begin{x}\n  \n\\end{x}", caret(12)),
+        ("\\begin{d}\n\\begin{x}\n\\end{d}", caret(19), "⏎", "\\begin{d}\n\\begin{x}\n  \n\\end{x}\n\\end{d}", caret(22)),
+        ("\\begin{document}", caret(16), "⏎", "\\begin{document}\n\n\\end{document}", caret(17)),
+        ("\t\\begin{x}", caret(10), "⏎", "\t\\begin{x}\n\t\t\n\t\\end{x}", caret(13)),
+        ("\\begin{x} y", caret(9), "⏎", "\\begin{x}\ny", caret(10)),
+    ];
+    assists(cases);
+}
+
+/// An item with text goes on to the next; an empty one is taken away, so a second Return leaves the list.
+#[test]
+fn return_in_a_list_goes_on_with_it() {
+    let list = |items: &str| format!("\\begin{{itemize}}\n  {items}\n\\end{{itemize}}");
+    let (one, end) = (list("\\item a"), units("\\begin{itemize}\n  \\item a"));
+    #[rustfmt::skip]
+    let cases: &[Case] = &[
+        (&one, caret(end), "⏎", &list("\\item a\n  \\item "), caret(end + 9)),
+        (&one, caret(end), "⏎⏎", &list("\\item a\n  "), caret(end + 3)),
+        (&one, caret(end - 1), "⏎", &list("\\item \n  a"), caret(end + 2)),
+        ("\\item a", caret(7), "⏎", "\\item a\n", caret(8)),
+        (&list("\\itemsep"), caret(end + 1), "⏎", &list("\\itemsep\n  "), caret(end + 4)),
+    ];
+    assists(cases);
+}
+
+/// A name with a partner is typed in both, until the selection leaves it.
+#[test]
+fn an_environments_name_is_typed_in_its_begin_and_end() {
+    let source = "\\begin{x}\n  \\begin{y}\\end{y}\n\\end{x}";
+    #[rustfmt::skip]
+    let cases: &[Case] = &[
+        (source, caret(8), "z", "\\begin{xz}\n  \\begin{y}\\end{y}\n\\end{xz}", caret(9)),
+        (source, range(34, 1), "w", "\\begin{w}\n  \\begin{y}\\end{y}\n\\end{w}", caret(35)),
+        (source, caret(8), "z⌫", source, caret(8)),
+        // With no other field to go to, Shift-Tab outdents.
+        (source, caret(19), "⇤", "\\begin{x}\n\\begin{y}\\end{y}\n\\end{x}", caret(17)),
+        // An \end that closes nothing, and a \begin nothing closes, have no partner.
+        ("\\end{x}", caret(6), "z", "\\end{xz}", caret(7)),
+        ("\\begin{x}\n\\end{y}", caret(8), "z", "\\begin{xz}\n\\end{y}", caret(9)),
+    ];
+    assists(cases);
 }
 
 #[test]
@@ -318,16 +399,14 @@ fn a_field_in_two_places_is_typed_in_both() {
     assert_eq!(e.doc.text(), "\\begin{fi}\n  \n\\end{fi}");
     e.keys("⇥");
     assert_eq!(e.selection(), caret(13));
-    // Typing outside the fields ends the snippet.
+    // Typing outside the fields ends the snippet, and Tab then indents.
     let mut e = Editor::open("\\beg", caret(4));
     e.put(edit(0, 4, &item.text), 0);
     let first = e.doc.start_snippet(&item.fields, 0).unwrap();
     e.select(first);
     e.select(caret(0));
-    e.keys("x");
-    e.select(caret(8));
-    e.keys("y");
-    assert_eq!(e.doc.text(), "x\\begin{yenv}\n  \n\\end{env}");
+    e.keys("x⇥");
+    assert_eq!(e.doc.text(), "  x\\begin{env}\n  \n\\end{env}");
 }
 
 #[test]
