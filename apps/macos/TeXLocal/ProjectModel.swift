@@ -150,20 +150,30 @@ final class ProjectModel {
 
     let notices = ProjectNotices()
 
-    var saved: SavedWorkspace {
-        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: panel.shown, pdfPage: pdf.restorePage ?? pdf.page,
-                       pdfZoom: pdf.restoreZoom ?? pdf.zoom)
+    /// Where the project is left, which `load` shows again from the core's ui state.
+    var place: [String: any Sendable] {
+        var place: [String: any Sendable] = ["line": cursorLine, "zoom": pdf.keptZoom.json, "panel": panel.shown]
+        if let openPath { place["file"] = openPath }
+        if let page = pdf.keptPage { place["page"] = page }
+        return place
+    }
+
+    /// As the project is left and on quit; one that never loaded has no place of its own to keep.
+    func savePlace() async {
+        guard initialLoadComplete else { return }
+        saveUIState(place)
+        await uiStateWrites?.value
     }
 
     // MARK: - Loading
 
     /// Stops if the project is left meanwhile.
-    func load(restoring saved: SavedWorkspace?) async {
+    func load() async {
         connectEditor()
-        if let saved { (panel.shown, pdf.restorePage, pdf.restoreZoom) = (saved.buildPanel, saved.pdfPage, saved.pdfZoom) }
         let session = core.observe { [weak self] event in self?.handle(event) }
-        // Shown before the workspace appears, so the pane doesn't open empty.
+        // Shown before the workspace appears, so the pane doesn't open empty; the PDF's place waits for the view's size.
         async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
+        let ui: UIState
         do {
             // With automatic builds and no PDF, the session starts one.
             let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
@@ -173,10 +183,12 @@ final class ProjectModel {
             name = opened.name
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
             settings = opened.settings
-            showUIState(opened.ui)
+            ui = opened.ui
+            showUIState(ui)
+            (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
             if !treeChanged { tree.show(opened.tree) }
-            let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
-            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
+            let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
+            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line) }
             await analysis?.value
         } catch {
             core.forget(session)
@@ -191,6 +203,8 @@ final class ProjectModel {
         _ = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
+        // The core remembers the user's last Start or Stop, so Live Preview is per project.
+        if ui.livePreview, canSwitchLivePreview { livePreview = true }
     }
 
     private func connectEditor() {
@@ -568,15 +582,6 @@ final class ProjectModel {
         guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
         Task { await open(item.file, line: item.line, atTop: true, focus: false) }
     }
-}
-
-nonisolated struct SavedWorkspace: Codable, Equatable {
-    var project: String
-    var file: String?
-    var line: Int
-    var buildPanel: Bool
-    var pdfPage: Int
-    var pdfZoom: PDFController.Zoom?
 }
 
 /// None: the file dropped opens.

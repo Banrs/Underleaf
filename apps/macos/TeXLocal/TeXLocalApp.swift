@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             let saved = await app.project?.save() ?? true
             if saved {
+                await app.project?.savePlace()
                 // Compiles run in their own process groups; nothing else stops them.
                 try? await Core.shared.call("kill_all", [:])
             } else if mainWindow.window?.isVisible != true {

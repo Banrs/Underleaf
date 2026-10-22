@@ -13,7 +13,7 @@ use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
 use crate::logparse::{LogItem, parse_live_log};
 use crate::projects::is_text;
-use crate::settings::Engine;
+use crate::settings::{self, Engine};
 use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
@@ -187,8 +187,20 @@ impl Actor {
         }
     }
 
+    /// Only the user's Start and Stop are remembered, so a project closed or the app quit
+    /// while it ran starts it again as it opens. Best effort: the state is a convenience.
+    fn remember_live(&self, on: bool) {
+        let _ = self.service.with_project(&self.project_id, |project| {
+            settings::store_ui(&project.ui, |ui| {
+                ui.live_preview = on;
+                Ok(())
+            })
+        });
+    }
+
     /// A restart still pending gives way to a user's Start: it would stop the preview this starts.
     pub fn live_start_asked(&mut self) -> Value {
+        self.remember_live(true);
         if self.live.phase == Phase::Stopped {
             self.live_cancel_work();
             self.live_start();
@@ -245,6 +257,12 @@ impl Actor {
                 self.ended();
             }
         }
+    }
+
+    pub fn live_stop_asked(&mut self) -> Value {
+        self.remember_live(false);
+        self.live_stop();
+        self.live_state()
     }
 
     pub fn live_stop(&mut self) {

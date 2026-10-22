@@ -129,7 +129,7 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
-    project_id: String,
+    pub project_id: String,
     pub project: Project,
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
@@ -435,10 +435,7 @@ impl Actor {
                 }
             }
             "live_start" => return Ok(self.live_start_asked()),
-            "live_stop" => {
-                self.live_stop();
-                return Ok(self.live_state());
-            }
+            "live_stop" => return Ok(self.live_stop_asked()),
             "live_log" => self.show_live_log(arg(args, "shown")?),
             "live_view" => self.live_view(arg(args, "first")?, arg(args, "last")?),
             "live_caret" => self.live_caret(path()?, arg(args, "offset")?),

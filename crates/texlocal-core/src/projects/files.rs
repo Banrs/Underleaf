@@ -189,7 +189,7 @@ pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
 mod tests {
     use super::*;
     use crate::projects::testing::project;
-    use crate::settings::{UiPatch, UiState, read_ui, write_ui};
+    use crate::settings::{read_ui, write_ui};
 
     #[cfg(unix)]
     #[test]
@@ -230,20 +230,24 @@ mod tests {
         let (_dir, root) = project();
         let project = Project::in_folder(&root);
         create_free(&root, "chapters/a.tex", false).unwrap();
-        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let patch = UiPatch {
-            expanded_folders: Some(list(&["other", "chapters/deep", "chapters"])),
-            folded_headings: Some(list(&["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"])),
-        };
-        write_ui(&project.ui, patch).unwrap();
+        let patch = json!({
+            "expandedFolders": ["other", "chapters/deep", "chapters"],
+            "foldedHeadings": ["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"],
+            "file": "chapters/a.tex",
+        });
+        write_ui(&project.ui, &patch).unwrap();
         rename_entry(&project, "chapters", "content").unwrap();
-        let state = UiState {
-            expanded_folders: list(&["content", "content/deep", "other"]),
-            folded_headings: list(&["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]),
-        };
-        assert_eq!(read_ui(&project.ui), state);
+        let state = read_ui(&project.ui);
+        assert_eq!(state.expanded_folders, ["content", "content/deep", "other"]);
+        let folds = ["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"];
+        assert_eq!(state.folded_headings, folds);
+        assert_eq!(state.file.as_deref(), Some("content/a.tex"));
         rename_entry(&project, "content/a.tex", "content/b.tex").unwrap();
-        let folds = read_ui(&project.ui).folded_headings;
-        assert_eq!(folds, ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]);
+        let state = read_ui(&project.ui);
+        assert_eq!(
+            state.folded_headings,
+            ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]
+        );
+        assert_eq!(state.file.as_deref(), Some("content/b.tex"));
     }
 }

@@ -86,11 +86,11 @@ struct PDFFitTests {
         let view = project.pdf.view
         project.pdf.restorePage = 3
         project.pdf.show(try pages(3))
-        #expect(project.saved.pdfPage == 3)
+        #expect(project.pdf.keptPage == 3)
         // The PDF can finish loading before SwiftUI gives the owned view its first size.
         view.setFrameSize(NSSize(width: 600, height: 500))
         view.layoutDocumentView()
-        #expect(project.pdf.pageCount == 3 && project.saved.pdfPage == 3)
+        #expect(project.pdf.pageCount == 3 && project.pdf.keptPage == 3)
         project.pdf.setScale(view.maxScaleFactor)
         #expect(!app.isEnabled(.viewZoomIn, on: project) && app.isEnabled(.viewZoomOut, on: project))
         project.tree.show(.sources)
@@ -99,7 +99,7 @@ struct PDFFitTests {
         project.openPath = "main.tex"
         #expect(app.isEnabled(.syncForward, on: project))
         project.pdf.go(toPage: 2)
-        #expect(project.saved.pdfPage == 2)
+        #expect(project.place["page"] as? Int == 2)
     }
 
     @Test func goToPageKeepsToTheDocument() throws {
@@ -121,13 +121,14 @@ struct PDFFitTests {
         project.pdf.restoreZoom = zoom
         project.pdf.show(try pages(3))
         // Kept until the view has a size to fit in.
-        #expect(project.saved.pdfZoom == zoom)
+        #expect(project.pdf.keptZoom == zoom)
         project.pdf.view.setFrameSize(NSSize(width: 600, height: 500))
         project.pdf.view.layoutDocumentView()
-        #expect(project.pdf.restoreZoom == nil && project.saved.pdfZoom == zoom)
+        #expect(project.pdf.restoreZoom == nil && project.pdf.keptZoom == zoom)
         if case .scale(let scale) = zoom { #expect(abs(project.pdf.view.scaleFactor - scale) < 0.001) }
-        let old = Data(#"{"project":"p","line":1,"buildPanel":false,"pdfPage":2}"#.utf8)
-        #expect(try JSONDecoder().decode(SavedWorkspace.self, from: old).pdfZoom == nil)
+        // As the core keeps it.
+        let kept = try JSONSerialization.data(withJSONObject: zoom.json, options: .fragmentsAllowed)
+        #expect(try JSONDecoder().decode(PDFController.Zoom.self, from: kept) == zoom)
     }
 
     /// The mark is beside the page, not an annotation, which Print and VoiceOver would see.

@@ -303,8 +303,8 @@ mod tests {
         let project = service.project(&id).unwrap();
         assert_eq!(project.settings, folder.join(SETTINGS_FILE));
         assert_eq!(read_settings(&project.settings).main_file, "paper.tex");
-        let patch = serde_json::from_value(json!({ "foldedHeadings": ["x"] })).unwrap();
-        crate::settings::write_ui(&project.ui, patch).unwrap();
+        let patch = json!({ "foldedHeadings": ["x"] });
+        crate::settings::write_ui(&project.ui, &patch).unwrap();
         assert_eq!(fs::read_to_string(folder.join(SETTINGS_FILE)).unwrap(), own);
         assert!(project.ui.starts_with(service.data_dir.join(STORE)));
     }

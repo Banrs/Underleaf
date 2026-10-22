@@ -13,7 +13,7 @@ and has no Live Preview. There is no Linux version.
 
 You start a project from a template (blank, article, report or Beamer presentation), or open a
 folder, `.tex` file or `.zip` you already have. The source sits on the left and the PDF on the
-right.
+right. A project opens again where you left it, on the same file, line, page and zoom.
 
 A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
 and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
@@ -38,7 +38,8 @@ Clicking in the PDF takes you to that place in the source, and you can go the ot
 
 Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
-brings it new citations and references.
+brings it new citations and references. Once on for a project, it starts with it until you turn it
+off.
 
 There's also a file tree, an outline of the current file, a word count, search and replace across
 the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go

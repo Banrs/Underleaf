@@ -185,15 +185,20 @@ final class ProjectFlowTests {
         #expect(app.project == nil && app.alert != nil && !app.isOpening)
     }
 
-    @Test func aProjectOpensOnItsBuiltPDF() async throws {
+    @Test func aProjectOpensOnItsBuiltPDFWhereItWasLeft() async throws {
         let (info, folder) = try await project()
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
         #expect(try textPDF(["one", "two", "three"]).write(to: folder.appending(path: "build/main.pdf")))
-        let saved = SavedWorkspace(project: info.id, file: nil, line: 1, buildPanel: true, pdfPage: 2, pdfZoom: nil)
-        await app.open(info.id, restoring: saved)
+        let place: [String: any Sendable] = ["file": "gone.tex", "line": 9, "page": 2, "zoom": 1.5, "panel": true]
+        try await Core.shared.call("set_ui_state", ["id": info.id, "patch": place])
+        await app.open(info.id)
         let project = try #require(app.project)
         #expect(project.initialLoadComplete && project.openPath == info.mainFile && project.panel.shown)
-        #expect(project.hasPDF && project.pdf.view.document?.pageCount == 3)
+        #expect(project.hasPDF && project.pdf.view.document?.pageCount == 3 && project.pdf.keptZoom == .scale(1.5))
+        project.panel.shown = false
+        await app.close()
+        await app.open(info.id)
+        #expect(app.project?.panel.shown == false)
         await app.close()
     }
 

@@ -122,21 +122,31 @@ pub fn read_settings(file: &Path) -> Settings {
 
 pub fn write_settings(file: &Path, patch: &Value) -> Result<Settings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
-        let Value::Object(patch) = patch else {
-            return Err(CoreError::bad_request("Invalid settings"));
-        };
-        let Ok(Value::Object(mut merged)) = serde_json::to_value(&file.settings) else {
-            unreachable!("settings serialize as an object");
-        };
-        merged.extend(patch.clone());
-        let mut settings = Settings::deserialize(Value::Object(merged))
-            .map_err(|err| CoreError::bad_request(format!("Invalid settings: {err}")))?;
+        let mut settings = merged(&file.settings, patch, "settings")?;
         // latexmk would read a main file starting with "-" as an option.
         settings.main_file = safe_rel_file(&settings.main_file)?;
         file.settings = settings;
         Ok(())
     })?;
     Ok(file.settings)
+}
+
+/// `value` with the keys of `patch` in place of its own: 400 if the patch isn't an object or
+/// what it makes isn't a `T`.
+fn merged<T: Serialize + DeserializeOwned>(
+    value: &T,
+    patch: &Value,
+    what: &str,
+) -> Result<T, CoreError> {
+    let Value::Object(patch) = patch else {
+        return Err(CoreError::bad_request(format!("Invalid {what}")));
+    };
+    let Ok(Value::Object(mut merged)) = serde_json::to_value(value) else {
+        unreachable!("{what} serialize as an object");
+    };
+    merged.extend(patch.clone());
+    T::deserialize(Value::Object(merged))
+        .map_err(|err| CoreError::bad_request(format!("Invalid {what}: {err}")))
 }
 
 /// The folders chosen for TeX's programs and for TeXpresso, shared by every project; None finds the program itself.
@@ -163,27 +173,46 @@ impl AppSettings {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What a host keeps of the project's interface: the place it was left at, which a host shows
+/// again as the project opens, and whether Live Preview was last asked to run.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UiState {
     pub expanded_folders: Vec<String>,
     pub folded_headings: Vec<String>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub page: Option<u32>,
+    pub zoom: Option<Zoom>,
+    pub panel: bool,
+    pub live_preview: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Zoom {
+    Fit(Fit),
+    /// 1 is 100%.
+    Scale(f64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UiPatch {
-    pub expanded_folders: Option<Vec<String>>,
-    pub folded_headings: Option<Vec<String>>,
+pub enum Fit {
+    FitWidth,
+    FitPage,
 }
 
 pub fn read_ui(file: &Path) -> UiState {
     read_project(file).ui
 }
 
-fn store_ui(file: &Path, change: impl FnOnce(&mut UiState)) -> Result<UiState, CoreError> {
+pub(crate) fn store_ui(
+    file: &Path,
+    change: impl FnOnce(&mut UiState) -> Result<(), CoreError>,
+) -> Result<UiState, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
-        change(&mut file.ui);
+        change(&mut file.ui)?;
         for list in [&mut file.ui.expanded_folders, &mut file.ui.folded_headings] {
             list.sort();
             list.dedup();
@@ -193,14 +222,16 @@ fn store_ui(file: &Path, change: impl FnOnce(&mut UiState)) -> Result<UiState, C
     Ok(file.ui)
 }
 
-pub fn write_ui(file: &Path, patch: UiPatch) -> Result<UiState, CoreError> {
+/// The keys of `patch` replace the state's, but for `livePreview`, which only the core's Live
+/// Preview commands write.
+pub fn write_ui(file: &Path, patch: &Value) -> Result<UiState, CoreError> {
     store_ui(file, |state| {
-        if let Some(folders) = patch.expanded_folders {
-            state.expanded_folders = folders;
-        }
-        if let Some(headings) = patch.folded_headings {
-            state.folded_headings = headings;
-        }
+        let live_preview = state.live_preview;
+        *state = UiState {
+            live_preview,
+            ..merged(state, patch, "ui state")?
+        };
+        Ok(())
     })
 }
 
@@ -215,6 +246,11 @@ pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
             *folder = new;
         }
     }
+    if let Some(shown) = &mut state.file
+        && let Some(new) = moved(shown)
+    {
+        *shown = new;
+    }
     for key in &mut state.folded_headings {
         if let Some((file, rest)) = key.split_once('\t')
             && let Some(new) = moved(file)
@@ -223,7 +259,10 @@ pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
         }
     }
     if state != before {
-        let _ = store_ui(file, |saved| *saved = state);
+        let _ = store_ui(file, |saved| {
+            *saved = state;
+            Ok(())
+        });
     }
 }
 
@@ -270,20 +309,32 @@ mod tests {
     }
 
     #[test]
-    fn interface_state_replaces_each_list_it_names_and_survives_settings_changes() {
+    fn a_ui_patch_replaces_only_what_it_names_and_never_live_preview() {
         let dir = tempfile::tempdir().unwrap();
         let file = &dir.path().join(SETTINGS_FILE);
-        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let patch = |value: Value| serde_json::from_value::<UiPatch>(value).unwrap();
         assert_eq!(read_ui(file), UiState::default());
-        write_ui(file, patch(json!({ "expandedFolders": ["b", "a", "b"] }))).unwrap();
-        write_ui(file, patch(json!({ "foldedHeadings": ["x\t1:T#1"] }))).unwrap();
+        let place = json!({
+            "expandedFolders": ["b", "a", "b"], "file": "a.tex", "line": 12, "zoom": "fitWidth"
+        });
+        write_ui(file, &place).unwrap();
+        store_ui(file, |ui| {
+            ui.live_preview = true;
+            Ok(())
+        })
+        .unwrap();
         write_settings(file, &json!({ "engine": "lualatex" })).unwrap();
-        let state = read_ui(file);
-        assert_eq!(state.expanded_folders, list(&["a", "b"]));
-        assert_eq!(state.folded_headings, list(&["x\t1:T#1"]));
-        write_ui(file, patch(json!({ "expandedFolders": [] }))).unwrap();
-        assert_eq!(read_ui(file).folded_headings, list(&["x\t1:T#1"]));
+        let patch = json!({
+            "line": null, "page": 3, "zoom": 1.5, "panel": true, "livePreview": false
+        });
+        let written = write_ui(file, &patch).unwrap();
+        let expected = json!({
+            "expandedFolders": ["a", "b"], "foldedHeadings": [], "file": "a.tex", "line": null,
+            "page": 3, "zoom": 1.5, "panel": true, "livePreview": true
+        });
+        assert_eq!(json!(written), expected);
+        assert_eq!(json!(read_ui(file)), expected);
+        let err = write_ui(file, &json!({ "zoom": "fitAll" })).unwrap_err();
+        assert_eq!(err.status, 400);
         assert_eq!(read_settings(file).engine, Engine::Lualatex);
     }
 

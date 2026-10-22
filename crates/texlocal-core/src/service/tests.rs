@@ -69,8 +69,14 @@ async fn a_new_project_is_made_with_its_engine() {
     let (_dir, service) = library();
     let args = json!({ "name": "Xe", "template": "blank", "engine": "xelatex" });
     let made = call(&service, "create_project", args).await;
-    let settings = call(&service, "get_settings", json!({ "id": made["id"] })).await;
-    assert_eq!(settings["engine"], "xelatex");
+    let sessions = Sessions::new(Arc::new(service));
+    let args = json!({ "id": made["id"], "session": 1 });
+    let opened = sessions.call("session_open", &args).await.unwrap();
+    assert_eq!(opened["settings"]["engine"], "xelatex");
+    sessions
+        .call("session_close", &json!({ "session": 1 }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

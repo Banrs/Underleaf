@@ -16,7 +16,27 @@ final class PDFController: NSObject {
         return document
     }
 
-    nonisolated enum Zoom: Codable, Hashable { case fitWidth, fitPage, scale(Double) }
+    /// As a project's ui state keeps it (docs/core-api.md): "fitWidth", "fitPage" or a scale.
+    nonisolated enum Zoom: Decodable, Hashable {
+        case fitWidth, fitPage, scale(Double)
+
+        init(from decoder: any Decoder) throws {
+            let value = try decoder.singleValueContainer()
+            if let scale = try? value.decode(Double.self) {
+                self = .scale(scale)
+            } else {
+                self = try value.decode(String.self) == "fitPage" ? .fitPage : .fitWidth
+            }
+        }
+
+        var json: any Sendable {
+            switch self {
+            case .fitWidth: "fitWidth"
+            case .fitPage: "fitPage"
+            case .scale(let scale): scale
+            }
+        }
+    }
 
     /// PDFKit would go to 10,000%; the toolbar's scale has room for three digits.
     private static let minScale: CGFloat = 0.1
@@ -37,6 +57,9 @@ final class PDFController: NSObject {
     /// A project's last page and zoom, kept until the view has a size to show them in.
     @ObservationIgnored var restorePage: Int?
     @ObservationIgnored var restoreZoom: Zoom?
+    /// What a project keeps of the view, the restored place while it waits.
+    var keptPage: Int? { restorePage ?? (page > 0 ? page : nil) }
+    var keptZoom: Zoom { restoreZoom ?? zoom }
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0

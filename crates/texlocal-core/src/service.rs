@@ -151,7 +151,6 @@ impl Service {
                     projects::rename_project(&self.data_dir, id, name, stop)
                 })?)
             }
-            "get_settings" => out(settings::read_settings(&project()?.settings)),
             "file_tree" => out(projects::file_tree(&project()?)?),
             "create_entry" => {
                 let path = s("path")?;
@@ -229,7 +228,7 @@ impl Service {
                 Ok(Value::Null)
             }
             "set_ui_state" => out(self.with_project(s("id")?, |project| {
-                settings::write_ui(&project.ui, arg(args, "patch")?)
+                settings::write_ui(&project.ui, &arg(args, "patch")?)
             })?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }

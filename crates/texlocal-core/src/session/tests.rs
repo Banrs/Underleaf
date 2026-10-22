@@ -908,6 +908,20 @@ async fn live(rig: &Rig) -> Value {
 }
 
 #[tokio::test(start_paused = true)]
+async fn live_preview_is_remembered_as_asked_and_not_as_its_session_closes() {
+    let rig = Rig::new(false).await;
+    live(&rig).await;
+    rig.ok("close", json!({})).await;
+    let args = json!({ "id": "P", "session": 2 });
+    let opened = rig.sessions.call("session_open", &args).await.unwrap();
+    assert_eq!(opened["ui"]["livePreview"], true);
+    let args = json!({ "session": 2 });
+    rig.sessions.call("session_live_stop", &args).await.unwrap();
+    let ui = rig.sessions.service.project("P").unwrap().ui;
+    assert!(!crate::settings::read_ui(&ui).live_preview);
+}
+
+#[tokio::test(start_paused = true)]
 async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
