@@ -24,7 +24,8 @@ final class PDFController: NSObject {
     @ObservationIgnored private(set) var shownVersion = 0
     @ObservationIgnored private var liveShown = false
     @ObservationIgnored private var liveMissed = false
-    @ObservationIgnored private var pendingReveal: ForwardLoc?
+    @ObservationIgnored var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
+    @ObservationIgnored var revealing: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -36,7 +37,7 @@ final class PDFController: NSObject {
             guard let self else { return }
             if zoom == .fitPage { fitPage() }
             restoreIfReady()
-            if let pending = pendingReveal { reveal(pending) }
+            if let pending = pendingReveal { reveal(pending.loc, from: pending.source) }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
         NotificationCenter.default.addObserver(self, selector: #selector(visiblePagesChanged), name: .PDFViewVisiblePagesChanged, object: view)
@@ -122,6 +123,7 @@ final class PDFController: NSObject {
     /// Into the document showing, so the place and zoom stay.
     func show(_ document: PDFDocument) {
         shownVersion += 1
+        revealing?.cancel()
         (liveShown, liveMissed) = (false, false)
         let place = restorePage == nil ? view.shownPlace : nil
         view.removeMark()
@@ -146,6 +148,7 @@ final class PDFController: NSObject {
     func clear() {
         shownVersion += 1
         pendingReveal = nil
+        revealing?.cancel()
         (liveShown, liveMissed) = (false, false)
         view.removeMark()
         view.document = nil
@@ -191,13 +194,15 @@ final class PDFController: NSObject {
 
     // MARK: - SyncTeX
 
-    func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
-        guard view.hasShownArea else { return pendingReveal = loc }
-        pendingReveal = nil
-        guard let page = view.document?.page(ifAt: Int(loc.page) - 1) else { return }
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
-        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
-        view.flash(rect, on: page)
+    /// The word selected in the find highlight's yellow, unless the find navigator is open with its own.
+    func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
+        if let selection, !view.findInteraction.isFindNavigatorVisible {
+            view.removeMark()
+            selection.color = view.findYellow
+            view.setCurrentSelection(selection, animate: !UIAccessibility.isReduceMotionEnabled)
+        } else {
+            view.flash(rect, on: page)
+        }
     }
 
     /// SyncTeX resolves only points on a glyph box, so the probe walks down to a line of text.
@@ -273,14 +278,19 @@ final class SyncPDFView: PDFView {
         onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.click(at: point))
     }
 
+    /// Find's yellow, as it shows through dark paper's inversion.
+    var findYellow: UIColor {
+        let yellow = UIColor.systemYellow.resolvedColor(with: traitCollection)
+        return darkPaper ? yellow.underDarkPaper : yellow
+    }
+
     /// Fades after a moment; with Reduce Motion it fades too, as the HIG puts a fade in motion's place.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
         let topLeft = convert(CGPoint(x: rect.minX, y: rect.maxY), from: page)
         let bottomRight = convert(CGPoint(x: rect.maxX, y: rect.minY), from: page)
         let mark = UIView(frame: CGRect(x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y))
-        let yellow = UIColor.systemYellow.resolvedColor(with: traitCollection)
-        mark.backgroundColor = (darkPaper ? yellow.underDarkPaper : yellow).withAlphaComponent(0.35)
+        mark.backgroundColor = findYellow.withAlphaComponent(0.35)
         mark.layer.cornerRadius = 3
         mark.isUserInteractionEnabled = false
         addSubview(mark)
