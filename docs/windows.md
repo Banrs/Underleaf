@@ -81,7 +81,7 @@ apps/windows/
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView`, an opened folder's path under its name as in Word's | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
 | Dialogs | `ContentDialog` through `App.Show` | Each dialog setting its own root, theme and style |
-| Version history | A wide `ContentDialog`, as Word's Version History pane: `ListView`s of versions and their changed files, the file's comparison a `ListView` of lines on `SystemFillColorCriticalBackground` and `SystemFillColorSuccessBackground`, diffed in C# for display; Restore all closes it for its confirmation, which reopens it on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
+| Version history | A wide `ContentDialog`, as Word's Version History pane: `ListView`s of versions and their changed files, the file's comparison a `ListView` of lines on `SystemFillColorCriticalBackground` and `SystemFillColorSuccessBackground`, as the core diffs them; Restore all closes it for its confirmation, which reopens it on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem` with `SendToRecycleBin` | `DeleteAsync` deletes outright unpackaged |
 | Source editor | `RichEditBox` (it passed the editor gate) | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG; the palette a grouped `GridView` in a `Flyout` | A font's glyphs miss TeX's spacing |

@@ -168,18 +168,18 @@ struct VersionHistorySheet: View {
     private func compare() async {
         (shown, restorable) = (nil, false)
         guard let session = project.session, let chosen, let file else { return }
-        let answer: Comparison
+        let rows: [DiffLine]
         do {
-            answer = try await project.core.call("session_history_compare", ["session": session, "id": chosen, "path": file],
-                                                 as: Comparison.self)
+            rows = try await project.core.call("session_history_compare", ["session": session, "id": chosen, "path": file],
+                                               as: [DiffLine].self)
         } catch {
             if !Task.isCancelled { shown = .failed(error.localizedDescription) }
             return
         }
         // Another file chosen meanwhile.
         guard !Task.isCancelled else { return }
-        restorable = answer.old != nil && answer.old != answer.new
-        shown = answer.old == answer.new ? .same : .diff(lineDiff(answer.old, answer.new))
+        restorable = !rows.isEmpty && snapshot?.changed.first(where: { $0.path == file })?.change != .deleted
+        shown = rows.isEmpty ? .same : .diff(rows)
     }
 
     private func restore(_ snapshot: Snapshot, paths: [String]?) {
@@ -232,17 +232,19 @@ private struct DiffView: View {
     }
 
     @ViewBuilder private func row(_ row: DiffLine) -> some View {
-        switch row {
-        case .same(let text): line(" ", text, tint: .clear)
-        case .removed(let text): line("−", text, tint: .red).accessibilityLabel("Removed: \(text)")
-        case .added(let text): line("+", text, tint: .green).accessibilityLabel("Added: \(text)")
-        case .skipped(let count):
+        if let text = row.removed {
+            line("−", text, tint: .red).accessibilityLabel("Removed: \(text)")
+        } else if let text = row.added {
+            line("+", text, tint: .green).accessibilityLabel("Added: \(text)")
+        } else if let count = row.skipped {
             Text("^[\(count) unchanged line](inflect: true)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 2)
                 .background(.quinary)
+        } else {
+            line(" ", row.same ?? "", tint: .clear)
         }
     }
 
@@ -256,70 +258,4 @@ private struct DiffView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.15))
     }
-}
-
-nonisolated enum DiffLine: Equatable {
-    case same(String), removed(String), added(String)
-    /// Unchanged lines further than the context from any change, folded as a unified diff's hunks leave them out.
-    case skipped(Int)
-}
-
-/// A longest common subsequence over the lines between the common head and tail, which is most files' edit; a middle too
-/// big for its table shows as removed then added. Display only: the core restores whole files.
-nonisolated func lineDiff(_ old: String?, _ new: String?, context: Int = 3) -> [DiffLine] {
-    let (a, b) = (lines(old), lines(new))
-    let head = zip(a, b).prefix { $0 == $1 }.count
-    let tail = zip(a.dropFirst(head).reversed(), b.dropFirst(head).reversed()).prefix { $0 == $1 }.count
-    let (x, y) = (Array(a[head..<(a.count - tail)]), Array(b[head..<(b.count - tail)]))
-    var rows = a[..<head].map(DiffLine.same)
-    if x.count * y.count > 4_000_000 {
-        rows += x.map(DiffLine.removed) + y.map(DiffLine.added)
-    } else {
-        // `common[i][j]`: the longest common subsequence of x[i...] and y[j...].
-        var common = [[Int32]](repeating: [Int32](repeating: 0, count: y.count + 1), count: x.count + 1)
-        for i in x.indices.reversed() {
-            for j in y.indices.reversed() {
-                common[i][j] = x[i] == y[j] ? common[i + 1][j + 1] + 1 : max(common[i + 1][j], common[i][j + 1])
-            }
-        }
-        var (i, j) = (0, 0)
-        while i < x.count || j < y.count {
-            if i < x.count, j < y.count, x[i] == y[j] {
-                rows.append(.same(x[i]))
-                (i, j) = (i + 1, j + 1)
-            } else if j == y.count || (i < x.count && common[i + 1][j] >= common[i][j + 1]) {
-                rows.append(.removed(x[i]))
-                i += 1
-            } else {
-                rows.append(.added(y[j]))
-                j += 1
-            }
-        }
-    }
-    rows += a[(a.count - tail)...].map(DiffLine.same)
-
-    var shown = [Bool](repeating: false, count: rows.count)
-    for (index, row) in rows.enumerated() {
-        if case .same = row { continue }
-        for near in max(0, index - context)...min(rows.count - 1, index + context) { shown[near] = true }
-    }
-    var folded: [DiffLine] = []
-    for (row, shown) in zip(rows, shown) {
-        if shown {
-            folded.append(row)
-        } else if case .skipped(let count)? = folded.last {
-            folded[folded.count - 1] = .skipped(count + 1)
-        } else {
-            folded.append(.skipped(1))
-        }
-    }
-    return folded
-}
-
-/// A file's lines as the editor counts them, at a carriage return alone too; an absent file has none.
-private nonisolated func lines(_ text: String?) -> [String] {
-    guard let text, !text.isEmpty else { return [] }
-    var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
-    if text.last?.isNewline == true { lines.removeLast() }
-    return lines
 }

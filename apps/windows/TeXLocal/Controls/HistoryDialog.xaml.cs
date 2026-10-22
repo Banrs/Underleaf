@@ -22,21 +22,21 @@ public sealed record ChangeRow(SnapshotChange Change)
     public override string ToString() => $"{Path}, {State}";
 }
 
-/// A line of a comparison, marked as only in the version (−), only now (+) or in both, as a unified diff marks them.
-public sealed record DiffLine(string Sign, string Text)
+/// A line of a comparison, marked as only in the version (−), only now (+) or in both, as a unified diff marks them; or
+/// the unchanged lines folded away between changes.
+public sealed record DiffLine(DiffRow Row)
 {
-    public bool Removed => Sign == "−";
-    public bool Added => Sign == "+";
+    public bool Removed => Row.Removed is not null;
+    public bool Added => Row.Added is not null;
+    public string Sign => Removed ? "−" : Added ? "+" : Row.Skipped is not null ? "⋯" : "";
+    public string Text => Row.Removed ?? Row.Added ?? Row.Same ?? $"{Row.Skipped} unchanged line{(Row.Skipped == 1 ? "" : "s")}";
     public override string ToString() => Removed ? $"Removed: {Text}" : Added ? $"Added: {Text}" : Text;
 }
 
 /// Word's Version History: the versions the core keeps, the files each changed, and the chosen file then and now. The
-/// core restores; the comparison is drawn here.
+/// core compares and restores.
 public sealed partial class HistoryDialog : ContentDialog
 {
-    /// Beyond this many pairs of lines between the texts' common start and end, the middle shows as removed then added.
-    const long MostPairs = 4_000_000;
-
     readonly ulong session;
     int comparisons;
 
@@ -102,51 +102,18 @@ public sealed partial class HistoryDialog : ContentDialog
         string? note;
         try
         {
-            var compared = await App.Core!.CallAsync<Compared>("session_history_compare", new { session, id = version.Snapshot.Id, path = row.Path });
-            lines = Diff(compared.Old, compared.New);
-            note = lines.Any(l => l.Sign.Length > 0) ? null : "This file is the same now as in this version.";
+            var rows = await App.Core!.CallAsync<DiffRow[]>("session_history_compare", new { session, id = version.Snapshot.Id, path = row.Path });
+            lines = [.. rows.Select(r => new DiffLine(r))];
+            note = lines.Count > 0 ? null : "This file is the same now as in this version.";
         }
         catch (CoreException ex) { note = ex.Message; }
         if (generation == comparisons) ShowLines(lines, note);
     }
 
-    /// The comparison from its first change, or the note in its place.
+    /// The comparison, or the note in its place.
     void ShowLines(List<DiffLine> lines, string? note)
     {
         Lines.ItemsSource = note is null ? lines : null;
         LinesNote.Text = note ?? "";
-        if (lines.Find(l => l.Sign.Length > 0) is { } first) Lines.ScrollIntoView(first, ScrollIntoViewAlignment.Leading);
     }
-
-    /// The version's lines against now's over their longest common subsequence, removed before added where a block was
-    /// replaced. The common start and end, which most edits leave, are set aside first, so the table is the middle's.
-    static List<DiffLine> Diff(string? then, string? now)
-    {
-        string[] a = Split(then), b = Split(now);
-        var start = 0;
-        while (start < a.Length && start < b.Length && a[start] == b[start]) start++;
-        var end = 0;
-        while (end < a.Length - start && end < b.Length - start && a[^(end + 1)] == b[^(end + 1)]) end++;
-        int n = a.Length - start - end, m = b.Length - start - end;
-        var common = (long)n * m <= MostPairs ? new int[n + 1, m + 1] : null;
-        for (var i = n - 1; common is not null && i >= 0; i--)
-            for (var j = m - 1; j >= 0; j--)
-                common[i, j] = a[start + i] == b[start + j] ? common[i + 1, j + 1] + 1 : Math.Max(common[i + 1, j], common[i, j + 1]);
-        List<DiffLine> lines = [.. a[..start].Select(l => new DiffLine("", l))];
-        int x = 0, y = 0;
-        while (x < n || y < m)
-        {
-            if (x < n && y < m && a[start + x] == b[start + y])
-            {
-                lines.Add(new("", a[start + x]));
-                (x, y) = (x + 1, y + 1);
-            }
-            else if (y == m || x < n && (common?[x + 1, y] ?? 0) >= (common?[x, y + 1] ?? 0)) lines.Add(new("−", a[start + x++]));
-            else lines.Add(new("+", b[start + y++]));
-        }
-        lines.AddRange(a[^end..].Select(l => new DiffLine("", l)));
-        return lines;
-    }
-
-    static string[] Split(string? text) => text?.Split('\n') ?? [];
 }

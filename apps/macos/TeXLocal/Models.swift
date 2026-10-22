@@ -187,8 +187,9 @@ nonisolated struct Snapshot: Decodable, Identifiable, Hashable {
     var title: String { name ?? reason ?? String(localized: "Automatic") }
 }
 
-/// `session_history_compare`'s: the file's text in the snapshot and now, nil where it is absent.
-nonisolated struct Comparison: Decodable { let old, new: String? }
+/// A row of `session_history_compare`'s unified diff: a line in both, the snapshot's alone or now's alone, or a count of
+/// unchanged lines folded away.
+nonisolated struct DiffLine: Decodable { let same, removed, added: String?; let skipped: Int? }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }

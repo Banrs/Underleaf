@@ -1587,7 +1587,10 @@ async fn a_replace_all_keeps_the_files_as_they_were_first() {
     assert_eq!(before["reason"], "Before Replace All");
     let compare = json!({ "id": before["id"], "path": "ch.tex" });
     let compared = rig.ok("history_compare", compare).await;
-    assert_eq!(compared, json!({ "old": "a cat", "new": "a dog" }));
+    assert_eq!(
+        compared,
+        json!([{ "removed": "a cat" }, { "added": "a dog" }])
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -1604,13 +1607,15 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
         let args = json!({ "id": draft["id"], "path": path });
         rig.call("history_compare", args)
     };
-    for (path, old, new) in [
-        ("main.tex", json!("Hello"), json!("Hello world")),
-        ("new.tex", Value::Null, json!("new")),
-        ("ch.tex", json!("one"), Value::Null),
+    for (path, rows) in [
+        (
+            "main.tex",
+            json!([{ "removed": "Hello" }, { "added": "Hello world" }]),
+        ),
+        ("new.tex", json!([{ "added": "new" }])),
+        ("ch.tex", json!([{ "removed": "one" }])),
     ] {
-        let compared = compare(path).await.unwrap();
-        assert_eq!(compared, json!({ "old": old, "new": new }), "{path}");
+        assert_eq!(compare(path).await.unwrap(), rows, "{path}");
     }
     assert_eq!(compare("figure.png").await.unwrap_err().status, 400);
 }

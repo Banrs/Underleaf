@@ -150,8 +150,9 @@ public sealed record SnapshotChange(string Path, string Change);
 /// <param name="Name">The reader's, from Save version; Reason the core's, as "Before Replace All"; an automatic one has neither.</param>
 public sealed record Snapshot(string Id, DateTimeOffset Time, string? Name, string? Reason, SnapshotChange[] Changed);
 
-/// A text file in a snapshot and now (the open document's text as edited); null where it doesn't exist.
-public sealed record Compared(string? Old, string? New);
+/// A row of session_history_compare's unified diff: a line in both, the snapshot's alone or now's alone, or a count of
+/// unchanged lines folded away.
+public sealed record DiffRow(string? Same, string? Removed, string? Added, int? Skipped);
 
 /// session_history_restore's answer: the open document's edits, if it is among the files; the core wrote the others.
 public sealed record Restored(DocumentEdits? Edits);

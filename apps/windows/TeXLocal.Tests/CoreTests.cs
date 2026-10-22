@@ -122,7 +122,7 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// session_history_list's entries and session_history_compare's texts, as docs/core-api.md has them.
+    /// session_history_list's entries and session_history_compare's rows, as docs/core-api.md has them.
     [Fact]
     public void HistoryDecodes()
     {
@@ -131,7 +131,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal(("a1", null, "Before Replace All"), (snapshot.Id, snapshot.Name, snapshot.Reason));
         Assert.Equal(new DateTimeOffset(2026, 10, 22, 9, 41, 0, TimeSpan.Zero), snapshot.Time);
         Assert.Equal(new SnapshotChange("main.tex", "changed"), Assert.Single(snapshot.Changed));
-        Assert.Equal(new Compared(null, "x\n"), JsonSerializer.Deserialize<Compared>("""{"old":null,"new":"x\n"}""", Core.Json));
+        Assert.Equal([new DiffRow(null, "a", null, null), new DiffRow(null, null, null, 2)], JsonSerializer.Deserialize<DiffRow[]>("""[{"removed":"a"},{"skipped":2}]""", Core.Json)!);
     }
 
     [Fact]

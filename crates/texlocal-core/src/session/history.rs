@@ -5,6 +5,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -100,11 +101,14 @@ impl Actor {
                     let text = |bytes| lf(lossy_string(bytes));
                     let old = history.files(&id, |p| p == path)?.pop();
                     let new = match (edited, fs::read(abs)) {
-                        (Some(edited), _) => Some(edited),
-                        (None, Err(err)) if err.kind() == ErrorKind::NotFound => None,
-                        (None, read) => Some(text(read?)),
+                        (Some(edited), _) => edited,
+                        (None, Err(err)) if err.kind() == ErrorKind::NotFound => String::new(),
+                        (None, read) => text(read?),
                     };
-                    Ok(json!({ "old": old.map(|(_, bytes)| text(bytes)), "new": new }))
+                    out(compare(
+                        &old.map_or(String::new(), |(_, bytes)| text(bytes)),
+                        &new,
+                    ))
                 })
             }
         })
@@ -149,6 +153,84 @@ impl Actor {
     }
 }
 
+/// A line of a comparison: in both texts, the snapshot's alone or now's alone; or a run of lines in
+/// both further than `CONTEXT` from any change, folded as a unified diff's hunks leave them out.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Row<'a> {
+    Same(&'a str),
+    Removed(&'a str),
+    Added(&'a str),
+    Skipped(usize),
+}
+
+const CONTEXT: usize = 3;
+
+/// The snapshot's lines against now's over their longest common subsequence, removed before added
+/// where a block was replaced; none where the lines are the same. The common start and end, which
+/// most edits leave, are set aside first so the table is the middle's, and a middle too big for one
+/// shows as removed then added.
+fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
+    let (a, b): (Vec<_>, Vec<_>) = (old.lines().collect(), new.lines().collect());
+    let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let ends = a[head..].iter().rev().zip(b[head..].iter().rev());
+    let tail = ends.take_while(|(x, y)| x == y).count();
+    let (x, y) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
+    let mut rows: Vec<Row> = a[..head].iter().map(|line| Row::Same(line)).collect();
+    if x.len() * y.len() > 4_000_000 {
+        rows.extend(x.iter().map(|line| Row::Removed(line)));
+        rows.extend(y.iter().map(|line| Row::Added(line)));
+    } else {
+        // `common[i * w + j]`: the longest common subsequence of x[i..] and y[j..].
+        let w = y.len() + 1;
+        let mut common = vec![0u32; (x.len() + 1) * w];
+        for i in (0..x.len()).rev() {
+            for j in (0..y.len()).rev() {
+                common[i * w + j] = if x[i] == y[j] {
+                    common[(i + 1) * w + j + 1] + 1
+                } else {
+                    common[(i + 1) * w + j].max(common[i * w + j + 1])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < x.len() || j < y.len() {
+            if i < x.len() && j < y.len() && x[i] == y[j] {
+                rows.push(Row::Same(x[i]));
+                (i, j) = (i + 1, j + 1);
+            } else if j == y.len()
+                || i < x.len() && common[(i + 1) * w + j] >= common[i * w + j + 1]
+            {
+                rows.push(Row::Removed(x[i]));
+                i += 1;
+            } else {
+                rows.push(Row::Added(y[j]));
+                j += 1;
+            }
+        }
+    }
+    rows.extend(a[a.len() - tail..].iter().map(|line| Row::Same(line)));
+
+    let mut shown = vec![false; rows.len()];
+    for (i, row) in rows.iter().enumerate() {
+        if !matches!(row, Row::Same(_)) {
+            shown[i.saturating_sub(CONTEXT)..rows.len().min(i + CONTEXT + 1)].fill(true);
+        }
+    }
+    if !shown.contains(&true) {
+        return vec![];
+    }
+    let mut folded = Vec::new();
+    for (row, shown) in rows.into_iter().zip(shown) {
+        match (shown, folded.last_mut()) {
+            (true, _) => folded.push(row),
+            (false, Some(Row::Skipped(count))) => *count += 1,
+            (false, _) => folded.push(Row::Skipped(1)),
+        }
+    }
+    folded
+}
+
 /// One edit making `text` into `to`: what lies between their common start and end, in UTF-16
 /// units, so the editor keeps its place around it.
 fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
@@ -169,4 +251,34 @@ fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
         length: units(&text[start..text.len() - end]),
         text: to[start..to.len() - end].to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Row::*;
+    use super::compare;
+
+    #[test]
+    fn a_comparison_folds_lines_far_from_a_change_and_puts_removed_before_added() {
+        let old = "1\n2\n3\n4\n5\n6\n7\n8\nold\n9\n10\n11\n12\n";
+        let new = "0\n1\n2\n3\n4\n5\n6\n7\n8\nnew\n9\n10\n11\n12";
+        let rows = [
+            Added("0"),
+            Same("1"),
+            Same("2"),
+            Same("3"),
+            Skipped(2),
+            Same("6"),
+            Same("7"),
+            Same("8"),
+            Removed("old"),
+            Added("new"),
+            Same("9"),
+            Same("10"),
+            Same("11"),
+            Skipped(1),
+        ];
+        assert_eq!(compare(old, new), rows);
+        assert_eq!(compare("a\n", "a"), []);
+    }
 }
