@@ -1802,6 +1802,11 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
         \\newlabel{sec:a}{{1}{3}{Intro}{section.1}{}}\n";
     fs::write(rig.root.join("build/main.aux"), aux).unwrap();
     assert_eq!(help("sec:a").await, label("1 on page 3"));
+    // An `\include`d file's labels are in its own .aux, which the main one inputs.
+    let included = "\\newlabel{sec:a}{{2}{5}{Intro}{section.2}{}}\n";
+    fs::write(rig.root.join("build/ch.aux"), included).unwrap();
+    fs::write(rig.root.join("build/main.aux"), "\\@input{ch.aux}\n").unwrap();
+    assert_eq!(help("sec:a").await, label("2 on page 5"));
     let defined = help_of("\\R", "\\newcommand{\\R}{\\mathbb{R}}", at("main.tex", 1));
     assert_eq!(help("\\R ").await, defined);
     let known = help_of("\\toprule", "From the booktabs package", Value::Null);
