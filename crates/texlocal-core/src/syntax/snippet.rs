@@ -1,11 +1,15 @@
 //! A snippet's fields: the places of a completion's or block's text to type in, which Tab and Shift-Tab go through
-//! and which mirror each other. The editor reports each change with `follow`; `mirror_snippet` then answers the
+//! and which mirror each other, as an environment's name does in its `\begin` and `\end`. The editor reports each change with `follow`; `mirror_snippet` then answers the
 //! edits that copy the typed field to its other places, which the editor applies with `mirroring` set.
 
 use serde::Serialize;
 
+use super::scan::environment_name;
 use super::typing::is_closing;
-use super::{SnippetField, SourceDocument, TextEdit, TextRange, span, splice};
+use super::{
+    NAME, SnippetField, SourceDocument, TextEdit, TextRange, ascii, clamp, escaped, is, letter,
+    span, splice,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Tab {
@@ -106,6 +110,21 @@ impl Snippet {
     }
 }
 
+/// The name of the `\begin` or `\end` at `at`.
+fn name_field(units: &[u16], at: usize) -> Option<Field> {
+    let word = units[at + 1..].iter().take_while(|&&u| letter(u)).count();
+    let command = &units[at + 1..at + 1 + word];
+    if !matches!(ascii(command, &mut [0; NAME]), "begin" | "end") || escaped(units, at) {
+        return None;
+    }
+    let (name, after) = environment_name(units, at + 1 + word)?;
+    Some(Field {
+        index: 0,
+        start: after - 1 - name.len(),
+        length: name.len(),
+    })
+}
+
 impl SourceDocument {
     pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
         let snippet = Snippet::new(fields, at as usize);
@@ -128,7 +147,13 @@ impl SourceDocument {
     }
 
     pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
-        let moved = self.typing.snippet.as_mut().map(|snippet| snippet.go(step));
+        // A field alone, as an environment's name is, has none to go to: Tab and Shift-Tab indent.
+        let snippet = self
+            .typing
+            .snippet
+            .as_mut()
+            .filter(|s| s.place(1).is_some());
+        let moved = snippet.map(|snippet| snippet.go(step));
         let edits = match moved {
             Some(Some(field)) => {
                 return Tab {
@@ -144,6 +169,23 @@ impl SourceDocument {
             None => self.indent(selections, step > 0),
         };
         Tab { field: None, edits }
+    }
+
+    /// An environment's name, in its `\begin` and its `\end`, as one field in two places, the selection's first: the
+    /// names are typed in together while they match.
+    pub(super) fn environment_names(&mut self, selection: TextRange) -> Option<Snippet> {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        let line = self.text.around(start).start;
+        let units = &self.text.units;
+        let command = line + units[line..start].iter().rposition(|&u| is(u, '\\'))?;
+        let here = name_field(units, command).filter(|f| f.holds(start, end))?;
+        let partner = self.environment_partner(command)?;
+        let there = name_field(&self.text.units, partner)?;
+        Some(Snippet {
+            fields: vec![here, there],
+            active: 0,
+            changed: false,
+        })
     }
 
     pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {

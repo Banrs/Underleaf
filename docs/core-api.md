@@ -213,7 +213,9 @@ editor's thread.
   `tl_free`): the editor applies them with `mirroring` true, which answers NULL, then selects
   what it had.
 - `tl_source_select(source, start, length, mirroring)`: the (first) selection moved; a snippet
-  ends once it leaves its fields, unless `mirroring`.
+  ends once it leaves its fields, unless `mirroring`. With none open, a selection in the name of
+  a `\begin` or `\end` that has its partner makes the two names a snippet's one field, so what's
+  typed in one goes in the other.
 - `tl_source_text(source, &len)`: the whole text as `len` bytes of UTF-8, which may hold
   U+0000; free with `tl_source_free_text(text, len)`.
 - `tl_source_call(source, command, args_json)` answers JSON, or NULL for an unknown command or
@@ -222,9 +224,9 @@ editor's thread.
 
   | Command | Arguments (optional in brackets) | Answers |
   |---|---|---|
-  | `type` | `selection`, `text`, [`autoPair` true] | the key's edit, selection, bracket partner and completion step |
+  | `type` | `selection`, `text`, [`autoPair` true] | the key's edit, selection, bracket partner and completion step; `autoPair` pairs brackets and, where they open maths, dollars, a second typed in an empty pair making it a display's |
   | `delete_backward` | `selection`, [`autoPair` true] | as `type` |
-  | `insert_newline` | `selection` | as `type` |
+  | `insert_newline` | `selection` | as `type`; after a `\begin` and its arguments, a line a step in and the `\end` unless it has one; in a list, the next `\item`, or an empty one taken away |
   | `partner` | `at` | the matching bracket's offset, or null |
   | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`; the project's own commands and environments come first; a citation from a .bib entry has a `detail` (“Knuth · 1984 · The TeXbook”: its authors' last names, year and title, as far as it has them), to show beside its key, and an item with none to say has no `detail` |
   | `definition` | `at` | `{kind, name, places: [{file, line, column, length}]}`, or null where no name is or nothing defines it. `kind` `label`, `citation`, `environment` or `command`: the key a `\ref` or `\cite` kin (one of a list) or a .bib entry's `crossref` names at `at` or a `\label`, `\bibitem` or .bib entry defines there, a `\begin` or `\end`'s environment, or a command's name, with every place the project defines it (`\label`, `\bibitem` or a .bib entry, `\newenvironment`, `\newcommand` and its kin, `\DeclareMathOperator` or `\def`), its files in the order of their paths, this document as it is now and the others as last scanned. `kind` `file`: the file an `\input`, `\include`, `\subfile`, `\import`, `\subimport` or `\includegraphics` names, found as TeX finds it, at its start (line 1, column 0, length 0). `line` counts from 1; `column` (from 0) and `length` are UTF-16 units of the line. A host goes to the first place. |
