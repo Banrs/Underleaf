@@ -21,7 +21,7 @@ public sealed class NavItem
     public string Tail { get; init; } = "";
     public string Glyph { get; init; } = "";
     public bool HasGlyph => Glyph.Length > 0;
-    /// A file's hit count or a hit's line.
+    /// A file's hit count, a hit's line or a heading's words.
     public string Trailing { get; init; } = "";
     public bool IsMain { get; init; }
     public string Tip { get; init; } = "";
@@ -69,9 +69,11 @@ public sealed partial class WorkspacePage
 
     List<NavItem> Headings(OutlineNode[] nodes) => [.. nodes.Select(n => new NavItem
     {
-        Lead = Title(n), Tip = Title(n), Key = n.FoldKey, IsExpanded = !folded.Contains(n.FoldKey), Target = n,
-        Children = n.Children is { } c ? Headings(c) : null,
+        Lead = Title(n), Tip = Title(n), Trailing = $"{n.Words:N0}", Spoken = $"{Title(n)}, {WordCount(n.Words)}", Key = n.FoldKey,
+        IsExpanded = !folded.Contains(n.FoldKey), Target = n, Children = n.Children is { } c ? Headings(c) : null,
     })];
+
+    static string WordCount(int words) => words == 1 ? "1 word" : $"{words:N0} words";
 
     /// An empty heading by its level, in sentence case: "Untitled subsection".
     static string Title(OutlineNode n) => n.Untitled ? Sentence(n.Title) : n.Title;
@@ -177,9 +179,9 @@ public sealed partial class WorkspacePage
 
     async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
     {
-        TreeNode { Type: not "dir" } node => OpenDocument(node.Path, node.Kind),
-        OutlineNode { File: { } file } heading => Reveal(file, heading.Line),
-        SearchHit hit => Reveal(hit.File, hit.Line, hit.Column, hit.Length),
+        TreeNode { Type: not "dir" } node => Jump(node.Path, null),
+        OutlineNode { File: { } file } heading => Jump(file, heading.Line),
+        SearchHit hit => Jump(hit.File, hit.Line, hit.Column, hit.Length),
         _ => Task.CompletedTask,
     });
 
@@ -192,17 +194,19 @@ public sealed partial class WorkspacePage
         try { analysis = await Core.CallAsync<Analysis>("session_analyze", new { session, path }); }
         catch (CoreException) { return; }
         if (Editor.Path != path) return;
-        Words.Text = analysis.Words == 1 ? "1 word" : $"{analysis.Words:N0} words";
         (OutlineTree.ItemsSource, currentHeading) = (Headings(analysis.Tree), null);
         ShowSide();
         ShowHeadings(analysis.HeadingStyles);
         CaretSettled();
     }
 
-    /// The caret's heading, checked in Insert › Heading, and headingLine's, selected in the outline.
+    /// The caret's heading, checked in Insert › Heading, and headingLine's, selected in the outline; the words, as Word's
+    /// status bar counts them: the selection's of the document's while text is selected.
     void CaretSettled() => Run(null, async () =>
     {
         if (analysis is not { } shown || Editor.Path is not { } path) return;
+        var words = WordCount(shown.Words);
+        Words.Text = Editor.SelectedWords is { } selected ? $"{selected:N0} of {words}" : words;
         var line = Editor.Caret.Line;
         ShowInsertChecks(shown.Outline.FirstOrDefault(h => h.File == path && h.Line == line));
         var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line = headingLine });

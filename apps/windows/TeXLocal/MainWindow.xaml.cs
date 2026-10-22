@@ -37,10 +37,12 @@ public sealed partial class MainWindow : Window
         {
             if (e.Key == (VirtualKey)188 && InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down)) OpenSettings();
         }), true);
-        // The mouse's back button, as in File Explorer and Settings.
+        // The mouse's back and forward buttons, as in File Explorer and Settings and, in a project, VS Code.
         Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
         {
-            if (e.GetCurrentPoint(Root).Properties.IsXButton1Pressed) GoBack();
+            var buttons = e.GetCurrentPoint(Root).Properties;
+            if (buttons.IsXButton1Pressed) Back();
+            else if (buttons.IsXButton2Pressed) (Pages.Content as WorkspacePage)?.Go(false);
         }), true);
         Root.Loaded += (_, _) => Root.XamlRoot.Changed += (_, _) => Fit();
         Activated += (_, e) =>
@@ -165,6 +167,12 @@ public sealed partial class MainWindow : Window
     async void GoBack()
     {
         if (Pages.CanGoBack && (Pages.Content is not WorkspacePage || await Leave())) Pages.GoBack();
+    }
+
+    /// Alt+Left and the mouse's back button: in a project, its last place while there is one, as VS Code's Go back.
+    void Back()
+    {
+        if ((Pages.Content as WorkspacePage)?.Go(true) != true) GoBack();
     }
 
     /// False, staying, when the open project's save fails or is asked about: the editor holds the only copy.

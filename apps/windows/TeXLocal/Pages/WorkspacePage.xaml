@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:app="using:TeXLocal"
+    xmlns:bridge="using:TeXLocal.Bridge"
     xmlns:controls="using:TeXLocal.Controls"
     xmlns:local="using:TeXLocal.Pages"
     Background="Transparent"
@@ -53,6 +54,47 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
         </Style>
+        <!-- Visual Studio's Go to all: a search box whose list is the results, each by its kind's icon. -->
+        <Flyout x:Name="GoToFlyout" Opened="OnGoToOpened">
+            <AutoSuggestBox
+                x:Name="GoToBox"
+                Width="400"
+                AutomationProperties.Name="Go to all"
+                PlaceholderText="Go to a file, heading or label"
+                PreviewKeyDown="OnGoToKey"
+                QuerySubmitted="OnGoToSubmitted"
+                TextChanged="OnGoToChanged"
+                UpdateTextOnSelect="False">
+                <AutoSuggestBox.ItemTemplate>
+                    <DataTemplate x:DataType="bridge:QuickItem">
+                        <Grid Padding="0,4" AutomationProperties.Name="{x:Bind Title}" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontSize="16" Glyph="{x:Bind local:WorkspacePage.KindGlyph(Kind)}" />
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="{x:Bind Detail}"
+                                    TextTrimming="CharacterEllipsis"
+                                    TextWrapping="NoWrap" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </AutoSuggestBox.ItemTemplate>
+            </AutoSuggestBox>
+        </Flyout>
+        <!-- VS Code's hover: the name in the editor's font, what it is, and where it is defined. -->
+        <Flyout x:Name="HelpFlyout" Placement="BottomEdgeAlignedLeft">
+            <StackPanel MaxWidth="400" Spacing="4">
+                <TextBlock x:Name="HelpTitle" FontWeight="SemiBold" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                <TextBlock x:Name="HelpDetail" IsTextSelectionEnabled="True" Style="{StaticResource BodyTextBlockStyle}" />
+                <HyperlinkButton x:Name="HelpPlace" Padding="0" Click="OnHelpPlace" Content="Go to definition" />
+            </StackPanel>
+        </Flyout>
     </Page.Resources>
 
     <Page.KeyboardAccelerators>
@@ -106,6 +148,7 @@
                     <!-- The PDF shown, as the Mac's Export as PDF and Share, and the project's files, as Home's Export as ZIP. -->
                     <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
                     <MenuFlyoutItem AccessKey="Z" Click="OnExportZip" Text="Export project as ZIP…" />
+                    <MenuFlyoutItem x:Name="ArxivItem" AccessKey="X" Click="OnExportZip" Text="Export for arXiv…" />
                     <MenuFlyoutItem x:Name="OpenPdfItem" AccessKey="D" Click="OnOpenPdf" Text="Open PDF in default app" />
                     <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
                     <MenuFlyoutItem x:Name="PrintItem" controls:Shortcut.Keys="Ctrl+P" AccessKey="R" Click="{x:Bind Pdf.Print}" Text="Print…" />
@@ -140,8 +183,15 @@
                     <MenuFlyoutItem Click="OnDeleteLine" KeyboardAcceleratorTextOverride="Ctrl+Shift+K" Text="Delete line" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Click="OnGoToLine" Text="Go to line…" />
-                    <!-- Visual Studio's key. No access key: each of its letters is another item's. -->
+                    <!-- VS Code's and the browsers' keys: Alt+Left is the window's, which goes back a page where there's no
+                         place to go back to. Go forward's letters are all other items'. -->
+                    <MenuFlyoutItem x:Name="BackItem" AccessKey="B" Click="OnBack" IsEnabled="False" KeyboardAcceleratorTextOverride="Alt+Left" Text="Go back" />
+                    <MenuFlyoutItem x:Name="ForwardItem" controls:Shortcut.Keys="Alt+Right" Click="OnForward" IsEnabled="False" Text="Go forward" />
+                    <!-- Visual Studio's keys. No access keys: each of their letters is another item's. -->
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+T" Click="OnGoToAll" Text="Go to all…" />
                     <MenuFlyoutItem x:Name="DefinitionItem" controls:Shortcut.Keys="F12" Click="{x:Bind Editor.GoToDefinition}" Text="Go to definition" />
+                    <!-- Visual Studio's Quick info is Ctrl+K, Ctrl+I, a chord Shortcut can't make. -->
+                    <MenuFlyoutItem x:Name="QuickInfoItem" controls:Shortcut.Keys="Ctrl+Shift+I" AccessKey="Q" Click="{x:Bind Editor.ShowQuickInfo}" Text="Quick info" />
                     <MenuFlyoutItem x:Name="ReferencesItem" controls:Shortcut.Keys="Shift+F12" Click="{x:Bind Editor.FindAllReferences}" Text="Find all references" />
                     <!-- VS Code's key, the editor's: in Files, F2 renames the file. -->
                     <MenuFlyoutItem x:Name="RenameSymbolItem" controls:Shortcut.Keys="F2" AccessKey="Y" Click="{x:Bind Editor.RenameSymbol}" Text="Rename symbol" />
@@ -752,7 +802,7 @@
                     <TextBlock x:Name="CaretText" Style="{StaticResource CaptionTextBlockStyle}" Text="Ln 1, Col 1" Typography.NumeralAlignment="Tabular" />
                 </Button>
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
-                <TextBlock x:Name="Words" MinWidth="88" Style="{StaticResource StatusTextStyle}" TextAlignment="Center" />
+                <TextBlock x:Name="Words" MinWidth="128" Style="{StaticResource StatusTextStyle}" TextAlignment="Center" />
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
                 <Button MinWidth="96" Click="OnGoToPage" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
                     <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="No PDF" Typography.NumeralAlignment="Tabular" />

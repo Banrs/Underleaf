@@ -185,7 +185,7 @@ public sealed partial class HomePage : Page
     void OnMenuOpening(object sender, object e)
     {
         var p = target = ProjectOf(((MenuFlyout)sender).Target)!;
-        RenameItem.Visibility = DeleteItem.Visibility = p.Opened ? Visibility.Collapsed : Visibility.Visible;
+        RenameItem.Visibility = DuplicateItem.Visibility = DeleteItem.Visibility = p.Opened ? Visibility.Collapsed : Visibility.Visible;
         ForgetItem.Visibility = p.Opened ? Visibility.Visible : Visibility.Collapsed;
         RevealItem.IsEnabled = ExportItem.IsEnabled = !p.Missing;
     }
@@ -201,6 +201,13 @@ public sealed partial class HomePage : Page
     void OnOpenItem(object sender, RoutedEventArgs e) => App.Window.OpenProject(target!.Id);
 
     void OnRenameItem(object sender, RoutedEventArgs e) => Rename(target!);
+
+    /// A copy beside it, named as File Explorer names one, its row focused.
+    async void OnDuplicateItem(object sender, RoutedEventArgs e)
+    {
+        try { Reload((await Core.CallAsync<ProjectInfo>("duplicate_project", new { id = target!.Id, name = $"{target.Name} - Copy" })).Id); }
+        catch (CoreException ex) { await App.Alert("Can't duplicate this project", ex.Message); }
+    }
 
     void OnRevealItem(object sender, RoutedEventArgs e) => App.Reveal(target!.Path);
 

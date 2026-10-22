@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using System.Text.Json;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Input;
 using Microsoft.UI.Text;
@@ -71,7 +72,7 @@ public sealed partial class SourceView : UserControl
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly List<(IssueLine Issue, IssueMark Label, Grid Mark, Polyline[] Squiggles)> marks = [];
-    readonly DispatcherQueueTimer partnerTimer;
+    readonly DispatcherQueueTimer partnerTimer, hoverTimer;
     readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
     ScrollViewer? scroller;
@@ -85,6 +86,8 @@ public sealed partial class SourceView : UserControl
     (SourceRange Anchor, SourceRange First)? dragging;
     /// A Ctrl+click's offset until its release.
     int? pressedAt;
+    /// The character the pointer rests on, until it moves to another.
+    int? hovered;
     MathPreview? shownMath;
     int? dismissedMath;
     Color[] kinds = [];
@@ -113,6 +116,9 @@ public sealed partial class SourceView : UserControl
     public event Action<Definition, Rect>? RenameAsked;
     /// A double-click in the text, once RichEdit has selected its word.
     public event Action? DoubleClicked;
+    /// What the name at an offset is, asked with its character's rectangle in the view: true for the pointer at rest on it,
+    /// false for the keyboard at the caret.
+    public event Action<int, Rect, bool>? HelpAsked;
 
     /// A file dragged from the navigation pane, by its absolute path: as storage items, the pane's own drop would add it
     /// to the project again.
@@ -126,6 +132,13 @@ public sealed partial class SourceView : UserControl
         partnerTimer = DispatcherQueue.CreateTimer();
         partnerTimer.Interval = TimeSpan.FromSeconds(1);
         partnerTimer.Tick += (_, _) => HidePartner();
+        hoverTimer = DispatcherQueue.CreateTimer();
+        hoverTimer.Interval = TimeSpan.FromMilliseconds(500);
+        hoverTimer.IsRepeating = false;
+        hoverTimer.Tick += (_, _) =>
+        {
+            if (hovered is { } at && RectOf(at, at + 1) is { } r) HelpAsked?.Invoke(at, InView(r), true);
+        };
         Editor.TextChanging += (_, e) =>
         {
             if (setting || !e.IsContentChanging) return;
@@ -181,6 +194,12 @@ public sealed partial class SourceView : UserControl
         Editor.AddHandler(PointerPressedEvent, new PointerEventHandler(OnPressed), true);
         Editor.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnReleased), true);
         Editor.AddHandler(DoubleTappedEvent, new DoubleTappedEventHandler((_, _) => DoubleClicked?.Invoke()), true);
+        Editor.AddHandler(PointerMovedEvent, new PointerEventHandler(OnHover), true);
+        Editor.PointerExited += (_, _) =>
+        {
+            hoverTimer.Stop();
+            hovered = null;
+        };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
         ActualThemeChanged += (_, _) => Recolour(true);
         Loaded += (_, _) =>
@@ -898,6 +917,30 @@ public sealed partial class SourceView : UserControl
         pressedAt = null;
     }
 
+    /// VS Code's hover: the pointer at rest on a character of the text, with no button down, for half a second.
+    void OnHover(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(Editor);
+        int? at = source is null || point.Properties.IsLeftButtonPressed ? null : OffsetAt(point.Position);
+        // Past a line's end RichEdit answers the line's last offset, which the pointer isn't on.
+        if (at is { } offset && !(RectOf(offset, offset + 1) is { } r && r.Contains(point.Position))) at = null;
+        if (at == hovered) return;
+        hovered = at;
+        hoverTimer.Stop();
+        if (at is not null) hoverTimer.Start();
+    }
+
+    /// Visual Studio's Quick info, at the caret.
+    public void ShowQuickInfo()
+    {
+        var at = CaretOffset;
+        if (RectOf(at, at) is { } r) HelpAsked?.Invoke(at, InView(r), false);
+    }
+
+    /// The prose words selected, counted as the document's are; null with nothing selected.
+    public int? SelectedWords => Selected is { Length: > 0 } s && source is not null
+        ? source.Call<JsonElement>("words", new { start = s.Start, length = s.Length }).GetProperty("words").GetInt32() : null;
+
     /// F12, at the caret.
     public void GoToDefinition() => Define(CaretOffset);
 
@@ -919,9 +962,11 @@ public sealed partial class SourceView : UserControl
         if (DefinitionAt(caret) is not { Kind: "label" or "citation" } symbol) return;
         // The name the caret is in or just after: the first that starts no further back than its length.
         var start = Text.IndexOf(symbol.Name, Math.Max(0, caret - symbol.Name.Length), StringComparison.Ordinal);
-        if (RectOf(start, start + symbol.Name.Length) is { } r)
-            RenameAsked?.Invoke(symbol, new Rect(Gutter.ActualWidth + r.X, r.Y, r.Width, r.Height));
+        if (RectOf(start, start + symbol.Name.Length) is { } r) RenameAsked?.Invoke(symbol, InView(r));
     }
+
+    /// A rectangle of the text's, in the view's coordinates, past the gutter.
+    Rect InView(Rect r) => new(Gutter.ActualWidth + r.X, r.Y, r.Width, r.Height);
 
     /// Visual Studio's Go to definition and Find all references and VS Code's Rename Symbol after the text commands,
     /// which the menu makes again each time it opens.

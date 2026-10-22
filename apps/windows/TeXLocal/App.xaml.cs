@@ -52,13 +52,14 @@ public partial class App : Application
     public static void Reveal(string path, bool select = false) =>
         Process.Start("explorer.exe", select ? $"/select,\"{path}\"" : $"\"{path}\"");
 
-    /// A project's files as a ZIP, where the save picker says; the core archives what is on disk.
-    public static async Task ExportZip(string id, string name)
+    /// A project's files as a ZIP, where the save picker says; the core archives what is on disk. For arXiv, it adds the
+    /// compiled bibliography and arXiv's 00README, or says why it can't.
+    public static async Task ExportZip(string id, string name, bool forArxiv = false)
     {
-        var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = name };
+        var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = forArxiv ? $"{name} arXiv" : name };
         picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
         if (await picker.PickSaveFileAsync() is not { } picked) return;
-        try { await Core!.CallAsync("export_zip", new { id, dest = picked.Path }); }
+        try { await Core!.CallAsync("export_zip", new { id, dest = picked.Path, forArxiv }); }
         catch (CoreException ex) { await Alert("Can't export", ex.Message); }
     }
 

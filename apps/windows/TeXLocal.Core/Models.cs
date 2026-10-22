@@ -124,8 +124,9 @@ public sealed record MathSvg(string? Svg, double Width, double Height, string? E
 /// Index: its place in the outline read in order; FoldKey names its fold in the project's UI state.
 /// <param name="Command">Its sectioning command without the backslash: "section".</param>
 /// <param name="Title">Plain text; untitled, its level's: "Untitled Section".</param>
+/// <param name="Words">The prose words up to the next heading at its level or above, its children's too.</param>
 public sealed record OutlineNode(int Index, string Command, string Title, bool Untitled, int Line, string? File, string FoldKey,
-    OutlineNode[]? Children)
+    int Words, OutlineNode[]? Children)
 {
     public IEnumerable<OutlineNode> AndBelow => [this, .. (Children ?? []).SelectMany(c => c.AndBelow)];
 }
@@ -193,3 +194,19 @@ public sealed record MathSymbol(string Command);
 public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
 
 public sealed record Menus(Templates Templates, SymbolGroup[] SymbolGroups);
+
+/// A place Back and Forward go to: a project path and a line from 1.
+public sealed record Spot(string Path, int Line);
+
+/// Whether there is a place to go back or forward to; after Back or Forward, To is the place to show, or null for none.
+public sealed record Trail(bool Back, bool Forward, Spot? To);
+
+/// One of Go to all's results (session_quick_open).
+/// <param name="Kind">file, heading or label.</param>
+/// <param name="Detail">A file's folder, a heading's level and file (“Section · ch.tex”), what a label labels.</param>
+/// <param name="Line">From 1; null for a file.</param>
+public sealed record QuickItem(string Kind, string Title, string Detail, string Path, int? Line);
+
+/// What a name in the source is (session_quick_help): its detail a line or more, and where it is defined, if the project
+/// defines it.
+public sealed record QuickHelp(string Title, string Detail, Spot? Place);
