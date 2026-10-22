@@ -107,6 +107,8 @@ public sealed partial class SourceView : UserControl
     public event Action<string[], int>? FilesDropped;
     /// The first place the project defines a name the reader asked after.
     public event Action<Place>? DefinitionFound;
+    /// Find all references, at the caret's offset.
+    public event Action<int>? ReferencesAsked;
     /// A label or citation to rename, and the name's rectangle in the view.
     public event Action<Definition, Rect>? RenameAsked;
 
@@ -901,6 +903,9 @@ public sealed partial class SourceView : UserControl
 
     Definition? DefinitionAt(int at) => source?.Call<Definition>("definition", new { at });
 
+    /// Shift+F12, at the caret: the session reads the project's other files.
+    public void FindAllReferences() => ReferencesAsked?.Invoke(CaretOffset);
+
     /// F2, VS Code's Rename Symbol: only a label or a citation, the names the core renames, its box under the name.
     public void RenameSymbol()
     {
@@ -912,8 +917,8 @@ public sealed partial class SourceView : UserControl
             RenameAsked?.Invoke(symbol, new Rect(Gutter.ActualWidth + r.X, r.Y, r.Width, r.Height));
     }
 
-    /// Visual Studio's Go to definition and VS Code's Rename Symbol after the text commands, which the menu makes again
-    /// each time it opens.
+    /// Visual Studio's Go to definition and Find all references and VS Code's Rename Symbol after the text commands,
+    /// which the menu makes again each time it opens.
     void OnContextOpening(object sender, object e)
     {
         var commands = ((TextCommandBarFlyout)sender).SecondaryCommands;
@@ -927,6 +932,7 @@ public sealed partial class SourceView : UserControl
         }
         commands.Add(new AppBarSeparator());
         Add("Go to definition", "F12", defined is { Places.Length: > 0 }, GoToDefinition);
+        Add("Find all references", "Shift+F12", true, FindAllReferences);
         Add("Rename symbol", "F2", defined is { Kind: "label" or "citation" }, RenameSymbol);
     }
 

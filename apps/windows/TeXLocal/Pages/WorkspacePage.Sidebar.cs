@@ -36,8 +36,8 @@ public sealed class NavItem
 }
 
 /// The sidebar, as Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results
-/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, session_search,
-/// which finds the open document's unsaved edits).
+/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, session_search
+/// and session_usages, which find the open document's unsaved edits).
 public sealed partial class WorkspacePage
 {
     readonly RenameFlyout rename = new();
@@ -123,6 +123,7 @@ public sealed partial class WorkspacePage
         FilesTree.Visibility = Vis(tab == FilesTab);
         OutlineTree.Visibility = Vis(tab == OutlineTab && outlined);
         ResultsTree.Visibility = Vis(tab == ResultsTab && hits);
+        ResultsHeading.Visibility = Vis(tab == ResultsTab && ResultsHeading.Text.Length > 0);
         SelectCurrentHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
@@ -275,14 +276,32 @@ public sealed partial class WorkspacePage
             try { files = await Core.CallAsync<SearchFile[]>("session_search", new { session, query }); }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != searches) return;
-        (searched, searchNote) = (query, error ?? replaced);
+        ShowResults(query, files, error ?? replaced);
+    }
+
+    /// Visual Studio's Find all references: each line that defines or uses the name at the caret, in Results under a
+    /// heading naming it. Where no name is, nothing changes, as for Go to definition.
+    void ShowUsages(int offset) => Run("Can't find references", async () =>
+    {
+        if (Editor.Path is not { } path) return;
+        var generation = ++searches;
+        var usages = await Core.CallAsync<Usages?>("session_usages", new { session, path, offset });
+        if (usages is not null && generation == searches) ShowResults(usages.Name, usages.Groups, null, usages.Heading);
+    });
+
+    /// Hits by file, said as their count or the note. A heading names what found them other than the box's search, whose
+    /// matches Replace all would replace.
+    void ShowResults(string query, SearchFile[] files, string? note, string heading = "")
+    {
+        (searched, searchNote) = (query, note);
         ResultsTree.ItemsSource = Results(files);
-        ReplaceAll.IsEnabled = files.Length > 0;
+        ResultsHeading.Text = heading;
+        ReplaceAll.IsEnabled = heading.Length == 0 && files.Length > 0;
         if (query.Length > 0)
         {
             Split.IsPaneOpen = true;
             SideTabs.SelectedItem = ResultsTab;
-            Announce(Search, replaced ?? files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
+            Announce(Search, note ?? files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
         }
         ShowSide();
     }

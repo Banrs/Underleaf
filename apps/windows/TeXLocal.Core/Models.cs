@@ -134,6 +134,20 @@ public sealed record SearchHit(string File, int Line, int Column, int Length, st
 
 public sealed record SearchFile(string File, SearchHit[] Hits);
 
+/// Every line that defines or uses a name, as a search's hits (session_usages).
+/// <param name="Kind">label, citation, environment, command or file.</param>
+public sealed record Usages(string Kind, string Name, SearchFile[] Groups)
+{
+    /// What was searched for, the name as the source writes it.
+    public string Heading => Kind switch
+    {
+        "label" => $"Usages of \\label{{{Name}}}",
+        "citation" => $"Usages of \\cite{{{Name}}}",
+        "environment" => $"Usages of \\begin{{{Name}}}",
+        _ => $"Usages of {Name}",
+    };
+}
+
 /// The open document's edits, against its text at Version, to apply at once as one undoable edit.
 public sealed record DocumentEdits(string Path, ulong Version, TextEdit[] Edits);
 

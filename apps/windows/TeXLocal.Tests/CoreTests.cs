@@ -100,9 +100,10 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Search's hits by file; Replace's edits of the open document at its version, and the other files counted.
+    /// Search's hits by file, and usages' as theirs under their heading; Replace's edits of the open document at its
+    /// version, and the other files counted.
     [Fact]
-    public async Task SearchAndReplaceDecode()
+    public async Task SearchUsagesAndReplaceDecode()
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Search" });
         File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\n");
@@ -110,10 +111,13 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_open", new { id = made.Id, session });
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
         using var source = core.SessionSource(session, "main.tex")!;
-        source.Edit(0, 0, "needle ");
+        source.Edit(0, 0, "needle \\label{x} ");
         var found = await core.CallAsync<SearchFile[]>("session_search", new { session, query = "needle" });
         var hit = Assert.Single(Assert.Single(found, f => f.File == "notes.tex").Hits);
         Assert.Equal(("a ", "needle", 1, 2, 6), (hit.Before, hit.Match, hit.Line, hit.Column, hit.Length));
+        var usages = (await core.CallAsync<Usages?>("session_usages", new { session, path = "main.tex", offset = 14 }))!;
+        Assert.Equal("Usages of \\label{x}", usages.Heading);
+        Assert.Equal(("main.tex", 14), (usages.Groups[0].File, Assert.Single(usages.Groups[0].Hits).Column));
         var replaced = await core.CallAsync<Replaced>("session_replace", new { session, query = "needle", replacement = "pin" });
         Assert.Equal("main.tex", replaced.Edits?.Path);
         Assert.Equal(source.Call<ulong?>("version", new { }), replaced.Edits?.Version);

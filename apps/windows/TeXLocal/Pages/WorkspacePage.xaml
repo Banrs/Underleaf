@@ -139,6 +139,7 @@
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Click="OnGoToLine" Text="Go to line…" />
                     <!-- Visual Studio's key. No access key: each of its letters is another item's. -->
                     <MenuFlyoutItem x:Name="DefinitionItem" controls:Shortcut.Keys="F12" Click="{x:Bind Editor.GoToDefinition}" Text="Go to definition" />
+                    <MenuFlyoutItem x:Name="ReferencesItem" controls:Shortcut.Keys="Shift+F12" Click="{x:Bind Editor.FindAllReferences}" Text="Find all references" />
                     <!-- VS Code's key, the editor's: in Files, F2 renames the file. -->
                     <MenuFlyoutItem x:Name="RenameSymbolItem" controls:Shortcut.Keys="F2" AccessKey="Y" Click="{x:Bind Editor.RenameSymbol}" Text="Rename symbol" />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+G" AccessKey="A" Click="OnGoToPage" Text="Go to page…" />
@@ -400,11 +401,21 @@
                             <Button x:Name="ReplaceAll" Grid.Column="1" Click="OnReplaceAll" Content="Replace all" IsEnabled="False" />
                         </Grid>
                     </Grid>
-                    <SelectorBar x:Name="SideTabs" Grid.Row="1" Margin="0,0,0,4" SelectionChanged="OnSideTab">
-                        <SelectorBarItem x:Name="FilesTab" IsSelected="True" Text="Files" />
-                        <SelectorBarItem x:Name="OutlineTab" Text="Outline" />
-                        <SelectorBarItem x:Name="ResultsTab" Text="Results" />
-                    </SelectorBar>
+                    <StackPanel Grid.Row="1" Margin="0,0,0,4">
+                        <SelectorBar x:Name="SideTabs" SelectionChanged="OnSideTab">
+                            <SelectorBarItem x:Name="FilesTab" IsSelected="True" Text="Files" />
+                            <SelectorBarItem x:Name="OutlineTab" Text="Outline" />
+                            <SelectorBarItem x:Name="ResultsTab" Text="Results" />
+                        </SelectorBar>
+                        <!-- Find all references' name, over its results. -->
+                        <TextBlock
+                            x:Name="ResultsHeading"
+                            Margin="12,4,4,0"
+                            AutomationProperties.HeadingLevel="Level2"
+                            Style="{StaticResource BodyStrongTextBlockStyle}"
+                            TextTrimming="CharacterEllipsis"
+                            Visibility="Collapsed" />
+                    </StackPanel>
                     <TreeView
                         x:Name="FilesTree"
                         Grid.Row="2"
