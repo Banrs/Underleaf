@@ -38,8 +38,9 @@ apps/windows/
                           Core.cs, Source.cs (a SafeHandle over TlSource), Models.cs (the JSON's records);
                           builds the DLL
   TeXLocal/               the WinUI 3 app: App, MainWindow, Prefs.cs (typed preferences);
-                          Pages/ Home, Workspace (.xaml.cs the session; .Sidebar.cs files, outline, search,
-                          words; .Insert.cs the Insert menu and symbol palette), Settings;
+                          Pages/ Home, Workspace (.xaml.cs the session, jumps, Back and Forward, Go to all and
+                          Quick info; .Sidebar.cs files, outline, search, words; .Insert.cs the Insert menu and
+                          symbol palette), Settings;
                           Controls/ Card, Shortcut, Sizer, RenameFlyout, PdfView, SourceView (+ .Find.cs),
                           PagePreview, HistoryDialog; Themes/Generic.xaml (the custom controls' styles)
   TeXLocal.Tests/         xUnit against TeXLocal.Core only: the bridge and smoke behaviour
@@ -87,6 +88,9 @@ apps/windows/
 | Maths, palette | `SvgImageSource` for RaTeX's SVG; the palette a grouped `GridView` in a `Flyout` | A font's glyphs miss TeX's spacing |
 | Completion | A `ListView` in a `Popup`, never focused | A `Flyout` takes the keyboard |
 | Find | Notepad's find bar over `RichEditTextRange.FindText` | No find in `RichEditBox` |
+| Back and Forward | VS Code's: Edit's Go back and Go forward, Alt+Left (the window's, which goes back a page where there's no place) and Alt+Right, the mouse's back and forward buttons; each jump goes through `WorkspacePage.Jump` | The title bar's back button stays the page's, as in Settings |
+| Go to all | Visual Studio's (Ctrl+T): a `Flyout` at the workspace's top centre holding an `AutoSuggestBox`, whose list is the results with a `FontIcon` per kind and the detail in Caption; one Escape closes it | A `ContentDialog` dims and blocks the window; a list of our own needs its own keys |
+| Quick info | VS Code's hover: a `Flyout` under the name after 500 ms at rest (`TransientWithDismissOnPointerMoveAway`, the keyboard staying in the text), or at the caret (Ctrl+Shift+I, `Standard`); the name in the editor's font, Go to definition a `HyperlinkButton` | A `ToolTip` holds no link; a `TeachingTip` points a tail at a word |
 | Layer corners | A rounded clip on each layer's composition visual | `CornerRadius` rounds only the border |
 | Issues | `ListView`, the build's then the checks', each row's explanation in Caption under its message; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a fix a button at the row's end, as the Store's Install, a `ProgressRing` beside it while it runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
@@ -156,6 +160,7 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; the outline follows the scroll | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
 | Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`, double-click to the PDF; undo cleared on switch | UI |
+| Editor | Quick Help | Quick info on Ctrl+Shift+I, not Visual Studio's Ctrl+K, Ctrl+I | UI: `Shortcut` has no chords |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
 | Panel | Log find | The filter keeps matching lines | UI |

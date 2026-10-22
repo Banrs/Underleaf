@@ -126,6 +126,34 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
+    /// Back's and Forward's answers, as the workspace's menu and jumps read them.
+    [Fact]
+    public async Task PlacesGoBackAndForward()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Places" });
+        const ulong session = 11;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        Assert.Equal(new Trail(true, false, null), await core.CallAsync<Trail>("session_navigate", new { session, from = new Spot("main.tex", 1) }));
+        var back = await core.CallAsync<Trail>("session_back", new { session, at = new Spot("main.tex", 3) });
+        Assert.Equal(new Trail(false, true, new Spot("main.tex", 1)), back);
+        var forward = await core.CallAsync<Trail>("session_forward", new { session, at = new Spot("main.tex", 1) });
+        Assert.Equal(new Trail(true, false, new Spot("main.tex", 3)), forward);
+        await core.CallAsync("session_close", new { session });
+    }
+
+    /// Go to all's results: a heading and a label, each with its place.
+    [Fact]
+    public async Task GoToAllDecodes()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Quick" });
+        File.WriteAllText(Path.Combine(dir, made.Id, "main.tex"), "\\section{Intro}\\label{sec:intro}\n");
+        const ulong session = 13;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        QuickItem[] found = [new("heading", "Intro", "Section · main.tex", "main.tex", 1), new("label", "sec:intro", "Intro", "main.tex", 1)];
+        Assert.Equal(found, await core.CallAsync<QuickItem[]>("session_quick_open", new { session, query = "intro" }));
+        await core.CallAsync("session_close", new { session });
+    }
+
     /// session_history_list's entries and session_history_compare's rows, as docs/core-api.md has them.
     [Fact]
     public void HistoryDecodes()

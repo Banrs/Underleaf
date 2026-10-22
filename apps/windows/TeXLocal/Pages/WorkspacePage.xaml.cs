@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -13,6 +14,7 @@ using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
@@ -50,7 +52,10 @@ public sealed partial class WorkspacePage : Page
     string? name, fixing;
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
+    int quickQueries;
     double ratio = Prefs.SplitRatio;
+    /// Where the quick info shown says its name is defined.
+    Spot? helpPlace;
     CompileResult? result;
     LogItem[] checks = [];
     UIElement? beforeMenu;
@@ -113,6 +118,7 @@ public sealed partial class WorkspacePage : Page
         // A scroll within the caret's wait of a move, either side, is the caret's.
         Editor.CaretMoved += () =>
         {
+            HelpFlyout.Hide();
             ShowCaret();
             headingLine = Editor.Caret.Line;
             caretScrolled |= scrollTimer.IsRunning;
@@ -120,6 +126,7 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.Scrolled += () =>
         {
+            HelpFlyout.Hide();
             caretScrolled |= caretTimer.IsRunning;
             Restart(scrollTimer);
         };
@@ -145,7 +152,8 @@ public sealed partial class WorkspacePage : Page
         {
             if (PdfItem.IsChecked && Editor.Path is not null && Pdf.PageCount > 0) Run(null, SyncToCaret);
         };
-        Editor.DefinitionFound += place => _ = Reveal(place.File, place.Line, place.Column, place.Length);
+        Editor.DefinitionFound += place => _ = Jump(place.File, place.Line, place.Column, place.Length);
+        Editor.HelpAsked += ShowHelp;
         Editor.ReferencesAsked += ShowUsages;
         // The core's refusal shows in the flyout.
         Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Editor.Apply((await Core.CallAsync<Replaced>("session_rename_symbol",
@@ -154,9 +162,9 @@ public sealed partial class WorkspacePage : Page
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
             var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
-            await Reveal(at.File, at.Line, at.Column ?? 0);
+            await Jump(at.File, at.Line, at.Column ?? 0);
         });
-        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, ReferencesItem, RenameSymbolItem]) Shortcut.SetScope(item, Editor);
+        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, ReferencesItem, RenameSymbolItem, QuickInfoItem]) Shortcut.SetScope(item, Editor);
         foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
@@ -393,11 +401,110 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// A place in a file: a line from 1, a column from 0 and what to select from there. The file opens as Files would open
-    /// it, so a graphic a definition names opens in its own app.
-    async Task Reveal(string path, int line, int column = 0, int length = 0)
+    /// A place in a file: a line from 1, or none for the file alone, a column from 0 and what to select from there. The
+    /// file opens as Files would open it, so a graphic a definition names opens in its own app. False if the editor doesn't
+    /// show it.
+    async Task<bool> Reveal(string path, int? line, int column = 0, int length = 0)
     {
-        if (await OpenDocument(path, KindOf(path) ?? "tex")) Editor.GoTo(line, column, length);
+        if (!await OpenDocument(path, KindOf(path) ?? "tex")) return false;
+        if (line is { } at) Editor.GoTo(at, column, length);
+        return true;
+    }
+
+    /// A jump that leaves the caret's place, which Back then returns to (session_navigate); a jump that didn't move it,
+    /// or opened the file in another app, keeps nothing.
+    async Task Jump(string path, int? line, int column = 0, int length = 0)
+    {
+        var from = Editor.Path is { } shown ? new Spot(shown, Editor.Caret.Line) : null;
+        if (await Reveal(path, line, column, length) && from is not null && from != new Spot(Editor.Path!, Editor.Caret.Line))
+            Run(null, async () => ShowTrail(await Core.CallAsync<Trail>("session_navigate", new { session, from })));
+    }
+
+    /// VS Code's Go back and Go forward, through the session's places; the caret's goes on the other way's.
+    void Step(string command) => Run(null, async () =>
+    {
+        if (Editor.Path is not { } path) return;
+        var trail = await Core.CallAsync<Trail>(command, new { session, at = new Spot(path, Editor.Caret.Line) });
+        ShowTrail(trail);
+        if (trail.To is { } to) await Reveal(to.Path, to.Line);
+    });
+
+    void ShowTrail(Trail trail) => (BackItem.IsEnabled, ForwardItem.IsEnabled) = (trail.Back, trail.Forward);
+
+    /// Back or Forward for the window's Alt+Left and the mouse's buttons: false where there's no place to go to.
+    public bool Go(bool back)
+    {
+        if (!(back ? BackItem : ForwardItem).IsEnabled) return false;
+        Step(back ? "session_back" : "session_forward");
+        return true;
+    }
+
+    void OnBack(object sender, RoutedEventArgs e) => Go(true);
+    void OnForward(object sender, RoutedEventArgs e) => Go(false);
+
+    /// Visual Studio's Go to all, at the workspace's top centre: the files first, then what the query matches.
+    void OnGoToAll(object sender, RoutedEventArgs e)
+    {
+        GoToBox.Text = "";
+        GoToFlyout.ShowAt(Split, new FlyoutShowOptions { Position = new(Split.ActualWidth / 2, 8), Placement = FlyoutPlacementMode.Bottom });
+        ListQuick("");
+    }
+
+    void OnGoToOpened(object sender, object e) => GoToBox.Focus(FocusState.Programmatic);
+
+    void OnGoToChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e)
+    {
+        if (e.Reason == AutoSuggestionBoxTextChangeReason.UserInput) ListQuick(sender.Text);
+    }
+
+    /// A later query's answer wins over an earlier one's.
+    void ListQuick(string query) => Run(null, async () =>
+    {
+        var generation = ++quickQueries;
+        var items = await Core.CallAsync<QuickItem[]>("session_quick_open", new { session, query });
+        if (generation != quickQueries) return;
+        GoToBox.ItemsSource = items;
+        GoToBox.IsSuggestionListOpen = items.Length > 0;
+    });
+
+    /// Enter without a result chosen takes the best.
+    void OnGoToSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e)
+    {
+        if ((e.ChosenSuggestion ?? (sender.ItemsSource as QuickItem[])?.FirstOrDefault()) is not QuickItem item) return;
+        GoToFlyout.Hide();
+        _ = Jump(item.Path, item.Line);
+    }
+
+    /// One Escape closes it, list and all, as Visual Studio's does.
+    void OnGoToKey(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Escape) return;
+        e.Handled = true;
+        GoToFlyout.Hide();
+    }
+
+    public static string KindGlyph(string kind) => kind switch { "heading" => "\uE8FD", "label" => "\uE8EC", _ => "\uE8A5" };
+
+    /// VS Code's hover and Visual Studio's Quick info: what the core says the name is, by its character. Hovered, the
+    /// keyboard stays in the text and the flyout goes as the pointer leaves it.
+    void ShowHelp(int offset, Rect at, bool hovered) => Run(null, async () =>
+    {
+        if (Editor.Path is not { } path || await Core.CallAsync<QuickHelp?>("session_quick_help", new { session, path, offset }) is not { } help
+            || Editor.Path != path) return;
+        (HelpTitle.Text, HelpDetail.Text, helpPlace) = (help.Title, help.Detail, help.Place);
+        HelpDetail.Visibility = Vis(help.Detail.Length > 0);
+        HelpPlace.Visibility = Vis(help.Place is not null);
+        HelpFlyout.ShowAt(Editor, new FlyoutShowOptions
+        {
+            Position = new(at.X, at.Bottom), ExclusionRect = at,
+            ShowMode = hovered ? FlyoutShowMode.TransientWithDismissOnPointerMoveAway : FlyoutShowMode.Standard,
+        });
+    });
+
+    void OnHelpPlace(object sender, RoutedEventArgs e)
+    {
+        HelpFlyout.Hide();
+        if (helpPlace is { } place) _ = Jump(place.Path, place.Line);
     }
 
     /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
@@ -429,6 +536,7 @@ public sealed partial class WorkspacePage : Page
     void ShowLook()
     {
         Editor.SetLook(Prefs.EditorFont, Prefs.EditorFontSize, Prefs.EditorTheme);
+        HelpTitle.FontFamily = SourceView.Font(Prefs.EditorFont);
         (Editor.AutoPair, Editor.AutoComplete, Editor.LineNumbers) = (Prefs.AutoPair, Prefs.AutoComplete, Prefs.LineNumbers);
     }
 
@@ -566,14 +674,14 @@ public sealed partial class WorkspacePage : Page
         IssueTabs.SelectedItem = IssuesTab;
         IssueList.SelectedItem = (IssueList.ItemsSource as IssueItem[])?.FirstOrDefault(i => i.Index == chosen.Index);
         if (IssueList.SelectedItem is { } row) IssueList.ScrollIntoView(row);
-        if (chosen.Issue.File is { } file) await Reveal(file, chosen.Issue.Line ?? 1);
+        if (chosen.Issue.File is { } file) await Jump(file, chosen.Issue.Line ?? 1);
     });
 
     /// A bad box isn't one of the session's issues, so its place is opened here.
     void Choose(IssueItem row)
     {
         if (row.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
-        else if (row.Item.File is { } file) _ = Reveal(file, row.Item.Line ?? 1);
+        else if (row.Item.File is { } file) _ = Jump(file, row.Item.Line ?? 1);
     }
 
     void OnIssueClick(object sender, ItemClickEventArgs e) => Choose((IssueItem)e.ClickedItem);

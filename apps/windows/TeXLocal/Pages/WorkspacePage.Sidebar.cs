@@ -179,9 +179,9 @@ public sealed partial class WorkspacePage
 
     async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
     {
-        TreeNode { Type: not "dir" } node => OpenDocument(node.Path, node.Kind),
-        OutlineNode { File: { } file } heading => Reveal(file, heading.Line),
-        SearchHit hit => Reveal(hit.File, hit.Line, hit.Column, hit.Length),
+        TreeNode { Type: not "dir" } node => Jump(node.Path, null),
+        OutlineNode { File: { } file } heading => Jump(file, heading.Line),
+        SearchHit hit => Jump(hit.File, hit.Line, hit.Column, hit.Length),
         _ => Task.CompletedTask,
     });
 
