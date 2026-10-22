@@ -327,7 +327,7 @@ impl Scanner {
         let mut buf = [0; NAME];
         let name = ascii(&src[name_start..name_end], &mut buf);
         let (code, read) = match name {
-            "verb" => (true, self.verb(src)),
+            "verb" | "lstinline" | "mintinline" => (true, self.verb(src, name)),
             "begin" | "end" => self.environment(src, start, name == "end", in_math, visit),
             _ => {
                 self.text_argument = in_math && CATALOG.text_commands.contains(name);
@@ -345,14 +345,35 @@ impl Scanner {
         (code, read)
     }
 
-    /// It can't cross a line: unclosed, it ends where its line does.
-    fn verb(&mut self, src: &[u16]) -> usize {
-        self.i += src.get(self.i).is_some_and(|&u| is(u, '*')) as usize;
+    /// `\verb`'s code, or `\lstinline`'s after its options, or `\mintinline`'s after its options
+    /// and language, between two of one character or, but for `\verb`'s, in braces. It can't
+    /// cross a line: unclosed, it ends where its line does.
+    fn verb(&mut self, src: &[u16], name: &str) -> usize {
+        let line_end = find(src, self.i, &[NEWLINE]);
+        let line = &src[..line_end.unwrap_or(src.len())];
+        let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
+        let past = |i: usize, close| find(line, i, &[close as u16]).map_or(line.len(), |i| i + 1);
+        if name == "verb" {
+            self.i += at(self.i, '*') as usize;
+        } else if at(self.i, '[') {
+            self.i = past(self.i, ']');
+        }
+        if name == "mintinline" && at(self.i, '{') {
+            self.i = past(self.i, '}');
+        }
         let Some(&delimiter) = src.get(self.i) else {
             return self.i + 1;
         };
-        let line_end = find(src, self.i, &[NEWLINE]);
-        self.skip_literal(src, self.i + 1, &[delimiter], line_end);
+        if name != "verb" && is(delimiter, '{') {
+            let mut depth = 0;
+            let close = line[self.i..].iter().position(|&u| {
+                depth += is(u, '{') as i32 - is(u, '}') as i32;
+                depth == 0
+            });
+            self.i = close.map_or(line.len(), |close| self.i + close + 1);
+        } else {
+            self.skip_literal(src, self.i + 1, &[delimiter], line_end);
+        }
         line_end.unwrap_or(src.len()) + 1 // looking for the line's end
     }
 

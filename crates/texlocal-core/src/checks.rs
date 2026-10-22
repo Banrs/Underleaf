@@ -470,7 +470,7 @@ mod tests {
                 &format!("This {open} is still open where the paragraph ends."),
             )
         };
-        let none = "% \\begin{x} {\n\\verb|{$|\n\\begin{verbatim}\n\\end{x} }\n\\end{verbatim}\n\
+        let none = "% \\begin{x} {\n\\verb|{$| \\lstinline[language=C]|}$| \\lstinline{a{b}$} \\mintinline{c}{$}\n\\begin{verbatim}\n\\end{x} }\n\\end{verbatim}\n\
             \\begin{lstlisting}\n{\n\\end{lstlisting}\n\\begin{minted}{py}\n}\n\\end{minted}\n\
             \\{ \\} \\$ 50\\% \\url{a%20b} \\href{c%d}{e}\n\\newcommand{\\bc}{\\begin{center}}\n\\renewcommand*\\ee{\\end{flushleft}}\n\
             \\newenvironment{bx}[1][x]{\\end{quote}}{\\begin{quote}}\n\\def\\x#1{\\end{itemize}}\n\
