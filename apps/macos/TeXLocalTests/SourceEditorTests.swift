@@ -74,7 +74,7 @@ struct SourceEditorTests {
         #expect(text.string == "{}" && text.selectedRange() == .caret(2))
         open("  a{}", caret: 4)
         text.insertNewline(nil)
-        #expect(text.string == "  a{\n  \n  }" && text.selectedRange().location == 7)
+        #expect(text.string == "  a{\n    \n  }" && text.selectedRange().location == 9)
         open("x", caret: 0)
         text.insertTab(nil)
         #expect(text.string == "  x" && text.document.text == text.string)
