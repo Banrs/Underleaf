@@ -730,6 +730,28 @@ public sealed partial class WorkspacePage : Page
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
+
+    /// Word's Save a version: a name the core keeps with the project's files as they are.
+    async void OnSaveVersion(object sender, RoutedEventArgs e)
+    {
+        var box = new TextBox { Header = "Name" };
+        var dialog = new ContentDialog { Title = "Save version", Content = box, PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, IsPrimaryButtonEnabled = false };
+        box.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = box.Text.Trim().Length > 0;
+        dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
+        if (await App.Show(dialog) != ContentDialogResult.Primary) return;
+        Run("Can't save this version", async () =>
+        {
+            var saved = await Core.CallAsync<Snapshot>("session_history_save", new { session, name = box.Text.Trim() });
+            Announce(BuildState, $"Saved version “{saved.Name}”", "history");
+        });
+    }
+
+    /// A restore's edits of the open document, as Replace all's, at the version the core read.
+    void OnHistory(object sender, RoutedEventArgs e) => Run("Can't restore", async () =>
+    {
+        if (await new HistoryDialog(session).Restore() is { } restored) Editor.Apply(restored.Edits);
+    });
+
     void OnFind(object sender, RoutedEventArgs e) => Editor.ShowFind(false);
     void OnReplace(object sender, RoutedEventArgs e) => Editor.ShowFind(true);
     void OnFindNext(object sender, RoutedEventArgs e) => Editor.FindNext(true);

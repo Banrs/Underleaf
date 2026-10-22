@@ -41,7 +41,7 @@ apps/windows/
                           Pages/ Home, Workspace (.xaml.cs the session; .Sidebar.cs files, outline, search,
                           words; .Insert.cs the Insert menu and symbol palette), Settings;
                           Controls/ Card, Shortcut, Sizer, RenameFlyout, PdfView, SourceView (+ .Find.cs),
-                          PagePreview; Themes/Generic.xaml (the custom controls' styles)
+                          PagePreview, HistoryDialog; Themes/Generic.xaml (the custom controls' styles)
   TeXLocal.Tests/         xUnit against TeXLocal.Core only: the bridge and smoke behaviour
 ```
 
@@ -80,6 +80,7 @@ apps/windows/
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView`, an opened folder's path under its name as in Word's | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
 | Dialogs | `ContentDialog` through `App.Show` | Each dialog setting its own root, theme and style |
+| Version history | A wide `ContentDialog`, as Word's Version History pane: `ListView`s of versions and their changed files, the file's comparison a `ListView` of lines on `SystemFillColorCriticalBackground` and `SystemFillColorSuccessBackground`, diffed in C# for display; Restore all closes it for its confirmation, which reopens it on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem` with `SendToRecycleBin` | `DeleteAsync` deletes outright unpackaged |
 | Source editor | `RichEditBox` (it passed the editor gate) | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG; the palette a grouped `GridView` in a `Flyout` | A font's glyphs miss TeX's spacing |
@@ -124,8 +125,8 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 14. **Issue indices on lines**: the `issues` event's lines don't say which issue they show, so a
     click on a line-end box looks up the first issue at that file and line.
 16. **TeX status for display**: the distribution's name ("TeX Live 2026").
-17. **Casing**: `menus` and `heading_styles` take a casing ("sentence" for Windows), and the host's
-    `Sentence()` goes.
+17. **Casing**: `menus`, `heading_styles` and `session_history_list`'s reasons take a casing
+    ("sentence" for Windows), and the host's `Sentence()` goes.
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the
     host's kind list and `.tex` test go.
