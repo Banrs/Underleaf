@@ -258,13 +258,17 @@ fn changes(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) 
     changed.collect()
 }
 
-/// Files of the project's as they were, written all or none, but those that are so already.
+/// Files of the project's as they were, written all or none, but those that are so already and
+/// those now too large to keep, which the snapshot before couldn't save.
 pub(crate) fn put_back(
     root: &Path,
     files: Vec<(String, Vec<u8>)>,
 ) -> Result<Vec<String>, CoreError> {
     write_all(files, |(rel, bytes)| {
         let abs = safe_write_path(root, &rel)?;
+        if fs::metadata(&abs).is_ok_and(|meta| meta.len() > MAX_KEPT) {
+            return Ok(None);
+        }
         let was = match fs::read(&abs) {
             Err(err) if err.kind() == ErrorKind::NotFound => None,
             read => Some(read?),
@@ -353,6 +357,22 @@ mod tests {
         assert_eq!(history.ids().unwrap(), kept);
         let files = history.read(now).unwrap().files.len();
         assert_eq!(names_in(&history.objects()).len(), files);
+    }
+
+    /// The Before Restore snapshot can't keep it, so a restore would lose it for good.
+    #[test]
+    fn a_restore_leaves_alone_a_file_too_large_to_keep() {
+        let (_dir, root) = project();
+        fs::write(root.join("data.csv"), "small").unwrap();
+        let history = history(&root);
+        history.take(0, Taken::Before("x")).unwrap();
+        let large = fs::File::create(root.join("data.csv")).unwrap();
+        large.set_len(MAX_KEPT + 1).unwrap();
+        let files = history.files("0", |_| true).unwrap();
+        assert!(files.iter().any(|(path, _)| path == "data.csv"));
+        put_back(&root, files).unwrap();
+        let len = fs::metadata(root.join("data.csv")).unwrap().len();
+        assert_eq!(len, MAX_KEPT + 1);
     }
 
     /// A snapshot holds what the tree lists, and the tree, search and an export (and so an
