@@ -159,18 +159,10 @@ final class ProjectModel {
 
     let notices = ProjectNotices()
 
-    /// Where the project is left, which `load` shows again from the core's ui state.
-    var place: [String: any Sendable] {
-        var place: [String: any Sendable] = ["line": cursorLine, "zoom": pdf.keptZoom.json, "panel": panel.shown]
-        if let openPath { place["file"] = openPath }
-        if let page = pdf.keptPage { place["page"] = page }
-        return place
-    }
-
-    /// As the project is left and on quit; one that never loaded has no place of its own to keep.
+    /// As the project is left and on quit, for `load` to show again; one that never loaded has no place of its own to keep.
     func savePlace() async {
         guard initialLoadComplete else { return }
-        saveUIState(place)
+        saveUIState(["file": openPath, "line": cursorLine, "page": pdf.keptPage, "zoom": pdf.keptZoom.json, "panel": panel.shown])
         await uiStateWrites?.value
     }
 
@@ -548,9 +540,8 @@ final class ProjectModel {
     /// is the core's sentence, for the history sheet to show.
     func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
         guard let session else { return }
-        var args: [String: any Sendable] = ["session": session, "id": snapshot.id]
-        if let paths { args["paths"] = paths }
-        apply(try await core.call("session_history_restore", args, as: Restored.self).edits, named: String(localized: "Restore"))
+        apply(try await core.call("session_history_restore", ["session": session, "id": snapshot.id, "paths": paths], as: Edited.self).edits,
+              named: String(localized: "Restore"))
     }
 
     /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
@@ -575,9 +566,9 @@ final class ProjectModel {
         if fix.command.hasPrefix("session_") { args["session"] = session }
         fixing = fix
         defer { fixing = nil }
-        let answer: FixAnswer
+        let answer: Edited
         do {
-            answer = try await core.call(fix.command, args, as: FixAnswer.self)
+            answer = try await core.call(fix.command, args, as: Edited.self)
         } catch {
             // install_package's 403 is its password dialog cancelled, which needs no alert.
             let cancelled = (error as? CoreError)?.status == 403 && fix.command == "install_package"
@@ -691,11 +682,9 @@ private nonisolated struct ProjectEdits: Decodable {
     var written: [Written]
 }
 
-/// `session_history_restore`'s, whose files written the app doesn't count.
-private nonisolated struct Restored: Decodable { var edits: ProjectEdits.Document? }
-
-/// What a fix's command answers that the window shows: `session_add_package`'s edits, `session_set_settings`'s settings.
-private nonisolated struct FixAnswer: Decodable {
+/// What a restore or a fix's command answers that the window shows: the open document's edits, or `session_set_settings`'s
+/// settings.
+private nonisolated struct Edited: Decodable {
     let edits: ProjectEdits.Document?
     let settings: ProjectSettings?
 

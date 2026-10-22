@@ -108,34 +108,22 @@ nonisolated struct LogItem: Decodable {
     nonisolated struct Arguments: Decodable, Equatable {
         let json: [String: any Sendable]
 
-        private nonisolated struct Key: CodingKey {
-            let stringValue: String
-            var intValue: Int? { nil }
-            init(stringValue: String) { self.stringValue = stringValue }
-            init?(intValue: Int) { return nil }
-        }
+        init(from decoder: any Decoder) throws { json = try [String: Value](from: decoder).mapValues(\.json) }
 
         private nonisolated struct Value: Decodable {
             let json: any Sendable
 
             init(from decoder: any Decoder) throws {
-                if let object = try? decoder.container(keyedBy: Key.self) {
-                    json = try Arguments(object).json
-                } else if let flag = try? decoder.singleValueContainer().decode(Bool.self) {
+                let value = try decoder.singleValueContainer()
+                if let flag = try? value.decode(Bool.self) {
                     json = flag
+                } else if let text = try? value.decode(String.self) {
+                    json = text
                 } else {
-                    json = try decoder.singleValueContainer().decode(String.self)
+                    json = try value.decode(Arguments.self).json
                 }
             }
         }
-
-        private init(_ object: KeyedDecodingContainer<Key>) throws {
-            json = try Dictionary(uniqueKeysWithValues: object.allKeys.map {
-                ($0.stringValue, try object.decode(Value.self, forKey: $0).json)
-            })
-        }
-
-        init(from decoder: any Decoder) throws { try self.init(decoder.container(keyedBy: Key.self)) }
 
         static func == (a: Self, b: Self) -> Bool { NSDictionary(dictionary: a.json).isEqual(to: b.json) }
     }
@@ -237,8 +225,8 @@ nonisolated struct RenameResult: Decodable {
 }
 
 /// One of `session_history_list`'s: what it was taken for, and the files that differ from the one before it.
-nonisolated struct Snapshot: Decodable, Identifiable, Hashable {
-    nonisolated struct Change: Decodable, Hashable {
+nonisolated struct Snapshot: Decodable, Identifiable {
+    nonisolated struct Change: Decodable {
         nonisolated enum Kind: String, Decodable { case added, deleted, changed }
 
         let path: String
