@@ -217,11 +217,7 @@ private struct IssueRow: View {
     @ViewBuilder private func offer(_ fix: LogItem.Fix) -> some View {
         Spacer()
         if project.fixing == fix {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text(fix.progress).foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
+            ProgressView().controlSize(.small).accessibilityLabel(fix.title)
         } else {
             Button(fix.title) { Task { if await confirmed(fix) { await project.run(fix) } } }
                 .controlSize(.small)

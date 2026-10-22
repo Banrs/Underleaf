@@ -102,14 +102,6 @@ nonisolated struct LogItem: Decodable {
         let args: Arguments
         /// Asked before it runs.
         let confirm: String?
-
-        /// "Install" as "Installing…": an English title starts with its verb.
-        var progress: String {
-            var words = title.split(separator: " ", maxSplits: 1).map(String.init)
-            if words[0].hasSuffix("e"), !words[0].hasSuffix("ee") { words[0].removeLast() }
-            words[0] += "ing"
-            return words.joined(separator: " ") + "…"
-        }
     }
 
     /// A JSON object sent back as it came, of the objects, strings and booleans the fixes' arguments have.

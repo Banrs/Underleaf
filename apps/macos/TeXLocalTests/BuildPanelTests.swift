@@ -53,13 +53,4 @@ struct BuildPanelTests {
         await project.run(try JSONDecoder().decode(LogItem.Fix.self, from: Data(json.utf8)))
         #expect(app.alert?.title == "Couldn’t Install" && project.fixing == nil)
     }
-
-    @Test func aFixInProgressIsItsTitlesVerbGoingOn() throws {
-        func progress(_ title: String) throws -> String {
-            let json = #"{"title": "\#(title)", "help": "", "command": "", "args": {}}"#
-            return try JSONDecoder().decode(LogItem.Fix.self, from: Data(json.utf8)).progress
-        }
-        #expect(try progress("Install") == "Installing…")
-        #expect(try progress("Use XeLaTeX") == "Using XeLaTeX…")
-    }
 }
