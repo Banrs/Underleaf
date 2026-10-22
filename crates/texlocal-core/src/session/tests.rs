@@ -372,6 +372,19 @@ async fn an_autosave_builds_when_auto_compile_is_on() {
     assert!(rig.of_type("build").await.iter().any(automatic));
 }
 
+/// The host builds after a fix, once it has applied the fix's edits.
+#[tokio::test(start_paused = true)]
+async fn a_fix_that_changes_a_setting_leaves_the_build_to_the_host() {
+    let rig = Rig::new(true).await;
+    wait(1).await;
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.ok("fix", json!({ "id": "engine:xelatex" })).await;
+    rig.ok("compile", json!({})).await;
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.state().await;
+    assert_eq!(rig.fake.called("compile"), 2);
+}
+
 #[tokio::test(start_paused = true)]
 async fn ime_composition_holds_the_autosave_until_it_ends() {
     let rig = Rig::new(false).await;

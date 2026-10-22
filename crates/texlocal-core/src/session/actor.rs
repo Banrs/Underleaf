@@ -452,7 +452,7 @@ impl Actor {
             "replace" => return self.replace(args),
             "rename_symbol" => return self.rename_symbol(args),
             "history_restore" => return self.history_restore(args),
-            "set_settings" => return self.set_settings(&arg(args, "patch")?),
+            "set_settings" => return self.set_settings(&arg(args, "patch")?, true),
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
                 let path = path()?;
@@ -1102,10 +1102,10 @@ impl Actor {
                 .add_package(&name)
                 .map(|mut added| added["edits"].take()),
             Ok(Fix::Xelatex) => self
-                .set_settings(&json!({ "engine": "xelatex" }))
+                .set_settings(&json!({ "engine": "xelatex" }), false)
                 .map(|_| Value::Null),
             Ok(Fix::ShellEscape) => self
-                .set_settings(&json!({ "shellEscape": true }))
+                .set_settings(&json!({ "shellEscape": true }), false)
                 .map(|_| Value::Null),
             Err(err) => Err(err),
         };
@@ -1231,7 +1231,9 @@ impl Actor {
         Ok(answer)
     }
 
-    fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
+    /// With `build`, an automatic build follows; after a fix the host builds, once it has applied
+    /// the fix's edits.
+    fn set_settings(&mut self, patch: &Value, build: bool) -> Result<Value, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
             let updated = settings::write_settings(&project.settings, patch)?;
@@ -1243,7 +1245,7 @@ impl Actor {
         })?;
         if main_changed {
             self.main_file_changed();
-        } else if self.auto_compile {
+        } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
         out(updated)
