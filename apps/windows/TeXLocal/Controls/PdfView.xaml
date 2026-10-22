@@ -37,7 +37,7 @@
                     <MenuFlyoutSeparator />
                 </MenuFlyout>
             </FlyoutBase.AttachedFlyout>
-            <!--  Padding, not Margin, so the content's coordinates are the panel's. Light: white paper in both themes.  -->
+            <!--  Padding, not Margin, so the content's coordinates are the panel's. Light, or Dark for dark paper (Repaper), whatever the app's.  -->
             <StackPanel x:Name="Pages" Padding="12" HorizontalAlignment="Center" RequestedTheme="Light" Spacing="12">
                 <StackPanel.Resources>
                     <!--  The paper: its stroke falls outside the page, so the bitmap keeps its size.  -->

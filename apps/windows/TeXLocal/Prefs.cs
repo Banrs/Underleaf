@@ -4,6 +4,8 @@ using Windows.Foundation.Collections;
 
 namespace TeXLocal;
 
+public enum PageColour { White, Dark, App }
+
 /// The host's preferences, typed, in LocalSettings (the registry, under HKCU\Software\Classes\Local Settings\Software\TeXLocal)
 /// until the core keeps validated shared ones; a run on a scratch library (TEXLOCAL_DATA) keeps its own, as "TeXLocal Dev".
 /// Settings › Editor's six raise EditorChanged.
@@ -23,6 +25,8 @@ public static unsafe partial class Prefs
     /// The project open as the app last closed, which the next launch opens again; "" for Home.
     internal static string LastProject { get => Get("lastProject", ""); set => values["lastProject"] = value; }
     internal static int Theme { get => Get("theme", 0); set => values["theme"] = value; }
+    /// Settings › PDF's, which the PDF reads as it's shown again: Settings is a page over the workspace.
+    internal static PageColour PageColour { get => (PageColour)Get("pageColour", 0); set => values["pageColour"] = (int)value; }
     internal static string Bounds { get => Get("bounds", ""); set => values["bounds"] = value; }
     internal static bool Maximized { get => Get("maximized", false); set => values["maximized"] = value; }
 

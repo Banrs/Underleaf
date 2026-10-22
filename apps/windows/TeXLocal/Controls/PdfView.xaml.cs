@@ -32,7 +32,7 @@ public sealed partial class PdfView : UserControl
     Fit fit = Fit.Width;
     (int Number, Point At)? source;
     int loads;
-    bool rendering, again;
+    bool rendering, again, dark;
 
     public event Action? ViewMoved;
     /// A page from 1 and a point on it in TeX points from its top left: a double-click, or Go to source position.
@@ -63,7 +63,12 @@ public sealed partial class PdfView : UserControl
             item.Click += (_, _) => ZoomTo(percent / 100.0);
             Menu.Items.Add(item);
         }
-        Loaded += (_, _) => XamlRoot.Changed += OnRootChanged;
+        Loaded += (_, _) =>
+        {
+            XamlRoot.Changed += OnRootChanged;
+            Repaper();
+        };
+        ActualThemeChanged += (_, _) => Repaper();
         Unloaded += (_, _) => XamlRoot?.Changed -= OnRootChanged;
     }
 
@@ -102,15 +107,52 @@ public sealed partial class PdfView : UserControl
         {
             if (i < first - 1 || i > last + 1) on[i].Image.Source = null;
             var width = (int)Math.Min(Math.Ceiling(on[i].Size.Width * zoom * (XamlRoot?.RasterizationScale ?? 1)), 4096);
-            if (i < first || i > last || ((on[i].Image.Source as BitmapImage)?.DecodePixelWidth ?? 0) == width) continue;
+            if (i < first || i > last || ((on[i].Image.Source as BitmapImage)?.DecodePixelWidth ?? 0) == width && Equals(on[i].Image.Tag, dark)) continue;
             using var page = doc.GetPage((uint)i);
             using var stream = new InMemoryRandomAccessStream();
             await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width, BitmapEncoderId = BitmapEncoder.BmpEncoderId });
+            var ink = dark;
+            using var darkened = ink ? await Darken(stream) : null;
             // At the drawn width: XAML would otherwise decode to the layout size, which leaves out the zoom.
             var bitmap = new BitmapImage { DecodePixelType = DecodePixelType.Physical, DecodePixelWidth = width };
-            await bitmap.SetSourceAsync(stream);
-            on[i].Image.Source = bitmap;
+            await bitmap.SetSourceAsync(darkened ?? stream);
+            (on[i].Image.Source, on[i].Image.Tag) = (bitmap, ink);
         }
+    }
+
+    /// The Mac's dark paper: inverted, then turned 180° in hue, which together turn each colour's luma over and keep its
+    /// chroma, c + 1 − 2Y. Per pixel off the UI thread, as Windows.Data.Pdf has no filter and composition's need Win2D.
+    static async Task<InMemoryRandomAccessStream> Darken(IRandomAccessStream page)
+    {
+        page.Seek(0);
+        var decoder = await BitmapDecoder.CreateAsync(BitmapDecoder.BmpDecoderId, page);
+        var pixels = (await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, new BitmapTransform(),
+            ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage)).DetachPixelData();
+        await Task.Run(() =>
+        {
+            for (var i = 0; i < pixels.Length; i += 4)
+            {
+                var turn = 255 - ((29 * pixels[i] + 150 * pixels[i + 1] + 77 * pixels[i + 2]) >> 7);
+                for (var c = i; c < i + 3; c++) pixels[c] = (byte)Math.Clamp(pixels[c] + turn, 0, 255);
+            }
+        });
+        var stream = new InMemoryRandomAccessStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.BmpEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, decoder.PixelWidth, decoder.PixelHeight, decoder.DpiX, decoder.DpiY, pixels);
+        await encoder.FlushAsync();
+        stream.Seek(0);
+        return stream;
+    }
+
+    /// Follows Settings' page colour and, for its Use app theme, the app's; the pages showing are drawn again.
+    void Repaper()
+    {
+        var colour = Prefs.PageColour;
+        var now = colour == PageColour.Dark || colour == PageColour.App && ActualTheme == ElementTheme.Dark;
+        if (now == dark) return;
+        dark = now;
+        Pages.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Light;
+        Render();
     }
 
     /// Draws for the view as it is now, one pass at a time: a call during a pass runs another after it.

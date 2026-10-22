@@ -114,6 +114,13 @@
                     </controls:Card>
 
                     <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="PDF" />
+                    <controls:Card Description="Dark inverts the pages for reading at night, keeping their colours' hues" Glyph="&#xE7C3;" Header="Page colour">
+                        <ComboBox x:Name="PageColourBox" MinWidth="200" AutomationProperties.Name="Page colour">
+                            <x:String>White</x:String>
+                            <x:String>Dark</x:String>
+                            <x:String>Use app theme</x:String>
+                        </ComboBox>
+                    </controls:Card>
                     <controls:Card Description="Scrolls the PDF to the line you are editing" Glyph="&#xEA90;" Header="Scroll to the cursor after compiling">
                         <ToggleSwitch MinWidth="0" AutomationProperties.Name="Scroll to the cursor after compiling" IsOn="{x:Bind app:Prefs.SyncAfterCompile, Mode=TwoWay}" />
                     </controls:Card>
