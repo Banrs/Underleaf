@@ -1,6 +1,6 @@
 //! The LaTeX the editors insert, complete and recognise (catalog.json).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,9 @@ pub struct Catalog {
     pub verbatim_environments: HashSet<String>,
     pub text_commands: HashSet<String>,
     pub preview_environments: HashSet<String>,
+    /// The package that defines a command (with its backslash) or an environment, for a build's
+    /// error to offer to load.
+    pub packages: HashMap<String, String>,
     pub commands: Vec<(String, String)>,
     pub templates: Templates,
     pub symbol_groups: Vec<SymbolGroup>,

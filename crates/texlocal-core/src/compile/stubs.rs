@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
 use super::CompileResult;
-use crate::logparse::SHELL_ESCAPE;
+use crate::logparse::{Fix, SHELL_ESCAPE};
 use crate::paths::Project;
 use crate::projects::testing::{names_in, with_project};
 use crate::projects::{create_project, open_path};
@@ -42,9 +42,17 @@ fn stubs(service: &Service) -> String {
 }
 
 async fn compile(service: &Service, root: &Path) -> CompileResult {
+    compile_auto(service, root, false).await
+}
+
+async fn compile_auto(service: &Service, root: &Path, auto: bool) -> CompileResult {
     let path = stubs(service);
     let project = Project::in_folder(root);
-    service.compile.compile(&project, &path).await.unwrap()
+    service
+        .compile
+        .compile(&project, &path, auto)
+        .await
+        .unwrap()
 }
 
 async fn built(script: &str) -> CompileResult {
@@ -142,11 +150,11 @@ async fn outputs_a_run_did_not_write_are_not_reported_as_its_own() {
 }
 
 #[tokio::test]
-async fn a_timed_out_compile_is_killed_and_reported_failed_with_the_output_it_wrote() {
+async fn a_timed_out_automatic_build_is_killed_and_reported_failed_with_the_output_it_wrote() {
     let (_dir, service, root) = setup("echo 'Running pdflatex'\ntouch printed\nsleep 20\n");
     let started = Instant::now();
     // Once the stub has printed, tokio's clock jumps straight to the build's time limit.
-    let (result, ()) = tokio::join!(compile(&service, &root), async {
+    let (result, ()) = tokio::join!(compile_auto(&service, &root, true), async {
         appears(&root.join("printed"), "latexmk did not print").await;
         tokio::time::pause();
     });
@@ -160,6 +168,21 @@ async fn a_timed_out_compile_is_killed_and_reported_failed_with_the_output_it_wr
     assert!(message.contains("stopped after"), "{result:?}");
     assert!(!message.contains("forever"), "{message}");
     promptly(started);
+}
+
+/// Asked for, a build runs past the automatic one's time limit until it ends.
+#[tokio::test]
+async fn a_build_asked_for_has_no_time_limit() {
+    let (_dir, service, root) = setup(
+        "touch printed\nwhile [ ! -f go ]; do sleep 0.01; done\nmkdir -p build\nprintf 'fake' > build/main.pdf\n",
+    );
+    let (result, ()) = tokio::join!(compile(&service, &root), async {
+        appears(&root.join("printed"), "latexmk did not print").await;
+        tokio::time::pause();
+        tokio::time::advance(super::COMPILE_TIMEOUT * 2).await;
+        fs::write(root.join("go"), "").unwrap();
+    });
+    assert!(result.ok, "{result:?}");
 }
 
 #[tokio::test]
@@ -222,7 +245,10 @@ async fn an_opened_folders_build_lands_in_its_store() {
     fs::write(folder.join("main.tex"), "").unwrap();
     let id = open_path(&service, &folder).unwrap().project.id;
     let project = service.project(&id).unwrap();
-    let result = service.compile.compile(&project, &stubs(&service)).await;
+    let result = service
+        .compile
+        .compile(&project, &stubs(&service), false)
+        .await;
     let pdf = project.build.join("main.pdf");
     assert_eq!(
         result.unwrap().pdf,
@@ -255,6 +281,19 @@ async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
         result.errors[0].message.contains("exit code 12"),
         "{result:?}"
     );
+}
+
+/// A package the main file loads already, if too late or misspelt, isn't offered again.
+#[tokio::test]
+async fn an_undefined_command_offers_its_package_only_while_the_main_file_doesnt_load_it() {
+    let (_dir, service, root) = setup(
+        "mkdir -p build\nprintf './main.tex:4: Undefined control sequence.\\nl.4 \\\\includegraphics\\n\\n./main.tex:5: Undefined control sequence.\\nl.5 \\\\toprule\\n' > build/main.log\nexit 12\n",
+    );
+    let main = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n";
+    fs::write(root.join("main.tex"), main).unwrap();
+    let result = compile(&service, &root).await;
+    let fixes: Vec<_> = result.errors.iter().map(|e| e.fix.clone()).collect();
+    assert_eq!(fixes, [None, Some(Fix::AddPackage("booktabs".into()))]);
 }
 
 /// At the package's error that asks for it, else with no place when TeX refused a program.
@@ -407,7 +446,11 @@ async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     let status = tex_available(none).await;
     assert!(!status.available && status.latexmk_version.is_none());
     let project = Project::in_folder(&root);
-    let result = service.compile.compile(&project, none).await.unwrap();
+    let result = service
+        .compile
+        .compile(&project, none, false)
+        .await
+        .unwrap();
     let message = &result.errors[0].message;
     assert!(message.starts_with("Couldn't start latexmk"), "{message}");
     assert_eq!(FORKS.with(Cell::get), before);

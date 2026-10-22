@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
+use crate::analyze::Facts;
 use crate::paths::{self, after_entry, fold_case, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, Trash};
 use crate::service::Service;
@@ -51,6 +52,21 @@ enum Source {
 static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
 });
+
+/// Packages that build only with XeLaTeX or LuaLaTeX, which a new project's engine follows.
+const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
+    (
+        "xelatex",
+        &[
+            "fontspec",
+            "unicode-math",
+            "polyglossia",
+            "xeCJK",
+            "mathspec",
+        ],
+    ),
+    ("lualatex", &["luacode", "luatexja", "luaotfload"]),
+];
 
 /// `name` in the project folder `dir` ("" is the project's own).
 fn in_folder(dir: &str, name: &str) -> String {
@@ -329,7 +345,8 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
 
 /// The settings a folder's sources name, `chosen` the top-level .tex opened: the main file is
 /// the root that .tex names, else that .tex, else the likeliest top-level one, else none; the
-/// engine is the one the chosen .tex or the main file names.
+/// engine is the one the chosen .tex or the main file names, else the one the main file's
+/// packages need.
 pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
     // latexmk would read a name starting with "-" as an option.
     let chosen = chosen.filter(|main| !main.starts_with('-'));
@@ -343,11 +360,18 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
         Some(main) => Some(main),
         None => projects::guess_main_file(root)?,
     };
-    let program = program.or_else(|| magic_comments(&root.join(main.as_ref()?)).1);
+    let main_path = main.as_ref().map(|main| root.join(main));
+    let program = program.or_else(|| magic_comments(main_path.as_ref()?).1);
     let program = program.unwrap_or_default().to_lowercase();
-    let engine = ["xelatex", "lualatex", "pdflatex"]
+    let named = ["xelatex", "lualatex", "pdflatex"]
         .into_iter()
         .find(|engine| program.contains(engine));
+    let engine = named.or_else(|| {
+        let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, "tex");
+        let loads = |names: &[&str]| facts.packages.iter().any(|p| names.contains(&p.as_str()));
+        let needed = ENGINE_PACKAGES.into_iter().find(|(_, names)| loads(names));
+        needed.map(|(engine, _)| engine)
+    });
     let mut settings = json!({});
     if let Some(main) = main {
         settings["mainFile"] = main.into();
@@ -684,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_guessed_are_the_root_and_program_a_tex_names_where_they_hold() {
+    fn the_settings_guessed_are_what_a_tex_names_else_the_engine_its_packages_need() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("Book");
         write_all(&src, &[("parts/book.tex", "\\documentclass{book}")]);
@@ -702,6 +726,17 @@ mod tests {
                 Some("xelatex"),
             ),
             ("% !TEX root = gone.tex\n", "chapter.tex", None),
+            // Without a program, the packages loaded name the engine they need.
+            (
+                "\\documentclass{book}\n% \\usepackage{luacode}\n\\usepackage{amsmath, fontspec}\n",
+                "chapter.tex",
+                Some("xelatex"),
+            ),
+            (
+                "% !TEX program = pdflatex\n\\usepackage{fontspec}\n",
+                "chapter.tex",
+                Some("pdflatex"),
+            ),
         ] {
             let chapter = format!("{chapter_head}\\chapter{{A}}");
             fs::write(src.join("chapter.tex"), chapter).unwrap();

@@ -267,7 +267,11 @@ mod tests {
             let name = format!("{n} {template}");
             crate::projects::create_project(&service.data_dir, &name, template, engine).unwrap();
             let project = service.project(&name).unwrap();
-            let result = service.compile.compile(&project, &path).await.unwrap();
+            let result = service
+                .compile
+                .compile(&project, &path, false)
+                .await
+                .unwrap();
             assert!(result.ok, "{name}: {}", result.log);
         }
     }

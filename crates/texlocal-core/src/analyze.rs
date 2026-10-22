@@ -84,9 +84,12 @@ pub struct Facts {
     /// ended, and graphics included.
     pub uses: Vec<Named>,
     pub class: Option<headings::DocumentClass>,
-    /// What \usepackage and \RequirePackage load.
+    /// What `\usepackage` and `\RequirePackage` load.
     pub packages: Vec<String>,
-    /// What \bibliography and \addbibresource name, as written.
+    /// Where a new `\usepackage` goes: at the end of the line where the last one's argument ends,
+    /// else `\documentclass`'s, which a package can't come before.
+    pub new_package: Option<Place>,
+    /// What `\bibliography` and `\addbibresource` name, as written.
     pub bibliographies: Vec<String>,
     /// What TeX would find unbalanced in it.
     pub slips: Vec<Slip>,
@@ -272,8 +275,14 @@ impl Visit for Names<'_> {
             }
             "documentclass" if facts.class.is_none() => {
                 facts.class = headings::class_at(&text.units, name_end);
+                facts.new_package = Some(after_line(text, name_end));
             }
-            "usepackage" | "RequirePackage" => facts.packages.extend(names(true)),
+            "usepackage" | "RequirePackage" => {
+                facts.packages.extend(names(true));
+                if name == "usepackage" {
+                    facts.new_package = Some(after_line(text, name_end));
+                }
+            }
             "bibliography" | "addbibresource" => {
                 facts.bibliographies.extend(names(name == "bibliography"));
             }
@@ -718,6 +727,13 @@ fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
         place: Place::of(text, at),
         tex,
     })
+}
+
+/// The end of the line a command's arguments end on.
+fn after_line(text: &Text, name_end: usize) -> Place {
+    let (_, stop) = braced(&text.units, name_end);
+    let end = text.around(stop - 1).end;
+    Place::of(text, end..end)
 }
 
 fn joined(folder: &str, name: &str) -> String {

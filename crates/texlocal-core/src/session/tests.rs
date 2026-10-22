@@ -65,7 +65,8 @@ fn issue(line: u32, message: &str) -> LogItem {
         message: message.into(),
         short: message.into(),
         command: None,
-        missing: None,
+        explain: None,
+        fix: None,
     }
 }
 
@@ -95,7 +96,7 @@ impl Fake {
 }
 
 impl Engine for Fake {
-    fn compile(&self, _project: Project) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, _project: Project, _auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         self.note("compile");
         let (tx, rx) = oneshot::channel();
         lock(&self.builds).push_back(tx);
@@ -1488,6 +1489,29 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     });
     assert_eq!(renamed, answer);
     assert_eq!(rig.disk("refs.bib"), bib.replace("knuth", "knuth84"));
+}
+
+/// After the preamble's last `\usepackage`, written on disk or answered as the open main file's
+/// edits, and not again once it is loaded.
+#[tokio::test(start_paused = true)]
+async fn a_package_is_added_after_the_last_one_the_main_file_loads_unless_it_loads_it() {
+    let rig = Rig::new(false).await;
+    let main =
+        "\\documentclass{article}\n\\usepackage[utf8]{inputenc,\n  amsmath}\n\\begin{document}\n";
+    fs::write(rig.root.join("main.tex"), main).unwrap();
+    let add = |name: &str| rig.call("add_package", json!({ "name": name }));
+    let written = json!({ "edits": null, "written": [{ "file": "main.tex", "count": 1 }] });
+    assert_eq!(add("graphicx").await.unwrap(), written);
+    let added = main.replace("amsmath}\n", "amsmath}\n\\usepackage{graphicx}\n");
+    assert_eq!(rig.disk("main.tex"), added);
+    let unchanged = json!({ "edits": null, "written": [] });
+    assert_eq!(add("amsmath").await.unwrap(), unchanged);
+    rig.open("main.tex").await;
+    let at = added.find("\n\\begin").unwrap();
+    let edit = json!({ "start": at, "length": 0, "text": "\n\\usepackage{xcolor}" });
+    let edits = json!({ "path": "main.tex", "version": 0, "edits": [edit] });
+    let answer = json!({ "edits": edits, "written": [] });
+    assert_eq!(add("xcolor").await.unwrap(), answer);
 }
 
 #[tokio::test(start_paused = true)]
