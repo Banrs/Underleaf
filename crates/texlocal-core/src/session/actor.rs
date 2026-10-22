@@ -915,9 +915,7 @@ impl Actor {
                     installed,
                     ..symbols
                 };
-                let checks = main.map_or_else(Vec::new, |main| {
-                    checks::check(&symbols.by_file, &symbols.files, &main, &symbols.installed)
-                });
+                let checks = main.map_or_else(Vec::new, |main| checks::check(&symbols, &main));
                 (symbols, checks)
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
