@@ -30,8 +30,20 @@ needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list 
 nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
 first error. You get the PDF along with every error and warning, each marked on its line in the
 source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
-compiles on its own when you pause typing; Settings can turn that off. When a package is missing,
-the Mac app can install it with TeX Live's tlmgr and compile again.
+compiles on its own when you pause typing; Settings can turn that off.
+
+Most of a build's errors come with a sentence or two in plain words on what TeX means and what
+usually fixes it. Where one click can, a button beside the error fixes it and compiles again.
+Install adds a missing package with TeX Live's tlmgr. Add `\usepackage` loads the package that
+defines a command TeX didn't know. Use XeLaTeX switches the project to an engine that takes any
+Unicode character, and Turn On Shell Escape lets packages such as minted run their programs, after
+asking you first.
+
+TeXLocal also checks the document as you write, without running TeX. It finds a `\ref` to a label
+nothing defines, a `\cite` key your bibliography doesn't have, a label or key defined twice, an
+`\input` file that isn't there, and environments, braces and maths that don't match up. These show
+in the list of issues after the build's own, and on their lines in the source, whether or not you
+have compiled.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
 (SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.
