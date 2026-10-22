@@ -452,6 +452,8 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     assert_eq!(lines[0]["line"], 3);
     assert_eq!(lines[0]["message"], "Undefined");
     assert_eq!(lines[0]["others"], json!(["Again"]));
+    let indices: Vec<&Value> = lines.iter().map(|line| &line["index"]).collect();
+    assert_eq!(indices, [0, 2]);
     let next = rig.ok("issue", json!({ "next": true })).await;
     assert_eq!(next["index"], 0);
     rig.ok("choose_issue", json!({ "index": 2 })).await;

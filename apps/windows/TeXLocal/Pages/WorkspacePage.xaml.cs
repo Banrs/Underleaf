@@ -141,8 +141,7 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.IssueInvoked += line =>
         {
-            var index = Array.FindIndex(Issues, i => i.File == Editor.Path && i.Line == line.Line);
-            if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
+            if (line.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
         };
         Editor.FilesDropped += OnFilesDropped;
         // The Mac's double-click to the PDF; where the PDF is hidden, selecting a word doesn't open it.

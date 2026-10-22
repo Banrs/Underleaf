@@ -583,7 +583,7 @@ struct SourceEditorTests {
     private func issue(_ line: Int, _ message: String, error: Bool = true, compact: String? = nil, tokens: [NSRange] = [],
                        others: [String] = []) -> IssuesEvent.Line {
         IssuesEvent.Line(line: line, error: error, message: message, short: message, compact: compact,
-                         tokens: tokens.map { SourceRange(start: $0.location, length: $0.length) }, others: others)
+                         tokens: tokens.map { SourceRange(start: $0.location, length: $0.length) }, others: others, index: nil)
     }
 
     private func show(_ issues: IssuesEvent.Line...) {

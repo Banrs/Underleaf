@@ -292,7 +292,12 @@ impl Actor {
                 .filter(|_| edits <= builds.result_edits);
             let checks = builds.checks.iter().flatten();
             let checks = checks.filter(|_| edits <= builds.checked);
-            let lines = issue_lines(built.chain(checks), path, &doc.doc);
+            let index = |line| {
+                let on =
+                    |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
+                builds.listed().position(on)
+            };
+            let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             if lines != doc.issues {
                 doc.issues.clone_from(&lines);
                 changed.push(json!({ "path": path, "lines": lines }));
@@ -336,11 +341,13 @@ impl Actor {
 
 /// Each line's first issue, with the messages of the others there. An undefined command's
 /// issue has where the line has the command (`tokens`), and a `compact` message that names it
-/// in fewer words; so does one that needs shell escape.
+/// in fewer words; so does one that needs shell escape. `index`: where a line's issues start in
+/// the session's list, for a click on it.
 pub(super) fn issue_lines<'a>(
     issues: impl IntoIterator<Item = &'a LogItem>,
     path: &str,
     doc: &Document,
+    index: impl Fn(u32) -> Option<usize>,
 ) -> Vec<Value> {
     let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
@@ -370,6 +377,7 @@ pub(super) fn issue_lines<'a>(
             "compact": compact,
             "tokens": tokens,
             "others": others,
+            "index": index(line),
         })
     };
     lines.into_iter().map(line).collect()
