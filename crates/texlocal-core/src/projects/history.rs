@@ -135,21 +135,21 @@ impl History {
         Ok(files)
     }
 
-    /// One taken as `taken` says, then the history pruned; false when none was.
-    pub fn take(&self, now: i64, taken: Taken) -> Result<bool, CoreError> {
+    /// One taken as `taken` says, then the history pruned.
+    pub fn take(&self, now: i64, taken: Taken) -> Result<(), CoreError> {
         let latest = match self.ids()?.first() {
             Some(&id) => Some((id, self.read(id)?)),
             None => None,
         };
         let recent = |(id, _): &(i64, Snapshot)| now - id <= 10 * MINUTE;
         if matches!(taken, Taken::Auto) && latest.as_ref().is_some_and(recent) {
-            return Ok(false);
+            return Ok(());
         }
         let files = self.files_now()?;
         let next = latest.as_ref().map_or(now, |(id, _)| now.max(id + 1));
         let unchanged = latest.filter(|(_, last)| last.files == files);
         let (id, snapshot) = match (taken, unchanged) {
-            (Taken::Auto, Some(_)) => return Ok(false),
+            (Taken::Auto, Some(_)) => return Ok(()),
             (Taken::Named(name), Some((id, last))) => (
                 id,
                 Snapshot {
@@ -172,8 +172,7 @@ impl History {
             }
         };
         self.write(id, &snapshot)?;
-        self.prune(now)?;
-        Ok(true)
+        self.prune(now)
     }
 
     /// Named snapshots stay; of the others, all from the last day, the last of each hour for a
@@ -310,11 +309,11 @@ mod tests {
     fn an_automatic_snapshot_waits_ten_minutes_after_the_last_and_for_a_change() {
         let (_dir, root) = project();
         let history = history(&root);
-        assert!(history.take(0, Taken::Auto).unwrap());
+        history.take(0, Taken::Auto).unwrap();
         fs::write(root.join("main.tex"), "changed").unwrap();
-        assert!(!history.take(10 * MINUTE, Taken::Auto).unwrap());
-        assert!(history.take(10 * MINUTE + 1, Taken::Auto).unwrap());
-        assert!(!history.take(30 * MINUTE, Taken::Auto).unwrap());
+        for at in [10 * MINUTE, 10 * MINUTE + 1, 30 * MINUTE] {
+            history.take(at, Taken::Auto).unwrap();
+        }
         assert_eq!(history.ids().unwrap(), [10 * MINUTE + 1, 0]);
     }
 

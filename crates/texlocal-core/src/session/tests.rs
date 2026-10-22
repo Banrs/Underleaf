@@ -1522,13 +1522,15 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
 }
 
 /// After the preamble's last `\usepackage`, written on disk or answered as the open main file's
-/// edits, and not again once it is loaded.
+/// edits, and not again once it is loaded; in the main file however the settings spell it.
 #[tokio::test(start_paused = true)]
 async fn a_package_is_added_after_the_last_one_the_main_file_loads_unless_it_loads_it() {
     let rig = Rig::new(false).await;
     let main =
         "\\documentclass{article}\n\\usepackage[utf8]{inputenc,\n  amsmath}\n\\begin{document}\n";
     fs::write(rig.root.join("main.tex"), main).unwrap();
+    let patch = json!({ "patch": { "mainFile": "Main.tex" } });
+    rig.ok("set_settings", patch).await;
     let add = |name: &str| rig.call("add_package", json!({ "name": name }));
     let written = json!({ "edits": null, "written": [{ "file": "main.tex", "count": 1 }] });
     assert_eq!(add("graphicx").await.unwrap(), written);

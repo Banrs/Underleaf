@@ -16,7 +16,6 @@ use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
 use super::build::Builds;
-use super::history::HistoryQueue;
 use super::live::Live;
 use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
@@ -24,7 +23,7 @@ use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
 use crate::logparse::LogItem;
 use crate::paths::{self, Project, within};
-use crate::projects::{self, Query, Symbols, file_kind};
+use crate::projects::{self, History, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
@@ -163,7 +162,7 @@ pub(crate) struct Actor {
     deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub history: HistoryQueue,
+    pub history: Arc<Mutex<History>>,
     pub trail: Trail,
     closed: bool,
 }
@@ -199,7 +198,7 @@ impl Actor {
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
         }
-        let history = HistoryQueue::new(&project);
+        let history = Arc::new(Mutex::new(History::of(&project)));
         let actor = Self {
             id,
             project_id,
@@ -1078,7 +1077,8 @@ impl Actor {
     /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
     /// file loads the package already.
     fn add_package(&self, name: &str) -> Result<Value, CoreError> {
-        let main = settings::read_settings(&self.project.settings).main_file;
+        // As the disk spells it, which the walk compares, however the settings do.
+        let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
         self.snapshot_before("Before Adding a Package")?;
         let found = |_: &str, text: &str| {
@@ -1087,7 +1087,7 @@ impl Actor {
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
         let line = format!("\n\\usepackage{{{name}}}");
-        self.edit_project(&open, &|rel| rel == main, &found, &line)
+        self.edit_project(&open, &|rel| Some(rel) == main, &found, &line)
     }
 
     /// The open documents' paths, text and versions, unless one has a change on disk still to

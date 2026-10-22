@@ -3,15 +3,14 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
 
 use super::Reply;
 use super::actor::Actor;
-use crate::paths::{self, Project};
+use crate::paths;
 use crate::projects::{self, History, Taken};
 use crate::service::{arg, out, string_arg};
 use crate::syntax::TextEdit;
@@ -19,59 +18,30 @@ use crate::{CoreError, lf, lock, lossy_string};
 
 type Job = Box<dyn FnOnce(&History) -> Result<Value, CoreError> + Send>;
 
-/// The history's jobs, taken in turn off the session's task, so no save waits on the store. A
-/// snapshot a change waits for is taken on the session's task, the lock keeping it from a job's.
-pub(crate) struct HistoryQueue {
-    history: Arc<Mutex<History>>,
-    jobs: mpsc::UnboundedSender<(Job, Option<Reply>)>,
-}
-
-impl HistoryQueue {
-    pub fn new(project: &Project) -> Self {
-        let history = Arc::new(Mutex::new(History::of(project)));
-        let (jobs, mut queue) = mpsc::unbounded_channel::<(Job, Option<Reply>)>();
-        let shared = Arc::clone(&history);
-        tokio::spawn(async move {
-            while let Some((job, reply)) = queue.recv().await {
-                let history = Arc::clone(&shared);
-                let _ = tokio::task::spawn_blocking(move || {
-                    let answer = job(&lock(&history));
-                    if let Some(reply) = reply {
-                        reply.send(answer);
-                    }
-                })
-                .await;
-            }
-        });
-        Self { history, jobs }
-    }
-
-    fn queue(&self, job: Job, reply: Option<Reply>) {
-        let _ = self.jobs.send((job, reply));
-    }
-}
-
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
 impl Actor {
     /// As the session opens, so the files as they were before its edits are kept, and after each
-    /// save.
+    /// save; beside the session, so no save waits on the store.
     pub fn snapshot_soon(&self) {
-        let job = |history: &History| history.take(now(), Taken::Auto).map(|_| Value::Null);
-        self.history.queue(Box::new(job), None);
+        let history = Arc::clone(&self.history);
+        tokio::task::spawn_blocking(move || lock(&history).take(now(), Taken::Auto));
     }
 
+    /// On the session's task, as the change waits for it.
     pub fn snapshot_before(&self, reason: &'static str) -> Result<(), CoreError> {
-        let history = lock(&self.history.history);
-        history.take(now(), Taken::Before(reason)).map(drop)
+        lock(&self.history).take(now(), Taken::Before(reason))
     }
 
     /// List, save and compare, which read the store but change no file of the project's.
     pub fn history_command(&self, name: &str, args: &Value, reply: Reply) {
         match self.history_job(name, args) {
-            Ok(job) => self.history.queue(job, Some(reply)),
+            Ok(job) => {
+                let history = Arc::clone(&self.history);
+                tokio::task::spawn_blocking(move || reply.send(job(&lock(&history))));
+            }
             Err(err) => reply.send(Err(err)),
         }
     }
@@ -126,7 +96,7 @@ impl Actor {
                 .as_ref()
                 .is_none_or(|paths| paths.iter().any(|p| p == path))
         };
-        let files = lock(&self.history.history).files(string_arg(args, "id")?, chosen)?;
+        let files = lock(&self.history).files(string_arg(args, "id")?, chosen)?;
         let (mut edits, mut others) = (Vec::new(), Vec::new());
         for (path, bytes) in files {
             match open.iter().find(|(open, ..)| *open == path) {
