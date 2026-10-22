@@ -141,8 +141,7 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.IssueInvoked += line =>
         {
-            var index = Array.FindIndex(Issues, i => i.File == Editor.Path && i.Line == line.Line);
-            if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
+            if (line.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
         };
         Editor.FilesDropped += OnFilesDropped;
         // The Mac's double-click to the PDF; where the PDF is hidden, selecting a word doesn't open it.
@@ -408,13 +407,15 @@ public sealed partial class WorkspacePage : Page
         return true;
     }
 
-    /// A jump that leaves the caret's place, which Back then returns to (session_navigate); a jump that didn't move it,
-    /// or opened the file in another app, keeps nothing.
+    /// A jump from the caret's place, which Back then returns to (session_navigate), unless the caret is there still.
     async Task Jump(string path, int? line, int column = 0, int length = 0)
     {
-        var from = Editor.Path is { } shown ? new Spot(shown, Editor.Caret.Line) : null;
-        if (await Reveal(path, line, column, length) && from is not null && from != new Spot(Editor.Path!, Editor.Caret.Line))
+        if (Editor.Path is { } shown)
+        {
+            var from = new Spot(shown, Editor.Caret.Line);
             Run(null, async () => ShowTrail(await Core.CallAsync<Trail>("session_navigate", new { session, from })));
+        }
+        await Reveal(path, line, column, length);
     }
 
     void ShowTrail(Trail trail) => (BackItem.IsEnabled, ForwardItem.IsEnabled) = (trail.Back, trail.Forward);

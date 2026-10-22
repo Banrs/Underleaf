@@ -97,6 +97,8 @@ nonisolated struct IssuesEvent: Decodable {
         /// Where the line has the undefined command, from its start.
         let tokens: [SourceRange]
         let others: [String]
+        /// Where the line's issues start in the session's list; none for Live Preview's.
+        let index: Int?
     }
 
     let path: String

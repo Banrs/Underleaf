@@ -12,7 +12,8 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
 }
 
 /// One of a list the core offers, by its id, with the title to show: an editor theme, a project template, an engine.
-public sealed record Choice(string Id, string Title);
+/// <param name="Default">The engine a new project has unless asked for another.</param>
+public sealed record Choice(string Id, string Title, bool Default);
 
 /// What a new project may start from, in the order Home shows it: each template's id is create_project's `template`,
 /// and each engine's its `engine` and a project's setting.
@@ -65,7 +66,8 @@ public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, strin
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
 /// <param name="Compact">For an undefined command, fewer words that keep its name.</param>
 /// <param name="Tokens">Where the line has that command, from the line's start.</param>
-public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others);
+/// <param name="Index">Where the line's issues start in the session's list; none for Live Preview's.</param>
+public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others, int? Index);
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
 /// <param name="Items">The checks', found without TeX.</param>

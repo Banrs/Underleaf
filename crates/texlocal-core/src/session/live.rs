@@ -607,7 +607,7 @@ impl Actor {
             return;
         };
         let items = self.live.issues.iter().map(|issue| &issue.item);
-        let lines = issue_lines(items, path, &doc.doc);
+        let lines = issue_lines(items, path, &doc.doc, |_| None);
         if lines != doc.live_issues {
             doc.live_issues.clone_from(&lines);
             self.emit("live_issues", json!({ "path": path, "lines": lines }));

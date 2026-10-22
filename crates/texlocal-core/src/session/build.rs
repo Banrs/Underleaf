@@ -61,6 +61,7 @@ pub(crate) struct Builds {
     error_count: usize,
     /// None until the first scan has checked the project.
     checks: Option<Vec<LogItem>>,
+    checks_shown: Value,
     /// The session's count of edits as the checks' scan began.
     checked: u64,
     chosen: Option<usize>,
@@ -72,9 +73,18 @@ pub(crate) struct Builds {
 }
 
 impl Builds {
+    /// The checks but those on a line the last build has an issue on, whose issue wins the line.
+    fn checks(&self) -> impl Iterator<Item = &LogItem> {
+        let checks = self.checks.iter().flatten();
+        checks.filter(|check| {
+            let built = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
+            !self.issues.iter().any(built)
+        })
+    }
+
     /// The session's issues: the last build's errors, then its warnings, then the checks.
     fn listed(&self) -> impl Iterator<Item = &LogItem> {
-        self.issues.iter().chain(self.checks.iter().flatten())
+        self.issues.iter().chain(self.checks())
     }
 }
 
@@ -154,6 +164,7 @@ impl Actor {
         let announce = !result.stopped && (!auto || builds.error_count != before);
         let outdated = builds.outdated;
         self.mark_issues();
+        self.publish_checks();
         // Live Preview reads the build folder's .aux and .bbl; TeXpresso goes back only as far
         // as their first changed byte. A stopped build may have left them half written.
         if !result.stopped {
@@ -228,6 +239,7 @@ impl Actor {
             (builds.pdf, builds.outdated) = (false, false);
             (builds.issues, builds.error_count, builds.chosen) = (Vec::new(), 0, None);
             self.mark_issues();
+            self.publish_checks();
             self.publish_build();
             self.emit("build_cleaned", json!({}));
             if self.auto_compile {
@@ -242,12 +254,20 @@ impl Actor {
     // MARK: - Issues
 
     pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {
-        self.builds.checked = edits;
-        if self.builds.checks.as_ref() != Some(&checks) {
-            self.emit("checks", json!({ "items": checks }));
-            self.builds.checks = Some(checks);
-        }
+        (self.builds.checked, self.builds.checks) = (edits, Some(checks));
+        self.publish_checks();
         self.mark_issues();
+    }
+
+    fn publish_checks(&mut self) {
+        if self.builds.checks.is_none() {
+            return;
+        }
+        let items = json!(self.builds.checks().collect::<Vec<_>>());
+        if items != self.builds.checks_shown {
+            self.builds.checks_shown = items.clone();
+            self.emit("checks", json!({ "items": items }));
+        }
     }
 
     pub fn clear_issues(&mut self, path: &str) {
@@ -272,7 +292,12 @@ impl Actor {
                 .filter(|_| edits <= builds.result_edits);
             let checks = builds.checks.iter().flatten();
             let checks = checks.filter(|_| edits <= builds.checked);
-            let lines = issue_lines(built.chain(checks), path, &doc.doc);
+            let index = |line| {
+                let on =
+                    |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
+                builds.listed().position(on)
+            };
+            let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             if lines != doc.issues {
                 doc.issues.clone_from(&lines);
                 changed.push(json!({ "path": path, "lines": lines }));
@@ -316,11 +341,13 @@ impl Actor {
 
 /// Each line's first issue, with the messages of the others there. An undefined command's
 /// issue has where the line has the command (`tokens`), and a `compact` message that names it
-/// in fewer words; so does one that needs shell escape.
+/// in fewer words; so does one that needs shell escape. `index`: where a line's issues start in
+/// the session's list, for a click on it.
 pub(super) fn issue_lines<'a>(
     issues: impl IntoIterator<Item = &'a LogItem>,
     path: &str,
     doc: &Document,
+    index: impl Fn(u32) -> Option<usize>,
 ) -> Vec<Value> {
     let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
@@ -350,6 +377,7 @@ pub(super) fn issue_lines<'a>(
             "compact": compact,
             "tokens": tokens,
             "others": others,
+            "index": index(line),
         })
     };
     lines.into_iter().map(line).collect()

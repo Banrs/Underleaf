@@ -372,6 +372,19 @@ async fn an_autosave_builds_when_auto_compile_is_on() {
     assert!(rig.of_type("build").await.iter().any(automatic));
 }
 
+/// The host builds after a fix, once it has applied the fix's edits.
+#[tokio::test(start_paused = true)]
+async fn a_fix_that_changes_a_setting_leaves_the_build_to_the_host() {
+    let rig = Rig::new(true).await;
+    wait(1).await;
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.ok("fix", json!({ "id": "engine:xelatex" })).await;
+    rig.ok("compile", json!({})).await;
+    rig.fake.finish_build(built(true, Vec::new()));
+    rig.state().await;
+    assert_eq!(rig.fake.called("compile"), 2);
+}
+
 #[tokio::test(start_paused = true)]
 async fn ime_composition_holds_the_autosave_until_it_ends() {
     let rig = Rig::new(false).await;
@@ -452,6 +465,8 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     assert_eq!(lines[0]["line"], 3);
     assert_eq!(lines[0]["message"], "Undefined");
     assert_eq!(lines[0]["others"], json!(["Again"]));
+    let indices: Vec<&Value> = lines.iter().map(|line| &line["index"]).collect();
+    assert_eq!(indices, [0, 2]);
     let next = rig.ok("issue", json!({ "next": true })).await;
     assert_eq!(next["index"], 0);
     rig.ok("choose_issue", json!({ "index": 2 })).await;
@@ -563,7 +578,8 @@ async fn until_sent(rig: &mut Rig, kind: &str) -> Vec<Value> {
 }
 
 /// They come as the session opens and as they change, by file and then line; they follow the
-/// build's issues in the session's list and on a line, and come back after an edit's save.
+/// build's issues in the session's list and on a line, and come back after an edit's save. One on
+/// a line the build has an issue on joins that issue's line, and isn't listed again.
 #[tokio::test(start_paused = true)]
 async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved() {
     let mut rig = Rig::new(false).await;
@@ -584,13 +600,19 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
     rig.ok("compile", json!({})).await;
     rig.fake
         .finish_build(built(true, vec![issue(2, "Undefined")]));
-    let issues = rig.of_type("issues").await;
-    let line = &issues.last().unwrap()["lines"][0];
+    let events = rig.events().await;
+    assert_eq!(checks(events.clone()), [json!([items[0]])]);
+    let issues = events.iter().rfind(|e| e["type"] == "issues");
+    let line = &issues.unwrap()["lines"][0];
     assert_eq!(
         (&line["message"], &line["others"]),
         (&json!("Undefined"), &json!([undefined]))
     );
-    for (index, file) in [(0, "main.tex"), (1, "a.tex"), (2, "main.tex")] {
+    for (index, file) in [
+        (0, json!("main.tex")),
+        (1, json!("a.tex")),
+        (2, Value::Null),
+    ] {
         let chosen = rig.ok("choose_issue", json!({ "index": index })).await;
         assert_eq!(chosen["issue"]["file"], file);
     }
@@ -1653,7 +1675,7 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
     assert_eq!(compare("figure.png").await.unwrap_err().status, 400);
 }
 
-/// A file added since is left alone, and one as it was already isn't written.
+/// A file added since is left alone.
 #[tokio::test(start_paused = true)]
 async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_they_were() {
     let rig = Rig::new(false).await;
@@ -1671,11 +1693,11 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
         rig.ok("history_restore", args)
     };
     let gone = restore(Some(["gone.tex"])).await;
-    assert_eq!(gone, json!({ "edits": null, "written": ["gone.tex"] }));
+    assert_eq!(gone, json!({ "edits": null }));
     let edit = json!({ "start": 5, "length": 6, "text": "" });
     let edits = json!({ "path": "main.tex", "version": 1, "edits": [edit] });
     let all = restore(None).await;
-    assert_eq!(all, json!({ "edits": edits, "written": ["ch.tex"] }));
+    assert_eq!(all, json!({ "edits": edits }));
     let disk = ["ch.tex", "gone.tex", "new.tex"].map(|path| rig.disk(path));
     assert_eq!(disk, ["one", "gone", "new"]);
 
@@ -1726,6 +1748,19 @@ async fn back_and_forward_retrace_the_last_fifty_places_jumps_left() {
         .ok("navigate", json!({ "from": at("main.tex", 1) }))
         .await;
     assert_eq!(jump, json!({ "back": true, "forward": false }));
+}
+
+/// A jump that left the caret where it was keeps a place Back would show no move to.
+#[tokio::test(start_paused = true)]
+async fn back_passes_over_the_carets_own_place() {
+    let rig = Rig::new(false).await;
+    for line in [3, 5] {
+        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
+            .await;
+    }
+    let back = rig.ok("back", json!({ "at": at("main.tex", 5) })).await;
+    let answer = json!({ "to": at("main.tex", 3), "back": false, "forward": true });
+    assert_eq!(back, answer);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1802,6 +1837,11 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
         \\newlabel{sec:a}{{1}{3}{Intro}{section.1}{}}\n";
     fs::write(rig.root.join("build/main.aux"), aux).unwrap();
     assert_eq!(help("sec:a").await, label("1 on page 3"));
+    // An `\include`d file's labels are in its own .aux, which the main one inputs.
+    let included = "\\newlabel{sec:a}{{2}{5}{Intro}{section.2}{}}\n";
+    fs::write(rig.root.join("build/ch.aux"), included).unwrap();
+    fs::write(rig.root.join("build/main.aux"), "\\@input{ch.aux}\n").unwrap();
+    assert_eq!(help("sec:a").await, label("2 on page 5"));
     let defined = help_of("\\R", "\\newcommand{\\R}{\\mathbb{R}}", at("main.tex", 1));
     assert_eq!(help("\\R ").await, defined);
     let known = help_of("\\toprule", "From the booktabs package", Value::Null);

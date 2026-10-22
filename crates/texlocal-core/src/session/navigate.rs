@@ -89,8 +89,8 @@ impl Actor {
         Ok(self.trail_state())
     }
 
-    /// Back, or Forward: the latest place whose file is there still, those that aren't dropped,
-    /// with the caret's place kept for the other way.
+    /// Back, or Forward: the latest place whose file is there still and that isn't the caret's,
+    /// those passed over dropped, with the caret's place kept for the other way.
     pub fn step(&mut self, args: &Value, back: bool) -> Result<Value, CoreError> {
         let at = place(args, "at")?;
         let (root, trail) = (&self.project.root, &mut self.trail);
@@ -99,7 +99,8 @@ impl Actor {
         } else {
             (&mut trail.forward, &mut trail.back)
         };
-        let to = std::iter::from_fn(|| from.pop()).find(|place| exists(root, place));
+        let to =
+            std::iter::from_fn(|| from.pop()).find(|place| *place != at && exists(root, place));
         if to.is_some() {
             push(other, at);
         }
@@ -220,12 +221,8 @@ impl Actor {
                     Some(entry.unwrap_or_default())
                 }
                 (SymbolKind::Label, Some(_)) => {
-                    let aux = aux.ok().and_then(|aux| fs::read_to_string(aux).ok());
-                    let number = aux.as_deref().and_then(|aux| numbered(aux, &name));
-                    let number = number.map_or_else(
-                        || "Compile to number it".to_owned(),
-                        |(number, page)| format!("{number} on page {page}"),
-                    );
+                    let number = aux.ok().and_then(|aux| numbered(&aux, &name));
+                    let number = number.unwrap_or_else(|| "Compile to number it".to_owned());
                     let symbols = doc.symbols();
                     let mut labels = own.labels.iter().chain(&symbols.labels);
                     let what = labels.find(|label| label.name == name);
@@ -258,13 +255,26 @@ impl Actor {
     }
 }
 
-/// A label's number and page as a build's .aux has them: `\newlabel{label}{{3}{2}…}`.
-fn numbered<'a>(aux: &'a str, label: &str) -> Option<(&'a str, &'a str)> {
+/// A label's number and page, `3 on page 2`, as a build's .aux has them
+/// (`\newlabel{label}{{3}{2}…}`), or as the .aux of a file it `\include`s has them: LaTeX writes
+/// that file's labels apart, and the main .aux reads them (`\@input{ch.aux}`).
+fn numbered(aux: &Path, label: &str) -> Option<String> {
     let key = format!("\\newlabel{{{label}}}{{{{");
-    let number = &aux[aux.find(&key)? + key.len()..];
-    let end = closing_brace(number)?;
-    let page = number[end + 1..].strip_prefix('{')?;
-    Some((&number[..end], &page[..closing_brace(page)?]))
+    let find = |aux: &str| {
+        let number = &aux[aux.find(&key)? + key.len()..];
+        let end = closing_brace(number)?;
+        let page = number[end + 1..].strip_prefix('{')?;
+        let page = &page[..closing_brace(page)?];
+        Some(format!("{} on page {page}", &number[..end]))
+    };
+    let main = fs::read_to_string(aux).ok()?;
+    find(&main).or_else(|| {
+        let folder = aux.parent()?;
+        main.split("\\@input{").skip(1).find_map(|rest| {
+            let included = paths::safe_path(folder, &rest[..rest.find('}')?]).ok()?;
+            find(&fs::read_to_string(included).ok()?)
+        })
+    })
 }
 
 /// How well `query` matches `text`: its characters in order, in any case, each scoring more at

@@ -231,9 +231,9 @@ final class ProjectModel {
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.issueClicked = { [weak self] line in
             guard let self else { return }
-            if let place = issues.firstIndex(where: { $0.file == self.openPath && $0.line == line }) {
+            if let index = editor.textView.issues.lines[line]?.index {
                 panel.show(.issues)
-                chooseIssue(place, focus: false, open: false)
+                chooseIssue(index, focus: false, open: false)
             } else if editor.textView.issues.live[line] != nil {
                 // Its log has TeX's own words round the error.
                 panel.show(.texpresso)
