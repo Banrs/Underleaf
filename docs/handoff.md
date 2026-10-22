@@ -16,12 +16,22 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 
 ## 27.2 workarounds
 
-Still needed, checked on screen: `HeadingRow`'s Equatable, `redrawFragments`, the width following
-a live resize, `WorkspaceController`'s `pdfItem.isCollapsed = false` at the first layout,
-`MathGlyphs`' `unmark` and `centre`, `NameWidth`. Still showing headless: `characterIndex` on T1
-fonts, replaced pages' memory (`PDFController.wholeAt`), zoom limits, menu images, the Share item,
-the drawn underline, PDFKit's fade, the frame guard, PDFKit's one drawer. Each comment says what
-it works around.
+Rechecked on the 27.2 RC (26B118, Xcode 27.2) in throwaway tests, each workaround turned off; none
+can go. Their bugs still show in the test host: `HeadingRow`'s Equatable (the heading opens
+closed), `redrawFragments` (a theme change draws no fragment), the width following a live resize
+(scrolled down, the container keeps its width until the resize ends), the top paragraph put back,
+`scroll`'s two passes and `prepareContent` (their tests fail), Jump to Selection (AppKit's lands
+30 pt off after a far jump), `MathGlyphs.centre` (palettes 13 pt in on the left, 5 on the right),
+`NameWidth` (a trailing space hangs past the edge), `characterIndex` (wrong after a ligature, T1 or
+OT1), replaced pages' memory (255 MB over 15 image pages, none for new documents), zoom limits,
+the Share item, the drawn underline, PDFKit's fade (a 0.25 s `CATransition`), the frame guard,
+PDFKit's one drawer (two draws take twice one) and `Mount` (a hidden hosting view still
+re-evaluates). Not settled on the RC, needing the screen: `pdfItem.isCollapsed = false` at the
+first layout (the view trees match), `MathGlyphs.unmark`, the palette's text-only rows, and a new
+document's flash (`PDFController.show`). The measures hold: the inspector opens at 270, a sidebar
+header row is 19 pt under 10, and Compile's word goes 2 pt before AppKit would take Zoom; AppKit
+now keeps Compile down to 533 pt and Back to 481, under the 542 minimum. Each comment says what it
+works around.
 
 ## Left
 
