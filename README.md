@@ -19,11 +19,11 @@ A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal ke
 and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
 projects folder.
 
-The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files (found
-by any part of the key or by an author, year or word of the title), `\ref{}` labels from the
-document with the caption or heading each one labels, and the packages and classes your TeX
-installation has. It closes brackets as you type and shows the maths under the cursor in a small
-preview. Its colours can follow Overleaf, TeXstudio or the system.
+The editor completes LaTeX commands, environments and the packages your TeX installation has,
+`\cite{}` keys from your `.bib` files by key, author or title, and `\ref{}` labels, each shown with
+the caption or heading it labels. It closes brackets, dollar signs and environments as you type and
+shows the maths under the cursor in a small preview. Its colours can follow Overleaf, TeXstudio or
+the system.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
 needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
@@ -32,42 +32,32 @@ first error. You get the PDF along with every error and warning, each marked on 
 source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
 compiles on its own when you pause typing; Settings can turn that off.
 
-Most of a build's errors come with a sentence or two in plain words on what TeX means and what
-usually fixes it. Where one click can, a button beside the error fixes it and compiles again.
-Install adds a missing package with TeX Live's tlmgr. Add `\usepackage` loads the package that
-defines a command TeX didn't know. Use XeLaTeX switches the project to an engine that takes any
-Unicode character, and Turn On Shell Escape lets packages such as minted run their programs, after
-asking you first.
-
-TeXLocal also checks the document as you write, without running TeX. It finds a `\ref` to a label
-nothing defines, a `\cite` key your bibliography doesn't have, a label or key defined twice, an
-`\input` file that isn't there, and environments, braces and maths that don't match up. These show
-in the list of issues after the build's own, and on their lines in the source, whether or not you
-have compiled.
+The errors new users meet most come with a sentence on what TeX means and what usually fixes it.
+Where one click can fix an error, such as a missing package to install with TeX Live's tlmgr or a
+`\usepackage` to add, a button beside it does so and compiles again. TeXLocal also checks the
+document as you write, without running TeX, for references and citations that point nowhere, labels
+defined twice, missing input files, and environments, braces or maths left open. What it finds is
+listed and marked on its line with the build's issues, even before you first compile.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
 (SyncTeX). The Mac app finds the exact word, Windows the line. The Mac app can also search the PDF.
 
 Live Preview, on the Mac only and still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
-brings it new citations and references. Once on for a project, it starts with it until you turn it
-off.
+brings it new citations and references. It stays on for a project until you turn it off.
 
-There's also a file tree, an outline of the current file, a word count, search and replace across
-the project, a list of every place a label, citation, command or file is used, renaming a label or
-citation everywhere it's used, and export to ZIP. Deleted files go to the Trash or the Recycle Bin.
-The outline counts the words in each section, its subsections' included, and leaves out maths and
-commands as the document's count does. A project exported for arXiv takes its compiled
-bibliography and the 00README.json that tells arXiv which file to build and with which engine.
-You can go back and forward through the places you jumped from, open a file, section or label by
-typing a few letters of its name, see what a citation, reference or command is without leaving the
-text, and duplicate a project. Select some text and the word count counts it too.
+There's also a file tree, a word count, an outline of the current file that counts each section's
+words, search and replace across the project, and export to ZIP, or to a ZIP ready for arXiv with
+the compiled bibliography and the 00README.json arXiv reads. Deleted files go to the Trash or the
+Recycle Bin. You can list every place a label, citation, command or file is used, rename a label or
+citation everywhere, and see what a citation, reference or command is without leaving the text. You
+can also open a file, section or label by typing a few letters of its name, and go back to where
+you jumped from.
 
-TeXLocal keeps a local history of each project, which you can compare files with and restore from.
-It takes a snapshot every ten minutes or so while you work and just before a change across files,
-such as Replace All, and you can save one under a name of your own. The history stays on your
-computer for as long as 90 days, or for good once named. A folder you opened keeps its history
-outside it, so nothing is added to the folder or its git repository.
+Each project keeps a history on your computer that you can compare files with and restore from,
+taken every ten minutes or so while you work and before a change across files such as Replace All.
+A version stays for 90 days, or for good once you name it, and an opened folder's history is
+kept outside the folder and its git repository.
 
 ## Requirements
 
