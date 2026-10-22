@@ -127,19 +127,31 @@ struct FormatPanel: View {
     fileprivate struct GlassTile: ToggleStyle {
         static let side: CGFloat = 24, width: CGFloat = 29
 
-        func makeBody(configuration: Configuration) -> some View {
-            Button { configuration.isOn.toggle() } label: {
-                configuration.label
-                    .labelStyle(.iconOnly)
-                    .imageScale(.large)
-                    .foregroundStyle(configuration.isOn ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                    .frame(width: Self.width, height: Self.side)
-                    .glassEffect(configuration.isOn ? .regular.tint(.accentColor).interactive() : .identity,
-                                 in: .rect(cornerRadius: FormatPanel.highlightRadius))
-                    .contentShape(.rect)
+        func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
+
+        /// Off, the symbol alone has nothing for the pointer to light, so a fill shows where a click would land.
+        private struct Tile: View {
+            let configuration: Configuration
+            @State private var hovering = false
+
+            var body: some View {
+                let on = configuration.isOn
+                Button { configuration.isOn.toggle() } label: {
+                    configuration.label
+                        .labelStyle(.iconOnly)
+                        .imageScale(.large)
+                        .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                        .frame(width: GlassTile.width, height: GlassTile.side)
+                        .background(hovering && !on ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.clear),
+                                    in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                        .glassEffect(on ? .regular.tint(.accentColor).interactive() : .identity,
+                                     in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+                .accessibilityAddTraits(on ? [.isToggle, .isSelected] : .isToggle)
             }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(configuration.isOn ? [.isToggle, .isSelected] : .isToggle)
         }
     }
 
