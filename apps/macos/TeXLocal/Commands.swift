@@ -287,6 +287,7 @@ struct AppCommands: Commands {
             LivePreviewItem(app: app)
             Divider()
             Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
+            BuildOptionItems(app: app)
             SetMainFileItem(app: app)
         }
     }
@@ -335,6 +336,26 @@ private struct LivePreviewItem: View {
         let project = app.commandProject
         Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
             .disabled(project?.canSwitchLivePreview != true)
+    }
+}
+
+/// The inspector's switches, dim with no project as the Engine picker is.
+private struct BuildOptionItems: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.commandProject
+        option("Shell Escape", project, \.shellEscape, SettingsChange.shellEscape)
+        option("Stop on First Error", project, \.stopOnFirstError, SettingsChange.stopOnFirstError)
+    }
+
+    private func option(_ title: LocalizedStringKey, _ project: ProjectModel?, _ setting: KeyPath<ProjectSettings, Bool>,
+                        _ change: @escaping (Bool) -> SettingsChange) -> some View {
+        let isOn = project?.settings?[keyPath: setting]
+        return Toggle(title, isOn: Binding(get: { isOn ?? false }, set: { on in
+            if let project { Task.immediate { await project.patchSettings(change(on)) } }
+        }))
+        .disabled(isOn == nil)
     }
 }
 
