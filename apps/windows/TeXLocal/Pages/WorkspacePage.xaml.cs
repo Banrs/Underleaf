@@ -17,18 +17,24 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
 
-/// An issues panel row: a build's error or warning, by its index among the build's issues, or a bad box, which is none.
-/// <param name="Installing">Its missing file's package is being installed.</param>
-public sealed record IssueItem(int? Index, LogItem Item, bool Installing = false)
+/// An issues panel row: a build's error or warning or a check, by its index among the session's issues, or a bad box,
+/// which is none.
+/// <param name="Fixing">The key of the fix that runs, if one does: its rows' rings turn and every fix waits.</param>
+public sealed record IssueItem(int? Index, LogItem Item, string? Fixing = null)
 {
-    public bool Installable => Item.Missing is not null;
-    public bool Idle => !Installing;
-    public string InstallName => $"Install the package with {Item.Missing}";
+    /// A list rebuilt meanwhile, by a build or new checks, has new items with the same fix.
+    public static string Key(Fix fix) => fix.Command + fix.Args.GetRawText();
+
+    public bool HasFix => Item.Fix is not null;
+    public bool Running => Item.Fix is { } fix && Key(fix) == Fixing;
+    public bool Idle => Fixing is null;
+    public string FixName => $"{Item.Fix?.Title}: {Item.Fix?.Help}";
+    public bool HasExplain => Item.Explain is not null;
     public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
     public bool HasPlace => Item.File is not null;
     public string Place => Item.Line is { } line ? $"{Item.File}:{line}" : Item.File ?? "";
-    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Item.Message}{(HasPlace ? $", {Place}" : "")}";
+    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Item.Message}{(HasPlace ? $", {Place}" : "")}{(HasExplain ? $". {Item.Explain}" : "")}";
 }
 
 /// A project: the sidebar, the editor and the PDF, builds and their issues, all through the project's session.
@@ -38,19 +44,21 @@ public sealed partial class WorkspacePage : Page
 
     static ulong sessions;
     readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
-    readonly HashSet<string> unsaved = [], installing = [];
+    readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", issueFilter = "", logFilter = "";
-    string? name;
+    string? name, fixing;
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
     double ratio = Prefs.SplitRatio;
     CompileResult? result;
+    LogItem[] checks = [];
     UIElement? beforeMenu;
 
     static Core Core => App.Core!;
     bool Inline => Split.DisplayMode == SplitViewDisplayMode.Inline;
-    LogItem[] BuildIssues => result is null ? [] : [.. result.Errors, .. result.Warnings];
+    /// The session's, numbered as session_choose_issue numbers them.
+    LogItem[] Issues => [.. result?.Errors ?? [], .. result?.Warnings ?? [], .. checks];
 
     public WorkspacePage()
     {
@@ -128,7 +136,7 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.IssueInvoked += line =>
         {
-            var index = Array.FindIndex(BuildIssues, i => i.File == Editor.Path && i.Line == line.Line);
+            var index = Array.FindIndex(Issues, i => i.File == Editor.Path && i.Line == line.Line);
             if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
         };
         Editor.FilesDropped += OnFilesDropped;
@@ -254,9 +262,8 @@ public sealed partial class WorkspacePage : Page
         (name, root) = (opened.Name, opened.Root);
         App.Window.SetTitle(name);
         Search.PlaceholderText = $"Search {name}";
-        ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
-        StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
-        await ShowEngines(opened.Settings.GetProperty("engine").GetString()!);
+        await ShowEngines();
+        ShowSettings(opened.Settings);
         var ui = opened.Ui;
         ReadFolds(ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
@@ -275,15 +282,24 @@ public sealed partial class WorkspacePage : Page
             Editor.GoTo(line);
     }
 
-    /// Build › Engine, the catalogue's, checked at the project's.
-    async Task ShowEngines(string engine)
+    /// Build › Engine, the catalogue's.
+    async Task ShowEngines()
     {
         foreach (var choice in (await App.Catalogue()).Engines)
         {
-            var item = new RadioMenuFlyoutItem { Text = choice.Title, GroupName = "engine", IsChecked = choice.Id == engine };
+            var item = new RadioMenuFlyoutItem { Text = choice.Title, GroupName = "engine", Tag = choice.Id };
             item.Click += (_, _) => Run("Can't change the engine", () => Core.CallAsync("session_set_settings", new { session, patch = new { engine = choice.Id } }));
             EngineMenu.Items.Add(item);
         }
+    }
+
+    /// The Build menu's, as session_open and session_set_settings give them.
+    void ShowSettings(JsonElement settings)
+    {
+        ShellEscapeItem.IsChecked = settings.GetProperty("shellEscape").GetBoolean();
+        StopOnErrorItem.IsChecked = settings.GetProperty("stopOnFirstError").GetBoolean();
+        var engine = settings.GetProperty("engine").GetString();
+        foreach (var item in EngineMenu.Items.OfType<RadioMenuFlyoutItem>()) item.IsChecked = (string)item.Tag == engine;
     }
 
     void OnEvent(CoreEvent e)
@@ -325,6 +341,10 @@ public sealed partial class WorkspacePage : Page
                 ShowBuild();
                 break;
             case "build_finished": Finished(ev); break;
+            case "checks":
+                checks = ev.Items!;
+                ShowIssues();
+                break;
         }
     }
 
@@ -434,9 +454,6 @@ public sealed partial class WorkspacePage : Page
     void Finished(DocEvent ev)
     {
         var done = result = ev.Result!;
-        (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
-        WarningsToggle.IsEnabled = done.Warnings.Length + done.BadBoxes.Length > 0;
-        WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
         ShowLog();
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
@@ -476,10 +493,15 @@ public sealed partial class WorkspacePage : Page
         BuildState.Text = outdated && !compiling && result is not null && !Prefs.AutoCompile ? $"{state} · PDF out of date" : state;
     }
 
-    /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
+    /// The bad boxes last; the Warnings toggle hides them too.
     void ShowIssues()
     {
-        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item, item.Missing is { } file && installing.Contains(file))).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
+        var issues = Issues;
+        var warnings = issues.Count(i => i.Type != "error");
+        (ErrorCount.Text, WarningCount.Text) = ($"{issues.Length - warnings}", $"{warnings}");
+        WarningsToggle.IsEnabled = warnings + (result?.BadBoxes.Length ?? 0) > 0;
+        WarningsLabel.Text = warnings == 1 ? "1 warning" : $"{warnings} warnings";
+        IssueList.ItemsSource = issues.Select((item, i) => new IssueItem(i, item, fixing)).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
             .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
@@ -556,20 +578,37 @@ public sealed partial class WorkspacePage : Page
     void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
     void OnCloseIssues(object sender, RoutedEventArgs e) => ShowPanel(false);
 
-    /// tlmgr takes minutes, behind UAC for a TeX Live installed for all users, whose Cancel (403) needs no alert. The
-    /// build runs again with its refusal ignored, since the project may have closed meanwhile.
-    async void OnInstall(object sender, RoutedEventArgs e)
+    /// The core's fix, run without knowing which it is (docs/core-api.md, Explanations and fixes); one at a time, as an
+    /// install takes minutes. The build's refusal is ignored, since the project may have closed meanwhile.
+    async void OnFix(object sender, RoutedEventArgs e)
     {
-        var file = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Missing!;
-        installing.Add(file);
+        var fix = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Fix!;
+        if (fix.Confirm is { } confirm && await App.Show(new ContentDialog
+            {
+                Title = fix.Title, Content = confirm, PrimaryButtonText = fix.Title, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
+            }) != ContentDialogResult.Primary) return;
+        var args = fix.Args.Deserialize<Dictionary<string, JsonElement>>(Core.Json)!;
+        if (fix.Command.StartsWith("session_")) args["session"] = JsonSerializer.SerializeToElement(session);
+        fixing = IssueItem.Key(fix);
         ShowIssues();
+        JsonElement answer = default;
         CoreException? failure = null;
-        try { await Core.CallAsync("install_package", new { file }); }
+        try { answer = await Core.CallAsync(fix.Command, args); }
         catch (CoreException ex) { failure = ex; }
-        installing.Remove(file);
+        fixing = null;
         ShowIssues();
-        if (failure is null) Run(null, () => Core.CallAsync("session_compile", new { session }));
-        else if (failure.Status != 403) await App.Alert($"Can't install {file}", failure.Message);
+        if (failure is not null)
+        {
+            await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
+            return;
+        }
+        if (answer.ValueKind == JsonValueKind.Object)
+        {
+            if (answer.TryGetProperty("edits", out var edits)) Editor.Apply(edits.Deserialize<DocumentEdits?>(Core.Json));
+            // The menus send the settings they show, so they show the fix's.
+            if (fix.Command == "session_set_settings") ShowSettings(answer);
+        }
+        Run(null, () => Core.CallAsync("session_compile", new { session }));
     }
 
     /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during

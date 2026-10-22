@@ -49,8 +49,12 @@ public sealed record Clash(string Path);
 public sealed record Imported(Clash[] Existing);
 
 /// <param name="Type">error or warning.</param>
-/// <param name="Missing">The package or class file LaTeX didn't find (“foo.sty”), for install_package.</param>
-public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Missing);
+/// <param name="Explain">What TeX's message means here and what usually fixes it.</param>
+public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Explain, Fix? Fix);
+
+/// A button an issue offers, run as any command: Command with Args, the session added for a session_* command.
+/// <param name="Confirm">Asked first, when there.</param>
+public sealed record Fix(string Title, string Help, string Command, JsonElement Args, string? Confirm);
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
@@ -64,8 +68,10 @@ public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, strin
 public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others);
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
+/// <param name="Items">The checks', found without TeX.</param>
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
-    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree, string[]? Paths);
+    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree, string[]? Paths,
+    LogItem[]? Items);
 
 /// <param name="Page">From 1; the box in TeX points from the page's top left.</param>
 public sealed record ForwardSync(double Page, double? H, double? V, double? Width, double? Height);
