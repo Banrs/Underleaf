@@ -2,12 +2,13 @@
 
 # Underleaf
 
-TeXLocal is a LaTeX editor for macOS and Windows that works offline. This repository, Underleaf,
+TeXLocal is a LaTeX editor for macOS, iPadOS and Windows that works offline. This repository, Underleaf,
 is its source. It does much of what Overleaf does, but on your own computer: you don't need an
 account or a connection, and each project is an ordinary folder on your disk.
 
-The Mac app is the more complete of the two. The Windows app works, but it hasn't caught up yet
-and has no Live Preview. There is no Linux version.
+The Mac app is the most complete. The iPad app is new and carries its own TeX, since iPadOS lets an
+app start no other programs. The Windows app works, but it hasn't caught up yet and has no Live
+Preview. There is no Linux version.
 
 ## What it does
 
@@ -60,9 +61,14 @@ under Compiling).
 On macOS 27, MacTeX 2026's biber fails with an error from `lipo`. Running
 `sudo tlmgr update biber` fixes it.
 
+The iPad app needs no TeX of its own. It has pdfLaTeX, XeLaTeX, BibTeX and makeindex built in,
+with LaTeX's usual packages, TikZ, biblatex, fontspec and the fonts they use. It has no LuaLaTeX
+or biber, so biblatex has to use `backend=bibtex`, and it can't add packages beyond those yet.
+Shell escape isn't possible there.
+
 ## Installing
 
-There are no downloads yet, so you have to build TeXLocal yourself. Both apps need
+There are no downloads yet, so you have to build TeXLocal yourself. All the apps need
 [Rust](https://rustup.rs).
 
 ### macOS
@@ -92,6 +98,22 @@ apps\windows\install.ps1
 This puts TeXLocal in `%LOCALAPPDATA%\Programs\TeXLocal` and adds it to the Start menu. To update,
 quit TeXLocal, pull and run the script again.
 
+### iPad
+
+Install Xcode 27 and Rust's iPad targets (`rustup target add aarch64-apple-ios
+aarch64-apple-ios-sim`). Then build TeX for the app, which takes a long time the first time, and
+copy the packages it carries from a TeX Live on your Mac:
+
+```sh
+tools/texpresso-ios/build.sh
+python3 tools/texpresso-ios/tree.py /usr/local/texlive/2026 tools/texpresso-ios/build/texmf
+```
+
+[tools/texpresso-ios/README.md](tools/texpresso-ios/README.md) lists what these need. Then open
+`apps/ipados/TeXLocal.xcodeproj` in Xcode, choose your iPad and press Run; Xcode asks for an Apple
+account to sign the app. Without the two commands above the app still builds, but it can't
+compile.
+
 ### Live Preview on the Mac
 
 Live Preview needs TeXpresso built with Underleaf's patch. Install
@@ -108,7 +130,9 @@ explains how it works.
 
 ## Projects
 
-Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. A project's
+Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. On the
+iPad they're in the app's own folder, which Files shows as On My iPad › TeXLocal, and a folder
+you open from Files stays where it is. A project's
 own settings, like its main file and TeX engine, are kept in a `.texlocal.json` file next to your
 sources.
 
@@ -123,9 +147,10 @@ A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read 
 
 ## How it's built
 
-Most of the work is done by a Rust library in `crates/texlocal-core`, which both apps share. The
-Mac app (`apps/macos`) is written with SwiftUI and AppKit, and the Windows app (`apps/windows`)
-with WinUI 3. [docs/core-api.md](docs/core-api.md) describes how the apps talk to the core, and
+Most of the work is done by a Rust library in `crates/texlocal-core`, which all the apps share.
+The Mac app (`apps/macos`) is written with SwiftUI and AppKit, and the iPad app (`apps/ipados`)
+with SwiftUI and UIKit, sharing much of the Mac's code through `apps/shared`. The Windows app
+(`apps/windows`) is written with WinUI 3. [docs/core-api.md](docs/core-api.md) describes how the apps talk to the core, and
 [docs/windows.md](docs/windows.md) covers the Windows app's design and what it still lacks.
 
 Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues). [AGENTS.md](AGENTS.md) holds
@@ -134,5 +159,7 @@ the instructions for coding agents that work on the project.
 ## Licence
 
 MIT; see [LICENSE](LICENSE). Maths previews are drawn with
-[RaTeX](https://crates.io/crates/ratex-layout), and your documents are compiled by your own TeX
-distribution.
+[RaTeX](https://crates.io/crates/ratex-layout), and on the Mac and Windows your documents are
+compiled by your own TeX distribution. The iPad app built with its TeX also contains
+[TeXpresso](https://github.com/let-def/texpresso), MuPDF (AGPL-3.0), and pdfTeX and xdvipdfmx
+(GPL-2.0 or later), so that app is distributed under the AGPL's terms.
