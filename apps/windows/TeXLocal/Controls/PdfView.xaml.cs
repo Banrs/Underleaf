@@ -6,11 +6,13 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Printing;
 using Microsoft.UI.Xaml.Shapes;
 using TeXLocal.Bridge;
 using Windows.Data.Pdf;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
+using Windows.Graphics.Printing;
 using Windows.Storage.Streams;
 using Windows.System;
 
@@ -315,6 +317,55 @@ public sealed partial class PdfView : UserControl
         (shown.Interval, shown.IsRepeating) = (TimeSpan.FromSeconds(2), false);
         shown.Tick += (_, _) => page.Marks.Children.Remove(box);
         shown.Start();
+    }
+
+    /// Windows' print dialog for the build's pages, on white, each fitted to the sheet and drawn at the printer's
+    /// resolution up to 600 dpi: XAML holds every sheet until the job is spooled, and PNG keeps them small until then.
+    public async void Print()
+    {
+        if (document is not { } doc) return;
+        var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
+        var printing = new PrintDocument();
+        var source = printing.DocumentSource;
+        var paper = new Size();
+        printing.Paginate += (_, e) =>
+        {
+            paper = e.PrintTaskOptions.GetPageDescription(0).PageSize;
+            printing.SetPreviewPageCount((int)doc.PageCount, PreviewPageCountType.Final);
+        };
+        printing.GetPreviewPage += async (_, e) =>
+            printing.SetPreviewPage(e.PageNumber, await Sheet(doc, e.PageNumber - 1, paper, 96 * (XamlRoot?.RasterizationScale ?? 1)));
+        printing.AddPages += async (_, e) =>
+        {
+            var sheet = e.PrintTaskOptions.GetPageDescription(0);
+            for (var i = 0; i < doc.PageCount; i++) printing.AddPage(await Sheet(doc, i, sheet.PageSize, Math.Min(sheet.DpiX, 600)));
+            printing.AddPagesComplete();
+        };
+        var title = System.IO.Path.GetFileNameWithoutExtension(FilePath);
+        // The interop throws when Windows has no printing for the window, which unhandled would end the app.
+        PrintManager? manager = null;
+        try
+        {
+            manager = PrintManagerInterop.GetForWindow(window);
+            manager.PrintTaskRequested += Requested;
+            await PrintManagerInterop.ShowPrintUIForWindowAsync(window);
+        }
+        catch (Exception ex) { await App.Alert("Can't print", ex.Message); }
+        finally { manager?.PrintTaskRequested -= Requested; }
+
+        void Requested(PrintManager sender, PrintTaskRequestedEventArgs e) => e.Request.CreatePrintTask(title, r => r.SetSource(source));
+    }
+
+    /// A page fitted to a sheet of paper in DIPs, drawn at a resolution in dpi.
+    static async Task<Image> Sheet(PdfDocument doc, int index, Size paper, double dpi)
+    {
+        using var page = doc.GetPage((uint)index);
+        var width = (int)Math.Ceiling(page.Size.Width * Math.Min(paper.Width / page.Size.Width, paper.Height / page.Size.Height) / 96 * dpi);
+        using var stream = new InMemoryRandomAccessStream();
+        await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = (uint)width });
+        var bitmap = new BitmapImage { DecodePixelType = DecodePixelType.Physical, DecodePixelWidth = width };
+        await bitmap.SetSourceAsync(stream);
+        return new Image { Source = bitmap, Width = paper.Width, Height = paper.Height };
     }
 
     // At the right-click, or from the keyboard a third of the way down the view's centre.

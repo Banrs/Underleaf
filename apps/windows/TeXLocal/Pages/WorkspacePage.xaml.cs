@@ -666,7 +666,7 @@ public sealed partial class WorkspacePage : Page
         PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
         foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
-        ExportItem.IsEnabled = OpenPdfItem.IsEnabled = ShareItem.IsEnabled = shown;
+        ExportItem.IsEnabled = OpenPdfItem.IsEnabled = ShareItem.IsEnabled = PrintItem.IsEnabled = shown;
         zooming = true;
         ZoomSlider.Value = Math.Log2(Pdf.Zoom);
         zooming = false;
