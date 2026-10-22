@@ -118,42 +118,29 @@ private struct IssueRow: View {
     let project: ProjectModel
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Button { project.chooseIssue(place, focus: true) } label: {
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.message).lineLimit(place == project.chosenIssue ? nil : 3)
-                        if let location = location(line: ":") {
-                            Text(location).font(.subheadline).foregroundStyle(.secondary)
-                        }
+        Button { project.chooseIssue(place, focus: true) } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.message).lineLimit(place == project.chosenIssue ? nil : 3)
+                    if let location = location(line: ":") {
+                        Text(location).font(.subheadline).foregroundStyle(.secondary)
                     }
-                } icon: {
-                    Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
                 }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(.rect)
+            } icon: {
+                Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
             }
-            .foregroundStyle(.primary)
-            .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
-            .accessibilityValue(location(line: ", line ") ?? "")
-            if let file = item.missing { install(file) }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(.rect)
         }
+        .foregroundStyle(.primary)
+        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
+        .accessibilityValue(location(line: ", line ") ?? "")
         .listRowBackground(place == project.chosenIssue ? Color.accentColor.opacity(0.15) : nil)
         .contextMenu {
             if item.file != nil {
                 Button(item.line == nil ? "Open File" : "Go to Line", systemImage: "arrow.right") { project.chooseIssue(place, focus: true) }
             }
             Button("Copy", systemImage: "document.on.document") { UIPasteboard.general.string = item.message }
-        }
-    }
-
-    @ViewBuilder private func install(_ file: String) -> some View {
-        if project.installing == file {
-            ProgressView().accessibilityLabel("Installing")
-        } else {
-            Button("Install") { Task { await project.install(file) } }
-                .buttonStyle(.bordered)
-                .disabled(project.installing != nil)
         }
     }
 
