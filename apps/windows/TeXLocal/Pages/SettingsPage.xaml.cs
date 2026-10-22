@@ -39,7 +39,7 @@ public sealed partial class SettingsPage : Page
         SyntaxBox.SelectionChanged += OnLook;
         EngineBox.SelectionChanged += (_, _) =>
         {
-            if (EngineBox.SelectedValue is string engine) Prefs.Engine = engine;
+            if (EngineBox.SelectedItem is Choice engine) Prefs.Engine = engine.Default ? "" : engine.Id;
         };
         TexMissing.Installed += ShowTex;
         Loaded += (_, _) => ShowPreview();
@@ -49,8 +49,9 @@ public sealed partial class SettingsPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         if (App.Core is not { } core) return;
-        EngineBox.ItemsSource = (await App.Catalogue()).Engines;
-        EngineBox.SelectedValue = Prefs.Engine;
+        var engines = (await App.Catalogue()).Engines;
+        EngineBox.ItemsSource = engines;
+        EngineBox.SelectedItem = engines.FirstOrDefault(e => e.Id == Prefs.Engine) ?? engines.First(e => e.Default);
         ShowTex(await core.CallAsync<TexStatus>("status"));
     }
 

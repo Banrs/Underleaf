@@ -162,7 +162,7 @@ public sealed partial class HomePage : Page
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             var deferral = args.GetDeferral();
-            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id, engine = Prefs.Engine })).Id; }
+            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id, engine = Prefs.Engine is "" ? null : Prefs.Engine })).Id; }
             catch (CoreException ex)
             {
                 args.Cancel = true;

@@ -12,7 +12,8 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
 }
 
 /// One of a list the core offers, by its id, with the title to show: an editor theme, a project template, an engine.
-public sealed record Choice(string Id, string Title);
+/// <param name="Default">The engine a new project has unless asked for another.</param>
+public sealed record Choice(string Id, string Title, bool Default);
 
 /// What a new project may start from, in the order Home shows it: each template's id is create_project's `template`,
 /// and each engine's its `engine` and a project's setting.
