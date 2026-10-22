@@ -223,6 +223,9 @@ fn dollars_pair_as_brackets_do() {
         ("$x", caret(2), "$", "$x$", caret(3)),
         ("\\", caret(1), "$", "\\$", caret(2)),
         ("\\\\", caret(2), "$", "\\\\$$", caret(3)),
+        ("", caret(0), "$\\$5", "$\\$5$", caret(4)),
+        // A display opened before is closed by hand.
+        ("$$ x ", caret(5), "$$", "$$ x $$", caret(7)),
         // An empty pair becomes a display's, whose closers are stepped over too.
         ("", caret(0), "$$x$$", "$$x$$", caret(5)),
         ("", caret(0), "$⌫", "", caret(0)),
@@ -262,12 +265,13 @@ fn return_in_a_list_goes_on_with_it() {
         (&one, caret(end), "⏎⏎", &list("\\item a\n  "), caret(end + 3)),
         (&one, caret(end - 1), "⏎", &list("\\item \n  a"), caret(end + 2)),
         ("\\item a", caret(7), "⏎", "\\item a\n", caret(8)),
+        (&list("\\item"), caret(end - 2), "⏎", &list("\\item\n  "), caret(end + 1)),
         (&list("\\itemsep"), caret(end + 1), "⏎", &list("\\itemsep\n  "), caret(end + 4)),
     ];
     assists(cases);
 }
 
-/// A name with a partner is typed in both, until the selection leaves it.
+/// A name with a partner is typed in both, until the selection leaves it or a brace is typed. Escape is the host's.
 #[test]
 fn an_environments_name_is_typed_in_its_begin_and_end() {
     let source = "\\begin{x}\n  \\begin{y}\\end{y}\n\\end{x}";
@@ -276,6 +280,7 @@ fn an_environments_name_is_typed_in_its_begin_and_end() {
         (source, caret(8), "z", "\\begin{xz}\n  \\begin{y}\\end{y}\n\\end{xz}", caret(9)),
         (source, range(34, 1), "w", "\\begin{w}\n  \\begin{y}\\end{y}\n\\end{w}", caret(35)),
         (source, caret(8), "z⌫", source, caret(8)),
+        (source, caret(8), "{", "\\begin{x{}}\n  \\begin{y}\\end{y}\n\\end{x}", caret(9)),
         // With no other field to go to, Shift-Tab outdents.
         (source, caret(19), "⇤", "\\begin{x}\n\\begin{y}\\end{y}\n\\end{x}", caret(17)),
         // An \end that closes nothing, and a \begin nothing closes, have no partner.
@@ -283,6 +288,10 @@ fn an_environments_name_is_typed_in_its_begin_and_end() {
         ("\\begin{x}\n\\end{y}", caret(8), "z", "\\begin{xz}\n\\end{y}", caret(9)),
     ];
     assists(cases);
+    let mut e = Editor::open(source, caret(8));
+    assert!(!e.doc.end_snippet());
+    e.keys("z");
+    e.shows("\\begin{xz}\n  \\begin{y}\\end{y}\n\\end{xz}", caret(9));
 }
 
 #[test]

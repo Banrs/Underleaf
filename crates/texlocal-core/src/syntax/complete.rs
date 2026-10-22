@@ -122,9 +122,7 @@ impl SourceDocument {
                     let mut open = None;
                     if &c[1] == "end" {
                         let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
-                        let mut scanner = self.scans.resume(text, at, at).scanner;
-                        scanner.run(&text.units[..at], at, &[], &mut ());
-                        let mut groups = scanner.groups().into_iter().rev();
+                        let mut groups = self.scanned_to(at).groups().into_iter().rev();
                         open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
                     }
                     let own = &self.symbols.environments;

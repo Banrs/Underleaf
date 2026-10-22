@@ -62,6 +62,11 @@ impl Snippet {
         self.fields.iter().find(|f| f.index == index).copied()
     }
 
+    /// A field alone, as an environment's name is, has none to go to.
+    fn tabs(&self) -> bool {
+        self.place(1).is_some()
+    }
+
     /// False if the change is outside the field typed in, which ends the snippet.
     pub(super) fn follow(&mut self, start: usize, end: usize, delta: i64, mirroring: bool) -> bool {
         let typed = self.place(self.active);
@@ -142,17 +147,18 @@ impl SourceDocument {
         Some(span(first.start, first.length))
     }
 
+    /// Escape is the host's in a snippet with no field to go to.
     pub fn end_snippet(&mut self) -> bool {
-        self.typing.snippet.take().is_some()
+        let tabs = self.typing.snippet.as_ref().is_some_and(Snippet::tabs);
+        if tabs {
+            self.typing.snippet = None;
+        }
+        tabs
     }
 
     pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
-        // A field alone, as an environment's name is, has none to go to: Tab and Shift-Tab indent.
-        let snippet = self
-            .typing
-            .snippet
-            .as_mut()
-            .filter(|s| s.place(1).is_some());
+        // Without a field to go to, Tab and Shift-Tab indent.
+        let snippet = self.typing.snippet.as_mut().filter(|s| s.tabs());
         let moved = snippet.map(|snippet| snippet.go(step));
         let edits = match moved {
             Some(Some(field)) => {
@@ -190,6 +196,12 @@ impl SourceDocument {
 
     pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
         let snippet = self.typing.snippet.as_mut();
-        snippet.map_or(vec![], |snippet| snippet.mirror(&self.text.units))
+        let edits = snippet.map_or(vec![], |snippet| snippet.mirror(&self.text.units));
+        // A brace, as one typed at a name's end, would break the other places too.
+        if edits.iter().any(|e| e.text.contains(['{', '}'])) {
+            self.typing.snippet = None;
+            return vec![];
+        }
+        edits
     }
 }

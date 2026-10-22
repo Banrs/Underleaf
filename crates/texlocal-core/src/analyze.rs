@@ -21,9 +21,10 @@ use crate::syntax::{SymbolKind, Text, headings, prose, scan};
 use crate::{lock, paths};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
-// the group after), labels and notes.
-static TITLE_DROP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\\(?:texorpdfstring|label|index|footnote)\s*\{").unwrap());
+// the group after), labels, notes, and on a label's line an environment's \begin and \end.
+static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:texorpdfstring|label|index|footnote|begin|end)\s*\{").unwrap()
+});
 static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\(?:emph|text(?:bf|it|sl|sc|tt|sf|rm|up|md|normal)|underline|em|bf|it|sl|sc|tt|sf|rm|normalfont|(?:bf|md)series|(?:it|sl|sc|up)shape|(?:rm|sf|tt)family)(?-u:\b)\s*").unwrap()
 });
@@ -343,7 +344,7 @@ impl Names<'_> {
                 let line = || String::from_utf16_lossy(text.line(text.line_index(start as u32)));
                 let detail = match &self.2 {
                     Some((close, title)) if after(*close) => Some(title.clone()),
-                    _ => plain_title(&line()),
+                    _ => plain_title(&line()).filter(|line| !line.contains('\\')),
                 };
                 let labels = listed(&text.units, name_end, false).into_iter();
                 let labels = labels.map(|at| Named {
@@ -1003,13 +1004,15 @@ mod tests {
         );
     }
 
-    /// The caption or heading it follows or is in, else its line, as plain text.
+    /// The caption or heading it follows or is in, else its line where that is plain text.
     #[test]
     fn a_label_says_what_it_labels() {
         let tex = "\\section{Intro}\\label{sec:intro}\n\
             \\begin{figure}\\caption{A \\emph{plot}\n of x}\n  \\label{fig:plot}\\end{figure}\n\
             \\caption{Inner\\label{fig:inner}}\n\
-            \\begin{equation}\n  E = mc^2 \\label{eq:e}\n\\end{equation}";
+            \\begin{equation}\n  E = mc^2 \\label{eq:e}\n\\end{equation}\n\
+            \\begin{equation} F = ma \\label{eq:f}\\end{equation}\n\
+            \\includegraphics{a.png}\\label{fig:a}";
         let labels = Facts::read(tex, "tex").labels;
         let details = labels.iter().map(|l| (&*l.name, l.detail.as_deref()));
         assert_eq!(
@@ -1019,6 +1022,8 @@ mod tests {
                 ("fig:plot", Some("A plot of x")),
                 ("fig:inner", Some("Inner")),
                 ("eq:e", Some("E = mc^2")),
+                ("eq:f", Some("F = ma")),
+                ("fig:a", None),
             ]
         );
     }
