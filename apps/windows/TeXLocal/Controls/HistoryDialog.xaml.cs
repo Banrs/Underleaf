@@ -18,7 +18,7 @@ public sealed record ChangeRow(SnapshotChange Change)
 {
     public string Path => Change.Path;
     public string State => Change.Change switch { "added" => "Added", "deleted" => "Deleted", _ => "Changed" };
-    public string Glyph => Change.Change switch { "added" => "", "deleted" => "", _ => "" };
+    public string Glyph => Change.Change switch { "added" => "\uE710", "deleted" => "\uE74D", _ => "\uE70F" };
     public override string ToString() => $"{Path}, {State}";
 }
 

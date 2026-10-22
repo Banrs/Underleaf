@@ -198,10 +198,10 @@ struct SourceEditorTests {
                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         let shown = try #require(editor.textView(text, menu: menu, for: event, at: 0))
         #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title }
-            == ["Jump to Definition", "Go to PDF Position", "Comment Selection", "-", "Cut"])
+            == ["Jump to Definition", "Find Usages", "Go to PDF Position", "Comment Selection", "-", "Cut"])
         var performed: [MenuCommand] = []
         editor.command = { performed.append($0) }
-        let sync = shown.items[1]
+        let sync = shown.items[2]
         NSApp.sendAction(try #require(sync.action), to: sync.target, from: sync)
         #expect(performed == [.syncForward])
     }
