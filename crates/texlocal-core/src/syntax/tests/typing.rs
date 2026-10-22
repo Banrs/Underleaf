@@ -271,7 +271,7 @@ fn return_in_a_list_goes_on_with_it() {
     assists(cases);
 }
 
-/// A name with a partner is typed in both, until the selection leaves it.
+/// A name with a partner is typed in both, until the selection leaves it or a brace is typed. Escape is the host's.
 #[test]
 fn an_environments_name_is_typed_in_its_begin_and_end() {
     let source = "\\begin{x}\n  \\begin{y}\\end{y}\n\\end{x}";
@@ -280,6 +280,7 @@ fn an_environments_name_is_typed_in_its_begin_and_end() {
         (source, caret(8), "z", "\\begin{xz}\n  \\begin{y}\\end{y}\n\\end{xz}", caret(9)),
         (source, range(34, 1), "w", "\\begin{w}\n  \\begin{y}\\end{y}\n\\end{w}", caret(35)),
         (source, caret(8), "z⌫", source, caret(8)),
+        (source, caret(8), "{", "\\begin{x{}}\n  \\begin{y}\\end{y}\n\\end{x}", caret(9)),
         // With no other field to go to, Shift-Tab outdents.
         (source, caret(19), "⇤", "\\begin{x}\n\\begin{y}\\end{y}\n\\end{x}", caret(17)),
         // An \end that closes nothing, and a \begin nothing closes, have no partner.
@@ -287,6 +288,10 @@ fn an_environments_name_is_typed_in_its_begin_and_end() {
         ("\\begin{x}\n\\end{y}", caret(8), "z", "\\begin{xz}\n\\end{y}", caret(9)),
     ];
     assists(cases);
+    let mut e = Editor::open(source, caret(8));
+    assert!(!e.doc.end_snippet());
+    e.keys("z");
+    e.shows("\\begin{xz}\n  \\begin{y}\\end{y}\n\\end{xz}", caret(9));
 }
 
 #[test]
