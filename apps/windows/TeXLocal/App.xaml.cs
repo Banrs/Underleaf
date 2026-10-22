@@ -109,7 +109,15 @@ public partial class App : Application
         Window = new MainWindow();
         Window.Activate();
         shown.SetResult(Window);
-        _ = Window.Open(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
+        // As on the Mac, the project open at the last close comes back, unless the launch names what to open.
+        var words = Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs());
+        if (words.Length > 1) _ = Window.Open(words);
+        else if (Core is not null && Prefs.LastProject is { Length: > 0 } last)
+            try
+            {
+                if ((await Core.CallAsync<ProjectInfo[]>("list_projects")).Any(p => p.Id == last && !p.Missing)) Window.OpenProject(last);
+            }
+            catch (CoreException) { }
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
         if (Core is null) ExitSmoke(error);

@@ -35,8 +35,14 @@ public sealed record TexStatus(bool Available, string? LatexmkVersion, string? T
 
 /// <param name="Name">For titles: an opened folder's id isn't one.</param>
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
-/// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
-public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
+public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, UiState Ui);
+
+/// A project's UI state, as set_ui_state patches it: the folders open, the headings folded and the place it was left at.
+/// <param name="Line">The caret's in File, from 1.</param>
+/// <param name="Page">The PDF's at the top of the view, from 1.</param>
+/// <param name="Zoom">The PDF's: "fitWidth", "fitPage" or a scale, 1 for 100%.</param>
+/// <param name="Panel">The issues panel shown.</param>
+public sealed record UiState(string[] ExpandedFolders, string[] FoldedHeadings, string? File, int? Line, int? Page, JsonElement Zoom, bool Panel);
 
 public sealed record Clash(string Path);
 

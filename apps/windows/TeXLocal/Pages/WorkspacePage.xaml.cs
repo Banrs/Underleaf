@@ -208,11 +208,29 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// Before the project goes, as on the Mac: session_close saves quietly, so edits a conflict's Cancel held or a write
-    /// refused would be lost. False, staying, when this save is asked about or fails.
-    public async Task<bool> Save()
+    /// Before the project goes: saved, and the place it's left at kept in its ui state for the next open. False,
+    /// staying, when the save is asked about or fails.
+    public async Task<bool> Leave()
     {
         if (session == 0) return true;
+        if (!await Save()) return false;
+        var (page, zoom) = Pdf.Place;
+        // A place that can't be written is only lost.
+        try
+        {
+            await Core.CallAsync("set_ui_state", new
+            {
+                id, patch = new { file = Editor.Path, line = Editor.Path is null ? (int?)null : Editor.Caret.Line, page, zoom, panel = IssuesItem.IsChecked },
+            });
+        }
+        catch (CoreException) { }
+        return true;
+    }
+
+    /// As on the Mac, before the project goes, since session_close saves quietly and would lose edits a conflict's Cancel
+    /// held or a write refused, and before its ZIP, which has what is on disk. False when this save is asked about or fails.
+    async Task<bool> Save()
+    {
         try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
         catch (CoreException ex)
         {
@@ -239,12 +257,22 @@ public sealed partial class WorkspacePage : Page
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
         await ShowEngines(opened.Settings.GetProperty("engine").GetString()!);
-        ReadFolds(opened.Ui);
+        var ui = opened.Ui;
+        ReadFolds(ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
-        if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
+        if (opened.Pdf is { } pdf && result is null)
+        {
+            await Pdf.Load(pdf);
+            Pdf.GoTo(ui.Page, ui.Zoom);
+        }
         ShowBuild();
-        Select(FilesTree, i => i.Key == (file ?? opened.Settings.GetProperty("mainFile").GetString()));
-        if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
+        ShowPanel(ui.Panel);
+        // The file it was left at, unless another was asked for; one gone since, the main file.
+        var shown = file ?? (ui.File is { } left && Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == left) is not null
+            ? left : opened.Settings.GetProperty("mainFile").GetString());
+        Select(FilesTree, i => i.Key == shown);
+        if (Picked is { Type: not "dir" } node && await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount)
+            Editor.GoTo(line);
     }
 
     /// Build › Engine, the catalogue's, checked at the project's.

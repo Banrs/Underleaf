@@ -87,7 +87,7 @@ public sealed class CoreTests : IDisposable
         const ulong session = 7;
         var opened = await core.CallAsync<SessionOpened>("session_open", new { id = made.Id, session });
         Assert.Equal("main.tex", opened.Settings.GetProperty("mainFile").GetString());
-        Assert.Equal(JsonValueKind.Array, opened.Ui.GetProperty("expandedFolders").ValueKind);
+        Assert.Empty(opened.Ui.ExpandedFolders);
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
         using (var source = core.SessionSource(session, "main.tex")) Assert.Equal(text, source?.Text);
         var analysis = await core.CallAsync<Analysis>("session_analyze", new { session, path = "main.tex" });

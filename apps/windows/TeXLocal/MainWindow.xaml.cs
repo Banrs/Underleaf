@@ -98,12 +98,13 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    /// With `file`, the project shows that file instead of its main file.
+    /// With `file`, the project shows that file instead of the one it was left at.
     public async void OpenProject(string id, string? file = null)
     {
         if (!await Leave()) return;
         ShowHome();
         Pages.Navigate(typeof(WorkspacePage), (id, file), new DrillInNavigationTransitionInfo());
+        Prefs.LastProject = id;
     }
 
     public async void OpenFolder()
@@ -167,7 +168,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// False, staying, when the open project's save fails or is asked about: the editor holds the only copy.
-    async Task<bool> Leave() => project is null || await project.Save();
+    async Task<bool> Leave() => project is null || await project.Leave();
 
     /// Back shows only where there is somewhere to go back to, as in Windows Settings.
     void OnNavigated(object sender, NavigationEventArgs e)
@@ -179,7 +180,7 @@ public sealed partial class MainWindow : Window
             project = page;
             return;
         }
-        if (e.Content is HomePage) project = null;
+        if (e.Content is HomePage) (project, Prefs.LastProject) = (null, "");
         SetMenu(null);
         SetTitle(null);
     }
