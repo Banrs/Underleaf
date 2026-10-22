@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
 use super::CompileResult;
-use crate::logparse::{Fix, SHELL_ESCAPE};
+use crate::logparse::SHELL_ESCAPE;
 use crate::paths::Project;
 use crate::projects::testing::{names_in, with_project};
 use crate::projects::{create_project, open_path};
@@ -281,19 +281,6 @@ async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
         result.errors[0].message.contains("exit code 12"),
         "{result:?}"
     );
-}
-
-/// A package the main file loads already, if too late or misspelt, isn't offered again.
-#[tokio::test]
-async fn an_undefined_command_offers_its_package_only_while_the_main_file_doesnt_load_it() {
-    let (_dir, service, root) = setup(
-        "mkdir -p build\nprintf './main.tex:4: Undefined control sequence.\\nl.4 \\\\includegraphics\\n\\n./main.tex:5: Undefined control sequence.\\nl.5 \\\\toprule\\n' > build/main.log\nexit 12\n",
-    );
-    let main = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n";
-    fs::write(root.join("main.tex"), main).unwrap();
-    let result = compile(&service, &root).await;
-    let fixes: Vec<_> = result.errors.iter().map(|e| e.fix.clone()).collect();
-    assert_eq!(fixes, [None, Some(Fix::AddPackage("booktabs".into()))]);
 }
 
 /// At the package's error that asks for it, else with no place when TeX refused a program.

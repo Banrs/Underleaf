@@ -41,7 +41,7 @@ pub struct LogItem {
 pub enum Fix {
     /// A package or class file LaTeX didn't find.
     Install(String),
-    /// A package that defines what TeX doesn't know, while the main file doesn't load it.
+    /// A package that defines what TeX doesn't know.
     AddPackage(String),
     Xelatex,
     ShellEscape,

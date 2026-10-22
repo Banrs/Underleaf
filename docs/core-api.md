@@ -258,7 +258,7 @@ A host knows no fix by name. The fixes:
 | `title` | `command` | `args` | When |
 |---|---|---|---|
 | Install | `install_package` | `{file}` | A package or class file LaTeX didn't find (“foo.sty”). |
-| Add `\usepackage{name}` | `session_add_package` | `{name}` | An undefined command or environment that a package the catalogue knows defines, while the main file doesn't load it. |
+| Add `\usepackage{name}` | `session_add_package` | `{name}` | An undefined command or environment that a package the catalogue knows defines. |
 | Use XeLaTeX | `session_set_settings` | `{patch: {engine: "xelatex"}}` | A Unicode character pdfLaTeX's fonts lack, or a package that needs XeTeX or LuaTeX (fontspec, unicode-math, polyglossia). |
 | Turn On Shell Escape | `session_set_settings` | `{patch: {shellEscape: true}}` | A build that needed shell escape; `confirm` says it lets the document run programs, for documents the user trusts. |
 
