@@ -563,7 +563,8 @@ async fn until_sent(rig: &mut Rig, kind: &str) -> Vec<Value> {
 }
 
 /// They come as the session opens and as they change, by file and then line; they follow the
-/// build's issues in the session's list and on a line, and come back after an edit's save.
+/// build's issues in the session's list and on a line, and come back after an edit's save. One on
+/// a line the build has an issue on joins that issue's line, and isn't listed again.
 #[tokio::test(start_paused = true)]
 async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved() {
     let mut rig = Rig::new(false).await;
@@ -584,13 +585,19 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
     rig.ok("compile", json!({})).await;
     rig.fake
         .finish_build(built(true, vec![issue(2, "Undefined")]));
-    let issues = rig.of_type("issues").await;
-    let line = &issues.last().unwrap()["lines"][0];
+    let events = rig.events().await;
+    assert_eq!(checks(events.clone()), [json!([items[0]])]);
+    let issues = events.iter().rfind(|e| e["type"] == "issues");
+    let line = &issues.unwrap()["lines"][0];
     assert_eq!(
         (&line["message"], &line["others"]),
         (&json!("Undefined"), &json!([undefined]))
     );
-    for (index, file) in [(0, "main.tex"), (1, "a.tex"), (2, "main.tex")] {
+    for (index, file) in [
+        (0, json!("main.tex")),
+        (1, json!("a.tex")),
+        (2, Value::Null),
+    ] {
         let chosen = rig.ok("choose_issue", json!({ "index": index })).await;
         assert_eq!(chosen["issue"]["file"], file);
     }
