@@ -274,6 +274,8 @@ public sealed partial class WorkspacePage : Page
                 break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
+            // As on the Mac: the outline and words are read from the disk, where another app has changed a file.
+            case "files_changed" when ev.Paths!.Any(p => KindOf(p) is "tex" or "bib"): _ = Analyze(); break;
             case "document":
                 var failed = ev.Error is not null;
                 if (failed && !unsaved.Contains(ev.Path!)) Announce(BuildState, "Wasn't saved", "save");

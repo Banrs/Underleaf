@@ -59,7 +59,7 @@ public sealed record IssueLine(int Line, bool Error, string Message, string Shor
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
-    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree);
+    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree, string[]? Paths);
 
 /// <param name="Page">From 1; the box in TeX points from the page's top left.</param>
 public sealed record ForwardSync(double Page, double? H, double? V, double? Width, double? Height);
