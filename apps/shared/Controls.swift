@@ -20,17 +20,3 @@ struct LinkButton: View {
 
     var body: some View { Button(title) { openURL(url) } }
 }
-
-enum PDFPaper: String, CaseIterable, Identifiable {
-    case white, dark, auto
-
-    var id: Self { self }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .white: "White"
-        case .dark: "Dark"
-        case .auto: "Match Appearance"
-        }
-    }
-}
