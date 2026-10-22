@@ -168,10 +168,10 @@ public sealed partial class WorkspacePage
     void SaveFolds() => foldsSaved = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
     /// The project's UI state: as it opens, and after a rename, which moves the entry's paths.
-    void ReadFolds(JsonElement ui)
+    void ReadFolds(UiState ui)
     {
-        expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
-        folded = [.. ui.GetProperty("foldedHeadings").EnumerateArray().Select(f => f.GetString()!)];
+        expanded = [.. ui.ExpandedFolders];
+        folded = [.. ui.FoldedHeadings];
     }
 
     async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
@@ -363,7 +363,7 @@ public sealed partial class WorkspacePage
         // write that failed doesn't stop it.
         await Task.WhenAny(foldsSaved);
         if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
-            ReadFolds(renamed.GetProperty("ui"));
+            ReadFolds(renamed.GetProperty("ui").Deserialize<UiState>(Core.Json)!);
         await RefreshTree();
         Select(FilesTree, i => i.Key == to);
     });

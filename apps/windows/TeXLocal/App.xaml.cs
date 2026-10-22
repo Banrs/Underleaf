@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.VisualBasic.FileIO;
 using Microsoft.Windows.AppLifecycle;
+using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 
 namespace TeXLocal;
@@ -14,6 +15,7 @@ public partial class App : Application
     public static MainWindow Window { get; private set; } = null!;
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
     static readonly TaskCompletionSource<MainWindow> shown = new();
+    static Catalogue? catalogue;
 
     public App()
     {
@@ -25,6 +27,9 @@ public partial class App : Application
             if (Smoke) Environment.Exit(1);
         };
     }
+
+    /// The core's templates and engines, which don't change while the app runs.
+    public static async Task<Catalogue> Catalogue() => catalogue ??= await Core!.CallAsync<Catalogue>("catalogue");
 
     /// Why the library can't open, or null once it has.
     public static string? OpenCore()
@@ -46,6 +51,16 @@ public partial class App : Application
     /// Opens a folder in File Explorer, or with `select` its parent with the item selected.
     public static void Reveal(string path, bool select = false) =>
         Process.Start("explorer.exe", select ? $"/select,\"{path}\"" : $"\"{path}\"");
+
+    /// A project's files as a ZIP, where the save picker says; the core archives what is on disk.
+    public static async Task ExportZip(string id, string name)
+    {
+        var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = name };
+        picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
+        if (await picker.PickSaveFileAsync() is not { } picked) return;
+        try { await Core!.CallAsync("export_zip", new { id, dest = picked.Path }); }
+        catch (CoreException ex) { await Alert("Can't export", ex.Message); }
+    }
 
     /// Windows.Storage's DeleteAsync deletes outright when unpackaged.
     public static Task Recycle(string path) => Task.Run(() =>
@@ -94,7 +109,15 @@ public partial class App : Application
         Window = new MainWindow();
         Window.Activate();
         shown.SetResult(Window);
-        _ = Window.Open(Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs()));
+        // As on the Mac, the project open at the last close comes back, unless the launch names what to open.
+        var words = Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs());
+        if (words.Length > 1) _ = Window.Open(words);
+        else if (Core is not null && Prefs.LastProject is { Length: > 0 } last)
+            try
+            {
+                if ((await Core.CallAsync<ProjectInfo[]>("list_projects")).Any(p => p.Id == last && !p.Missing)) Window.OpenProject(last);
+            }
+            catch (CoreException) { }
         if (!Smoke) return;
         // A new blank project, opened: the workspace ends the run once its session is open.
         if (Core is null) ExitSmoke(error);

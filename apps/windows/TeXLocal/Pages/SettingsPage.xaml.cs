@@ -35,6 +35,10 @@ public sealed partial class SettingsPage : Page
         FontBox.SelectionChanged += OnLook;
         SizeBox.SelectionChanged += OnLook;
         SyntaxBox.SelectionChanged += OnLook;
+        EngineBox.SelectionChanged += (_, _) =>
+        {
+            if (EngineBox.SelectedValue is string engine) Prefs.Engine = engine;
+        };
         TexMissing.Installed += ShowTex;
         Loaded += (_, _) => ShowPreview();
         ActualThemeChanged += (_, _) => DispatcherQueue.TryEnqueue(ShowPreview);
@@ -42,7 +46,10 @@ public sealed partial class SettingsPage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        if (App.Core is { } core) ShowTex(await core.CallAsync<TexStatus>("status"));
+        if (App.Core is not { } core) return;
+        EngineBox.ItemsSource = (await App.Catalogue()).Engines;
+        EngineBox.SelectedValue = Prefs.Engine;
+        ShowTex(await core.CallAsync<TexStatus>("status"));
     }
 
     void OnOpenFolder(object sender, RoutedEventArgs e) => App.Reveal(Core.DefaultDataDir);

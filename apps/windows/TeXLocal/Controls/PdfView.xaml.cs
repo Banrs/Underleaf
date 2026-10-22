@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -230,6 +231,21 @@ public sealed partial class PdfView : UserControl
     /// y: the content's at the top of the view, by default the one there now.
     void View(double zoom, double? across, double? y = null) =>
         Scroller.ChangeView(across, (y ?? Scroller.VerticalOffset / Zoom) * zoom, (float)zoom, true);
+
+    /// The page at the top of the view, from 1, as GoToPage leaves it, and the zoom, as a project's ui state keeps them.
+    public (int? Page, object Zoom) Place => (pages.Length == 0 ? null : PageAt(tops, Scroller.VerticalOffset / Zoom + Edge) + 1,
+        fit switch { Fit.Width => "fitWidth", Fit.Page => "fitPage", _ => Zoom });
+
+    /// Back to a Place, in one move: a page after the zoom would scroll by the zoom being left. A page past the last
+    /// is left where the view is.
+    public void GoTo(int? page, JsonElement zoom)
+    {
+        if (pages.Length == 0) return;
+        fit = zoom.ValueKind == JsonValueKind.Number ? Fit.None : zoom.ValueKind == JsonValueKind.String && zoom.GetString() == "fitPage" ? Fit.Page : Fit.Width;
+        var factor = fit == Fit.None ? Math.Clamp(zoom.GetDouble(), Scroller.MinZoomFactor, Scroller.MaxZoomFactor)
+            : Scroller.ViewportWidth == 0 ? Zoom : FitZoom(pages);
+        View(factor, 0, page is { } n && n <= pages.Length ? tops[n - 1] - Edge : null);
+    }
 
     public void GoToPage(int number)
     {

@@ -166,7 +166,12 @@ public sealed partial class WorkspacePage : Page
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(name, Editor.Path);
         CheckTex();
-        if (session != 0) return;
+        if (session != 0)
+        {
+            // Settings › Compiling may have changed it while the page waited underneath.
+            if (AutoCompileItem.IsChecked != Prefs.AutoCompile) SetAutoCompile();
+            return;
+        }
         Core.Event += OnEvent;
         try { await OpenSession(file); }
         catch (CoreException ex)
@@ -203,11 +208,29 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// Before the project goes, as on the Mac: session_close saves quietly, so edits a conflict's Cancel held or a write
-    /// refused would be lost. False, staying, when this save is asked about or fails.
-    public async Task<bool> Save()
+    /// Before the project goes: saved, and the place it's left at kept in its ui state for the next open. False,
+    /// staying, when the save is asked about or fails.
+    public async Task<bool> Leave()
     {
         if (session == 0) return true;
+        if (!await Save()) return false;
+        var (page, zoom) = Pdf.Place;
+        // A place that can't be written is only lost.
+        try
+        {
+            await Core.CallAsync("set_ui_state", new
+            {
+                id, patch = new { file = Editor.Path, line = Editor.Path is null ? (int?)null : Editor.Caret.Line, page, zoom, panel = IssuesItem.IsChecked },
+            });
+        }
+        catch (CoreException) { }
+        return true;
+    }
+
+    /// As on the Mac, before the project goes, since session_close saves quietly and would lose edits a conflict's Cancel
+    /// held or a write refused, and before its ZIP, which has what is on disk. False when this save is asked about or fails.
+    async Task<bool> Save()
+    {
         try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
         catch (CoreException ex)
         {
@@ -233,12 +256,34 @@ public sealed partial class WorkspacePage : Page
         Search.PlaceholderText = $"Search {name}";
         ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
         StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
-        ReadFolds(opened.Ui);
+        await ShowEngines(opened.Settings.GetProperty("engine").GetString()!);
+        var ui = opened.Ui;
+        ReadFolds(ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
-        if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
+        if (opened.Pdf is { } pdf && result is null)
+        {
+            await Pdf.Load(pdf);
+            Pdf.GoTo(ui.Page, ui.Zoom);
+        }
         ShowBuild();
-        Select(FilesTree, i => i.Key == (file ?? opened.Settings.GetProperty("mainFile").GetString()));
-        if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
+        ShowPanel(ui.Panel);
+        // The file it was left at, unless another was asked for; one gone since, the main file.
+        var shown = file ?? (ui.File is { } left && Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == left) is not null
+            ? left : opened.Settings.GetProperty("mainFile").GetString());
+        Select(FilesTree, i => i.Key == shown);
+        if (Picked is { Type: not "dir" } node && await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount)
+            Editor.GoTo(line);
+    }
+
+    /// Build › Engine, the catalogue's, checked at the project's.
+    async Task ShowEngines(string engine)
+    {
+        foreach (var choice in (await App.Catalogue()).Engines)
+        {
+            var item = new RadioMenuFlyoutItem { Text = choice.Title, GroupName = "engine", IsChecked = choice.Id == engine };
+            item.Click += (_, _) => Run("Can't change the engine", () => Core.CallAsync("session_set_settings", new { session, patch = new { engine = choice.Id } }));
+            EngineMenu.Items.Add(item);
+        }
     }
 
     void OnEvent(CoreEvent e)
@@ -257,6 +302,8 @@ public sealed partial class WorkspacePage : Page
                 break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
+            // As on the Mac: the outline and words are read from the disk, where another app has changed a file.
+            case "files_changed" when ev.Paths!.Any(p => KindOf(p) is "tex" or "bib"): _ = Analyze(); break;
             case "document":
                 var failed = ev.Error is not null;
                 if (failed && !unsaved.Contains(ev.Path!)) Announce(BuildState, "Wasn't saved", "save");
@@ -288,7 +335,7 @@ public sealed partial class WorkspacePage : Page
     {
         if (kind is not ("tex" or "bib" or "text"))
         {
-            Process.Start(new ProcessStartInfo(Full(path)) { UseShellExecute = true });
+            Launch(Full(path));
             return false;
         }
         if (Editor.Path == path) return true;
@@ -588,6 +635,13 @@ public sealed partial class WorkspacePage : Page
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
         Prefs.AutoCompile = AutoCompileItem.IsChecked;
+        SetAutoCompile();
+    }
+
+    /// The menu and the session follow Prefs, which the menu or Settings set.
+    void SetAutoCompile()
+    {
+        AutoCompileItem.IsChecked = Prefs.AutoCompile;
         ShowBuild();
         Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
     }
@@ -607,7 +661,7 @@ public sealed partial class WorkspacePage : Page
         PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
         foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
-        ExportItem.IsEnabled = ShareItem.IsEnabled = shown;
+        ExportItem.IsEnabled = OpenPdfItem.IsEnabled = ShareItem.IsEnabled = shown;
         zooming = true;
         ZoomSlider.Value = Math.Log2(Pdf.Zoom);
         zooming = false;
@@ -752,6 +806,13 @@ public sealed partial class WorkspacePage : Page
         catch (Exception ex) { await App.Alert("Can't export", ex.Message); }
     }
 
+    void OnOpenPdf(object sender, RoutedEventArgs e) => Launch(Pdf.FilePath!);
+
+    async void OnExportZip(object sender, RoutedEventArgs e)
+    {
+        if (await Save()) await App.ExportZip(id, name!);
+    }
+
     /// Windows' share sheet, which a desktop app opens through its window.
     async void OnSharePdf(object sender, RoutedEventArgs e)
     {
@@ -817,6 +878,9 @@ public sealed partial class WorkspacePage : Page
     }
 
     static Visibility Vis(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
+
+    /// In the app Windows opens the file with.
+    static void Launch(string path) => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
 
     string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
 }

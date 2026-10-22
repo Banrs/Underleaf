@@ -52,13 +52,14 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Home draws a page for each of these ids (PagePreview).
+    /// Home draws a page for each of these ids (PagePreview); Prefs' engine for new projects is pdflatex until one is chosen.
     [Fact]
-    public async Task CatalogueNamesHomesTemplates()
+    public async Task CatalogueNamesHomesTemplatesAndEngines()
     {
-        var templates = (await core.CallAsync<Catalogue>("catalogue")).Templates;
+        var (templates, engines) = await core.CallAsync<Catalogue>("catalogue");
         Assert.Equal(new[] { "blank", "article", "report", "beamer" }, templates.Select(t => t.Id));
         Assert.Equal("Presentation", templates[3].Title);
+        Assert.Contains(engines, e => e.Id == "pdflatex");
     }
 
     [Fact]
@@ -86,7 +87,7 @@ public sealed class CoreTests : IDisposable
         const ulong session = 7;
         var opened = await core.CallAsync<SessionOpened>("session_open", new { id = made.Id, session });
         Assert.Equal("main.tex", opened.Settings.GetProperty("mainFile").GetString());
-        Assert.Equal(JsonValueKind.Array, opened.Ui.GetProperty("expandedFolders").ValueKind);
+        Assert.Empty(opened.Ui.ExpandedFolders);
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
         using (var source = core.SessionSource(session, "main.tex")) Assert.Equal(text, source?.Text);
         var analysis = await core.CallAsync<Analysis>("session_analyze", new { session, path = "main.tex" });

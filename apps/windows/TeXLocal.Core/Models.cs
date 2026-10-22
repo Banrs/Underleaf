@@ -11,11 +11,12 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
     public override string ToString() => Name;
 }
 
-/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template.
+/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template, an engine.
 public sealed record Choice(string Id, string Title);
 
-/// What a new project may start from, in the order Home shows it; each id is create_project's `template`.
-public sealed record Catalogue(Choice[] Templates);
+/// What a new project may start from, in the order Home shows it: each template's id is create_project's `template`,
+/// and each engine's its `engine` and a project's setting.
+public sealed record Catalogue(Choice[] Templates, Choice[] Engines);
 
 /// <param name="Path">"" for the project's folder.</param>
 public sealed record Located(string Id, string Path);
@@ -34,8 +35,14 @@ public sealed record TexStatus(bool Available, string? LatexmkVersion, string? T
 
 /// <param name="Name">For titles: an opened folder's id isn't one.</param>
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
-/// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
-public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
+public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, UiState Ui);
+
+/// A project's UI state, as set_ui_state patches it: the folders open, the headings folded and the place it was left at.
+/// <param name="Line">The caret's in File, from 1.</param>
+/// <param name="Page">The PDF's at the top of the view, from 1.</param>
+/// <param name="Zoom">The PDF's: "fitWidth", "fitPage" or a scale, 1 for 100%.</param>
+/// <param name="Panel">The issues panel shown.</param>
+public sealed record UiState(string[] ExpandedFolders, string[] FoldedHeadings, string? File, int? Line, int? Page, JsonElement Zoom, bool Panel);
 
 public sealed record Clash(string Path);
 
@@ -58,7 +65,7 @@ public sealed record IssueLine(int Line, bool Error, string Message, string Shor
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
-    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree);
+    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree, string[]? Paths);
 
 /// <param name="Page">From 1; the box in TeX points from the page's top left.</param>
 public sealed record ForwardSync(double Page, double? H, double? V, double? Width, double? Height);

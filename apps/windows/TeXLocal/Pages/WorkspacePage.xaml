@@ -89,6 +89,7 @@
         <Border x:Name="MenuSlot" Visibility="Collapsed">
             <MenuBar x:Name="MainMenu">
                 <MenuBarItem AccessKey="F" Title="File">
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+N" AccessKey="P" Click="{x:Bind app:App.Window.NewProject}" Text="New project…" />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
                     <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
                     <MenuFlyoutItem AccessKey="A" Click="OnAddFiles" Text="Add files…" />
@@ -100,8 +101,10 @@
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Click="OnSave" Text="Save" />
                     <MenuFlyoutSeparator />
-                    <!-- The PDF shown, as the Mac's Export as PDF and Share. -->
+                    <!-- The PDF shown, as the Mac's Export as PDF and Share, and the project's files, as Home's Export as ZIP. -->
                     <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
+                    <MenuFlyoutItem AccessKey="Z" Click="OnExportZip" Text="Export project as ZIP…" />
+                    <MenuFlyoutItem x:Name="OpenPdfItem" AccessKey="D" Click="OnOpenPdf" Text="Open PDF in default app" />
                     <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
@@ -187,6 +190,8 @@
                     <MenuFlyoutItem x:Name="StopItem" controls:Shortcut.Keys="Shift+F5" AccessKey="S" Click="OnStop" IsEnabled="False" Text="Stop" />
                     <MenuFlyoutItem AccessKey="L" Click="OnClean" Text="Clean build folder" />
                     <MenuFlyoutSeparator />
+                    <!-- The catalogue's engines, filled as the session opens. -->
+                    <MenuFlyoutSubItem x:Name="EngineMenu" AccessKey="N" Text="Engine" />
                     <ToggleMenuFlyoutItem x:Name="AutoCompileItem" AccessKey="A" Click="OnAutoCompile" IsChecked="{x:Bind app:Prefs.AutoCompile, Mode=OneTime}" Text="Compile automatically" />
                     <ToggleMenuFlyoutItem x:Name="ShellEscapeItem" AccessKey="E" Click="OnBuildSetting" Text="Shell escape" />
                     <ToggleMenuFlyoutItem x:Name="StopOnErrorItem" AccessKey="F" Click="OnBuildSetting" Text="Stop on first error" />
