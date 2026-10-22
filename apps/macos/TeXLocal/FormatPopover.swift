@@ -119,36 +119,37 @@ struct FormatPanel: View {
         Toggle(command.title, systemImage: command.style!.symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
         }))
-        .toggleStyle(GlassTile())
+        .toggleStyle(StyleTile())
         .help(command.style!.help)
     }
 
-    /// Notes' style toggles: the symbol alone, on the accent's glass while on, 24 pt high at a 29 pt pitch (27.2).
-    fileprivate struct GlassTile: ToggleStyle {
+    /// Notes' style toggles, AppKit checkboxes read through Accessibility (27.2): 24 pt squares, here at our own pitch.
+    fileprivate struct StyleTile: ToggleStyle {
         static let side: CGFloat = 24, width: CGFloat = 29
 
         func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
 
-        /// Off, the symbol alone has nothing for the pointer to light, so the pointer brings the on pill, in the accent the
-        /// levels light in.
+        /// Lit in the accent the levels light in while on; under the pointer a wash of it, which doesn't read as on.
         private struct Tile: View {
             let configuration: Configuration
             @State private var hovering = false
 
             var body: some View {
-                let on = configuration.isOn, lit = on || hovering
+                let on = configuration.isOn
                 Button { configuration.isOn.toggle() } label: {
                     configuration.label
                         .labelStyle(.iconOnly)
                         .imageScale(.large)
-                        .foregroundStyle(lit ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                        .frame(width: GlassTile.width, height: GlassTile.side)
-                        .glassEffect(lit ? .regular.tint(.accentColor).interactive() : .identity,
-                                     in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                        .foregroundStyle(.primary)
+                        .frame(width: StyleTile.side, height: StyleTile.side)
+                        .background(on ? AnyShapeStyle(.tint) : hovering ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.clear),
+                                    in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                        .environment(\.backgroundProminence, on ? .increased : .standard)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .onHover { hovering = $0 }
+                .frame(width: StyleTile.width)
                 .accessibilityAddTraits(on ? [.isToggle, .isSelected] : .isToggle)
             }
         }
