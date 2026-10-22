@@ -203,6 +203,18 @@ xcodebuild -create-xcframework \
   -library "$WORK/ios-arm64/libtexpresso.a" -headers "$WORK/include" \
   -library "$WORK/ios-arm64-simulator/libtexpresso.a" -headers "$WORK/include" \
   -output "$WORK/Texpresso.xcframework" >/dev/null
+mkdir -p "$WORK/icu"
+cp -f "$SRC/engines/build-wasm2c-xetex"/icudt*.dat "$WORK/icu/"
+# The iPad project includes this file when it's here (apps/ipados/TeXLocal.xcconfig): it links the
+# engine, and bundles XeTeX's ICU data and the TeX tree that tree.py writes to texmf beside it.
+cat > "$WORK/Engine.xcconfig" <<XCCONFIG
+TEXPRESSO_BUILD = $WORK
+OTHER_LDFLAGS[sdk=iphonesimulator*] = \$(inherited) $WORK/Texpresso.xcframework/ios-arm64-simulator/libtexpresso.a -lz -lc++
+OTHER_LDFLAGS[sdk=iphoneos*] = \$(inherited) $WORK/Texpresso.xcframework/ios-arm64/libtexpresso.a -lz -lc++
+SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*] = \$(inherited) $WORK/Texpresso.xcframework/ios-arm64-simulator/Headers
+SWIFT_INCLUDE_PATHS[sdk=iphoneos*] = \$(inherited) $WORK/Texpresso.xcframework/ios-arm64/Headers
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = \$(inherited) TEXPRESSO
+XCCONFIG
 
 # --- the Mac program, for the core's tests -----------------------------------------
 mac=$WORK/macos

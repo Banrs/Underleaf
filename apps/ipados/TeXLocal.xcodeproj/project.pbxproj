@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD54DC003230FC3C247D004B /* TeXLocal.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TeXLocal.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -53,10 +54,19 @@
 		F9CE0EF4D060BE65149E7ED3 /* apps */ = {
 			isa = PBXGroup;
 			children = (
+				FF60E77D2463600C813D7C9F /* ipados */,
 				2AEFAF529587A9C538E926A1 /* shared */,
 			);
 			name = apps;
 			path = ..;
+			sourceTree = "<group>";
+		};
+		FF60E77D2463600C813D7C9F /* ipados */ = {
+			isa = PBXGroup;
+			children = (
+				BD54DC003230FC3C247D004B /* TeXLocal.xcconfig */,
+			);
+			path = ipados;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -68,6 +78,7 @@
 			buildPhases = (
 				D0BFDCD8EC49557EEE2F31DA /* Build Rust core */,
 				4DB01B4638613538B369BFF0 /* Sources */,
+				1086CA62A98DBE91C7596252 /* Bundle TeX */,
 				CF5BC3DA715BEAEDD65571AD /* Resources */,
 			);
 			buildRules = (
@@ -129,6 +140,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		1086CA62A98DBE91C7596252 /* Bundle TeX */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle TeX";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# The engine's tree and XeTeX's ICU data, where TeXLocal.xcconfig found the engine.\n[ -n \"$TEXPRESSO_BUILD\" ] && [ -d \"$TEXPRESSO_BUILD/texmf\" ] || exit 0\nresources=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nrsync -a --delete \"$TEXPRESSO_BUILD/texmf/\" \"$resources/texmf/\"\nrsync -a --delete \"$TEXPRESSO_BUILD/icu/\" \"$resources/icu/\"\n";
+		};
 		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -290,6 +320,7 @@
 		};
 		E7DA4BF3B9007896C624FEDD /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BD54DC003230FC3C247D004B /* TeXLocal.xcconfig */;
 			buildSettings = {
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -312,20 +343,21 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.2.0;
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(SRCROOT)/../../target/aarch64-apple-ios/release/libtexlocal_ffi.a";
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libtexlocal_ffi.a";
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(SRCROOT)/../../target/aarch64-apple-ios/release/libtexlocal_ffi.a";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libtexlocal_ffi.a";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(TEXLOCAL_APP_IDENTIFIER)";
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../../crates/texlocal-ffi/include";
 				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Release;
 		};
 		FECB5F4341ED04EE776B7C69 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BD54DC003230FC3C247D004B /* TeXLocal.xcconfig */;
 			buildSettings = {
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -348,14 +380,14 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.2.0;
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(SRCROOT)/../../target/aarch64-apple-ios/debug/libtexlocal_ffi.a";
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(SRCROOT)/../../target/aarch64-apple-ios-sim/debug/libtexlocal_ffi.a";
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(SRCROOT)/../../target/aarch64-apple-ios/debug/libtexlocal_ffi.a";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/debug/libtexlocal_ffi.a";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(TEXLOCAL_APP_IDENTIFIER)";
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../../crates/texlocal-ffi/include";
 				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;

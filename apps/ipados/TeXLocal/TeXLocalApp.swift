@@ -2,9 +2,17 @@ import SwiftUI
 
 @main
 struct TeXLocalApp: App {
-    @State private var app = AppModel()
+    @State private var app: AppModel
     /// In-app settings, a sheet: the menu's Settings item is for the app's page in the Settings app (HIG, The menu bar).
     @State private var settingsShown = false
+
+    init() {
+        #if TEXPRESSO
+        Engine.start()
+        #endif
+        // After the engine, which the core takes when it opens.
+        _app = State(initialValue: AppModel())
+    }
 
     var body: some Scene {
         WindowGroup {

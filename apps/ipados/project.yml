@@ -27,6 +27,9 @@ targets:
       - path: ../shared
         name: Shared
         type: syncedFolder
+    configFiles:
+      Debug: TeXLocal.xcconfig
+      Release: TeXLocal.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TEXLOCAL_APP_IDENTIFIER)
@@ -53,21 +56,30 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # The build script runs cargo in the repository.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
-        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../crates/texlocal-ffi/include
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
       # By path, as the Mac's: a -l would prefer a dylib of that name.
       configs:
         Debug:
-          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(SRCROOT)/../../target/aarch64-apple-ios-sim/debug/libtexlocal_ffi.a
-          OTHER_LDFLAGS[sdk=iphoneos*]: $(SRCROOT)/../../target/aarch64-apple-ios/debug/libtexlocal_ffi.a
+          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/debug/libtexlocal_ffi.a
+          OTHER_LDFLAGS[sdk=iphoneos*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios/debug/libtexlocal_ffi.a
         Release:
-          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libtexlocal_ffi.a
-          OTHER_LDFLAGS[sdk=iphoneos*]: $(SRCROOT)/../../target/aarch64-apple-ios/release/libtexlocal_ffi.a
+          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libtexlocal_ffi.a
+          OTHER_LDFLAGS[sdk=iphoneos*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios/release/libtexlocal_ffi.a
     preBuildScripts:
       - name: Build Rust core
         script: |
           "$SRCROOT/../../tools/build-core.sh"
         # Cargo checks Rust inputs and the archive's freshness itself.
+        basedOnDependencyAnalysis: false
+    postCompileScripts:
+      - name: Bundle TeX
+        script: |
+          # The engine's tree and XeTeX's ICU data, where TeXLocal.xcconfig found the engine.
+          [ -n "$TEXPRESSO_BUILD" ] && [ -d "$TEXPRESSO_BUILD/texmf" ] || exit 0
+          resources="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          rsync -a --delete "$TEXPRESSO_BUILD/texmf/" "$resources/texmf/"
+          rsync -a --delete "$TEXPRESSO_BUILD/icu/" "$resources/icu/"
         basedOnDependencyAnalysis: false
 schemes:
   TeXLocal:
