@@ -175,7 +175,7 @@ impl AppSettings {
 
 /// What a host keeps of the project's interface: the place it was left at, which a host shows
 /// again as the project opens, and whether Live Preview was last asked to run.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UiState {
     pub expanded_folders: Vec<String>,
@@ -183,24 +183,10 @@ pub struct UiState {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub page: Option<u32>,
-    pub zoom: Option<Zoom>,
+    /// The host's alone, kept as it sends it.
+    pub zoom: Option<Value>,
     pub panel: bool,
     pub live_preview: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Zoom {
-    Fit(Fit),
-    /// 1 is 100%.
-    Scale(f64),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Fit {
-    FitWidth,
-    FitPage,
 }
 
 pub fn read_ui(file: &Path) -> UiState {
@@ -333,8 +319,6 @@ mod tests {
         });
         assert_eq!(json!(written), expected);
         assert_eq!(json!(read_ui(file)), expected);
-        let err = write_ui(file, &json!({ "zoom": "fitAll" })).unwrap_err();
-        assert_eq!(err.status, 400);
         assert_eq!(read_settings(file).engine, Engine::Lualatex);
     }
 
