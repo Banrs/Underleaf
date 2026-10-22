@@ -150,7 +150,7 @@ public sealed partial class WorkspacePage : Page
         // The Mac's double-click to the PDF; where the PDF is hidden, selecting a word doesn't open it.
         Editor.DoubleClicked += () =>
         {
-            if (PdfItem.IsChecked && Editor.Path is not null && Pdf.PageCount > 0) Run(null, SyncToCaret);
+            if (PdfItem.IsChecked && Pdf.PageCount > 0) Run(null, SyncToCaret);
         };
         Editor.DefinitionFound += place => _ = Jump(place.File, place.Line, place.Column, place.Length);
         Editor.HelpAsked += ShowHelp;
@@ -289,8 +289,7 @@ public sealed partial class WorkspacePage : Page
         ShowBuild();
         ShowPanel(ui.Panel);
         // The file it was left at, unless another was asked for; one gone since, the main file.
-        var shown = file ?? (ui.File is { } left && Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == left) is not null
-            ? left : opened.Settings.GetProperty("mainFile").GetString());
+        var shown = file ?? (ui.File is { } left && KindOf(left) is not null ? left : opened.Settings.GetProperty("mainFile").GetString());
         Select(FilesTree, i => i.Key == shown);
         if (Picked is { Type: not "dir" } node && await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount)
             Editor.GoTo(line);
@@ -420,22 +419,20 @@ public sealed partial class WorkspacePage : Page
             Run(null, async () => ShowTrail(await Core.CallAsync<Trail>("session_navigate", new { session, from })));
     }
 
-    /// VS Code's Go back and Go forward, through the session's places; the caret's goes on the other way's.
-    void Step(string command) => Run(null, async () =>
-    {
-        if (Editor.Path is not { } path) return;
-        var trail = await Core.CallAsync<Trail>(command, new { session, at = new Spot(path, Editor.Caret.Line) });
-        ShowTrail(trail);
-        if (trail.To is { } to) await Reveal(to.Path, to.Line);
-    });
-
     void ShowTrail(Trail trail) => (BackItem.IsEnabled, ForwardItem.IsEnabled) = (trail.Back, trail.Forward);
 
-    /// Back or Forward for the window's Alt+Left and the mouse's buttons: false where there's no place to go to.
+    /// VS Code's Go back and Go forward, through the session's places, the caret's going on the other way's; also the
+    /// window's Alt+Left and the mouse's buttons, false where there's no place to go to.
     public bool Go(bool back)
     {
         if (!(back ? BackItem : ForwardItem).IsEnabled) return false;
-        Step(back ? "session_back" : "session_forward");
+        Run(null, async () =>
+        {
+            if (Editor.Path is not { } path) return;
+            var trail = await Core.CallAsync<Trail>(back ? "session_back" : "session_forward", new { session, at = new Spot(path, Editor.Caret.Line) });
+            ShowTrail(trail);
+            if (trail.To is { } to) await Reveal(to.Path, to.Line);
+        });
         return true;
     }
 
@@ -713,15 +710,13 @@ public sealed partial class WorkspacePage : Page
         ShowIssues();
         if (failure is not null)
         {
-            await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
+            // install_package's 403 is its UAC prompt cancelled, which needs no alert.
+            if (failure.Status != 403 || fix.Command != "install_package") await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
             return;
         }
-        if (answer.ValueKind == JsonValueKind.Object)
-        {
-            if (answer.TryGetProperty("edits", out var edits)) Editor.Apply(edits.Deserialize<DocumentEdits?>(Core.Json));
-            // The menus send the settings they show, so they show the fix's.
-            if (fix.Command == "session_set_settings") ShowSettings(answer);
-        }
+        if (answer.TryGetProperty("edits", out var edits)) Editor.Apply(edits.Deserialize<DocumentEdits?>(Core.Json));
+        // The menus send the settings they show, so they show the fix's.
+        if (fix.Command == "session_set_settings") ShowSettings(answer);
         Run(null, () => Core.CallAsync("session_compile", new { session }));
     }
 

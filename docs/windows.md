@@ -38,9 +38,8 @@ apps/windows/
                           Core.cs, Source.cs (a SafeHandle over TlSource), Models.cs (the JSON's records);
                           builds the DLL
   TeXLocal/               the WinUI 3 app: App, MainWindow, Prefs.cs (typed preferences);
-                          Pages/ Home, Workspace (.xaml.cs the session, jumps, Back and Forward, Go to all and
-                          Quick info; .Sidebar.cs files, outline, search, words; .Insert.cs the Insert menu and
-                          symbol palette), Settings;
+                          Pages/ Home, Workspace (.xaml.cs the session and its jumps; .Sidebar.cs files, outline,
+                          search, words; .Insert.cs the Insert menu and symbol palette), Settings;
                           Controls/ Card, Shortcut, Sizer, RenameFlyout, PdfView, SourceView (+ .Find.cs),
                           PagePreview, HistoryDialog; Themes/Generic.xaml (the custom controls' styles)
   TeXLocal.Tests/         xUnit against TeXLocal.Core only: the bridge and smoke behaviour
@@ -82,17 +81,16 @@ apps/windows/
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView`, an opened folder's path under its name as in Word's | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
 | Dialogs | `ContentDialog` through `App.Show` | Each dialog setting its own root, theme and style |
-| Version history | A wide `ContentDialog`, as Word's Version History pane: `ListView`s of versions and their changed files, the file's comparison a `ListView` of lines on `SystemFillColorCriticalBackground` and `SystemFillColorSuccessBackground`, as the core diffs them; Restore all closes it for its confirmation, which reopens it on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
+| Version history | A wide `ContentDialog`, as Word's Version History: versions and their changed files beside the file's comparison; Restore all's confirmation takes its place and gives it back on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem` with `SendToRecycleBin` | `DeleteAsync` deletes outright unpackaged |
 | Source editor | `RichEditBox` (it passed the editor gate) | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG; the palette a grouped `GridView` in a `Flyout` | A font's glyphs miss TeX's spacing |
 | Completion | A `ListView` in a `Popup`, never focused | A `Flyout` takes the keyboard |
 | Find | Notepad's find bar over `RichEditTextRange.FindText` | No find in `RichEditBox` |
-| Back and Forward | VS Code's: Edit's Go back and Go forward, Alt+Left (the window's, which goes back a page where there's no place) and Alt+Right, the mouse's back and forward buttons; each jump goes through `WorkspacePage.Jump` | The title bar's back button stays the page's, as in Settings |
-| Go to all | Visual Studio's (Ctrl+T): a `Flyout` at the workspace's top centre holding an `AutoSuggestBox`, whose list is the results with a `FontIcon` per kind and the detail in Caption; one Escape closes it | A `ContentDialog` dims and blocks the window; a list of our own needs its own keys |
-| Quick info | VS Code's hover: a `Flyout` under the name after 500 ms at rest (`TransientWithDismissOnPointerMoveAway`, the keyboard staying in the text), or at the caret (Ctrl+Shift+I, `Standard`); the name in the editor's font, Go to definition a `HyperlinkButton` | A `ToolTip` holds no link; a `TeachingTip` points a tail at a word |
+| Navigation | VS Code's Go back and Go forward (Alt+Left, the window's, which goes back a page where there's no place; Alt+Right; the mouse's buttons) over every jump (`WorkspacePage.Jump`); Visual Studio's Go to all (Ctrl+T), an `AutoSuggestBox` in a `Flyout` at the top centre | The title bar's back button stays the page's, as in Settings; a `ContentDialog` dims and blocks the window |
+| Quick info | VS Code's hover, a `Flyout` under the name after 500 ms at rest that goes as the pointer leaves, or at the caret (Ctrl+Shift+I) | A `ToolTip` holds no link; a `TeachingTip` points a tail at a word |
 | Layer corners | A rounded clip on each layer's composition visual | `CornerRadius` rounds only the border |
-| Issues | `ListView`, the build's then the checks', each row's explanation in Caption under its message; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a fix a button at the row's end, as the Store's Install, a `ProgressRing` beside it while it runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
+| Issues | `ListView`, the build's then the checks', an explanation in Caption under its message; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a fix a button at the row's end, as the Store's Install, with a `ProgressRing` while it runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 | The metapackage adds ~60 MB |
 | PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come. Dark paper turns each page's pixels over (c + 1 − 2Y, the Mac's invert and half-turn of hue) off the UI thread | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions; composition's colour effects need Win2D |
@@ -159,8 +157,7 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 | Workspace | Inspector with the engine | Build menu: Engine and toggles | Design |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; the outline follows the scroll | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
-| Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`, double-click to the PDF; undo cleared on switch | UI |
-| Editor | Quick Help | Quick info on Ctrl+Shift+I, not Visual Studio's Ctrl+K, Ctrl+I | UI: `Shortcut` has no chords |
+| Editor | `drop_text`, per-file undo, double-click to the PDF, Quick Help | `drop_text`, double-click to the PDF, Quick info on Ctrl+Shift+I (`Shortcut` has no chord for Ctrl+K, Ctrl+I); undo cleared on switch | UI |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
 | Panel | Log find | The filter keeps matching lines | UI |
@@ -168,9 +165,9 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 | Settings | Live Preview | None | Core 12 |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
-ZIP export on Home, the engine in the New project dialog, Open PDF in default app and F6 region
-cycling. Also to come: multiple windows and the zip and winget release. Still to check by eye: a
-high-contrast theme, touch, and a real pointer over the sizers' grips.
+ZIP export on Home, Open PDF in default app and F6 region cycling. Also to come: multiple windows
+and the zip and winget release. Still to check by eye: a high-contrast theme, touch, and a real
+pointer over the sizers' grips.
 
 ## Live Preview on Windows
 
