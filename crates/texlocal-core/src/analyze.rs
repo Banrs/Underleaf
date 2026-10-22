@@ -102,7 +102,7 @@ pub struct Facts {
 }
 
 /// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -110,7 +110,7 @@ pub struct Place {
 }
 
 impl Place {
-    fn of(text: &Text, range: Range<usize>) -> Self {
+    pub(crate) fn of(text: &Text, range: Range<usize>) -> Self {
         let line = text.line_index(range.start as u32);
         Self {
             line: line as u32 + 1,
