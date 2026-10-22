@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
     @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
     @AppStorage(DefaultsKey.syncAfterCompile) private var syncAfterCompile = false
+    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
 
     private static let families = UIFont.familyNames.filter { family in
         UIFont.fontNames(forFamilyName: family).first.flatMap { UIFont(name: $0, size: 12) }?
@@ -57,6 +58,13 @@ struct SettingsView: View {
                 Section("Compiling") {
                     Toggle("Compile Automatically", detail: "Compiles shortly after you stop typing.", isOn: $app.autoCompile)
                     Toggle("Scroll to Cursor After Compiling", detail: "Scrolls the PDF to the line you are editing.", isOn: $syncAfterCompile)
+                }
+                Section("PDF") {
+                    Picker("Page Colour",
+                           detail: "Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.",
+                           selection: $paper) {
+                        ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
+                    }
                 }
             }
             .navigationTitle("Settings")

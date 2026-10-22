@@ -307,10 +307,18 @@ private struct PDFFileView: UIViewRepresentable {
 private struct PDFPane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
+    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let dark = paper.isDark(in: colorScheme)
         ZStack {
-            PDFRepresentable(project: project)
+            // Inverted with its hues turned back, as the Mac's pages and Smart Invert, by SwiftUI as UIKit has no layer
+            // filters; round the pages, the view's own colour is outside it.
+            PDFRepresentable(project: project, darkPaper: dark)
+                .contrast(dark ? -1 : 1)
+                .hueRotation(.degrees(dark ? 180 : 0))
+                .background(Color(uiColor: project.pdf.view.surround))
                 .opacity(project.hasPDF ? 1 : 0)
             if !project.hasPDF {
                 ContentUnavailableView {

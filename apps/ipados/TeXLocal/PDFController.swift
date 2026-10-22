@@ -223,9 +223,21 @@ final class SyncPDFView: PDFView {
     var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
     private var markView: UIView?
+    /// PDFKit's colour round the pages, which its pane shows while dark paper's inversion would turn it.
+    private(set) var surround = UIColor.clear
+
+    /// Pages inverted by the pane, which lose their shadows as they would turn to glows.
+    var darkPaper = false {
+        didSet {
+            guard darkPaper != oldValue else { return }
+            backgroundColor = darkPaper ? .clear : surround
+            pageShadowsEnabled = !darkPaper
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        surround = backgroundColor ?? .clear
         // A double tap goes to the source, as a double-click does on the Mac.
         let tap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped))
         tap.numberOfTapsRequired = 2
@@ -267,7 +279,8 @@ final class SyncPDFView: PDFView {
         let topLeft = convert(CGPoint(x: rect.minX, y: rect.maxY), from: page)
         let bottomRight = convert(CGPoint(x: rect.maxX, y: rect.minY), from: page)
         let mark = UIView(frame: CGRect(x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y))
-        mark.backgroundColor = .systemYellow.withAlphaComponent(0.35)
+        let yellow = UIColor.systemYellow.resolvedColor(with: traitCollection)
+        mark.backgroundColor = (darkPaper ? yellow.underDarkPaper : yellow).withAlphaComponent(0.35)
         mark.layer.cornerRadius = 3
         mark.isUserInteractionEnabled = false
         addSubview(mark)
@@ -283,6 +296,7 @@ final class SyncPDFView: PDFView {
 
 struct PDFRepresentable: UIViewRepresentable {
     let project: ProjectModel
+    let darkPaper: Bool
 
     func makeUIView(context: Context) -> SyncPDFView {
         let view = project.pdf.view
@@ -292,5 +306,17 @@ struct PDFRepresentable: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: SyncPDFView, context: Context) {}
+    func updateUIView(_ view: SyncPDFView, context: Context) { view.darkPaper = darkPaper }
+}
+
+private extension UIColor {
+    /// The colour that dark paper turns into this one: inverting and turning the hue 180° undoes itself, by SwiftUI's
+    /// hue matrix (SVG's `hueRotate` at 180°).
+    var underDarkPaper: UIColor {
+        var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        (r, g, b) = (1 - r, 1 - g, 1 - b)
+        return UIColor(red: -0.574 * r + 1.43 * g + 0.144 * b, green: 0.426 * r + 0.43 * g + 0.144 * b,
+                       blue: 0.426 * r + 1.43 * g - 0.856 * b, alpha: a)
+    }
 }
