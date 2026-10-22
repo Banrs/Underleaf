@@ -564,7 +564,7 @@ final class ProjectFlowTests {
         let project = try await opened("\\label{a} \\ref{a}").project
         project.editor.textView.setSelectedRange(.caret(7))
         await project.findUsages()
-        #expect(project.search.usages?.heading == "Usages of \\label{a}" && project.search.query == "a")
+        #expect(project.search.usages?.name == "\\label{a}" && project.search.query == "\\label{a}")
         await project.search.run(in: project.session)
         #expect(project.search.usages != nil && project.search.hitCount == 1)
         project.search.query = "ref"

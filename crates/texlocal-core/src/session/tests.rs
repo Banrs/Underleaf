@@ -1486,7 +1486,7 @@ async fn usages_are_where_the_name_at_an_offset_is_defined_and_used_as_a_search_
         hit("ch.tex", 2, 9, "See \\ref{", "}."),
         hit("main.tex", 1, 13, "Hello \\label{", "}"),
     ];
-    let answer = json!({ "name": "fig:a", "kind": "label", "groups": groups });
+    let answer = json!({ "name": "\\label{fig:a}", "groups": groups });
     assert_eq!(usages, answer);
 }
 

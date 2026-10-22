@@ -174,7 +174,7 @@ struct FilesList: View {
         // Usages aren't the query's matches, which Replace All would replace.
         .safeAreaBar(edge: .top, spacing: 0) {
             if let usages = project.search.usages {
-                Text(usages.heading)
+                Text(String(localized: "Usages of \(usages.name)"))
                     .font(.headline)
                     .lineLimit(1)
                     .truncationMode(.middle)

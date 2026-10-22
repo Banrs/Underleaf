@@ -1022,9 +1022,15 @@ impl Actor {
                 syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
             };
             let hits = projects::search_project(&root, &texts(&docs), &tex, &found, usize::MAX);
+            // As the source writes it, for a host's heading: a command has its backslash already.
+            let name = match kind {
+                SymbolKind::Label => format!("\\label{{{name}}}"),
+                SymbolKind::Citation => format!("\\cite{{{name}}}"),
+                SymbolKind::Environment => format!("\\begin{{{name}}}"),
+                _ => name,
+            };
             let groups = hits.map(projects::search_groups);
-            reply
-                .send(groups.map(|groups| json!({ "name": name, "kind": kind, "groups": groups })));
+            reply.send(groups.map(|groups| json!({ "name": name, "groups": groups })));
         });
     }
 

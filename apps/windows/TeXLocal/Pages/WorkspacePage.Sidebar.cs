@@ -290,7 +290,7 @@ public sealed partial class WorkspacePage
         if (Editor.Path is not { } path) return;
         var generation = ++searches;
         var usages = await Core.CallAsync<Usages?>("session_usages", new { session, path, offset });
-        if (usages is not null && generation == searches) ShowResults(usages.Name, usages.Groups, null, usages.Heading);
+        if (usages is not null && generation == searches) ShowResults(usages.Name, usages.Groups, null, $"Usages of {usages.Name}");
     });
 
     /// Hits by file, said as their count or the note. A heading names what found them other than the box's search, whose

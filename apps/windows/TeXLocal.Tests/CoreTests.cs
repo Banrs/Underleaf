@@ -116,7 +116,7 @@ public sealed class CoreTests : IDisposable
         var hit = Assert.Single(Assert.Single(found, f => f.File == "notes.tex").Hits);
         Assert.Equal(("a ", "needle", 1, 2, 6), (hit.Before, hit.Match, hit.Line, hit.Column, hit.Length));
         var usages = (await core.CallAsync<Usages?>("session_usages", new { session, path = "main.tex", offset = 14 }))!;
-        Assert.Equal("Usages of \\label{x}", usages.Heading);
+        Assert.Equal("\\label{x}", usages.Name);
         Assert.Equal(("main.tex", 14), (usages.Groups[0].File, Assert.Single(usages.Groups[0].Hits).Column));
         var replaced = await core.CallAsync<Replaced>("session_replace", new { session, query = "needle", replacement = "pin" });
         Assert.Equal("main.tex", replaced.Edits?.Path);
