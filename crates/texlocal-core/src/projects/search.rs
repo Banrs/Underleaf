@@ -10,7 +10,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::files::write_creating;
+use super::files::{Planned, write_all};
 use super::skip_unreadable;
 use super::tree::{file_kind, is_text, visit_files};
 use crate::analyze::Place;
@@ -233,23 +233,15 @@ pub(crate) fn replace_in_files(
         Ok(true)
     })?;
     // Each read again as it's written: another app may have written it while the rest were read.
-    let mut written = Vec::new();
-    let writing: Result<(), CoreError> = edited.into_iter().try_for_each(|(rel, abs)| {
-        if let Some((file, count, was)) = replace(&abs, &rel)? {
-            write_creating(&abs, file.as_bytes())?;
-            written.push((abs, was, json!({ "file": rel, "count": count })));
-        }
-        Ok(())
-    });
-    if let Err(err) = writing {
-        // Each was just written where it is, so can be again; the error to tell is the one that
-        // stopped the replace.
-        for (abs, was, _) in &written {
-            let _ = write_creating(abs, was.as_bytes());
-        }
-        return Err(err);
-    }
-    Ok(written.into_iter().map(|(.., done)| done).collect())
+    write_all(edited, |(rel, abs)| {
+        let planned = replace(&abs, &rel)?.map(|(file, count, was)| Planned {
+            abs,
+            bytes: file.into_bytes(),
+            was: Some(was.into_bytes()),
+            done: json!({ "file": rel, "count": count }),
+        });
+        Ok(planned)
+    })
 }
 
 /// `to` in place of each of `places`, which are in order, in `file` as written: a place's line

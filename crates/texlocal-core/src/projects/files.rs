@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::json;
@@ -53,6 +53,42 @@ pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreE
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| atomic::write(abs, contents))
         .map_err(|err| write_error(abs, err))
+}
+
+/// A file one of `write_all`'s writes: `was` what it held, None if there was none, and `done`
+/// what the caller answers for it.
+pub(crate) struct Planned<D> {
+    pub abs: PathBuf,
+    pub bytes: Vec<u8>,
+    pub was: Option<Vec<u8>>,
+    pub done: D,
+}
+
+/// What `plan` makes of each item, written in turn, all or none: a plan or write that fails is the
+/// error, and the files written before it are put back as they were, or removed if they weren't.
+pub(crate) fn write_all<T, D>(
+    items: impl IntoIterator<Item = T>,
+    mut plan: impl FnMut(T) -> Result<Option<Planned<D>>, CoreError>,
+) -> Result<Vec<D>, CoreError> {
+    let mut written = Vec::new();
+    let writing = items.into_iter().try_for_each(|item| {
+        if let Some(planned) = plan(item)? {
+            write_creating(&planned.abs, &planned.bytes)?;
+            written.push(planned);
+        }
+        Ok(())
+    });
+    if let Err(err) = writing {
+        // Each was just written where it is, so can be again.
+        for Planned { abs, was, .. } in &written {
+            let _ = match was {
+                Some(was) => write_creating(abs, was).map(drop),
+                None => fs::remove_file(abs).map_err(CoreError::from),
+            };
+        }
+        return Err(err);
+    }
+    Ok(written.into_iter().map(|planned| planned.done).collect())
 }
 
 /// A failed write in Foundation's words, as the hosts show it in an alert whose title already
