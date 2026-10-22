@@ -53,7 +53,9 @@ struct SettingsView: View {
                 }
                 Section("Typing") {
                     Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $autoPair)
-                    Toggle("Suggest Completions While Typing", isOn: $autoComplete)
+                    Toggle("Suggest Completions While Typing",
+                           detail: "When off, press Option-Escape, or the completions key above the keyboard, to see suggestions.",
+                           isOn: $autoComplete)
                 }
                 Section("Compiling") {
                     Toggle("Compile Automatically", detail: "Compiles shortly after you stop typing.", isOn: $app.autoCompile)

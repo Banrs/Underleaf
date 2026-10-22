@@ -74,7 +74,9 @@ extension SourceTextView {
 
     override var keyCommands: [UIKeyCommand]? {
         var ours = [UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(backtab)),
-                    UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escape))]
+                    UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escape)),
+                    // The Mac's key for completions.
+                    UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: .alternate, action: #selector(showCompletions))]
         // While the list shows, the arrows move through it; Return and Tab come as typing (`insertText`).
         if completions.offered != nil {
             ours += [UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(previousCompletion)),
@@ -86,6 +88,7 @@ extension SourceTextView {
 
     @objc private func backtab() { if isEditable { tab(-1) } }
     @objc private func escape() { cancel() }
+    @objc private func showCompletions() { completions.complete(explicit: true) }
     @objc private func previousCompletion() { completions.move(-1) }
     @objc private func nextCompletion() { completions.move(1) }
 
