@@ -158,7 +158,7 @@ Service commands (`tl_call`):
 | `create_project` | `name`, `template?` (article), `engine?` | the project, as `list_projects` lists it | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
-| `install_package` | `file` | `{package}` | Installs the TeX Live package with the file `file` (a build error's `missing`), through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 403 when the dialog is cancelled; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. It takes minutes: ask with `tl_call_async`. |
+| `install_package` | `file` | `{package}` | Installs the TeX Live package with the file `file` (an Install fix's), through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 403 when the dialog is cancelled; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. It takes minutes: ask with `tl_call_async`. |
 | `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`; on Windows `%APPDATA%\TinyTeX`, or `%ProgramData%\TinyTeX` where that path has a space or a letter past ASCII), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
@@ -192,7 +192,7 @@ Each is `{"type", "session", …}`.
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
 | `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), “Needs Shell Escape” for a build that needed it, else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
-| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). An error's `missing`: the package or class file LaTeX didn't find (“foo.sty”), for an Install that asks `install_package`. |
+| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). Each item of `errors` and `warnings` has an `explain` and a `fix` (Explanations and fixes). |
 | `build_cleaned` | | Clear the PDF unless live. |
 | `tree` | `tree` (as `file_tree`, whose main file's node has `main: true`) | Redraw the sidebar; it comes again when another main file is chosen, here or by another app in `.texlocal.json`. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
@@ -200,6 +200,26 @@ Each is `{"type", "session", …}`.
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
 | `live_issues` | `path`, `lines` (as `issues`') | Live Preview's errors: draw them as issues, kept apart from the build's (a build's issue wins its line). They come once a run TeXpresso had every edit for has lasted a second (`[]`: none), follow their lines as text is typed above them, and go with an edit over their line's start, the document's reload, and Live Preview's stop or restart. |
 | `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session forwards pages and documents one at a time, in the order TeXpresso writes them, and drops nothing: a page can come before its run's `live_document`. |
+
+### Explanations and fixes
+
+A build's items (`errors`, `warnings`, and the issue `session_issue` and `session_choose_issue`
+answer) carry `explain`: one or two sentences on what TeX's message means here and what usually
+fixes it, for the build panel under the message, or null. And `fix`, or null:
+`{title, help, command, args, confirm?}`, which a host shows as a button titled `title`, with
+`help` as its tooltip, and runs as any command. On a click: when `confirm` is there, ask first
+with its text (Cancel does nothing); call `command` with `args` through `tl_call_async`, adding
+`session` for a `session_*` command; an error answer is shown as that command's would be, and
+ends it; else apply the answer's `edits`, if any, as `session_replace`'s, then compile
+(`session_compile`, a manual build).
+A host knows no fix by name. The fixes:
+
+| `title` | `command` | `args` | When |
+|---|---|---|---|
+| Install | `install_package` | `{file}` | A package or class file LaTeX didn't find (“foo.sty”). |
+| Add `\usepackage{name}` | `session_add_package` | `{name}` | An undefined command or environment that a package the catalogue knows defines, while the main file doesn't load it. |
+| Use XeLaTeX | `session_set_settings` | `{patch: {engine: "xelatex"}}` | A Unicode character pdfLaTeX's fonts lack, or a package that needs XeTeX or LuaTeX (fontspec, unicode-math, polyglossia). |
+| Turn On Shell Escape | `session_set_settings` | `{patch: {shellEscape: true}}` | A build that needed shell escape; `confirm` says it lets the document run programs, for documents the user trusts. |
 
 ## The editor's source
 

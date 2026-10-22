@@ -10,10 +10,11 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::analyze::Facts;
 use crate::error::CoreError;
 use crate::lock;
 use crate::logparse::{
-    LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
+    Fix, LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
 };
 use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
@@ -90,6 +91,8 @@ enum End {
 
 struct CompileRun {
     main_rel: String,
+    /// The main file, whose preamble says which packages the project loads.
+    main: PathBuf,
     /// The PDF; latexmk names the run's other outputs as it, with their own extensions.
     pdf: PathBuf,
     before: HashMap<&'static str, Stamp>,
@@ -193,6 +196,7 @@ impl CompileManager {
         });
         let run = CompileRun {
             before: before.collect(),
+            main: root.join(&main_rel),
             main_rel,
             pdf,
             request_started,
@@ -298,6 +302,14 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
         .partition(|item| item.kind == Severity::Error);
     if !ok {
         point_to_shell_escape(&mut errors, tex_log);
+    }
+    // A package the main file loads already, too late or for a command misspelt, is no fix.
+    let main = std::fs::read_to_string(&run.main).unwrap_or_default();
+    let loaded = Facts::read(&main, "tex").packages;
+    for error in &mut errors {
+        if matches!(&error.fix, Some(Fix::AddPackage(name)) if loaded.contains(name)) {
+            error.fix = None;
+        }
     }
 
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
