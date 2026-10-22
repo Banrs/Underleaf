@@ -10,8 +10,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{SourceDocument, Text, catalog, escaped, indentation, is, letter, utf16};
-use crate::analyze::{Defined, Facts, Named, Place};
+use super::{SourceDocument, Text, catalog, indentation, utf16};
+use crate::analyze::{Defined, Facts, Input, Named, Place};
 use crate::paths;
 use crate::projects::file_kind;
 
@@ -56,6 +56,15 @@ pub struct Symbols {
     /// Each .tex and .bib file's, by its name.
     pub by_file: BTreeMap<String, Arc<Facts>>,
     pub installed: Arc<Installed>,
+}
+
+impl Symbols {
+    /// The project's file that `rel` names, spelt as the project spells it.
+    pub(crate) fn spelt(&self, rel: &str) -> Option<String> {
+        let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
+        let mut files = self.files.iter();
+        files.find(|file| paths::fold_case(file) == rel).cloned()
+    }
 }
 
 /// The names, without their extensions, of the .sty, .cls, .bst and .tex files the installed TeX
@@ -203,70 +212,46 @@ impl SourceDocument {
     /// command, from the last scan and this document as it is now, or the file an input or a
     /// graphic names, from its start. None where no name is, or nothing defines it.
     pub fn definition(&self, at: u32) -> Option<Value> {
-        let (text, at) = (&self.text, at.min(self.text.len()));
         let own = Facts::read(&self.text(), file_kind(&self.path));
+        let (kind, name, file) = self.symbol_at(&own, at)?;
+        let places = match kind {
+            SymbolKind::File => {
+                let start = |file| json!({ "file": file, "line": 1, "column": 0, "length": 0 });
+                file.map(start).into_iter().collect()
+            }
+            kind => self.defined(&own, kind, &name),
+        };
+        (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
+    }
+
+    /// The name at `at` in this document, whose facts are `own`, as written, with its kind and,
+    /// for a file, the project's file it names, found as TeX finds it.
+    pub(crate) fn symbol_at(
+        &self,
+        own: &Facts,
+        at: u32,
+    ) -> Option<(SymbolKind, String, Option<String>)> {
+        let (text, at) = (&self.text, at.min(self.text.len()));
         let line = text.line_index(at);
         let column = at - text.lines[line];
         let holds = |place: &Place| {
             place.line as usize == line + 1
                 && (place.column..=place.column + place.length).contains(&column)
         };
-        let found = |rel: &str| {
-            let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
-            let mut files = self.symbols.files.iter();
-            files.find(|file| paths::fold_case(file) == rel).cloned()
-        };
-        let start = |file: Option<String>| -> Vec<Value> {
-            let start = |file| json!({ "file": file, "line": 1, "column": 0, "length": 0 });
-            file.map(start).into_iter().collect()
-        };
-        let (kind, name, places) =
-            if let Some(input) = own.inputs.iter().find(|input| holds(&input.place)) {
-                let parent = self.path.rsplit_once('/').map_or("", |(parent, _)| parent);
-                // The folder an \import gave this file isn't known here: the main file's is the
-                // likeliest, then the file's own.
-                let file = input.resolve(&self.path, "", found);
-                let file = file.or_else(|| input.resolve(&self.path, parent, found));
-                let places = start(file.map(|(file, _)| file));
-                (SymbolKind::File, input.name.clone(), places)
-            } else if let Some(used) = own.uses.iter().find(|used| holds(&used.place)) {
-                let name = &used.name;
-                let places = match used.kind {
-                    SymbolKind::File => {
-                        let graphic = GRAPHICS.iter().find_map(|ext| found(&(name.clone() + ext)));
-                        start(graphic)
-                    }
-                    kind => self.defined(&own, kind, name),
-                };
-                (used.kind, name.clone(), places)
-            } else if let Some((kind, named)) = [
-                (SymbolKind::Label, &own.labels),
-                (SymbolKind::Citation, &own.citations),
-            ]
-            .into_iter()
-            .find_map(|(kind, list)| Some((kind, list.iter().find(|n| holds(&n.place))?)))
-            {
-                // At a definition itself, so Rename can start there as from a reference.
-                (
-                    kind,
-                    named.name.clone(),
-                    self.defined(&own, kind, &named.name),
-                )
-            } else {
-                let units = &text.units;
-                let at = at as usize;
-                // The backslash is the command's too.
-                let at = at + usize::from(units.get(at).is_some_and(|&u| is(u, '\\')));
-                let start = at - units[..at].iter().rev().take_while(|&&u| letter(u)).count();
-                let end = at + units[at..].iter().take_while(|&&u| letter(u)).count();
-                let slash = start.checked_sub(1).filter(|&slash| {
-                    start < end && is(units[slash], '\\') && !escaped(units, slash)
-                })?;
-                let name = String::from_utf16_lossy(&units[slash..end]);
-                let places = self.defined(&own, SymbolKind::Command, &name);
-                (SymbolKind::Command, name, places)
-            };
-        (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
+        let found = |rel: &str| self.symbols.spelt(rel);
+        if let Some(input) = own.inputs.iter().find(|input| holds(&input.place)) {
+            let file = input_file(input, &self.path, found);
+            return Some((SymbolKind::File, input.name.clone(), file));
+        }
+        // Uses from the last, so a click on a command's backslash is that command's, not the one
+        // it ends; then definitions, so Rename can start at one as from a reference.
+        let uses = own.uses.iter().rev();
+        let mut names = uses.chain(&own.labels).chain(&own.citations);
+        let named = names.find(|named| holds(&named.place))?;
+        let file = (named.kind == SymbolKind::File)
+            .then(|| graphic(&named.name, found))
+            .flatten();
+        Some((named.kind, named.name.clone(), file))
     }
 
     /// Where each file defines `name` as a `kind`, the files in the order of their names, this
@@ -278,26 +263,80 @@ impl SourceDocument {
             others.map(|(file, facts)| (&**file, &**facts)).collect();
         files.push((&self.path, own));
         files.sort_by_key(|&(file, _)| file);
-        let named = |list: &[Named]| -> Vec<Place> {
-            let list = list.iter().filter(|named| named.name == name);
-            list.map(|named| named.place).collect()
-        };
         let places = files.into_iter().flat_map(|(file, facts)| {
-            let places = match kind {
-                SymbolKind::Label => named(&facts.labels),
-                SymbolKind::Citation => named(&facts.citations),
-                SymbolKind::Environment => named(&facts.environments),
-                _ => {
-                    let commands = facts.commands.iter().filter(|c| c.name == name);
-                    commands.map(|c| c.place).collect()
-                }
-            };
-            places.into_iter().map(move |at| {
+            definitions(facts, kind, name).into_iter().map(move |at| {
                 json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
             })
         });
         places.collect()
     }
+}
+
+/// Where `facts` define `name` as a `kind`.
+pub(crate) fn definitions(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
+    let named = |list: &[Named]| -> Vec<Place> {
+        let list = list.iter().filter(|named| named.name == name);
+        list.map(|named| named.place).collect()
+    };
+    match kind {
+        SymbolKind::Label => named(&facts.labels),
+        SymbolKind::Citation => named(&facts.citations),
+        SymbolKind::Environment => named(&facts.environments),
+        _ => {
+            let commands = facts.commands.iter().filter(|c| c.name == name);
+            commands.map(|c| c.place).collect()
+        }
+    }
+}
+
+/// Every place `facts`, `file`'s, define or use `name` as a `kind`, in order; for a file, each
+/// input or graphic that names it, as `found` spells the project's files.
+pub(crate) fn usages(
+    facts: &Facts,
+    file: &str,
+    kind: SymbolKind,
+    name: &str,
+    found: impl Fn(&str) -> Option<String>,
+) -> Vec<Place> {
+    let mut places = if kind == SymbolKind::File {
+        let inputs = facts
+            .inputs
+            .iter()
+            .filter(|input| input_file(input, file, &found).as_deref() == Some(name));
+        let graphics = facts.uses.iter().filter(|used| {
+            used.kind == kind && graphic(&used.name, &found).as_deref() == Some(name)
+        });
+        let places = inputs.map(|input| input.place);
+        places.chain(graphics.map(|used| used.place)).collect()
+    } else {
+        let used = facts
+            .uses
+            .iter()
+            .filter(|used| used.kind == kind && used.name == name);
+        let mut places = definitions(facts, kind, name);
+        places.extend(used.map(|used| used.place));
+        places
+    };
+    places.sort_by_key(|place| (place.line, place.column));
+    // A command's definition is also where its name is written.
+    places.dedup();
+    places
+}
+
+/// The file `input` names, read from `file`. The folder an \import gave `file` isn't known
+/// here: the main file's is the likeliest, then the file's own.
+fn input_file(input: &Input, file: &str, found: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let parent = file.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let named = input.resolve(file, "", &found);
+    let named = named.or_else(|| input.resolve(file, parent, &found));
+    named.map(|(named, _)| named)
+}
+
+/// The file a graphic named `name` is.
+fn graphic(name: &str, found: impl Fn(&str) -> Option<String>) -> Option<String> {
+    GRAPHICS
+        .iter()
+        .find_map(|ext| found(&format!("{name}{ext}")))
 }
 
 /// A graphic named without its extension is looked for with pdfTeX's, in its order.

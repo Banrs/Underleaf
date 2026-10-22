@@ -81,7 +81,7 @@ pub struct Facts {
     pub commands: Vec<Defined>,
     pub environments: Vec<Named>,
     /// Labels and citations referred to, one for each key a list names, environments begun or
-    /// ended, and graphics included.
+    /// ended, graphics included, and every command, from its backslash.
     pub uses: Vec<Named>,
     pub class: Option<headings::DocumentClass>,
     /// What `\usepackage` and `\RequirePackage` load.
@@ -263,6 +263,9 @@ impl Visit for Names<'_> {
     fn command(&mut self, name: &str, start: usize, name_end: usize) {
         let (text, facts) = (self.0, &mut *self.1);
         self.3.command(text, name, start, name_end);
+        facts
+            .uses
+            .push(named(text, SymbolKind::Command, start..name_end));
         let names = |list| {
             let names = listed(&text.units, name_end, list).into_iter();
             names.map(|at| String::from_utf16_lossy(&text.units[at]))
@@ -313,6 +316,8 @@ impl Visit for Names<'_> {
 
     fn math_command(&mut self, name: &str, start: usize, name_end: usize) {
         self.3.command(self.0, name, start, name_end);
+        let command = named(self.0, SymbolKind::Command, start..name_end);
+        self.1.uses.push(command);
         self.used(name, start, name_end);
     }
 
@@ -961,9 +966,10 @@ mod tests {
             column,
             length,
         };
-        use SymbolKind::{Citation, Environment, File, Label};
+        use SymbolKind::{Citation, Command, Environment, File, Label};
         fn named(list: &[Named]) -> Vec<(SymbolKind, &str, Place)> {
-            list.iter().map(|n| (n.kind, &*n.name, n.place)).collect()
+            let list = list.iter().filter(|n| n.kind != Command);
+            list.map(|n| (n.kind, &*n.name, n.place)).collect()
         }
         let tex = "😀 \\label{fig:a}\n\\cite[p.~3]{knuth, lamport} \\ref{fig:a}\n\
             \\newcommand{\\R}{x} \\newenvironment{thm}{}{}\n\
@@ -980,6 +986,28 @@ mod tests {
         assert_eq!(commands.collect::<Vec<_>>(), [("\\R", at(3, 12, 2))]);
         let input = &facts.inputs[0];
         assert_eq!((&*input.name, input.place), ("chapters/a", at(5, 19, 10)));
+        let commands = facts.uses.iter().filter(|n| n.kind == Command);
+        let commands: Vec<_> = commands.map(|n| (&*n.name, n.place)).collect();
+        let names: Vec<_> = commands.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "\\label",
+                "\\cite",
+                "\\ref",
+                "\\newcommand",
+                "\\R",
+                "\\newenvironment",
+                "\\begin",
+                "\\includegraphics",
+                "\\end",
+                "\\bibitem",
+                "\\input",
+                "\\nocite",
+                "\\nameref"
+            ]
+        );
+        assert_eq!(commands[4].1, at(3, 12, 2), "from its backslash");
         assert_eq!(
             named(&facts.uses),
             [

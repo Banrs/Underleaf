@@ -13,14 +13,15 @@ use crate::paths::Project;
 use crate::projects::search::SearchHit;
 use crate::projects::testing::{fails_with, names_in, project};
 use crate::projects::{
-    Query, Symbols, create_free, create_project, file_tree, rename_entry, rename_project,
+    Query, Symbols, create_free, create_project, file_tree, is_text, rename_entry, rename_project,
     scan_symbols, search_project,
 };
 use crate::settings::{read_settings, write_settings};
 
 /// In any case and in part of a word, with nothing open, as the service searches.
 fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    search_project(root, &Query::new(query), &HashMap::new(), limit)
+    let found = |_: &str, text: &str| Query::new(query).places(text);
+    search_project(root, &HashMap::new(), &is_text, &found, limit)
 }
 
 /// With nothing open and nothing read before.
