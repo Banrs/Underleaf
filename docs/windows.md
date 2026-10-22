@@ -87,7 +87,7 @@ apps/windows/
 | Completion | A `ListView` in a `Popup`, never focused | A `Flyout` takes the keyboard |
 | Find | Notepad's find bar over `RichEditTextRange.FindText` | No find in `RichEditBox` |
 | Layer corners | A rounded clip on each layer's composition visual | `CornerRadius` rounds only the border |
-| Issues | `ListView`; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a missing package's row an Install button, a `ProgressRing` beside it while tlmgr runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
+| Issues | `ListView`, the build's then the checks', each row's explanation in Caption under its message; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a fix a button at the row's end, as the Store's Install, a `ProgressRing` beside it while it runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 | The metapackage adds ~60 MB |
 | PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions |
