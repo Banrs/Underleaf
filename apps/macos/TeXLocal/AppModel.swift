@@ -355,6 +355,16 @@ final class AppModel {
         })
     }
 
+    /// Named as Finder names a copy, numbered on by the core where that's taken; the copy's id once the list has it.
+    func duplicate(_ project: ProjectInfo) async -> String? {
+        let copy = await alerting("Couldn’t Duplicate “\(project.name)”") {
+            try await core.call("duplicate_project", ["id": project.id, "name": String(localized: "\(project.name) copy")],
+                                as: ProjectInfo.self)
+        }
+        await refresh()
+        return copy?.id
+    }
+
     var undoManager: UndoManager? { undoSource() }
     @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
 

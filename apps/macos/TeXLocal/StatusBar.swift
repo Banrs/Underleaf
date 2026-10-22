@@ -11,6 +11,8 @@ struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     let project: ProjectModel
+    /// The selection's, while there is one.
+    @State private var selectedWords: Int?
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -24,6 +26,13 @@ struct StatusBar: View {
         .monospacedDigit()
         .buttonStyle(.borderless)
         .contextMenu { Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) } }
+        .task(id: project.editor.changes.count) {
+            let selection = project.editor.textView.selectedRange()
+            guard selection.length > 0 else { return selectedWords = nil }
+            // Once the selection rests: a drag through the text changes it on every move.
+            guard (try? await Task.sleep(for: .milliseconds(200))) != nil else { return }
+            selectedWords = project.editor.textView.document.words(in: selection)
+        }
     }
 
     private enum Detail { case full, symbols, short }
@@ -78,9 +87,15 @@ struct StatusBar: View {
                     .help("Go to a line")
                 }
                 if let words {
-                    Text("^[\(words) word](inflect: true)")
-                        .foregroundStyle(.secondary)
-                        .layoutPriority(-1)
+                    Group {
+                        if let selectedWords {
+                            Text("\(selectedWords) of ^[\(words) word](inflect: true)")
+                        } else {
+                            Text("^[\(words) word](inflect: true)")
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                    .layoutPriority(-1)
                 }
                 if pages {
                     freshness

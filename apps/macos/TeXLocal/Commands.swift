@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum MenuCommand: CaseIterable {
-    case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectSearch
+    case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectExportArxiv, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
@@ -23,6 +23,7 @@ enum MenuCommand: CaseIterable {
         case .openQuickly: ("Open Quickly…", KeyboardShortcut("o", modifiers: [.command, .shift]))
         case .projectClose: ("Close Project", KeyboardShortcut("w", modifiers: [.command, .shift]))
         case .projectExport: ("Export Project as ZIP…", nil)
+        case .projectExportArxiv: ("Export for arXiv…", nil)
         case .projectSearch: ("Find in Project…", KeyboardShortcut("f", modifiers: [.command, .shift]))
         case .fileNew: ("New File", KeyboardShortcut("n"))
         case .fileNewFolder: ("New Folder", KeyboardShortcut("n", modifiers: [.command, .shift, .option]))
@@ -170,7 +171,13 @@ extension AppModel {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
         case .projectClose: Task { await close() }
-        case .projectExport: if let project { exporting = ExportFile(name: "\(project.name).zip", type: .zip, make: project.exportZip) }
+        case .projectExport, .projectExportArxiv:
+            let arxiv = command == .projectExportArxiv
+            if let project {
+                exporting = ExportFile(name: arxiv ? "\(project.name) arXiv.zip" : "\(project.name).zip", type: .zip) {
+                    try await project.exportZip(forArxiv: arxiv)
+                }
+            }
         case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .projectSearch:
             sidebarShown = true
@@ -264,7 +271,7 @@ struct AppCommands: Commands {
                 .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
-            items(.pdfSave, .pdfOpen, .projectExport)
+            items(.pdfSave, .pdfOpen, .projectExport, .projectExportArxiv)
             Divider()
             if let project, let url = project.buildPDF {
                 ShareLink(item: url)
