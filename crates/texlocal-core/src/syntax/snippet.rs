@@ -1,6 +1,7 @@
 //! A snippet's fields: the places of a completion's or block's text to type in, which Tab and Shift-Tab go through
-//! and which mirror each other, as an environment's name does in its `\begin` and `\end`. The editor reports each change with `follow`; `mirror_snippet` then answers the
-//! edits that copy the typed field to its other places, which the editor applies with `mirroring` set.
+//! and which mirror each other, as an environment's name does in its `\begin` and `\end`. The editor reports each
+//! change with `follow`; `mirror_snippet` then answers the edits that copy the typed field to its other places, which
+//! the editor applies with `mirroring` set.
 
 use serde::Serialize;
 
@@ -149,11 +150,7 @@ impl SourceDocument {
 
     /// Escape is the host's in a snippet with no field to go to.
     pub fn end_snippet(&mut self) -> bool {
-        let tabs = self.typing.snippet.as_ref().is_some_and(Snippet::tabs);
-        if tabs {
-            self.typing.snippet = None;
-        }
-        tabs
+        self.typing.snippet.take_if(|s| s.tabs()).is_some()
     }
 
     pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
@@ -197,8 +194,8 @@ impl SourceDocument {
     pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
         let snippet = self.typing.snippet.as_mut();
         let edits = snippet.map_or(vec![], |snippet| snippet.mirror(&self.text.units));
-        // A brace, as one typed at a name's end, would break the other places too.
-        if edits.iter().any(|e| e.text.contains(['{', '}'])) {
+        // A brace or a line break, as one typed at a name's end, would break the other places too.
+        if edits.iter().any(|e| e.text.contains(['{', '}', '\n'])) {
             self.typing.snippet = None;
             return vec![];
         }

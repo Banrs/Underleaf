@@ -242,8 +242,7 @@ fn return_after_a_begin_closes_its_environment() {
     #[rustfmt::skip]
     let cases: &[Case] = &[
         ("\\begin{x}", caret(9), "⏎", "\\begin{x}\n  \n\\end{x}", caret(12)),
-        ("  \\begin{tabular}{ll} ", caret(21), "⏎", "  \\begin{tabular}{ll}\n    \n  \\end{tabular}", caret(26)),
-        ("\\begin{figure}[ht]", caret(18), "⏎", "\\begin{figure}[ht]\n  \n\\end{figure}", caret(21)),
+        ("  \\begin{tabular}[t]{ll} ", caret(24), "⏎", "  \\begin{tabular}[t]{ll}\n    \n  \\end{tabular}", caret(29)),
         ("\\begin{x}\n\\end{x}", caret(9), "⏎", "\\begin{x}\n  \n\\end{x}", caret(12)),
         ("\\begin{x}\\end{x}", caret(9), "⏎", "\\begin{x}\n  \n\\end{x}", caret(12)),
         ("\\begin{d}\n\\begin{x}\n\\end{d}", caret(19), "⏎", "\\begin{d}\n\\begin{x}\n  \n\\end{x}\n\\end{d}", caret(22)),
@@ -271,7 +270,8 @@ fn return_in_a_list_goes_on_with_it() {
     assists(cases);
 }
 
-/// A name with a partner is typed in both, until the selection leaves it or a brace is typed. Escape is the host's.
+/// A name with a partner is typed in both, until the selection leaves it or a brace or line break is typed. Escape
+/// is the host's.
 #[test]
 fn an_environments_name_is_typed_in_its_begin_and_end() {
     let source = "\\begin{x}\n  \\begin{y}\\end{y}\n\\end{x}";
@@ -281,6 +281,7 @@ fn an_environments_name_is_typed_in_its_begin_and_end() {
         (source, range(34, 1), "w", "\\begin{w}\n  \\begin{y}\\end{y}\n\\end{w}", caret(35)),
         (source, caret(8), "z⌫", source, caret(8)),
         (source, caret(8), "{", "\\begin{x{}}\n  \\begin{y}\\end{y}\n\\end{x}", caret(9)),
+        (source, caret(8), "⏎", "\\begin{x\n}\n  \\begin{y}\\end{y}\n\\end{x}", caret(9)),
         // With no other field to go to, Shift-Tab outdents.
         (source, caret(19), "⇤", "\\begin{x}\n\\begin{y}\\end{y}\n\\end{x}", caret(17)),
         // An \end that closes nothing, and a \begin nothing closes, have no partner.

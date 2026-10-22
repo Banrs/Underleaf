@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use serde::Serialize;
 
-use super::scan::{Group, Visit, arguments, blank_line, environment_name};
+use super::scan::{Group, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
     INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice,
@@ -202,22 +202,17 @@ impl SourceDocument {
             completions: Completing::Close,
             ..Keystroke::default()
         };
-        // The \begin just before the caret, with its arguments.
+        // The \begin just before the caret, with its arguments, its name the first.
         let begun = groups
             .last()
             .filter(|g| g.open >= line.start)
             .and_then(|g| {
                 let name = g.end.strip_prefix("env:")?;
-                let head = &units[..start];
-                let mut at = environment_name(head, g.open + "\\begin".len())?.1;
-                loop {
-                    let (next, braced) = arguments(head, at, |_, _| {});
-                    at = next;
-                    if !braced {
-                        break;
-                    }
+                let mut read = (g.open + "\\begin".len(), true);
+                while read.1 {
+                    read = arguments(&units[..start], read.0, |_, _| {});
                 }
-                (at == start).then_some((name, g.open))
+                (read.0 == start).then_some((name, g.open))
             });
         let step = match begun {
             // A document's body is written at its \begin's indentation.

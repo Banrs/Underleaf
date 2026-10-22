@@ -128,12 +128,10 @@ impl SourceDocument {
                 }
                 "begin" | "end" => {
                     // The environment an \end closes comes first, for Return to complete.
-                    let mut open = None;
-                    if &c[1] == "end" {
-                        let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
-                        let mut groups = self.scanned_to(at).groups().into_iter().rev();
-                        open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
-                    }
+                    let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
+                    let groups = (&c[1] == "end").then(|| self.scanned_to(at).groups());
+                    let mut groups = groups.into_iter().flatten().rev();
+                    let open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
                     let own = &self.symbols.environments;
                     let others = catalog.environments.iter().filter(|e| !own.contains(e));
                     let rest = own
@@ -419,17 +417,11 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
 fn cited<'a>(citations: &'a [Named], typed: &str) -> Vec<&'a Named> {
     let found = finder(typed);
     let mut cited = matching(citations, typed, |c| &c.name);
-    let mut others: Vec<(bool, &Named)> = citations
-        .iter()
-        .filter(|c| !found(&c.name, At::Start))
-        .filter_map(|c| {
-            let key = found(&c.name, At::Anywhere);
-            let detail = || c.detail.as_deref().is_some_and(|d| found(d, At::Word));
-            (key || detail()).then_some((!key, c))
-        })
-        .collect();
-    others.sort_by_key(|&(by_detail, _)| by_detail);
-    cited.extend(others.into_iter().map(|(_, c)| c));
+    let others = citations.iter().filter(|c| !found(&c.name, At::Start));
+    let (keys, others): (Vec<_>, Vec<_>) = others.partition(|c| found(&c.name, At::Anywhere));
+    cited.extend(keys);
+    let detailed = |c: &&Named| c.detail.as_deref().is_some_and(|d| found(d, At::Word));
+    cited.extend(others.into_iter().filter(detailed));
     cited
 }
 
