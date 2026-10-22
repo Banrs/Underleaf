@@ -142,6 +142,7 @@ impl Service {
                     engine.as_deref(),
                 )?)
             }
+            "duplicate_project" => out(import::duplicate_project(self, s("id")?, s("name")?)?),
             "free_project_name" => {
                 Ok(json!({ "name": projects::free_project_name(&self.data_dir)? }))
             }

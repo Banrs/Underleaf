@@ -7,16 +7,24 @@ use tempfile::TempPath;
 
 use crate::stamp::Stamp;
 
-/// A new, empty temporary file in `dir` with a new file's mode (0666 less the umask); tempfile's 0600 would leave files unreadable to the accounts a project is shared with.
-pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
+/// Makes temporary entries with a new entry's `mode` less the umask (0666 for a file, 0777 for a
+/// folder); tempfile's 0600 and 0700 would leave them unreadable to the accounts a project is
+/// shared with.
+#[cfg_attr(not(unix), allow(unused_variables))]
+pub(crate) fn temp_builder(mode: u32) -> tempfile::Builder<'static, 'static> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        builder.permissions(fs::Permissions::from_mode(0o666));
+        builder.permissions(fs::Permissions::from_mode(mode));
     }
-    Ok(builder.tempfile_in(dir)?.into_parts())
+    builder
+}
+
+/// A new, empty temporary file in `dir`.
+pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
+    Ok(temp_builder(0o666).tempfile_in(dir)?.into_parts())
 }
 
 /// The extended attributes of `from` (Finder tags, quarantine) copied onto `to`, since the rename gives the file a new inode. Failure copies none and doesn't fail the save.
