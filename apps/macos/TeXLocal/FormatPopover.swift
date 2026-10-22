@@ -129,22 +129,21 @@ struct FormatPanel: View {
 
         func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
 
-        /// Off, the symbol alone has nothing for the pointer to light, so a fill shows where a click would land.
+        /// Off, the symbol alone has nothing for the pointer to light, so the pointer brings the on pill, in the accent the
+        /// levels light in.
         private struct Tile: View {
             let configuration: Configuration
             @State private var hovering = false
 
             var body: some View {
-                let on = configuration.isOn
+                let on = configuration.isOn, lit = on || hovering
                 Button { configuration.isOn.toggle() } label: {
                     configuration.label
                         .labelStyle(.iconOnly)
                         .imageScale(.large)
-                        .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                        .foregroundStyle(lit ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                         .frame(width: GlassTile.width, height: GlassTile.side)
-                        .background(hovering && !on ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.clear),
-                                    in: .rect(cornerRadius: FormatPanel.highlightRadius))
-                        .glassEffect(on ? .regular.tint(.accentColor).interactive() : .identity,
+                        .glassEffect(lit ? .regular.tint(.accentColor).interactive() : .identity,
                                      in: .rect(cornerRadius: FormatPanel.highlightRadius))
                         .contentShape(.rect)
                 }
