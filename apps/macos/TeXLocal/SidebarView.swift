@@ -89,7 +89,7 @@ struct FilesList: View {
             .onChange(of: selection) { _, path in
                 if let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false {
                     Task {
-                        await project.open(path, focus: false)
+                        await project.open(path, focus: false, jump: true)
                         if project.openPath != path, selection == path { selection = project.openPath }
                     }
                 }
@@ -210,7 +210,7 @@ struct FilesList: View {
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {
         if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus) }
+            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus, jump: true) }
         }
     }
 
@@ -375,7 +375,7 @@ struct OutlineList: View {
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
                 let item = outline[id]
-                Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
+                Task { await project.open(item.file, line: item.line, atTop: true, focus: true, jump: true) }
             }
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil

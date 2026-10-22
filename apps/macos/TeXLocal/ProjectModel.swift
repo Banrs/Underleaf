@@ -27,6 +27,8 @@ final class ProjectModel {
     @ObservationIgnored private var currentLine = 1
     /// For the rest of the turn the caret moved in: a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
+    /// Go Back's and Go Forward's, from the session's last answer.
+    private(set) var trail = Trail()
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
@@ -253,8 +255,9 @@ final class ProjectModel {
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
         }
         editor.textView.openDefinition = { [weak self] place in
-            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
+            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
         }
+        editor.textView.quickHelp = { [weak self] offset in Task { await self?.quickHelp(at: offset) } }
         editor.command = { [weak self] in self?.app?.perform($0, on: self) }
     }
 
@@ -353,13 +356,19 @@ final class ProjectModel {
     // MARK: - Editing
 
     /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
-    /// the editor never shows a file without its document.
-    func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
+    /// the editor never shows a file without its document. A `jump` is one the person makes away from the caret, whose place
+    /// Go Back returns to.
+    func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
+              jump: Bool = false) async {
         openRequests += 1
         let request = openRequests
         let latest = { request == self.openRequests && !self.closed }
         await enqueue(&opens) { [self] in
             guard latest() else { return }
+            if jump, let session, let from = caretPlace,
+               let trail = try? await core.call("session_navigate", ["session": session, "from": from], as: Trail.self) {
+                self.trail = trail
+            }
             if path != openPath {
                 guard let session else { return }
                 // A file made a moment ago may not be in the tree yet.
@@ -503,6 +512,31 @@ final class ProjectModel {
         app?.sidebarShown = true
     }
 
+    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or a beep where the core knows nothing of it.
+    func quickHelp(at offset: Int) async {
+        guard let session, let path = editor.path else { return }
+        guard let answer = await alerting("Couldn’t Show Quick Help", {
+            try await core.call("session_quick_help", ["session": session, "path": path, "offset": offset], as: QuickHelp?.self)
+        }), editor.path == path else { return }
+        guard let help = answer else { return NSSound.beep() }
+        editor.textView.showQuickHelp(help, at: offset) { [weak self] place in
+            Task { await self?.open(place.path, line: place.line, jump: true) }
+        }
+    }
+
+    /// Where the caret is, for the places Go Back and Go Forward keep.
+    private var caretPlace: [String: any Sendable]? { openPath.map { ["path": $0, "line": editsText ? cursorLine : 1] } }
+
+    /// Go Back, or Go Forward: shown as a jump is, but leaving no place behind.
+    func retrace(back: Bool) async {
+        guard let session, let at = caretPlace,
+              let step = await alerting(back ? "Couldn’t Go Back" : "Couldn’t Go Forward", {
+                  try await core.call(back ? "session_back" : "session_forward", ["session": session, "at": at], as: Trail.self)
+              }) else { return }
+        trail = step
+        if let to = step.to { await open(to.path, line: to.line) }
+    }
+
     /// A refusal is the core's sentence, for the sheet to show.
     func renameSymbol(_ symbol: Definition, to name: String) async throws {
         guard let session else { return }
@@ -636,7 +670,7 @@ final class ProjectModel {
     func reveal(_ item: OutlineItem) {
         // Already there: a click chooses the row as it goes down, then taps it.
         guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
-        Task { await open(item.file, line: item.line, atTop: true, focus: false) }
+        Task { await open(item.file, line: item.line, atTop: true, focus: false, jump: true) }
     }
 }
 

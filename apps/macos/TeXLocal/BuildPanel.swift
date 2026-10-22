@@ -176,7 +176,7 @@ private struct IssueList: View {
 
     private func item(_ id: Int) -> LogItem? { items.first { $0.offset == id }?.element }
 
-    private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line) } } }
+    private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line, jump: true) } } }
 }
 
 private struct IssueRow: View {

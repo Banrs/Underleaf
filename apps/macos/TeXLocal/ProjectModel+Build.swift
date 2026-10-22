@@ -112,7 +112,7 @@ extension ProjectModel {
         if let session { core.send("session_choose_issue", ["session": session, "index": place]) }
         let issues = listed
         guard open, let place, issues.indices.contains(place), let file = issues[place].file else { return }
-        Task { await self.open(file, line: issues[place].line, focus: focus) }
+        Task { await self.open(file, line: issues[place].line, focus: focus, jump: true) }
     }
 
     func goToIssue(next: Bool) {
@@ -122,7 +122,7 @@ extension ProjectModel {
                   !closed else { return }
             panel.show(.issues)
             chosenIssue = chosen.index
-            if let file = chosen.issue.file { await open(file, line: chosen.issue.line, focus: true) }
+            if let file = chosen.issue.file { await open(file, line: chosen.issue.line, focus: true, jump: true) }
         }
     }
 }
