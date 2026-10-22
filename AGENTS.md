@@ -85,6 +85,10 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
   window is compact.
 - **Touch**: 44 pt targets, every gesture also a button or menu item, the software keyboard's
   room left to the source.
+- **Source**: a TextKit 2 `UITextView` on the Mac editor's shared logic. Every edit goes into the
+  storage with the view's own undo, keys coalesced into one Typing, as UIKit's undo skips the
+  core's edits; spelling is the view's own, kept to the prose; the shortcuts bar has the LaTeX keys;
+  the maths preview is glass in the window, as a popover would animate at each step of the caret.
 - **The menu bar** is the Mac's (`AppCommands`); its Settings item opens the app's page in the
   Settings app, App Settings the in-app sheet. The library is the app's Documents (On My iPad ›
   TeXLocal).
