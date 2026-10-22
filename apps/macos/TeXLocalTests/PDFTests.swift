@@ -99,7 +99,7 @@ struct PDFFitTests {
         project.openPath = "main.tex"
         #expect(app.isEnabled(.syncForward, on: project))
         project.pdf.go(toPage: 2)
-        #expect(project.place["page"] as? Int == 2)
+        #expect(project.pdf.keptPage == 2)
     }
 
     @Test func goToPageKeepsToTheDocument() throws {
