@@ -76,7 +76,7 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    pub fn completions(&self, caret: u32, explicit: bool) -> Option<Completions> {
+    pub fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         let from = text.lines[line].max(caret.saturating_sub(250));
@@ -103,9 +103,22 @@ impl SourceDocument {
                 }
                 c if catalog.ref_commands.contains(c) => (&self.symbols.labels, SymbolKind::Label),
                 "begin" | "end" => {
+                    // The environment an \end closes comes first, for Return to complete.
+                    let mut open = None;
+                    if &c[1] == "end" {
+                        let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
+                        let mut scanner = self.scans.resume(text, at, at).scanner;
+                        scanner.run(&text.units[..at], at, &[], &mut ());
+                        let mut groups = scanner.groups().into_iter().rev();
+                        open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
+                    }
                     let own = &self.symbols.environments;
                     let others = catalog.environments.iter().filter(|e| !own.contains(e));
-                    listed = own.iter().chain(others).cloned().collect();
+                    let rest = own
+                        .iter()
+                        .chain(others)
+                        .filter(|e| Some(*e) != open.as_ref());
+                    listed = open.iter().chain(rest).cloned().collect();
                     (&listed, SymbolKind::Environment)
                 }
                 command => {
@@ -437,6 +450,16 @@ mod tests {
         assert_eq!(fracs[0].text, "\\frac{}");
         let names = labels("\\begin{th", symbols());
         assert_eq!(names, ["thm", "theorem", "thebibliography"]);
+    }
+
+    #[test]
+    fn an_end_offers_the_environment_it_closes_first() {
+        let open =
+            "\\begin{document}\n\\begin{itemize}\\begin{center}\\end{center}\n\\item x\n\\end{";
+        assert_eq!(
+            labels(open, Symbols::default())[..2],
+            ["itemize", "document"]
+        );
     }
 
     #[test]
