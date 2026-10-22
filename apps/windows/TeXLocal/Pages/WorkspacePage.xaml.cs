@@ -305,7 +305,7 @@ public sealed partial class WorkspacePage : Page
     {
         if (kind is not ("tex" or "bib" or "text"))
         {
-            Process.Start(new ProcessStartInfo(Full(path)) { UseShellExecute = true });
+            Launch(Full(path));
             return false;
         }
         if (Editor.Path == path) return true;
@@ -631,7 +631,7 @@ public sealed partial class WorkspacePage : Page
         PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
         foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
-        ExportItem.IsEnabled = ShareItem.IsEnabled = shown;
+        ExportItem.IsEnabled = OpenPdfItem.IsEnabled = ShareItem.IsEnabled = shown;
         zooming = true;
         ZoomSlider.Value = Math.Log2(Pdf.Zoom);
         zooming = false;
@@ -774,6 +774,13 @@ public sealed partial class WorkspacePage : Page
         catch (Exception ex) { await App.Alert("Can't export", ex.Message); }
     }
 
+    void OnOpenPdf(object sender, RoutedEventArgs e) => Launch(Pdf.FilePath!);
+
+    async void OnExportZip(object sender, RoutedEventArgs e)
+    {
+        if (await Save()) await App.ExportZip(id, name!);
+    }
+
     /// Windows' share sheet, which a desktop app opens through its window.
     async void OnSharePdf(object sender, RoutedEventArgs e)
     {
@@ -839,6 +846,9 @@ public sealed partial class WorkspacePage : Page
     }
 
     static Visibility Vis(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
+
+    /// In the app Windows opens the file with.
+    static void Launch(string path) => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
 
     string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
 }

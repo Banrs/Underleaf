@@ -147,6 +147,14 @@ public sealed partial class MainWindow : Window
         if (await Leave()) ShowHome();
     }
 
+    /// File › New project, as Word's File › New shows its gallery: Home, its templates focused.
+    public async void NewProject()
+    {
+        if (!await Leave()) return;
+        ShowHome();
+        (Pages.Content as HomePage)?.ShowTemplates();
+    }
+
     void ShowHome()
     {
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();

@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.VisualBasic.FileIO;
 using Microsoft.Windows.AppLifecycle;
+using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 
 namespace TeXLocal;
@@ -50,6 +51,16 @@ public partial class App : Application
     /// Opens a folder in File Explorer, or with `select` its parent with the item selected.
     public static void Reveal(string path, bool select = false) =>
         Process.Start("explorer.exe", select ? $"/select,\"{path}\"" : $"\"{path}\"");
+
+    /// A project's files as a ZIP, where the save picker says; the core archives what is on disk.
+    public static async Task ExportZip(string id, string name)
+    {
+        var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = name };
+        picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
+        if (await picker.PickSaveFileAsync() is not { } picked) return;
+        try { await Core!.CallAsync("export_zip", new { id, dest = picked.Path }); }
+        catch (CoreException ex) { await Alert("Can't export", ex.Message); }
+    }
 
     /// Windows.Storage's DeleteAsync deletes outright when unpackaged.
     public static Task Recycle(string path) => Task.Run(() =>

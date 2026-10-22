@@ -2,7 +2,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
-using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -27,6 +26,7 @@ public sealed partial class HomePage : Page
     ProjectInfo? target;
     string? focus;
     int loads;
+    bool newProject;
 
     public HomePage() => InitializeComponent();
 
@@ -77,7 +77,14 @@ public sealed partial class HomePage : Page
         if (error is not null) return;
         projects = listed;
         Show();
+        if (!newProject) return;
+        newProject = false;
+        Templates.UpdateLayout();
+        (FocusManager.FindFirstFocusableElement(Templates) as Control)?.Focus(FocusState.Keyboard);
     }
+
+    /// The gallery's first template focused, once listed: File › New project in a project.
+    public void ShowTemplates() => newProject = true;
 
     /// The projects whose names hold the search's text, as on the Mac.
     void Show()
@@ -199,15 +206,7 @@ public sealed partial class HomePage : Page
 
     void OnDeleteItem(object sender, RoutedEventArgs e) => Delete(target!);
 
-    async void OnExportItem(object sender, RoutedEventArgs e)
-    {
-        var p = target!;
-        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = p.Name };
-        picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
-        if (await picker.PickSaveFileAsync() is not { } picked) return;
-        try { await Core.CallAsync("export_zip", new { id = p.Id, dest = picked.Path }); }
-        catch (CoreException ex) { await App.Alert("Can't export", ex.Message); }
-    }
+    async void OnExportItem(object sender, RoutedEventArgs e) => await App.ExportZip(target!.Id, target.Name);
 
     /// Renames in place, at the row's name, as File Explorer does.
     void Rename(ProjectInfo p)
