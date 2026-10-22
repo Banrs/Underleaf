@@ -129,22 +129,21 @@ struct FormatPanel: View {
 
         func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
 
-        /// Lit in the accent the levels light in while on; under the pointer a wash of it, which doesn't read as on.
+        /// Lit in the accent the levels light in, while on and under the pointer, as they light.
         private struct Tile: View {
             let configuration: Configuration
             @State private var hovering = false
 
             var body: some View {
-                let on = configuration.isOn
+                let on = configuration.isOn, lit = on || hovering
                 Button { configuration.isOn.toggle() } label: {
                     configuration.label
                         .labelStyle(.iconOnly)
                         .imageScale(.large)
                         .foregroundStyle(.primary)
                         .frame(width: StyleTile.side, height: StyleTile.side)
-                        .background(on ? AnyShapeStyle(.tint) : hovering ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.clear),
-                                    in: .rect(cornerRadius: FormatPanel.highlightRadius))
-                        .environment(\.backgroundProminence, on ? .increased : .standard)
+                        .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: FormatPanel.highlightRadius))
+                        .environment(\.backgroundProminence, lit ? .increased : .standard)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
