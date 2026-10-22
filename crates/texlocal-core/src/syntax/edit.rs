@@ -178,8 +178,20 @@ impl SourceDocument {
         let before = &text.units[text.lines[line] as usize..selection.start as usize];
         // After text, a line feed first; the template ends with its own.
         let newline = if blank_line(before) { "" } else { "\n" };
-        let (block, fields) =
+        let (mut block, mut fields) =
             complete::expand(text, selection.start, &format!("{newline}{template}"));
+        // Text the block is made over goes in, not away: a list of the selected line is that
+        // line as its item.
+        if let Some((first, rest)) = fields.split_first_mut().filter(|_| selection.length > 0) {
+            let (start, end) = selection.bounds();
+            let mut units: Vec<u16> = block.encode_utf16().collect();
+            let at = first.start as usize;
+            units.splice(at..at, text.units[start..end].iter().copied());
+            block = String::from_utf16_lossy(&units);
+            first.length = selection.length;
+            rest.iter_mut()
+                .for_each(|field| field.start += selection.length);
+        }
         Some(Insertion {
             caret: selection.start + fields.first().map_or(utf16(&block) as u32, |f| f.start),
             edit: edit(selection.start, selection.length, block),

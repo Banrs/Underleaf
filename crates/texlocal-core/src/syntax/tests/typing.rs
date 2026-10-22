@@ -303,6 +303,17 @@ fn blocks_tab_through_their_fields() {
 }
 
 #[test]
+fn a_block_over_selected_text_holds_it_in_its_first_field() {
+    let mut e = Editor::open("one two", range(4, 3));
+    let insertion = e.doc.insert_block("itemize", e.selection()).unwrap();
+    e.put(insertion.edit.clone(), insertion.caret);
+    let first = e.doc.start_snippet(&insertion.fields, insertion.edit.start);
+    e.select(first.unwrap());
+    let list = "one \n\\begin{itemize}\n  \\item two\n\\end{itemize}\n";
+    e.shows(list, range(29, 3));
+}
+
+#[test]
 fn a_field_in_two_places_is_typed_in_both() {
     let mut e = Editor::open("\\beg", caret(4));
     let offer = e.doc.completions(4, false).unwrap();

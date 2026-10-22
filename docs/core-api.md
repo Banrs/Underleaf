@@ -239,7 +239,7 @@ editor's thread.
   | `wrap` | `selections`, `template` | the change |
   | `map_selections` | `edits`, `selections` | the selections after the edits |
   | `set_heading` | `caret`, `command` (a sectioning command, or none for plain text) | the insertion |
-  | `insert_block` | `id`, `selection` | the insertion, or null |
+  | `insert_block` | `id`, `selection` | the insertion, or null; a selected text goes in the block's first field, which spans it |
   | `insert_symbol` | `command`, `selection` | the insertion |
   | `math_at` | `caret` | the maths under the caret, `{start, tex, display}`, or null; in a session's source, `tex` begins with the definitions it uses, as the project was last scanned (`\newcommand` and its kin, `\DeclareMathOperator`, `\def` without parameters), as RaTeX takes them: `math_svg` draws it as it is |
   | `text_styles` | `selection` | the styles the selection has |
