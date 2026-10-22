@@ -249,6 +249,49 @@ x2,7:14000000,10300473
         assert_eq!((loc.file.as_str(), loc.line), ("main.tex", 3));
     }
 
+    /// A damaged file's values needn't sum within i32 as TeX's do: with boxes, kerns, pages and
+    /// lines at i32's ends, queries answer or fail without overflowing.
+    #[test]
+    fn a_damaged_synctex_answers_without_overflowing() {
+        let (_dir, project, _) = setup();
+        let damaged = DAMAGED.replace("{root}", &project.root.to_string_lossy());
+        std::fs::write(project.build.join("main.synctex"), damaged).unwrap();
+        for line in [1, u32::MAX] {
+            let _ = synctex_forward_at(&project, "main.tex", line, None);
+        }
+        let _ = synctex_inverse(&project, 1.0, 0.0, 0.0, None, None);
+    }
+
+    const DAMAGED: &str = "SyncTeX Version:1
+Input:1:{root}/./main.tex
+Output:pdf
+Magnification:1000
+Unit:1
+X Offset:0
+Y Offset:0
+Content:
+{-2147483648
+(1,1:0,0:0,0,0
+x1,1:0,0
+)
+}-2147483648
+{1
+(1,2147483647:0,0:0,2147483647,2147483647
+(1,1:2147483647,0:2147483647,2147483647,2147483647
+g1,1:2147483647,0
+k1,1:-2147483648,0:2147483647
+h1,1:2147483647,0:2147483647,2147483647,2147483647
+)
+)
+(1,1:2147483647,0:2147483647,0,0
+)
+(1,1:0,0:-2147483648,-2147483648,-2147483648
+)
+(1,1:0,0:-2147483648,-2147483648,-2147483648
+)
+}1
+";
+
     /// For every line of a document and points across its pages, the reader answers as TeX
     /// Live's synctex program: `cargo test -p texlocal-core synctex -- --ignored`.
     #[test]

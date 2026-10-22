@@ -613,7 +613,7 @@ impl Reader {
             .expect("an hbox starts with its boundary");
         let seen = self.s.node(hbox).seen;
         let end = Extent {
-            h: seen.h + seen.width,
+            h: seen.h.wrapping_add(seen.width),
             ..seen
         };
         self.append(Node::boundary(self.s.node(source).place(), end));
@@ -668,16 +668,16 @@ impl Reader {
         match kind {
             Kind::VoidHBox => self.contain(Bounds::of_extent(at)),
             Kind::Kern => {
-                let (min, max) = if at.width > 0 {
-                    (at.h - at.width, at.h)
+                let (h, width) = (i64::from(at.h), i64::from(at.width));
+                let (min_h, max_h) = if width > 0 {
+                    (h - width, h)
                 } else {
-                    (at.h, at.h - at.width)
+                    (h, h - width)
                 };
                 self.contain(Bounds {
-                    min_h: min,
-                    max_h: max,
-                    min_v: at.v,
-                    max_v: at.v,
+                    min_h,
+                    max_h,
+                    ..Bounds::point(at.h, at.v)
                 });
             }
             Kind::Glue | Kind::Math | Kind::Boundary => self.contain(Bounds::point(at.h, at.v)),
@@ -764,30 +764,29 @@ impl Reader {
             return;
         };
         let seen = &mut self.s.nodes[parent as usize].seen;
-        if seen.width < 0 {
-            let max = seen.h;
-            let min = max + seen.width;
+        let (h, width) = (i64::from(seen.h), i64::from(seen.width));
+        if width < 0 {
+            let (min, max) = (h + width, h);
             if bounds.min_h < min {
-                seen.width = bounds.min_h - max;
+                seen.width = (bounds.min_h - max) as i32;
             } else if bounds.max_h > max {
-                seen.h = bounds.max_h;
-                seen.width = min - bounds.max_h;
+                seen.h = bounds.max_h as i32;
+                seen.width = (min - bounds.max_h) as i32;
             }
         } else {
-            let min = seen.h;
-            let max = min + seen.width;
+            let (min, max) = (h, h + width);
             if bounds.min_h < min {
-                seen.h = bounds.min_h;
-                seen.width = max - bounds.min_h;
+                seen.h = bounds.min_h as i32;
+                seen.width = (max - bounds.min_h) as i32;
             } else if bounds.max_h > max {
-                seen.width = bounds.max_h - min;
+                seen.width = (bounds.max_h - min) as i32;
             }
         }
-        let n = seen.v;
-        if bounds.min_v < n - seen.height {
-            seen.height = n - bounds.min_v;
-        } else if bounds.max_v > n + seen.depth {
-            seen.depth = bounds.max_v - n;
+        let n = i64::from(seen.v);
+        if bounds.min_v < n - i64::from(seen.height) {
+            seen.height = (n - bounds.min_v) as i32;
+        } else if bounds.max_v > n + i64::from(seen.depth) {
+            seen.depth = (bounds.max_v - n) as i32;
         }
     }
 }
@@ -835,16 +834,18 @@ impl Node {
     }
 }
 
+/// In i64, as a damaged file's sums can pass i32's.
 #[derive(Clone, Copy)]
 struct Bounds {
-    min_h: i32,
-    max_h: i32,
-    min_v: i32,
-    max_v: i32,
+    min_h: i64,
+    max_h: i64,
+    min_v: i64,
+    max_v: i64,
 }
 
 impl Bounds {
     fn point(h: i32, v: i32) -> Self {
+        let (h, v) = (i64::from(h), i64::from(v));
         Self {
             min_h: h,
             max_h: h,
@@ -854,16 +855,17 @@ impl Bounds {
     }
 
     fn of_extent(e: Extent) -> Self {
-        let (min_h, max_h) = if e.width < 0 {
-            (e.h + e.width, e.h)
+        let (h, width, v) = (i64::from(e.h), i64::from(e.width), i64::from(e.v));
+        let (min_h, max_h) = if width < 0 {
+            (h + width, h)
         } else {
-            (e.h, e.h + e.width)
+            (h, h + width)
         };
         Self {
             min_h,
             max_h,
-            min_v: e.v - e.height,
-            max_v: e.v + e.depth,
+            min_v: v - i64::from(e.height),
+            max_v: v + i64::from(e.depth),
         }
     }
 }
@@ -924,10 +926,10 @@ impl SyncTex {
                     .map(|id| self.shown(id))
                     .collect();
             }
-            line += step;
+            line = line.saturating_add(step);
             step = next_step(step);
             if line <= 0 {
-                line += step;
+                line = line.saturating_add(step);
                 step = next_step(step);
             }
         }
@@ -965,7 +967,7 @@ impl SyncTex {
 
     /// The groups, each sorted, the one on the lowest page first and the rest after it in reverse.
     fn ordered(&self, groups: Vec<Vec<u32>>) -> Vec<u32> {
-        let page = |chain: &[u32]| self.node(chain[0]).page.abs();
+        let page = |chain: &[u32]| self.node(chain[0]).page.unsigned_abs();
         let mut groups = groups.into_iter();
         let first = groups.next().expect("a match makes a group");
         let mut best = page(&first);
@@ -1032,10 +1034,10 @@ impl SyncTex {
             up = parent;
             let at = self.node(parent).at;
             if self.node(parent).kind.is_hbox() {
-                if (mean - self.mean_line(parent)).abs() > 1 {
+                if mean.abs_diff(self.mean_line(parent)) > 1 {
                     break;
                 }
-                if at.width > bound || at.height + at.depth > bound {
+                if at.width > bound || at.height.saturating_add(at.depth) > bound {
                     node = parent;
                     break;
                 }
@@ -1065,9 +1067,6 @@ impl SyncTex {
     /// (synctex's `synctex_iterator_new_edit`, its first result).
     pub fn inverse(&self, page: i32, h: f32, v: f32) -> Option<(&str, i32)> {
         let sheet = self.sheets.iter().find(|sheet| sheet.page == page)?;
-        if self.unit <= 0.0 {
-            return None;
-        }
         let hit = Point {
             h: i64::from(((h - self.x_offset) / self.unit) as i32),
             v: i64::from(((v - self.y_offset) / self.unit) as i32),
@@ -1118,10 +1117,11 @@ impl SyncTex {
     fn smallest(&self, node: u32, other: u32) -> u32 {
         let measure = |id: u32| {
             let seen = self.node(id).seen;
-            let height = i64::from(seen.depth).abs() + i64::from(seen.height).abs();
+            let height =
+                u64::from(seen.depth.unsigned_abs()) + u64::from(seen.height.unsigned_abs());
             (
-                height * i64::from(seen.width).abs(),
-                i64::from(self.node(id).at.width).abs(),
+                height * u64::from(seen.width.unsigned_abs()),
+                self.node(id).at.width.unsigned_abs(),
                 height,
             )
         };
