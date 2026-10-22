@@ -203,6 +203,8 @@ final class ProjectModel {
         _ = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
+        // The core remembers the user's last Start or Stop, so Live Preview is per project.
+        if ui.livePreview, canSwitchLivePreview { livePreview = true }
     }
 
     private func connectEditor() {
