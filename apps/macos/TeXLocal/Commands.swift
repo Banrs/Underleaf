@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 enum MenuCommand: CaseIterable {
     case projectNew, projectOpen, projectClose, projectExport, projectSearch
-    case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, filePrint
+    case fileNew, fileNewFolder, fileUpload, fileSave, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
@@ -28,6 +28,7 @@ enum MenuCommand: CaseIterable {
         case .fileUpload: ("Add Files…", nil)
         case .fileSave: ("Save", KeyboardShortcut("s"))
         case .pdfSave: ("Export as PDF…", nil)
+        case .pdfOpen: ("Open PDF in Default App", KeyboardShortcut("o", modifiers: [.command, .option]))
         case .filePrint: ("Print…", KeyboardShortcut("p"))
         case .editBold: ("Bold", KeyboardShortcut("b"))
         case .editItalic: ("Italic", KeyboardShortcut("i"))
@@ -111,7 +112,7 @@ extension AppModel {
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
-        case .pdfSave, .filePrint: project?.buildPDF != nil
+        case .pdfSave, .pdfOpen, .filePrint: project?.buildPDF != nil
         case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
@@ -127,6 +128,11 @@ extension AppModel {
     }
 
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
+        // The app Finder would open it in, Preview or another the user chose, named as Finder names it.
+        if command == .pdfOpen, let app = NSWorkspace.shared.urlForApplication(toOpen: .pdf),
+           let name = try? app.resourceValues(forKeys: [.localizedNameKey]).localizedName {
+            return "Open PDF in \(name)"
+        }
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarShown
         case .viewTogglePDF: showPDF
@@ -162,6 +168,7 @@ extension AppModel {
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
+        case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
         case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
         case .editBold: project?.editor.perform(.bold)
@@ -234,7 +241,7 @@ struct AppCommands: Commands {
                 .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
-            items(.pdfSave, .projectExport)
+            items(.pdfSave, .pdfOpen, .projectExport)
             Divider()
             if let project, let url = project.buildPDF {
                 ShareLink(item: url)
