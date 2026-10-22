@@ -32,8 +32,8 @@ final class BuildPanelModel {
     }
 
     /// Enumerated before filtering: duplicate messages keep distinct, stable row IDs.
-    func rows(of result: CompileResult?) -> [(offset: Int, element: LogItem)] {
-        (result?.listed ?? []).enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
+    func rows(of listed: [LogItem]) -> [(offset: Int, element: LogItem)] {
+        listed.enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
     }
 }
 
@@ -70,10 +70,10 @@ struct BuildPanel: View {
 
     /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder private var issues: some View {
-        let items = project.panel.rows(of: project.result)
+        let items = project.panel.rows(of: project.listed)
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !project.panel.showsWarnings, project.result?.listed.contains(where: { !$0.isError && project.panel.matches($0) }) == true {
+        } else if !project.panel.showsWarnings, project.listed.contains(where: { !$0.isError && project.panel.matches($0) }) {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {

@@ -10,6 +10,7 @@ nonisolated enum SessionEvent: Sendable {
     case conflict(ConflictEvent)
     case issues(IssuesEvent)
     case liveIssues(IssuesEvent)
+    case checks(ChecksEvent)
     case build(BuildState)
     case buildFinished(BuildFinished)
     case buildCleaned
@@ -31,6 +32,7 @@ nonisolated enum SessionEvent: Sendable {
         case "conflict": self = .conflict(try fields())
         case "issues": self = .issues(try fields())
         case "live_issues": self = .liveIssues(try fields())
+        case "checks": self = .checks(try fields())
         case "build": self = .build(try fields())
         case "build_finished": self = .buildFinished(try fields())
         case "build_cleaned": self = .buildCleaned
@@ -81,6 +83,7 @@ nonisolated struct PathsEvent: Decodable { let paths: [String] }
 nonisolated struct BuildState: Decodable { let compiling, auto, outdated: Bool }
 
 nonisolated struct BuildFinished: Decodable { let auto, announce, outdated: Bool, result: CompileResult }
+nonisolated struct ChecksEvent: Decodable { let items: [LogItem] }
 
 nonisolated struct IssuesEvent: Decodable {
     nonisolated struct Line: Decodable, Equatable {

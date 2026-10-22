@@ -27,17 +27,21 @@ struct BuildPanelTests {
         #expect(panel.shown)
     }
 
-    @Test func badBoxesFollowTheWarningsAndHideWithThem() throws {
+    @Test func checksFollowTheWarningsAndBadBoxesComeLastAllHidingWithThem() throws {
         func items(_ type: String, _ message: String) -> String { "[{\"type\": \"\(type)\", \"file\": null, \"line\": null, \"message\": \"\(message)\"}]" }
         let json = """
             {"ok": true, "stopped": false, "pdf": null, "pdfChanged": false, "durationMs": 0, "log": "",
              "errors": \(items("error", "Undefined")), "warnings": \(items("warning", "Citation")), "badBoxes": \(items("warning", "Overfull"))}
             """
-        let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
-        let panel = BuildPanelModel()
-        #expect(panel.rows(of: result).map(\.element.message) == ["Undefined", "Citation", "Overfull"])
-        panel.showsWarnings = false
-        #expect(panel.rows(of: result).map(\.element.message) == ["Undefined"])
+        let defaults = TestDefaults()
+        let app = AppModel(defaults: defaults.store)
+        let project = ProjectModel(id: "BuildPanelTests", app: app)
+        project.result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
+        project.checks = try JSONDecoder().decode([LogItem].self, from: Data(items("warning", "Reference").utf8))
+        #expect(project.panel.rows(of: project.listed).map(\.element.message) == ["Undefined", "Citation", "Reference", "Overfull"])
+        #expect(project.errorCount == 1 && project.warningCount == 2)
+        project.panel.showsWarnings = false
+        #expect(project.panel.rows(of: project.listed).map(\.element.message) == ["Undefined"])
     }
 
     /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.

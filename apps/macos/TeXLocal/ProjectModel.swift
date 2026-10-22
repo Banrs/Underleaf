@@ -44,6 +44,8 @@ final class ProjectModel {
     /// One at a time, as tlmgr takes one and a fix is followed by a build.
     var fixing: LogItem.Fix?
     var result: CompileResult?
+    /// What the session finds wrong without TeX, kept through builds and cleans.
+    var checks: [LogItem] = []
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
     nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
@@ -55,7 +57,11 @@ final class ProjectModel {
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
-    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
+    /// In the session's order, which `session_choose_issue` numbers.
+    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) + checks }
+    /// The bad boxes after the issues, as Overleaf lists its typesetting warnings: numbered on from them, which the session
+    /// numbers alone.
+    var listed: [LogItem] { issues + (result?.badBoxes ?? []) }
 
     var openURL: URL? { openPath.flatMap(url) }
     var diskConflict: String?
@@ -137,8 +143,9 @@ final class ProjectModel {
     /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
     func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath)?.fileName ?? name)” Wasn’t Saved") }
 
-    var errorCount: Int { result?.errors.count ?? 0 }
-    var warningCount: Int { result?.warnings.count ?? 0 }
+    /// With the checks', as Xcode's counts include its live issues.
+    var errorCount: Int { issues.count(where: \.isError) }
+    var warningCount: Int { issues.count - errorCount }
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
 
@@ -293,6 +300,8 @@ final class ProjectModel {
         case .liveIssues(let marked):
             liveIssues[marked.path] = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
+        // After the build events before it, so the list numbers its rows as the session did then.
+        case .checks(let found): inOrder { self.checks = found.items }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
