@@ -136,6 +136,19 @@ public sealed record FileCount(string File, int Count);
 /// files, which the core has written.
 public sealed record Replaced(DocumentEdits? Edits, FileCount[] Written);
 
+/// <param name="Change">added, deleted or changed, against the snapshot before.</param>
+public sealed record SnapshotChange(string Path, string Change);
+
+/// A version of the project's files the core keeps (session_history_list, newest first).
+/// <param name="Name">The reader's, from Save version; Reason the core's, as "Before Replace All"; an automatic one has neither.</param>
+public sealed record Snapshot(string Id, DateTimeOffset Time, string? Name, string? Reason, SnapshotChange[] Changed);
+
+/// A text file in a snapshot and now (the open document's text as edited); null where it doesn't exist.
+public sealed record Compared(string? Old, string? New);
+
+/// session_history_restore's answer: the open document's edits, if it is among the files; the core wrote the others.
+public sealed record Restored(DocumentEdits? Edits);
+
 /// <param name="Shape">upright, italic or smallCaps.</param>
 public sealed record HeadingFont(double Scale, bool Bold, string Shape);
 
