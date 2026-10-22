@@ -115,54 +115,18 @@ struct FormatPanel: View {
     /// Notes' half-point separator: a `Divider` framed to half a point still inks a whole one.
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
-    /// Notes' style toggles are AppKit buttons, read through Accessibility (27.2). AppKit's accessory-bar toggle draws the
-    /// grey under the pointer, at its own size; it has no accent for on, which is drawn behind it in its bezel's shape.
+    /// Notes' style toggles, as the accessory bar's, which draw their own hover, press and on; one size for the three, 36 by
+    /// 23 pt in its padding, where its own would differ by the symbol.
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
-        StyleButton(command: command, on: on) { [app, project] in app.perform(command, on: project) }
-            .background(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 5))
-    }
-
-    private struct StyleButton: NSViewRepresentable {
-        let command: MenuCommand
-        let on: Bool
-        let toggle: () -> Void
-
-        func makeNSView(context: Context) -> NSButton {
-            let image = NSImage(systemSymbolName: command.style!.symbol, accessibilityDescription: command.title)?
-                .withSymbolConfiguration(.init(scale: .large))
-            let button = NSButton(image: image ?? NSImage(), target: context.coordinator, action: #selector(Coordinator.click(_:)))
-            button.setButtonType(.pushOnPushOff)
-            button.bezelStyle = .accessoryBar
-            button.showsBorderOnlyWhileMouseInside = true
-            button.toolTip = command.style!.help
-            context.coordinator.size = button.intrinsicContentSize
-            return button
+        Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: project) })) {
+            Label(command.title, systemImage: command.style!.symbol)
+                .labelStyle(.iconOnly)
+                .imageScale(.large)
+                .frame(width: 12, height: 15)
         }
-
-        /// On, without its bezel, the accent stands under the pointer too, at the bezel's size.
-        func updateNSView(_ button: NSButton, context: Context) {
-            context.coordinator.toggle = toggle
-            button.state = on ? .on : .off
-            button.isBordered = !on
-            button.showsBorderOnlyWhileMouseInside = !on
-            button.contentTintColor = on ? .alternateSelectedControlTextColor : nil
-        }
-
-        func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? { context.coordinator.size }
-
-        func makeCoordinator() -> Coordinator { Coordinator(toggle: toggle) }
-
-        final class Coordinator: NSObject {
-            var toggle: () -> Void
-            var size = CGSize.zero
-            init(toggle: @escaping () -> Void) { self.toggle = toggle }
-
-            /// Back as it was until the editor's styles say: a click that changes no text changes nothing.
-            @objc func click(_ button: NSButton) {
-                button.state = button.state == .on ? .off : .on
-                toggle()
-            }
-        }
+        .toggleStyle(.button)
+        .buttonStyle(.accessoryBar)
+        .help(command.style!.help)
     }
 
     private func row(_ style: HeadingStyle, layout: Layout, checked: Bool) -> some View {
