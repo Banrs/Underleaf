@@ -481,6 +481,19 @@ final class ProjectModel {
         await search.run(in: session)
     }
 
+    /// Xcode's Find Selected Symbol in Workspace: the name at the selection's start, defined and used, in the sidebar as a
+    /// search's hits. Enabled wherever the caret is, so where no name is it beeps, as Jump to Definition does.
+    func findUsages() async {
+        guard let session, let path = editor.path else { return }
+        let offset = editor.textView.selectedRange().location
+        guard let found = await alerting("Couldn’t Find Usages", {
+            try await core.call("session_usages", ["session": session, "path": path, "offset": offset], as: Usages?.self)
+        }) else { return }
+        guard let found else { return NSSound.beep() }
+        search.show(found)
+        app?.sidebarShown = true
+    }
+
     /// A refusal is the core's sentence, for the sheet to show.
     func renameSymbol(_ symbol: Definition, to name: String) async throws {
         guard let session else { return }

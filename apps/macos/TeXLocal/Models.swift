@@ -131,6 +131,24 @@ nonisolated struct SearchGroup: Decodable, Identifiable {
     var id: String { file }
 }
 
+/// Every line that defines or uses a name, as a search's hits (`session_usages`).
+nonisolated struct Usages: Decodable {
+    /// `label`, `citation`, `environment`, `command` or `file`.
+    let kind: String
+    let name: String
+    let groups: [SearchGroup]
+
+    /// What was searched for, the name as the source writes it.
+    var heading: String {
+        switch kind {
+        case "label": String(localized: "Usages of \\label{\(name)}")
+        case "citation": String(localized: "Usages of \\cite{\(name)}")
+        case "environment": String(localized: "Usages of \\begin{\(name)}")
+        default: String(localized: "Usages of \(name)")
+        }
+    }
+}
+
 /// In PDF points, origin at the page's top-left: the baseline point (h, v) and the box's width and height above it.
 nonisolated struct ForwardLoc: Decodable {
     let page: Double

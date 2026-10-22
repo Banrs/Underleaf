@@ -166,7 +166,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
         let offered: [(MenuCommand, Bool)] = [
-            (.jumpToDefinition, true), (.editRename, textView.isEditable && renamable != nil),
+            (.jumpToDefinition, true), (.findUsages, true), (.editRename, textView.isEditable && renamable != nil),
             (.syncForward, textView.forwardSync(false) != nil), (.editComment, textView.isEditable),
         ]
         let ours = offered.filter(\.1).map { command, _ in
