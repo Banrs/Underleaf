@@ -401,7 +401,7 @@ final class AppModel {
     @ObservationIgnored var launchProject: String?
 
     /// `project` goes from one to the next, never nil between, so the window keeps the workspace.
-    func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
+    func open(_ id: String) async {
         openGeneration += 1
         let generation = openGeneration
         guard project?.id != id || project?.closed == true else { return }
@@ -415,7 +415,7 @@ final class AppModel {
             .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
         let model = ProjectModel(id: id, app: self)
         project = model
-        await model.load(restoring: saved?.project == id ? saved : nil)
+        await model.load()
     }
 
     /// False, staying, when the save fails: the editor holds the only copy.
@@ -442,6 +442,7 @@ final class AppModel {
         guard let project else { return true }
         if !project.closed {
             guard await project.save(), generation == openGeneration else { return false }
+            await project.savePlace()
             project.close()
         }
         await project.waitUntilClosed()

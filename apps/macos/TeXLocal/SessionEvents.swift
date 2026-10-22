@@ -52,7 +52,14 @@ nonisolated struct SessionOpened: Decodable, Sendable {
 }
 
 nonisolated struct Located: Decodable, Sendable { let id, path: String }
-nonisolated struct UIState: Decodable, Sendable { let expandedFolders, foldedHeadings: [String] }
+/// The project's interface as it was left (docs/core-api.md).
+nonisolated struct UIState: Decodable, Sendable {
+    let expandedFolders, foldedHeadings: [String]
+    let file: String?
+    let line, page: Int?
+    let zoom: PDFController.Zoom?
+    let panel, livePreview: Bool
+}
 nonisolated struct Saved: Decodable, Sendable { let saved: Bool }
 nonisolated struct Closed: Decodable, Sendable { let closed: Bool }
 nonisolated struct Ready: Decodable, Sendable { let ready: Bool }
