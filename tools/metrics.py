@@ -14,10 +14,12 @@ files = subprocess.run(["git", "ls-files", "crates/*.rs", "apps/*.swift", "apps/
 code = [f for f in files if not re.search(r"(/tests/|tests\.rs$|/stubs\.rs$|Tests/|\.Tests/)", f)]
 out = subprocess.run([sys.executable, "-m", "lizard", "--csv", *code], capture_output=True, text=True).stdout
 
+# A Rust file's inline test module, which runs to its end; `#[cfg(test)] mod tests;` names a file of its own.
 def in_tests(path, line, starts={}):
     if path not in starts:
-        starts[path] = next((i + 1 for i, l in enumerate(open(path, encoding="utf-8"))
-                             if path.endswith(".rs") and l.startswith("#[cfg(test)]")), math.inf)
+        lines = open(path, encoding="utf-8").read().splitlines()
+        starts[path] = next((i + 1 for i in range(len(lines) - 1) if path.endswith(".rs")
+                             and lines[i] == "#[cfg(test)]" and re.match(r"mod \w+ \{", lines[i + 1])), math.inf)
     return line >= starts[path]
 
 mass, eroded = {}, {}
