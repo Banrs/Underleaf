@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use tokio::sync::mpsc;
 
 use super::Msg;
+use crate::analyze::Facts;
 use crate::lock;
-use crate::projects::Symbols;
+use crate::projects::{Symbols, file_kind};
 use crate::syntax::{SourceDocument, TextEdit};
 
 struct Text {
@@ -110,6 +111,15 @@ impl Document {
 
     pub(crate) fn moved(&self, path: &str) {
         path.clone_into(&mut lock(&self.0.text).source.path);
+    }
+
+    /// Read from a copy of the text, so the editor's keys don't wait on the parse.
+    pub(crate) fn facts(&self) -> Facts {
+        let (text, path) = {
+            let held = lock(&self.0.text);
+            (held.source.text(), held.source.path.clone())
+        };
+        Facts::read(&text, file_kind(&path))
     }
 
     pub(crate) fn snapshot(&self) -> (String, u64) {

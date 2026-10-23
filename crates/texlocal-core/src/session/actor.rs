@@ -1034,10 +1034,8 @@ impl Actor {
         };
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
-            let symbol = doc.with(|source| {
-                let own = Facts::read(&source.text(), file_kind(&source.path));
-                source.symbol_at(&own, offset)
-            });
+            let own = doc.facts();
+            let symbol = doc.with(|source| source.symbol_at(&own, offset));
             // A file by the project's name for it, which every input of it elsewhere resolves to.
             let named = symbol.and_then(|(kind, name, file)| match kind {
                 SymbolKind::File => Some((kind, file?)),
