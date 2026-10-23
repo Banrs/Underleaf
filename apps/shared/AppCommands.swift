@@ -62,7 +62,7 @@ struct AppCommands: Commands {
             items(.viewToggleSidebar)
             Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") { app.outlineCollapsed.toggle() }
                 .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
-            items(.viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
+            items(.viewToggleSource, .viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()
             items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
         }

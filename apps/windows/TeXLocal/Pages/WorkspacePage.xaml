@@ -166,6 +166,8 @@
                 <MenuBarItem AccessKey="V" Title="View">
                     <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="N" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Navigation pane" />
                     <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
+                    <!-- No Ctrl+Alt+S: AltGr is Ctrl+Alt, and AltGr+S types ś. -->
+                    <ToggleMenuFlyoutItem x:Name="SourceItem" AccessKey="S" IsChecked="True" Text="Source" />
                     <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" IsChecked="True" Text="PDF" />
                     <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="OnIssuesPane" Text="Issues" />
                     <MenuFlyoutSeparator />

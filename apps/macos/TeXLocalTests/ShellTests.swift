@@ -255,6 +255,19 @@ struct ShellTests {
         #expect(app.showPDF && asked == 2 && defaults.saved(DefaultsKey.showPDF) == nil)
     }
 
+    /// Hiding the source or the PDF while the other is hidden shows the other, for later launches too.
+    @Test func theSourceOrThePDFAlwaysShows() {
+        let app = AppModel(defaults: defaults.store)
+        app.toggleSource()
+        #expect(!app.showSource && app.showPDF)
+        app.togglePDF()
+        #expect(app.showSource && !app.showPDF)
+        app.toggleSource()
+        #expect(!app.showSource && app.showPDF)
+        let next = AppModel(defaults: defaults.store)
+        #expect(!next.showSource && next.showPDF)
+    }
+
     /// On Home, Find focuses the projects' search field.
     @Test func findOnHomeSearchesTheProjects() {
         let app = AppModel(defaults: defaults.store)

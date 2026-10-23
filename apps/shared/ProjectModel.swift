@@ -117,6 +117,8 @@ final class ProjectModel {
     }
 
     var isLaTeX: Bool { openKind == .tex }
+    /// The toolbar's LaTeX tools act on the source, so only while it shows.
+    var sourceToolsEnabled: Bool { isLaTeX && app?.showSource == true }
 
     /// The caret's line's sectioning command: empty for Normal Text.
     var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
@@ -180,7 +182,7 @@ final class ProjectModel {
             showUIState(opened.ui)
             if !treeChanged { tree.show(opened.tree) }
             let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
-            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
+            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line, showsSource: false) }
             await analysis?.value
         } catch {
             core.forget(session)
@@ -334,13 +336,16 @@ final class ProjectModel {
     // MARK: - Editing
 
     /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
-    /// the editor never shows a file without its document.
-    func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
+    /// the editor never shows a file without its document. It shows the source, as a PDF command shows the PDF, but for the
+    /// project's own first file.
+    func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
+              showsSource: Bool = true) async {
         openRequests += 1
         let request = openRequests
         let latest = { request == self.openRequests && !self.closed }
         await enqueue(&opens) { [self] in
             guard latest() else { return }
+            if showsSource { app?.showSource = true }
             if path != openPath {
                 guard let session else { return }
                 // A file made a moment ago may not be in the tree yet.

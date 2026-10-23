@@ -7,7 +7,7 @@ enum MenuCommand: CaseIterable {
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editGotoLine, jumpToDefinition, editRename
     case pdfFind, pdfGotoPage
-    case viewToggleSidebar, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
+    case viewToggleSidebar, viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
     case compileRun, compileStop, compileClean, syncForward, syncInverse, issueNext, issuePrevious
 
@@ -44,6 +44,7 @@ enum MenuCommand: CaseIterable {
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSidebar: ("Sidebar", KeyboardShortcut("s", modifiers: [.command, .control]))
+        case .viewToggleSource: ("Source", KeyboardShortcut("s", modifiers: [.command, .option]))
         case .viewTogglePDF: ("PDF", KeyboardShortcut("p", modifiers: [.command, .option]))
         case .viewToggleInspector: ("Inspector", KeyboardShortcut("i", modifiers: [.command, .option]))
         case .viewToggleLogs: ("Build Panel", KeyboardShortcut("y", modifiers: [.command, .shift]))
@@ -136,6 +137,7 @@ extension AppModel {
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarShown
+        case .viewToggleSource: showSource
         case .viewTogglePDF: showPDF
         case .viewToggleInspector: inspectorShown
         case .viewToggleLogs: project?.panel.shown == true
@@ -186,6 +188,7 @@ extension AppModel {
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
+        case .viewToggleSource: toggleSource()
         case .viewTogglePDF: togglePDF()
         case .viewToggleInspector: inspectorShown.toggle()
         case .viewToggleLogs: project?.panel.shown.toggle()

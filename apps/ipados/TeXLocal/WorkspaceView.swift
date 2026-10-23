@@ -78,7 +78,8 @@ private struct DetailView: View {
 
     /// Both panes always, so the source's text view keeps its host and the PDF its place; the one not shown is 0 wide.
     private var panes: some View {
-        let shows: SplitPanes<SourcePane, PDFPane>.Shown = !app.showPDF ? .leading : sideBySide ? .both : pane == .pdf ? .trailing : .leading
+        let shows: SplitPanes<SourcePane, PDFPane>.Shown = !app.showPDF ? .leading : !app.showSource ? .trailing
+            : sideBySide ? .both : pane == .pdf ? .trailing : .leading
         return SplitPanes(fraction: $fraction, minimum: paneMinimum, shown: shows) {
             SourcePane(project: project)
         } trailing: {
@@ -179,9 +180,9 @@ private struct WorkspaceToolbar: ToolbarContent {
             Menu("Math", systemImage: "x.squareroot") {
                 MathMenuItems(project: project) { app.perform(.editMath, on: project) }
             }
-            .disabled(!project.isLaTeX)
+            .disabled(!project.sourceToolsEnabled)
             Menu("Insert", systemImage: "plus.square.on.square") { InsertMenuItems(project: project) }
-                .disabled(!project.isLaTeX)
+                .disabled(!project.sourceToolsEnabled)
             Toggle("Live Preview", systemImage: "bolt", isOn: Bindable(project).livePreview)
                 .disabled(!project.canSwitchLivePreview)
             Button(app.title(.viewToggleLogs, on: project), systemImage: "list.bullet.rectangle") { project.panel.shown.toggle() }
@@ -192,9 +193,10 @@ private struct WorkspaceToolbar: ToolbarContent {
                 Toggle("PDF", systemImage: "rectangle.righthalf.inset.filled", isOn: Binding(get: { app.showPDF }, set: { _ in app.togglePDF() }))
             } else {
                 // One pane at a time: the PDF in the source's place, and back.
-                Toggle("PDF", systemImage: "doc.richtext", isOn: Binding(get: { app.showPDF && pane == .pdf }, set: { on in
+                Toggle("PDF", systemImage: "doc.richtext", isOn: Binding(get: { app.showPDF && (pane == .pdf || !app.showSource) }, set: { on in
                     pane = on ? .pdf : .source
                     if on, !app.showPDF { app.togglePDF() }
+                    if !on, !app.showSource { app.toggleSource() }
                 }))
             }
             Toggle("Inspector", systemImage: "info.circle", isOn: Bindable(app).inspectorVisible)
@@ -252,7 +254,7 @@ private struct FormatMenu: View {
             .controlGroupStyle(.palette)
             Section("Section Level") { SectionLevelItems(project: project) }
         }
-        .disabled(!project.isLaTeX)
+        .disabled(!project.sourceToolsEnabled)
     }
 }
 

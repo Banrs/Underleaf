@@ -9,6 +9,7 @@ nonisolated enum DefaultsKey {
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
     static let folderBookmarks = "folderBookmarks"
+    static let showSource = "showSource"
     static let showPDF = "showPDF"
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
@@ -121,7 +122,9 @@ final class AppModel {
         }
     }
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
-    /// Kept by View › Show PDF and the toolbar; a PDF command shows it for now.
+    /// Kept by View › Show Source and View › Show PDF, with the toolbar's PDF; one always shows. Opening a file or a place
+    /// in one shows the source for now, as a PDF command shows the PDF.
+    var showSource: Bool
     var showPDF: Bool
     var outlineCollapsed: Bool { didSet { defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
     /// The menus act on the project only while its window is key.
@@ -136,11 +139,13 @@ final class AppModel {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
-                                     DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
+                                     DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
+                                     DefaultsKey.showPDF: true])
         sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
         inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
+        showSource = defaults.bool(forKey: DefaultsKey.showSource)
         showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
@@ -163,9 +168,13 @@ final class AppModel {
         project.search.isSearching ? .hidden : outlineOpen(of: project) ? .open : .folded
     }
 
-    func togglePDF() {
-        showPDF.toggle()
-        defaults.set(showPDF, forKey: DefaultsKey.showPDF)
+    func toggleSource() { showPanes(source: !showSource, pdf: showPDF || showSource) }
+    func togglePDF() { showPanes(source: showSource || showPDF, pdf: !showPDF) }
+
+    private func showPanes(source: Bool, pdf: Bool) {
+        (showSource, showPDF) = (source, pdf)
+        defaults.set(source, forKey: DefaultsKey.showSource)
+        defaults.set(pdf, forKey: DefaultsKey.showPDF)
     }
 
     func requestPDF(_ action: PDFAction) {
