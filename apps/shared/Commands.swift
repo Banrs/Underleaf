@@ -121,6 +121,25 @@ enum PDFAction {
     case reveal(ForwardLoc, SyncSource?)
 }
 
+extension ProjectModel {
+    /// On the pages showing; `find` opens each app's own find.
+    func perform(_ action: PDFAction, find: () -> Void) {
+        guard hasPDF else { return }
+        switch action {
+        case .zoomIn: pdf.zoom(in: true)
+        case .zoomOut: pdf.zoom(in: false)
+        case .actualSize: pdf.setScale(1)
+        case .fitWidth: pdf.fitWidth()
+        case .fitPage: pdf.fitPage()
+        case .goToPage(let page): pdf.go(toPage: page)
+        case .find: find()
+        case let .reveal(loc, source): pdf.reveal(loc, from: source)
+        case .inverseFromView:
+            if case let (page, point)? = pdf.sourcePoint() { Task { await inverseSync(page: page, x: point.x, y: point.y) } }
+        }
+    }
+}
+
 extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
@@ -206,11 +225,11 @@ extension AppModel {
         case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .fileBrowseVersions: prompt = .versionHistory
         case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
-        case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
         #else
         // Not in the iPad's menus.
-        case .openQuickly, .fileBrowseVersions, .pdfOpen, .quickHelp: break
+        case .openQuickly, .fileBrowseVersions, .pdfOpen: break
         #endif
+        case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
         case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
         case .editBold: project?.editor.perform(.bold)

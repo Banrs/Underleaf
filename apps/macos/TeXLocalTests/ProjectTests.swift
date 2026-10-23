@@ -523,7 +523,7 @@ final class ProjectFlowTests {
         text.insertText("z", replacementRange: .caret(0))
         await settle()
         #expect(text.issues.live.keys.sorted() == [3] && text.issues.issue(on: 3)?.live == true)
-        text.issueClicked(3)
+        text.issues.clicked(3)
         #expect(project.panel.shown && project.panel.tab == .texpresso)
         try send("issues", [3])
         #expect(text.issues.issue(on: 3)?.live == false)

@@ -39,10 +39,11 @@ final class SourceDocument {
         tl_source_select(raw, UInt32(selection.location), UInt32(selection.length), mirroring)
     }
 
-    /// Not an edit to save.
-    func reload(_ text: String) {
+    /// Not an edit to save. False when keys were typed since the session sent it: the text stays, and the core asks about
+    /// the change.
+    @discardableResult func reload(_ text: String) -> Bool {
         var text = text
-        text.withUTF8 { tl_source_reload(raw, $0.baseAddress, $0.count) }
+        return text.withUTF8 { tl_source_reload(raw, $0.baseAddress, $0.count) }
     }
 
     func line(at offset: Int) -> Int { Int(tl_source_line_at(raw, UInt32(offset))) }

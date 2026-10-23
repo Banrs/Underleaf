@@ -36,6 +36,12 @@ targets:
     info:
       path: Info.plist
       properties:
+        # XcodeGen's defaults would put 1.0 here over the version below.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # One window, as on the Mac: a second would take the open project's editor.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         CFBundleDocumentTypes:
           - CFBundleTypeName: ZIP Archive
             CFBundleTypeRole: Viewer
@@ -56,7 +62,6 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Underleaf contributors"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: >-
@@ -102,4 +107,5 @@ schemes:
       targets:
         TeXLocal: all
     run:
-      config: Debug
+      config: Release
+      debugEnabled: false

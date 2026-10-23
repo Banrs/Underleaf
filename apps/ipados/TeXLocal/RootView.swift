@@ -54,11 +54,18 @@ struct RootView: View {
     private func saveEdits() {
         guard let project = app.project else { return }
         let application = UIApplication.shared
-        let task = application.beginBackgroundTask(withName: "Save")
+        nonisolated(unsafe) var task = UIBackgroundTaskIdentifier.invalid
+        // Ended by whichever comes first, as iPadOS ends an app whose time runs out with a task still begun.
+        let end: @MainActor @Sendable () -> Void = {
+            guard task != .invalid else { return }
+            application.endBackgroundTask(task)
+            task = .invalid
+        }
+        task = application.beginBackgroundTask(withName: "Save", expirationHandler: end)
         Task {
             await project.save()
             await project.savePlace()
-            application.endBackgroundTask(task)
+            end()
         }
     }
 }

@@ -421,21 +421,11 @@ final class WorkspaceController: ThinSplitViewController {
 
     private func performPDF(_ action: PDFAction) {
         setCollapsed(pdfItem, false) { [weak self] in
-            guard let self, project.hasPDF else { return }
-            switch action {
-            case .zoomIn: pdf.zoom(in: true)
-            case .zoomOut: pdf.zoom(in: false)
-            case .actualSize: pdf.setScale(1)
-            case .fitWidth: pdf.fitWidth()
-            case .fitPage: pdf.fitPage()
-            case .goToPage(let page): pdf.go(toPage: page)
-            case .find:
+            guard let self else { return }
+            project.perform(action) {
                 pdf.find.isOpen = true
                 setHidden(pdfFind, false)
                 focus(pdf.find.field, in: pdfFind)
-            case let .reveal(loc, source): pdf.reveal(loc, from: source)
-            case .inverseFromView:
-                if case let (page, point)? = pdf.sourcePoint() { Task { await project.inverseSync(page: page, x: point.x, y: point.y) } }
             }
         }
     }

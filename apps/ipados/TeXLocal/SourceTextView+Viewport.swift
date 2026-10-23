@@ -5,23 +5,7 @@ extension SourceTextView {
     /// The bounds less the insets for the bars over the text and the keyboard under it.
     var shownRect: CGRect { bounds.inset(by: adjustedContentInset) }
 
-    /// From the fragments last laid out: asked by point, TextKit answers from its new estimates.
-    var shownTop: (offset: Int, below: CGFloat)? {
-        guard let top = fragment(under: shownRect.minY) else { return nil }
-        return (offset(top.rangeInElement.location), top.layoutFragmentFrame.minY + textContainerInset.top - contentOffset.y)
-    }
-
-    /// The line half a line under the shown text's top; nil until the fragments laid out reach there (`laidOut`).
-    var topLine: Int? {
-        let y = shownRect.minY + (font?.lineHeight ?? 0) / 2
-        guard let top = fragment(under: y), top.layoutFragmentFrame.minY + textContainerInset.top <= y else { return nil }
-        return document.line(at: offset(top.rangeInElement.location))
-    }
-
-    /// The first fragment laid out that reaches below `y`.
-    private func fragment(under y: CGFloat) -> NSTextLayoutFragment? {
-        fragments.first { $0.fragment.layoutFragmentFrame.maxY + textContainerInset.top > y }?.fragment
-    }
+    var scrollY: CGFloat? { contentOffset.y }
 
     /// The caret's line in the middle of what shows: far from the viewport TextKit has only estimated the heights above.
     func centerSelection() {
@@ -45,14 +29,6 @@ extension SourceTextView {
         }
     }
 
-    func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
-        guard let location = textRange(.caret(min(top.offset, length)))?.location else { return }
-        scroll(location) { $0.minY - top.below }
-    }
-
-    /// The paragraph at `offset` at the shown text's top.
-    func scroll(toTop offset: Int) { scroll(toShownTop: (offset, shownRect.minY - contentOffset.y)) }
-
     /// Lays out only that paragraph, in two passes, as the estimates above it settle; `y` is the offset for its frame.
     func scroll(_ location: any NSTextLocation, to y: (CGRect) -> CGFloat) {
         guard let manager = textLayoutManager, window != nil else { return }
@@ -65,23 +41,6 @@ extension SourceTextView {
             contentOffset.y = min(max(wanted, least), most)
             manager.textViewportLayoutController.layoutViewport()
         }
-    }
-
-    /// What floats over the text follows a scroll: TextKit lays the viewport out again only past what it had laid out.
-    func scrolled() {
-        completions.follow()
-        previewMath()
-    }
-
-    override func textViewportLayoutControllerWillLayout(_ controller: NSTextViewportLayoutController) {
-        super.textViewportLayoutControllerWillLayout(controller)
-        fragments.removeAll(keepingCapacity: true)
-    }
-
-    override func textViewportLayoutController(_ controller: NSTextViewportLayoutController,
-                                               configureRenderingSurfaceFor fragment: NSTextLayoutFragment) {
-        super.textViewportLayoutController(controller, configureRenderingSurfaceFor: fragment)
-        fragments.append((offset(fragment.rangeInElement.location), fragment))
     }
 
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {

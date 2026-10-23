@@ -235,7 +235,7 @@ final class ProjectModel {
             findHeadings()
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
-        editor.textView.issueClicked = { [weak self] line in
+        editor.textView.issues.clicked = { [weak self] line in
             guard let self else { return }
             if let index = editor.textView.issues.lines[line]?.index {
                 panel.show(.issues)
@@ -515,19 +515,23 @@ final class ProjectModel {
         app?.sidebarShown = true
     }
 
-    #if os(macOS)
-    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or a beep where the core knows nothing of it.
+    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or on the Mac a beep where the core knows
+    /// nothing of it.
     func quickHelp(at offset: Int) async {
         guard let session, let path = editor.path else { return }
         guard let answer = await alerting("Couldn’t Show Quick Help", {
             try await core.call("session_quick_help", ["session": session, "path": path, "offset": offset], as: QuickHelp?.self)
         }), editor.path == path else { return }
-        guard let help = answer else { return NSSound.beep() }
+        guard let help = answer else {
+            #if os(macOS)
+            NSSound.beep()
+            #endif
+            return
+        }
         editor.textView.showQuickHelp(help, at: offset) { [weak self] place in
             Task { await self?.open(place.path, line: place.line, jump: true) }
         }
     }
-    #endif
 
     /// Where the caret is, for the places Go Back and Go Forward keep.
     private var caretPlace: [String: any Sendable]? { openPath.map { ["path": $0, "line": editsText ? cursorLine : 1] } }

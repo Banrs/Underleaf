@@ -9,10 +9,10 @@ final class PDFController: NSObject {
     private static let maxScale: CGFloat = 8
 
     @ObservationIgnored let view = SyncPDFView()
-    private(set) var page = 0
-    private(set) var pageCount = 0
+    var page = 0
+    var pageCount = 0
     private(set) var scale: CGFloat = 1
-    private(set) var zoom = Zoom.fitWidth
+    var zoom = Zoom.fitWidth
     var canZoomIn: Bool { scale < Self.maxScale }
     var canZoomOut: Bool { scale > Self.minScale }
 
@@ -20,7 +20,7 @@ final class PDFController: NSObject {
     @ObservationIgnored var restorePage: Int?
     @ObservationIgnored var restoreZoom: Zoom?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
-    @ObservationIgnored private var toldPages: ClosedRange<Int>?
+    @ObservationIgnored var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
     @ObservationIgnored private var liveShown = false
     @ObservationIgnored private var liveMissed = false
@@ -44,24 +44,6 @@ final class PDFController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
     }
 
-    @objc private func pageChanged() {
-        guard let document = view.document, let page = view.currentPage else { return }
-        if let number = document.number(of: page) { self.page = number }
-        pageCount = document.pageCount
-    }
-
-    var visiblePages: ClosedRange<Int>? {
-        guard let document = view.document, view.hasShownArea else { return nil }
-        let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
-        return shown.min().flatMap { first in shown.max().map { first...$0 } }
-    }
-
-    @objc private func visiblePagesChanged() {
-        guard let pages = visiblePages, pages != toldPages else { return }
-        toldPages = pages
-        onVisiblePages(pages)
-    }
-
     @objc private func scaleChanged() {
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
@@ -72,14 +54,6 @@ final class PDFController: NSObject {
         }
     }
 
-    func apply(_ zoom: Zoom) {
-        switch zoom {
-        case .fitWidth: fitWidth()
-        case .fitPage: fitPage()
-        case .scale(let scale): setScale(CGFloat(scale))
-        }
-    }
-
     func setScale(_ scale: CGFloat) {
         zoom = .scale(Double(self.scale))
         view.autoScales = false
@@ -87,15 +61,6 @@ final class PDFController: NSObject {
     }
 
     func zoom(in zoomIn: Bool) { setScale(scale * (zoomIn ? 1.25 : 0.8)) }
-
-    func go(toPage number: Int) {
-        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
-    }
-
-    func fitWidth() {
-        zoom = .fitWidth
-        view.autoScales = true
-    }
 
     func fitPage() {
         guard let page = view.currentPage, view.hasShownArea else { return }
@@ -155,12 +120,6 @@ final class PDFController: NSObject {
         (page, pageCount) = (0, 0)
     }
 
-    private func restoreIfReady() {
-        guard view.document != nil, view.hasShownArea else { return }
-        if let zoom = restoreZoom.take() { apply(zoom) }
-        if let number = restorePage.take() { go(toPage: number) }
-    }
-
     // MARK: - Live Preview
 
     func showLive(_ read: LiveRead) {
@@ -205,23 +164,6 @@ final class PDFController: NSObject {
         }
     }
 
-    /// SyncTeX resolves only points on a glyph box, so the probe walks down to a line of text.
-    func sourcePoint() -> (page: Int, point: CGPoint)? {
-        guard let document = view.document else { return nil }
-        let probe = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + view.shownHeight * 0.2)
-        guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
-        let bounds = page.bounds(for: view.displayBox)
-        var point = view.convert(probe, to: page)
-        while point.y > bounds.minY {
-            if let line = page.selectionForLine(at: point), let text = line.string, !text.trimmingCharacters(in: .whitespaces).isEmpty {
-                let box = line.bounds(for: page)
-                point = CGPoint(x: box.midX, y: box.minY)
-                break
-            }
-            point.y -= 6
-        }
-        return (number, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
-    }
 }
 
 final class SyncPDFView: PDFView {
