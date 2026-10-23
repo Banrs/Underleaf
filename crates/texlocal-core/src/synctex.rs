@@ -4,6 +4,7 @@
 mod parser;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -44,7 +45,7 @@ fn pdf_for(project: &Project, live: Option<&Path>) -> Result<PathBuf, CoreError>
         .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))
 }
 
-fn sync_for(project: &Project, live: Option<&Path>) -> Result<SyncTex, CoreError> {
+fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
     SyncTex::beside(&pdf_for(project, live)?)
         .map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
 }
