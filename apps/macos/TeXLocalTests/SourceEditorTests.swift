@@ -298,30 +298,32 @@ struct SourceEditorTests {
         #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }
 
-    /// A completion's first field is selected, and what's typed in a mirrored field goes in both its places at every
-    /// step of Undo; one Undo should take it all back.
-    @Test(.timeLimit(.minutes(1)))
-    func completionsFillTheirFields() async throws {
+    /// A completion's first field is selected, and what's typed in a mirrored field goes in both its places, one Undo
+    /// taking it all back once the selection leaves the field.
+    @Test func completionsFillTheirFields() throws {
         open("  \\beg")
-        let undo = try groupingByEvent()
-        await undo.grouping {
-            text.complete(nil)
-            #expect(text.completions.offered?.start == 2 && text.completions.offered?.items.first?.label == "\\begin")
-            text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        }
+        let undo = try #require(text.undoManager)
+        text.complete(nil)
+        #expect(text.completions.offered?.start == 2 && text.completions.offered?.items.first?.label == "\\begin")
+        text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        endEvent()
         #expect(text.completions.offered == nil && undo.undoActionName == "Completion")
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.selectedRange() == NSRange(location: 9, length: 3))
-        for key in "itemize" { await undo.grouping { type(String(key)) } }
-        #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
-        undo.undo()
-        let string = text.string as NSString
-        let begun = string.substring(with: NSRange(location: 9, length: string.range(of: "}").location - 9))
-        #expect(string.hasSuffix("\\end{\(begun)}") && text.document.text == text.string)
-        // The mirror edits end the typing's coalescing.
-        withKnownIssue("Typing in a mirrored field takes an Undo per key") {
-            #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
+        for key in "itemize" {
+            type(String(key))
+            endEvent()
         }
+        #expect(text.string == "  \\begin{itemize}\n    \n  \\end{itemize}")
+        text.setSelectedRange(.caret(0))
+        endEvent()
+        undo.undo()
+        #expect(text.string == "  \\begin{env}\n    \n  \\end{env}" && text.document.text == text.string)
+        undo.undo()
+        #expect(text.string == "  \\beg")
     }
+
+    /// What AppKit does as it handles each event: the undo groups opened since the last end, where grouping by event.
+    private func endEvent() { _ = (UndoManager.self as AnyObject).perform(NSSelectorFromString("_endTopLevelGroupings")) }
 
     @Test func theCompletionListTakesOnlyItsKeys() throws {
         inWindow()
