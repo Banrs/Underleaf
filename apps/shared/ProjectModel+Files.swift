@@ -47,7 +47,7 @@ extension ProjectModel {
             if isText(now) != wasText {
                 if wasText { _ = await closeDocument(now) }
                 if openPath == now { clearOpenFile() }
-                await open(now, focus: false)
+                await open(now, focus: false, showsSource: false)
             } else {
                 analyze()
             }

@@ -491,7 +491,9 @@ private struct WorkspaceModals: ViewModifier {
         let text = promptText.trimmingCharacters(in: .whitespaces)
         switch prompt {
         case .gotoLine:
-            if let line = Int(text), line >= 1 { project.editor.reveal(line: min(line, project.editor.textView.document.lineCount)) }
+            guard let line = Int(text), line >= 1 else { return }
+            app.showSource = true
+            project.editor.reveal(line: min(line, project.editor.textView.document.lineCount))
         case .gotoPage:
             if let page = Int(text), page >= 1 { app.requestPDF(.goToPage(page)) }
         case .rename(let symbol):

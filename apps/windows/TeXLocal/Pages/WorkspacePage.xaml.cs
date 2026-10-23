@@ -715,8 +715,10 @@ public sealed partial class WorkspacePage : Page
 
     async void OnGoToLine(object sender, RoutedEventArgs e)
     {
-        if (Editor.Path is not null && await AskNumber("Go to line", $"Line (1–{Editor.LineCount})", Editor.Caret.Line, Editor.LineCount) is { } line)
-            Editor.GoTo(line);
+        if (Editor.Path is null || await AskNumber("Go to line", $"Line (1–{Editor.LineCount})", Editor.Caret.Line, Editor.LineCount) is not { } line)
+            return;
+        SourceItem.IsChecked = true;
+        Editor.GoTo(line);
     }
 
     async void OnGoToPage(object sender, RoutedEventArgs e)

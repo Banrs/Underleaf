@@ -337,7 +337,7 @@ final class ProjectModel {
 
     /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
     /// the editor never shows a file without its document. It shows the source, as a PDF command shows the PDF, but for the
-    /// project's own first file.
+    /// project's own first file and a file its rename reopens.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
               showsSource: Bool = true) async {
         openRequests += 1
