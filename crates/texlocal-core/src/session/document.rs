@@ -9,7 +9,7 @@ use super::Msg;
 use crate::analyze::Facts;
 use crate::lock;
 use crate::projects::{Symbols, file_kind};
-use crate::syntax::{SourceDocument, TextEdit};
+use crate::syntax::{SourceDocument, TextEdit, TextRange};
 
 struct Text {
     source: SourceDocument,
@@ -50,9 +50,17 @@ impl Document {
         }))
     }
 
-    pub fn edit(&self, start: u32, length: u32, text: &str) {
+    /// `SourceDocument::apply_edit`, told to the session.
+    pub fn edit(
+        &self,
+        start: u32,
+        length: u32,
+        text: &str,
+        changing: Option<TextRange>,
+        mirroring: bool,
+    ) -> Vec<TextEdit> {
         let mut held = lock(&self.0.text);
-        held.source.edit(start, length, text);
+        let mirrors = (held.source).apply_edit(start, length, text, changing, mirroring);
         held.edited = true;
         let edit = TextEdit {
             start,
@@ -60,6 +68,7 @@ impl Document {
             text: text.to_owned(),
         };
         self.changed(&mut held, Some(edit));
+        mirrors
     }
 
     /// The session asks for a reload of the text it saw at `version`.

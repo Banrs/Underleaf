@@ -10,8 +10,8 @@ use serde::Serialize;
 use super::scan::{Group, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
-    INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice,
-    utf16,
+    INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, range, span,
+    splice, utf16,
 };
 
 /// What a key does instead of the editor: an edit typed as a key types (so it undoes with the typing around it),
@@ -267,8 +267,28 @@ impl SourceDocument {
         key(start, length, format!("\n{indented}"), start + 1 + indent)
     }
 
+    /// Each change to the editor's storage, once: the closers typing put in and a snippet's
+    /// fields move with it. While a field is typed in, the edits that put what was typed in its
+    /// other places, from the last; the editor applies them `mirroring`, which answers none.
+    pub fn apply_edit(
+        &mut self,
+        start: u32,
+        length: u32,
+        text: &str,
+        changing: Option<TextRange>,
+        mirroring: bool,
+    ) -> Vec<TextEdit> {
+        self.edit(start, length, text);
+        let delta = utf16(text) as i64 - length as i64;
+        self.follow(range(start, length), delta, changing, mirroring);
+        if mirroring {
+            return Vec::new();
+        }
+        self.mirror_snippet()
+    }
+
     /// `changing`, the range the editor said it would change, stands for `old` when it is within it from the same start.
-    pub fn follow(
+    pub(super) fn follow(
         &mut self,
         old: TextRange,
         delta: i64,

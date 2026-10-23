@@ -15,8 +15,10 @@ mod watch;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
@@ -24,14 +26,16 @@ use crate::analyze::{self, Heading};
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
 use crate::logparse::LogItem;
+use crate::paths::RelPath;
 use crate::projects::Symbols;
-use crate::service::{Service, arg, out, string_arg};
+use crate::service::{Service, out, parse};
 use crate::syntax::TextEdit;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
 pub(crate) use build::Engine;
 pub use document::Document;
+use navigate::Place;
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -41,11 +45,7 @@ pub(crate) enum Msg {
         version: u64,
         edit: Option<TextEdit>,
     },
-    Command {
-        name: String,
-        args: Value,
-        reply: Reply,
-    },
+    Command(Command, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
     /// A symbol scan's, numbered, with what the project's checks found and the session's count
@@ -57,6 +57,166 @@ pub(crate) enum Msg {
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
+}
+
+/// A session's commands, by the name a host sends without its `session_` (docs/core-api.md),
+/// with their arguments.
+#[derive(Deserialize)]
+#[serde(
+    tag = "call",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum Command {
+    Close,
+    SetOptions {
+        auto_compile: Option<bool>,
+    },
+    Rescan,
+    OpenDocument {
+        path: RelPath,
+    },
+    CloseDocument {
+        path: RelPath,
+    },
+    Composing {
+        path: RelPath,
+        composing: bool,
+    },
+    Save {
+        reporting: Option<bool>,
+    },
+    Resolve {
+        path: RelPath,
+        answer: String,
+    },
+    Compile {
+        #[serde(default)]
+        auto: bool,
+    },
+    StopCompile,
+    Clean,
+    Analyze {
+        path: RelPath,
+    },
+    Search {
+        query: String,
+    },
+    Usages {
+        path: RelPath,
+        offset: u32,
+    },
+    QuickHelp {
+        path: RelPath,
+        offset: u32,
+    },
+    QuickOpen {
+        query: String,
+    },
+    Navigate {
+        from: Place,
+    },
+    Back {
+        at: Place,
+    },
+    Forward {
+        at: Place,
+    },
+    Replace {
+        query: String,
+        replacement: String,
+    },
+    RenameSymbol {
+        kind: String,
+        from: String,
+        to: String,
+    },
+    Fix {
+        id: String,
+    },
+    HistoryList,
+    HistorySave {
+        name: String,
+    },
+    HistoryCompare {
+        id: String,
+        path: RelPath,
+    },
+    HistoryRestore {
+        id: String,
+        paths: Option<Vec<RelPath>>,
+    },
+    Issue {
+        next: bool,
+    },
+    ChooseIssue {
+        index: Option<usize>,
+    },
+    Rename {
+        from: RelPath,
+        to: Option<String>,
+        name: Option<String>,
+    },
+    CreateEntry {
+        #[serde(default)]
+        folder: String,
+        name: String,
+        #[serde(default)]
+        dir: bool,
+    },
+    SetSettings {
+        patch: Value,
+    },
+    PrepareDelete {
+        path: RelPath,
+    },
+    Deleted {
+        path: RelPath,
+        trashed: Option<bool>,
+    },
+    LiveStart,
+    LiveStop,
+    LiveView {
+        first: u32,
+        last: u32,
+    },
+    LiveCaret {
+        path: RelPath,
+        offset: usize,
+    },
+    LiveLog {
+        shown: bool,
+    },
+    #[cfg(test)]
+    Panic,
+    #[cfg(test)]
+    State,
+    #[serde(other)]
+    Unknown,
+}
+
+/// A session's command as sent: its session's number beside it.
+#[derive(Deserialize)]
+struct Call {
+    session: u64,
+    #[serde(flatten)]
+    command: Command,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Opening {
+    id: String,
+    session: u64,
+    #[serde(default)]
+    auto_compile: bool,
+}
+
+#[derive(Deserialize)]
+struct OutlineAt {
+    session: u64,
+    path: RelPath,
+    line: usize,
 }
 
 /// One a panic drops says the session stopped, where the host would otherwise be told
@@ -85,6 +245,10 @@ pub(crate) fn stopped() -> CoreError {
     CoreError::internal("The project stopped after an internal error. Close it and open it again.")
 }
 
+fn gone() -> CoreError {
+    CoreError::not_found("No such session")
+}
+
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     docs: Arc<Mutex<HashMap<String, Document>>>,
@@ -97,6 +261,8 @@ pub(crate) struct Outline {
     seq: u64,
     headings: Vec<Heading>,
 }
+
+pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>;
 
 pub struct Sessions {
     service: Arc<Service>,
@@ -143,34 +309,41 @@ impl Sessions {
         lock(&docs).get(&path).cloned()
     }
 
-    /// Must run inside a tokio runtime that goes on running its tasks between calls.
-    pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        match command {
-            "session_open" => self.open(args),
-            _ => self.send(command, args).await,
+    /// Every command a host sends. A session's are queued for it as this is called, so they are
+    /// taken in the order sent however their answers are awaited; the others run as the answer
+    /// is awaited, inside a tokio runtime that goes on running its tasks between calls.
+    pub fn call(self: &Arc<Self>, command: &str, args: Value) -> Answer {
+        let (name, sessions) = (command.to_owned(), Arc::clone(self));
+        match command.strip_prefix("session_") {
+            Some("open") => Box::pin(async move { sessions.open(parse(&name, args)?) }),
+            Some("outline_current") => Box::pin(std::future::ready(self.outline_current(args))),
+            Some(command) => Box::pin(self.send(command, args)),
+            None => Box::pin(async move { sessions.service.call(&name, args).await }),
         }
     }
 
     /// The session's first events may come before this answers. A number open already is
     /// refused (409).
-    fn open(&self, args: &Value) -> Result<Value, CoreError> {
-        let id: u64 = arg(args, "session")?;
+    fn open(&self, opening: Opening) -> Result<Value, CoreError> {
+        let Opening {
+            id,
+            session,
+            auto_compile,
+        } = opening;
         let taken = || CoreError::conflict("That session is open already");
-        if lock(&self.open).contains_key(&id) {
+        if lock(&self.open).contains_key(&session) {
             return Err(taken());
         }
-        let project_id = string_arg(args, "id")?.to_owned();
-        let project = self.service.project(&project_id)?;
-        let auto_compile = arg::<Option<bool>>(args, "autoCompile")?.unwrap_or(false);
+        let project = self.service.project(&id)?;
         let (tx, rx) = mpsc::unbounded_channel();
-        let new = actor::Actor::new(self, id, project_id, project, tx.clone(), auto_compile);
+        let new = actor::Actor::new(self, session, id, project, tx.clone(), auto_compile);
         let (actor, opened) = new?;
         let open = Open {
             tx: tx.clone(),
             docs: Arc::clone(&actor.shared),
             outline: Arc::clone(&actor.outline),
         };
-        match lock(&self.open).entry(id) {
+        match lock(&self.open).entry(session) {
             Entry::Occupied(_) => return Err(taken()),
             Entry::Vacant(entry) => entry.insert(open),
         };
@@ -179,64 +352,61 @@ impl Sessions {
             actor.run(rx).await;
             // A close took it off already, and the host may have opened the number again.
             let mut open = lock(&sessions);
-            if open.get(&id).is_some_and(|open| open.tx.same_channel(&tx)) {
-                open.remove(&id);
+            if open
+                .get(&session)
+                .is_some_and(|open| open.tx.same_channel(&tx))
+            {
+                open.remove(&session);
             }
         });
         Ok(opened)
     }
 
-    /// Queued for the session's task as this is called, so commands are taken in the order
-    /// sent however their answers are awaited.
-    pub fn send(
+    /// The heading a line is under, from the outline kept: on no queue, for the UI thread.
+    fn outline_current(&self, args: Value) -> Result<Value, CoreError> {
+        let OutlineAt {
+            session,
+            path,
+            line,
+        } = parse("outline_current", args)?;
+        let outline = Arc::clone(&lock(&self.open).get(&session).ok_or_else(gone)?.outline);
+        let current = analyze::current_heading(&lock(&outline).headings, &path.0, line);
+        out(current)
+    }
+
+    fn send(
         &self,
-        command: &str,
-        args: &Value,
+        name: &str,
+        args: Value,
     ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
-        let gone = || CoreError::not_found("No such session");
-        let name = command.trim_start_matches("session_").to_owned();
-        let closing = name == "close";
         let (reply, answer) = oneshot::channel();
-        let queued = arg::<u64>(args, "session").and_then(|id| {
+        let queued = parse(name, args).and_then(|Call { session, command }| {
+            let closing = matches!(command, Command::Close);
+            let message = Msg::Command(command, Reply(Some(reply)));
             let open = lock(&self.open);
-            let session = open.get(&id).ok_or_else(gone)?;
-            if name == "outline_current" {
-                let outline = Arc::clone(&session.outline);
-                drop(open);
-                let _ = reply.send(outline_current(&outline, args));
-                return Ok(id);
-            }
-            let message = Msg::Command {
-                name,
-                args: args.clone(),
-                reply: Reply(Some(reply)),
-            };
-            session.tx.send(message).map_err(|_| gone())?;
-            Ok(id)
+            let open = open.get(&session).ok_or_else(gone)?;
+            open.tx.send(message).map_err(|_| gone())?;
+            Ok((session, closing))
         });
         let open = Arc::clone(&self.open);
         async move {
-            let id = queued?;
+            let (session, closing) = queued?;
             let answer = answer.await.unwrap_or_else(|_| Err(gone()));
             // Taken off here, not as the task ends, so the number is free once this answers.
             if closing {
-                lock(&open).remove(&id);
+                lock(&open).remove(&session);
             }
             answer
         }
     }
 
+    /// Every session closed, saving what it can, and every build and live preview stopped, as
+    /// a host quits.
     pub async fn close_all(&self) {
         let ids: Vec<u64> = lock(&self.open).keys().copied().collect();
-        for id in ids {
-            let _ = self.send("session_close", &json!({ "session": id })).await;
+        for session in ids {
+            let _ = self.send("close", json!({ "session": session })).await;
         }
+        self.service.kill_all();
     }
-}
-
-fn outline_current(outline: &Mutex<Outline>, args: &Value) -> Result<Value, CoreError> {
-    let path = paths::rel_key(string_arg(args, "path")?)?;
-    let line = arg(args, "line")?;
-    let current = analyze::current_heading(&lock(outline).headings, &path, line);
-    out(current)
 }

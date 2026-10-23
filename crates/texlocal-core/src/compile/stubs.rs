@@ -336,7 +336,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     // and its record goes before the folder moves, where the build can't reach it.
     create_project(&service.data_dir, "taken", "blank", None).unwrap();
     let refused = service
-        .call("rename_project", &json!({ "id": "two", "name": "taken" }))
+        .call("rename_project", json!({ "id": "two", "name": "taken" }))
         .await;
     assert_eq!(refused.unwrap_err().status, 409);
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -344,7 +344,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
 
     let started = Instant::now();
     service
-        .call("rename_project", &json!({ "id": "two", "name": "uno" }))
+        .call("rename_project", json!({ "id": "two", "name": "uno" }))
         .await
         .unwrap();
     assert!(two.await.unwrap().stopped);

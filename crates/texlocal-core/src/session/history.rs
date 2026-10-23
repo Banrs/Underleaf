@@ -10,14 +10,12 @@ use serde_json::{Value, json};
 
 use super::Reply;
 use super::actor::Actor;
-use crate::paths;
+use crate::paths::RelPath;
 use crate::projects::{self, History, Taken};
-use crate::service::{arg, out, string_arg};
+use crate::service::out;
 use crate::syntax::TextEdit;
 use crate::texpresso::delta;
 use crate::{CoreError, lf, lock, lossy_string};
-
-type Job = Box<dyn FnOnce(&History) -> Result<Value, CoreError> + Send>;
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -37,68 +35,70 @@ impl Actor {
         Ok(taken.map(|id| id.to_string()))
     }
 
-    /// List, save and compare, which read the store but change no file of the project's.
-    pub fn history_command(&self, name: &str, args: &Value, reply: Reply) {
-        match self.history_job(name, args) {
-            Ok(job) => {
-                let history = Arc::clone(&self.history);
-                tokio::task::spawn_blocking(move || reply.send(job(&lock(&history))));
-            }
-            Err(err) => reply.send(Err(err)),
-        }
+    /// List, save and compare read the store but change no file of the project's, so they
+    /// answer from beside the session.
+    fn beside(
+        &self,
+        job: impl FnOnce(&History) -> Result<Value, CoreError> + Send + 'static,
+        reply: Reply,
+    ) {
+        let history = Arc::clone(&self.history);
+        tokio::task::spawn_blocking(move || reply.send(job(&lock(&history))));
     }
 
-    fn history_job(&self, name: &str, args: &Value) -> Result<Job, CoreError> {
-        Ok(match name {
-            "history_list" => Box::new(|history| out(history.list()?)),
-            "history_save" => {
-                let name = string_arg(args, "name")?.trim().to_owned();
-                if name.is_empty() {
-                    return Err(CoreError::bad_request("A version needs a name."));
-                }
-                Box::new(move |history| {
-                    history.take(now(), Taken::Named(name))?;
-                    out(history.list()?.first())
-                })
-            }
-            _ => {
-                let id = string_arg(args, "id")?.to_owned();
-                let path = paths::rel_key(string_arg(args, "path")?)?;
-                if !projects::is_text(&path) {
-                    return Err(CoreError::bad_request("Only a text file can be compared."));
-                }
-                let edited = self.docs.get(&path).map(|doc| doc.doc.snapshot().0);
-                let abs = self.project.root.join(&path);
-                Box::new(move |history| {
-                    let text = |bytes| lf(lossy_string(bytes));
-                    let old = history.files(&id, |p| p == path)?.pop();
-                    let new = match (edited, fs::read(abs)) {
-                        (Some(edited), _) => edited,
-                        (None, Err(err)) if err.kind() == ErrorKind::NotFound => String::new(),
-                        (None, read) => text(read?),
-                    };
-                    out(compare(
-                        &old.map_or(String::new(), |(_, bytes)| text(bytes)),
-                        &new,
-                    ))
-                })
-            }
-        })
+    pub fn history_list(&self, reply: Reply) {
+        self.beside(|history| out(history.list()?), reply);
+    }
+
+    pub fn history_save(&self, name: String, reply: Reply) {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return reply.send(Err(CoreError::bad_request("A version needs a name.")));
+        }
+        let save = move |history: &History| {
+            history.take(now(), Taken::Named(name))?;
+            out(history.list()?.first())
+        };
+        self.beside(save, reply);
+    }
+
+    pub fn history_compare(&self, id: String, path: String, reply: Reply) {
+        if !projects::is_text(&path) {
+            let refused = CoreError::bad_request("Only a text file can be compared.");
+            return reply.send(Err(refused));
+        }
+        let edited = self.docs.get(&path).map(|doc| doc.doc.snapshot().0);
+        let abs = self.project.root.join(&path);
+        let compared = move |history: &History| {
+            let text = |bytes| lf(lossy_string(bytes));
+            let old = history.files(&id, |p| p == path)?.pop();
+            let new = match (edited, fs::read(abs)) {
+                (Some(edited), _) => edited,
+                (None, Err(err)) if err.kind() == ErrorKind::NotFound => String::new(),
+                (None, read) => text(read?),
+            };
+            out(compare(
+                &old.map_or(String::new(), |(_, bytes)| text(bytes)),
+                &new,
+            ))
+        };
+        self.beside(compared, reply);
     }
 
     /// The snapshot's files, or those of them `paths` names, as they were: an open document's as
     /// edits, the others written, all or none, as a replace does.
-    pub fn history_restore(&mut self, args: &Value) -> Result<Value, CoreError> {
-        let paths: Option<Vec<String>> = arg(args, "paths")?;
-        let paths = paths.map(|paths| paths.iter().map(|p| paths::rel_key(p)).collect());
-        let paths: Option<Vec<String>> = paths.transpose()?;
+    pub fn history_restore(
+        &mut self,
+        id: &str,
+        paths: Option<Vec<RelPath>>,
+    ) -> Result<Value, CoreError> {
         let open = self.texts_to_edit("restored")?;
         let chosen = |path: &str| {
             paths
                 .as_ref()
-                .is_none_or(|paths| paths.iter().any(|p| p == path))
+                .is_none_or(|paths| paths.iter().any(|p| p.0 == path))
         };
-        let files = lock(&self.history).files(string_arg(args, "id")?, chosen)?;
+        let files = lock(&self.history).files(id, chosen)?;
         let (mut edits, mut others) = (Vec::new(), Vec::new());
         for (path, bytes) in files {
             match open.iter().find(|(open, ..)| *open == path) {

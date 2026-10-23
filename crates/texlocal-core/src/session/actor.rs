@@ -20,13 +20,13 @@ use super::build::Builds;
 use super::live::Live;
 use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
-use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
+use super::{Command, Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
 use crate::events::Queued;
 use crate::logparse::{Fix, LogItem};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, History, Query, Symbols, file_kind};
-use crate::service::{Service, arg, out, string_arg};
+use crate::service::{Service, out, unknown};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{self, SymbolKind, Text, TextEdit};
@@ -299,7 +299,7 @@ impl Actor {
         }
         rx.close();
         while let Ok(message) = rx.try_recv() {
-            if let Msg::Command { reply, .. } = message {
+            if let Msg::Command(_, reply) = message {
                 reply.send(Err(super::stopped()));
             }
         }
@@ -317,7 +317,7 @@ impl Actor {
     fn handle(&mut self, message: Msg) {
         match message {
             Msg::Changed { doc, version, edit } => self.changed(doc, version, edit),
-            Msg::Command { name, args, reply } => self.command(&name, &args, reply),
+            Msg::Command(command, reply) => self.command(command, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
@@ -377,133 +377,103 @@ impl Actor {
 
     // MARK: - Commands
 
-    fn command(&mut self, name: &str, args: &Value, reply: Reply) {
-        match name {
-            "clean" => self.clean(reply),
-            "fix" => self.fix(args, reply),
-            "analyze" => match string_arg(args, "path").and_then(paths::rel_key) {
-                Ok(path) => self.analyze(path, reply),
-                Err(err) => reply.send(Err(err)),
-            },
-            "search" => match query(args) {
-                Ok(query) => self.search(query, reply),
-                Err(err) => reply.send(Err(err)),
-            },
-            "history_list" | "history_save" | "history_compare" => {
-                self.history_command(name, args, reply);
-            }
-            "usages" | "quick_help" => {
-                let path = string_arg(args, "path").and_then(paths::rel_key);
-                match path.and_then(|path| Ok((path, arg::<u32>(args, "offset")?))) {
-                    Ok((path, offset)) if name == "usages" => self.usages(&path, offset, reply),
-                    Ok((path, offset)) => self.quick_help(&path, offset, reply),
-                    Err(err) => reply.send(Err(err)),
-                }
-            }
-            "quick_open" => match string_arg(args, "query") {
-                Ok(query) => self.quick_open(query.to_owned(), reply),
-                Err(err) => reply.send(Err(err)),
-            },
+    /// Those worked out beside the session answer from there; the rest answer as they're done,
+    /// those with nothing to say `()`, which is null.
+    #[expect(clippy::unit_arg)]
+    fn command(&mut self, command: Command, reply: Reply) {
+        let answer = match command {
+            Command::Clean => return self.clean(reply),
+            Command::Fix { id } => return self.fix(&id, reply),
+            Command::Analyze { path } => return self.analyze(path.0, reply),
+            Command::Search { query } => return self.search(&query, reply),
+            Command::Usages { path, offset } => return self.usages(&path.0, offset, reply),
+            Command::QuickHelp { path, offset } => return self.quick_help(&path.0, offset, reply),
+            Command::QuickOpen { query } => return self.quick_open(query, reply),
+            Command::HistoryList => return self.history_list(reply),
+            Command::HistorySave { name } => return self.history_save(name, reply),
+            Command::HistoryCompare { id, path } => return self.history_compare(id, path.0, reply),
             // After the `tree` event they make, so the host has the entry's row as it hears.
-            "rename" | "create_entry" => {
-                let answer = self.answer(name, args);
-                let then = Queued::Then(Box::new(move || reply.send(answer)));
-                let _ = self.events.send(then);
+            Command::Rename { from, to, name } => {
+                let answer = self.rename(&from.0, to, name);
+                return self.after_events(answer, reply);
             }
+            Command::CreateEntry { folder, name, dir } => {
+                let answer = self.create_entry(&folder, &name, dir);
+                return self.after_events(answer, reply);
+            }
+            Command::Close => Ok(self.close()),
+            Command::SetOptions { auto_compile } => {
+                out(auto_compile.map(|auto| self.auto_compile = auto))
+            }
+            Command::Rescan => out(self.handle(Msg::Fs(vec![Change {
+                path: self.project.root.clone(),
+                structural: true,
+            }]))),
+            Command::OpenDocument { path } => self.open_document(&path.0).and_then(out),
+            Command::CloseDocument { path } => self.close_document(&path.0),
+            Command::Composing { path, composing } => out(self.composing(&path.0, composing)),
+            Command::Save { reporting } => self
+                .save_edits(reporting.unwrap_or(true))
+                .map(|saved| json!({ "saved": saved })),
+            Command::Resolve { path, answer } => self.resolve(&path.0, &answer),
+            Command::Compile { auto } => self.compile(auto).and_then(out),
+            Command::StopCompile => out(self.stop_compile()),
+            Command::Issue { next } => Ok(self.next_issue(next)),
+            Command::ChooseIssue { index } => Ok(self.choose_issue(index)),
+            Command::Navigate { from } => Ok(self.navigate(from)),
+            Command::Back { at } => Ok(self.step(at, true)),
+            Command::Forward { at } => Ok(self.step(at, false)),
+            Command::Replace { query, replacement } => self.replace(&query, &replacement),
+            Command::RenameSymbol { kind, from, to } => self.rename_symbol(&kind, &from, &to),
+            Command::HistoryRestore { id, paths } => self.history_restore(&id, paths),
+            Command::SetSettings { patch } => self.set_settings(&patch, true),
+            Command::PrepareDelete { path } => self.prepare_delete(&path.0),
+            Command::Deleted { path, trashed } => out(self.deleted(&path.0, trashed)),
+            Command::LiveStart => Ok(self.live_start_asked()),
+            Command::LiveStop => Ok(self.live_stop_asked()),
+            Command::LiveLog { shown } => out(self.show_live_log(shown)),
+            Command::LiveView { first, last } => out(self.live_view(first, last)),
+            Command::LiveCaret { path, offset } => out(self.live_caret(path.0, offset)),
             #[cfg(test)]
-            "panic" => panic!("a bug in the session"),
-            _ => {
-                let answer = self.answer(name, args);
-                reply.send(answer);
+            Command::Panic => panic!("a bug in the session"),
+            #[cfg(test)]
+            Command::State => Ok(self.state()),
+            Command::Unknown => Err(unknown()),
+        };
+        reply.send(answer);
+    }
+
+    fn after_events(&self, answer: Result<Value, CoreError>, reply: Reply) {
+        let then = Queued::Then(Box::new(move || reply.send(answer)));
+        let _ = self.events.send(then);
+    }
+
+    fn composing(&mut self, path: &str, composing: bool) {
+        if let Some(doc) = self.docs.get_mut(path) {
+            doc.composing = composing;
+            if !composing && doc.dirty() {
+                self.after(Timer::Autosave);
             }
         }
     }
 
-    fn answer(&mut self, name: &str, args: &Value) -> Result<Value, CoreError> {
-        let path = || paths::rel_key(string_arg(args, "path")?);
-        match name {
-            "close" => return Ok(self.close()),
-            #[cfg(test)]
-            "state" => return Ok(self.state()),
-            "set_options" => {
-                if let Some(auto) = arg::<Option<bool>>(args, "autoCompile")? {
-                    self.auto_compile = auto;
-                }
+    fn deleted(&mut self, path: &str, trashed: Option<bool>) {
+        self.deleting.remove(path);
+        if trashed.unwrap_or(true) {
+            for doc in self.docs_within(path) {
+                self.close_doc(&doc, "deleted");
             }
-            "rescan" => self.handle(Msg::Fs(vec![Change {
-                path: self.project.root.clone(),
-                structural: true,
-            }])),
-            "open_document" => self.open_document(&path()?)?,
-            "close_document" => return self.close_document(&path()?),
-            "composing" => {
-                let (path, composing) = (path()?, arg::<bool>(args, "composing")?);
-                if let Some(doc) = self.docs.get_mut(&path) {
-                    doc.composing = composing;
-                    if !composing && doc.dirty() {
-                        self.after(Timer::Autosave);
-                    }
-                }
-            }
-            "save" => {
-                let reporting = arg::<Option<bool>>(args, "reporting")?.unwrap_or(true);
-                return Ok(json!({ "saved": self.save_edits(reporting)? }));
-            }
-            "resolve" => return self.resolve(&path()?, string_arg(args, "answer")?),
-            "compile" => self.compile(arg::<Option<bool>>(args, "auto")?.unwrap_or(false))?,
-            "stop_compile" => self.stop_compile(),
-            "issue" => return Ok(self.next_issue(arg(args, "next")?)),
-            "choose_issue" => return Ok(self.choose_issue(arg(args, "index")?)),
-            "rename" => {
-                let from = paths::rel_key(string_arg(args, "from")?)?;
-                let to = match arg::<Option<String>>(args, "name")? {
-                    Some(name) => {
-                        let folder = from.rsplit_once('/').map_or("", |(folder, _)| folder);
-                        paths::in_folder(folder, &name)
-                    }
-                    None => string_arg(args, "to")?.to_owned(),
-                };
-                return self.rename(&from, &to);
-            }
-            "create_entry" => {
-                let folder = arg::<Option<String>>(args, "folder")?.unwrap_or_default();
-                let path = paths::in_folder(&folder, string_arg(args, "name")?);
-                let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
-                let made = self.service.with_project(&self.project_id, |project| {
-                    projects::create_free(&project.root, &path, dir)
-                })?;
-                self.reload_tree();
-                return Ok(json!({ "path": made }));
-            }
-            "navigate" => return self.navigate(args),
-            "back" => return self.step(args, true),
-            "forward" => return self.step(args, false),
-            "replace" => return self.replace(args),
-            "rename_symbol" => return self.rename_symbol(args),
-            "history_restore" => return self.history_restore(args),
-            "set_settings" => return self.set_settings(&arg(args, "patch")?, true),
-            "prepare_delete" => return self.prepare_delete(&path()?),
-            "deleted" => {
-                let path = path()?;
-                self.deleting.remove(&path);
-                if arg::<Option<bool>>(args, "trashed")?.unwrap_or(true) {
-                    for doc in self.docs_within(&path) {
-                        self.close_doc(&doc, "deleted");
-                    }
-                    self.reload_tree();
-                }
-            }
-            "live_start" => return Ok(self.live_start_asked()),
-            "live_stop" => return Ok(self.live_stop_asked()),
-            "live_log" => self.show_live_log(arg(args, "shown")?),
-            "live_view" => self.live_view(arg(args, "first")?, arg(args, "last")?),
-            "live_caret" => self.live_caret(path()?, arg(args, "offset")?),
-            _ => {
-                let unknown = format!("Unknown command: session_{name}");
-                return Err(CoreError::not_found(unknown));
-            }
+            self.reload_tree();
         }
-        Ok(Value::Null)
+    }
+
+    fn create_entry(&mut self, folder: &str, name: &str, dir: bool) -> Result<Value, CoreError> {
+        let path = paths::in_folder(folder, name);
+        let made = self.service.with_project(&self.project_id, |project| {
+            projects::create_free(&project.root, &path, dir)
+        })?;
+        self.reload_tree();
+        Ok(json!({ "path": made }))
     }
 
     #[cfg(test)]
@@ -1033,7 +1003,8 @@ impl Actor {
     // MARK: - Search and replace
 
     /// Worked out beside the session, as an analysis is: it reads every text file.
-    fn search(&self, query: Query, reply: Reply) {
+    fn search(&self, query: &str, reply: Reply) {
+        let query = Query::new(query, false, false);
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
@@ -1043,8 +1014,8 @@ impl Actor {
         });
     }
 
-    fn replace(&self, args: &Value) -> Result<Value, CoreError> {
-        let (query, to) = (query(args)?, string_arg(args, "replacement")?);
+    fn replace(&self, query: &str, to: &str) -> Result<Value, CoreError> {
+        let query = Query::new(query, false, false);
         let open = self.texts_to_edit("replaced")?;
         let found = |_: &str, text: &str| query.places(text);
         self.edit_project("Before Replace All", &open, &projects::is_text, &found, to)
@@ -1088,8 +1059,7 @@ impl Actor {
 
     /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
     /// one key of a list alone.
-    fn rename_symbol(&self, args: &Value) -> Result<Value, CoreError> {
-        let noun = string_arg(args, "kind")?;
+    fn rename_symbol(&self, noun: &str, from: &str, to: &str) -> Result<Value, CoreError> {
         let kind = match noun {
             "label" => SymbolKind::Label,
             "citation" => SymbolKind::Citation,
@@ -1099,7 +1069,6 @@ impl Actor {
                 ));
             }
         };
-        let (from, to) = (string_arg(args, "from")?, string_arg(args, "to")?);
         if to.is_empty() || to.contains(|c: char| "{}%\\,".contains(c) || c.is_whitespace()) {
             return Err(CoreError::bad_request(format!(
                 "A {noun} can't be empty or have spaces, commas, braces, % or \\ in it."
@@ -1133,11 +1102,9 @@ impl Actor {
 
     /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
     /// analysis does; its password or UAC dialog cancelled answers null, nothing to do.
-    fn fix(&mut self, args: &Value, reply: Reply) {
-        let unknown = || CoreError::bad_request("There's no such fix.");
-        let fix = string_arg(args, "id").and_then(|id| Fix::parse(id).ok_or_else(unknown));
-        let edits = match fix {
-            Ok(Fix::Install(file)) => {
+    fn fix(&mut self, id: &str, reply: Reply) {
+        let edits = match Fix::parse(id) {
+            Some(Fix::Install(file)) => {
                 let (service, settings) =
                     (Arc::clone(&self.service), self.project.settings.clone());
                 tokio::spawn(async move {
@@ -1149,16 +1116,16 @@ impl Actor {
                 });
                 return;
             }
-            Ok(Fix::AddPackage(name)) => self
+            Some(Fix::AddPackage(name)) => self
                 .add_package(&name)
                 .map(|mut added| added["edits"].take()),
-            Ok(Fix::Xelatex) => self
+            Some(Fix::Xelatex) => self
                 .set_settings(&json!({ "engine": "xelatex" }), false)
                 .map(|_| Value::Null),
-            Ok(Fix::ShellEscape) => self
+            Some(Fix::ShellEscape) => self
                 .set_settings(&json!({ "shellEscape": true }), false)
                 .map(|_| Value::Null),
-            Err(err) => Err(err),
+            None => Err(CoreError::bad_request("There's no such fix.")),
         };
         reply.send(edits.map(|edits| fixed(edits, &self.project.settings)));
     }
@@ -1239,13 +1206,23 @@ impl Actor {
 
     // MARK: - Files
 
-    fn rename(&mut self, from: &str, to: &str) -> Result<Value, CoreError> {
+    /// `name` renames the entry in its folder, `to` moves it.
+    fn rename(
+        &mut self,
+        from: &str,
+        to: Option<String>,
+        name: Option<String>,
+    ) -> Result<Value, CoreError> {
+        let to = match name {
+            Some(name) => paths::in_folder(from.rsplit_once('/').map_or("", |(f, _)| f), &name),
+            None => to.ok_or_else(|| CoreError::bad_request("A rename needs `to` or `name`"))?,
+        };
         if !self.save_edits(true)? {
             return Ok(Value::Null);
         }
         let (renamed, main) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
-            let renamed = projects::rename_entry(project, from, to)?;
+            let renamed = projects::rename_entry(project, from, &to)?;
             self.preview.stop(&project.root)?;
             Ok((renamed, main))
         })?;
@@ -1337,10 +1314,6 @@ fn fixed(edits: Value, settings: &Path) -> Value {
 /// The files a symbol is defined and used in.
 fn tex(rel: &str) -> bool {
     matches!(file_kind(rel), "tex" | "bib")
-}
-
-fn query(args: &Value) -> Result<Query, CoreError> {
-    string_arg(args, "query").map(|query| Query::new(query, false, false))
 }
 
 /// The open documents' text as the editor has it, each taken without holding the others.

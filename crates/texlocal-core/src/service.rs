@@ -5,18 +5,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::compile::CompileManager;
+use crate::import::Conflict;
 use crate::paths::Project;
 use crate::projects::{self, History};
 use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, inprocess, lock, templates, tinytex, wordmatch, zipexport};
+use crate::wordmatch::PdfPage;
+use crate::{CoreError, import, inprocess, lock, templates, tinytex, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
@@ -35,6 +37,115 @@ pub struct Service {
     /// One for each store, so two sessions of a project take turns with it: one's pruning would
     /// remove what the other has stored for a snapshot not yet written.
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
+}
+
+/// The commands outside a session, by the name a host sends (docs/core-api.md), with their
+/// arguments.
+#[derive(Deserialize)]
+#[serde(
+    tag = "call",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+enum Command {
+    Status,
+    SetTexpressoDir {
+        dir: Option<PathBuf>,
+    },
+    SetTexDir {
+        dir: Option<PathBuf>,
+    },
+    Catalogue,
+    ListProjects,
+    CreateProject {
+        name: String,
+        template: Option<String>,
+        engine: Option<String>,
+    },
+    DuplicateProject {
+        id: String,
+        name: String,
+    },
+    FreeProjectName,
+    RenameProject {
+        id: String,
+        name: String,
+    },
+    FileTree {
+        id: String,
+    },
+    CreateEntry {
+        id: String,
+        path: String,
+        #[serde(default)]
+        dir: bool,
+    },
+    SynctexForward {
+        id: String,
+        file: String,
+        line: u32,
+        #[serde(flatten)]
+        live: Live,
+    },
+    SynctexInverse {
+        id: String,
+        page: f64,
+        x: f64,
+        y: f64,
+        text: Option<String>,
+        at: Option<usize>,
+        #[serde(flatten)]
+        live: Live,
+    },
+    SynctexMatch {
+        id: String,
+        file: String,
+        line: u32,
+        column: usize,
+        pages: Vec<PdfPage>,
+    },
+    Locate {
+        path: PathBuf,
+    },
+    PdfPath {
+        id: String,
+    },
+    ExportZip {
+        id: String,
+        dest: PathBuf,
+        #[serde(default)]
+        for_arxiv: bool,
+    },
+    KillAll,
+    InstallTex,
+    ImportFiles {
+        id: String,
+        #[serde(default)]
+        dir: String,
+        #[serde(default)]
+        paths: Vec<PathBuf>,
+        conflict: Option<Conflict>,
+    },
+    OpenPath {
+        path: PathBuf,
+    },
+    ForgetFolder {
+        id: String,
+    },
+    SetUiState {
+        id: String,
+        patch: Value,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+/// With `live`, the live preview of the host's project session (`session`) syncs, not the build.
+#[derive(Deserialize)]
+struct Live {
+    #[serde(default)]
+    live: bool,
+    session: Option<u64>,
 }
 
 impl Service {
@@ -66,13 +177,13 @@ impl Service {
         Project::find(&self.data_dir, id)
     }
 
-    /// With `live`, the live preview of the client's project session (`session`) syncs, not
-    /// the build: its number, and its PDF, the one shown.
-    fn live(&self, args: &Value) -> Result<Option<(u64, PathBuf)>, CoreError> {
-        if !arg::<Option<bool>>(args, "live")?.unwrap_or(false) {
+    /// The live session's number and its PDF, the one shown, when the live preview syncs.
+    fn live(&self, live: Live) -> Result<Option<(u64, PathBuf)>, CoreError> {
+        if !live.live {
             return Ok(None);
         }
-        let session = arg::<Option<u64>>(args, "session")?
+        let session = live
+            .session
             .ok_or_else(|| CoreError::bad_request("Live sync needs the project session"))?;
         Ok(Some((session, self.texpresso.live_pdf(session)?)))
     }
@@ -108,37 +219,34 @@ impl Service {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
-    pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        let s = |key: &str| string_arg(args, key);
-        let project = || self.project(s("id")?);
-        let folder = || arg::<Option<String>>(args, "dir");
+    pub async fn call(&self, name: &str, args: Value) -> Result<Value, CoreError> {
         // A build or live preview would go on in a folder moved or taken off the list, and
         // report back from the old path.
         let stop = |root: &Path| {
             self.compile.stop(root);
             self.texpresso.stop(root)
         };
-        match command {
-            "status" => out(self.status().await),
-            "set_texpresso_dir" => {
-                let dir = folder()?.map(PathBuf::from);
-                if let Some(dir) = &dir
-                    && tex::program_at(&dir.join("texpresso")).is_none()
-                {
+        match parse(name, args)? {
+            Command::Status => out(self.status().await),
+            Command::SetTexpressoDir { dir } => {
+                let texpresso = dir
+                    .as_ref()
+                    .map(|dir| tex::program_at(&dir.join("texpresso")));
+                if texpresso.is_some_and(|found| found.is_none()) {
                     return Err(CoreError::bad_request(NO_TEXPRESSO));
                 }
                 AppSettings::update(&self.data_dir, |app| app.texpresso_dir = dir)?;
                 out(self.status().await)
             }
-            "set_tex_dir" => {
-                let no_latexmk = || CoreError::bad_request(NO_LATEXMK);
-                let dir =
-                    folder()?.map(|dir| tex::tex_bin_dir(Path::new(&dir)).ok_or_else(no_latexmk));
-                let dir = dir.transpose()?;
-                AppSettings::update(&self.data_dir, |app| app.tex_dir = dir)?;
+            Command::SetTexDir { dir } => {
+                let bin = dir.map(|dir| tex::tex_bin_dir(&dir).ok_or(()));
+                let bin = bin
+                    .transpose()
+                    .map_err(|()| CoreError::bad_request(NO_LATEXMK))?;
+                AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
                 out(self.status().await)
             }
-            "catalogue" => Ok(json!({
+            Command::Catalogue => Ok(json!({
                 "templates": templates::TEMPLATES.map(|(id, title)| json!({ "id": id, "title": title })),
                 "engines": Engine::ALL.map(|engine| json!({
                     "id": engine,
@@ -146,125 +254,128 @@ impl Service {
                     "default": engine == Engine::default(),
                 })),
             })),
-            "list_projects" => out(projects::list_projects(&self.data_dir)?),
+            Command::ListProjects => projects::list_projects(&self.data_dir).and_then(out),
             // The project made is answered, so its `id` is the name it got.
-            "create_project" => {
-                let template = arg::<Option<String>>(args, "template")?;
-                let engine = arg::<Option<String>>(args, "engine")?;
-                out(projects::create_project(
-                    &self.data_dir,
-                    s("name")?,
-                    template.as_deref().unwrap_or("article"),
-                    engine.as_deref(),
-                )?)
+            Command::CreateProject {
+                name,
+                template,
+                engine,
+            } => {
+                let template = template.as_deref().unwrap_or("article");
+                projects::create_project(&self.data_dir, &name, template, engine.as_deref())
+                    .and_then(out)
             }
-            "duplicate_project" => out(import::duplicate_project(self, s("id")?, s("name")?)?),
-            "free_project_name" => {
+            Command::DuplicateProject { id, name } => {
+                import::duplicate_project(self, &id, &name).and_then(out)
+            }
+            Command::FreeProjectName => {
                 Ok(json!({ "name": projects::free_project_name(&self.data_dir)? }))
             }
-            "rename_project" => {
-                let (id, name) = (s("id")?, s("name")?);
-                out(self.with_project(id, |_| {
-                    projects::rename_project(&self.data_dir, id, name, stop)
-                })?)
+            Command::RenameProject { id, name } => self
+                .with_project(&id, |_| {
+                    projects::rename_project(&self.data_dir, &id, &name, stop)
+                })
+                .and_then(out),
+            Command::FileTree { id } => projects::file_tree(&self.project(&id)?).and_then(out),
+            Command::CreateEntry { id, path, dir } => self.with_project(&id, |project| {
+                Ok(json!({ "path": projects::create_free(&project.root, &path, dir)? }))
+            }),
+            Command::SynctexForward {
+                id,
+                file,
+                line,
+                live,
+            } => {
+                let pdf = self.live(live)?.map(|(_, pdf)| pdf);
+                synctex::synctex_forward_at(&self.project(&id)?, &file, line, pdf.as_deref())
+                    .and_then(out)
             }
-            "file_tree" => out(projects::file_tree(&project()?)?),
-            "create_entry" => {
-                let path = s("path")?;
-                let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
-                out(self.with_project(s("id")?, |project| {
-                    Ok(json!({ "path": projects::create_free(&project.root, path, dir)? }))
-                })?)
-            }
-            "synctex_forward" => out(synctex::synctex_forward_at(
-                &project()?,
-                s("file")?,
-                arg(args, "line")?,
-                self.live(args)?.as_ref().map(|(_, pdf)| pdf.as_path()),
-            )?),
-            "synctex_inverse" => {
-                let project = project()?;
-                let click =
-                    arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
-                let live = self.live(args)?;
+            Command::SynctexInverse {
+                id,
+                page,
+                x,
+                y,
+                text,
+                at,
+                live,
+            } => {
+                let live = self.live(live)?;
                 let typeset = |rel: &str| self.texpresso.live_text(live.as_ref()?.0, rel);
-                out(synctex::synctex_inverse(
-                    &project,
-                    arg(args, "page")?,
-                    arg(args, "x")?,
-                    arg(args, "y")?,
-                    click.as_ref().map(|(text, at)| (text.as_str(), *at)),
-                    live.as_ref().map(|(_, pdf)| pdf.as_path()),
-                    &typeset,
-                )?)
+                let pdf = live.as_ref().map(|(_, pdf)| pdf.as_path());
+                let click = text.as_deref().zip(at);
+                let project = self.project(&id)?;
+                synctex::synctex_inverse(&project, page, x, y, click, pdf, &typeset).and_then(out)
             }
-            "synctex_match" => out(synctex::match_forward(
-                &project()?.root,
-                s("file")?,
-                arg(args, "line")?,
-                arg(args, "column")?,
-                &arg::<Vec<wordmatch::PdfPage>>(args, "pages")?,
-            )?),
-            "locate" => out(projects::locate(&self.data_dir, Path::new(s("path")?))?),
-            "pdf_path" => {
-                let project = project()?;
-                let pdf =
-                    settings::read_settings(&project.settings).output(&project.build, "pdf")?;
-                Ok(json!(pdf.to_string_lossy()))
+            Command::SynctexMatch {
+                id,
+                file,
+                line,
+                column,
+                pages,
+            } => synctex::match_forward(&self.project(&id)?.root, &file, line, column, &pages)
+                .and_then(out),
+            Command::Locate { path } => projects::locate(&self.data_dir, &path).and_then(out),
+            Command::PdfPath { id } => {
+                let project = self.project(&id)?;
+                let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
+                Ok(json!(pdf?.to_string_lossy()))
             }
-            "export_zip" => {
-                let project = project()?;
-                let added = match arg::<Option<bool>>(args, "forArxiv")? {
-                    Some(true) => zipexport::for_arxiv(&project)?,
-                    _ => Vec::new(),
+            Command::ExportZip {
+                id,
+                dest,
+                for_arxiv,
+            } => {
+                let project = self.project(&id)?;
+                let added = match for_arxiv {
+                    true => zipexport::for_arxiv(&project)?,
+                    false => Vec::new(),
                 };
-                let dest = Path::new(s("dest")?);
-                out(zipexport::export_zip(&project.root, dest, &added)?)
+                zipexport::export_zip(&project.root, &dest, &added).and_then(out)
             }
             // On quit, while a compile may be in flight, stop the latexmk trees that would outlive the app.
-            "kill_all" => {
+            Command::KillAll => {
                 self.kill_all();
                 Ok(Value::Null)
             }
-            "install_tex" if inprocess::IN_PROCESS => Err(inprocess::no_installs()),
-            "install_tex" => {
+            Command::InstallTex if inprocess::IN_PROCESS => Err(inprocess::no_installs()),
+            Command::InstallTex => {
                 tinytex::install(&self.tool_paths().0).await?;
                 out(self.status().await)
             }
-            "import_files" => out(import::import_files(
-                self,
-                s("id")?,
-                &folder()?.unwrap_or_default(),
-                &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
-                arg(args, "conflict")?,
-                projects::discard,
-            )?),
-            "open_path" => out(projects::open_path(self, Path::new(s("path")?))?),
-            "forget_folder" => {
-                projects::forget_folder(self, s("id")?, stop)?;
-                Ok(Value::Null)
-            }
-            "set_ui_state" => out(self.with_project(s("id")?, |project| {
-                settings::write_ui(&project.ui, &arg(args, "patch")?)
-            })?),
-            _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
+            Command::ImportFiles {
+                id,
+                dir,
+                paths,
+                conflict,
+            } => import::import_files(self, &id, &dir, &paths, conflict, projects::discard)
+                .and_then(out),
+            Command::OpenPath { path } => projects::open_path(self, &path).and_then(out),
+            Command::ForgetFolder { id } => projects::forget_folder(self, &id, stop).and_then(out),
+            Command::SetUiState { id, patch } => self
+                .with_project(&id, |project| settings::write_ui(&project.ui, &patch))
+                .and_then(out),
+            Command::Unknown => Err(unknown()),
         }
     }
 }
 
-pub(crate) fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
-    T::deserialize(args.get(key).unwrap_or(&Value::Null))
-        .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))
+pub(crate) fn unknown() -> CoreError {
+    CoreError::not_found("Unknown command")
 }
 
-pub(crate) fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> {
-    args.get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| arg::<String>(args, key).unwrap_err())
+/// A command's arguments as the type that takes them; with `name` as their `call`, an enum of
+/// commands tagged by it reads which it is (`command` is some commands' argument).
+pub(crate) fn parse<T: DeserializeOwned>(name: &str, mut args: Value) -> Result<T, CoreError> {
+    let object = args
+        .as_object_mut()
+        .ok_or_else(|| CoreError::bad_request("The arguments aren't a JSON object"))?;
+    object.insert("call".into(), name.into());
+    T::deserialize(args).map_err(|err| CoreError::bad_request(format!("Invalid arguments: {err}")))
 }
 
-pub(crate) fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {
-    serde_json::to_value(value).map_err(|err| CoreError::internal(err.to_string()))
+/// A command's answer as JSON, which every answer of the core's serializes to.
+pub(crate) fn out(value: impl Serialize) -> Result<Value, CoreError> {
+    Ok(json!(value))
 }
 
 #[cfg(test)]

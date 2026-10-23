@@ -1,79 +1,222 @@
 //! The commands by name: a JSON object of arguments in, the answer's JSON out, as the C ABI forwards them.
+//! An argument a command needs is required: one left out is no call, never the text's start.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::edit::map_selections;
-use super::theme::{self, Rgba};
-use super::{SourceDocument, TextEdit, TextRange};
+use super::complete::SnippetField;
+use super::edit::{Style, map_selections};
+use super::theme::{self, Appearance, Rgba};
+use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
 use crate::projects::Query;
+use crate::service::parse;
+
+/// A source's commands; docs/core-api.md lists them.
+#[derive(Deserialize)]
+#[serde(
+    tag = "call",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+enum Command {
+    Completions {
+        caret: u32,
+        #[serde(default)]
+        explicit: bool,
+    },
+    ToggleComment {
+        selections: Vec<TextRange>,
+    },
+    SetHeading {
+        caret: u32,
+        command: String,
+    },
+    InsertBlock {
+        id: String,
+        selection: TextRange,
+    },
+    InsertSymbol {
+        command: String,
+        selection: TextRange,
+    },
+    MathAt {
+        caret: u32,
+    },
+    TextStyles {
+        selection: TextRange,
+    },
+    CodeRanges {
+        selection: TextRange,
+        #[serde(rename = "for")]
+        checker: Checker,
+    },
+    Words {
+        #[serde(flatten)]
+        range: TextRange,
+    },
+    Find {
+        query: String,
+        #[serde(default)]
+        match_case: bool,
+        #[serde(default)]
+        whole_word: bool,
+    },
+    Type {
+        selection: TextRange,
+        text: String,
+        auto_pair: Option<bool>,
+    },
+    DeleteBackward {
+        selection: TextRange,
+        auto_pair: Option<bool>,
+    },
+    InsertNewline {
+        selection: TextRange,
+    },
+    Partner {
+        at: u32,
+    },
+    Definition {
+        at: u32,
+    },
+    StartSnippet {
+        fields: Vec<SnippetField>,
+        at: u32,
+    },
+    EndSnippet,
+    Tab {
+        selections: Vec<TextRange>,
+        step: Option<i64>,
+    },
+    MoveLines {
+        selections: Vec<TextRange>,
+        up: bool,
+    },
+    DuplicateLines {
+        selections: Vec<TextRange>,
+    },
+    DeleteLines {
+        selections: Vec<TextRange>,
+    },
+    ToggleStyle {
+        selections: Vec<TextRange>,
+        style: Style,
+    },
+    Wrap {
+        selections: Vec<TextRange>,
+        template: String,
+    },
+    MapSelections {
+        edits: Vec<TextEdit>,
+        selections: Vec<TextRange>,
+    },
+}
+
+/// The commands that need no document.
+#[derive(Deserialize)]
+#[serde(
+    tag = "call",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+enum Free {
+    DropText {
+        path: String,
+        kind: Option<String>,
+        into: Option<String>,
+    },
+    Themes,
+    MathSvg {
+        #[serde(default)]
+        tex: String,
+        #[serde(default)]
+        display: bool,
+        size: Option<f64>,
+        color: Option<Rgba>,
+    },
+    GlyphSvg {
+        #[serde(default)]
+        command: String,
+        size: Option<f64>,
+        side: Option<f64>,
+        color: Option<Rgba>,
+    },
+    Menus,
+    HeadingStyles,
+    ThemeColors {
+        theme: String,
+        #[serde(flatten)]
+        appearance: Appearance,
+    },
+    Legible {
+        color: Rgba,
+        background: Rgba,
+        fill: Rgba,
+        #[serde(default)]
+        increase_contrast: bool,
+        ratio: Option<f64>,
+    },
+}
 
 fn json(value: impl Serialize) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
-/// A command is sent what it needs, never given the text's start for an argument left out.
-fn get<T: DeserializeOwned>(args: &Value, key: &str) -> Option<T> {
-    T::deserialize(args.get(key).unwrap_or(&Value::Null)).ok()
-}
-
-fn optional<T: DeserializeOwned>(args: &Value, key: &str, default: T) -> Option<T> {
-    get::<Option<T>>(args, key).map(|value| value.unwrap_or(default))
-}
-
-fn object(args_json: &str) -> Option<Value> {
-    serde_json::from_str(args_json)
-        .ok()
-        .filter(Value::is_object)
+fn read<T: DeserializeOwned>(command: &str, args_json: &str) -> Option<T> {
+    parse(command, serde_json::from_str(args_json).ok()?).ok()
 }
 
 impl SourceDocument {
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
-        let a = &object(args_json)?;
-        let caret = || get::<u32>(a, "caret");
-        let selection = || get::<TextRange>(a, "selection");
-        let selections = || get::<Vec<TextRange>>(a, "selections");
-        let string = |key| get::<String>(a, key);
-        let auto_pair = || optional(a, "autoPair", true);
-        match command {
-            "completions" => json(self.completions(caret()?, optional(a, "explicit", false)?)),
-            "toggle_comment" => json(self.toggle_comment(&selections()?)),
-            "set_heading" => json(self.set_heading(caret()?, &string("command")?)),
-            "insert_block" => json(self.insert_block(&string("id")?, selection()?)),
-            "insert_symbol" => json(self.insert_symbol(&string("command")?, selection()?)),
-            "math_at" => json(self.math_at(caret()?)),
-            "text_styles" => json(self.text_styles(selection()?)),
-            "code_ranges" => json(self.code_ranges(selection()?, get(a, "for")?)),
-            "words" => json(json!({ "words": self.words(TextRange::deserialize(a).ok()?) })),
-            "find" => {
-                let (case, whole) = (
-                    optional(a, "matchCase", false)?,
-                    optional(a, "wholeWord", false)?,
-                );
-                json(self.find(&Query::new(&string("query")?, case, whole)))
+        match read(command, args_json)? {
+            Command::Completions { caret, explicit } => json(self.completions(caret, explicit)),
+            Command::ToggleComment { selections } => json(self.toggle_comment(&selections)),
+            Command::SetHeading { caret, command } => json(self.set_heading(caret, &command)),
+            Command::InsertBlock { id, selection } => json(self.insert_block(&id, selection)),
+            Command::InsertSymbol { command, selection } => {
+                json(self.insert_symbol(&command, selection))
             }
-            "type" => json(self.type_text(selection()?, &string("text")?, auto_pair()?)),
-            "delete_backward" => json(self.delete_backward(selection()?, auto_pair()?)),
-            "insert_newline" => json(self.insert_newline(selection()?)),
-            "partner" => json(self.partner(get(a, "at")?)),
-            "definition" => json(self.definition(get(a, "at")?)),
-            "start_snippet" => {
-                json(self.start_snippet(&get::<Vec<_>>(a, "fields")?, get(a, "at")?))
+            Command::MathAt { caret } => json(self.math_at(caret)),
+            Command::TextStyles { selection } => json(self.text_styles(selection)),
+            Command::CodeRanges { selection, checker } => {
+                json(self.code_ranges(selection, checker))
             }
-            "end_snippet" => json(self.end_snippet()),
-            "tab" => json(self.tab(&selections()?, optional(a, "step", 1)?)),
-            "move_lines" => json(self.move_lines(&selections()?, get(a, "up")?)),
-            "duplicate_lines" => json(self.duplicate_lines(&selections()?)),
-            "delete_lines" => json(self.delete_lines(&selections()?)),
-            "toggle_style" => json(self.toggle_style(&selections()?, get(a, "style")?)),
-            "wrap" => json(self.wrap(&selections()?, &string("template")?)),
-            "map_selections" => json(map_selections(
-                &get::<Vec<TextEdit>>(a, "edits")?,
-                &selections()?,
-            )),
-            _ => None,
+            Command::Words { range } => json(json!({ "words": self.words(range) })),
+            Command::Find {
+                query,
+                match_case,
+                whole_word,
+            } => json(self.find(&Query::new(&query, match_case, whole_word))),
+            Command::Type {
+                selection,
+                text,
+                auto_pair,
+            } => json(self.type_text(selection, &text, auto_pair.unwrap_or(true))),
+            Command::DeleteBackward {
+                selection,
+                auto_pair,
+            } => json(self.delete_backward(selection, auto_pair.unwrap_or(true))),
+            Command::InsertNewline { selection } => json(self.insert_newline(selection)),
+            Command::Partner { at } => json(self.partner(at)),
+            Command::Definition { at } => json(self.definition(at)),
+            Command::StartSnippet { fields, at } => json(self.start_snippet(&fields, at)),
+            Command::EndSnippet => json(self.end_snippet()),
+            Command::Tab { selections, step } => json(self.tab(&selections, step.unwrap_or(1))),
+            Command::MoveLines { selections, up } => json(self.move_lines(&selections, up)),
+            Command::DuplicateLines { selections } => json(self.duplicate_lines(&selections)),
+            Command::DeleteLines { selections } => json(self.delete_lines(&selections)),
+            Command::ToggleStyle { selections, style } => {
+                json(self.toggle_style(&selections, style))
+            }
+            Command::Wrap {
+                selections,
+                template,
+            } => json(self.wrap(&selections, &template)),
+            Command::MapSelections { edits, selections } => {
+                json(map_selections(&edits, &selections))
+            }
         }
     }
 }
@@ -113,46 +256,53 @@ fn tex_reads(path: &str) -> bool {
 
 /// The commands that need no document; docs/core-api.md lists them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
-    let a = &object(args_json)?;
-    let string = |key, default: &str| optional(a, key, default.to_owned());
-    let color = || optional(a, "color", BLACK);
-    match command {
-        "drop_text" => {
-            let (kind, into) = (string("kind", "")?, string("into", "tex")?);
-            json(dropped(&get::<String>(a, "path")?, &kind, &into))
-        }
-        "themes" => json(theme::THEMES.map(|t| json!({ "id": t.id, "title": t.title }))),
-        "math_svg" => rendered(render::math_svg(
-            &string("tex", "")?,
-            optional(a, "display", false)?,
-            optional(a, "size", 13.0)?,
-            color()?,
+    match read(command, args_json)? {
+        Free::DropText { path, kind, into } => json(dropped(
+            &path,
+            kind.as_deref().unwrap_or(""),
+            into.as_deref().unwrap_or("tex"),
         )),
-        "glyph_svg" => rendered(render::glyph_svg(
-            &string("command", "")?,
-            optional(a, "size", 19.0)?,
-            optional(a, "side", 24.0)?,
-            color()?,
+        Free::Themes => json(theme::THEMES.map(|t| json!({ "id": t.id, "title": t.title }))),
+        Free::MathSvg {
+            tex,
+            display,
+            size,
+            color,
+        } => rendered(render::math_svg(
+            &tex,
+            display,
+            size.unwrap_or(13.0),
+            color.unwrap_or(BLACK),
         )),
-        "menus" => {
+        Free::GlyphSvg {
+            command,
+            size,
+            side,
+            color,
+        } => rendered(render::glyph_svg(
+            &command,
+            size.unwrap_or(19.0),
+            side.unwrap_or(24.0),
+            color.unwrap_or(BLACK),
+        )),
+        Free::Menus => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
         }
-        "heading_styles" => json(headings::heading_styles(None, false)),
-        "theme_colors" => {
-            let theme = theme::theme(&get::<String>(a, "theme")?)?;
-            json(theme::theme_colors(
-                theme,
-                &Deserialize::deserialize(a).ok()?,
-            ))
+        Free::HeadingStyles => json(headings::heading_styles(None, false)),
+        Free::ThemeColors { theme, appearance } => {
+            json(theme::theme_colors(theme::theme(&theme)?, &appearance))
         }
-        "legible" => {
-            let increase_contrast = optional(a, "increaseContrast", false)?;
-            let ratio = optional(a, "ratio", theme::text_contrast(increase_contrast))?;
-            let (background, fill) = (get(a, "background")?, get(a, "fill")?);
-            json(theme::legible(get(a, "color")?, background, fill, ratio))
+        Free::Legible {
+            color,
+            background,
+            fill,
+            increase_contrast,
+            ratio,
+        } => {
+            let ratio = ratio.unwrap_or_else(|| theme::text_contrast(increase_contrast));
+            json(theme::legible(color, background, fill, ratio))
         }
-        _ => None,
     }
 }
 

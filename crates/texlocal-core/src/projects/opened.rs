@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(Path::new(&project.path), folder);
 
         let patch = json!({ "id": id, "patch": { "expandedFolders": ["chapters"] } });
-        service.call("set_ui_state", &patch).await.unwrap();
+        service.call("set_ui_state", patch).await.unwrap();
         let found = service.project(&id).unwrap();
         assert_eq!(found.settings, found.ui);
         assert_eq!(read_ui(&found.ui).expanded_folders, ["chapters"]);
