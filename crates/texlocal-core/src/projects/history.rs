@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::files::{Planned, write_all};
-use super::skip_unreadable;
 use super::tree::visit_files;
+use super::{read_capped, skip_unreadable};
 use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{Project, safe_write_path};
@@ -114,10 +114,7 @@ impl History {
         let objects = self.objects();
         let mut files = BTreeMap::new();
         visit_files(&self.root, &mut |abs, rel| {
-            if !fs::metadata(abs).is_ok_and(|meta| meta.len() <= MAX_KEPT) {
-                return Ok(true);
-            }
-            let Some(bytes) = skip_unreadable(fs::read(abs))? else {
+            let Some(bytes) = read_capped(abs, MAX_KEPT)? else {
                 return Ok(true);
             };
             let hash: String = Sha256::digest(&bytes)

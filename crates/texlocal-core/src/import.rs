@@ -17,7 +17,7 @@ use zip::result::ZipError;
 
 use crate::analyze::Facts;
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
-use crate::projects::{self, ProjectInfo, Trash};
+use crate::projects::{self, ProjectInfo, Trash, is_litter, walk};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
@@ -72,37 +72,6 @@ const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
     ("lualatex", &["luacode", "luatexja", "luaotfload"]),
 ];
 
-/// The files under a path, each by its path named from the path's own name `rel`. A drop leaves
-/// links inside a folder behind, as it imports what was dropped; a duplicate follows `links` to
-/// files, as the tree and an export do.
-fn collect(
-    abs: &Path,
-    rel: String,
-    meta: &fs::Metadata,
-    links: bool,
-    files: &mut Vec<(String, PathBuf)>,
-) -> Result<(), CoreError> {
-    if meta.is_file() {
-        files.push((rel, abs.to_path_buf()));
-    } else if meta.is_dir() {
-        for entry in fs::read_dir(abs).map_err(CoreError::at(abs))? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !projects::is_litter(&name) {
-                let path = entry.path();
-                // An entry's own metadata doesn't follow a link; a folder's could cycle.
-                let meta = if links && path.is_file() {
-                    fs::metadata(&path)?
-                } else {
-                    entry.metadata()?
-                };
-                collect(&path, in_folder(&rel, &name), &meta, links, files)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// A bad path fails the drop before anything lands. Without `conflict`, a drop onto existing
 /// entries writes nothing and reports them, for the host to ask about; with Replace, `trash`
 /// discards them.
@@ -117,9 +86,19 @@ pub fn import_files(
     let mut files = Vec::new();
     for abs in paths {
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
-        // A dropped link is followed: dropping it names what it points at.
+        // A dropped link is followed: dropping it names what it points at. A link inside a
+        // dropped folder is left behind, as what was dropped is imported.
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
-        collect(abs, name.into_owned(), &meta, false, &mut files)?;
+        if meta.is_file() {
+            files.push((name.into_owned(), abs.clone()));
+        } else if meta.is_dir() {
+            walk(abs, &|rel| !rel.split('/').any(is_litter), &mut |entry| {
+                if !entry.dir && !entry.link {
+                    files.push((in_folder(&name, &entry.rel), entry.path.clone()));
+                }
+                Ok(true)
+            })?;
+        }
     }
     let root = service.project(id)?.root;
     let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
@@ -465,13 +444,13 @@ pub(crate) fn duplicate_project(
         ));
     }
     let root = service.project(id)?.root;
-    let mut found = Vec::new();
-    let meta = fs::metadata(&root)?;
-    collect(&root, String::new(), &meta, true, &mut found)?;
-    let files: Vec<_> = (found.into_iter())
-        .filter(|(path, _)| !left_out(path))
-        .map(|(path, abs)| (path, Source::File(abs)))
-        .collect();
+    let mut files = Vec::new();
+    walk(&root, &|rel| !left_out(rel), &mut |entry| {
+        if !entry.dir {
+            files.push((entry.rel.clone(), Source::File(entry.path.clone())));
+        }
+        Ok(true)
+    })?;
     projects::new_project(&service.data_dir, name, |copy| {
         write_files(copy, &files, None)?;
         // Copied apart, as the generic writes refuse it; a folder put in the library by hand may

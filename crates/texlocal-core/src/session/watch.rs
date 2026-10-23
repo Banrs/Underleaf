@@ -12,7 +12,7 @@ use super::Msg;
 use crate::SETTINGS_FILE;
 use crate::analyze::disk_spelling;
 use crate::paths::within;
-use crate::projects::TreeNode;
+use crate::projects::{TreeNode, listed};
 
 #[derive(Debug)]
 pub(crate) struct Change {
@@ -140,13 +140,11 @@ pub(crate) fn classify(
     meaning
 }
 
-/// A save renames a new file over a listed one, which leaves the listing as it was; nor
-/// does the tree list a hidden file. A rename that changes only case leaves a file at the old
+/// A save renames a new file over a listed one, which leaves the listing as it was, as does an
+/// entry the tree doesn't list. A rename that changes only case leaves a file at the old
 /// spelling on a volume that ignores case.
 fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.starts_with('.')
-        || index.files.contains(rel) && disk_spelling(root, rel).as_deref() == Some(rel)
+    !listed(rel) || index.files.contains(rel) && disk_spelling(root, rel).as_deref() == Some(rel)
 }
 
 #[cfg(test)]

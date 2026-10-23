@@ -2,9 +2,9 @@
 //! What goes in is what an import takes back: all but what `left_out` names.
 
 use std::ffi::OsStr;
-use std::fs::{self, DirEntry, File};
+use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 use serde_json::json;
@@ -17,32 +17,62 @@ use crate::atomic::{create_temp, persist};
 use crate::checks::bib_file;
 use crate::error::CoreError;
 use crate::paths::{Project, in_build_dir, safe_path, safe_rel_file};
-use crate::projects::is_litter;
+use crate::projects::{Entry, is_litter, walk};
 use crate::settings::read_settings;
 
 /// `added`: files of the export's own, each at its path in the archive in place of the project's.
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
     let parent = dest.parent().expect("a file is in a folder");
     let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
-
     // Resolved as the walk resolves the project, so a destination spelled through a link is recognised.
-    let mut export = Export {
-        writer: ZipWriter::new(file),
-        archive_dir: dunce::canonicalize(parent).map_err(CoreError::at(dest))?,
-        archive_names: [dest.file_name(), temp_path.file_name()],
-        added,
+    let archive_dir = dunce::canonicalize(parent).map_err(CoreError::at(dest))?;
+    let archive = |entry: &Entry| {
+        let names = [dest.file_name(), temp_path.file_name()];
+        names.contains(&Some(OsStr::new(&entry.name)))
+            && entry
+                .path
+                .parent()
+                .and_then(|dir| dunce::canonicalize(dir).ok())
+                == Some(archive_dir.clone())
     };
-    export.add_dir(root, "")?;
+    let replaced = |rel: &str| added.iter().any(|(path, _)| path.eq_ignore_ascii_case(rel));
+    let mut writer = ZipWriter::new(file);
+    walk(
+        root,
+        &|rel| !left_out(rel) && !replaced(rel),
+        &mut |entry| {
+            if entry.dir {
+                let modified = fs::metadata(&entry.path).and_then(|meta| meta.modified());
+                writer.add_directory(format!("{}/", entry.rel), options(modified))?;
+            } else if !archive(entry) {
+                // One gone since it was listed is left out.
+                match add_file(&mut writer, &entry.rel, &entry.path) {
+                    Err(err) if err.status == 404 => {}
+                    added => added?,
+                }
+            }
+            Ok(true)
+        },
+    )?;
     for (rel, bytes) in added {
-        export
-            .writer
-            .start_file(rel, options(Ok(SystemTime::now())))?;
-        export.writer.write_all(bytes)?;
+        writer.start_file(rel, options(Ok(SystemTime::now())))?;
+        writer.write_all(bytes)?;
     }
-    export.writer.finish()?.sync_all()?;
+    writer.finish()?.sync_all()?;
     persist(temp_path, dest).map_err(CoreError::at(dest))
 }
 
+fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), CoreError> {
+    let mut file = File::open(path)?;
+    let meta = file.metadata()?;
+    // Past 4 GiB sizes need ZIP64's fields, and from 3 GiB a file gets them too, since deflate
+    // can store an incompressible one larger.
+    let options = options(meta.modified()).large_file(meta.len() >= 3 << 30);
+    writer.start_file(rel, options)?;
+    // No flush per file: on a deflated entry it forces a sync block into the stream.
+    io::copy(&mut file, writer)?;
+    Ok(())
+}
 /// What arXiv takes beside the project's files: the main file's .bbl from the build folder,
 /// beside the main file with its stem, and a 00README.json naming the compiler and the main file
 /// as the top-level source. Refused while shell escape is on, as arXiv compiles without it, and
@@ -83,75 +113,6 @@ pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, Cor
     let beside_main = Path::new(&main).with_extension("bbl");
     added.push((beside_main.to_string_lossy().into_owned(), fs::read(bbl)?));
     Ok(added)
-}
-
-struct Export<'a> {
-    writer: ZipWriter<File>,
-    archive_dir: PathBuf,
-    archive_names: [Option<&'a OsStr>; 2],
-    added: &'a [(String, Vec<u8>)],
-}
-
-impl Export<'_> {
-    fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
-        let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
-        entries.sort_by_key(DirEntry::file_name);
-        if dunce::canonicalize(dir)? == self.archive_dir {
-            entries.retain(|entry| !self.archive_names.contains(&Some(&entry.file_name())));
-        }
-        self.add_entries(&entries, prefix)
-    }
-
-    /// Adds a folder's listed entries; one gone since it was listed is left out.
-    fn add_entries(&mut self, entries: &[DirEntry], prefix: &str) -> Result<(), CoreError> {
-        for entry in entries {
-            match self.add_entry(entry, prefix) {
-                Err(err) if err.status == 404 => {}
-                added => added?,
-            }
-        }
-        Ok(())
-    }
-
-    fn add_entry(&mut self, entry: &DirEntry, prefix: &str) -> Result<(), CoreError> {
-        let rel = format!("{prefix}{}", entry.file_name().to_string_lossy());
-        let replaced = || {
-            self.added
-                .iter()
-                .any(|(path, _)| path.eq_ignore_ascii_case(&rel))
-        };
-        if left_out(&rel) || replaced() {
-            return Ok(());
-        }
-        let path = entry.path();
-        let entry_type = entry.file_type()?;
-        // Links are followed to files only, as folder links can cycle.
-        if entry_type.is_symlink() {
-            if path.is_file() {
-                self.add_file(&rel, &path)?;
-            }
-        } else if entry_type.is_dir() {
-            let dir = format!("{rel}/");
-            let modified = entry.metadata().and_then(|meta| meta.modified());
-            self.writer.add_directory(dir.clone(), options(modified))?;
-            self.add_dir(&path, &dir)?;
-        } else if entry_type.is_file() {
-            self.add_file(&rel, &path)?;
-        }
-        Ok(())
-    }
-
-    fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
-        let mut file = File::open(path)?;
-        let meta = file.metadata()?;
-        // Past 4 GiB sizes need ZIP64's fields, and from 3 GiB a file gets them too, since deflate
-        // can store an incompressible one larger.
-        let options = options(meta.modified()).large_file(meta.len() >= 3 << 30);
-        self.writer.start_file(rel, options)?;
-        // No flush per file: on a deflated entry it forces a sync block into the stream.
-        io::copy(&mut file, &mut self.writer)?;
-        Ok(())
-    }
 }
 
 /// What an export leaves out and an import leaves behind, by its path in the
@@ -248,27 +209,6 @@ mod tests {
         let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
         let minute = local.format("%Y-%m-%d %H:%M").to_string();
         assert_eq!(dated.unwrap().to_string()[..16], minute);
-    }
-
-    #[test]
-    fn an_entry_that_vanishes_during_the_walk_is_left_out_not_a_failure() {
-        let (dir, root) = project();
-        fs::write(root.join("a.tex"), "a").unwrap();
-        fs::write(root.join("gone.tex"), "x").unwrap();
-        let mut listed: Vec<_> = fs::read_dir(&root).unwrap().map(Result::unwrap).collect();
-        listed.sort_by_key(DirEntry::file_name);
-        fs::remove_file(root.join("gone.tex")).unwrap();
-
-        let dest = dir.path().join("out.zip");
-        let mut export = Export {
-            writer: ZipWriter::new(File::create(&dest).unwrap()),
-            archive_dir: PathBuf::new(),
-            archive_names: [None, None],
-            added: &[],
-        };
-        export.add_entries(&listed, "").unwrap();
-        export.writer.finish().unwrap();
-        assert_eq!(zip_names(&dest), ["a.tex", "main.tex"]);
     }
 
     #[test]
