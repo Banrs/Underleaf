@@ -95,7 +95,7 @@ extension SourceTextView {
     func drawUnderText(in rect: CGRect) {
         let current = selectedRange.length == 0 ? currentLine : nil
         if let current, current.rect.intersects(rect) {
-            UIColor.secondarySystemFill.setFill()
+            UIColor.currentLine.setFill()
             UIBezierPath(roundedRect: current.rect, cornerRadius: 4).fill()
         }
         issues.draw(in: rect, currentLine: current?.number)

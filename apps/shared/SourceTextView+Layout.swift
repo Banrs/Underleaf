@@ -61,6 +61,9 @@ extension SourceTextView {
 
     // MARK: the gutter's numbers and the current line's band, drawn under the text
 
+    /// Xcode 27's Default (Light) and Default (Dark) themes' `DVTSourceTextCurrentLineHighlightColor`, in sRGB.
+    nonisolated static let currentLineRGBA = (light: [0.909804, 0.94902, 1, 1], dark: [0.138526, 0.146864, 0.169283, 1])
+
     var currentLine: (number: Int, rect: CGRect)? {
         let selection = selection, length = length
         guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }

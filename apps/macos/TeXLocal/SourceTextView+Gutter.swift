@@ -49,7 +49,7 @@ extension SourceTextView {
     func drawCurrentLine(_ current: (number: Int, rect: NSRect)?, in rect: NSRect) {
         gutter.drawnLine = current?.rect
         guard let current, current.rect.intersects(rect) else { return }
-        NSColor.secondarySystemFill.setFill()
+        NSColor.currentLine.setFill()
         NSBezierPath(roundedRect: current.rect, xRadius: 4, yRadius: 4).fill()
     }
 }
