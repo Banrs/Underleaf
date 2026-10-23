@@ -18,6 +18,7 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
+| `tl_set_engine(&engine)` | The iPad's TeX: a `tl_engine` of `txp_live_start`, `txp_session_wait` and `txp_run`, copied, set once before `tl_open` (see TeX inside the app). Unused elsewhere. |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
 the call.
@@ -76,6 +77,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings`: `{mainFile, engine, shellEscape, stopOnFirstError}`; `ui`: the ui state (below). All a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
+| `session_rescan` | | null | The folder read again, as when its watcher loses count: the tree, and each open document against the disk. iOS has no watcher (one descriptor a file there), so the iPad sends it as the app comes back to the front. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
@@ -116,9 +118,11 @@ The service's other commands (`id` is the project's): `list_projects` (Opened fo
 `rename_project {id, name}` (400 for an opened folder), `file_tree {id}`, `pdf_path {id}` (a
 new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest, forArxiv?}`,
 `import_files {id, dir?, paths?, conflict}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
-`synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
+`synctex_forward {id, file, line}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
-`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`.
+`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`. The
+core reads the SyncTeX file TeX writes beside the PDF and searches it as TeX Live's `synctex`
+program does, which it never runs.
 
 `export_zip`'s `forArxiv: true` makes the ZIP arXiv takes: the main file's `.bbl` from the build
 folder goes beside the main file with its stem, and `00README.json` at the root names the
@@ -195,12 +199,34 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   depth, and a top-level `build` and `.texlocal.json` (an import makes the new project's own).
   Other dotfiles (`.latexmkrc`) are the author's and go both ways, though the file tree hides
   every dotfile.
-- SyncTeX without TeX's `synctex` program is 404 “SyncTeX is not available: TeX's synctex
-  program was not found.”
+- SyncTeX for a PDF without its SyncTeX file is 404 “This PDF has no SyncTeX: compile it again.”
 - A session a panic ended: the command that was running, and any queued behind it, answer 500
   “The project stopped after an internal error. Close it and open it again.” The session then
   sends a `document` event with an `error` for each open document (what was typed is saved as
   far as it can be) and is gone: later commands for its number answer 404 “No such session”.
+
+## TeX inside the app
+
+iPadOS starts no processes, so there the core runs TeX through the engine the app links
+(TeXpresso's, `tools/texpresso-ios`) and registers with `tl_set_engine`. Before `tl_open` the app
+sets TEXMFCNF, TEXMFROOT, TEXMFDIST, TEXMFVAR, TEXPRESSO_LSR, TEXPRESSO_CACHE (writable, its
+own) and ICU_DATA in its environment, as `tools/texpresso-ios/README.md` says.
+
+- **`status`**: `available` when an engine is registered and TEXMFDIST holds LaTeX
+  (`tex/latex/base/latex.ltx`); `found` and `texpresso` are then TEXMFDIST, the rest null.
+  `install_tex` and `install_package` are 501: nothing can be added to the tree.
+- **Compile** makes the passes latexmk would: the engine (pdfLaTeX, or XeLaTeX with `-no-pdf`
+  and xdvipdfmx at the end) with the flags latexmk's gets, from the project's folder into the
+  build folder; BibTeX when the `.aux` names a bibliography and makeindex when there's a `.idx`,
+  each again only when its input changed, with the project's folder on BIBINPUTS, BSTINPUTS and
+  INDEXSTYLE; TeX again while its `.aux` changes or its log asks, five passes at most. The Build
+  Log has each program's command line and terminal output after TeX's log. A format is made for
+  each engine on the first build, into `$TEXPRESSO_CACHE/formats`; an app whose engine changes
+  clears that folder. LuaLaTeX is a 400; glossaries, bib2gls and biber aren't run, so their
+  warnings stay in the log; shell escape and latexmkrc files don't apply. Stop and the time limit
+  end a program at its next file access.
+- **Live Preview** runs one session at a time: a start stops another project's (its `live`
+  event says why) and begins once that has ended.
 
 ## Commands that fill small gaps
 

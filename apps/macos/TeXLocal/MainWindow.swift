@@ -136,8 +136,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         }
     }
 
-    /// ⌘F, ⌘G and ⌘E go to the editor or to the PDF, by which has the keyboard. On Home ⌘F is its search field's, as
-    /// Finder's and Music's.
+    /// ⌘F, ⌘G and ⌘E go to the editor or to the PDF, by which has the keyboard or shows alone. On Home ⌘F is its search
+    /// field's, as Finder's and Music's.
     private func findAction(for sender: Any?) -> (() -> Void)? {
         guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag)
         else { return nil }
@@ -147,7 +147,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             return { app.searchFocusToken += 1 }
         }
         let pdf = project.pdf
-        guard app.showPDF, pdfPagesHaveKeyboard || pdf.find.field.hasFocus else {
+        guard app.showPDF, !app.showSource || pdfPagesHaveKeyboard || pdf.find.field.hasFocus else {
             guard project.editsText else {
                 guard action == .showFindInterface, project.hasPDF else { return nil }
                 return { app.requestPDF(.find) }

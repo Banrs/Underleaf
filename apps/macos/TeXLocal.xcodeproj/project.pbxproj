@@ -45,6 +45,12 @@
 			path = TeXLocal;
 			sourceTree = "<group>";
 		};
+		A1C0FFEE0A55E7500000D010 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = Shared;
+			path = ../shared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXGroup section */
@@ -52,6 +58,7 @@
 			isa = PBXGroup;
 			children = (
 				828D4CA0BCC36654846EAE79 /* TeXLocal */,
+				A1C0FFEE0A55E7500000D010 /* Shared */,
 				6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */,
 				4AACD0AA9786B91F34A573C0 /* Products */,
 			);
@@ -104,6 +111,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				828D4CA0BCC36654846EAE79 /* TeXLocal */,
+				A1C0FFEE0A55E7500000D010 /* Shared */,
 			);
 			name = TeXLocal;
 			packageProductDependencies = (
@@ -174,7 +182,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/scripts/build-core.sh\"\n";
+			shellScript = "\"$SRCROOT/../../tools/build-core.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

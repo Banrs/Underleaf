@@ -1,11 +1,12 @@
-//! Building a project with latexmk: Stop and quit, an automatic build's timeout, and the
-//! stale-output guard. A session runs one build at a time.
+//! Building a project with latexmk, or where TeX runs inside the app with the passes latexmk
+//! would make (`passes`): Stop and quit, an automatic build's timeout, and the stale-output
+//! guard. A session runs one build at a time.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -71,6 +72,8 @@ struct Running {
     /// latexmk's record, until a good run ends. After a fatal TeX error it
     /// holds the truncated .aux's state, which fails every later run.
     record: Option<PathBuf>,
+    /// Set to end a build that runs inside the app.
+    cancel: Arc<AtomicI32>,
 }
 
 #[derive(Default)]
@@ -109,7 +112,7 @@ impl CompileRun {
 
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
         (allow_existing || self.wrote(ext))
-            .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())
+            .then(|| read_tail(std::fs::File::open(self.output(ext)).ok()?, LOG_READ_MAX).ok())
             .flatten()
             .map(crate::lossy_string)
     }
@@ -143,9 +146,7 @@ impl CompileManager {
         let running = lock(&self.running);
         self.shutdown.store(true, Ordering::Release);
         for entry in running.values() {
-            if let Some(tree) = &entry.tree {
-                tree.kill();
-            }
+            entry.halt();
         }
     }
 
@@ -155,9 +156,7 @@ impl CompileManager {
             return false;
         };
         entry.stopped = true;
-        if let Some(tree) = &entry.tree {
-            tree.kill();
-        }
+        entry.halt();
         if let Some(record) = entry.record.take() {
             let _ = std::fs::remove_file(record);
         }
@@ -197,6 +196,10 @@ impl CompileManager {
             pdf,
             request_started,
         };
+        #[cfg(unix)]
+        if crate::inprocess::IN_PROCESS {
+            return self.compile_in_process(project, &settings, run).await;
+        }
         let command = process::command("latexmk", Some(root), path_env).map(|mut command| {
             // A project's own latexmkrc runs Perl on every build, so only a trusted project's
             // is read.
@@ -233,21 +236,14 @@ impl CompileManager {
             command.arg(format!("./{}", run.main_rel));
             command
         });
-        let spawned = {
-            let mut running = lock(&self.running);
-            if self.shutdown.load(Ordering::Acquire) {
-                return Ok(CompileResult {
-                    stopped: true,
-                    duration_ms: request_started.elapsed().as_millis() as u64,
-                    log: "The build was stopped before it started.".to_string(),
-                    ..CompileResult::default()
-                });
-            }
-            let entry = running.entry(root.to_path_buf()).or_default();
+        let started = self.register(root, |entry| {
             entry.record = Some(run.output("fdb_latexmk"));
             command
                 .and_then(|mut command| Tree::spawn(&mut command))
                 .inspect(|(_, tree)| entry.tree = Some(tree.clone()))
+        });
+        let Some(spawned) = started else {
+            return Ok(stopped_before_start(&run));
         };
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
@@ -263,6 +259,28 @@ impl CompileManager {
                 (end, output)
             }
         };
+        self.ended(root, run, end, "latexmk", output).await
+    }
+
+    /// The build's entry, made under the lock `kill_all` takes: None once quitting began, when
+    /// a build would start an engine nothing ends.
+    fn register<T>(&self, root: &Path, start: impl FnOnce(&mut Running) -> T) -> Option<T> {
+        let mut running = lock(&self.running);
+        if self.shutdown.load(Ordering::Acquire) {
+            return None;
+        }
+        Some(start(running.entry(root.to_path_buf()).or_default()))
+    }
+
+    /// `tool` names what ran, for a failure nothing else explains.
+    async fn ended(
+        &self,
+        root: &Path,
+        run: CompileRun,
+        end: End,
+        tool: &'static str,
+        output: String,
+    ) -> Result<CompileResult, CoreError> {
         let entry = lock(&self.running).remove(root).unwrap_or_default();
         let end = if entry.stopped || self.shutdown.load(Ordering::Acquire) {
             End::Stopped
@@ -274,13 +292,31 @@ impl CompileManager {
         {
             let _ = std::fs::remove_file(record);
         }
-        tokio::task::spawn_blocking(move || finish(&run, &end, output))
+        tokio::task::spawn_blocking(move || finish(&run, &end, tool, output))
             .await
             .map_err(|err| CoreError::internal(err.to_string()))
     }
 }
 
-fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
+impl Running {
+    fn halt(&self) {
+        self.cancel.store(1, Ordering::Release);
+        if let Some(tree) = &self.tree {
+            tree.kill();
+        }
+    }
+}
+
+fn stopped_before_start(run: &CompileRun) -> CompileResult {
+    CompileResult {
+        stopped: true,
+        duration_ms: run.request_started.elapsed().as_millis() as u64,
+        log: "The build was stopped before it started.".to_string(),
+        ..CompileResult::default()
+    }
+}
+
+fn finish(run: &CompileRun, end: &End, tool: &str, output: String) -> CompileResult {
     if matches!(end, End::Stopped | End::TimedOut) {
         run.discard_cut_short();
     }
@@ -307,7 +343,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
             COMPILE_TIMEOUT.as_secs() / 60
         ))),
         End::Unstarted(err) => {
-            errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
+            errors = vec![LogItem::error(format!("Couldn't start {tool}: {err}"))];
         }
         // A failure always names a cause: latexmk's summary of the failed step, else the exit.
         &End::Exited(code) if !ok && errors.is_empty() => {
@@ -315,7 +351,7 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
             if errors.is_empty() {
                 errors.push(LogItem::error(match code {
                     0 => "The build made no PDF. See the Build Log.".to_string(),
-                    code => format!("latexmk stopped with exit code {code}. See the Build Log."),
+                    code => format!("{tool} stopped with exit code {code}. See the Build Log."),
                 }));
             }
         }
@@ -344,14 +380,11 @@ fn joined_log(engine_log: Option<&str>, output: String) -> String {
 }
 
 /// From a line's start when it cuts: a cut line would parse as garbage.
-fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+fn read_tail(mut file: std::fs::File, max: u64) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     let cut = len > max;
-    if cut {
-        file.seek(SeekFrom::Start(len - max))?;
-    }
+    file.seek(SeekFrom::Start(len.saturating_sub(max)))?;
     let mut bytes = Vec::with_capacity(len.min(max) as usize);
     file.take(max).read_to_end(&mut bytes)?;
     if cut {
@@ -361,6 +394,8 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[cfg(unix)]
+mod passes;
 #[cfg(all(test, unix))]
 pub(crate) mod stubs;
 
@@ -389,12 +424,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("main.log");
         std::fs::write(&path, "first line\nsecond line\n./main.tex:3: Boom.\n").unwrap();
+        let file = || std::fs::File::open(&path).unwrap();
         assert_eq!(
-            read_tail(&path, 30).unwrap(),
+            read_tail(file(), 30).unwrap(),
             b"./main.tex:3: Boom.\n".to_vec()
         );
         assert_eq!(
-            read_tail(&path, 1000).unwrap(),
+            read_tail(file(), 1000).unwrap(),
             std::fs::read(&path).unwrap()
         );
         assert_eq!(tail("short", 10), "short");
@@ -527,10 +563,9 @@ See \cite{knuth}.
         let names = crate::projects::testing::names_in(&folder);
         assert_eq!(names, ["ch", "main.tex", "refs.bib"]);
 
-        let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None, None, &path).await;
-        let shown = shown.unwrap();
+        let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None).unwrap();
         let (x, y) = (shown.h.unwrap() + 5.0, shown.v.unwrap() - 2.0);
-        let clicked = synctex_inverse(&project, shown.page, x, y, None, None, &path).await;
+        let clicked = synctex_inverse(&project, shown.page, x, y, None, None);
         assert_eq!(clicked.unwrap().file, "ch/intro.tex");
     }
 }

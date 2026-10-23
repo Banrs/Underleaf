@@ -41,8 +41,8 @@ the app quits or crashes.
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as far
   as those, and each page that changed is written at once with MuPDF's PDF writer as a one-page
   PDF beside the document and reported (`["page", index, path, mark]`). TeX's Type 1 fonts are
-  written as CFF copies (`src/dvi/type1_cff.c`): MuPDF's writer would embed them as PDF doesn't
-  allow, and PDFKit would draw the wrong glyphs.
+  written as OpenType copies around a CID-keyed CFF (`src/dvi/type1_cff.c`): MuPDF's writer
+  would embed them as PDF doesn't allow, and PDFKit would draw the wrong glyphs.
 - When typing pauses the rest is typeset and the whole document is written (to a `.part` file,
   renamed when complete) with its SyncTeX beside it (`live.synctex`), reported as
   `["pdf", path, pages, run, changed, mark]`: the pages that changed, and whether TeX reached the
@@ -86,6 +86,15 @@ Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --w
 
 CI has no TeX, so `.github/workflows/tex-check.yml` runs this nightly on macOS, with TinyTeX and
 the engine built from `tools/texpresso`, beside the core's other tests that need TeX Live.
+
+## iPad
+
+iPadOS starts no processes, so the iPad app links TeXpresso's in-process engine instead:
+`tools/texpresso-ios` builds it, from TeXpresso's `eclipse` branch with this patch's behaviour
+carried over, as an XCFramework whose Live Preview speaks the same protocol over pipes and which
+also runs Compile's programs. The app hands its functions to the core with `tl_set_engine`
+(`docs/core-api.md`, TeX inside the app); the engine runs one Live Preview at a time, so a
+project's start ends another's.
 
 ## Boundaries
 

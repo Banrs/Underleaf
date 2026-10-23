@@ -266,7 +266,10 @@ fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Optio
     let named = || found.get(1).map(|name| name.as_str().to_owned());
     let fix = match offer {
         Offer::Nothing => None,
-        Offer::Install => named().map(Fix::Install),
+        // TeX inside the app (iPadOS) takes no installs.
+        Offer::Install => named()
+            .filter(|_| !crate::inprocess::IN_PROCESS)
+            .map(Fix::Install),
         Offer::Package => (command.map(str::to_owned).or_else(named))
             .and_then(|name| CATALOG.packages.get(&name).cloned())
             .map(Fix::AddPackage),

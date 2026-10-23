@@ -8,7 +8,7 @@ is open, `docs/windows.md` the Windows app and its gaps, `docs/texpresso.md` Liv
 
 - **Names**: the repository is Underleaf; the app is TeXLocal, and so are its names on disk
   (`~/TeXLocal`, `.texlocal.json`, `TEXLOCAL_DATA`), so existing projects keep working.
-- **Rust core** (`crates/texlocal-core`, macOS and Windows only) owns everything but UI and OS
+- **Rust core** (`crates/texlocal-core`, macOS, iPadOS and Windows) owns everything but UI and OS
   integration: projects, path safety, latexmk, SyncTeX, logs, ZIP export, the JSON service and
   project sessions (`session/`: documents, autosave, watching, builds, issues, outline, TeXpresso).
   Logic both hosts need goes here, never in a host.
@@ -16,8 +16,12 @@ is open, `docs/windows.md` the Windows app and its gaps, `docs/texpresso.md` Liv
   the symbol and template catalogue, heading styles, spelling's skipped ranges, and maths and
   glyphs through RaTeX.
 - **`crates/texlocal-ffi`** is the C ABI: a static library, built as a DLL for Windows.
-- **The apps** (`apps/macos`, `apps/windows`) are UI only. They have the same features, each in
-  its own system's design: the Mac the HIG, Windows WinUI 3 and Fluent.
+- **The apps** (`apps/macos`, `apps/ipados`, `apps/windows`) are UI only. They have the same
+  features, each in its own system's design: the Mac the HIG, the iPad iPadOS's, Windows WinUI 3
+  and Fluent.
+- **`apps/shared`** is the Swift both Apple apps compile: the models, the core's bridge, the menus
+  and the views that are alike on both. Each app has its platform's classes under the same names
+  (`SourceEditor`, `PDFController`, `MathGlyphs`, `LogTextView`); `#if os(macOS)` marks the rest.
 - **Security**: `-shell-escape` is off unless a project turns it on, and a project's own
   `latexmkrc` is read only then; `.texlocal.json` can't be written through the generic file
   commands.
@@ -49,8 +53,9 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
   bar as Xcode's console: Issues, Build Log, Live Preview Log, then Warnings or Copy Log, then a
   filter.
 - **Splits**: AppKit's thin dividers, dragged freely as Xcode's and Mail's are, except that the
-  source|PDF divider stops, with the alignment haptic, at the even split, and where the toolbar's
-  separator can follow it no further. A double-click does nothing.
+  source|PDF divider stops, with the alignment haptic, at the even split. Where the toolbar's
+  separator can't follow it, they part, as AppKit leaves them: moved to the separator, the divider
+  fought each resize and flickered. A double-click does nothing.
 - **File Outline** at the sidebar's foot, dim and folded on a file that isn't LaTeX.
 - **PDF**: a rebuild's pages replace those showing in place; fitted pages keep PDFKit's margins,
   as Preview's; paper is white, dark or automatic.
@@ -72,6 +77,23 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
   command edits (`toggle_style`, `wrap`, `set_heading`) are the source's (`tl_source_call`), told
   back with `tl_source_edit` and `tl_source_select`. The maths preview is 1.21 times the text.
   Live pages arrive as `live_document` and `live_page` for `PDFController.showLive`.
+
+## The iPad app
+
+- **By width**, never device or orientation: the sidebar floats over the panes, then source and
+  PDF take turns below 640 pt, and a collapsed split opens on the source.
+- **No bottom bar**, as a window's bottom edge can be off screen: the status is the title's
+  subtitle and its menu, the build panel has its controls along its top and is a sheet where the
+  window is compact.
+- **Touch**: 44 pt targets, every gesture also a button or menu item, the software keyboard's
+  room left to the source.
+- **Source**: a TextKit 2 `UITextView` on the Mac editor's shared logic. Every edit goes into the
+  storage with the view's own undo, keys coalesced into one Typing, as UIKit's undo skips the
+  core's edits; spelling is the view's own, kept to the prose; the shortcuts bar has the LaTeX keys;
+  the maths preview is glass in the window, as a popover would animate at each step of the caret.
+- **The menu bar** is the Mac's (`AppCommands`); its Settings item opens the app's page in the
+  Settings app, App Settings the in-app sheet. The library is the app's Documents (On My iPad ›
+  TeXLocal).
 
 ## Writing code
 
@@ -109,6 +131,9 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
   which takes turns, rather than parallel `xcodebuild`s.
 - On screen: only the QA copy through `tools/qa/README.md`, never the installed app or `~/TeXLocal`.
   Trackpad gestures, the divider's haptic, interactive IME and materials stay manual checks.
+- iPad: `xcodebuild -project apps/ipados/TeXLocal.xcodeproj -scheme TeXLocal -destination
+  'generic/platform=iOS Simulator' build`. XcodeGen generates the project from `project.yml`, and
+  both are committed; the Mac's project is edited by hand. `typecheck.sh` checks the iPad too.
 - Windows: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke` exits 0 once
   a new blank project's session is open. Dev builds run with a scratch `TEXLOCAL_DATA`.
 - Live Preview end to end needs the patched engine: `docs/texpresso.md`, Verify.
@@ -120,5 +145,6 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 - Mac (Xcode 27, Rust stable): `zsh tools/install-mac.sh` builds this checkout's Release, quits
   TeXLocal, installs it to `/Applications`, verifies it and reopens it.
 - Windows (.NET 10 SDK, Rust stable): quit TeXLocal, then `apps/windows/install.ps1`.
-- The version is the same in the workspace `Cargo.toml`, `apps/macos/project.yml`, the `.xcodeproj`
-  (`MARKETING_VERSION`) and `apps/windows/TeXLocal/TeXLocal.csproj`.
+- The version is the same in the workspace `Cargo.toml`, `apps/macos/project.yml` and
+  `apps/ipados/project.yml`, both `.xcodeproj`s (`MARKETING_VERSION`) and
+  `apps/windows/TeXLocal/TeXLocal.csproj`.

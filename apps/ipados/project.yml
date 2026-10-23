@@ -1,0 +1,105 @@
+# The iPad app. Generate TeXLocal.xcodeproj with `xcodegen` from this folder;
+# the generated project is committed too, so building needs only Xcode.
+name: TeXLocal
+options:
+  bundleIdPrefix: com.texlocal
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+  projectFormat: xcode16_0
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # As the Mac app's, which shares its models.
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+    SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+    IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+    TEXLOCAL_APP_IDENTIFIER: com.texlocal.ipad
+targets:
+  TeXLocal:
+    type: application
+    platform: iOS
+    sources:
+      - path: TeXLocal
+        type: syncedFolder
+      # The models and the core's bridge, which the Mac app builds too.
+      - path: ../shared
+        name: Shared
+        type: syncedFolder
+    configFiles:
+      Debug: TeXLocal.xcconfig
+      Release: TeXLocal.xcconfig
+    # What Files, the Dock and other apps can hand the app, as Home's Open takes them: a .zip or a
+    # folder (Files lets the app into a .tex file alone, not the folder it would open). Alternate,
+    # so TeXLocal never becomes their default app. Outside the synced folder, which would bundle it.
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: ZIP Archive
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive]
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.folder]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TEXLOCAL_APP_IDENTIFIER)
+        PRODUCT_NAME: TeXLocal
+        TARGETED_DEVICE_FAMILY: "2"
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        ARCHS: arm64
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Underleaf contributors"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: >-
+          UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+          UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # The library is the app's Documents, which Files shows as On My iPad › TeXLocal.
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Automatic
+        # The build script runs cargo in the repository.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../crates/texlocal-ffi/include
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+      # By path, as the Mac's: a -l would prefer a dylib of that name.
+      configs:
+        Debug:
+          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/debug/libtexlocal_ffi.a
+          OTHER_LDFLAGS[sdk=iphoneos*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios/debug/libtexlocal_ffi.a
+        Release:
+          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libtexlocal_ffi.a
+          OTHER_LDFLAGS[sdk=iphoneos*]: $(inherited) $(SRCROOT)/../../target/aarch64-apple-ios/release/libtexlocal_ffi.a
+    preBuildScripts:
+      - name: Build Rust core
+        script: |
+          "$SRCROOT/../../tools/build-core.sh"
+        # Cargo checks Rust inputs and the archive's freshness itself.
+        basedOnDependencyAnalysis: false
+    postCompileScripts:
+      - name: Bundle TeX
+        script: |
+          # The engine's tree and XeTeX's ICU data, where TeXLocal.xcconfig found the engine.
+          [ -n "$TEXPRESSO_BUILD" ] && [ -d "$TEXPRESSO_BUILD/texmf" ] || exit 0
+          resources="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          rsync -a --delete "$TEXPRESSO_BUILD/texmf/" "$resources/texmf/"
+          rsync -a --delete "$TEXPRESSO_BUILD/icu/" "$resources/icu/"
+        basedOnDependencyAnalysis: false
+schemes:
+  TeXLocal:
+    build:
+      targets:
+        TeXLocal: all
+    run:
+      config: Debug

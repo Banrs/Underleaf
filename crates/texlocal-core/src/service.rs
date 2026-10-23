@@ -15,7 +15,7 @@ use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, lock, templates, tinytex, wordmatch, zipexport};
+use crate::{CoreError, import, inprocess, lock, templates, tinytex, wordmatch, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
@@ -77,6 +77,11 @@ impl Service {
     }
 
     async fn status(&self) -> TexStatus {
+        if inprocess::IN_PROCESS {
+            let found = inprocess::status();
+            self.tex_found.send_replace(found.available);
+            return found;
+        }
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
@@ -164,11 +169,8 @@ impl Service {
                 &project()?,
                 s("file")?,
                 arg(args, "line")?,
-                arg(args, "column")?,
                 self.live_pdf(args)?.as_deref(),
-                &self.tool_paths().0,
-            )
-            .await?),
+            )?),
             "synctex_inverse" => {
                 let project = project()?;
                 let click =
@@ -180,9 +182,7 @@ impl Service {
                     arg(args, "y")?,
                     click.as_ref().map(|(text, at)| (text.as_str(), *at)),
                     self.live_pdf(args)?.as_deref(),
-                    &self.tool_paths().0,
-                )
-                .await?)
+                )?)
             }
             "synctex_match" => out(synctex::match_forward(
                 &project()?.root,
@@ -212,6 +212,7 @@ impl Service {
                 self.kill_all();
                 Ok(Value::Null)
             }
+            "install_tex" if inprocess::IN_PROCESS => Err(inprocess::no_installs()),
             "install_tex" => {
                 tinytex::install(&self.tool_paths().0).await?;
                 out(self.status().await)

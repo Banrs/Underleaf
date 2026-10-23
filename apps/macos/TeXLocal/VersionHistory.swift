@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// As Pages' Save a Version: a name for the project as it is, which the history keeps however old it gets.
 struct SaveVersionSheet: View {
     let project: ProjectModel
     @State private var name = ""
@@ -11,9 +10,7 @@ struct SaveVersionSheet: View {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         DialogSheet(title: "Save Version", message: "Named versions stay in the version history however old they get.",
                     action: "Save", enabled: !trimmed.isEmpty, failure: { "Couldn’t Save the Version" }) {
-            guard let session = project.session else { return }
-            let saved = try await project.core.call("session_history_save", ["session": session, "name": trimmed], as: Snapshot.self)
-            project.notices.note(String(localized: "Saved Version “\(saved.title)”"))
+            try await project.saveVersion(named: trimmed)
         } fields: {
             TextField("Name", text: $name)
                 .focused($focused)

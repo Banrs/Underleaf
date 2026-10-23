@@ -1,42 +1,5 @@
 import SwiftUI
 
-enum PanelTab: String, CaseIterable { case issues = "Issues", log = "Build Log", texpresso = "Live Preview Log" }
-
-@Observable
-final class BuildPanelModel {
-    var shown = false { didSet { if !shown { openedByBuild = false } } }
-    @ObservationIgnored private var openedByBuild = false
-    var tab: PanelTab = .issues
-    var issueFilter = ""
-    var logFilter = ""
-    var showsWarnings = true
-
-    /// Whether it shows the Live Preview Log, which the session sends only then.
-    var showsLiveLog: Bool { shown && tab == .texpresso }
-
-    func show(_ tab: PanelTab) {
-        self.tab = tab
-        shown = true
-    }
-
-    func openForFailedBuild() {
-        if !shown { openedByBuild = true }
-        show(.issues)
-    }
-
-    func closeAfterCleanBuild() { if openedByBuild, tab == .issues { shown = false } }
-
-    func matches(_ item: LogItem) -> Bool {
-        issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(issueFilter)
-            || (item.file?.localizedCaseInsensitiveContains(issueFilter) ?? false)
-    }
-
-    /// Enumerated before filtering: duplicate messages keep distinct, stable row IDs.
-    func rows(of listed: [LogItem]) -> [(offset: Int, element: LogItem)] {
-        listed.enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
-    }
-}
-
 struct BuildPanel: View {
     let project: ProjectModel
 
@@ -239,44 +202,6 @@ private struct IssueRow: View {
     }
 
     private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
-}
-
-/// The bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes it as an inset.
-private struct LogPane: View {
-    let text: String
-    let filter: String
-    var title = "Build Log"
-    /// Found off the main actor, not on every redraw of a log that can be megabytes; the last ones stay until the next.
-    @State private var filtered: (filter: String, lines: String)?
-
-    var body: some View {
-        let current = filtered?.filter == filter ? filtered?.lines : nil
-        let previous = filtered.flatMap { $0.lines.isEmpty ? nil : $0.lines }
-        let shown = filter.isEmpty ? text : current ?? previous ?? text
-        Group {
-            if shown.isEmpty {
-                ContentUnavailableView.search(text: filter)
-            } else {
-                GeometryReader { geometry in
-                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
-                        .ignoresSafeArea(.container, edges: .bottom)
-                }
-            }
-        }
-        .task(id: [text, filter]) {
-            guard !filter.isEmpty else { return filtered = nil }
-            if let lines = await Self.lines(of: text, with: filter), !Task.isCancelled { filtered = (filter, lines) }
-        }
-    }
-
-    @concurrent private nonisolated static func lines(of text: String, with filter: String) async -> String? {
-        var kept: [Substring] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if Task.isCancelled { return nil }
-            if line.localizedCaseInsensitiveContains(filter) { kept.append(line) }
-        }
-        return kept.joined(separator: "\n")
-    }
 }
 
 /// A SwiftUI Text lays out megabyte logs whole on every change.

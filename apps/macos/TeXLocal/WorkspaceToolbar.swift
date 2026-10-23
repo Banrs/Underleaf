@@ -218,21 +218,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func menu(_ items: some View) -> NSMenu {
-        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
+        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.sourceToolsEnabled }) { items })
     }
 
     // MARK: - State
 
     /// Off, all of it, while a project opened over this one loads.
     private nonisolated struct State: Equatable {
-        let isLaTeX, hasPDF, canShare, showsPDF: Bool
+        let sourceTools, hasPDF, canShare, showsPDF: Bool
         let zoomLabel: String
         let canZoomIn, canZoomOut, compiling, canCompile, compactCompile: Bool
     }
 
     private var state: State {
         let open = !project.closed
-        return State(isLaTeX: open && project.isLaTeX, hasPDF: open && project.hasPDF, canShare: open && project.buildPDF != nil,
+        return State(sourceTools: open && project.sourceToolsEnabled, hasPDF: open && project.hasPDF, canShare: open && project.buildPDF != nil,
                      showsPDF: app.showPDF, zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
                      compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
     }
@@ -257,7 +257,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
         switch item.itemIdentifier {
         case .format, .math, .insert:
-            update(item, \.isEnabled, state.isLaTeX)
+            update(item, \.isEnabled, state.sourceTools)
         case .zoom:
             guard let control = item.view as? NSSegmentedControl else { return }
             if control.label(forSegment: 1) != state.zoomLabel { control.setLabel(state.zoomLabel, forSegment: 1) }
@@ -296,7 +296,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func allows(_ action: Selector?) -> Bool {
         guard !project.closed else { return false }
         switch action {
-        case #selector(style(_:)), #selector(insertTemplate(_:)): return project.isLaTeX
+        case #selector(style(_:)), #selector(insertTemplate(_:)): return project.sourceToolsEnabled
         // The overflow menu's Compile, which the item's own view doesn't enable.
         case #selector(compile): return canCompile
         default: return true

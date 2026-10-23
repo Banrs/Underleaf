@@ -126,24 +126,6 @@ struct ShellTests {
         toolbar.itemIdentifiers = defaults
     }
 
-    /// The source|PDF divider stands under the toolbar's separator from the widest window to the narrowest, sidebar open
-    /// or shut: where a section's tools stop the separator, the divider goes to it (`joinDivider`).
-    @Test(arguments: [false, true])
-    func theDividerStaysUnderTheToolbarsSeparator(sidebar: Bool) async throws {
-        let (window, workspace) = try await workspace(sidebar: sidebar)
-        defer { workspace.close(); window.close() }
-        let split = workspace.columns.splitView
-        let frame = try #require(window.contentView?.superview)
-        func lines() -> [CGFloat] { frame.descendants(named: "NSSeparatorToolbarItemView").map { split.convert($0.bounds, from: $0).minX } }
-        func divider() -> CGFloat { split.arrangedSubviews[0].frame.maxX }
-        for width in [1300, 900, 700, ColumnMetrics.contentMinimum.width] {
-            try await resize(window, to: width)
-            try await waitUntil({ lines().contains { isClose($0, divider()) } }) {
-                "width \(width): divider at \(divider()), lines at \(lines())"
-            }
-        }
-    }
-
     /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
     /// split takes a press there before the bar does, with the panel shut and open.
     @Test func theStatusBarsLineTakesThePanelsDrag() async throws {
@@ -271,6 +253,19 @@ struct ShellTests {
         app.requestPDF(.fitWidth)
         app.requestPDF(.fitWidth)
         #expect(app.showPDF && asked == 2 && defaults.saved(DefaultsKey.showPDF) == nil)
+    }
+
+    /// Hiding the source or the PDF while the other is hidden shows the other, for later launches too.
+    @Test func theSourceOrThePDFAlwaysShows() {
+        let app = AppModel(defaults: defaults.store)
+        app.toggleSource()
+        #expect(!app.showSource && app.showPDF)
+        app.togglePDF()
+        #expect(app.showSource && !app.showPDF)
+        app.toggleSource()
+        #expect(!app.showSource && app.showPDF)
+        let next = AppModel(defaults: defaults.store)
+        #expect(!next.showSource && next.showPDF)
     }
 
     /// On Home, Find focuses the projects' search field.

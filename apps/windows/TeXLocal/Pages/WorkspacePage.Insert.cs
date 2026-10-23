@@ -90,10 +90,11 @@ public sealed partial class WorkspacePage
         }
     }
 
-    /// The caret line's level, and the selection's bold, italic and underline; LaTeX's commands only in a .tex file.
+    /// The caret line's level, and the selection's bold, italic and underline; LaTeX's commands only in a .tex file that
+    /// shows.
     void ShowInsertChecks(OutlineNode? heading)
     {
-        var latex = Editor.Path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
+        var latex = SourceItem.IsChecked && Editor.Path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
         foreach (var item in InsertMenu.Items) item.IsEnabled = latex;
         foreach (var control in (Control[])[StyleButton, BoldButton, ItalicButton, UnderlineButton, EquationButton, SymbolButton, InsertButton])
             control.IsEnabled = latex;

@@ -67,24 +67,13 @@ class ThinSplitViewController: NSSplitViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// A drag of the source|PDF divider stops at the even split, with the haptic, and where the toolbar's separator can follow
-    /// it no further; a position set in code goes where it is set. NSSplitViewController doesn't implement this delegate
-    /// method, so there is no super to call.
+    /// A drag of the source|PDF divider stops at the even split, with the haptic; a position set in code goes where it is
+    /// set. NSSplitViewController doesn't implement this delegate method, so there is no super to call.
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
-        guard let columns = splitView as? ColumnsSplitView, columns.dragging else { return proposedPosition }
-        var position = proposedPosition
-        // A separator that stayed put while the divider passed it has no more room, and the divider would go back to it as
-        // the drag ends; one only lagging a step has moved since the last.
-        let divider = columns.arrangedSubviews[0].frame.maxX
-        if let line = (splitView.window?.contentViewController as? WorkspaceController)?.separatorLine() {
-            if let before = columns.separatorBefore, abs(line - before) < 0.5, abs(line - divider) >= 0.5 {
-                position = line > divider ? max(position, line) : min(position, line)
-            }
-            columns.separatorBefore = line
-        }
-        guard abs(position - columns.evenPosition) <= 8 else { return position }
-        if abs(divider - columns.evenPosition) >= 0.5 {
+        guard let columns = splitView as? ColumnsSplitView, columns.dragging,
+              abs(proposedPosition - columns.evenPosition) <= 8 else { return proposedPosition }
+        if abs(columns.arrangedSubviews[0].frame.maxX - columns.evenPosition) >= 0.5 {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
         }
         return columns.evenPosition
@@ -111,14 +100,6 @@ final class SidebarSplitViewController: ThinSplitViewController {
 }
 
 final class ColumnsSplitView: DraggedSplitView {
-    /// Where the toolbar's separator stood at the drag's last step.
-    var separatorBefore: CGFloat?
-
-    override func mouseDown(with event: NSEvent) {
-        separatorBefore = nil
-        super.mouseDown(with: event)
-    }
-
     /// Short of the status bar, whose line is AppKit's scroll edge's. A split view is flipped.
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))

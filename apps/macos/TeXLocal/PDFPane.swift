@@ -10,7 +10,7 @@ struct PDFPane: View {
     var body: some View {
         if project.hasPDF {
             // Not in a SwiftUI scroll view, which would take PDFKit's rubber-banding and insets (27.2).
-            PDFRepresentable(project: project, darkPaper: paper == .dark || (paper == .auto && colorScheme == .dark))
+            PDFRepresentable(project: project, darkPaper: paper.isDark(in: colorScheme))
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {
             emptyState
@@ -150,19 +150,5 @@ struct ScaleMenuItems: View {
     private var shown: PDFController.Zoom {
         guard case .scale(let scale) = pdf.zoom else { return pdf.zoom }
         return .scale((scale * 100).rounded() / 100)
-    }
-}
-
-enum PDFPaper: String, CaseIterable, Identifiable {
-    case white, dark, auto
-
-    var id: Self { self }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .white: "White"
-        case .dark: "Dark"
-        case .auto: "Match Appearance"
-        }
     }
 }

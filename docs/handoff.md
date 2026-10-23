@@ -63,6 +63,39 @@ header row is 19 pt under 10, and Compile's word goes 2 pt before AppKit would t
 now keeps Compile down to 533 pt and Back to 481, under the 542 minimum. Each comment says what it
 works around.
 
+## iPad
+
+- On an iPad: the engine has run only in the simulator. Each wasm instance reserves 2 GB of address
+  space, two at a time; signal handling for its copy-on-write snapshots is unverified on a device,
+  and Xcode's debugger stops on their faults unless told to pass EXC_BAD_ACCESS. Live Preview peaks
+  at 550 MB, 780 MB with a build beside it.
+- A folder opened from Files: its security-scoped access and bookmark are checked only in the
+  simulator, which isn't sandboxed as a device is; so are a .zip or folder handed over by Files,
+  the Dock or another app (`onOpenURL`).
+- Built, never seen on screen: dark paper (SwiftUI's `contrast(-1)` and `hueRotation(180°)` over
+  the PDF view, which leaves its background clear for the pane's; the find yellow is chosen to come
+  through the inversion), a forward sync selecting the source's word, and the save as the window
+  stops being active (closing from the app switcher, putting the app away).
+- Packages beyond the bundled tree (`tools/texpresso-ios/tree.py`) can't be added, so the build
+  panel has no Install. It needs the engine to read its `ls-R` files again (TeXpresso's
+  `texlive_provider.c` lists them once per process), downloads from CTAN into the container
+  (`texlive.tlpdb`'s files, dependencies and checksums; the archives are `.tar.xz`), a second
+  `ls-R` (`TEXPRESSO_LSR` takes several) and the new fonts' maps in a `pdftex.map` found first. No
+  LuaLaTeX, biber, glossaries or bib2gls.
+- Stop and the time limit reach a build at its next file access, so a TeX loop that reads and
+  writes nothing runs on.
+- A file dragged from the sidebar into the source is known at once only if its drag item sets
+  `localObject` to the file's URL, which SwiftUI's `draggable` can't.
+- Main's round of fixes and navigation came in with the merge, but the iPad lacks their UI: Quick
+  Help's popover, Open Quickly, the Version History browser (Save Version is its prompt), Open PDF
+  in Default App, and the build panel's fix buttons and explanations. Their menu commands are the
+  Mac's only (`#if os(macOS)`); the core already answers them, and gives the iPad no Install fix.
+- No iOS test target: the screenshots were taken by a scratch UI test (rotations, the software
+  keyboard, the build panel, Compile), not committed.
+- CI builds the app without the engine; `tools/texpresso-ios/build.sh` takes hours from source.
+- Licences: with its TeX the app is distributed under the AGPL (MuPDF) and GPL (pdfTeX,
+  xdvipdfmx); whether the App Store allows that is disputed.
+
 ## Left
 
 - AppKit's own completion list in place of `CompletionList` once the system's has glass; until

@@ -1333,6 +1333,21 @@ async fn the_folders_watcher_tells_another_apps_changes() {
     rig.sessions.close_all().await;
 }
 
+/// Where nothing watches (iOS), a rescan finds what another app did.
+#[tokio::test(start_paused = true)]
+async fn a_rescan_tells_another_apps_changes_unwatched() {
+    let mut rig = Rig::new(false).await;
+    rig.open("main.tex").await;
+    fs::write(rig.root.join("main.tex"), "theirs").unwrap();
+    fs::write(rig.root.join("new.tex"), "").unwrap();
+    rig.ok("rescan", json!({})).await;
+    wait(300).await;
+    let events = rig.events().await;
+    let reload = events.iter().find(|e| e["type"] == "document_reload");
+    assert_eq!(reload.expect("reloaded")["text"], "theirs");
+    assert!(events.iter().any(|e| e["type"] == "tree"));
+}
+
 #[tokio::test]
 async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     let mut rig = Rig::new(true).await;

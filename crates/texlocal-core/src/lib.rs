@@ -12,6 +12,7 @@ mod compile;
 mod error;
 pub mod events;
 mod import;
+pub mod inprocess;
 mod logparse;
 mod packages;
 mod paths;

@@ -1148,6 +1148,7 @@ dependencies = [
  "libc",
  "memchr",
  "notify",
+ "objc2-foundation",
  "ratex-font",
  "ratex-katex-fonts",
  "ratex-layout",

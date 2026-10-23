@@ -96,7 +96,15 @@ public sealed partial class WorkspacePage : Page
             ShowEdge();
         });
         Split.PaneOpened += (_, _) => Remeasure(SideTabs);
-        PdfItem.RegisterPropertyChangedCallback(ToggleMenuFlyoutItem.IsCheckedProperty, (_, _) => ShowPdf());
+        // One of the source and the PDF always shows: hiding the one shows the other. LaTeX's tools follow the source.
+        void Toggled(ToggleMenuFlyoutItem item, ToggleMenuFlyoutItem other)
+        {
+            if (!item.IsChecked) other.IsChecked = true;
+            ShowPanes();
+            CaretSettled();
+        }
+        SourceItem.RegisterPropertyChangedCallback(ToggleMenuFlyoutItem.IsCheckedProperty, (_, _) => Toggled(SourceItem, PdfItem));
+        PdfItem.RegisterPropertyChangedCallback(ToggleMenuFlyoutItem.IsCheckedProperty, (_, _) => Toggled(PdfItem, SourceItem));
         // An overlaid pane open as the window widens is light-dismissed after it has become inline; it stays.
         Split.PaneClosing += (_, e) => e.Cancel = Inline;
         PaneSizer.Delta += d => Split.OpenPaneLength = Math.Clamp(Split.OpenPaneLength + d, 200, 480);
@@ -368,6 +376,8 @@ public sealed partial class WorkspacePage : Page
             Launch(Full(path));
             return false;
         }
+        // As a PDF command shows the PDF.
+        SourceItem.IsChecked = true;
         if (Editor.Path == path) return true;
         try
         {
@@ -832,8 +842,7 @@ public sealed partial class WorkspacePage : Page
     void SetSplit(double to)
     {
         ratio = Math.Clamp(to, 0.1, 0.9);
-        EditorColumn.Width = new(ratio, GridUnitType.Star);
-        if (PdfItem.IsChecked) PdfColumn.Width = new(1 - ratio, GridUnitType.Star);
+        ShowPanes();
     }
 
     void OnSplitReset(object sender, DoubleTappedRoutedEventArgs e)
@@ -842,12 +851,13 @@ public sealed partial class WorkspacePage : Page
         Prefs.SplitRatio = ratio;
     }
 
-    void ShowPdf()
+    void ShowPanes()
     {
-        var show = PdfItem.IsChecked;
-        PdfLayer.Visibility = SplitSizer.Visibility = Vis(show);
-        PdfColumn.MinWidth = show ? 240 : 0;
-        PdfColumn.Width = new(show ? 1 - ratio : 0, GridUnitType.Star);
+        var (source, pdf) = (SourceItem.IsChecked, PdfItem.IsChecked);
+        (EditorLayer.Visibility, PdfLayer.Visibility, SplitSizer.Visibility) = (Vis(source), Vis(pdf), Vis(source && pdf));
+        (EditorColumn.MinWidth, PdfColumn.MinWidth) = (source ? 280 : 0, pdf ? 240 : 0);
+        EditorColumn.Width = new(source ? ratio : 0, GridUnitType.Star);
+        PdfColumn.Width = new(pdf ? 1 - ratio : 0, GridUnitType.Star);
     }
 
     /// F6 and Shift+F6: the sidebar, the editor, the PDF and the issues panel in turn, each that is shown.
@@ -858,7 +868,7 @@ public sealed partial class WorkspacePage : Page
         (UIElement Area, bool Shown, Func<bool> Focus)[] regions =
         [
             (SidePane, true, () => (Split.IsPaneOpen = true) && side.Focus(FocusState.Keyboard)),
-            (Editor, Editor.Visibility == Visibility.Visible, () => { Editor.Focus(FocusState.Keyboard); return true; }),
+            (Editor, SourceItem.IsChecked && Editor.Visibility == Visibility.Visible, () => { Editor.Focus(FocusState.Keyboard); return true; }),
             (Pdf, PdfItem.IsChecked, () => Pdf.Focus(FocusState.Keyboard)),
             (IssuesPanel, IssuesItem.IsChecked, () => (Log.Visibility == Visibility.Visible ? (Control)Log : IssueList).Focus(FocusState.Keyboard)),
         ];
@@ -905,8 +915,10 @@ public sealed partial class WorkspacePage : Page
 
     async void OnGoToLine(object sender, RoutedEventArgs e)
     {
-        if (Editor.Path is not null && await AskNumber("Go to line", $"Line (1–{Editor.LineCount})", Editor.Caret.Line, Editor.LineCount) is { } line)
-            Editor.GoTo(line);
+        if (Editor.Path is null || await AskNumber("Go to line", $"Line (1–{Editor.LineCount})", Editor.Caret.Line, Editor.LineCount) is not { } line)
+            return;
+        SourceItem.IsChecked = true;
+        Editor.GoTo(line);
     }
 
     async void OnGoToPage(object sender, RoutedEventArgs e)
@@ -925,8 +937,8 @@ public sealed partial class WorkspacePage : Page
 
     async Task SyncToCaret()
     {
-        var (line, column) = Editor.Caret;
-        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line, column }));
+        var (line, _) = Editor.Caret;
+        Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line }));
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));

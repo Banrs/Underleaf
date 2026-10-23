@@ -18,7 +18,7 @@ final class WorkspaceController: ThinSplitViewController {
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
-    private var appeared = false, joining = false
+    private var appeared = false
     private var panelHeight: CGFloat = 0
     private var paneAnimations = 0, quieting = 0
     private var quietScrollViews: [NSScrollView] = []
@@ -47,7 +47,7 @@ final class WorkspaceController: ThinSplitViewController {
         inspectorItem.canCollapseFromWindowResize = true
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
-        for item in [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] {
+        for item in [sidebarItem, outlineItem, sourceItem, pdfItem, panelItem, inspectorItem] {
             item!.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
         watch()
@@ -67,6 +67,7 @@ final class WorkspaceController: ThinSplitViewController {
                 if shown { mount(inspectorItem.viewController, true) }
                 app.sideColumn(.inspector, shown: shown, byWindow: foldedByWindow)
             },
+            follow(sourceItem),
             follow(pdfItem),
             // A drag on the status bar's line, not the autosave's restore.
             follow(panelItem) { [unowned self] shown in
@@ -89,6 +90,7 @@ final class WorkspaceController: ThinSplitViewController {
         super.viewDidAppear()
         guard !appeared else { return }
         appeared = true
+        if !app.showSource { sourceItem.isCollapsed = true }
         if !app.showPDF { pdfItem.isCollapsed = true }
         fitColumns()
     }
@@ -102,36 +104,11 @@ final class WorkspaceController: ThinSplitViewController {
 
     /// AppKit folds the side columns on the way to the toolbar's least width, by the area's minimum.
     private func fitColumns() {
+        let source = sourceItem.isCollapsed ? 0 : sourceItem.minimumThickness
         let pdf = pdfItem.isCollapsed ? 0 : columns.splitView.dividerThickness + ColumnMetrics.pdfRoom
-        let area = max(sourceItem.minimumThickness + pdf + ColumnMetrics.toolbarInset, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
+        let area = max(source + pdf + ColumnMetrics.toolbarInset, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
         fitToolbar()
-        // A turn on, once the toolbar has laid its sections out for the panes as they now are.
-        guard appeared, !joining else { return }
-        joining = true
-        Task { [weak self] in
-            self?.joining = false
-            self?.joinDivider()
-        }
-    }
-
-    /// The separator follows the divider only as far as each section's tools leave it room (27.2), so the divider goes to
-    /// it.
-    private func joinDivider() {
-        let split = columns.splitView
-        guard paneAnimations == 0, !pdfItem.isCollapsed, let line = separatorLine(),
-              abs(line - split.arrangedSubviews[0].frame.maxX) >= 0.5 else { return }
-        split.setPosition(line, ofDividerAt: 0)
-    }
-
-    /// The toolbar's source|PDF separator, in the columns' coordinates. No API tells its place: its view is found by class,
-    /// and without it nothing moves.
-    func separatorLine() -> CGFloat? {
-        guard let content = view.window?.contentView, let frame = content.superview else { return nil }
-        let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
-        let lines = frame.subviews.filter { $0 !== content }.flatMap { $0.descendants(named: "NSSeparatorToolbarItemView") }
-            .map { split.convert($0.bounds, from: $0).minX }
-        return lines.min(by: { abs($0 - divider) < abs($1 - divider) })
     }
 
     /// Customize Toolbar changed the tools, which Compile's form goes by.
@@ -294,8 +271,7 @@ final class WorkspaceController: ThinSplitViewController {
         watches = [
             track({ app.sidebarShown }) { [weak self] in if let self { setCollapsed(sidebarItem, !$0) } },
             track({ app.inspectorShown }) { [weak self] in if let self { setCollapsed(inspectorItem, !$0) } },
-            // Until the workspace appears, `viewDidAppear` has it.
-            track({ app.showPDF }) { [weak self] in if let self, appeared { setCollapsed(pdfItem, !$0) } },
+            track({ [app.showSource, app.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
             track({ app.outlineState(of: project) }) { [weak self] state in
                 guard let self else { return }
@@ -312,6 +288,17 @@ final class WorkspaceController: ThinSplitViewController {
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
         ]
         app.performPDF = { [weak self] in self?.performPDF($0) }
+    }
+
+    /// Until the workspace appears, `viewDidAppear` has them. The one shown opens first and the other closes after it, so
+    /// both are never shut and the one closing keeps its own width to come back at.
+    private func showPanes() {
+        guard appeared else { return }
+        let (opening, closing) = app.showSource ? (sourceItem!, pdfItem!) : (pdfItem!, sourceItem!)
+        setCollapsed(opening, false) { [weak self] in
+            guard let self else { return }
+            setCollapsed(closing, !(closing === sourceItem ? app.showSource : app.showPDF))
+        }
     }
 
     /// Each column's change, and with it the room the toolbar has.

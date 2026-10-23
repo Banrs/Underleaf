@@ -24,3 +24,6 @@ xcuserdata/
 
 # TeXpresso checkout made by tools/texpresso/build.sh
 /tools/texpresso/source/
+
+# TeXpresso, MuPDF and the iPad framework made by tools/texpresso-ios/build.sh
+/tools/texpresso-ios/build/

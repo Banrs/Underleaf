@@ -42,6 +42,7 @@ struct WorkspaceModals: ViewModifier {
                     }
                 case .gotoLine:
                     GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) {
+                        app.showSource = true
                         project.editor.reveal(line: $0)
                     }
                 case .rename(let symbol):

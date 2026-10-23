@@ -111,7 +111,10 @@ impl Sessions {
     pub fn new(service: Arc<Service>) -> Self {
         let engine = Arc::new(Arc::clone(&service));
         let preview = Arc::clone(&service.texpresso);
-        Self::with_engine(service, engine, preview, true)
+        // iOS's watcher (kqueue) holds a descriptor for every file and folder, which a project's
+        // build and history take past the app's limit and the in-process TeX's needs: there the
+        // app asks for `session_rescan` as it comes back to the front instead.
+        Self::with_engine(service, engine, preview, !cfg!(target_os = "ios"))
     }
 
     pub(crate) fn with_engine(
