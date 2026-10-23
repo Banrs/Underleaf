@@ -37,6 +37,8 @@ if ! git -C "$SRC" apply --reverse --check "$HERE/eclipse-ios.patch" 2>/dev/null
   git -C "$SRC" clean --quiet --force -d src scripts
   git -C "$SRC" apply "$HERE/eclipse-ios.patch"
 fi
+# Live Preview's loop and the Type 1 fonts' copies, as the Mac's program has them.
+cp -R "$HERE/../texpresso/src/." "$SRC/src/"
 if [ ! -d mupdf/.git ]; then
   git clone --depth 1 --branch "$MUPDF" --recurse-submodules --shallow-submodules \
     https://github.com/ArtifexSoftware/mupdf.git mupdf
@@ -80,7 +82,10 @@ rtinc() {
 #
 # The wasm runtime checks bounds rather than relying on guard pages, which would
 # reserve 8 GB of address space per instance, beyond what an iOS app can count on.
-WASM_RT="-DWASM_RT_USE_MMAP=1 -DWASM_RT_MEMCHECK_BOUNDS_CHECK=1"
+# Without guard pages the runtime counts calls instead, 500 deep by default, which
+# deep TeX recursion can pass: 6000 of the engines' largest frame (4.4 KB) fit the
+# coroutine's 32 MB (wasm_host.c) with room for the host's calls.
+WASM_RT="-DWASM_RT_USE_MMAP=1 -DWASM_RT_MEMCHECK_BOUNDS_CHECK=1 -DWASM_RT_MAX_CALL_STACK_DEPTH=6000"
 FRONTEND="frontend/state.c frontend/fs.c frontend/incdvi.c frontend/myabort.c
   frontend/synctex.c frontend/prot_parser.c frontend/sexp_parser.c frontend/json_parser.c
   frontend/editor.c frontend/live.c frontend/engine_tex_xetex.c frontend/engine_tex_pdftex.c
@@ -134,29 +139,30 @@ slice() { # name sdk target
   join
   objs="$objs $out/obj/engine_tex.o"
 
-  # The engines txp_run knows, and Live Preview's interrupt.
+  # The engines txp_run knows, Live Preview's first.
   {
     echo '#include "engines.h"'
     for e in $ENGINES; do
       echo "int ${e}_wasm_engine_run_native(int, char **, const char *, int, char *const *, const volatile int *);"
+      echo "void ${e}_wasm_engine_shutdown(void);"
     done
     echo "const struct txp_engine_entry txp_engines[] = {"
-    for e in $ENGINES; do echo "  {\"$e\", ${e}_wasm_engine_run_native},"; done
-    echo "  {0, 0},"
+    for e in $ENGINES; do
+      echo "  {\"$e\", ${e}_wasm_engine_run_native, ${e}_wasm_engine_shutdown},"
+    done
+    echo "  {0, 0, 0},"
     echo "};"
   } > "$out/obj/engines.c"
   cat > "$out/obj/engines.h" <<EOF
-#include <pthread.h>
 struct txp_engine_entry {
   const char *name;
   int (*run)(int, char **, const char *, int, char *const *, const volatile int *);
+  void (*shutdown)(void);
 };
 extern const struct txp_engine_entry txp_engines[];
-void ${LIVE}_wasm_host_interrupt(pthread_t thread);
-#define txp_live_interrupt ${LIVE}_wasm_host_interrupt
 EOF
   $cc -O2 -I"$out/obj" -c "$out/obj/engines.c" -o "$out/obj/engines.o"
-  $cc -O2 -I"$out/obj" -c "$SRC/src/embed/embed.c" -o "$out/obj/embed.o"
+  $cc -O2 -I"$out/obj" $inc $mu_inc -c "$SRC/src/embed/embed.c" -o "$out/obj/embed.o"
   objs="$objs $out/obj/engines.o $out/obj/embed.o"
 
   for e in $ENGINES; do
@@ -169,7 +175,8 @@ EOF
       bg $cc -O1 $WASM_RT -I"$i" -I"$d" -c "$d/engine.c" -o "$u/engine.o"
     fi
     for f in wasm-rt-impl wasm-rt-mem-impl wasm-rt-exceptions-impl; do
-      bg $cc -O2 $WASM_RT -I"$i" -I"$r" -c "$r/$f.c" -o "$u/$f.o"
+      bg $cc -O2 $WASM_RT -include "$SRC/src/embed/embed_config.h" -I"$i" -I"$r" \
+        -c "$r/$f.c" -o "$u/$f.o"
     done
     # Its ucontext_t needs _XOPEN_SOURCE from the first header on, which the
     # forced include would otherwise come before.

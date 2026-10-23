@@ -67,446 +67,22 @@ index 92548a0..58d9b6d 100644
        }
      }
 diff --git a/src/dvi/mydvi.h b/src/dvi/mydvi.h
-index e2f2105..0092697 100644
+index e2f2105..e5fe733 100644
 --- a/src/dvi/mydvi.h
 +++ b/src/dvi/mydvi.h
-@@ -210,6 +210,10 @@ dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks);
+@@ -210,6 +210,12 @@ dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks);
  void dvi_resmanager_free(fz_context *ctx, dvi_resmanager *rm);
  dvi_font *dvi_resmanager_get_tex_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen);
  fz_font *dvi_resmanager_get_xdv_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen, int index);
 +
-+/* The font a glyph of `font` goes to the page in: an OpenType copy of a Type 1 font while
-+   TEXPRESSO_PDF_OUTPUT is set (type1_cff.c), else the font itself. */
++/* The font a glyph of `font` goes to the page in: an OpenType copy of a Type 1 font while the
++   pages are written as PDF (type1_cff.c), else the font itself. dvi_page_fonts turns that
++   on or off, and frees the copies made. */
 +fz_font *dvi_page_font(fz_context *ctx, fz_font *font);
++void dvi_page_fonts(fz_context *ctx, bool on);
  pdf_document *dvi_resmanager_get_pdf(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
-diff --git a/src/dvi/type1_cff.c b/src/dvi/type1_cff.c
-new file mode 100644
-index 0000000..38fe352
---- /dev/null
-+++ b/src/dvi/type1_cff.c
-@@ -0,0 +1,420 @@
-+/* Type 1 fonts as OpenType, for the pages Live Preview writes as PDF.
-+ *
-+ * MuPDF's PDF writer embeds a Type 1 font program as the descendant of a CID font, which PDF
-+ * doesn't allow (CID fonts take CID-keyed CFF or TrueType programs): PDF viewers other than
-+ * MuPDF draw the wrong glyphs. The glyphs a Type 1 font shows go to the page through an
-+ * OpenType copy of it instead, as PDF allows: a CID-keyed CFF with the same glyphs
-+ * in the same order, CID i being glyph i, and a Unicode cmap from the glyphs' names, from which
-+ * MuPDF writes the ToUnicode map that copying and finding text need. The Type 1 font still
-+ * answers the DVI's glyph lookups. */
-+
-+#include <stdio.h>
-+#include <stdlib.h>
-+#include <string.h>
-+#include <math.h>
-+#include <ft2build.h>
-+#include FT_FREETYPE_H
-+#include FT_OUTLINE_H
-+#include FT_FONT_FORMATS_H
-+#include <mupdf/fitz.h>
-+#include "mydvi.h"
-+
-+typedef struct { unsigned char *data; size_t len, cap; int failed; } cff_buf;
-+
-+static void put(cff_buf *b, const void *p, size_t n)
-+{
-+  if (b->failed) return;
-+  if (b->len + n > b->cap)
-+  {
-+    size_t cap = b->cap ? b->cap * 2 : 4096;
-+    while (cap < b->len + n) cap *= 2;
-+    unsigned char *data = realloc(b->data, cap);
-+    if (!data) { b->failed = 1; return; }
-+    b->data = data;
-+    b->cap = cap;
-+  }
-+  memcpy(b->data + b->len, p, n);
-+  b->len += n;
-+}
-+
-+static void put8(cff_buf *b, int v) { unsigned char c = v; put(b, &c, 1); }
-+static void put16(cff_buf *b, int v) { put8(b, v >> 8); put8(b, v); }
-+static void put32(cff_buf *b, long v) { put16(b, (int)(v >> 16)); put16(b, (int)(v & 0xffff)); }
-+
-+/* A Type 2 charstring operand, or a DICT one: the same encodings up to two bytes. */
-+static void put_number(cff_buf *b, long v, int dict)
-+{
-+  if (v >= -107 && v <= 107)
-+    put8(b, (int)v + 139);
-+  else if (v >= 108 && v <= 1131)
-+  {
-+    v -= 108;
-+    put8(b, (int)(v >> 8) + 247);
-+    put8(b, (int)v);
-+  }
-+  else if (v >= -1131 && v <= -108)
-+  {
-+    v = -v - 108;
-+    put8(b, (int)(v >> 8) + 251);
-+    put8(b, (int)v);
-+  }
-+  else if (dict && (v < -32768 || v > 32767))
-+  {
-+    put8(b, 29);
-+    put32(b, v);
-+  }
-+  else
-+  {
-+    if (v < -32768) v = -32768;
-+    if (v > 32767) v = 32767;
-+    put8(b, 28);
-+    put16(b, (int)v);
-+  }
-+}
-+
-+/* A DICT offset at a fixed five bytes, so the DICT's size is known before its offsets. */
-+static void put_offset(cff_buf *b, long v) { put8(b, 29); put32(b, v); }
-+
-+/* An INDEX of `count` items, `data` holding them end to end and `ends` where each ends. */
-+static void put_index(cff_buf *b, const unsigned char *data, const size_t *ends, int count)
-+{
-+  put16(b, count);
-+  if (count == 0) return;
-+  size_t total = ends[count - 1];
-+  int size = total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
-+  put8(b, size);
-+  for (int i = 0; i <= count; i++)
-+  {
-+    size_t offset = (i ? ends[i - 1] : 0) + 1;
-+    for (int k = size - 1; k >= 0; k--)
-+      put8(b, (int)(offset >> (8 * k)));
-+  }
-+  put(b, data, total);
-+}
-+
-+static size_t index_size(size_t total, int count)
-+{
-+  if (count == 0) return 2;
-+  int size = total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
-+  return 3 + (size_t)size * (count + 1) + total;
-+}
-+
-+/* The outline, in 1000 units to the em, as Type 2 operators; the advance leads the first. */
-+typedef struct { cff_buf *b; double scale; long x, y; long width; int started; } outline_state;
-+
-+static long units(outline_state *s, FT_Pos v) { return lround(v * s->scale); }
-+
-+static void start(outline_state *s)
-+{
-+  if (!s->started) put_number(s->b, s->width, 0);
-+  s->started = 1;
-+}
-+
-+static int move_to(const FT_Vector *to, void *user)
-+{
-+  outline_state *s = user;
-+  long x = units(s, to->x), y = units(s, to->y);
-+  start(s);
-+  put_number(s->b, x - s->x, 0);
-+  put_number(s->b, y - s->y, 0);
-+  put8(s->b, 21); /* rmoveto */
-+  s->x = x; s->y = y;
-+  return 0;
-+}
-+
-+static int line_to(const FT_Vector *to, void *user)
-+{
-+  outline_state *s = user;
-+  long x = units(s, to->x), y = units(s, to->y);
-+  put_number(s->b, x - s->x, 0);
-+  put_number(s->b, y - s->y, 0);
-+  put8(s->b, 5); /* rlineto */
-+  s->x = x; s->y = y;
-+  return 0;
-+}
-+
-+static void curve(outline_state *s, long x1, long y1, long x2, long y2, long x3, long y3)
-+{
-+  put_number(s->b, x1 - s->x, 0);
-+  put_number(s->b, y1 - s->y, 0);
-+  put_number(s->b, x2 - x1, 0);
-+  put_number(s->b, y2 - y1, 0);
-+  put_number(s->b, x3 - x2, 0);
-+  put_number(s->b, y3 - y2, 0);
-+  put8(s->b, 8); /* rrcurveto */
-+  s->x = x3; s->y = y3;
-+}
-+
-+static int cubic_to(const FT_Vector *c1, const FT_Vector *c2, const FT_Vector *to, void *user)
-+{
-+  outline_state *s = user;
-+  curve(s, units(s, c1->x), units(s, c1->y), units(s, c2->x), units(s, c2->y), units(s, to->x), units(s, to->y));
-+  return 0;
-+}
-+
-+/* Type 1 has no quadratic curves; a font FreeType gives one for still converts. */
-+static int conic_to(const FT_Vector *c, const FT_Vector *to, void *user)
-+{
-+  outline_state *s = user;
-+  long cx = units(s, c->x), cy = units(s, c->y), x = units(s, to->x), y = units(s, to->y);
-+  curve(s, lround(s->x + 2.0 * (cx - s->x) / 3), lround(s->y + 2.0 * (cy - s->y) / 3),
-+        lround(x + 2.0 * (cx - x) / 3), lround(y + 2.0 * (cy - y) / 3), x, y);
-+  return 0;
-+}
-+
-+typedef struct { const char *tag; cff_buf data; } sfnt_table;
-+
-+static unsigned long checksum(const cff_buf *t)
-+{
-+  unsigned long sum = 0;
-+  for (size_t i = 0; i < t->len; i++)
-+    sum += (unsigned long)t->data[i] << (24 - 8 * (i & 3));
-+  return sum & 0xffffffff;
-+}
-+
-+/* An OpenType font around a CID-keyed CFF (malloc'd, `*len` bytes), or NULL on a failure. */
-+static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *advance,
-+                               const long bbox[4], size_t *len)
-+{
-+  int n = face->num_glyphs;
-+  long widest = 0;
-+  for (int gid = 0; gid < n; gid++)
-+    if (advance[gid] > widest) widest = advance[gid];
-+  enum { CFF, CMAP, HEAD, HHEA, HMTX, MAXP, NAME, POST, TABLES };
-+  sfnt_table t[TABLES] = { {"CFF "}, {"cmap"}, {"head"}, {"hhea"}, {"hmtx"}, {"maxp"},
-+                           {"name"}, {"post"} };
-+  put(&t[CFF].data, cff->data, cff->len);
-+
-+  /* Unicode from the glyphs' names, which FreeType reads into a charmap of a Type 1 face. */
-+  FT_CharMap encoding = face->charmap;
-+  cff_buf groups = {0};
-+  long ngroups = 0;
-+  if (!FT_Select_Charmap(face, FT_ENCODING_UNICODE))
-+  {
-+    FT_UInt gid;
-+    for (FT_ULong ucs = FT_Get_First_Char(face, &gid); gid; ucs = FT_Get_Next_Char(face, ucs, &gid))
-+    {
-+      put32(&groups, (long)ucs); put32(&groups, (long)ucs); put32(&groups, gid);
-+      ngroups++;
-+    }
-+    FT_Set_Charmap(face, encoding);
-+  }
-+  put16(&t[CMAP].data, 0); put16(&t[CMAP].data, 1);
-+  put16(&t[CMAP].data, 3); put16(&t[CMAP].data, 10); put32(&t[CMAP].data, 12);
-+  put16(&t[CMAP].data, 12); put16(&t[CMAP].data, 0); put32(&t[CMAP].data, 16 + 12 * ngroups);
-+  put32(&t[CMAP].data, 0); put32(&t[CMAP].data, ngroups);
-+  put(&t[CMAP].data, groups.data, groups.len);
-+  t[CMAP].data.failed |= groups.failed;
-+  free(groups.data);
-+
-+  cff_buf *h = &t[HEAD].data;
-+  put32(h, 0x10000); put32(h, 0x10000); put32(h, 0); put32(h, 0x5F0F3CF5);
-+  put16(h, 3); put16(h, 1000);
-+  for (int k = 0; k < 4; k++) put32(h, 0); /* created, modified */
-+  for (int k = 0; k < 4; k++) put16(h, (int)bbox[k]);
-+  put16(h, 0); put16(h, 8); put16(h, 2); put16(h, 0); put16(h, 0);
-+
-+  h = &t[HHEA].data;
-+  put32(h, 0x10000); put16(h, (int)bbox[3]); put16(h, (int)bbox[1]); put16(h, 0);
-+  put16(h, (int)widest); put16(h, 0); put16(h, 0); put16(h, (int)bbox[2]);
-+  put16(h, 1); put16(h, 0); put16(h, 0);
-+  for (int k = 0; k < 5; k++) put16(h, 0);
-+  put16(h, n);
-+
-+  for (int gid = 0; gid < n; gid++) { put16(&t[HMTX].data, (int)advance[gid]); put16(&t[HMTX].data, 0); }
-+  put32(&t[MAXP].data, 0x5000); put16(&t[MAXP].data, n);
-+
-+  /* Its family, full and PostScript names, which some viewers want of an embedded font. */
-+  const char *ps_name = FT_Get_Postscript_Name(face);
-+  if (!ps_name || !*ps_name) ps_name = "Type1";
-+  int name_len = (int)strlen(ps_name);
-+  h = &t[NAME].data;
-+  put16(h, 0); put16(h, 3); put16(h, 6 + 3 * 12);
-+  for (int k = 0; k < 3; k++)
-+  {
-+    put16(h, 3); put16(h, 1); put16(h, 0x409); put16(h, (int[]){ 1, 4, 6 }[k]);
-+    put16(h, 2 * name_len); put16(h, 0);
-+  }
-+  for (int k = 0; k < name_len; k++) put16(h, (unsigned char)ps_name[k]);
-+
-+  put32(&t[POST].data, 0x30000); /* no glyph names */
-+  for (int k = 0; k < 7; k++) put32(&t[POST].data, 0);
-+
-+  cff_buf out = {0};
-+  int search = 1, selector = 0;
-+  while (search * 2 <= TABLES) { search *= 2; selector++; }
-+  put32(&out, 0x4F54544F); put16(&out, TABLES); put16(&out, 16 * search);
-+  put16(&out, selector); put16(&out, 16 * (TABLES - search));
-+  size_t at = 12 + 16 * TABLES;
-+  for (int k = 0; k < TABLES; k++)
-+  {
-+    put(&out, t[k].tag, 4); put32(&out, (long)checksum(&t[k].data));
-+    put32(&out, (long)at); put32(&out, (long)t[k].data.len);
-+    at += (t[k].data.len + 3) & ~(size_t)3;
-+  }
-+  int failed = 0;
-+  for (int k = 0; k < TABLES; k++)
-+  {
-+    put(&out, t[k].data.data, t[k].data.len);
-+    while (out.len & 3) put8(&out, 0);
-+    failed |= t[k].data.failed;
-+    free(t[k].data.data);
-+  }
-+  if (failed || out.failed)
-+  {
-+    free(out.data);
-+    return NULL;
-+  }
-+  /* head's checkSumAdjustment makes the whole font sum to the magic number. */
-+  unsigned long adjust = (0xB1B0AFBAUL - checksum(&out)) & 0xffffffff;
-+  size_t head_at = 12 + 16 * TABLES;
-+  for (int k = 0; k < HEAD; k++) head_at += (t[k].data.len + 3) & ~(size_t)3;
-+  for (int k = 0; k < 4; k++) out.data[head_at + 8 + k] = (unsigned char)(adjust >> (24 - 8 * k));
-+  *len = out.len;
-+  return out.data;
-+}
-+
-+/* A Type 1 face as OpenType (malloc'd, `*len` bytes), or NULL for another kind of font, or a
-+ * failure. CID i is glyph i, the face's glyph i with its advance; hints go. */
-+static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
-+{
-+  const char *format = FT_Get_Font_Format(face);
-+  if (!format || strcmp(format, "Type 1") || face->num_glyphs < 1 || face->num_glyphs > 0xffff)
-+    return NULL;
-+
-+  int n = face->num_glyphs;
-+  double scale = face->units_per_EM ? 1000.0 / face->units_per_EM : 1;
-+  size_t *glyph_ends = calloc(n, sizeof *glyph_ends);
-+  long *advance = calloc(n, sizeof *advance);
-+  cff_buf glyphs = {0}, fixed = {0}, top = {0}, fd = {0}, out = {0};
-+  if (!glyph_ends || !advance)
-+  {
-+    free(glyph_ends); free(advance);
-+    return NULL;
-+  }
-+
-+  /* Charstrings, from FreeType's outlines in font units. */
-+  FT_Outline_Funcs funcs = { move_to, line_to, conic_to, cubic_to, 0, 0 };
-+  for (int gid = 0; gid < n; gid++)
-+  {
-+    outline_state s = { &glyphs, scale, 0, 0, 0, 0 };
-+    if (!FT_Load_Glyph(face, gid, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP))
-+    {
-+      s.width = lround(face->glyph->metrics.horiAdvance * scale);
-+      if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE)
-+        FT_Outline_Decompose(&face->glyph->outline, &funcs, &s);
-+    }
-+    start(&s);
-+    put8(&glyphs, 14); /* endchar */
-+    glyph_ends[gid] = glyphs.len;
-+    advance[gid] = s.width;
-+  }
-+
-+  const char *ps_name = FT_Get_Postscript_Name(face);
-+  if (!ps_name || !*ps_name) ps_name = "Type1";
-+  size_t name_len = strlen(ps_name);
-+  static const char strings[] = "AdobeIdentity"; /* SIDs 391 and 392, for the ROS */
-+  static const size_t string_ends[] = { 5, 13 };
-+
-+  /* The Top DICT: everything after it is laid out from its size. */
-+  long bbox[4] = { lround(face->bbox.xMin * scale), lround(face->bbox.yMin * scale),
-+                   lround(face->bbox.xMax * scale), lround(face->bbox.yMax * scale) };
-+  put_number(&fixed, 391, 1); put_number(&fixed, 392, 1); put_number(&fixed, 0, 1);
-+  put8(&fixed, 12); put8(&fixed, 30); /* ROS: Adobe-Identity-0 */
-+  for (int k = 0; k < 4; k++) put_number(&fixed, bbox[k], 1);
-+  put8(&fixed, 5); /* FontBBox */
-+  put_number(&fixed, n, 1); put8(&fixed, 12); put8(&fixed, 34); /* CIDCount */
-+  size_t top_len = fixed.len + 6 + 6 + 7 + 7, fd_len = 11;
-+  unsigned char private_dict[] = { 139, 20, 139, 21 }; /* defaultWidthX 0, nominalWidthX 0 */
-+
-+  size_t charset_at = 4 + index_size(name_len, 1) + index_size(top_len, 1)
-+                      + index_size(sizeof strings - 1, 2) + index_size(0, 0);
-+  size_t fdselect_at = charset_at + 1 + 2 * (size_t)(n - 1);
-+  size_t charstrings_at = fdselect_at + 8;
-+  size_t fdarray_at = charstrings_at + index_size(glyphs.len, n);
-+  size_t private_at = fdarray_at + index_size(fd_len, 1);
-+
-+  put(&top, fixed.data, fixed.len);
-+  put_offset(&top, (long)charset_at); put8(&top, 15);
-+  put_offset(&top, (long)charstrings_at); put8(&top, 17);
-+  put_offset(&top, (long)fdarray_at); put8(&top, 12); put8(&top, 36);
-+  put_offset(&top, (long)fdselect_at); put8(&top, 12); put8(&top, 37);
-+  size_t top_end = top.len;
-+  put_offset(&fd, (long)sizeof private_dict); put_offset(&fd, (long)private_at); put8(&fd, 18);
-+  size_t fd_end = fd.len;
-+
-+  put8(&out, 1); put8(&out, 0); put8(&out, 4); put8(&out, 4); /* Header */
-+  put_index(&out, (const unsigned char *)ps_name, &name_len, 1);
-+  put_index(&out, top.data, &top_end, 1);
-+  put_index(&out, (const unsigned char *)strings, string_ends, 2);
-+  put_index(&out, NULL, NULL, 0); /* Global Subrs */
-+  put8(&out, 0); /* charset, format 0: glyph i is CID i */
-+  for (int gid = 1; gid < n; gid++) put16(&out, gid);
-+  put8(&out, 3); put16(&out, 1); put16(&out, 0); put8(&out, 0); put16(&out, n); /* FDSelect */
-+  put_index(&out, glyphs.data, glyph_ends, n);
-+  put_index(&out, fd.data, &fd_end, 1);
-+  put(&out, private_dict, sizeof private_dict);
-+
-+  int failed = glyphs.failed || fixed.failed || top.failed || fd.failed || out.failed
-+               || top.len != top_len || fd.len != fd_len
-+               || out.len != private_at + sizeof private_dict;
-+  unsigned char *font = failed ? NULL : opentype(face, &out, advance, bbox, len);
-+  free(glyph_ends); free(advance);
-+  free(glyphs.data); free(fixed.data); free(top.data); free(fd.data); free(out.data);
-+  return font;
-+}
-+
-+/* Each Type 1 font met and its OpenType copy (NULL when it couldn't be made), for the process. */
-+typedef struct page_font { fz_font *font, *copy; struct page_font *next; } page_font;
-+static page_font *page_fonts;
-+
-+fz_font *dvi_page_font(fz_context *ctx, fz_font *font)
-+{
-+  static int pdf_output = -1;
-+  static page_font *last;
-+  if (pdf_output < 0)
-+  {
-+    const char *path = getenv("TEXPRESSO_PDF_OUTPUT");
-+    pdf_output = path && *path;
-+  }
-+  if (!pdf_output || !font)
-+    return font;
-+  if (!last || last->font != font)
-+  {
-+    for (last = page_fonts; last && last->font != font; last = last->next);
-+    if (!last)
-+    {
-+      last = fz_malloc_struct(ctx, page_font);
-+      /* Kept, so another font can't come to have its address. */
-+      last->font = fz_keep_font(ctx, font);
-+      last->next = page_fonts;
-+      page_fonts = last;
-+      size_t len;
-+      unsigned char *data = NULL;
-+      FT_Face face = fz_font_ft_face(ctx, font);
-+      /* MuPDF's FreeType allocates through the context only while it's locked. */
-+      if (face)
-+      {
-+        fz_ft_lock(ctx);
-+        data = type1_to_opentype(face, &len);
-+        fz_ft_unlock(ctx);
-+      }
-+      if (data)
-+      {
-+        fz_buffer *buf = NULL;
-+        fz_var(buf);
-+        fz_try(ctx)
-+        {
-+          buf = fz_new_buffer_from_copied_data(ctx, data, len);
-+          last->copy = fz_new_font_from_buffer(ctx, fz_font_name(ctx, font), buf, 0, 0);
-+        }
-+        fz_always(ctx)
-+          fz_drop_buffer(ctx, buf);
-+        fz_catch(ctx)
-+          fz_warn(ctx, "%s stays Type 1 in the PDF: %s", fz_font_name(ctx, font), fz_caught_message(ctx));
-+        free(data);
-+      }
-+    }
-+  }
-+  return last->copy ? last->copy : font;
-+}
 diff --git a/src/engine/engine/xetex-errors.c b/src/engine/engine/xetex-errors.c
 index fb6c9d3..15bf4ab 100644
 --- a/src/engine/engine/xetex-errors.c
@@ -522,35 +98,85 @@ index fb6c9d3..15bf4ab 100644
  
  
 diff --git a/src/engine/main/main.c b/src/engine/main/main.c
-index 333408e..5ee2032 100644
+index 333408e..23db8db 100644
 --- a/src/engine/main/main.c
 +++ b/src/engine/main/main.c
-@@ -62,7 +62,9 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
+@@ -62,7 +62,11 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
    vfprintf(stderr, format, ap);
    va_end(ap);
    fprintf(stderr, "\n");
 -  do_abort();
 +  // TeX stopping on the document (an emergency stop, no \end, too many errors) is not a crash:
 +  // its log is written, and an abort would leave a crash report for every one while typing.
-+  exit(EXIT_FAILURE);
++  // _exit: a snapshot is a fork, whose exit would flush its parent's buffers a second time.
++  fflush(stderr);
++  _exit(EXIT_FAILURE);
  }
  
  int ttstub_shell_escape(const unsigned short *cmd, size_t len)
+diff --git a/src/frontend/Makefile b/src/frontend/Makefile
+index c922019..5e24e65 100644
+--- a/src/frontend/Makefile
++++ b/src/frontend/Makefile
+@@ -1,4 +1,4 @@
+-OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
++OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o live.o
+ 
+ BUILD=../../build
+ DIR=$(BUILD)/frontend
 diff --git a/src/frontend/driver.c b/src/frontend/driver.c
-index 9337b08..f67bcf3 100644
+index 9337b08..c3aba31 100644
 --- a/src/frontend/driver.c
 +++ b/src/frontend/driver.c
-@@ -288,6 +288,10 @@ int main(int argc, const char **argv)
+@@ -27,6 +27,7 @@
+ #include <mupdf/fitz.h>
+ #include "logo.h"
+ #include "driver.h"
++#include "live.h"
  
-   bool init = 0;
+ #ifdef __APPLE__
+ #include <sys/syslimits.h>
+@@ -127,8 +128,40 @@ static void usage(void)
+           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
+ }
  
-+  // Writing a PDF for the editor to show, there is no window of our own.
-+  if (getenv("TEXPRESSO_PDF_OUTPUT"))
-+    SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
++/* Writing pages for an editor's own PDF view (live.c), stderr holds a keystroke's
++   diagnostics until the loop waits, so the editor reading them wakes once, not forty
++   times. What was said before a crash is what explains it: the buffer is written as it
++   is, as fflush isn't safe in a signal handler (Darwin's FILE). */
++static char diagnostics[1 << 15];
 +
-   //Initialize SDL
-   if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
-   {
++static void crashed(int sig)
++{
++  (void)sig;
++  write(STDERR_FILENO, diagnostics, stderr->_p - (unsigned char *)diagnostics);
++}
++
++static int live(int argc, const char **argv, const char *pdf_output)
++{
++  setvbuf(stderr, diagnostics, _IOFBF, sizeof diagnostics);
++  struct sigaction crash = {.sa_handler = crashed, .sa_flags = SA_RESETHAND};
++  sigaction(SIGABRT, &crash, NULL);
++  sigaction(SIGSEGV, &crash, NULL);
++  sigaction(SIGBUS, &crash, NULL);
++  char exe_path[PATH_MAX];
++  if (!get_executable_path(exe_path) && !realpath(argv[0], exe_path))
++  {
++    perror("finding executable path");
++    return 1;
++  }
++  return txp_live_main(argc, argv, exe_path, pdf_output, STDIN_FILENO);
++}
++
+ int main(int argc, const char **argv)
+ {
++  const char *pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
++  if (pdf_output && *pdf_output)
++    return live(argc, argv, pdf_output);
++
+   // Unbuffered stderr so debug/[fatal] lines hit disk before a crash.
+   setvbuf(stderr, NULL, _IONBF, 0);
+ 
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
 index 6face98..97e0224 100644
 --- a/src/frontend/editor.c
@@ -784,24 +410,26 @@ index 05fdd1c..02f09c4 100644
  void editor_reset_sync(void);
  void editor_notify_file_opened(int index, const char *path, int len);
 diff --git a/src/frontend/engine.h b/src/frontend/engine.h
-index 13e945d..ccd29ca 100644
+index 13e945d..ac1b6ba 100644
 --- a/src/frontend/engine.h
 +++ b/src/frontend/engine.h
-@@ -47,6 +47,20 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
+@@ -47,6 +47,22 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
  
  txp_engine *txp_create_pdf_engine(fz_context *ctx, const char *pdf_path);
  
-+/* The TeX engine's own, for an editor showing the document in its own PDF view (main.c). */
-+void txp_tex_live(txp_engine *self);
-+int txp_tex_worker_fd(txp_engine *self);
++/* The TeX engine's own, for an editor showing the document in its own PDF view
++ * (live.c). */
++txp_engine *txp_tex_live_engine(fz_context *ctx, const char *exe_path, const char *root,
++                                const char *name, const char *inputs);
++int txp_tex_worker_fd(txp_engine *self); /* what a step waits on, or -1 */
 +uint64_t txp_tex_page_hash(txp_engine *self, int page);
 +int txp_tex_outcome(txp_engine *self); /* enum EDITOR_RUN, once the run is over */
 +bool txp_tex_aux_changed(txp_engine *self);
-+void txp_tex_adopt(txp_engine *self, fz_context *ctx, txp_engine *from);
++void txp_tex_rerun(txp_engine *self, fz_context *ctx);
++/* The engine to go on with: `self`, or a pass that has taken its place (freeing it). */
++txp_engine *txp_tex_successor(txp_engine *self, fz_context *ctx);
 +bool txp_tex_warm(txp_engine *self, fileentry_t **entry, int *offset);
 +bool txp_tex_plant(txp_engine *self, fileentry_t *entry, int offset);
-+void txp_tex_take_resources(txp_engine *self, txp_engine *from);
-+void txp_tex_resend_output(txp_engine *self);
 +fz_rect txp_tex_page_box(txp_engine *self, int page);
 +void txp_tex_run_page(txp_engine *self, fz_context *ctx, int page, fz_device *dev);
 +
@@ -809,16 +437,27 @@ index 13e945d..ccd29ca 100644
                                    const char *dvi_path,
                                    dvi_reshooks hooks);
 diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
-index 5866b1b..22c2c27 100644
+index 5866b1b..6f4e573 100644
 --- a/src/frontend/engine_tex.c
 +++ b/src/frontend/engine_tex.c
-@@ -102,8 +102,21 @@ struct tex_engine
+@@ -38,6 +38,7 @@
+ #include "state.h"
+ #include "synctex.h"
+ #include "editor.h"
++#include "providers.h"
+ 
+ typedef struct
+ {
+@@ -102,8 +103,24 @@ struct tex_engine
  
    bool aux_dirty;
    bool finishing;
 +
-+  // For the editor's own PDF view (txp_tex_live): finishing passes are another engine's
++  // For the editor's own PDF view (txp_tex_live_engine)
 +  bool live;
++  char *root;              // the document's folder
++  struct tex_engine *pass; // a finishing pass under way (txp_tex_rerun)
++  struct tex_engine *next; // and once it is over, the engine to go on with
 +  struct {
 +    fileentry_t *entry;
 +    int position;
@@ -834,7 +473,7 @@ index 5866b1b..22c2c27 100644
  // Backtrackable process state & VFS representation
  
  static process_t *get_process(struct tex_engine *t)
-@@ -207,6 +220,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
+@@ -207,6 +224,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
    {
      self->deferred.active = false;
      log_rollback(ctx, self->log, self->restart);
@@ -844,7 +483,7 @@ index 5866b1b..22c2c27 100644
      self->process_count = 1;
      process_t *p = get_process(self);
      p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
-@@ -305,6 +321,25 @@ static void decimate_processes(struct tex_engine *self)
+@@ -305,6 +325,25 @@ static void decimate_processes(struct tex_engine *self)
      }
    }
  
@@ -870,7 +509,26 @@ index 5866b1b..22c2c27 100644
    int i = 0;
    for (int j = 0; j < self->process_count; j++)
    {
-@@ -339,6 +374,10 @@ static void engine_destroy(txp_engine *_self, fz_context *ctx)
+@@ -332,16 +371,33 @@ static void decimate_processes(struct tex_engine *self)
+ 
+ // Engine class implementation
+ 
++// A finishing pass is muted: the editor is shown the document it replaces until it does.
++static void drop_pass(fz_context *ctx, struct tex_engine *self)
++{
++  if (!self->pass)
++    return;
++  editor_mute(true);
++  engine_destroy((txp_engine *)self->pass, ctx);
++  editor_mute(false);
++  self->pass = NULL;
++}
++
+ static void engine_destroy(txp_engine *_self, fz_context *ctx)
+ {
+   SELF;
++  drop_pass(ctx, self);
+   while (self->process_count > 0)
      pop_process(ctx, self);
    incdvi_free(ctx, self->dvi);
    synctex_free(ctx, self->stex);
@@ -881,7 +539,11 @@ index 5866b1b..22c2c27 100644
    fz_free(ctx, self->name);
    fz_free(ctx, self->engine_path);
    fz_free(ctx, self->inclusion_path);
-@@ -474,7 +513,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
++  fz_free(ctx, self->root);
+   fz_free(ctx, self);
+ }
+ 
+@@ -474,7 +530,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
  static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
  {
    // Fences are pending: don't snapshot now
@@ -890,7 +552,7 @@ index 5866b1b..22c2c27 100644
      return 0;
  
    int process = self->process_count - 1;
-@@ -550,6 +589,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -550,6 +606,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
            if (!fs_path)
            {
              e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -898,7 +560,7 @@ index 5866b1b..22c2c27 100644
              if (e->promised && !self->deferred.active)
              {
                // File was promised and is missing: notify the editor and wait
-@@ -581,6 +621,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -581,6 +638,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
  
        if (!e)
          e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -907,7 +569,7 @@ index 5866b1b..22c2c27 100644
  
        log_filecell(ctx, self->log, cell);
        log_fileentry(ctx, self->log, e);
-@@ -742,6 +784,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -742,6 +801,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
        if (fork)
        {
          a.tag = A_FORK;
@@ -916,7 +578,7 @@ index 5866b1b..22c2c27 100644
          self->fence_pos -= 1;
        }
        else if (need_snapshot(ctx, self, q->time))
-@@ -754,6 +798,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -754,6 +815,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
          a.tag = A_READ;
          a.read.size = n;
        }
@@ -925,7 +587,7 @@ index 5866b1b..22c2c27 100644
        if (0)
        {
          if (fork)
-@@ -986,7 +1032,9 @@ static void revert_trace(trace_entry_t *te)
+@@ -986,7 +1049,9 @@ static void revert_trace(trace_entry_t *te)
  static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
  {
    self->deferred.active = false;
@@ -936,7 +598,7 @@ index 5866b1b..22c2c27 100644
  
    fprintf(
      stderr,
-@@ -1018,7 +1066,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
+@@ -1018,7 +1083,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
              p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
    }
  
@@ -948,7 +610,7 @@ index 5866b1b..22c2c27 100644
      pop_process(ctx, self);
  
    int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
-@@ -1066,6 +1117,7 @@ static bool possible_fence(trace_entry_t *te)
+@@ -1066,6 +1134,7 @@ static bool possible_fence(trace_entry_t *te)
  static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
  {
    self->fence_pos = -1;
@@ -956,7 +618,7 @@ index 5866b1b..22c2c27 100644
  
    if (trace <= 0)
      return trace;
-@@ -1074,6 +1126,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
+@@ -1074,6 +1143,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
      mabort();
  
    self->fence_pos = 0;
@@ -966,7 +628,21 @@ index 5866b1b..22c2c27 100644
  
    offset = (offset - 64) & ~(64 - 1);
    if (offset < self->trace[trace].seen)
-@@ -1169,7 +1224,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
+@@ -1143,9 +1215,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
+   return dl;
+ }
+ 
++static bool pass_step(fz_context *ctx, struct tex_engine *self);
++
+ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_needed)
+ {
+   SELF;
++  if (self->pass)
++    return pass_step(ctx, self);
+   if (restart_if_needed)
+     prepare_process(ctx, self);
+ 
+@@ -1169,7 +1245,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
      int fd = get_process(self)->fd;
      if (fd == -1)
        return 0;
@@ -975,23 +651,60 @@ index 5866b1b..22c2c27 100644
        return 0;
      if (!read_query(self, self->c, &q))
      {
-@@ -1609,6 +1664,186 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
+@@ -1368,6 +1444,8 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
+ 
+ static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
+ {
++  // The pass would show the document as it was.
++  drop_pass(ctx, self);
+   int trace_len = self->rollback.trace_len;
+   // if (changed > 0) changed--;
+ 
+@@ -1584,6 +1662,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
+ static txp_engine_status engine_get_status(txp_engine *_self)
+ {
+   SELF;
++  if (self->pass)
++    return DOC_RUNNING;
+   if (self->process_count == 0)
+     return DOC_TERMINATED;
+   return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
+@@ -1609,6 +1689,243 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
    return filesystem_lookup_or_create(ctx, self->fs, path);
  }
  
 +// For the editor's own PDF view
 +
-+void txp_tex_live(txp_engine *_self)
++static struct tex_engine *live_engine(fz_context *ctx, const char *engine_path,
++                                      const char *inclusion_path, const char *name,
++                                      const char *root)
 +{
-+  SELF;
++  struct tex_engine *self = (struct tex_engine *)txp_create_tex_engine(
++      ctx, engine_path, true, false, inclusion_path, name, dvi_texlive_hooks(ctx, root));
 +  self->live = true;
++  self->root = fz_strdup(ctx, root);
++  return self;
++}
++
++txp_engine *txp_tex_live_engine(fz_context *ctx, const char *exe_path, const char *root,
++                                const char *name, const char *inputs)
++{
++  // Its TeX is beside it, and runs in the document's folder.
++  char engine_path[PATH_MAX];
++  snprintf(engine_path, sizeof engine_path, "%.*s/texpresso-xetex",
++           (int)(strrchr(exe_path, '/') - exe_path), exe_path);
++  if (chdir(root) != 0)
++    perror("chdir to the document's folder");
 +  // The caller waits, on the worker and its own input together (txp_tex_worker_fd).
 +  step_timeout = 0;
++  return (txp_engine *)live_engine(ctx, engine_path, inputs, name, root);
 +}
 +
 +int txp_tex_worker_fd(txp_engine *_self)
 +{
 +  SELF;
++  if (self->pass)
++    return txp_tex_worker_fd((txp_engine *)self->pass);
 +  if (self->process_count == 0 || self->deferred.active)
 +    return -1;
 +  return get_process(self)->fd;
@@ -1050,12 +763,10 @@ index 5866b1b..22c2c27 100644
 +  return false;
 +}
 +
-+// A new engine for the document `_from` has finished: the editor's buffers as they are,
-+// and what `_from` wrote to the files it reads as their contents.
-+void txp_tex_adopt(txp_engine *_self, fz_context *ctx, txp_engine *_from)
++// A finishing pass of `from`, which has finished: the editor's buffers as they are, and
++// what `from` wrote to the files it reads as their contents.
++static void adopt(fz_context *ctx, struct tex_engine *self, struct tex_engine *from)
 +{
-+  SELF;
-+  struct tex_engine *from = (struct tex_engine *)_from;
 +  fileentry_t *e;
 +  for (int index = 0; (e = filesystem_scan(from->fs, &index));)
 +  {
@@ -1119,16 +830,9 @@ index 5866b1b..22c2c27 100644
 +  return true;
 +}
 +
-+void txp_tex_take_resources(txp_engine *_self, txp_engine *_from)
-+{
-+  SELF;
-+  incdvi_take_resources(self->dvi, ((struct tex_engine *)_from)->dvi);
-+}
-+
 +// TeX's output and log from their start, to an editor that has another engine's.
-+void txp_tex_resend_output(txp_engine *_self)
++static void resend_output(struct tex_engine *self)
 +{
-+  SELF;
 +  fileentry_t *e, *out = self->st.stdout.entry, *log = self->st.log.entry;
 +  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
 +  {
@@ -1142,6 +846,53 @@ index 5866b1b..22c2c27 100644
 +  editor_truncate(BUF_LOG, NULL);
 +  editor_append(BUF_OUT, output_data(out), 0);
 +  editor_append(BUF_LOG, output_data(log), 0);
++}
++
++// A finishing pass runs in a second TeX, while this one's snapshots still answer an edit,
++// which drops the pass: forked workers started over would leave none near the caret.
++void txp_tex_rerun(txp_engine *_self, fz_context *ctx)
++{
++  SELF;
++  struct tex_engine *pass =
++      live_engine(ctx, self->engine_path, self->inclusion_path, self->name, self->root);
++  adopt(ctx, pass, self);
++  // Its own snapshot where this one's is, for the edit after it takes over.
++  if (self->warm.entry)
++    txp_tex_plant((txp_engine *)pass,
++                  filesystem_lookup_or_create(ctx, pass->fs, self->warm.entry->path),
++                  self->warm.position);
++  self->pass = pass;
++  editor_mute(true);
++  engine_step((txp_engine *)pass, ctx, true);
++  editor_mute(false);
++}
++
++static bool pass_step(fz_context *ctx, struct tex_engine *self)
++{
++  struct tex_engine *pass = self->pass;
++  editor_mute(true);
++  bool stepped = engine_step((txp_engine *)pass, ctx, false);
++  editor_mute(false);
++  if (engine_get_status((txp_engine *)pass) == DOC_RUNNING)
++    return stepped;
++  // Over, it takes this engine's place, with its fonts.
++  incdvi_take_resources(pass->dvi, self->dvi);
++  resend_output(pass);
++  self->next = pass;
++  self->pass = NULL;
++  return false;
++}
++
++txp_engine *txp_tex_successor(txp_engine *_self, fz_context *ctx)
++{
++  SELF;
++  struct tex_engine *next = self->next;
++  if (!next)
++    return _self;
++  editor_mute(true);
++  engine_destroy(_self, ctx);
++  editor_mute(false);
++  return (txp_engine *)next;
 +}
 +
 +fz_rect txp_tex_page_box(txp_engine *_self, int page)
@@ -1209,768 +960,22 @@ index 852f744..e26e1e9 100644
 +
  #endif /*!INCDVI_H*/
 diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..755f88c 100644
+index c202294..dcaa3ad 100644
 --- a/src/frontend/main.c
 +++ b/src/frontend/main.c
-@@ -29,6 +29,7 @@
- #include <stdio.h>
- #include <unistd.h>
- #include <errno.h>
-+#include <signal.h>
- #include "mydvi.h"
- #include "providers.h"
- #include "renderer.h"
-@@ -42,9 +43,18 @@
- 
- struct persistent_state *pstate;
- 
-+/* TEXPRESSO_PDF_OUTPUT (<folder>/live.pdf): no window. The editor shows the document in its
-+   own PDF view, from the files written into that folder; see "Live preview" below. */
-+static const char *pdf_output;
-+static unsigned live_events;
-+
- static void schedule_event(enum custom_events ev)
- {
--  pstate->schedule_event(ev);
-+  // There is no window to draw for, and the loop below looks for these itself.
-+  if (pdf_output)
-+    live_events |= 1u << ev;
-+  else
-+    pstate->schedule_event(ev);
- }
- 
- static bool should_reload_binary(void)
-@@ -745,6 +755,16 @@ static void realize_change(struct persistent_state *ps,
-   send(notify_file_changes, ui->eng, ps->ctx, e, offset);
- }
- 
-+/* What the editor's own PDF view has asked for. */
-+static struct {
-+  int first, last;      // the pages it shows
-+  int mark;             // its last ["mark", n]
-+  bool touched;         // a command changed a file
-+  bool rerun;           // it asked for a finishing pass
-+  char caret_path[1024];
-+  int caret_offset;     // where its caret settled, -1 once a snapshot is there
-+} live_wish = {.last = 1, .caret_offset = -1};
-+
- #define BUFFERED_OPS 64
- #define BUFFERED_CHARS 4096
- #define T_IDLE_MS 500
-@@ -975,6 +995,7 @@ static void interpret_command(struct persistent_state *ps,
-   switch (cmd.tag)
-   {
-     case EDIT_OPEN:
-+      live_wish.touched = true;
-       if (cmd.open.base64)
-       {
-         unsigned char *buf = malloc(cmd.open.length);
-@@ -995,10 +1016,12 @@ static void interpret_command(struct persistent_state *ps,
-       break;
- 
-     case EDIT_CLOSE:
-+      live_wish.touched = true;
-       interpret_close(ps, ui, cmd.close.path);
-       break;
- 
-     case EDIT_CHANGE:
-+      live_wish.touched = true;
-       interpret_change(ps, ui, &cmd.change);
-       break;
- 
-@@ -1131,9 +1154,24 @@ static void interpret_command(struct persistent_state *ps,
- 
-     case EDIT_RERUN_ONCE:
-       ps->rerun_once_pending = true;
-+      live_wish.rerun = true;
+@@ -1134,6 +1134,12 @@ static void interpret_command(struct persistent_state *ps,
        fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
        schedule_event(SCAN_EVENT);
        break;
 +
++    // Live Preview's (live.c): a window shows every page itself.
 +    case EDIT_VIEW:
-+      live_wish.first = fz_maxi(cmd.view.first, 0);
-+      live_wish.last = fz_maxi(cmd.view.last, live_wish.first);
-+      break;
-+
 +    case EDIT_MARK:
-+      live_wish.mark = cmd.mark.serial;
-+      break;
-+
 +    case EDIT_CARET:
-+      snprintf(live_wish.caret_path, sizeof live_wish.caret_path, "%s", cmd.caret.path);
-+      live_wish.caret_offset = fz_maxi(cmd.caret.offset, 0);
 +      break;
    }
  }
  
-@@ -1163,6 +1201,568 @@ static void sync_fullscreen_state(struct fullscreen_state *fs,
-   fs->prev_fs = cur_fs;
- }
- 
-+/* Runs the commands waiting on stdin. Whether stdin has closed. */
-+static bool read_commands(struct persistent_state *ps, ui_state *ui,
-+                          prot_parser *cmd_parser, vstack *cmd_stack)
-+{
-+  char buffer[4096];
-+  int n = -1;
-+  while (poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
-+  {
-+    if (n == -1)
-+    {
-+      if (errno == EINTR)
-+        continue;
-+      perror("poll stdin");
-+      break;
-+    }
-+
-+    // Echoed for upstream's window; with a page to write per keystroke it is only noise.
-+    if (!pdf_output)
-+      fprintf(stderr, "stdin: %.*s\n", n, buffer);
-+
-+    const char *ptr = buffer, *lim = buffer + n;
-+    fz_try(ps->ctx)
-+    {
-+      while ((ptr = prot_parse(ps->ctx, cmd_parser, cmd_stack, ptr, lim)))
-+      {
-+        val cmds = vstack_get_values(ps->ctx, cmd_stack);
-+        int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
-+        for (int i = 0; i < n_cmds; i++)
-+        {
-+          val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
-+          interpret_command(ps, ui, cmd_stack, cmd);
-+        }
-+      }
-+    }
-+    fz_catch(ps->ctx)
-+    {
-+      fprintf(stderr, "error while reading stdin commands: %s\n",
-+              fz_caught_message(ps->ctx));
-+      vstack_reset(ps->ctx, cmd_stack);
-+      prot_reinitialize(cmd_parser);
-+    }
-+  }
-+  return n == 0;
-+}
-+
-+/* Live preview in the editor's own PDF view
-+ *
-+ * The editor says which pages it shows (["view", first, last]). A change is typeset as far
-+ * as the last of them, and each page in view whose content differs from what the editor was
-+ * last given is written at once as a one-page PDF of its own (["page", index, path, mark]).
-+ * The rest of the document follows once typing pauses, in slices that a change interrupts.
-+ * The whole document, with its SyncTeX, is written when a run has reached the end and
-+ * differs from the one written before (["pdf", path, pages, run, changed, mark]).
-+ *
-+ * References and contents come from finishing passes, which a second engine runs beside the
-+ * first once the document has been left alone for a moment, and only when a file TeX reads
-+ * back (.aux, .toc) was written other than as read. The second replaces the first when it
-+ * is done; a change in between drops it, and the first resumes its snapshots as if there
-+ * had been no pass. */
-+
-+#define LIVE_PASSES 4
-+
-+/* ms after a change: before the pages past the view are typeset, before the whole document
-+   is written, and before a finishing pass starts. */
-+static int live_tail_ms = 150, live_whole_ms = 300, live_rerun_ms = 1000;
-+
-+typedef struct
-+{
-+  uint64_t now;   // the page as typeset, by its bytes (pages below live.checked)
-+  uint64_t shown; // as the editor was last given it, in a page of its own or the document
-+  uint64_t whole; // as in the whole document last written
-+  int file[2];    // its own PDFs, by serial: the latest, and the one before it
-+} live_page;
-+
-+static struct
-+{
-+  live_page *pages;
-+  int cap;
-+  int checked;       // pages below this are compared since they were typeset
-+  int serial;        // of the last page file
-+  uint64_t salt;     // changes when a file on disk did: its pages are other pages
-+  int whole_pages;   // pages in the whole document last written, -1 before the first
-+  bool had_complete; // a whole document of a run that reached the end was written
-+  bool whole_complete; // and the one last written is such a one
-+  bool dirty;        // a page differs from the whole document last written
-+  int synced;        // the last mark told as shown
-+  bool started;      // the first run is over
-+  double changed_at; // when a file last changed, once it is
-+  enum EDITOR_RUN run; // how the last run ended
-+  bool aux;          // and whether it wrote the files it reads other than as read
-+  int passes;        // finishing passes since the last change
-+  txp_engine *pass;  // the one under way
-+  char dir[4096];
-+} live;
-+
-+static double live_ms(void)
-+{
-+  struct timespec t;
-+  clock_gettime(CLOCK_MONOTONIC, &t);
-+  return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
-+}
-+
-+static live_page *live_at(fz_context *ctx, int index)
-+{
-+  if (index >= live.cap)
-+  {
-+    int cap = live.cap ? live.cap : 64;
-+    while (cap <= index) cap *= 2;
-+    live.pages = fz_realloc_array(ctx, live.pages, cap, live_page);
-+    memset(live.pages + live.cap, 0, (cap - live.cap) * sizeof(live_page));
-+    live.cap = cap;
-+  }
-+  return &live.pages[index];
-+}
-+
-+static void live_page_path(char *path, size_t size, int index, int serial)
-+{
-+  snprintf(path, size, "%s/page-%d-%d.pdf", live.dir, index, serial);
-+}
-+
-+/* A page's own PDF is removed one step after another replaces it (`serial`, or 0 for the
-+   whole document): the editor may be about to read the one it was just told of. */
-+static void live_retire(live_page *page, int index, int serial)
-+{
-+  char path[4200];
-+  if (page->file[1])
-+  {
-+    live_page_path(path, sizeof path, index, page->file[1]);
-+    remove(path);
-+  }
-+  page->file[1] = page->file[0];
-+  page->file[0] = serial;
-+}
-+
-+static bool live_write_page(fz_context *ctx, ui_state *ui, int index)
-+{
-+  live_page *page = &live.pages[index];
-+  int serial = ++live.serial;
-+  char path[4200];
-+  live_page_path(path, sizeof path, index, serial);
-+  fz_document_writer *writer = NULL;
-+  fz_var(writer);
-+  fz_try(ctx)
-+  {
-+    writer = fz_new_pdf_writer(ctx, path, "");
-+    fz_device *dev = fz_begin_page(ctx, writer, txp_tex_page_box(ui->eng, index));
-+    txp_tex_run_page(ui->eng, ctx, index, dev);
-+    fz_end_page(ctx, writer);
-+    fz_close_document_writer(ctx, writer);
-+  }
-+  fz_always(ctx)
-+    fz_drop_document_writer(ctx, writer);
-+  fz_catch(ctx)
-+  {
-+    fprintf(stderr, "[pdf] couldn't write %s: %s\n", path, fz_caught_message(ctx));
-+    remove(path);
-+    return false;
-+  }
-+  live_retire(page, index, serial);
-+  page->shown = page->now;
-+  // Complete on disk before the editor hears of it.
-+  editor_page(index, path, live_wish.mark);
-+  return true;
-+}
-+
-+/* Compares the pages typeset since the last look, and writes those in view that differ from
-+   what the editor has; with `view`, first the earlier ones that have come into view. */
-+static void live_scan(fz_context *ctx, ui_state *ui, bool view)
-+{
-+  int count = send(page_count, ui->eng);
-+  if (live.checked > count)
-+    live.checked = count;
-+  // Until the editor has a document, there is nothing for a page of its own to replace.
-+  bool pages = live.whole_pages >= 0;
-+  if (view && pages)
-+    for (int i = live_wish.first; i <= live_wish.last && i < live.checked; i++)
-+      if (live.pages[i].now != live.pages[i].shown)
-+        live_write_page(ctx, ui, i);
-+  for (; live.checked < count; live.checked++)
-+  {
-+    int i = live.checked;
-+    live_page *page = live_at(ctx, i);
-+    page->now = txp_tex_page_hash(ui->eng, i) ^ live.salt;
-+    if (page->now != page->whole)
-+      live.dirty = true;
-+    if (pages && i >= live_wish.first && i <= live_wish.last && page->now != page->shown)
-+      live_write_page(ctx, ui, i);
-+  }
-+}
-+
-+static void export_synctex(fz_context *ctx, ui_state *ui)
-+{
-+  fz_buffer *buf = NULL;
-+  send(synctex, ui->eng, &buf);
-+  size_t len = strlen(pdf_output);
-+  if (!buf || len < 4 || len > 4000 || strcmp(pdf_output + len - 4, ".pdf"))
-+    return;
-+  char path[4200], part[4200];
-+  snprintf(path, sizeof path, "%.*s.synctex", (int)(len - 4), pdf_output);
-+  snprintf(part, sizeof part, "%s.part", path);
-+  FILE *f = fopen(part, "wb");
-+  if (!f)
-+    return;
-+  bool written = fwrite(buf->data, 1, buf->len, f) == buf->len;
-+  if (fclose(f) != 0 || !written || rename(part, path) != 0)
-+  {
-+    fprintf(stderr, "[pdf] couldn't write %s\n", path);
-+    remove(part);
-+  }
-+}
-+
-+enum live_written { LIVE_WRITTEN, LIVE_INTERRUPTED, LIVE_FAILED };
-+
-+/* The whole document as typeset so far, to TEXPRESSO_PDF_OUTPUT. `interruptible`, it gives
-+   way to a command waiting on stdin: the next keystroke's page comes first. */
-+static enum live_written live_write_whole(fz_context *ctx, ui_state *ui, enum EDITOR_RUN run,
-+                                          bool interruptible)
-+{
-+  int pages = send(page_count, ui->eng);
-+  char part[4200];
-+  snprintf(part, sizeof part, "%s.part", pdf_output);
-+  fz_document_writer *writer = NULL;
-+  bool interrupted = false;
-+  fz_var(writer);
-+  fz_var(interrupted);
-+  fz_try(ctx)
-+  {
-+    writer = fz_new_pdf_writer(ctx, part, "");
-+    for (int i = 0; i < pages && !interrupted; i++)
-+    {
-+      fz_device *dev = fz_begin_page(ctx, writer, txp_tex_page_box(ui->eng, i));
-+      txp_tex_run_page(ui->eng, ctx, i, dev);
-+      fz_end_page(ctx, writer);
-+      interrupted = interruptible && (i & 3) == 3 && poll_stdin();
-+    }
-+    if (!interrupted)
-+      fz_close_document_writer(ctx, writer);
-+  }
-+  fz_always(ctx)
-+    fz_drop_document_writer(ctx, writer);
-+  fz_catch(ctx)
-+  {
-+    fprintf(stderr, "[pdf] couldn't write %s: %s\n", part, fz_caught_message(ctx));
-+    remove(part);
-+    return LIVE_FAILED;
-+  }
-+  if (interrupted)
-+  {
-+    remove(part);
-+    return LIVE_INTERRUPTED;
-+  }
-+  // Its SyncTeX beside it, as live.synctex for live.pdf, for the editor's jumps between
-+  // source and pages; written first, so a PDF never comes without its own.
-+  export_synctex(ctx, ui);
-+  if (rename(part, pdf_output) != 0)
-+  {
-+    perror("[pdf] rename");
-+    return LIVE_FAILED;
-+  }
-+
-+  int *changed = fz_malloc_array(ctx, 2 * (pages + 1), int);
-+  int ranges = 0;
-+  for (int i = 0; i < live.cap; i++)
-+  {
-+    live_page *page = &live.pages[i];
-+    if (i < pages && page->now != page->whole)
-+    {
-+      if (ranges && changed[2 * ranges - 1] == i - 1)
-+        changed[2 * ranges - 1] = i;
-+      else
-+      {
-+        changed[2 * ranges] = changed[2 * ranges + 1] = i;
-+        ranges++;
-+      }
-+    }
-+    page->whole = page->shown = i < pages ? page->now : 0;
-+    live_retire(page, i, 0);
-+  }
-+  live.whole_pages = pages;
-+  live.dirty = false;
-+  live.whole_complete = run == RUN_COMPLETE;
-+  if (run == RUN_COMPLETE)
-+    live.had_complete = true;
-+  editor_pdf(pdf_output, pages, run, changed, ranges, live_wish.mark);
-+  fz_free(ctx, changed);
-+  return LIVE_WRITTEN;
-+}
-+
-+/* Steps `eng` until its page count leaves `count` (when not negative), a command waits, a
-+   few ms have passed, or its worker has nothing more to say yet. Whether it has more. */
-+static bool live_step(fz_context *ctx, txp_engine *eng, int count)
-+{
-+  double until = live_ms() + 4;
-+  int steps = 0;
-+  while (send(step, eng, ctx, false))
-+  {
-+    if (count >= 0 && send(page_count, eng) != count)
-+      return true;
-+    if ((++steps & 15) == 0 && (poll_stdin() || live_ms() > until))
-+      return true;
-+  }
-+  return false;
-+}
-+
-+/* Where the editor's caret settled, a snapshot is wanted just before it, so that the first
-+   key typed there is as quick as the ones after it. A run that hasn't read that far takes
-+   it on its way. One that is over is told of a change there that changes nothing, and takes
-+   it as it does for a real change: the pages typeset again are the same pages, and nothing
-+   is sent. A run in between is left to end first. */
-+static void live_caret(struct persistent_state *ps, ui_state *ui)
-+{
-+  int offset = live_wish.caret_offset, at, go_up = 0;
-+  if (offset < 0)
-+    return;
-+  const char *path = live_wish.caret_path;
-+  if (path[0] == '/')
-+    path = relative_path(path, ps->doc_path, &go_up);
-+  fileentry_t *e = go_up > 0 ? NULL : send(find_file, ui->eng, ps->ctx, path), *warm;
-+  bool running = send(get_status, ui->eng) == DOC_RUNNING;
-+  if (!e || (txp_tex_warm(ui->eng, &warm, &at) && warm == e && offset >= at && offset - at < 256) ||
-+      txp_tex_plant(ui->eng, e, offset))
-+    live_wish.caret_offset = -1;
-+  else if (!running)
-+  {
-+    live_wish.caret_offset = -1;
-+    send(notify_file_changes, ui->eng, ps->ctx, e, offset);
-+  }
-+}
-+
-+static void live_pass_drop(fz_context *ctx)
-+{
-+  if (!live.pass)
-+    return;
-+  editor_mute(true);
-+  send(destroy, live.pass, ctx);
-+  editor_mute(false);
-+  live.pass = NULL;
-+}
-+
-+static void live_pass_start(struct persistent_state *ps, ui_state *ui,
-+                            const char *engine_path, bool texlive)
-+{
-+  dvi_reshooks hooks = texlive ? dvi_texlive_hooks(ps->ctx, ps->doc_path)
-+                               : dvi_tectonic_hooks(ps->ctx, ps->doc_path);
-+  live.pass = txp_create_tex_engine(ps->ctx, engine_path, texlive, ps->stream_mode,
-+                                    ps->inclusion_path, ps->doc_name, hooks);
-+  live.passes++;
-+  txp_tex_live(live.pass);
-+  txp_tex_adopt(live.pass, ps->ctx, ui->eng);
-+  // Its own snapshot where the first engine's is, for the edit after it takes over.
-+  fileentry_t *warm;
-+  int at;
-+  if (txp_tex_warm(ui->eng, &warm, &at))
-+    txp_tex_plant(live.pass, send(find_file, live.pass, ps->ctx, warm->path), at);
-+  fprintf(stderr, "[live] finishing pass %d\n", live.passes);
-+  editor_mute(true);
-+  send(step, live.pass, ps->ctx, true);
-+  editor_mute(false);
-+}
-+
-+/* A slice of the finishing pass, which takes the first engine's place when it has reached
-+   the end. Whether it has more steps waiting; `*promoted` when it is now the engine. */
-+static bool live_pass_step(struct persistent_state *ps, ui_state *ui, bool *promoted)
-+{
-+  fz_context *ctx = ps->ctx;
-+  editor_mute(true);
-+  bool more = live_step(ctx, live.pass, -1);
-+  bool over = send(get_status, live.pass) != DOC_RUNNING;
-+  editor_mute(false);
-+  if (!over)
-+    return more;
-+  if (txp_tex_outcome(live.pass) != RUN_COMPLETE)
-+  {
-+    // Not a document to show in place of one that reached its end: no more passes for now.
-+    fprintf(stderr, "[live] finishing pass stopped on an error, dropped\n");
-+    live.passes = LIVE_PASSES;
-+    live_pass_drop(ctx);
-+    return false;
-+  }
-+  txp_engine *old = ui->eng;
-+  txp_tex_take_resources(live.pass, old);
-+  ui->eng = live.pass;
-+  live.pass = NULL;
-+  editor_mute(true);
-+  send(destroy, old, ctx);
-+  editor_mute(false);
-+  txp_tex_resend_output(ui->eng);
-+  live.checked = 0;
-+  *promoted = true;
-+  return true;
-+}
-+
-+/* What was said before a crash is what explains it. */
-+static void live_crashed(int sig)
-+{
-+  (void)sig;
-+  fflush(stderr);
-+}
-+
-+static int live_env(const char *name, int value)
-+{
-+  const char *text = getenv(name);
-+  return text && *text ? atoi(text) : value;
-+}
-+
-+static void live_loop(struct persistent_state *ps, ui_state *ui, prot_parser *parser,
-+                      vstack *stack, const char *engine_path, bool texlive)
-+{
-+  fz_context *ctx = ps->ctx;
-+  snprintf(live.dir, sizeof live.dir, "%s", pdf_output);
-+  char *slash = strrchr(live.dir, '/');
-+  if (slash)
-+    *slash = 0;
-+  else
-+    strcpy(live.dir, ".");
-+  live.whole_pages = -1;
-+  live.changed_at = -1e9;
-+  // For measuring.
-+  live_tail_ms = live_env("TEXPRESSO_LIVE_TAIL_MS", live_tail_ms);
-+  live_whole_ms = live_env("TEXPRESSO_LIVE_WHOLE_MS", live_whole_ms);
-+  live_rerun_ms = live_env("TEXPRESSO_LIVE_RERUN_MS", live_rerun_ms);
-+  // The diagnostics of a keystroke in one write, not forty, for whoever reads them.
-+  static char errors[1 << 15];
-+  setvbuf(stderr, errors, _IOFBF, sizeof errors);
-+  struct sigaction crashed = {.sa_handler = live_crashed, .sa_flags = SA_RESETHAND};
-+  sigaction(SIGABRT, &crashed, NULL);
-+  sigaction(SIGSEGV, &crashed, NULL);
-+  sigaction(SIGBUS, &crashed, NULL);
-+  txp_tex_live(ui->eng);
-+  editor_live(1);
-+
-+  bool running = true; // a run whose end hasn't been told
-+  for (;;)
-+  {
-+    int first = live_wish.first, last = live_wish.last;
-+    live_wish.touched = false;
-+    send(begin_changes, ui->eng, ctx);
-+    if (read_commands(ps, ui, parser, stack))
-+      break;
-+    bool scanned = live_events & (1u << SCAN_EVENT);
-+    live_events = 0;
-+    flush_changes(ps, ui);
-+    if (scanned)
-+      send(detect_changes, ui->eng, ctx);
-+    live_caret(ps, ui);
-+    if (send(end_changes, ui->eng, ctx))
-+    {
-+      if (!ps->paused)
-+        send(step, ui->eng, ctx, true);
-+      running = true;
-+      if (scanned)
-+      {
-+        live_wish.touched = true;
-+        live.salt += 0x9e3779b97f4a7c15ull;
-+      }
-+    }
-+    if (live_wish.touched)
-+    {
-+      // The files opened with the session aren't typing to wait out.
-+      if (live.started)
-+        live.changed_at = live_ms();
-+      live.passes = 0;
-+      live_pass_drop(ctx);
-+    }
-+
-+    bool stepping = send(get_status, ui->eng) == DOC_RUNNING && !ps->paused;
-+    int count = send(page_count, ui->eng);
-+    // Pages in view first; the rest once typing has paused.
-+    bool wanted = stepping && (count <= live_wish.last ||
-+                               live_ms() - live.changed_at >= live_tail_ms);
-+    bool more = wanted && live_step(ctx, ui->eng, count);
-+    live_scan(ctx, ui, first != live_wish.first || last != live_wish.last);
-+    stepping = send(get_status, ui->eng) == DOC_RUNNING && !ps->paused;
-+    count = send(page_count, ui->eng);
-+
-+    if (running && !stepping && !ps->paused)
-+    {
-+      running = false;
-+      live.started = true;
-+      live.run = txp_tex_outcome(ui->eng);
-+      live.aux = live.run == RUN_COMPLETE && txp_tex_aux_changed(ui->eng);
-+      if (!live.aux)
-+        live_wish.rerun = false;
-+      editor_done(count, live.run);
-+    }
-+    if (live_wish.mark != live.synced && (!stepping || count > live_wish.last))
-+    {
-+      live.synced = live_wish.mark;
-+      editor_synced(live.synced);
-+    }
-+
-+    double now = live_ms(), wake = -1;
-+    if (stepping)
-+    {
-+      // Something to show before a long document is done.
-+      if (live.whole_pages < 0 && count > live_wish.last &&
-+          live_write_whole(ctx, ui, RUN_PARTIAL, false) == LIVE_FAILED)
-+        live.whole_pages = 0;
-+      if (!wanted)
-+        wake = live.changed_at + live_tail_ms;
-+    }
-+    else if (!running)
-+    {
-+      // The early document, or one of a run that stopped, is told as complete once it is,
-+      // even with the same pages: the editor goes by what the last one said.
-+      bool completed = live.run == RUN_COMPLETE && !live.whole_complete;
-+      // A run that stopped on an error doesn't replace a document that reached its end.
-+      bool differs = (live.dirty || count != live.whole_pages || completed) &&
-+                     !(live.run == RUN_STOPPED && live.had_complete);
-+      // Other pages wait for typing to pause; another number of them is told at once.
-+      double due = live.run == RUN_COMPLETE && (count != live.whole_pages || completed)
-+                       ? now : live.changed_at + live_whole_ms;
-+      if (differs && now >= due)
-+      {
-+        enum live_written written =
-+            live_write_whole(ctx, ui, live.run, live.whole_pages >= 0);
-+        if (written == LIVE_INTERRUPTED)
-+          more = true;
-+        else if (written == LIVE_FAILED)
-+          live.dirty = false, live.whole_pages = count;
-+      }
-+      else if (differs)
-+        wake = due;
-+
-+      if (live_wish.rerun)
-+        live.passes = fz_mini(live.passes, LIVE_PASSES - 1);
-+      double pass_due = live_wish.rerun ? now : live.changed_at + live_rerun_ms;
-+      if (live.pass)
-+      {
-+        bool promoted = false;
-+        more = live_pass_step(ps, ui, &promoted) || more;
-+        running = running || promoted;
-+      }
-+      else if (live.aux && live.passes < LIVE_PASSES && now >= pass_due)
-+      {
-+        live_wish.rerun = false;
-+        live_pass_start(ps, ui, engine_path, texlive);
-+        more = true;
-+      }
-+      else if (live.aux && live.passes < LIVE_PASSES && (wake < 0 || pass_due < wake))
-+        wake = pass_due;
-+    }
-+    // A caret that waited for the run to end.
-+    if (more || (!stepping && live_wish.caret_offset >= 0))
-+      continue;
-+
-+    // Nothing to do until a command comes, a worker has more, or one of the pauses is over.
-+    fflush(stderr);
-+    struct pollfd fds[2] = {{STDIN_FILENO, POLLRDNORM, 0}, {-1, POLLRDNORM, 0}};
-+    if (stepping && wanted)
-+      fds[1].fd = txp_tex_worker_fd(ui->eng);
-+    else if (!stepping && live.pass)
-+      fds[1].fd = txp_tex_worker_fd(live.pass);
-+    int timeout = wake < 0 ? -1 : fz_maxi((int)(wake - live_ms() + 0.999), 0);
-+    if (poll(fds, 2, timeout) == -1 && errno != EINTR)
-+      break;
-+    if ((fds[0].revents & (POLLHUP | POLLERR | POLLNVAL)) && !poll_stdin())
-+      break;
-+  }
-+  live_pass_drop(ctx);
-+}
-+
- /* Entry point */
- 
- bool texpresso_main(struct persistent_state *ps)
-@@ -1170,6 +1770,9 @@ bool texpresso_main(struct persistent_state *ps)
-   editor_set_protocol(ps->protocol);
-   editor_set_line_output(ps->line_output);
-   pstate = ps;
-+  pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
-+  if (pdf_output && !*pdf_output)
-+    pdf_output = NULL;
- 
-   struct fullscreen_state fs = {
-     .has_backup = false,
-@@ -1221,6 +1824,7 @@ bool texpresso_main(struct persistent_state *ps)
-   find_engine(engine_path, ps->exe_path);
-   fprintf(stderr, "[info] engine path: %s\n", engine_path);
- 
-+  bool tex_engine = false;
-   if (doc_ext && strcmp(doc_ext, "pdf") == 0)
-     ui->eng = txp_create_pdf_engine(ps->ctx, ps->doc_name);
-   else
-@@ -1234,10 +1838,16 @@ bool texpresso_main(struct persistent_state *ps)
-     if (doc_ext && (strcmp(doc_ext, "dvi") == 0 || strcmp(doc_ext, "xdv") == 0))
-       ui->eng = txp_create_dvi_engine(ps->ctx, ps->doc_name, hooks);
-     else
-+    {
-       ui->eng = txp_create_tex_engine(ps->ctx, engine_path, using_texlive,
-                                       ps->stream_mode, ps->inclusion_path,
-                                       ps->doc_name, hooks);
-+      tex_engine = true;
-+    }
-   }
-+  // Pages are told apart by the TeX engine's output: another kind of document has a window.
-+  if (!tex_engine)
-+    pdf_output = NULL;
- 
-   ui->sdl_renderer = ps->renderer;
-   ui->doc_renderer = txp_renderer_new(ps->ctx, ui->sdl_renderer);
-@@ -1267,6 +1877,17 @@ bool texpresso_main(struct persistent_state *ps)
-   bool quit = 0, reload = 0;
-   if (!ps->paused)
-     send(step, ui->eng, ps->ctx, true);
-+  if (pdf_output)
-+  {
-+    vstack *stack = vstack_new(ps->ctx);
-+    prot_parser parser;
-+    prot_initialize(&parser, (ps->protocol == EDITOR_JSON));
-+    live_loop(ps, ui, &parser, stack, engine_path, using_texlive);
-+    // The editor has gone: its pipe closed, even unexpectedly.
-+    txp_renderer_free(ps->ctx, ui->doc_renderer);
-+    send(destroy, ui->eng, ps->ctx);
-+    return 0;
-+  }
-   render(ps->ctx, ui);
-   schedule_event(RELOAD_EVENT);
- 
-@@ -1297,43 +1918,8 @@ bool texpresso_main(struct persistent_state *ps)
- 
-     // Process stdin
-     send(begin_changes, ui->eng, ps->ctx);
--    char buffer[4096];
--    int n = -1;
--    while (!stdin_eof && poll_stdin() && (n = read(STDIN_FILENO, buffer, 4096)) != 0)
--    {
--      if (n == -1)
--      {
--        if (errno == EINTR)
--          continue;
--        perror("poll stdin");
--        break;
--      }
--
--      fprintf(stderr, "stdin: %.*s\n", n, buffer);
--
--      const char *ptr = buffer, *lim = buffer + n;
--      fz_try(ps->ctx)
--      {
--        while ((ptr = prot_parse(ps->ctx, &cmd_parser, cmd_stack, ptr, lim)))
--        {
--          val cmds = vstack_get_values(ps->ctx, cmd_stack);
--          int n_cmds = val_array_length(ps->ctx, cmd_stack, cmds);
--          for (int i = 0; i < n_cmds; i++)
--          {
--            val cmd = val_array_get(ps->ctx, cmd_stack, cmds, i);
--            interpret_command(ps, ui, cmd_stack, cmd);
--          }
--        }
--      }
--      fz_catch(ps->ctx)
--      {
--        fprintf(stderr, "error while reading stdin commands: %s\n",
--                fz_caught_message(ps->ctx));
--        vstack_reset(ps->ctx, cmd_stack);
--        prot_reinitialize(&cmd_parser);
--      }
--    }
--    if (n == 0) stdin_eof = 1;
-+    if (!stdin_eof)
-+      stdin_eof = read_commands(ps, ui, &cmd_parser, cmd_stack);
- 
-     if (send(end_changes, ui->eng, ps->ctx))
-     {
 diff --git a/src/frontend/state.h b/src/frontend/state.h
 index 4854531..db8d100 100644
 --- a/src/frontend/state.h

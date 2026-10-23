@@ -64,7 +64,7 @@ CFG
 # any npm cache on the machine and a stand-in for the source maps never made.
 if ! (cd emscripten && npm ci --omit=dev --no-audit --no-fund >/dev/null 2>&1); then
   NM=emscripten/node_modules
-  mkdir -p "$NM/@jridgewell/source-map" emscripten/out
+  mkdir -p "$NM/@jridgewell/source-map"
   fetch "$NM/terser" https://github.com/terser/terser "$TERSER"
   fetch "$NM/acorn-import-phases" https://github.com/nicolo-ribaudo/acorn-import-phases "$IMPORT_PHASES"
   if [ ! -f "$NM/acorn/package.json" ]; then
@@ -76,10 +76,12 @@ if ! (cd emscripten && npm ci --omit=dev --no-audit --no-fund >/dev/null 2>&1); 
     > "$NM/@jridgewell/source-map/package.json"
   echo 'export class SourceMapConsumer {} export class SourceMapGenerator {}' \
     > "$NM/@jridgewell/source-map/index.js"
-  for s in npm_packages create_entry_points git_submodules install_hooks; do
-    touch "emscripten/out/$s.stamp"
-  done
 fi
+# What emcc checks bootstrap.py has done, which the steps above did.
+mkdir -p emscripten/out
+for s in npm_packages create_entry_points git_submodules install_hooks; do
+  touch "emscripten/out/$s.stamp"
+done
 
 cat > env.sh <<ENV
 export PATH="$TC/emscripten:$TC/wabt-install/bin:$TC/bin:\$PATH"
