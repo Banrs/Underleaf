@@ -948,7 +948,7 @@ impl Actor {
         );
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
-            let installed = tex::installed(|| service.tool_paths().0);
+            let installed = tex::installed(&service.tool_paths().0);
             let result = symbols.map(|symbols| {
                 let symbols = Symbols {
                     files,
