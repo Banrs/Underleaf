@@ -25,14 +25,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
     let toolbar = NSToolbar(identifier: "Workspace 5")
-    /// Compile as its symbol, where the workspace finds its word would be the first tool without room.
-    var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
     weak var workspace: WorkspaceController?
     private lazy var format = FormatPopover(app: app, project: project)
-    private var customized: NSKeyValueObservation?
     private var closed = false
 
     init(app: AppModel, project: ProjectModel) {
@@ -41,20 +38,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // Compile's word is the one label, and the workspace knows its width.
+        // Compile's word is the one label.
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = app.savesLayout
-        // A turn later, once AppKit has done with its items.
-        customized = toolbar.observe(\.itemIdentifiers) { [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.workspace?.toolbarItemsChanged() }
-        }
         watch()
     }
 
     func close() {
         closed = true
-        customized = nil
         format.popover.close()
     }
 
@@ -79,12 +71,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile, .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
-    }
-
-    /// The default tools, spaces aside, whose widths the workspace reckons Compile's room from.
-    var holdsDefaultItems: Bool {
-        let tools = { (ids: [NSToolbarItem.Identifier]) in ids.filter { $0 != .space && $0 != .flexibleSpace } }
-        return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
     }
 
     /// To the window's split, not the nested ones, which would answer first, and out of the overflow menu (HIG, Toolbars).
@@ -227,14 +213,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private nonisolated struct State: Equatable {
         let sourceTools, hasPDF, canShare, showsPDF: Bool
         let zoomLabel: String
-        let canZoomIn, canZoomOut, compiling, canCompile, compactCompile: Bool
+        let canZoomIn, canZoomOut, compiling, canCompile: Bool
     }
 
     private var state: State {
         let open = !project.closed
         return State(sourceTools: open && project.sourceToolsEnabled, hasPDF: open && project.hasPDF, canShare: open && project.buildPDF != nil,
                      showsPDF: app.showPDF, zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-                     compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
+                     compiling: project.compiling, canCompile: canCompile)
     }
 
     /// Not a turn later as a `track` would: the toolbar would draw each frame of a sidebar's animation twice.
@@ -276,10 +262,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Stop on clear glass: a prominent item's glass stays its own, where a plain item's joins its neighbours'.
             update(item, \.backgroundTintColor, state.compiling ? .clear : nil)
             update(item, \.isEnabled, state.canCompile)
-            // A help tag for the symbol alone: the word says as much itself (HIG, Buttons).
-            update(item, \.toolTip, !state.compactCompile ? nil : state.compiling ? "Stop the build" : "Compile the project")
             if let host = item.view as? NSHostingView<CompileButton>,
-               (host.rootView.compiling, host.rootView.compact, host.rootView.enabled) != (state.compiling, state.compactCompile, state.canCompile) {
+               (host.rootView.compiling, host.rootView.enabled) != (state.compiling, state.canCompile) {
                 host.rootView = compileButton(state)
             }
         case .togglePDF:
@@ -325,7 +309,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
     private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in self?.compile() }
+        CompileButton(compiling: state.compiling, enabled: state.canCompile) { [weak self] in self?.compile() }
     }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
@@ -363,57 +347,35 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Stop in Compile's width. It fills the item's glass, which doesn't pass clicks to an undersized view, and changes form
-/// as AppKit's search item does (27.2).
+/// Stop in Compile's width, so the tools beside it stay put. It fills the item's glass, which passes no clicks to an
+/// undersized view.
 private struct CompileButton: View {
-    let compiling, compact, enabled: Bool
+    let compiling, enabled: Bool
     let action: () -> Void
     @Environment(\.appearsActive) private var appearsActive
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             ZStack {
-                idle.opacity(compiling ? 0 : 1)
+                Text(MenuCommand.compileRun.title).opacity(compiling ? 0 : 1)
                 // A button to VoiceOver still; the status bar says Compiling.
-                busy.opacity(compiling ? 1 : 0).accessibilityHidden(true)
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.small)
+                    Text(MenuCommand.compileStop.title)
+                }
+                .opacity(compiling ? 1 : 0)
+                .accessibilityHidden(true)
             }
             // Faint in a window that isn't the active one, as AppKit's own items.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
-            .animation(reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
-            // AppKit's glass for a title and for a symbol (27.2).
-            .padding(.horizontal, compact ? 0 : 12)
-            .frame(minWidth: 36, minHeight: 36)
+            // The padding and height of AppKit's glass around an item's title.
+            .padding(.horizontal, 12)
+            .frame(minHeight: 36)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
-    }
-
-    /// At the size AppKit draws an item's symbol (27.2).
-    @ViewBuilder private var idle: some View {
-        if compact {
-            Image(systemName: "play.fill").font(.system(size: 17))
-        } else {
-            Text(MenuCommand.compileRun.title).transition(.identity)
-        }
-    }
-
-    /// Round the symbol: the regular spinner touches the circle's edge, and the small one has no room inside.
-    @ViewBuilder private var busy: some View {
-        if compact {
-            ZStack {
-                ProgressView().controlSize(.regular).scaleEffect(0.8)
-                Image(systemName: "stop.fill").font(.system(size: 7))
-            }
-        } else {
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.small)
-                Text(MenuCommand.compileStop.title)
-            }
-            .transition(.identity)
-        }
     }
 }
 

@@ -73,8 +73,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // The toolbar's ground over the source is the editor's surface.
         window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
-        // Compile's form goes by the toolbar's tools, which the workspace could not read before the window had them.
-        workspace.toolbarItemsChanged()
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
