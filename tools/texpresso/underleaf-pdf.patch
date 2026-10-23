@@ -959,6 +959,23 @@ index 852f744..e26e1e9 100644
 +void incdvi_take_resources(incdvi_t *d, incdvi_t *from);
 +
  #endif /*!INCDVI_H*/
+diff --git a/src/frontend/main.c b/src/frontend/main.c
+index c202294..dcaa3ad 100644
+--- a/src/frontend/main.c
++++ b/src/frontend/main.c
+@@ -1134,6 +1134,12 @@ static void interpret_command(struct persistent_state *ps,
+       fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
+       schedule_event(SCAN_EVENT);
+       break;
++
++    // Live Preview's (live.c): a window shows every page itself.
++    case EDIT_VIEW:
++    case EDIT_MARK:
++    case EDIT_CARET:
++      break;
+   }
+ }
+ 
 diff --git a/src/frontend/state.h b/src/frontend/state.h
 index 4854531..db8d100 100644
 --- a/src/frontend/state.h
