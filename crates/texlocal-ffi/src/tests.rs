@@ -264,8 +264,6 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
         let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
         assert_eq!(disk, format!("{added}{text}"));
         until(&events, |e| e["type"] == "saved" && e["session"] == session);
-        tl_source_reload(source, b"x".as_ptr(), 1);
-        assert_eq!(text_of(source), "x");
         tl_source_free(source);
         tl_close(handle);
     }
@@ -315,5 +313,40 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
         assert_eq!(!source.is_null(), open, "round {round}");
         unsafe { tl_source_free(source) };
     }
+    unsafe { tl_close(handle) };
+}
+
+struct Within {
+    handle: *const TlHandle,
+    sink: mpsc::Sender<Value>,
+}
+
+extern "C" fn call_within(ctx: *mut c_void, _json: *const c_char) {
+    let within = unsafe { &*(ctx as *const Within) };
+    let _ = within
+        .sink
+        .send(call(within.handle, "list_projects", json!({})));
+}
+
+/// As a host's continuation may, resumed on the thread that answered.
+#[test]
+fn a_session_commands_done_may_call_the_core() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open(dir.path());
+    open_main(handle);
+    let (sink, answers) = mpsc::channel();
+    let within = Within { handle, sink };
+    let (command, args) = (c("session_save"), c(r#"{ "session": 1 }"#));
+    unsafe {
+        let ctx = (&raw const within).cast_mut().cast();
+        tl_call_async(
+            handle,
+            command.as_ptr(),
+            args.as_ptr(),
+            Some(call_within),
+            ctx,
+        );
+    }
+    assert_eq!(until(&answers, |_| true)["ok"][0]["id"], "P");
     unsafe { tl_close(handle) };
 }

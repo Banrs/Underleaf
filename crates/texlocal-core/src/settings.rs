@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::atomic;
 use crate::error::CoreError;
@@ -81,6 +81,9 @@ struct ProjectFile {
     #[serde(flatten)]
     settings: Settings,
     ui: UiState,
+    /// A newer build's, or another tool's: a write keeps them, as a synced folder shares the file.
+    #[serde(flatten)]
+    rest: Map<String, Value>,
 }
 
 /// A JSON file as `T`: the default if there is no file, an error (409) if it
@@ -187,6 +190,9 @@ pub struct UiState {
     pub zoom: Option<Value>,
     pub panel: bool,
     pub live_preview: bool,
+    /// A newer build's, kept as the project file's are.
+    #[serde(flatten)]
+    pub rest: Map<String, Value>,
 }
 
 pub fn read_ui(file: &Path) -> UiState {
@@ -320,6 +326,22 @@ mod tests {
         assert_eq!(json!(written), expected);
         assert_eq!(json!(read_ui(file)), expected);
         assert_eq!(read_settings(file).engine, Engine::Lualatex);
+    }
+
+    #[test]
+    fn a_write_keeps_the_keys_a_newer_build_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = &dir.path().join(SETTINGS_FILE);
+        let newer =
+            r#"{ "mainFile": "a.tex", "outline": 2, "ui": { "panel": true, "split": 0.4 } }"#;
+        fs::write(file, newer).unwrap();
+        write_ui(file, &json!({ "line": 3 })).unwrap();
+        write_settings(file, &json!({ "engine": "xelatex" })).unwrap();
+        let written: Value = serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
+        assert_eq!(
+            (&written["outline"], &written["ui"]["split"]),
+            (&json!(2), &json!(0.4))
+        );
     }
 
     #[test]

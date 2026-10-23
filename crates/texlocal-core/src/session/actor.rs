@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
+use std::io::ErrorKind;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -21,6 +22,7 @@ use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
+use crate::events::Queued;
 use crate::logparse::{Fix, LogItem};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, History, Query, Symbols, file_kind};
@@ -28,7 +30,7 @@ use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{self, SymbolKind, Text, TextEdit};
-use crate::{CoreError, checks, lf, lock, packages, tex};
+use crate::{CoreError, checks, lf, lock, newline, packages, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -67,8 +69,8 @@ pub(crate) struct Doc {
     asking: Option<Conflict>,
     held: bool,
     error: Option<String>,
-    /// A `document_reload` the host has yet to apply: nothing is saved meanwhile.
-    reload: Option<Reload>,
+    /// The `document_reload`s the host has yet to apply, in order: nothing is saved meanwhile.
+    reloads: VecDeque<Reload>,
     composing: bool,
     pub issues: Vec<Value>,
     pub live_issues: Vec<Value>,
@@ -138,7 +140,7 @@ pub(crate) struct Actor {
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
     pub preview: Arc<dyn Preview>,
-    events: std::sync::mpsc::Sender<Value>,
+    events: std::sync::mpsc::Sender<Queued>,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub docs: BTreeMap<String, Doc>,
@@ -198,7 +200,7 @@ impl Actor {
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
         }
-        let history = Arc::new(Mutex::new(History::of(&project)));
+        let history = sessions.service.history(&project);
         let actor = Self {
             id,
             project_id,
@@ -309,7 +311,7 @@ impl Actor {
     pub fn emit(&self, kind: &str, mut fields: Value) {
         fields["type"] = kind.into();
         fields["session"] = self.id.into();
-        let _ = self.events.send(fields);
+        let _ = self.events.send(Queued::Event(fields));
     }
 
     fn handle(&mut self, message: Msg) {
@@ -402,6 +404,12 @@ impl Actor {
                 Ok(query) => self.quick_open(query.to_owned(), reply),
                 Err(err) => reply.send(Err(err)),
             },
+            // After the `tree` event they make, so the host has the entry's row as it hears.
+            "rename" | "create_entry" => {
+                let answer = self.answer(name, args);
+                let then = Queued::Then(Box::new(move || reply.send(answer)));
+                let _ = self.events.send(then);
+            }
             #[cfg(test)]
             "panic" => panic!("a bug in the session"),
             _ => {
@@ -448,7 +456,24 @@ impl Actor {
             "choose_issue" => return Ok(self.choose_issue(arg(args, "index")?)),
             "rename" => {
                 let from = paths::rel_key(string_arg(args, "from")?)?;
-                return self.rename(&from, string_arg(args, "to")?);
+                let to = match arg::<Option<String>>(args, "name")? {
+                    Some(name) => {
+                        let folder = from.rsplit_once('/').map_or("", |(folder, _)| folder);
+                        paths::in_folder(folder, &name)
+                    }
+                    None => string_arg(args, "to")?.to_owned(),
+                };
+                return self.rename(&from, &to);
+            }
+            "create_entry" => {
+                let folder = arg::<Option<String>>(args, "folder")?.unwrap_or_default();
+                let path = paths::in_folder(&folder, string_arg(args, "name")?);
+                let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
+                let made = self.service.with_project(&self.project_id, |project| {
+                    projects::create_free(&project.root, &path, dir)
+                })?;
+                self.reload_tree();
+                return Ok(json!({ "path": made }));
             }
             "navigate" => return self.navigate(args),
             "back" => return self.step(args, true),
@@ -534,7 +559,7 @@ impl Actor {
             asking: None,
             held: false,
             error: None,
-            reload: None,
+            reloads: VecDeque::new(),
             composing: false,
             issues: Vec::new(),
             live_issues: Vec::new(),
@@ -579,6 +604,13 @@ impl Actor {
             Some(edit) => {
                 self.after(Timer::Autosave);
                 self.live_edited(&path, version, &edit);
+                // Typed before the reload reached the editor, which refuses it now.
+                let doc = self.docs.get_mut(&path).expect("found by its id");
+                if !doc.reloads.is_empty() {
+                    doc.reloads.clear();
+                    doc.conflict = Some(Conflict::Changed);
+                    self.ask(&path, Conflict::Changed);
+                }
             }
             None => self.reloaded(&path, version),
         }
@@ -588,7 +620,7 @@ impl Actor {
         self.after(Timer::Symbols);
         let doc = self.docs.get_mut(path).expect("found by its id");
         doc.saved = version;
-        let reason = doc.reload.take();
+        let reason = doc.reloads.pop_front();
         // A save under way when the change came may have written over it.
         doc.force |= reason == Some(Reload::Revert);
         self.live_whole(path);
@@ -654,7 +686,10 @@ impl Actor {
             if !doc.dirty() {
                 return Ok(true);
             }
-            if doc.reload.is_some() || deleting || doc.asking.is_some() || autosave && doc.composing
+            if !doc.reloads.is_empty()
+                || deleting
+                || doc.asking.is_some()
+                || autosave && doc.composing
             {
                 return Ok(false);
             }
@@ -794,9 +829,16 @@ impl Actor {
         }
     }
 
+    /// In place of the text as saved, or, for a Revert, as the user chose to drop it: keys typed
+    /// since then refuse it.
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
-            doc.reload = Some(reason);
+            let seen = match reason {
+                Reload::Disk => doc.saved,
+                Reload::Revert => doc.doc.version(),
+            };
+            doc.doc.expect_reload(seen);
+            doc.reloads.push_back(reason);
             self.emit("document_reload", json!({ "path": path, "text": text }));
         }
     }
@@ -844,7 +886,7 @@ impl Actor {
 
     fn check_disk(&mut self, path: &str) {
         let abs = self.project.root.join(path);
-        if !abs.exists() {
+        if fs::metadata(&abs).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
             return self.file_gone(path);
         }
         let Some(doc) = self.docs.get_mut(path) else {
@@ -856,8 +898,16 @@ impl Actor {
         if as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
             return;
         }
-        let Ok((disk, stamp)) = read_disk(&abs) else {
-            return;
+        let (disk, stamp) = match read_disk(&abs) {
+            Ok(read) => read,
+            // An error that may pass, as a permission or another app's lock does, while saves wait.
+            Err(err) => {
+                if doc.dirty() {
+                    doc.error = Some(err.message);
+                    self.publish_doc(path);
+                }
+                return;
+            }
         };
         doc.disk_stamp = stamp;
         if let Some((text, newline)) = &disk {
@@ -922,7 +972,7 @@ impl Actor {
         );
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
-            let installed = tex::installed(|| service.tool_paths().0);
+            let installed = tex::installed(&service.tool_paths().0);
             let result = symbols.map(|symbols| {
                 let symbols = Symbols {
                     files,
@@ -996,8 +1046,8 @@ impl Actor {
     fn replace(&self, args: &Value) -> Result<Value, CoreError> {
         let (query, to) = (query(args)?, string_arg(args, "replacement")?);
         let open = self.texts_to_edit("replaced")?;
-        self.snapshot_before("Before Replace All")?;
-        self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
+        let found = |_: &str, text: &str| query.places(text);
+        self.edit_project("Before Replace All", &open, &projects::is_text, &found, to)
     }
 
     /// Where the project defines or uses the name at `offset` in the open document `path`, as
@@ -1008,10 +1058,8 @@ impl Actor {
         };
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
-            let symbol = doc.with(|source| {
-                let own = Facts::read(&source.text(), file_kind(&source.path));
-                source.symbol_at(&own, offset)
-            });
+            let own = doc.facts();
+            let symbol = doc.with(|source| source.symbol_at(&own, offset));
             // A file by the project's name for it, which every input of it elsewhere resolves to.
             let named = symbol.and_then(|(kind, name, file)| match kind {
                 SymbolKind::File => Some((kind, file?)),
@@ -1076,12 +1124,11 @@ impl Actor {
                 "A {noun} “{to}” exists already."
             )));
         }
-        self.snapshot_before("Before Rename")?;
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
             syntax::usages(&facts, rel, kind, from, |_| None)
         };
-        self.edit_project(&open, &tex, &found, to)
+        self.edit_project("Before Rename", &open, &tex, &found, to)
     }
 
     /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
@@ -1122,14 +1169,14 @@ impl Actor {
         // As the disk spells it, which the walk compares, however the settings do.
         let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
-        self.snapshot_before("Before Adding a Package")?;
         let found = |_: &str, text: &str| {
             let facts = Facts::read(text, "tex");
             let loaded = facts.packages.iter().any(|package| package == name);
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
         let line = format!("\n\\usepackage{{{name}}}");
-        self.edit_project(&open, &|rel| Some(rel) == main, &found, &line)
+        let main = |rel: &str| Some(rel) == main;
+        self.edit_project("Before Adding a Package", &open, &main, &found, &line)
     }
 
     /// The open documents' paths, text and versions, unless one has a change on disk still to
@@ -1137,7 +1184,7 @@ impl Actor {
     pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
         let unsettled =
-            |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || doc.reload.is_some();
+            |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || !doc.reloads.is_empty();
         if let Some(doc) = docs.clone().find(unsettled) {
             return Err(CoreError::conflict(format!(
                 "“{}” changed on disk, so nothing was {done}. Keep your edits or the disk’s first, then try again.",
@@ -1152,12 +1199,14 @@ impl Actor {
     }
 
     /// `to` in place of what `found` finds in each file `chosen` takes, given its text with line
-    /// feeds alone. An open document isn't written: its edits are answered against its version,
-    /// for the host to apply as one edit that the session saves as any other, and the answer
-    /// holds one document's. The other files are read again, written and counted under the
-    /// project's lock, but for those on their way to the Trash.
+    /// feeds alone, after a snapshot taken for `reason`. An open document isn't written: its edits
+    /// are answered against its version, for the host to apply as one edit that the session saves
+    /// as any other, and the answer holds one document's. The other files are read again, written
+    /// and counted under the project's lock, but for those on their way to the Trash. The
+    /// snapshot's id is answered, for a host that can't apply the edits to put the others back.
     fn edit_project(
         &self,
+        reason: &'static str,
         open: &[(String, String, u64)],
         chosen: &dyn Fn(&str) -> bool,
         found: &dyn Fn(&str, &str) -> Vec<Place>,
@@ -1180,11 +1229,12 @@ impl Actor {
         if edits.len() > 1 {
             return Err(CoreError::conflict(ONE_DOCUMENT));
         }
+        let snapshot = self.snapshot_before(reason)?;
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
         let written = self.service.with_project(&self.project_id, |project| {
             projects::replace_in_files(&project.root, &others, found, to)
         })?;
-        Ok(json!({ "edits": edits.pop(), "written": written }))
+        Ok(json!({ "edits": edits.pop(), "written": written, "snapshot": snapshot }))
     }
 
     // MARK: - Files
@@ -1290,7 +1340,7 @@ fn tex(rel: &str) -> bool {
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {
-    string_arg(args, "query").map(Query::new)
+    string_arg(args, "query").map(|query| Query::new(query, false, false))
 }
 
 /// The open documents' text as the editor has it, each taken without holding the others.
@@ -1328,15 +1378,3 @@ fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError
 }
 
 type DiskText = (String, &'static str);
-
-/// The first line break's.
-pub(crate) fn newline(text: &str) -> &'static str {
-    let Some(at) = text.find(['\r', '\n']) else {
-        return "\n";
-    };
-    match &text.as_bytes()[at..] {
-        [b'\r', b'\n', ..] => "\r\n",
-        [b'\r', ..] => "\r",
-        _ => "\n",
-    }
-}
