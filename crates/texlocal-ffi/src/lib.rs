@@ -378,10 +378,17 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8, len: usize) {
+pub unsafe extern "C" fn tl_source_reload(
+    source: *mut TlSource,
+    text: *const u8,
+    len: usize,
+) -> bool {
     let text = unsafe { text_arg(text, len) };
     let reload = |source: &mut TlSource| match source {
-        TlSource::Own(doc) => **doc = SourceDocument::new(&text),
+        TlSource::Own(doc) => {
+            **doc = SourceDocument::new(&text);
+            true
+        }
         TlSource::Session(document) => document.reload(&text),
     };
     unsafe { on_source(source, reload) }

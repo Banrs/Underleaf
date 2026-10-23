@@ -266,7 +266,7 @@ Each is `{"type", "session", …}`.
 |---|---|---|
 | `document` | `path`, `error`, `held` | Status bar: Not Saved when `error` or `held`. Announce “Wasn’t Saved” when `error` appears. Sent when a document opens or moves and when either field changes. |
 | `saved` | `path` | Ask `session_analyze` again (outline, words, levels). |
-| `document_reload` | `path`, `text` | Show `text` without making an edit if the document shows, then, shown or not, `tl_source_reload(source, text)`. Saves of the document wait for it, and say nothing while they wait: no `held` or `error`. |
+| `document_reload` | `path`, `text` | `tl_source_reload(source, text)`, shown or not, then show `text` without making an edit if the document shows. It is false, and nothing is shown, when keys were typed since it was sent: the session asks about the change instead (`conflict`). Saves of the document wait for it, and say nothing while they wait: no `held` or `error`. |
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |

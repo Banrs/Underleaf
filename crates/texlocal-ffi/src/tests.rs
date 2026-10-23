@@ -264,8 +264,6 @@ fn a_session_saves_the_edits_its_document_source_takes_and_tells_the_listener() 
         let disk = std::fs::read_to_string(dir.path().join("P/main.tex")).unwrap();
         assert_eq!(disk, format!("{added}{text}"));
         until(&events, |e| e["type"] == "saved" && e["session"] == session);
-        tl_source_reload(source, b"x".as_ptr(), 1);
-        assert_eq!(text_of(source), "x");
         tl_source_free(source);
         tl_close(handle);
     }

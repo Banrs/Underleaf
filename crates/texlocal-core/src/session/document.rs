@@ -13,6 +13,8 @@ use crate::syntax::{SourceDocument, TextEdit};
 struct Text {
     source: SourceDocument,
     version: u64,
+    /// Typed in since the session asked for a reload, which would lose it.
+    edited: bool,
 }
 
 struct Cell {
@@ -34,7 +36,11 @@ impl Document {
         symbols: Arc<RwLock<Arc<Symbols>>>,
     ) -> Self {
         let source = SourceDocument::named(text, path);
-        let text = Mutex::new(Text { source, version: 0 });
+        let text = Mutex::new(Text {
+            source,
+            version: 0,
+            edited: false,
+        });
         Self(Arc::new(Cell {
             id,
             text,
@@ -46,6 +52,7 @@ impl Document {
     pub fn edit(&self, start: u32, length: u32, text: &str) {
         let mut held = lock(&self.0.text);
         held.source.edit(start, length, text);
+        held.edited = true;
         let edit = TextEdit {
             start,
             length,
@@ -54,10 +61,22 @@ impl Document {
         self.changed(&mut held, Some(edit));
     }
 
-    pub fn reload(&self, text: &str) {
+    /// The session asks for a reload of the text it saw at `version`.
+    pub(crate) fn expect_reload(&self, version: u64) {
         let mut held = lock(&self.0.text);
+        held.edited = held.version != version;
+    }
+
+    /// False, changing nothing, when keys were typed since the session asked for it: they would
+    /// be lost, so the session asks about the change instead.
+    pub fn reload(&self, text: &str) -> bool {
+        let mut held = lock(&self.0.text);
+        if held.edited {
+            return false;
+        }
         held.source = SourceDocument::named(text, &held.source.path);
         self.changed(&mut held, None);
+        true
     }
 
     /// Sent under the lock, so the session has changes in the order made.

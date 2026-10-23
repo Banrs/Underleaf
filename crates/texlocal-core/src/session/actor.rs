@@ -67,8 +67,8 @@ pub(crate) struct Doc {
     asking: Option<Conflict>,
     held: bool,
     error: Option<String>,
-    /// A `document_reload` the host has yet to apply: nothing is saved meanwhile.
-    reload: Option<Reload>,
+    /// The `document_reload`s the host has yet to apply, in order: nothing is saved meanwhile.
+    reloads: VecDeque<Reload>,
     composing: bool,
     pub issues: Vec<Value>,
     pub live_issues: Vec<Value>,
@@ -534,7 +534,7 @@ impl Actor {
             asking: None,
             held: false,
             error: None,
-            reload: None,
+            reloads: VecDeque::new(),
             composing: false,
             issues: Vec::new(),
             live_issues: Vec::new(),
@@ -579,6 +579,13 @@ impl Actor {
             Some(edit) => {
                 self.after(Timer::Autosave);
                 self.live_edited(&path, version, &edit);
+                // Typed before the reload reached the editor, which refuses it now.
+                let doc = self.docs.get_mut(&path).expect("found by its id");
+                if !doc.reloads.is_empty() {
+                    doc.reloads.clear();
+                    doc.conflict = Some(Conflict::Changed);
+                    self.ask(&path, Conflict::Changed);
+                }
             }
             None => self.reloaded(&path, version),
         }
@@ -588,7 +595,7 @@ impl Actor {
         self.after(Timer::Symbols);
         let doc = self.docs.get_mut(path).expect("found by its id");
         doc.saved = version;
-        let reason = doc.reload.take();
+        let reason = doc.reloads.pop_front();
         // A save under way when the change came may have written over it.
         doc.force |= reason == Some(Reload::Revert);
         self.live_whole(path);
@@ -654,7 +661,10 @@ impl Actor {
             if !doc.dirty() {
                 return Ok(true);
             }
-            if doc.reload.is_some() || deleting || doc.asking.is_some() || autosave && doc.composing
+            if !doc.reloads.is_empty()
+                || deleting
+                || doc.asking.is_some()
+                || autosave && doc.composing
             {
                 return Ok(false);
             }
@@ -794,9 +804,16 @@ impl Actor {
         }
     }
 
+    /// In place of the text as saved, or, for a Revert, as the user chose to drop it: keys typed
+    /// since then refuse it.
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
-            doc.reload = Some(reason);
+            let seen = match reason {
+                Reload::Disk => doc.saved,
+                Reload::Revert => doc.doc.version(),
+            };
+            doc.doc.expect_reload(seen);
+            doc.reloads.push_back(reason);
             self.emit("document_reload", json!({ "path": path, "text": text }));
         }
     }
@@ -1137,7 +1154,7 @@ impl Actor {
     pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
         let unsettled =
-            |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || doc.reload.is_some();
+            |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || !doc.reloads.is_empty();
         if let Some(doc) = docs.clone().find(unsettled) {
             return Err(CoreError::conflict(format!(
                 "“{}” changed on disk, so nothing was {done}. Keep your edits or the disk’s first, then try again.",

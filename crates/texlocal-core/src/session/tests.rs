@@ -664,6 +664,21 @@ async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_o
 }
 
 #[tokio::test(start_paused = true)]
+async fn keys_typed_before_a_reload_reaches_the_editor_refuse_it_and_ask_about_the_change() {
+    let mut rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    rig.write_elsewhere("main.tex", "From elsewhere");
+    wait(300).await;
+    assert_eq!(rig.of_type("document_reload").await.len(), 1);
+    doc.edit(5, 0, "!");
+    assert!(!doc.reload("From elsewhere"));
+    assert_eq!(doc.snapshot().0, "Hello!");
+    assert_eq!(rig.of_type("conflict").await[0]["kind"], "changed");
+    wait(800).await;
+    assert_eq!(rig.disk("main.tex"), "From elsewhere");
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_sessions_own_save_is_not_another_apps_change() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
