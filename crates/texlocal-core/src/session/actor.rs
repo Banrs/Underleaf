@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
+use std::io::ErrorKind;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -861,7 +862,7 @@ impl Actor {
 
     fn check_disk(&mut self, path: &str) {
         let abs = self.project.root.join(path);
-        if !abs.exists() {
+        if fs::metadata(&abs).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
             return self.file_gone(path);
         }
         let Some(doc) = self.docs.get_mut(path) else {
@@ -873,8 +874,16 @@ impl Actor {
         if as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
             return;
         }
-        let Ok((disk, stamp)) = read_disk(&abs) else {
-            return;
+        let (disk, stamp) = match read_disk(&abs) {
+            Ok(read) => read,
+            // An error that may pass, as a permission or another app's lock does, while saves wait.
+            Err(err) => {
+                if doc.dirty() {
+                    doc.error = Some(err.message);
+                    self.publish_doc(path);
+                }
+                return;
+            }
         };
         doc.disk_stamp = stamp;
         if let Some((text, newline)) = &disk {

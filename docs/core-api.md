@@ -377,7 +377,9 @@ editor's thread.
   which the tree marks. An open document's file changed: reloaded if it has no unsaved edits,
   else asked about once; a change to its line ends alone is no change. Gone, or no longer
   UTF-8: closed, or asked about if it has unsaved edits (Revert then closes one that isn't
-  UTF-8).
+  UTF-8). Only a file not found is gone: one that can't be read for now (a permission, another
+  app's lock) is left as it is, and with unsaved edits its `document` event has the `error`
+  until a save writes it.
 - **Builds**: one at a time; a request during one queues one more (manual wins over
   automatic); Stop drops it. Automatic builds wait while live preview runs or is restarting,
   and run only once `status` has found TeX (both hosts ask it as they start).

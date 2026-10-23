@@ -773,6 +773,32 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
     assert_eq!(rig.disk("main.tex"), "Hello mine");
 }
 
+/// A folder that can't be read for now, as another app's lock leaves it, is no deletion.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn a_file_that_cant_be_read_for_now_shows_not_saved_and_isnt_taken_as_gone() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut rig = Rig::new(false).await;
+    fs::create_dir(rig.root.join("ch")).unwrap();
+    fs::write(rig.root.join("ch/a.tex"), "chapter").unwrap();
+    let doc = rig.open("ch/a.tex").await;
+    doc.edit(7, 0, " mine");
+    fs::write(rig.root.join("ch/a.tex"), "theirs").unwrap();
+    let folder = rig.root.join("ch");
+    let locked = |mode| fs::set_permissions(&folder, fs::Permissions::from_mode(mode));
+    locked(0o000).unwrap();
+    rig.changed("ch/a.tex", false);
+    wait(300).await;
+    let events = rig.events().await;
+    locked(0o755).unwrap();
+    assert!(
+        !events.iter().any(|e| e["type"] == "conflict"),
+        "{events:?}"
+    );
+    let shown = events.iter().rfind(|e| e["type"] == "document");
+    assert!(shown.unwrap()["error"].is_string(), "{events:?}");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     let mut rig = Rig::new(false).await;
