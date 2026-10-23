@@ -18,8 +18,9 @@ NSRunningApplication.runningApplications(withBundleIdentifier: "com.texlocal.mac
 for _ in {1..50}; do pgrep -qf "^$DEST/" || break; sleep 0.2; done
 pgrep -qf "^$DEST/" && { echo "TeXLocal is still running: not installed"; exit 1; }
 
-rm -rf $DEST
-ditto $APP $DEST
+# Copied beside it first, so a failed copy leaves the installed app as it was.
+rm -rf $DEST.new; ditto $APP $DEST.new
+rm -rf $DEST; mv $DEST.new $DEST
 codesign --verify --deep --strict $DEST
 cmp -s $APP/Contents/MacOS/TeXLocal $DEST/Contents/MacOS/TeXLocal || { echo "installed binary differs from the build"; exit 1; }
 echo "installed $(git -C $R rev-parse --short HEAD) to $DEST"
