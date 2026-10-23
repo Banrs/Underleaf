@@ -6,13 +6,10 @@ enum BarMetrics {
     static let target: CGFloat = 20
 }
 
-/// Page uses PDFKit numbering, which can differ from LaTeX.
+/// Small views, each observing its own values: a key typed redraws the caret's place and the word count, not the bar.
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     let project: ProjectModel
-    /// The selection's, while there is one.
-    @State private var selectedWords: Int?
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -26,124 +23,43 @@ struct StatusBar: View {
         .monospacedDigit()
         .buttonStyle(.borderless)
         .contextMenu { Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) } }
-        .task(id: project.editor.changes.count) {
-            let selection = project.editor.textView.selectedRange()
-            guard selection.length > 0 else { return selectedWords = nil }
-            // Once the selection rests: a drag through the text changes it on every move.
-            guard (try? await Task.sleep(for: .milliseconds(200))) != nil else { return }
-            selectedWords = project.editor.textView.document.words(in: selection)
-        }
     }
 
-    private enum Detail { case full, symbols, short }
+    fileprivate enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: 9) {
-            // A button: the panel's own toggle is the one place its open state shows.
-            let showingIssues = project.panel.shown && project.panel.tab == .issues
-            Button {
-                if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
-            } label: { buildStatus.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
-            .help(showingIssues ? "Hide issues" : "Show issues")
-            if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
-                // As the build's time after its result: the engine whose breaks the pages show, when the PDF's differ.
-                let title = project.liveEngine
-                Button { project.panel.show(.texpresso) } label: {
-                    Label {
-                        if let title {
-                            Text("\(Text(project.texpresso.title)) \(Text("· \(title)").foregroundStyle(.secondary))")
-                        } else {
-                            Text(project.texpresso.title)
-                        }
-                    } icon: {
-                        Image(systemName: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
-                    }
-                    .hitTarget()
-                }
-                .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }
-                      ?? "Show the Live Preview log")
-            }
-            if let reason = project.saveFailure {
-                Button { Task { await project.save() } } label: {
-                    Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
-                        .symbolRenderingMode(.multicolor)
-                        .hitTarget()
-                }
-                .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
-            }
+            BuildStatus(project: project, detail: detail)
+            LiveStatus(project: project)
+            SaveStatus(project: project)
             if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
-            let words = detail == .full && project.editsText && app.showWordCount ? project.words : nil
-            let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
             HStack(spacing: 16) {
-                if project.editsText {
-                    Button { app.perform(.editGotoLine, on: project) } label: {
-                        place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
-                              short: "\(project.cursorLine):\(project.cursorColumn + 1)",
-                              spoken: "Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
-                    }
-                    .help("Go to a line")
-                }
-                if let words {
-                    Group {
-                        if let selectedWords {
-                            Text("\(selectedWords) of ^[\(words) word](inflect: true)")
-                        } else {
-                            Text("^[\(words) word](inflect: true)")
-                        }
-                    }
-                    .foregroundStyle(.secondary)
-                    .layoutPriority(-1)
-                }
-                if pages {
-                    freshness
-                    Button { app.perform(.pdfGotoPage, on: project) } label: {
-                        place(detail, "Page \(project.pdf.page) of \(project.pdf.pageCount)",
-                              short: "\(project.pdf.page)/\(project.pdf.pageCount)",
-                              spoken: "Page \(project.pdf.page) of \(project.pdf.pageCount)")
-                    }
-                    .help("Go to a page")
-                }
+                CaretPlace(project: project, detail: detail)
+                WordCount(project: project, detail: detail)
+                PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            if project.editsText || pages { Divider().frame(height: 12) }
-            Toggle(isOn: Bindable(project.panel).shown) {
-                // With Differentiate Without Colour, off is the plain square.
-                Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
-                      ? "square" : "inset.filled.bottomthird.square")
-                    .font(.body)
-                    .frame(minHeight: BarMetrics.target)
-            }
-            .labelStyle(.iconOnly)
-            .toggleStyle(.button)
-            .help(app.title(.viewToggleLogs, on: project))
+            if project.editsText || PagePlace.shows(project, app) { Divider().frame(height: 12) }
+            PanelToggle(project: project)
         }
     }
+}
 
-    private func place(_ detail: Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
-        Group { if detail == .short { Text(verbatim: short) } else { Text(full) } }
-        .accessibilityLabel(spoken)
-        .hitTarget()
+/// A button: the panel's own toggle is the one place its open state shows.
+private struct BuildStatus: View {
+    let project: ProjectModel
+    let detail: StatusBar.Detail
+
+    var body: some View {
+        let showingIssues = project.panel.shown && project.panel.tab == .issues
+        Button {
+            if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
+        } label: { label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
+        .help(showingIssues ? "Hide issues" : "Show issues")
     }
 
-    /// Automatic builds refresh the PDF within moments, so it is called out of date only without them; while Live Preview
-    /// holds them, its pages take the PDF's place.
-    @ViewBuilder private var freshness: some View {
-        if project.showsLastSuccessfulBuild {
-            Button { project.panel.show(.issues) } label: {
-                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
-            }
-            .help("The latest build failed, so this is the last PDF that built")
-        } else if project.outdated, !project.livePDF, !app.autoCompile {
-            Button { app.perform(.compileRun, on: project) } label: {
-                Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
-            }
-            .help("The PDF is older than the source; compile to refresh it")
-            .disabled(!app.isEnabled(.compileRun, on: project))
-        }
-    }
-
-    private var buildStatus: some View {
+    private var label: some View {
         HStack {
             if project.compiling {
                 // The toolbar's Stop has the build's one spinner.
@@ -184,6 +100,155 @@ struct StatusBar: View {
         }
         .labelStyle(.titleAndIcon)
     }
+}
+
+/// As the build's time after its result: the engine whose breaks the pages show, when the PDF's differ.
+private struct LiveStatus: View {
+    let project: ProjectModel
+
+    var body: some View {
+        if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
+            let title = project.liveEngine
+            Button { project.panel.show(.texpresso) } label: {
+                Label {
+                    if let title {
+                        Text("\(Text(project.texpresso.title)) \(Text("· \(title)").foregroundStyle(.secondary))")
+                    } else {
+                        Text(project.texpresso.title)
+                    }
+                } icon: {
+                    Image(systemName: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                }
+                .hitTarget()
+            }
+            .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }
+                  ?? "Show the Live Preview log")
+        }
+    }
+}
+
+private struct SaveStatus: View {
+    let project: ProjectModel
+
+    var body: some View {
+        if let reason = project.saveFailure {
+            Button { Task { await project.save() } } label: {
+                Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+                    .hitTarget()
+            }
+            .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
+        }
+    }
+}
+
+private struct CaretPlace: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+    let detail: StatusBar.Detail
+
+    var body: some View {
+        if project.editsText {
+            Button { app.perform(.editGotoLine, on: project) } label: {
+                place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
+                      short: "\(project.cursorLine):\(project.cursorColumn + 1)",
+                      spoken: "Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
+            }
+            .help("Go to a line")
+        }
+    }
+}
+
+/// The selection's count, while there is one, once it rests: a drag through the text changes it on every move.
+private struct WordCount: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+    let detail: StatusBar.Detail
+    @State private var selectedWords: Int?
+
+    var body: some View {
+        if detail == .full, project.editsText, app.showWordCount, let words = project.words {
+            Group {
+                if let selectedWords {
+                    Text("\(selectedWords) of ^[\(words) word](inflect: true)")
+                } else {
+                    Text("^[\(words) word](inflect: true)")
+                }
+            }
+            .foregroundStyle(.secondary)
+            .layoutPriority(-1)
+            .task(id: project.editor.changes.count) {
+                let selection = project.editor.textView.selectedRange()
+                guard selection.length > 0 else { return selectedWords = nil }
+                guard (try? await Task.sleep(for: .milliseconds(200))) != nil else { return }
+                selectedWords = project.editor.textView.document.words(in: selection)
+            }
+        }
+    }
+}
+
+/// Page uses PDFKit numbering, which can differ from LaTeX.
+private struct PagePlace: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+    let detail: StatusBar.Detail
+
+    static func shows(_ project: ProjectModel, _ app: AppModel) -> Bool { app.showPDF && project.hasPDF && project.pdf.pageCount > 0 }
+
+    var body: some View {
+        if Self.shows(project, app) {
+            freshness
+            Button { app.perform(.pdfGotoPage, on: project) } label: {
+                place(detail, "Page \(project.pdf.page) of \(project.pdf.pageCount)",
+                      short: "\(project.pdf.page)/\(project.pdf.pageCount)",
+                      spoken: "Page \(project.pdf.page) of \(project.pdf.pageCount)")
+            }
+            .help("Go to a page")
+        }
+    }
+
+    /// Automatic builds refresh the PDF within moments, so it is called out of date only without them; while Live Preview
+    /// holds them, its pages take the PDF's place.
+    @ViewBuilder private var freshness: some View {
+        if project.showsLastSuccessfulBuild {
+            Button { project.panel.show(.issues) } label: {
+                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
+            }
+            .help("The latest build failed, so this is the last PDF that built")
+        } else if project.outdated, !project.livePDF, !app.autoCompile {
+            Button { app.perform(.compileRun, on: project) } label: {
+                Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
+            }
+            .help("The PDF is older than the source; compile to refresh it")
+            .disabled(!app.isEnabled(.compileRun, on: project))
+        }
+    }
+
+}
+
+private struct PanelToggle: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    let project: ProjectModel
+
+    var body: some View {
+        Toggle(isOn: Bindable(project.panel).shown) {
+            // With Differentiate Without Colour, off is the plain square.
+            Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
+                  ? "square" : "inset.filled.bottomthird.square")
+                .font(.body)
+                .frame(minHeight: BarMetrics.target)
+        }
+        .labelStyle(.iconOnly)
+        .toggleStyle(.button)
+        .help(app.title(.viewToggleLogs, on: project))
+    }
+}
+
+private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
+    Group { if detail == .short { Text(verbatim: short) } else { Text(full) } }
+    .accessibilityLabel(spoken)
+    .hitTarget()
 }
 
 extension View {
