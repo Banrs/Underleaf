@@ -288,7 +288,7 @@ public sealed partial class WorkspacePage : Page
         ShowSettings(opened.Settings);
         var ui = opened.Ui;
         ReadFolds(ui);
-        ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
+        ShowTree(tree ?? opened.Tree);
         if (opened.Pdf is { } pdf && result is null)
         {
             await Pdf.Load(pdf);

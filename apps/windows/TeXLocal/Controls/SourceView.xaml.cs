@@ -295,10 +295,12 @@ public sealed partial class SourceView : UserControl
         return SetText(text);
     }
 
+    /// Kept as it is when the core keeps its text, keys having been typed since the reload was sent, so the two never
+    /// differ; the change is asked about instead.
     public void Reload(string content) => App.Run(null, async () =>
     {
         var (line, column) = Caret;
-        source!.Reload(content);
+        if (!source!.Reload(content)) return;
         await SetText(content);
         if (source is null) return;
         line = Math.Min(line, source.LineCount);

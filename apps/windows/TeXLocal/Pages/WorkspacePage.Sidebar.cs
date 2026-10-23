@@ -27,8 +27,9 @@ public sealed partial class WorkspacePage
     /// as they are drawn: one project is open at a time.
     static HashSet<string> expanded = [], folded = [];
     readonly Dictionary<string, TreeNode> nodes = [];
-    TreeNode[] tree = [];
-    string treeJson = "", searched = "";
+    /// The last tree event's, null until one comes.
+    TreeNode[]? tree;
+    string searched = "";
     /// The search's error, or what the replace before it did.
     string? searchNote;
     int searches;
@@ -68,14 +69,10 @@ public sealed partial class WorkspacePage
         return FilesTree.ContainerFromItem(node) as FrameworkElement;
     }
 
-    /// The project's files. The watcher's tree after a RefreshTree is often the one it read, which shown again would take
-    /// away a new file's row as its name is typed (core gap 24).
-    void ShowTree(TreeNode[] shown, bool force = false)
+    void ShowTree(TreeNode[] shown)
     {
-        var json = JsonSerializer.Serialize(shown, Core.Json);
-        if (!force && json == treeJson) return;
-        (tree, treeJson) = (shown, json);
         var selected = Picked?.Path;
+        tree = shown;
         nodes.Clear();
         void Index(TreeNode[] level)
         {
@@ -89,8 +86,6 @@ public sealed partial class WorkspacePage
         FilesTree.ItemsSource = shown;
         SelectFile(selected);
     }
-
-    async Task RefreshTree() => ShowTree(await Core.CallAsync<TreeNode[]>("file_tree", new { id }));
 
     /// The active tab's tree, or its note: an empty outline, no search yet, no hits, or the search's error.
     void ShowSide()
@@ -216,7 +211,7 @@ public sealed partial class WorkspacePage
     /// one whose items were just replaced can crash it.
     void SelectCurrentHeading()
     {
-        if (OutlineTree.Visibility != Visibility.Visible || OutlineTree.SelectedItem == currentHeading) return;
+        if (OutlineTree.Visibility != Visibility.Visible || ReferenceEquals(OutlineTree.SelectedItem, currentHeading)) return;
         OutlineTree.UpdateLayout();
         OutlineTree.SelectedItem = currentHeading;
     }
@@ -316,8 +311,6 @@ public sealed partial class WorkspacePage
 
     static string ParentOf(string path) => path.LastIndexOf('/') is var i and > 0 ? path[..i] : "";
 
-    static string Join(string dir, string name) => dir.Length == 0 ? name : $"{dir}/{name}";
-
     void OnFilesContext(UIElement sender, ContextRequestedEventArgs args) =>
         FilesTree.SelectedItem = (args.OriginalSource as FrameworkElement)?.DataContext as TreeNode;
 
@@ -334,15 +327,15 @@ public sealed partial class WorkspacePage
     void NewFile() => Create("New file", "untitled.tex", false);
     void NewFolder() => Create("New folder", "untitled folder", true);
 
-    /// A new entry beside the selection, named first, as File Explorer's New names it before it is made.
+    /// A new entry beside the selection, named first, as File Explorer's New names it before it is made. The core answers
+    /// once the tree shows it; its folder opens (Expanding keeps that).
     void Create(string title, string suggested, bool dir) => App.Run("Can't create this", async () =>
     {
-        var parent = TargetDir(Picked);
+        var folder = TargetDir(Picked);
         string? made = null;
         if (!await App.Prompt(title, "Name", suggested, "Create", async name =>
-            made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir })).GetProperty("path").GetString(), stem: !dir)) return;
-        if (parent.Length > 0 && expanded.Add(parent)) SaveFolds();
-        await RefreshTree();
+            made = (await Core.CallAsync("session_create_entry", new { session, folder, name, dir })).GetProperty("path").GetString(), stem: !dir)) return;
+        if (nodes.TryGetValue(folder, out var parent) && FilesTree.ContainerFromItem(parent) is TreeViewItem row) row.IsExpanded = true;
         SelectFile(made);
     });
 
@@ -353,23 +346,24 @@ public sealed partial class WorkspacePage
     }
 
     /// The core's refusal shows in the dialog. A rename above the main file moves it, and the folders open move with
-    /// it; the answer is null if the files couldn't be saved first.
+    /// it, so the tree, which comes before the answer, is drawn again with them; the answer is null if the files couldn't
+    /// be saved first.
     void RenameFile()
     {
         if (Picked is not { } node) return;
-        var to = "";
+        string? to = null;
         App.Run("Can't rename this", async () =>
         {
             if (!await App.Prompt("Rename", "Name", node.Name, "Rename", async name =>
             {
-                to = Join(ParentOf(node.Path), name);
                 // The core takes a session's service commands in no set order, and the rename moves the folds this wrote;
                 // a write that failed doesn't stop it.
                 await Task.WhenAny(foldsSaved);
-                if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
-                    ReadFolds(renamed.GetProperty("ui").Deserialize<UiState>(Core.Json)!);
+                if (await Core.CallAsync("session_rename", new { session, from = node.Path, name }) is not { ValueKind: JsonValueKind.Object } renamed) return;
+                ReadFolds(renamed.GetProperty("ui").Deserialize<UiState>(Core.Json)!);
+                to = renamed.GetProperty("to").GetString();
             }, stem: node.Type != "dir")) return;
-            await RefreshTree();
+            ShowTree(tree!);
             SelectFile(to);
         });
     }
@@ -395,7 +389,6 @@ public sealed partial class WorkspacePage
             }
             catch (Exception ex) { await App.Alert("Can't delete this", ex.Message); }
             await Core.CallAsync("session_deleted", new { session, path = node.Path, trashed });
-            await RefreshTree();
         });
     }
 
@@ -447,7 +440,8 @@ public sealed partial class WorkspacePage
         if (picked.Count > 0) await Import(TargetDir(Picked), [.. picked.Select(f => f.Path)]);
     });
 
-    /// Copies of other files into a folder of the project; a clash asks as File Explorer does.
+    /// Copies of other files into a folder of the project, which the watcher's tree then lists; a clash asks as File
+    /// Explorer does.
     async Task Import(string dir, string[] paths)
     {
         var imported = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
@@ -463,6 +457,5 @@ public sealed partial class WorkspacePage
             if (conflict is null) return;
             await Core.CallAsync("import_files", new { id, dir, paths, conflict });
         }
-        await RefreshTree();
     }
 }

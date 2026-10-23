@@ -1,4 +1,3 @@
-using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Input;
@@ -7,13 +6,10 @@ using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Controls;
 
-/// RichEdit finds; replacements are the session's edits like any other.
+/// The core finds (`find`), folding case as project search does, so Ctrl+F and Ctrl+Shift+F find the same; replacements
+/// are the session's edits like any other.
 public sealed partial class SourceView
 {
-    const int Forward = 0x3FFFFFFF, MostCounted = 999;
-
-    FindOptions Options => (MatchCase.IsChecked ? FindOptions.Case : FindOptions.None) | (WholeWord.IsChecked ? FindOptions.Word : FindOptions.None);
-
     bool FindShown => FindBar.Visibility == Visibility.Visible;
 
     public void ShowFind() => OpenFind(false);
@@ -62,37 +58,33 @@ public sealed partial class SourceView
         if (source is null) return;
         var s = Selected;
         if (FindBox.Text.Length == 0) ShowFind();
-        else if ((Search(forward ? s.End : s.Start, forward) ?? Search(forward ? 0 : Text.Length, forward)) is { } found) Place(found);
+        else if (Next(forward ? s.End : s.Start, forward) is { } found) Place(found);
         Count();
     }
 
-    SourceRange? Search(int from, bool forward)
-    {
-        var range = forward ? Document.GetRange(from, Text.Length) : Document.GetRange(0, from);
-        return range.FindText(FindBox.Text, forward ? Forward : -Forward, Options) > 0
-            ? new SourceRange(range.StartPosition, range.EndPosition - range.StartPosition) : null;
-    }
+    SourceRange[] Matches() => FindBox.Text.Length == 0 || source is null ? []
+        : source.Call<SourceRange[]>("find", new { query = FindBox.Text, matchCase = MatchCase.IsChecked, wholeWord = WholeWord.IsChecked }) ?? [];
 
-    List<SourceRange> Matches(int most = int.MaxValue)
+    /// The first match from `from` on, or the last before it, round the document's ends.
+    SourceRange? Next(int from, bool forward)
     {
-        var found = new List<SourceRange>();
-        for (var at = 0; found.Count < most && Search(at, true) is { } match; at = match.End) found.Add(match);
-        return found;
+        var matches = Matches();
+        return forward ? matches.FirstOrDefault(m => m.Start >= from) ?? matches.FirstOrDefault()
+            : matches.LastOrDefault(m => m.End <= from) ?? matches.LastOrDefault();
     }
 
     void Count()
     {
-        List<SourceRange> matches = FindBox.Text.Length == 0 || source is null ? [] : Matches(MostCounted + 1);
-        var at = matches.IndexOf(Selected);
-        var total = matches.Count > MostCounted ? $"{MostCounted}+" : $"{matches.Count}";
-        FindCount.Text = FindBox.Text.Length == 0 ? "" : matches.Count == 0 ? "No results" : at < 0 ? $"{total} found" : $"{at + 1} of {total}";
-        ReplaceOne.IsEnabled = ReplaceEvery.IsEnabled = matches.Count > 0;
+        var matches = Matches();
+        var at = Array.IndexOf(matches, Selected);
+        FindCount.Text = FindBox.Text.Length == 0 ? "" : matches.Length == 0 ? "No results" : at < 0 ? $"{matches.Length} found" : $"{at + 1} of {matches.Length}";
+        ReplaceOne.IsEnabled = ReplaceEvery.IsEnabled = matches.Length > 0;
         FrameworkElementAutomationPeer.FromElement(FindCount)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
     void OnFindChanged(object sender, object e)
     {
-        if (source is not null && FindBox.Text.Length > 0 && (Search(Selected.Start, true) ?? Search(0, true)) is { } found) Place(found);
+        if (Next(Selected.Start, true) is { } found) Place(found);
         Count();
     }
 
@@ -112,7 +104,7 @@ public sealed partial class SourceView
     {
         if (source is null || FindBox.Text.Length == 0) return;
         var s = Selected;
-        if (Search(s.Start, true) == s) Apply(new TextEdit(s.Start, s.Length, ReplaceBox.Text));
+        if (Matches().Contains(s)) Apply(new TextEdit(s.Start, s.Length, ReplaceBox.Text));
         FindNext();
     }
 
