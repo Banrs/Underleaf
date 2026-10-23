@@ -13,151 +13,53 @@ use super::{catalog, headings, render};
 use crate::projects::Query;
 use crate::service::parse;
 
-/// A source's commands; docs/core-api.md lists them.
+/// A source's commands (docs/core-api.md): a table, one a line.
 #[derive(Deserialize)]
-#[serde(
-    tag = "call",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[rustfmt::skip]
 enum Command {
-    Completions {
-        caret: u32,
-        #[serde(default)]
-        explicit: bool,
-    },
-    ToggleComment {
-        selections: Vec<TextRange>,
-    },
-    SetHeading {
-        caret: u32,
-        command: String,
-    },
-    InsertBlock {
-        id: String,
-        selection: TextRange,
-    },
-    InsertSymbol {
-        command: String,
-        selection: TextRange,
-    },
-    MathAt {
-        caret: u32,
-    },
-    TextStyles {
-        selection: TextRange,
-    },
-    CodeRanges {
-        selection: TextRange,
-        #[serde(rename = "for")]
-        checker: Checker,
-    },
-    Words {
-        #[serde(flatten)]
-        range: TextRange,
-    },
-    Find {
-        query: String,
-        #[serde(default)]
-        match_case: bool,
-        #[serde(default)]
-        whole_word: bool,
-    },
-    Type {
-        selection: TextRange,
-        text: String,
-        auto_pair: Option<bool>,
-    },
-    DeleteBackward {
-        selection: TextRange,
-        auto_pair: Option<bool>,
-    },
-    InsertNewline {
-        selection: TextRange,
-    },
-    Partner {
-        at: u32,
-    },
-    Definition {
-        at: u32,
-    },
-    StartSnippet {
-        fields: Vec<SnippetField>,
-        at: u32,
-    },
+    Completions { caret: u32, #[serde(default)] explicit: bool },
+    ToggleComment { selections: Vec<TextRange> },
+    SetHeading { caret: u32, command: String },
+    InsertBlock { id: String, selection: TextRange },
+    InsertSymbol { command: String, selection: TextRange },
+    MathAt { caret: u32 },
+    TextStyles { selection: TextRange },
+    CodeRanges { selection: TextRange, #[serde(rename = "for")] checker: Checker },
+    Words { #[serde(flatten)] range: TextRange },
+    Find { query: String, #[serde(default)] match_case: bool, #[serde(default)] whole_word: bool },
+    Type { selection: TextRange, text: String, auto_pair: Option<bool> },
+    DeleteBackward { selection: TextRange, auto_pair: Option<bool> },
+    InsertNewline { selection: TextRange },
+    Partner { at: u32 },
+    Definition { at: u32 },
+    StartSnippet { fields: Vec<SnippetField>, at: u32 },
     EndSnippet,
-    Tab {
-        selections: Vec<TextRange>,
-        step: Option<i64>,
-    },
-    MoveLines {
-        selections: Vec<TextRange>,
-        up: bool,
-    },
-    DuplicateLines {
-        selections: Vec<TextRange>,
-    },
-    DeleteLines {
-        selections: Vec<TextRange>,
-    },
-    ToggleStyle {
-        selections: Vec<TextRange>,
-        style: Style,
-    },
-    Wrap {
-        selections: Vec<TextRange>,
-        template: String,
-    },
-    MapSelections {
-        edits: Vec<TextEdit>,
-        selections: Vec<TextRange>,
-    },
+    Tab { selections: Vec<TextRange>, step: Option<i64> },
+    MoveLines { selections: Vec<TextRange>, up: bool },
+    DuplicateLines { selections: Vec<TextRange> },
+    DeleteLines { selections: Vec<TextRange> },
+    ToggleStyle { selections: Vec<TextRange>, style: Style },
+    Wrap { selections: Vec<TextRange>, template: String },
+    MapSelections { edits: Vec<TextEdit>, selections: Vec<TextRange> },
 }
 
 /// The commands that need no document.
 #[derive(Deserialize)]
-#[serde(
-    tag = "call",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[rustfmt::skip]
 enum Free {
-    DropText {
-        path: String,
-        kind: Option<String>,
-        into: Option<String>,
-    },
+    DropText { path: String, kind: Option<String>, into: Option<String> },
     Themes,
-    MathSvg {
-        #[serde(default)]
-        tex: String,
-        #[serde(default)]
-        display: bool,
-        size: Option<f64>,
-        color: Option<Rgba>,
-    },
-    GlyphSvg {
-        #[serde(default)]
-        command: String,
-        size: Option<f64>,
-        side: Option<f64>,
-        color: Option<Rgba>,
-    },
+    MathSvg { #[serde(default)] tex: String, #[serde(default)] display: bool, size: Option<f64>,
+        color: Option<Rgba> },
+    GlyphSvg { #[serde(default)] command: String, size: Option<f64>, side: Option<f64>,
+        color: Option<Rgba> },
     Menus,
     HeadingStyles,
-    ThemeColors {
-        theme: String,
-        #[serde(flatten)]
-        appearance: Appearance,
-    },
-    Legible {
-        color: Rgba,
-        background: Rgba,
-        fill: Rgba,
-        #[serde(default)]
-        increase_contrast: bool,
-        ratio: Option<f64>,
-    },
+    ThemeColors { theme: String, #[serde(flatten)] appearance: Appearance },
+    Legible { color: Rgba, background: Rgba, fill: Rgba, #[serde(default)] increase_contrast: bool,
+        ratio: Option<f64> },
 }
 
 fn json(value: impl Serialize) -> Option<String> {

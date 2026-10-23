@@ -60,133 +60,49 @@ pub(crate) enum Msg {
 }
 
 /// A session's commands, by the name a host sends without its `session_` (docs/core-api.md),
-/// with their arguments.
+/// with their arguments: a table, one a line.
 #[derive(Deserialize)]
-#[serde(
-    tag = "call",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[rustfmt::skip]
 pub(crate) enum Command {
     Close,
-    SetOptions {
-        auto_compile: Option<bool>,
-    },
+    SetOptions { auto_compile: Option<bool> },
     Rescan,
-    OpenDocument {
-        path: RelPath,
-    },
-    CloseDocument {
-        path: RelPath,
-    },
-    Composing {
-        path: RelPath,
-        composing: bool,
-    },
-    Save {
-        reporting: Option<bool>,
-    },
-    Resolve {
-        path: RelPath,
-        answer: String,
-    },
-    Compile {
-        #[serde(default)]
-        auto: bool,
-    },
+    OpenDocument { path: RelPath },
+    CloseDocument { path: RelPath },
+    Composing { path: RelPath, composing: bool },
+    Save { reporting: Option<bool> },
+    Resolve { path: RelPath, answer: String },
+    Compile { #[serde(default)] auto: bool },
     StopCompile,
     Clean,
-    Analyze {
-        path: RelPath,
-    },
-    Search {
-        query: String,
-    },
-    Usages {
-        path: RelPath,
-        offset: u32,
-    },
-    QuickHelp {
-        path: RelPath,
-        offset: u32,
-    },
-    QuickOpen {
-        query: String,
-    },
-    Navigate {
-        from: Place,
-    },
-    Back {
-        at: Place,
-    },
-    Forward {
-        at: Place,
-    },
-    Replace {
-        query: String,
-        replacement: String,
-    },
-    RenameSymbol {
-        kind: String,
-        from: String,
-        to: String,
-    },
-    Fix {
-        id: String,
-    },
+    Analyze { path: RelPath },
+    Search { query: String },
+    Usages { path: RelPath, offset: u32 },
+    QuickHelp { path: RelPath, offset: u32 },
+    QuickOpen { query: String },
+    Navigate { from: Place },
+    Back { at: Place },
+    Forward { at: Place },
+    Replace { query: String, replacement: String },
+    RenameSymbol { kind: String, from: String, to: String },
+    Fix { id: String },
     HistoryList,
-    HistorySave {
-        name: String,
-    },
-    HistoryCompare {
-        id: String,
-        path: RelPath,
-    },
-    HistoryRestore {
-        id: String,
-        paths: Option<Vec<RelPath>>,
-    },
-    Issue {
-        next: bool,
-    },
-    ChooseIssue {
-        index: Option<usize>,
-    },
-    Rename {
-        from: RelPath,
-        to: Option<String>,
-        name: Option<String>,
-    },
-    CreateEntry {
-        #[serde(default)]
-        folder: String,
-        name: String,
-        #[serde(default)]
-        dir: bool,
-    },
-    SetSettings {
-        patch: Value,
-    },
-    PrepareDelete {
-        path: RelPath,
-    },
-    Deleted {
-        path: RelPath,
-        trashed: Option<bool>,
-    },
+    HistorySave { name: String },
+    HistoryCompare { id: String, path: RelPath },
+    HistoryRestore { id: String, paths: Option<Vec<RelPath>> },
+    Issue { next: bool },
+    ChooseIssue { index: Option<usize> },
+    Rename { from: RelPath, to: Option<String>, name: Option<String> },
+    CreateEntry { #[serde(default)] folder: String, name: String, #[serde(default)] dir: bool },
+    SetSettings { patch: Value },
+    PrepareDelete { path: RelPath },
+    Deleted { path: RelPath, trashed: Option<bool> },
     LiveStart,
     LiveStop,
-    LiveView {
-        first: u32,
-        last: u32,
-    },
-    LiveCaret {
-        path: RelPath,
-        offset: usize,
-    },
-    LiveLog {
-        shown: bool,
-    },
+    LiveView { first: u32, last: u32 },
+    LiveCaret { path: RelPath, offset: usize },
+    LiveLog { shown: bool },
     #[cfg(test)]
     Panic,
     #[cfg(test)]

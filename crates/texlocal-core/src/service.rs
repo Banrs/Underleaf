@@ -40,102 +40,36 @@ pub struct Service {
 }
 
 /// The commands outside a session, by the name a host sends (docs/core-api.md), with their
-/// arguments.
+/// arguments: a table, one a line.
 #[derive(Deserialize)]
-#[serde(
-    tag = "call",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[rustfmt::skip]
 enum Command {
     Status,
-    SetTexpressoDir {
-        dir: Option<PathBuf>,
-    },
-    SetTexDir {
-        dir: Option<PathBuf>,
-    },
+    SetTexpressoDir { dir: Option<PathBuf> },
+    SetTexDir { dir: Option<PathBuf> },
     Catalogue,
     ListProjects,
-    CreateProject {
-        name: String,
-        template: Option<String>,
-        engine: Option<String>,
-    },
-    DuplicateProject {
-        id: String,
-        name: String,
-    },
+    CreateProject { name: String, template: Option<String>, engine: Option<String> },
+    DuplicateProject { id: String, name: String },
     FreeProjectName,
-    RenameProject {
-        id: String,
-        name: String,
-    },
-    FileTree {
-        id: String,
-    },
-    CreateEntry {
-        id: String,
-        path: String,
-        #[serde(default)]
-        dir: bool,
-    },
-    SynctexForward {
-        id: String,
-        file: String,
-        line: u32,
-        #[serde(flatten)]
-        live: Live,
-    },
-    SynctexInverse {
-        id: String,
-        page: f64,
-        x: f64,
-        y: f64,
-        text: Option<String>,
-        at: Option<usize>,
-        #[serde(flatten)]
-        live: Live,
-    },
-    SynctexMatch {
-        id: String,
-        file: String,
-        line: u32,
-        column: usize,
-        pages: Vec<PdfPage>,
-    },
-    Locate {
-        path: PathBuf,
-    },
-    PdfPath {
-        id: String,
-    },
-    ExportZip {
-        id: String,
-        dest: PathBuf,
-        #[serde(default)]
-        for_arxiv: bool,
-    },
+    RenameProject { id: String, name: String },
+    FileTree { id: String },
+    CreateEntry { id: String, path: String, #[serde(default)] dir: bool },
+    SynctexForward { id: String, file: String, line: u32, #[serde(flatten)] live: Live },
+    SynctexInverse { id: String, page: f64, x: f64, y: f64, text: Option<String>, at: Option<usize>,
+        #[serde(flatten)] live: Live },
+    SynctexMatch { id: String, file: String, line: u32, column: usize, pages: Vec<PdfPage> },
+    Locate { path: PathBuf },
+    PdfPath { id: String },
+    ExportZip { id: String, dest: PathBuf, #[serde(default)] for_arxiv: bool },
     KillAll,
     InstallTex,
-    ImportFiles {
-        id: String,
-        #[serde(default)]
-        dir: String,
-        #[serde(default)]
-        paths: Vec<PathBuf>,
-        conflict: Option<Conflict>,
-    },
-    OpenPath {
-        path: PathBuf,
-    },
-    ForgetFolder {
-        id: String,
-    },
-    SetUiState {
-        id: String,
-        patch: Value,
-    },
+    ImportFiles { id: String, #[serde(default)] dir: String, #[serde(default)] paths: Vec<PathBuf>,
+        conflict: Option<Conflict> },
+    OpenPath { path: PathBuf },
+    ForgetFolder { id: String },
+    SetUiState { id: String, patch: Value },
     #[serde(other)]
     Unknown,
 }
