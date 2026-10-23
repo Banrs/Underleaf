@@ -135,6 +135,15 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(root.join(rel))
 }
 
+/// `name` in the project folder `dir` ("" is the project's own).
+pub(crate) fn in_folder(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", dir.trim_end_matches('/'), name)
+    }
+}
+
 pub(crate) fn fold_case(path: &str) -> String {
     path.to_lowercase()
 }

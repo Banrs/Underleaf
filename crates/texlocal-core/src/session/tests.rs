@@ -272,7 +272,8 @@ impl Rig {
         self.state().await;
         self.marks += 1;
         let mark = json!({ "type": "mark", "n": self.marks });
-        self.sessions.hub.queue.send(mark.clone()).unwrap();
+        let queued = crate::events::Queued::Event(mark.clone());
+        self.sessions.hub.queue.send(queued).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let mut seen = lock(&self.seen);
@@ -903,6 +904,23 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
 }
 
 // MARK: - Files
+
+/// So a host selects the entry in a tree that has it, with no tree of its own to read.
+#[tokio::test(start_paused = true)]
+async fn a_new_or_renamed_entry_is_answered_after_the_tree_that_lists_it() {
+    let rig = Rig::new(false).await;
+    let listed = |path: &str| {
+        let seen = lock(&rig.seen);
+        let last = seen.iter().rfind(|e| e["type"] == "tree");
+        last.is_some_and(|tree| tree.to_string().contains(path))
+    };
+    let made = rig.ok("create_entry", json!({ "folder": "ch", "name": "a.tex" }));
+    assert_eq!(made.await["path"], "ch/a.tex");
+    assert!(listed("ch/a.tex"));
+    let renamed = rig.ok("rename", json!({ "from": "ch/a.tex", "name": "b.tex" }));
+    assert_eq!(renamed.await["to"], "ch/b.tex");
+    assert!(listed("ch/b.tex"));
+}
 
 /// Its edits are saved first; a rename only in case moves it rather than closing it.
 #[tokio::test(start_paused = true)]

@@ -22,6 +22,7 @@ use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
+use crate::events::Queued;
 use crate::logparse::{Fix, LogItem};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, History, Query, Symbols, file_kind};
@@ -139,7 +140,7 @@ pub(crate) struct Actor {
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
     pub preview: Arc<dyn Preview>,
-    events: std::sync::mpsc::Sender<Value>,
+    events: std::sync::mpsc::Sender<Queued>,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub docs: BTreeMap<String, Doc>,
@@ -310,7 +311,7 @@ impl Actor {
     pub fn emit(&self, kind: &str, mut fields: Value) {
         fields["type"] = kind.into();
         fields["session"] = self.id.into();
-        let _ = self.events.send(fields);
+        let _ = self.events.send(Queued::Event(fields));
     }
 
     fn handle(&mut self, message: Msg) {
@@ -403,6 +404,12 @@ impl Actor {
                 Ok(query) => self.quick_open(query.to_owned(), reply),
                 Err(err) => reply.send(Err(err)),
             },
+            // After the `tree` event they make, so the host has the entry's row as it hears.
+            "rename" | "create_entry" => {
+                let answer = self.answer(name, args);
+                let then = Queued::Then(Box::new(move || reply.send(answer)));
+                let _ = self.events.send(then);
+            }
             #[cfg(test)]
             "panic" => panic!("a bug in the session"),
             _ => {
@@ -449,7 +456,24 @@ impl Actor {
             "choose_issue" => return Ok(self.choose_issue(arg(args, "index")?)),
             "rename" => {
                 let from = paths::rel_key(string_arg(args, "from")?)?;
-                return self.rename(&from, string_arg(args, "to")?);
+                let to = match arg::<Option<String>>(args, "name")? {
+                    Some(name) => {
+                        let folder = from.rsplit_once('/').map_or("", |(folder, _)| folder);
+                        paths::in_folder(folder, &name)
+                    }
+                    None => string_arg(args, "to")?.to_owned(),
+                };
+                return self.rename(&from, &to);
+            }
+            "create_entry" => {
+                let folder = arg::<Option<String>>(args, "folder")?.unwrap_or_default();
+                let path = paths::in_folder(&folder, string_arg(args, "name")?);
+                let dir = arg::<Option<bool>>(args, "dir")?.unwrap_or(false);
+                let made = self.service.with_project(&self.project_id, |project| {
+                    projects::create_free(&project.root, &path, dir)
+                })?;
+                self.reload_tree();
+                return Ok(json!({ "path": made }));
             }
             "navigate" => return self.navigate(args),
             "back" => return self.step(args, true),
@@ -1316,7 +1340,7 @@ fn tex(rel: &str) -> bool {
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {
-    string_arg(args, "query").map(Query::new)
+    string_arg(args, "query").map(|query| Query::new(query, false, false))
 }
 
 /// The open documents' text as the editor has it, each taken without holding the others.

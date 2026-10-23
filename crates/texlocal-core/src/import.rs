@@ -16,7 +16,7 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::analyze::Facts;
-use crate::paths::{self, after_entry, fold_case, normalize_segments, rel_key};
+use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, Trash};
 use crate::service::Service;
 use crate::settings::write_settings;
@@ -71,15 +71,6 @@ const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
     ),
     ("lualatex", &["luacode", "luatexja", "luaotfload"]),
 ];
-
-/// `name` in the project folder `dir` ("" is the project's own).
-fn in_folder(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
-}
 
 /// The files under a path, each by its path named from the path's own name `rel`. A drop leaves
 /// links inside a folder behind, as it imports what was dropped; a duplicate follows `links` to

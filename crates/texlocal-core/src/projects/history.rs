@@ -421,7 +421,7 @@ mod tests {
         fs::remove_file(root.join("secret.tex")).unwrap();
         let tree = file_tree(&project).unwrap();
         assert!(tree.iter().all(|node| node.name != HISTORY_DIR));
-        let secret = |_: &str, text: &str| Query::new("secret").places(text);
+        let secret = |_: &str, text: &str| Query::new("secret", false, false).places(text);
         let found = search_project(root, &HashMap::new(), &is_text, &secret, 100);
         assert!(found.unwrap().is_empty());
         let zip = dir.path().join("P.zip");

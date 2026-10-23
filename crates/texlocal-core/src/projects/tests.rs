@@ -20,7 +20,7 @@ use crate::settings::{read_settings, write_settings};
 
 /// In any case and in part of a word, with nothing open, as the service searches.
 fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    let found = |_: &str, text: &str| Query::new(query).places(text);
+    let found = |_: &str, text: &str| Query::new(query, false, false).places(text);
     search_project(root, &HashMap::new(), &is_text, &found, limit)
 }
 
