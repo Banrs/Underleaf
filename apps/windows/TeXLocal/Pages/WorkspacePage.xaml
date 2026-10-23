@@ -146,7 +146,8 @@
                     <MenuFlyoutItem AccessKey="F" Command="{StaticResource NewFolderCommand}" />
                     <MenuFlyoutItem AccessKey="A" Command="{StaticResource AddFilesCommand}" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutSubItem AccessKey="O" Text="Open">
+                    <!-- Word's Open: the places to open from, then the recent projects (ShowRecent). -->
+                    <MenuFlyoutSubItem x:Name="OpenMenu" AccessKey="O" Text="Open">
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" AccessKey="F" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…" />
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" AccessKey="Z" Click="{x:Bind app:App.Window.OpenFile}" Text="ZIP or TeX file…" />
                     </MenuFlyoutSubItem>

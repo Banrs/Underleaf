@@ -193,6 +193,7 @@ public sealed partial class WorkspacePage : Page
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(name, Editor.Path);
         CheckTex();
+        ShowRecent();
         if (session != 0)
         {
             // Settings › Compiling may have changed it while the page waited underneath.
@@ -304,6 +305,22 @@ public sealed partial class WorkspacePage : Page
             if (await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount) Editor.GoTo(line);
         });
     }
+
+    /// File › Open's recent projects after its places, the library's newest first but this one and those not found, numbered
+    /// as Windows numbers a recent list, their number their access key.
+    void ShowRecent() => App.Run(null, async () =>
+    {
+        var recent = (await Core.CallAsync<ProjectInfo[]>("list_projects")).Where(p => p.Id != id && !p.Missing).Take(9).ToArray();
+        while (OpenMenu.Items.Count > 2) OpenMenu.Items.RemoveAt(2);
+        if (recent.Length > 0) OpenMenu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var (project, number) in recent.Select((p, i) => (p, $"{i + 1}")))
+        {
+            var item = new MenuFlyoutItem { Text = $"{number} {project.Name}", AccessKey = number };
+            ToolTipService.SetToolTip(item, project.Path);
+            item.Click += (_, _) => App.Window.OpenProject(project.Id);
+            OpenMenu.Items.Add(item);
+        }
+    });
 
     /// Build › Engine, the catalogue's.
     async Task ShowEngines()
