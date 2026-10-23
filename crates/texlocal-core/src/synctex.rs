@@ -102,6 +102,8 @@ pub fn synctex_forward_at(
     Ok(first)
 }
 
+/// `typeset` gives a file's text where the PDF wasn't made from the disk's, as Live Preview's
+/// is from the editor's.
 pub fn synctex_inverse(
     project: &Project,
     page: f64,
@@ -109,6 +111,7 @@ pub fn synctex_inverse(
     y: f64,
     click: Option<(&str, usize)>,
     live: Option<&Path>,
+    typeset: &dyn Fn(&str) -> Option<String>,
 ) -> Result<InverseLoc, CoreError> {
     if !(page.is_finite() && x.is_finite() && y.is_finite()) || page < 1.0 {
         return Err(CoreError::bad_request("Invalid PDF location"));
@@ -122,7 +125,8 @@ pub fn synctex_inverse(
     let rel = source_file(root, name)
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
     let found = click.and_then(|(text, at)| {
-        let source = crate::lossy_string(std::fs::read(root.join(&rel)).ok()?);
+        let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
+        let source = typeset(&rel).or_else(disk)?;
         find_in_source(&source, line, text, at)
     });
     Ok(InverseLoc {
@@ -229,7 +233,8 @@ x2,7:14000000,10300473
                 (Some(("theword", 4)), 6, Some(1)),
                 (Some(("absent", 0)), 7, None),
             ] {
-                let loc = synctex_inverse(&project, 1.0, 200.0, 155.0, click, None).unwrap();
+                let loc = synctex_inverse(&project, 1.0, 200.0, 155.0, click, None, &|_| None);
+                let loc = loc.unwrap();
                 assert_eq!(
                     (loc.file.as_str(), loc.line, loc.column),
                     ("chapter.tex", line, column)
@@ -245,8 +250,20 @@ x2,7:14000000,10300473
         let live = project.build.join("live.pdf");
         std::fs::write(&live, "a PDF").unwrap();
         std::fs::write(live.with_extension("synctex"), synctex).unwrap();
-        let loc = synctex_inverse(&project, 1.0, 200.0, 135.0, None, Some(&live)).unwrap();
+        let loc = synctex_inverse(&project, 1.0, 200.0, 135.0, None, Some(&live), &|_| None);
+        let loc = loc.unwrap();
         assert_eq!((loc.file.as_str(), loc.line), ("main.tex", 3));
+    }
+
+    /// Live Preview's PDF is made from the editor's text, saved or not.
+    #[test]
+    fn a_click_finds_its_word_in_the_text_the_pdf_was_made_from() {
+        let (_dir, project, synctex) = setup();
+        std::fs::write(project.build.join("main.synctex"), synctex).unwrap();
+        let typeset = |rel: &str| (rel == "chapter.tex").then(|| "\n".repeat(6) + "new edited\n");
+        let click = Some(("new edited", 4));
+        let loc = synctex_inverse(&project, 1.0, 200.0, 155.0, click, None, &typeset).unwrap();
+        assert_eq!((loc.line, loc.column), (7, Some(4)));
     }
 
     /// A damaged file's values needn't sum within i32 as TeX's do: with boxes, kerns, pages and
@@ -259,7 +276,7 @@ x2,7:14000000,10300473
         for line in [1, u32::MAX] {
             let _ = synctex_forward_at(&project, "main.tex", line, None);
         }
-        let _ = synctex_inverse(&project, 1.0, 0.0, 0.0, None, None);
+        let _ = synctex_inverse(&project, 1.0, 0.0, 0.0, None, None, &|_| None);
     }
 
     const DAMAGED: &str = "SyncTeX Version:1

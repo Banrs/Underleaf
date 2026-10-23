@@ -120,8 +120,8 @@ new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest, forArxi
 `import_files {id, dir?, paths?, conflict}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
 `synctex_forward {id, file, line}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
-`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`. The
-core reads the SyncTeX file TeX writes beside the PDF and searches it as TeX Live's `synctex`
+`live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`, whose
+click (`text`, `at`) is then found in the text Live Preview typeset, the editor's. The core reads the SyncTeX file TeX writes beside the PDF and searches it as TeX Live's `synctex`
 program does, which it never runs.
 
 `export_zip`'s `forArxiv: true` makes the ZIP arXiv takes: the main file's `.bbl` from the build

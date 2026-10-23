@@ -67,14 +67,14 @@ impl Service {
     }
 
     /// With `live`, the live preview of the client's project session (`session`) syncs, not
-    /// the build: its PDF is the one shown.
-    fn live_pdf(&self, args: &Value) -> Result<Option<PathBuf>, CoreError> {
+    /// the build: its number, and its PDF, the one shown.
+    fn live(&self, args: &Value) -> Result<Option<(u64, PathBuf)>, CoreError> {
         if !arg::<Option<bool>>(args, "live")?.unwrap_or(false) {
             return Ok(None);
         }
         let session = arg::<Option<u64>>(args, "session")?
             .ok_or_else(|| CoreError::bad_request("Live sync needs the project session"))?;
-        self.texpresso.live_pdf(session).map(Some)
+        Ok(Some((session, self.texpresso.live_pdf(session)?)))
     }
 
     /// Finds the project once the lock is held, so a rename or delete that held it first is seen.
@@ -180,19 +180,22 @@ impl Service {
                 &project()?,
                 s("file")?,
                 arg(args, "line")?,
-                self.live_pdf(args)?.as_deref(),
+                self.live(args)?.as_ref().map(|(_, pdf)| pdf.as_path()),
             )?),
             "synctex_inverse" => {
                 let project = project()?;
                 let click =
                     arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
+                let live = self.live(args)?;
+                let typeset = |rel: &str| self.texpresso.live_text(live.as_ref()?.0, rel);
                 out(synctex::synctex_inverse(
                     &project,
                     arg(args, "page")?,
                     arg(args, "x")?,
                     arg(args, "y")?,
                     click.as_ref().map(|(text, at)| (text.as_str(), *at)),
-                    self.live_pdf(args)?.as_deref(),
+                    live.as_ref().map(|(_, pdf)| pdf.as_path()),
+                    &typeset,
                 )?)
             }
             "synctex_match" => out(synctex::match_forward(

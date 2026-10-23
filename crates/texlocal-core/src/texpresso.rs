@@ -297,6 +297,12 @@ impl Manager {
             .cloned()
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
     }
+    /// A file's text as the owner's preview typesets it: the editor's, saved or not.
+    pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
+        lock(&self.owned(owner).ok()?.files)
+            .get(rel)
+            .map(String::from)
+    }
     pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
         let pdf = self.owned(owner)?.pdf.clone();
         if !pdf.with_extension("synctex").is_file() {
