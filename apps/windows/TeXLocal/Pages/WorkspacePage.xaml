@@ -151,7 +151,7 @@
                     <MenuFlyoutItem x:Name="ArxivItem" AccessKey="X" Click="OnExportZip" Text="Export for arXiv…" />
                     <MenuFlyoutItem x:Name="OpenPdfItem" AccessKey="D" Click="OnOpenPdf" Text="Open PDF in default app" />
                     <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
-                    <MenuFlyoutItem x:Name="PrintItem" controls:Shortcut.Keys="Ctrl+P" AccessKey="R" Click="{x:Bind Pdf.Print}" Text="Print…" />
+                    <MenuFlyoutItem x:Name="PrintItem" controls:Shortcut.Keys="Ctrl+P" AccessKey="I" Click="{x:Bind Pdf.Print}" Text="Print…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
                     <MenuFlyoutSeparator />
@@ -645,13 +645,13 @@
                                 IsEnabled="False"
                                 Unchecked="OnWarnings">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="14" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
+                                    <FontIcon FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
                                     <TextBlock x:Name="WarningsLabel" Text="0 warnings" Typography.NumeralAlignment="Tabular" />
                                 </StackPanel>
                             </ToggleButton>
                             <Button x:Name="CopyLog" Grid.Column="1" Click="OnCopyLog" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="14" Glyph="&#xE8C8;" />
+                                    <FontIcon FontSize="16" Glyph="&#xE8C8;" />
                                     <TextBlock Text="Copy log" />
                                 </StackPanel>
                             </Button>

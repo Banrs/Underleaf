@@ -27,7 +27,8 @@ public sealed class PaletteGroup(string title, IEnumerable<PaletteItem> items) :
 public sealed partial class WorkspacePage
 {
     static readonly Menus Catalogue = Source.SyntaxCall<Menus>("menus", new { })!;
-    List<PaletteGroup> symbols = [];
+    /// The palette, drawn once for its ink: a second click while it draws waits for the same groups.
+    Task<List<PaletteGroup>>? symbols;
     Color inked;
 
     void SetUpInsert()
@@ -117,19 +118,19 @@ public sealed partial class WorkspacePage
     void OnSymbols(object sender, RoutedEventArgs e) => App.Run(null, async () =>
     {
         if (Editor.Path is null) return;
-        if (symbols.Count == 0 || inked != Editor.Ink) await DrawSymbols();
+        if (symbols is null || inked != Editor.Ink) symbols = DrawSymbols(inked = Editor.Ink);
+        await symbols;
         SymbolFilter.Text = "";
         ShowSymbols();
         var r = Editor.CaretRect;
         Palette.ShowAt(Editor, new FlyoutShowOptions { Position = new(r.X, r.Bottom), ExclusionRect = r, Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
     });
 
-    async Task DrawSymbols()
+    async Task<List<PaletteGroup>> DrawSymbols(Color ink)
     {
-        inked = Editor.Ink;
-        var color = SourceView.Rgba(inked);
+        var color = SourceView.Rgba(ink);
         var pixels = 24 * (XamlRoot?.RasterizationScale ?? 1);
-        symbols = [];
+        List<PaletteGroup> groups = [];
         foreach (var group in Catalogue.SymbolGroups)
         {
             List<PaletteItem> items = [];
@@ -140,8 +141,9 @@ public sealed partial class WorkspacePage
                 await image.SetSourceAsync(new MemoryStream(Encoding.UTF8.GetBytes(svg)).AsRandomAccessStream());
                 items.Add(new(symbol.Command, image));
             }
-            symbols.Add(new(group.Title, items));
+            groups.Add(new(group.Title, items));
         }
+        return groups;
     }
 
     void ShowSymbols()
@@ -150,7 +152,7 @@ public sealed partial class WorkspacePage
         Symbols.ItemsSource = new CollectionViewSource
         {
             IsSourceGrouped = true,
-            Source = symbols.Select(g => new PaletteGroup(g.Title, g.Where(s => s.Command.Contains(filter, StringComparison.OrdinalIgnoreCase))))
+            Source = (symbols?.IsCompletedSuccessfully == true ? symbols.Result : []).Select(g => new PaletteGroup(g.Title, g.Where(s => s.Command.Contains(filter, StringComparison.OrdinalIgnoreCase))))
                 .Where(g => g.Count > 0).ToList(),
         }.View;
     }

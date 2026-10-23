@@ -239,7 +239,7 @@ public sealed partial class WorkspacePage : Page
     }
 
     /// Before the project goes: saved, and the place it's left at kept in its ui state for the next open. False,
-    /// staying, when the save is asked about or fails.
+    /// staying, when the save is asked about or cancelled.
     public async Task<bool> Leave()
     {
         if (session == 0) return true;
@@ -255,14 +255,16 @@ public sealed partial class WorkspacePage : Page
 
     /// As on the Mac, before the project goes, since session_close saves quietly and would lose edits a conflict's Cancel
     /// held or a write refused, and before its ZIP, which has what is on disk. False when this save is asked about or fails.
+    /// A write refused, as by a drive gone, asks as Word does: Save again, Don't save, which leaves the edits, or Cancel.
     async Task<bool> Save()
     {
-        try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
-        catch (CoreException ex)
-        {
-            await App.Alert("Can't save", ex.Message);
-            return false;
-        }
+        while (true)
+            try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
+            catch (CoreException ex)
+            {
+                var answer = await App.Ask("Can't save", ex.Message, "Save again", "Don't save", ContentDialogButton.Primary);
+                if (answer != ContentDialogResult.Primary) return answer == ContentDialogResult.Secondary;
+            }
     }
 
     /// The session is numbered before it opens, so the events that come before its answer are this page's too; a tree
@@ -380,17 +382,14 @@ public sealed partial class WorkspacePage : Page
         // As a PDF command shows the PDF.
         SourceItem.IsChecked = true;
         if (Editor.Path == path) return true;
-        // Opened first and the shown one closed after, so a file that won't open leaves the editor as it was.
+        // Opened first, so a file that won't open leaves the editor as it was; the one shown is closed once the new one
+        // shows, so keys typed meanwhile go to a document still open. A close asked about keeps it open until answered.
         await Core.CallAsync("session_open_document", new { session, path });
-        if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
-        {
-            // The session keeps no document the editor doesn't show; a later open of it opens it again.
-            App.Run(null, () => Core.CallAsync("session_close_document", new { session, path }));
-            return false;
-        }
         if (Core.SessionSource(session, path) is not { } source) return false;
+        var closing = Editor.Path;
         (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
         await Editor.Show(path, source);
+        if (closing is not null) App.Run("Can't save this file", () => Core.CallAsync("session_close_document", new { session, path = closing }));
         App.Window.SetTitle(name, path);
         Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
         ShowSaved();
@@ -544,15 +543,9 @@ public sealed partial class WorkspacePage : Page
     {
         var name = System.IO.Path.GetFileName(path);
         var changed = kind == "changed";
-        var answer = await App.Show(new ContentDialog
-        {
-            Title = changed ? $"“{name}” changed on disk" : $"“{name}” was deleted",
-            Content = changed ? "It has edits here that aren't saved." : "It was deleted or moved, and it has edits here that aren't saved.",
-            PrimaryButtonText = changed ? "Save anyway" : "Save again",
-            SecondaryButtonText = changed ? "Revert" : "Close",
-            CloseButtonText = "Cancel",
-            DefaultButton = changed ? ContentDialogButton.Close : ContentDialogButton.Primary,
-        }) switch
+        var answer = await App.Ask(changed ? $"“{name}” changed on disk" : $"“{name}” was deleted",
+            changed ? "It has edits here that aren't saved." : "It was deleted or moved, and it has edits here that aren't saved.",
+            changed ? "Save anyway" : "Save again", changed ? "Revert" : "Close", changed ? ContentDialogButton.Close : ContentDialogButton.Primary) switch
         {
             ContentDialogResult.Primary => "save",
             ContentDialogResult.Secondary => changed ? "revert" : "close",
@@ -698,10 +691,7 @@ public sealed partial class WorkspacePage : Page
         var fix = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Fix!;
         App.Run($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", async () =>
         {
-            if (fix.Confirm is { } confirm && await App.Show(new ContentDialog
-                {
-                    Title = fix.Title, Content = confirm, PrimaryButtonText = fix.Title, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
-                }) != ContentDialogResult.Primary) return;
+            if (fix.Confirm is { } confirm && await App.Ask(fix.Title, confirm, fix.Title) != ContentDialogResult.Primary) return;
             fixing = fix.Id;
             ShowIssues();
             JsonElement answer;

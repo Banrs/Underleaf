@@ -105,6 +105,13 @@ public partial class App : Application
         finally { dialogs.Release(); }
     }
 
+    /// A question with Cancel, whose safe answer is the default unless another is preferred.
+    public static Task<ContentDialogResult> Ask(string title, string content, string primary, string? secondary = null,
+        ContentDialogButton preferred = ContentDialogButton.Close) => Show(new ContentDialog
+    {
+        Title = title, Content = content, PrimaryButtonText = primary, SecondaryButtonText = secondary ?? "", CloseButtonText = "Cancel", DefaultButton = preferred,
+    });
+
     /// In a smoke run, which no one reads, an alert is its failure.
     public static Task Alert(string title, string message)
     {

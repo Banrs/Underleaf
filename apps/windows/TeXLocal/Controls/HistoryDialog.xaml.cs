@@ -72,14 +72,9 @@ public sealed partial class HistoryDialog : ContentDialog
             var id = version.Snapshot.Id;
             if (answer == ContentDialogResult.Primary)
                 return await App.Core!.CallAsync<Restored>("session_history_restore", new { session, id, paths = new[] { ((ChangeRow)Files.SelectedItem).Path } });
-            var confirmed = await App.Show(new ContentDialog
-            {
-                Title = $"Restore all files to {(version.Snapshot.Name is { } name ? $"“{name}”" : $"the version of {version.When}")}?",
-                Content = "Files changed since go back to how they were, and deleted ones return; files added since stay. The project as it is now is kept as a version first.",
-                PrimaryButtonText = "Restore all",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-            });
+            var confirmed = await App.Ask($"Restore all files to {(version.Snapshot.Name is { } name ? $"“{name}”" : $"the version of {version.When}")}?",
+                "Files changed since go back to how they were, and deleted ones return; files added since stay. The project as it is now is kept as a version first.",
+                "Restore all");
             if (confirmed == ContentDialogResult.Primary) return await App.Core!.CallAsync<Restored>("session_history_restore", new { session, id });
         }
     }

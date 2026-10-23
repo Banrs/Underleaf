@@ -212,14 +212,8 @@ public sealed partial class HomePage : Page
     /// An opened folder is the author's, so it only leaves the list, without asking, as from Word's Recent.
     void Delete(ProjectInfo p) => App.Run(p.Opened ? "Can't remove this folder from the list" : "Can't delete this project", async () =>
     {
-        if (!p.Opened && await App.Show(new ContentDialog
-        {
-            Title = $"Delete “{p.Name}”?",
-            Content = "The project folder moves to the Recycle Bin.",
-            PrimaryButtonText = "Move to Recycle Bin",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-        }) != ContentDialogResult.Primary) return;
+        if (!p.Opened && await App.Ask($"Delete “{p.Name}”?", "The project folder moves to the Recycle Bin.", "Move to Recycle Bin")
+            != ContentDialogResult.Primary) return;
         try { await (p.Opened ? Core.CallAsync("forget_folder", new { id = p.Id }) : App.Recycle(p.Path)); }
         finally { Reload(); }
     });

@@ -472,15 +472,8 @@ public sealed partial class WorkspacePage
         var imported = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
         if (imported.Existing.Length > 0)
         {
-            var conflict = await App.Show(new ContentDialog
-            {
-                Title = "Replace existing files?",
-                Content = string.Join("\n", imported.Existing.Select(c => c.Path)),
-                PrimaryButtonText = "Replace",
-                SecondaryButtonText = "Keep both",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Secondary,
-            }) switch
+            var conflict = await App.Ask("Replace existing files?", string.Join("\n", imported.Existing.Select(c => c.Path)), "Replace", "Keep both",
+                ContentDialogButton.Secondary) switch
             {
                 ContentDialogResult.Primary => "replace",
                 ContentDialogResult.Secondary => "keepBoth",
