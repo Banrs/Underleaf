@@ -189,9 +189,10 @@ fn open_folder(
 }
 
 /// Takes an opened folder off the list, with its settings and build output, after `stop` ends
-/// what runs in it; the folder stays as it is.
+/// what runs in it; the folder stays as it is. Its store, with the build output and history, goes
+/// once the other projects' edits can go on.
 pub fn forget_folder(
-    data_dir: &Path,
+    service: &Service,
     id: &str,
     stop: impl FnOnce(&Path) -> Result<(), CoreError>,
 ) -> Result<(), CoreError> {
@@ -200,14 +201,18 @@ pub fn forget_folder(
             "Only a folder opened where it is can be removed from the list.",
         ));
     }
-    let known = folders(data_dir);
+    let store = store(&service.data_dir, id);
+    let edits = lock(&service.edits);
+    let known = folders(&service.data_dir);
     let Some((_, folder)) = known.iter().find(|(known, _)| known == id) else {
         return Err(CoreError::not_found(format!("No such project: {id}")));
     };
     if folder.path.is_dir() {
         stop(&folder.path)?;
     }
-    Ok(fs::remove_dir_all(store(data_dir, id))?)
+    fs::remove_file(store.join(FOLDER))?;
+    drop(edits);
+    Ok(fs::remove_dir_all(store)?)
 }
 
 #[cfg(unix)]
@@ -326,17 +331,14 @@ mod tests {
         let found = open_path(&service, &moved).unwrap().project;
         assert_eq!((&found.id, found.name.as_str()), (&id, "Thesis 2"));
         assert!(!found.missing);
-        fails_with(
-            forget_folder(&service.data_dir, "P", |_| Ok(())),
-            "Only a folder",
-        );
-        forget_folder(&service.data_dir, &id, |_| Ok(())).unwrap();
+        fails_with(forget_folder(&service, "P", |_| Ok(())), "Only a folder");
+        forget_folder(&service, &id, |_| Ok(())).unwrap();
         assert_eq!(names_in(&moved), ["main.tex"]);
         assert_eq!(
             names_in(&service.data_dir.join(STORE)),
             Vec::<String>::new()
         );
-        let again = forget_folder(&service.data_dir, &id, |_| Ok(()));
+        let again = forget_folder(&service, &id, |_| Ok(()));
         assert_eq!(again.unwrap_err().status, 404);
     }
 

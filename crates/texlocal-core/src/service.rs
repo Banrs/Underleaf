@@ -241,8 +241,7 @@ impl Service {
             )?),
             "open_path" => out(projects::open_path(self, Path::new(s("path")?))?),
             "forget_folder" => {
-                let _edits = lock(&self.edits);
-                projects::forget_folder(&self.data_dir, s("id")?, stop)?;
+                projects::forget_folder(self, s("id")?, stop)?;
                 Ok(Value::Null)
             }
             "set_ui_state" => out(self.with_project(s("id")?, |project| {
