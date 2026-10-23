@@ -29,7 +29,7 @@ use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
 use crate::syntax::{self, SymbolKind, Text, TextEdit};
-use crate::{CoreError, checks, lf, lock, packages, tex};
+use crate::{CoreError, checks, lf, lock, newline, packages, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -1354,15 +1354,3 @@ fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError
 }
 
 type DiskText = (String, &'static str);
-
-/// The first line break's.
-pub(crate) fn newline(text: &str) -> &'static str {
-    let Some(at) = text.find(['\r', '\n']) else {
-        return "\n";
-    };
-    match &text.as_bytes()[at..] {
-        [b'\r', b'\n', ..] => "\r\n",
-        [b'\r', ..] => "\r",
-        _ => "\n",
-    }
-}

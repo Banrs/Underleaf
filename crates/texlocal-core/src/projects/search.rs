@@ -15,7 +15,7 @@ use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
-use crate::{lf, lossy_string};
+use crate::{lf, lossy_string, newline};
 
 /// The largest file but a .tex or .bib that a search reads; a data set or log that size isn't
 /// where anyone looks.
@@ -260,8 +260,10 @@ pub(crate) fn replace_in_files(
 
 /// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
 /// and column count as they do with line feeds alone, so each line keeps its own ending, which
-/// in a file edited on more than one system needn't be the first's.
+/// in a file edited on more than one system needn't be the first's. A break in `to` is written
+/// as the file's own, as a save writes one.
 fn replaced(file: &str, places: &[Place], to: &str) -> String {
+    let to = &to.replace('\n', newline(file));
     // The byte the first `units` UTF-16 units of `s` end at.
     let byte = |s: &str, units: u32| {
         let mut seen = 0;
@@ -316,6 +318,16 @@ mod tests {
         big.set_len(SEARCH_FILE_MAX).unwrap();
         let at_the_cap = read_capped(&root.join("big.csv"), "big.csv").unwrap();
         assert!(at_the_cap.is_some());
+    }
+
+    #[test]
+    fn a_line_break_in_a_replacement_is_written_as_the_files_own() {
+        let place = Place {
+            line: 2,
+            column: 0,
+            length: 1,
+        };
+        assert_eq!(replaced("a\r\nb\r\n", &[place], "x\ny"), "a\r\nx\r\ny\r\n");
     }
 
     /// Another app's write while the replace reads the project is kept, not written over.

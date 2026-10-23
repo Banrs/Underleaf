@@ -61,6 +61,18 @@ pub(crate) fn lf(text: String) -> String {
     }
 }
 
+/// A file's own line ending, a save's and a replace's: its first line break's.
+pub(crate) fn newline(text: &str) -> &'static str {
+    let Some(at) = text.find(['\r', '\n']) else {
+        return "\n";
+    };
+    match &text.as_bytes()[at..] {
+        [b'\r', b'\n', ..] => "\r\n",
+        [b'\r', ..] => "\r",
+        _ => "\n",
+    }
+}
+
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())

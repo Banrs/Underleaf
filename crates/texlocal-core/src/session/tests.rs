@@ -10,7 +10,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use super::actor::newline;
 use super::build::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
@@ -21,7 +20,7 @@ use crate::projects::Symbols;
 use crate::projects::testing::names_in;
 use crate::service::Service;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
-use crate::{CoreError, lock};
+use crate::{CoreError, lock, newline};
 
 // MARK: - A fake engine
 
