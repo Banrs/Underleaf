@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -31,6 +31,9 @@ static RERUN: LazyLock<Regex> = LazyLock::new(|| {
 /// The .aux's lines BibTeX reads.
 static BIBLIOGRAPHY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^\\(?:citation|bibdata|bibstyle)\{.*$").unwrap());
+/// What TeX says when an `\include`d file's .aux goes to a folder the build folder lacks.
+static UNWRITABLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"I can't write on file `([^']+\.aux)'").unwrap());
 
 impl CompileManager {
     pub(super) async fn compile_in_process(
@@ -167,6 +170,14 @@ impl Job {
         for _ in 0..MAX_PASSES {
             let before = fs::read(self.output("aux")).ok();
             tex = run(self.tex.engine, &args, &self.root, &env);
+            // TeX Live makes no folders: as latexmk does, an `\include`d file's is made in the
+            // build folder and TeX runs again.
+            while tex != 0
+                && let Some(folder) = self.missing_folder(build)
+                && fs::create_dir_all(&folder).is_ok()
+            {
+                tex = run(self.tex.engine, &args, &self.root, &env);
+            }
             if tex != 0 && (self.halt || cancel.load(Ordering::Acquire) != 0) {
                 return (tex, self.tex.name);
             }
@@ -219,6 +230,20 @@ impl Job {
             return (tex, self.tex.name);
         }
         failed.unwrap_or((0, self.tex.name))
+    }
+
+    /// The folder in `build` TeX's log says an .aux couldn't be written to, if it is missing
+    /// and inside `build`.
+    fn missing_folder(&self, build: &Path) -> Option<PathBuf> {
+        let log = File::open(self.output("log")).and_then(|log| read_tail(log, 64 * 1024));
+        let log = log.ok()?;
+        let name = UNWRITABLE.captures(&log)?.get(1)?.as_bytes();
+        let folder = Path::new(std::str::from_utf8(name).ok()?).parent()?;
+        let inside = folder
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)));
+        let folder = build.join(folder);
+        (inside && !folder.exists()).then_some(folder)
     }
 
     /// The engine's format, made in a folder of its own and moved into place, so a run cut
@@ -303,6 +328,11 @@ mod tests {
                     unsafe { *cancel.cast_mut() = 1 };
                     return 130;
                 }
+                if main.contains("include") && !out.join("ch").exists() {
+                    let unwritable = "./main.tex:1: I can't write on file `ch/intro.aux'.\n";
+                    write(out.join("main.log"), unwritable);
+                    return 1;
+                }
                 let mut aux = String::from("\\relax\n");
                 if main.contains("cite") {
                     aux += "\\citation{knuth}\n\\bibdata{refs}\n";
@@ -365,7 +395,8 @@ mod tests {
     /// The first build makes the format, runs BibTeX and makeindex after the first pass and
     /// TeX until the .aux settles; the next runs them again only to find nothing changed. A
     /// .aux that never settles stops at the limit, XeLaTeX's XDV goes through xdvipdfmx once,
-    /// Stop on First Error ends at the failed pass, and a Stop ends the build at once.
+    /// Stop on First Error ends at the failed pass, a Stop ends the build at once, and a pass
+    /// that can't write an `\include`d file's .aux runs again once its folder is made.
     #[test]
     fn a_build_runs_what_latexmk_would_until_the_aux_settles() {
         let dir = tempfile::tempdir().unwrap();
@@ -384,7 +415,7 @@ mod tests {
         };
         let (pdf, xe) = (settings::Engine::Pdflatex, settings::Engine::Xelatex);
         let output = tempfile::tempfile().unwrap();
-        let cases: [(_, _, _, &[&str], _); 6] = [
+        let cases: [(_, _, _, &[&str], _); 7] = [
             (
                 "cite index",
                 pdf,
@@ -436,6 +467,13 @@ mod tests {
                 (1, "pdflatex"),
             ),
             ("stop", pdf, false, &["pdflatex"], (130, "pdflatex")),
+            (
+                "include",
+                pdf,
+                true,
+                &["pdflatex -halt-on-error"; 3],
+                (0, "pdflatex"),
+            ),
         ];
         for (case, (main, engine, halt, ran, end)) in cases.into_iter().enumerate() {
             // The second builds the first's project again; the rest start afresh.
