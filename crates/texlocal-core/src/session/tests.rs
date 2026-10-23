@@ -20,7 +20,7 @@ use crate::projects::Symbols;
 use crate::projects::testing::names_in;
 use crate::service::Service;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
-use crate::{CoreError, lock, newline};
+use crate::{CoreError, lock};
 
 // MARK: - A fake engine
 
@@ -847,14 +847,6 @@ async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_
     let trees = rig.of_type("tree").await;
     assert_eq!(trees[0]["tree"][0]["main"], true);
     assert_eq!(rig.fake.called("compile"), builds + 1);
-}
-
-#[test]
-fn a_file_ends_its_lines_as_its_first_line_break_does() {
-    assert_eq!(newline("a\r\nb\nc"), "\r\n");
-    assert_eq!(newline("a\rb"), "\r");
-    assert_eq!(newline("a\nb\r\n"), "\n");
-    assert_eq!(newline("a"), "\n");
 }
 
 #[tokio::test(start_paused = true)]

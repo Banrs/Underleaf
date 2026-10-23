@@ -183,6 +183,15 @@ mod tests {
         fs::write(&inside, "old incomplete archive").unwrap();
         export_zip(&root, &inside, &[]).unwrap();
         assert_eq!(zip_names(&inside), kept);
+        // Spelt through a link into the project, as when a Save panel hands back /private/var
+        // for a data folder under /var: a lexical comparison would archive the half-written ZIP.
+        #[cfg(unix)]
+        {
+            let alias = root.with_file_name("alias");
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            export_zip(&root, &alias.join("project.zip"), &[]).unwrap();
+            assert_eq!(zip_names(&inside), kept);
+        }
 
         let service = Service::new(dir.path().join("again"));
         let copy = service

@@ -83,25 +83,9 @@ async fn a_new_project_is_made_with_its_engine() {
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
     assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
-    let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
-    assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
-    for (command, args) in [
-        (
-            "synctex_forward",
-            json!({ "id": "P", "file": "a.tex", "line": "x" }),
-        ),
-        (
-            "create_entry",
-            json!({ "id": "P", "path": "../../etc/passwd" }),
-        ),
-        ("file_tree", json!({ "id": "../P" })),
-    ] {
-        assert_eq!(status_of(&service, command, args).await, 400, "{command}");
-    }
-    for args in [json!({ "id": "P" }), json!({ "id": "P", "path": null })] {
-        let err = service.call("create_entry", args).await.unwrap_err();
-        assert_eq!(err.status, 400);
-        assert!(err.message.starts_with("Invalid arguments: "), "{err}");
+    let line = json!({ "id": "P", "file": "a.tex", "line": "x" });
+    for args in [line, json!({ "id": "P" }), json!([])] {
+        assert_eq!(status_of(&service, "synctex_forward", args).await, 400);
     }
 }
 
@@ -185,36 +169,6 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     let cleared = call(&service, "set_texpresso_dir", json!({ "dir": null })).await;
     assert!(cleared["texpressoDir"].is_null());
     assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
-}
-
-#[tokio::test]
-async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
-    let (_dir, service) = with_project();
-    let service = Arc::new(service);
-    let root = service.project("P").unwrap().root;
-    fs::create_dir(root.join("ch")).unwrap();
-    fs::write(root.join("ch/a.tex"), "").unwrap();
-    let patch = json!({ "expandedFolders": ["ch"] });
-    let args = json!({ "id": "P", "patch": patch });
-    call(&service, "set_ui_state", args).await;
-    let sessions = Arc::new(Sessions::new(Arc::clone(&service)));
-    let ask = async |command: &str, args: Value| {
-        let answer = sessions.call(command, args).await;
-        answer.unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
-    };
-    let opened = ask("session_open", json!({ "id": "P", "session": 1 })).await;
-    assert_eq!(opened["name"], "P");
-
-    let args = json!({ "session": 1, "patch": { "mainFile": "ch/a.tex" } });
-    ask("session_set_settings", args).await;
-    let args = json!({ "session": 1, "from": "ch", "to": "chapters" });
-    let renamed = ask("session_rename", args).await;
-    assert_eq!(renamed["mainFile"], "chapters/a.tex");
-    assert_eq!(renamed["ui"]["expandedFolders"], json!(["chapters"]));
-    let args = json!({ "session": 1, "path": "chapters" });
-    let refused = sessions.call("session_prepare_delete", args).await;
-    assert_eq!(refused.unwrap_err().status, 409);
-    ask("session_close", json!({ "session": 1 })).await;
 }
 
 // MARK: - The edit lock

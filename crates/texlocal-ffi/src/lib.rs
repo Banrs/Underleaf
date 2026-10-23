@@ -211,15 +211,14 @@ pub unsafe extern "C" fn tl_free(text: *mut c_char) {
 /// closed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
-    if handle.is_null() {
-        return;
+    if !handle.is_null() {
+        let handle = unsafe { Box::from_raw(handle) };
+        caught(move || {
+            handle.runtime.block_on(handle.sessions.close_all());
+            handle.sessions.set_listener(None);
+            drop(handle);
+        });
     }
-    let handle = unsafe { Box::from_raw(handle) };
-    caught(move || {
-        handle.runtime.block_on(handle.sessions.close_all());
-        handle.sessions.set_listener(None);
-        drop(handle);
-    });
 }
 
 /// A file's text as the editor has it (`syntax::SourceDocument`):

@@ -323,6 +323,14 @@ mod tests {
     }
 
     #[test]
+    fn a_file_ends_its_lines_as_its_first_line_break_does() {
+        assert_eq!(newline("a\r\nb\nc"), "\r\n");
+        assert_eq!(newline("a\rb"), "\r");
+        assert_eq!(newline("a\nb\r\n"), "\n");
+        assert_eq!(newline("a"), "\n");
+    }
+
+    #[test]
     fn a_line_break_in_a_replacement_is_written_as_the_files_own() {
         let place = Place {
             line: 2,

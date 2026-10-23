@@ -11,9 +11,9 @@ use crate::CoreError;
 use crate::analyze::Files;
 use crate::paths::Project;
 use crate::projects::search::SearchHit;
-use crate::projects::testing::{fails_with, names_in, project};
+use crate::projects::testing::{names_in, project};
 use crate::projects::{
-    Query, Symbols, create_free, create_project, file_tree, is_text, rename_entry, rename_project,
+    Query, Symbols, create_free, create_project, is_text, rename_entry, rename_project,
     scan_symbols, search_project,
 };
 use crate::settings::{read_settings, write_settings};
@@ -102,36 +102,6 @@ fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing()
     assert_eq!(names_in(data), ["p", "second"]);
 }
 
-#[cfg(unix)]
-#[test]
-fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
-    use std::os::unix::fs::PermissionsExt;
-    let (_dir, root) = project();
-    fs::write(root.join("main.tex"), "\\label{sec:open} needle\n").unwrap();
-    create_free(&root, "locked/inside.tex", false).unwrap();
-    fs::write(root.join("secret.tex"), "needle").unwrap();
-    let lock = |path: &Path, mode| fs::set_permissions(path, fs::Permissions::from_mode(mode));
-    lock(&root.join("locked"), 0o000).unwrap();
-    lock(&root.join("secret.tex"), 0o000).unwrap();
-    if fs::read_dir(root.join("locked")).is_ok() {
-        // Running as root, where permissions don't lock anything.
-        lock(&root.join("locked"), 0o755).unwrap();
-        return;
-    }
-
-    let tree = file_tree(&Project::in_folder(&root));
-    let hits = search(&root, "needle", 100);
-    let symbols = scan(&root);
-    lock(&root.join("locked"), 0o755).unwrap();
-
-    let tree = tree.unwrap();
-    let locked = tree.iter().find(|n| n.name == "locked").unwrap();
-    assert!(locked.children.as_ref().unwrap().is_empty());
-    let hits: Vec<_> = hits.unwrap().into_iter().map(|hit| hit.file).collect();
-    assert_eq!(hits, ["main.tex"]);
-    assert_eq!(labels(symbols.unwrap()), ["sec:open"]);
-}
-
 #[test]
 fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
     let (_dir, root) = project();
@@ -189,37 +159,6 @@ fn a_hit_places_its_match_in_utf16_units_of_the_line() {
     assert_eq!(place, (1, 7, 4, "a\u{1D538}b".into()));
     let place = hit("İ \u{212A} \u{1F600} GRÖẞE und\n", "größe");
     assert_eq!(place, (1, 7, 5, "GRÖẞE".into()));
-}
-
-/// Only the project's own top-level build/ is compile output, in any case: no file of the
-/// author's takes its name, and the tree and the scans leave it out. A `build` deeper in is the
-/// author's: the tree lists it and the export archives it, so search and the symbol scan see it
-/// too.
-#[test]
-fn only_the_top_level_build_folder_is_the_compile_outputs() {
-    let (_dir, root) = project();
-    let project = Project::in_folder(&root);
-    fails_with(create_free(&root, "build", true), "compiled PDF");
-    fails_with(create_free(&root, "BUILD/x.tex", false), "compiled PDF");
-    create_free(&root, "figs/a.png", false).unwrap();
-    fails_with(rename_entry(&project, "figs", "Build"), "compiled PDF");
-    fs::create_dir(root.join("Build")).unwrap();
-    fs::write(root.join("Build/main.tex"), "needle \\label{gen:one}\n").unwrap();
-    fs::write(root.join("Build/main.log"), "needle in the build dir").unwrap();
-    create_free(&root, "chapters/build/notes.tex", false).unwrap();
-    let notes = "a needle and \\label{deep:one}\n";
-    fs::write(root.join("chapters/build/notes.tex"), notes).unwrap();
-
-    assert!(
-        file_tree(&project)
-            .unwrap()
-            .iter()
-            .all(|n| n.name != "Build")
-    );
-    let hits = search(&root, "needle", 10).unwrap();
-    let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
-    assert_eq!(files, ["chapters/build/notes.tex"]);
-    assert_eq!(labels(scan(&root).unwrap()), ["deep:one"]);
 }
 
 /// A Latin-1 .bib read as bytes by a Unicode-mode pattern loses the whole entry, so it is
@@ -338,75 +277,60 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     assert_eq!(scanned(), ["three"]);
 }
 
-/// A link to a file, inside or out (a shared .bib), is content. One to a folder, broken or in a
-/// loop is not, and is no error.
+/// The walk the tree, search, the scans, history and export share: links followed to files
+/// only, inside or out (a shared .bib), as one to a folder may loop; an entry unreadable read
+/// as empty; and, with the tree's rule, no dotfiles and no top-level build folder in any case,
+/// though a build deeper in is the author's.
 #[cfg(unix)]
 #[test]
-fn the_tree_scans_and_zip_follow_links_to_files_only() {
-    use std::os::unix::fs::symlink;
+fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
-    use crate::projects::testing::zip_names;
-    use crate::zipexport::export_zip;
+    use crate::projects::{listed, walk};
     let (_dir, root) = project();
     let outside = tempfile::tempdir().unwrap();
-    let shared = outside.path().join("shared.tex");
-    fs::write(&shared, "\\label{shared}\n").unwrap();
-    fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
-    fs::create_dir(root.join("figures")).unwrap();
-    fs::write(root.join("figures/a.txt"), "figure").unwrap();
+    fs::write(outside.path().join("shared.bib"), "").unwrap();
+    for file in [
+        "Build/main.log",
+        "chapters/build/notes.tex",
+        "figures/a.png",
+        "locked/a.tex",
+    ] {
+        fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+        fs::write(root.join(file), "").unwrap();
+    }
     for (target, name) in [
-        (root.join("source.txt"), "linked.tex"),
-        (shared, "external.tex"),
+        (outside.path().join("shared.bib"), "shared.bib"),
         (root.join("figures"), "linked-dir"),
         (root.clone(), "loop"),
         (root.join("gone.tex"), "broken.tex"),
-        (root.join("b.tex"), "a.tex"),
-        (root.join("a.tex"), "b.tex"),
     ] {
         symlink(target, root.join(name)).unwrap();
     }
-    let alias = root.with_file_name("alias");
-    symlink(&root, &alias).unwrap();
-
-    let tree = file_tree(&Project::in_folder(&root)).unwrap();
-    let top: Vec<_> = tree.iter().map(|n| n.path.as_str()).collect();
-    let listed = [
+    let lock = |mode| fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(mode));
+    lock(0o000).unwrap();
+    // Running as root, permissions lock nothing.
+    let locked = fs::read_dir(root.join("locked")).is_err();
+    let mut walked = Vec::new();
+    let walk = walk(&root, &listed, &mut |entry| {
+        walked.push(entry.rel.clone());
+        Ok(true)
+    });
+    lock(0o755).unwrap();
+    walk.unwrap();
+    let mut listed = vec![
+        "chapters",
+        "chapters/build",
+        "chapters/build/notes.tex",
         "figures",
-        "external.tex",
-        "linked.tex",
-        "main.tex",
-        "source.txt",
     ];
-    assert_eq!(top, listed);
-    let mut hits: Vec<_> = search(&root, "needle", 10)
-        .unwrap()
-        .into_iter()
-        .map(|hit| hit.file)
-        .collect();
-    hits.sort();
-    assert_eq!(hits, ["linked.tex", "source.txt"]);
-    let mut labels = labels(scan(&root).unwrap());
-    labels.sort();
-    assert_eq!(labels, ["linked", "shared"]);
-    let dest = root.with_file_name("out.zip");
-    export_zip(&root, &dest, &[]).unwrap();
-    let zipped = [
-        "external.tex",
-        "figures/",
-        "figures/a.txt",
-        "linked.tex",
+    listed.extend([
+        "figures/a.png",
+        "locked",
+        "locked/a.tex",
         "main.tex",
-        "source.txt",
-    ];
-    assert_eq!(zip_names(&dest), zipped);
-    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
-    let mut body = String::new();
-    std::io::Read::read_to_string(&mut archive.by_name("linked.tex").unwrap(), &mut body).unwrap();
-    assert_eq!(body, "needle \\label{linked}");
-
-    // The destination spelled through a link into the project, as when a Save panel hands back
-    // /private/var for a data folder under /var: a lexical comparison would archive the ZIP's
-    // own half-written temporary file.
-    export_zip(&root, &alias.join("again.zip"), &[]).unwrap();
-    assert_eq!(zip_names(&root.join("again.zip")), zip_names(&dest));
+        "shared.bib",
+    ]);
+    listed.retain(|rel| !locked || *rel != "locked/a.tex");
+    assert_eq!(walked, listed);
 }

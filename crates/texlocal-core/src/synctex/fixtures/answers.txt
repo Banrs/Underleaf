@@ -1,0 +1,344 @@
+# synctex view -i LINE:1:./FILE -o main.pdf: each result's Page h v W H
+# synctex edit -o PAGE:X:Y:main.pdf: the first result's Input and Line
+view main.tex 1 | 1 133.768356 134.764618 343.711060 9.962625 | 1 133.768356 134.764618 343.711060 9.962625
+view main.tex 2 | 1 133.768356 134.764618 343.711060 9.962625 | 1 133.768356 134.764618 343.711060 9.962625
+view main.tex 3 | 1 133.768356 134.764618 343.711060 9.962625 | 1 133.768356 134.764618 343.711060 9.962625
+view main.tex 4 | 1 133.768356 134.764618 343.711060 9.962625 | 1 133.768356 134.764618 343.711060 9.962625
+view main.tex 5 | 1 133.768356 134.764618 343.711060 9.962625 | 1 133.768356 134.764618 343.711060 9.962625
+view main.tex 6 | 1 133.768356 134.764618 343.711060 9.962625 | 1 133.768356 134.764618 343.711060 9.962625
+view main.tex 7 | 1 133.768356 158.522720 343.711060 10.046797
+view main.tex 8 | 1 133.768356 158.522720 343.711060 10.046797 | 1 133.768356 158.522720 343.711060 10.046797 | 1 133.768356 170.477890 343.711060 8.855677 | 1 133.768356 158.522720 343.711060 10.046797 | 1 133.768356 158.522720 343.711060 10.046797
+view main.tex 9 | 1 133.768356 170.477890 343.711060 8.855677
+view main.tex 10 | 1 133.768356 158.522720 343.711060 10.046797
+view main.tex 11 | 1 133.768356 158.522720 343.711060 10.046797
+view main.tex 12 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677
+view main.tex 13 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677
+view main.tex 14 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677 | 1 133.768356 203.649002 343.711060 8.855677
+view main.tex 15 | 1 133.768356 675.586548 343.711060 9.504367 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 672.747192 15.243070 6.664993 | 1 133.768356 672.747192 15.243070 6.664993 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 672.747192 15.243070 6.664993
+view main.tex 16 | 1 133.768356 675.586548 343.711060 9.504367 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 672.747192 15.243070 6.664993 | 1 133.768356 672.747192 15.243070 6.664993 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 221.356339 343.711060 8.109618 | 1 133.768356 672.747192 15.243070 6.664993
+view main.tex 17 | 1 133.768356 242.572281 343.711060 0.000000
+view main.tex 18 | 1 133.768356 242.572281 343.711060 0.000000
+view main.tex 19 | 1 286.253876 257.018097 191.225571 11.098411 | 1 286.253876 257.018097 191.225571 11.098411 | 1 286.253876 257.018097 191.225571 11.098411 | 1 286.253876 254.527451 38.740086 8.607751 | 1 286.253876 257.018097 191.225571 11.098411
+view main.tex 20 | 1 286.253876 257.018097 191.225571 11.098411 | 1 286.253876 257.018097 191.225571 11.098411 | 1 286.253876 257.018097 191.225571 11.098411 | 1 286.253876 254.527451 38.740086 8.607751 | 1 286.253876 257.018097 191.225571 11.098411
+view main.tex 21 | 1 267.793488 281.920197 4.981320 0.000000
+view main.tex 22 | 1 267.793488 281.920197 4.981320 0.000000
+view main.tex 23 | 1 272.774811 279.230316 65.698196 11.955168 | 1 272.774811 279.230316 65.698196 11.955168 | 1 272.774811 279.230316 65.698196 11.955168
+view main.tex 24 | 1 272.774811 279.230316 65.698196 11.955168 | 1 272.774811 279.230316 65.698196 11.955168 | 1 272.774811 279.230316 65.698196 11.955168
+view main.tex 25 | 1 272.774811 279.230316 65.698196 11.955168 | 1 272.774811 279.230316 65.698196 11.955168
+view main.tex 26 | 1 272.774811 291.583984 65.698196 11.955168 | 1 272.774811 291.583954 65.698196 24.308834 | 1 272.774811 291.583984 65.698196 11.955168
+view main.tex 27 | 1 272.774811 291.583954 65.698196 24.308834 | 1 272.774811 291.583984 65.698196 11.955168 | 1 272.774811 291.583954 65.698196 24.308834
+view main.tex 28 | 1 133.768356 291.583954 343.711060 24.308834
+view main.tex 29 | 1 133.768356 310.696655 343.711060 8.855677
+view main.tex 30 | 1 133.768356 310.696655 343.711060 8.855677
+view main.tex 31 | 1 133.768356 310.696655 343.711060 8.855677
+view main.tex 32 | 1 133.768356 657.396545 343.711060 8.855677 | 1 133.768356 322.651825 343.711060 8.855677 | 1 133.768356 645.441406 343.711060 8.855677 | 1 133.768356 633.486206 343.711060 8.855677 | 1 133.768356 621.531067 343.711060 8.855677 | 1 133.768356 609.575867 343.711060 8.855677 | 1 133.768356 597.620728 343.711060 8.855677 | 1 133.768356 585.665527 343.711060 8.855677 | 1 133.768356 573.710388 343.711060 8.855677 | 1 133.768356 561.755249 343.711060 8.855677 | 1 133.768356 549.800049 343.711060 8.855677 | 1 133.768356 537.844910 343.711060 8.855677 | 1 133.768356 525.889709 343.711060 8.855677 | 1 133.768356 513.934509 343.711060 8.855677 | 1 133.768356 501.979340 343.711060 8.855677 | 1 133.768356 490.024170 343.711060 8.855677 | 1 133.768356 478.069000 343.711060 8.855677 | 1 133.768356 466.113861 343.711060 8.855677 | 1 133.768356 454.158691 343.711060 8.855677 | 1 133.768356 442.203522 343.711060 8.855677 | 1 133.768356 430.248352 343.711060 8.855677 | 1 133.768356 418.293182 343.711060 8.855677 | 1 133.768356 406.338013 343.711060 8.855677 | 1 133.768356 394.382843 343.711060 8.855677 | 1 133.768356 382.427673 343.711060 8.855677 | 1 133.768356 370.472504 343.711060 8.855677 | 1 133.768356 358.517334 343.711060 8.855677 | 1 133.768356 346.562164 343.711060 8.855677 | 1 133.768356 334.606995 343.711060 8.855677 | 2 133.768356 136.701797 343.711060 8.855677 | 2 133.768356 148.656967 343.711060 8.855677 | 2 133.768356 256.253479 343.711060 8.855677 | 2 133.768356 244.298309 343.711060 8.855677 | 2 133.768356 232.343140 343.711060 8.855677 | 2 133.768356 220.387970 343.711060 8.855677 | 2 133.768356 208.432800 343.711060 8.855677 | 2 133.768356 196.477631 343.711060 8.855677 | 2 133.768356 184.522461 343.711060 8.855677 | 2 133.768356 172.567307 343.711060 8.855677 | 2 133.768356 160.612137 343.711060 8.855677
+view main.tex 33 | 1 133.768356 702.635132 343.711060 6.420366 | 1 133.768356 99.895378 343.711060 0.000000 | 1 133.768356 702.635132 343.711060 6.420366 | 1 133.768356 675.586548 343.711060 9.504367 | 1 149.011429 672.747192 0.000000 6.625149 | 1 272.774811 291.583984 65.698196 11.955168 | 1 272.774811 279.230316 65.698196 11.955168 | 2 133.768356 268.208618 343.711060 6.226635
+view main.tex 34 | 2 133.768356 282.897980 343.711060 13.693081 | 2 133.768356 282.897980 343.711060 13.693081 | 2 298.152191 282.499481 39.734386 12.896082 | 2 133.768356 282.897980 343.711060 13.693081 | 2 133.768356 282.897980 343.711060 13.693081 | 2 298.152191 282.897980 39.734386 13.693081
+view main.tex 35 | 2 133.768356 282.897980 343.711060 13.693081 | 2 0.000000 0.000000 0.000000 0.000000 | 2 0.000000 0.000000 0.000000 0.000000 | 2 0.000000 0.000000 0.000000 0.000000
+view main.tex 36 | 2 133.768356 702.635132 343.711060 6.420366 | 2 298.152191 282.897980 39.734386 13.693081 | 2 133.768356 99.895378 343.711060 0.000000 | 2 133.768356 702.635132 343.711060 6.420366 | 2 0.000000 0.000000 0.000000 0.000000
+view main.tex 37 | 3 133.768356 136.701797 343.711060 8.855677
+view main.tex 38 | 3 133.768356 702.635132 343.711060 6.420366 | 3 133.768356 99.895378 343.711060 0.000000 | 3 133.768356 702.635132 343.711060 6.420366
+view main.tex 39 | 3 133.768356 702.635132 343.711060 6.420366 | 3 133.768356 99.895378 343.711060 0.000000 | 3 133.768356 702.635132 343.711060 6.420366
+view main.tex 40 | 3 133.768356 702.635132 343.711060 6.420366 | 3 133.768356 99.895378 343.711060 0.000000 | 3 133.768356 702.635132 343.711060 6.420366
+view sub/intro.tex 1 | 1 133.768356 182.433060 343.711060 8.855677
+view sub/intro.tex 2 | 1 133.768356 182.433060 343.711060 8.855677
+view sub/intro.tex 3 | 1 133.768356 182.433060 343.711060 8.855677
+view intro.tex 1
+edit 1 15 12 | /project/./main.tex 33
+edit 1 87 12 | /project/./main.tex 33
+edit 1 159 12 | /project/./main.tex 33
+edit 1 231 12 | /project/./main.tex 6
+edit 1 303 12 | /project/./main.tex 7
+edit 1 375 12 | /project/./main.tex 8
+edit 1 447 12 | /project/./main.tex 33
+edit 1 519 12 | /project/./main.tex 33
+edit 1 591 12 | /project/./main.tex 33
+edit 1 15 84 | /project/./main.tex 33
+edit 1 87 84 | /project/./main.tex 33
+edit 1 159 84 | /project/./main.tex 33
+edit 1 231 84 | /project/./main.tex 6
+edit 1 303 84 | /project/./main.tex 7
+edit 1 375 84 | /project/./main.tex 8
+edit 1 447 84 | /project/./main.tex 33
+edit 1 519 84 | /project/./main.tex 33
+edit 1 591 84 | /project/./main.tex 33
+edit 1 15 156 | /project/./main.tex 7
+edit 1 87 156 | /project/./main.tex 7
+edit 1 159 156 | /project/./main.tex 7
+edit 1 231 156 | /project/./main.tex 7
+edit 1 303 156 | /project/./main.tex 7
+edit 1 375 156 | /project/./main.tex 8
+edit 1 447 156 | /project/./main.tex 8
+edit 1 519 156 | /project/./main.tex 10
+edit 1 591 156 | /project/./main.tex 10
+edit 1 15 228 | /project/./main.tex 15
+edit 1 87 228 | /project/./main.tex 15
+edit 1 159 228 | /project/./main.tex 15
+edit 1 231 228 | /project/./main.tex 15
+edit 1 303 228 | /project/./main.tex 20
+edit 1 375 228 | /project/./main.tex 20
+edit 1 447 228 | /project/./main.tex 20
+edit 1 519 228 | /project/./main.tex 16
+edit 1 591 228 | /project/./main.tex 16
+edit 1 15 300 | /project/./main.tex 30
+edit 1 87 300 | /project/./main.tex 30
+edit 1 159 300 | /project/./main.tex 32
+edit 1 231 300 | /project/./main.tex 32
+edit 1 303 300 | /project/./main.tex 26
+edit 1 375 300 | /project/./main.tex 30
+edit 1 447 300 | /project/./main.tex 30
+edit 1 519 300 | /project/./main.tex 31
+edit 1 591 300 | /project/./main.tex 31
+edit 1 15 372 | /project/./main.tex 32
+edit 1 87 372 | /project/./main.tex 32
+edit 1 159 372 | /project/./main.tex 32
+edit 1 231 372 | /project/./main.tex 32
+edit 1 303 372 | /project/./main.tex 32
+edit 1 375 372 | /project/./main.tex 32
+edit 1 447 372 | /project/./main.tex 32
+edit 1 519 372 | /project/./main.tex 32
+edit 1 591 372 | /project/./main.tex 32
+edit 1 15 444 | /project/./main.tex 32
+edit 1 87 444 | /project/./main.tex 32
+edit 1 159 444 | /project/./main.tex 32
+edit 1 231 444 | /project/./main.tex 32
+edit 1 303 444 | /project/./main.tex 32
+edit 1 375 444 | /project/./main.tex 32
+edit 1 447 444 | /project/./main.tex 32
+edit 1 519 444 | /project/./main.tex 32
+edit 1 591 444 | /project/./main.tex 32
+edit 1 15 516 | /project/./main.tex 32
+edit 1 87 516 | /project/./main.tex 32
+edit 1 159 516 | /project/./main.tex 32
+edit 1 231 516 | /project/./main.tex 32
+edit 1 303 516 | /project/./main.tex 32
+edit 1 375 516 | /project/./main.tex 32
+edit 1 447 516 | /project/./main.tex 32
+edit 1 519 516 | /project/./main.tex 32
+edit 1 591 516 | /project/./main.tex 32
+edit 1 15 588 | /project/./main.tex 32
+edit 1 87 588 | /project/./main.tex 32
+edit 1 159 588 | /project/./main.tex 32
+edit 1 231 588 | /project/./main.tex 32
+edit 1 303 588 | /project/./main.tex 32
+edit 1 375 588 | /project/./main.tex 32
+edit 1 447 588 | /project/./main.tex 32
+edit 1 519 588 | /project/./main.tex 32
+edit 1 591 588 | /project/./main.tex 32
+edit 1 15 660 | /project/./main.tex 32
+edit 1 87 660 | /project/./main.tex 32
+edit 1 159 660 | /project/./main.tex 32
+edit 1 231 660 | /project/./main.tex 32
+edit 1 303 660 | /project/./main.tex 32
+edit 1 375 660 | /project/./main.tex 32
+edit 1 447 660 | /project/./main.tex 32
+edit 1 519 660 | /project/./main.tex 32
+edit 1 591 660 | /project/./main.tex 32
+edit 1 15 732 | /project/./main.tex 33
+edit 1 87 732 | /project/./main.tex 33
+edit 1 159 732 | /project/./main.tex 33
+edit 1 231 732 | /project/./main.tex 15
+edit 1 303 732 | /project/./main.tex 33
+edit 1 375 732 | /project/./main.tex 32
+edit 1 447 732 | /project/./main.tex 33
+edit 1 519 732 | /project/./main.tex 33
+edit 1 591 732 | /project/./main.tex 33
+edit 2 15 12 | /project/./main.tex 36
+edit 2 87 12 | /project/./main.tex 36
+edit 2 159 12 | /project/./main.tex 36
+edit 2 231 12 | /project/./main.tex 32
+edit 2 303 12 | /project/./main.tex 32
+edit 2 375 12 | /project/./main.tex 32
+edit 2 447 12 | /project/./main.tex 32
+edit 2 519 12 | /project/./main.tex 36
+edit 2 591 12 | /project/./main.tex 36
+edit 2 15 84 | /project/./main.tex 36
+edit 2 87 84 | /project/./main.tex 36
+edit 2 159 84 | /project/./main.tex 36
+edit 2 231 84 | /project/./main.tex 32
+edit 2 303 84 | /project/./main.tex 32
+edit 2 375 84 | /project/./main.tex 32
+edit 2 447 84 | /project/./main.tex 32
+edit 2 519 84 | /project/./main.tex 36
+edit 2 591 84 | /project/./main.tex 36
+edit 2 15 156 | /project/./main.tex 32
+edit 2 87 156 | /project/./main.tex 32
+edit 2 159 156 | /project/./main.tex 32
+edit 2 231 156 | /project/./main.tex 32
+edit 2 303 156 | /project/./main.tex 32
+edit 2 375 156 | /project/./main.tex 32
+edit 2 447 156 | /project/./main.tex 32
+edit 2 519 156 | /project/./main.tex 32
+edit 2 591 156 | /project/./main.tex 32
+edit 2 15 228 | /project/./main.tex 32
+edit 2 87 228 | /project/./main.tex 32
+edit 2 159 228 | /project/./main.tex 32
+edit 2 231 228 | /project/./main.tex 32
+edit 2 303 228 | /project/./main.tex 32
+edit 2 375 228 | /project/./main.tex 32
+edit 2 447 228 | /project/./main.tex 32
+edit 2 519 228 | /project/./main.tex 32
+edit 2 591 228 | /project/./main.tex 32
+edit 2 15 300 | /project/./main.tex 34
+edit 2 87 300 | /project/./main.tex 34
+edit 2 159 300 | /project/./main.tex 34
+edit 2 231 300 | /project/./main.tex 34
+edit 2 303 300 | /project/./main.tex 34
+edit 2 375 300 | /project/./main.tex 35
+edit 2 447 300 | /project/./main.tex 35
+edit 2 519 300 | /project/./main.tex 36
+edit 2 591 300 | /project/./main.tex 36
+edit 2 15 372 | /project/./main.tex 34
+edit 2 87 372 | /project/./main.tex 34
+edit 2 159 372 | /project/./main.tex 34
+edit 2 231 372 | /project/./main.tex 34
+edit 2 303 372 | /project/./main.tex 34
+edit 2 375 372 | /project/./main.tex 35
+edit 2 447 372 | /project/./main.tex 35
+edit 2 519 372 | /project/./main.tex 36
+edit 2 591 372 | /project/./main.tex 36
+edit 2 15 444 | /project/./main.tex 34
+edit 2 87 444 | /project/./main.tex 34
+edit 2 159 444 | /project/./main.tex 34
+edit 2 231 444 | /project/./main.tex 34
+edit 2 303 444 | /project/./main.tex 34
+edit 2 375 444 | /project/./main.tex 35
+edit 2 447 444 | /project/./main.tex 35
+edit 2 519 444 | /project/./main.tex 36
+edit 2 591 444 | /project/./main.tex 36
+edit 2 15 516 | /project/./main.tex 36
+edit 2 87 516 | /project/./main.tex 36
+edit 2 159 516 | /project/./main.tex 36
+edit 2 231 516 | /project/./main.tex 34
+edit 2 303 516 | /project/./main.tex 36
+edit 2 375 516 | /project/./main.tex 35
+edit 2 447 516 | /project/./main.tex 36
+edit 2 519 516 | /project/./main.tex 36
+edit 2 591 516 | /project/./main.tex 36
+edit 2 15 588 | /project/./main.tex 36
+edit 2 87 588 | /project/./main.tex 36
+edit 2 159 588 | /project/./main.tex 36
+edit 2 231 588 | /project/./main.tex 36
+edit 2 303 588 | /project/./main.tex 36
+edit 2 375 588 | /project/./main.tex 36
+edit 2 447 588 | /project/./main.tex 36
+edit 2 519 588 | /project/./main.tex 36
+edit 2 591 588 | /project/./main.tex 36
+edit 2 15 660 | /project/./main.tex 36
+edit 2 87 660 | /project/./main.tex 36
+edit 2 159 660 | /project/./main.tex 36
+edit 2 231 660 | /project/./main.tex 36
+edit 2 303 660 | /project/./main.tex 36
+edit 2 375 660 | /project/./main.tex 36
+edit 2 447 660 | /project/./main.tex 36
+edit 2 519 660 | /project/./main.tex 36
+edit 2 591 660 | /project/./main.tex 36
+edit 2 15 732 | /project/./main.tex 36
+edit 2 87 732 | /project/./main.tex 36
+edit 2 159 732 | /project/./main.tex 36
+edit 2 231 732 | /project/./main.tex 36
+edit 2 303 732 | /project/./main.tex 36
+edit 2 375 732 | /project/./main.tex 36
+edit 2 447 732 | /project/./main.tex 36
+edit 2 519 732 | /project/./main.tex 36
+edit 2 591 732 | /project/./main.tex 36
+edit 3 15 12 | /project/./main.tex 38
+edit 3 87 12 | /project/./main.tex 38
+edit 3 159 12 | /project/./main.tex 38
+edit 3 231 12 | /project/./main.tex 37
+edit 3 303 12 | /project/./main.tex 37
+edit 3 375 12 | /project/./main.tex 38
+edit 3 447 12 | /project/./main.tex 38
+edit 3 519 12 | /project/./main.tex 38
+edit 3 591 12 | /project/./main.tex 38
+edit 3 15 84 | /project/./main.tex 38
+edit 3 87 84 | /project/./main.tex 38
+edit 3 159 84 | /project/./main.tex 38
+edit 3 231 84 | /project/./main.tex 37
+edit 3 303 84 | /project/./main.tex 37
+edit 3 375 84 | /project/./main.tex 38
+edit 3 447 84 | /project/./main.tex 38
+edit 3 519 84 | /project/./main.tex 38
+edit 3 591 84 | /project/./main.tex 38
+edit 3 15 156 | /project/./main.tex 37
+edit 3 87 156 | /project/./main.tex 37
+edit 3 159 156 | /project/./main.tex 37
+edit 3 231 156 | /project/./main.tex 37
+edit 3 303 156 | /project/./main.tex 37
+edit 3 375 156 | /project/./main.tex 38
+edit 3 447 156 | /project/./main.tex 38
+edit 3 519 156 | /project/./main.tex 38
+edit 3 591 156 | /project/./main.tex 38
+edit 3 15 228 | /project/./main.tex 37
+edit 3 87 228 | /project/./main.tex 37
+edit 3 159 228 | /project/./main.tex 37
+edit 3 231 228 | /project/./main.tex 37
+edit 3 303 228 | /project/./main.tex 37
+edit 3 375 228 | /project/./main.tex 38
+edit 3 447 228 | /project/./main.tex 38
+edit 3 519 228 | /project/./main.tex 38
+edit 3 591 228 | /project/./main.tex 38
+edit 3 15 300 | /project/./main.tex 37
+edit 3 87 300 | /project/./main.tex 37
+edit 3 159 300 | /project/./main.tex 37
+edit 3 231 300 | /project/./main.tex 37
+edit 3 303 300 | /project/./main.tex 37
+edit 3 375 300 | /project/./main.tex 38
+edit 3 447 300 | /project/./main.tex 38
+edit 3 519 300 | /project/./main.tex 38
+edit 3 591 300 | /project/./main.tex 38
+edit 3 15 372 | /project/./main.tex 37
+edit 3 87 372 | /project/./main.tex 37
+edit 3 159 372 | /project/./main.tex 37
+edit 3 231 372 | /project/./main.tex 37
+edit 3 303 372 | /project/./main.tex 37
+edit 3 375 372 | /project/./main.tex 38
+edit 3 447 372 | /project/./main.tex 38
+edit 3 519 372 | /project/./main.tex 38
+edit 3 591 372 | /project/./main.tex 38
+edit 3 15 444 | /project/./main.tex 38
+edit 3 87 444 | /project/./main.tex 38
+edit 3 159 444 | /project/./main.tex 38
+edit 3 231 444 | /project/./main.tex 37
+edit 3 303 444 | /project/./main.tex 38
+edit 3 375 444 | /project/./main.tex 38
+edit 3 447 444 | /project/./main.tex 38
+edit 3 519 444 | /project/./main.tex 38
+edit 3 591 444 | /project/./main.tex 38
+edit 3 15 516 | /project/./main.tex 38
+edit 3 87 516 | /project/./main.tex 38
+edit 3 159 516 | /project/./main.tex 38
+edit 3 231 516 | /project/./main.tex 38
+edit 3 303 516 | /project/./main.tex 38
+edit 3 375 516 | /project/./main.tex 38
+edit 3 447 516 | /project/./main.tex 38
+edit 3 519 516 | /project/./main.tex 38
+edit 3 591 516 | /project/./main.tex 38
+edit 3 15 588 | /project/./main.tex 38
+edit 3 87 588 | /project/./main.tex 38
+edit 3 159 588 | /project/./main.tex 38
+edit 3 231 588 | /project/./main.tex 38
+edit 3 303 588 | /project/./main.tex 38
+edit 3 375 588 | /project/./main.tex 38
+edit 3 447 588 | /project/./main.tex 38
+edit 3 519 588 | /project/./main.tex 38
+edit 3 591 588 | /project/./main.tex 38
+edit 3 15 660 | /project/./main.tex 38
+edit 3 87 660 | /project/./main.tex 38
+edit 3 159 660 | /project/./main.tex 38
+edit 3 231 660 | /project/./main.tex 38
+edit 3 303 660 | /project/./main.tex 38
+edit 3 375 660 | /project/./main.tex 38
+edit 3 447 660 | /project/./main.tex 38
+edit 3 519 660 | /project/./main.tex 38
+edit 3 591 660 | /project/./main.tex 38
+edit 3 15 732 | /project/./main.tex 38
+edit 3 87 732 | /project/./main.tex 38
+edit 3 159 732 | /project/./main.tex 38
+edit 3 231 732 | /project/./main.tex 38
+edit 3 303 732 | /project/./main.tex 38
+edit 3 375 732 | /project/./main.tex 38
+edit 3 447 732 | /project/./main.tex 38
+edit 3 519 732 | /project/./main.tex 38
+edit 3 591 732 | /project/./main.tex 38
+edit 4 100 100
