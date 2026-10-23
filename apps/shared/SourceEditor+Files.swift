@@ -25,9 +25,9 @@ extension SourceEditor {
 
     /// Another app's text for the file shown: a new undo, and the caret and top line where they were, as Xcode's.
     func reload(text: String) {
-        textView.undo = UndoManager()
         let selection = textView.selection, top = textView.shownTop
-        textView.reload(text)
+        guard textView.reload(text) else { return }
+        textView.undo = UndoManager()
         let length = textView.length, start = min(selection.location, length)
         textView.selection = NSRange(location: start, length: min(NSMaxRange(selection), length) - start)
         top.map(textView.scroll(toShownTop:))

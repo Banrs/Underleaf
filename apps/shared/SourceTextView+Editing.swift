@@ -13,10 +13,11 @@ extension SourceTextView {
         show(text)
     }
 
-    /// The disk's text, from the session's `document_reload`: shown without an edit.
-    func reload(_ text: String) {
-        document.reload(text)
+    /// The disk's text, from the session's `document_reload`: shown without an edit, unless the core kept the view's.
+    func reload(_ text: String) -> Bool {
+        guard document.reload(text) else { return false }
         show(text)
+        return true
     }
 
     /// The core's edits, and the selections after them. False for none.
