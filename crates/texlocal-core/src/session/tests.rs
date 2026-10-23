@@ -1427,6 +1427,21 @@ async fn cleans_asked_for_together_are_all_answered() {
     assert_eq!(rig.fake.called("clean"), 1);
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_build_asked_for_during_a_clean_starts_once_it_is_over() {
+    let mut rig = Rig::new(false).await;
+    let cleaned = rig
+        .sessions
+        .send("session_clean", &json!({ "session": rig.session }));
+    rig.ok("compile", json!({})).await;
+    cleaned.await.unwrap();
+    let events = rig.events().await;
+    let at = |test: &dyn Fn(&Value) -> bool| events.iter().position(test);
+    let started = at(&|e| e["type"] == "build" && e["compiling"] == true);
+    let cleaned = at(&|e| e["type"] == "build_cleaned");
+    assert!(cleaned.unwrap() < started.unwrap(), "{events:?}");
+}
+
 /// Until the document's symbols pass `test`, perhaps a scan or two later.
 async fn until(doc: &Document, test: impl Fn(&Symbols) -> bool) -> bool {
     for _ in 0..500 {
