@@ -355,8 +355,8 @@ final class ProjectModel {
 
     // MARK: - Editing
 
-    /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
-    /// the editor never shows a file without its document. A `jump` is one the person makes away from the caret, whose place
+    /// After the opens asked for before it. One superseded meanwhile stops: the editor never shows a file without its
+    /// document. A `jump` is one the person makes away from the caret, whose place
     /// Go Back returns to. It shows the source, as a PDF command shows the PDF, but for the project's own first file and a
     /// file its rename reopens.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
@@ -382,15 +382,16 @@ final class ProjectModel {
                     if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
                     return
                 }
-                // Nothing awaited between the close and the switch.
-                var shows = latest()
-                if shows, let was = openPath, editsText { shows = await closeDocument(was) && !closed }
-                guard shows else {
+                guard latest() else {
                     // The session keeps no document the editor doesn't show.
-                    if text, path != openPath, !closed { core.send("session_close_document", ["session": session, "path": path]) }
+                    if text { core.send("session_close_document", ["session": session, "path": path]) }
                     return
                 }
+                // Shown before the old one closes, so keys typed meanwhile go into the new one. One whose save fails stays
+                // open in the session, Not Saved.
+                let was = editsText ? openPath : nil
                 show(path, focus: focus)
+                if let was { await closeDocument(was) }
             }
             if let line, editsText, latest() { editor.reveal(line: line, column: column, length: length, atTop: atTop, focus: focus) }
         }.value
@@ -407,12 +408,10 @@ final class ProjectModel {
         editor.textView.issues.live = liveIssues[path] ?? [:]
     }
 
-    /// Saved first; false, staying open, if that failed or asks about the disk.
-    func closeDocument(_ path: String) async -> Bool {
-        guard let session else { return true }
-        return await alerting(notSavedTitle(path)) {
-            try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
-        } ?? false
+    /// Saved first; it stays open, Not Saved, if that failed or asks about the disk.
+    func closeDocument(_ path: String) async {
+        guard let session else { return }
+        await alerting(notSavedTitle(path)) { try await core.call("session_close_document", ["session": session, "path": path]) }
     }
 
     private func composing(_ composing: Bool) {

@@ -43,7 +43,7 @@ extension ProjectModel {
         showUIState(result.ui)
         if moved, let now, openPath == now, !closed {
             if isText(now) != wasText {
-                if wasText { _ = await closeDocument(now) }
+                if wasText { await closeDocument(now) }
                 if openPath == now { clearOpenFile() }
                 await open(now, focus: false, showsSource: false)
             } else {

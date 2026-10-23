@@ -459,33 +459,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Going back to the file shown while an open away from it has closed it, before that open took the answer: the file
-    /// is shown with a document of the session's again, so what's typed in it is saved.
-    @Test func anOpenOvertakenAfterClosingTheFileShownStillShowsItsOwn() async throws {
-        let (project, folder) = try await opened(with: ["a.tex": "a"])
-        let session = try #require(project.session)
-        let mainClosed = { SourceDocument(session: session, path: "main.tex") == nil }
-        let opening = Task { await project.open("a.tex") }
-        // Waits holding the main actor, so the open can't take the close's answer before the next open is asked for.
-        var held = false
-        for _ in 0..<1000 where !held {
-            await Task.yield()
-            let until = ContinuousClock.now + .milliseconds(20)
-            while !held, ContinuousClock.now < until { held = mainClosed() }
-        }
-        #expect(held && project.openPath == "main.tex")
-        let back = Task.immediate { await project.open("main.tex") }
-        await opening.value
-        await back.value
-
-        #expect(project.editor.path == "main.tex" && !mainClosed() && SourceDocument(session: session, path: "a.tex") == nil)
-        #expect(project.editor.perform(.bold))
-        #expect(await project.save())
-        #expect(try String(contentsOf: folder.appending(path: "main.tex"), encoding: .utf8) == project.editor.textView.string)
-        #expect(app.alert == nil)
-        await app.close()
-    }
-
     /// Stop and the session's word that Live Preview ended each put the build's PDF back: the pane never empties, and the
     /// build's pages go into the document showing.
     @Test func stoppingLivePreviewGoesBackToTheBuildsPDF() async throws {
