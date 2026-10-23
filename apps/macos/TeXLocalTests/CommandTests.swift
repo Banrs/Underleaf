@@ -75,7 +75,7 @@ struct MenuStructureTests {
         return menu
     }
 
-    /// macOS 27 shows the images the app asks for and hides the system's, which the Edit menu leaves out of this.
+    /// The menus show the images the app asks for and hide the system's, which the Edit menu leaves out of this.
     @Test func theMenuBarFollowsTheGuidelines() throws {
         let titles = try #require(NSApp.mainMenu).items.map(\.title)
         #expect(Array(titles.dropFirst()) == ["File", "Edit", "Format", "View", "Go", "Insert", "Compile", "Window", "Help"])

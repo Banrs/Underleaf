@@ -97,7 +97,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Whatever has the keyboard, as the menu's: it validates them too.
             item.target = nil
         case .format:
-            // Notes' words, from its strings (27.2).
+            // Notes' words, from its strings.
             item = button(id, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
             let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
             form.submenu = menu(Group { [app, project] in
@@ -200,7 +200,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.toolTip = help
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
         item.menu = menu(items)
-        // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
+        // No chevrons, as Notes' tools: with them, each menu draws its own capsule.
         item.showsIndicator = false
         return item
     }
@@ -297,7 +297,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func back() { app.perform(.projectClose, on: project) }
 
-    /// A toolbar button's action comes from its item (27.2).
+    /// A toolbar button's action comes from its item.
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func style(_ item: NSToolbarItem) { if let command = Self.styles[item.itemIdentifier] { app.perform(command, on: project) } }
     @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
@@ -319,7 +319,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
 }
 
-/// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (27.2).
+/// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (`theToolbarsControlsKeepTheirStateAndWidth`).
 private final class ShareItem: NSSharingServicePickerToolbarItem {
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }
@@ -336,7 +336,8 @@ private final class ZoomControl: NSSegmentedControl {
 
     override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
-    /// Inside the toolbar's own update the control's size lags each font change by one (27.2).
+    /// Inside the toolbar's own update the control's size lags each font change by one
+    /// (`theToolbarsControlsKeepTheirStateAndWidth`).
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }

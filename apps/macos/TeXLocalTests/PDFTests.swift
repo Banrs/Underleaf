@@ -50,6 +50,12 @@ struct PDFFitTests {
         }
     }
 
+    /// A document zooms from a tenth to eight times, though PDFKit puts its own limits back with each one.
+    @Test func eachDocumentHasTheZoomsLimits() throws {
+        let view = showing(try pages(1)).view
+        #expect(view.minScaleFactor == 0.1 && view.maxScaleFactor == 8)
+    }
+
     /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
         let controller = showing(try pages(3)), view = controller.view
@@ -262,13 +268,15 @@ struct PDFFindTests {
         #expect(controller.find.query == "a" && controller.find.matches.count == 3)
     }
 
+    /// The letter on a line under another, where `characterIndex` is a letter behind for each line above.
     @Test func aClickSendsThePagesTextAndTheLetter() throws {
-        let pdf = try textPDF(["alpha beta"]), page = try #require(pdf.page(at: 0))
+        let pdf = try textPDF(["alpha beta\ngamma delta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
-        let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
+        let e = text.range(of: "e", options: .backwards)
+        let letter = try #require(page.selection(for: e)).bounds(for: page)
         // A page holds its document weakly; it's the view's in the app.
         let click = try #require(withExtendedLifetime(pdf) { page.click(at: CGPoint(x: letter.midX, y: letter.midY)) })
-        #expect(click == PageClick(text: text as String, at: text.range(of: "e").location))
+        #expect(click == PageClick(text: text as String, at: e.location))
     }
 
     /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.

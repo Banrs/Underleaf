@@ -58,7 +58,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     // MARK: - Live preview
 
-    /// A page given to PDFKit fades in over a quarter of a second (27.2); a layer's contents change in one frame.
+    /// A page given to PDFKit fades in over a quarter of a second; a layer's contents change in one frame.
     private let liveCanvas: NSView = {
         let canvas = FilterView()
         canvas.autoresizingMask = [.width, .height]
@@ -71,7 +71,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
     var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
 
-    /// At PDFKit's scale from its pixel-rounded frame's corner (27.2), so its page takes the layer's place unseen. Only the
+    /// At PDFKit's scale from its pixel-rounded frame's corner, so its page takes the layer's place unseen. Only the
     /// part in view: the whole is half a gigabyte for A4 at 800%.
     func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
         guard let documentView, let window, let overlay = shownOverlay(of: shown) else { return false }
@@ -88,7 +88,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             .translatedBy(x: -box.minX, y: -box.minY)
         let whole = CGRect(x: 0, y: 0, width: onScreen.width.rounded(), height: onScreen.height.rounded())
         let part = visible.applying(toPixels).integral.intersection(whole)
-        // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours (27.2).
+        // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours.
         guard part.width >= 1, part.height >= 1,
               let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
                                                    .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),

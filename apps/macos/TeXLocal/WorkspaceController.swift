@@ -129,8 +129,8 @@ final class WorkspaceController: ThinSplitViewController {
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = 100
-        // Never hidden before its first layout, when it would still inset its pane (27.2). The status bar's height, folded
-        // or open: it rides the files' foot as the outline opens, one motion with the outline's rows under it.
+        // Hidden only after its first layout, before which it would still inset its pane. The status bar's height, folded or
+        // open: it rides the files' foot as the outline opens, one motion with the outline's rows under it.
         let header = hostingView(OutlineHeader())
         header.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
         // The files draw the edge (`HeaderEdge`); the accessory's own would lay AppKit's glass over them.
@@ -188,7 +188,7 @@ final class WorkspaceController: ThinSplitViewController {
         // 27.2: collapsed at the first layout, it leaves the source without the toolbar's scroll edge.
         pdfItem.isCollapsed = false
 
-        // As Xcode's editor bar, over an empty accessory in each pane. 27.2: one across both gave its edge to one only.
+        // As Xcode's editor bar, over an empty accessory in each pane: one across both gave its edge to one only.
         for item in [sourceItem!, pdfItem!] {
             let space = NSView()
             space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
@@ -238,7 +238,7 @@ final class WorkspaceController: ThinSplitViewController {
         return host
     }
 
-    /// `edge` for a bar of its own height: AppKit's insets would pad it, and the pane's safe area with it (27.2).
+    /// `edge` for a bar of its own height: AppKit's insets would pad it, and the pane's safe area with it.
     private func accessory(_ view: NSView, edge: NSScrollEdgeEffectStyle? = nil) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
         accessory.view = view

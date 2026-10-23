@@ -28,7 +28,7 @@ struct SymbolItems: View {
             let columns = Self.columns(symbols.count)
             Menu(group.title) {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
-                    // A palette row, which shows its items' images: text alone draws blank (27.2).
+                    // A palette row, which shows its items' images: text alone draws blank.
                     ControlGroup {
                         ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { symbol in
                             Button { project?.editor.perform(.symbol(symbol.command)) } label: {

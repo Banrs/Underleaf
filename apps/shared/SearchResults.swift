@@ -5,7 +5,7 @@ struct SearchResults: View {
     let project: ProjectModel
     #if os(macOS)
     @State private var hit: SearchHit.ID?
-    /// At the inset and spacing the search field's accessory has (measured, 27.2).
+    /// At the inset and spacing the search field's accessory has (measured).
     private static let inset: (side: CGFloat, below: CGFloat) = (10, 9)
     #else
     /// Back to the source, where the split has collapsed to one column.

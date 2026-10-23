@@ -42,6 +42,29 @@ extension SourceTextView {
         scroll(toShownTop: (offset, shownRect.minY - scrollY))
     }
 
+    /// The line at `location` in the middle of what shows.
+    func center(_ location: any NSTextLocation) {
+        guard let manager = textLayoutManager, let scrollY else { return }
+        let middle = shownRect.midY - scrollY
+        scroll(location) { [unowned self] paragraph in
+            guard let fragment = manager.textLayoutFragment(for: location) else { return paragraph.midY - middle }
+            let inParagraph = offset(location) - offset(fragment.rangeInElement.location)
+            let line = fragment.textLineFragments.last { $0.characterRange.location <= inParagraph } ?? fragment.textLineFragments.first
+            return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - middle
+        }
+    }
+
+    /// TextKit 2 only estimates the heights of what it hasn't laid out, so a place far from the viewport is laid out and
+    /// scrolled to, then again once the estimates above it settle as it shows. `scroll` says whether it scrolled.
+    func settle(_ range: NSTextRange, _ scroll: () -> Bool) {
+        guard let manager = textLayoutManager else { return }
+        for _ in 0..<2 {
+            manager.ensureLayout(for: range)
+            guard scroll() else { return }
+            manager.textViewportLayoutController.layoutViewport()
+        }
+    }
+
     /// What floats over the text follows a scroll: TextKit lays the viewport out again only past what it had laid out.
     func scrolled() {
         completions.follow()

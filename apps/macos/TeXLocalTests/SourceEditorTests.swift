@@ -223,7 +223,7 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
-    /// 27.2: until a scroll prepares content, TextKit's content view can end at the scroll view's insets, which left the lines
+    /// Until a scroll prepares content, TextKit's content view can end at the scroll view's insets, which left the lines
     /// under the status bar undrawn after a launch or a resize. Once laid out, the source has prepared all that shows.
     @Test func theShownTextIsPreparedBeforeAnyScroll() async throws {
         let window = inWindow()

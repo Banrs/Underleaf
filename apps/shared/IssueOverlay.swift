@@ -124,7 +124,8 @@ final class IssueOverlay {
             issue.message = (message, rect, fitted?.cut ?? true)
         }
         if issue.message?.cut != false || issues > 1 { issue.tip = said.joined(separator: "\n") }
-        // 27.2: TextKit 2 draws no underline given as a rendering attribute: it is drawn under the text, in Xcode's red.
+        // TextKit 2 draws no underline given as a rendering attribute: it is drawn under the text, in Xcode's red
+        // (`anIssuesMessageIsAtItsLinesEnd`).
         if !reported.tokens.isEmpty, let textFont = view.font {
             let thickness = max(1, view.onPixels(CTFontGetUnderlineThickness(textFont as CTFont)))
             for token in reported.tokens {

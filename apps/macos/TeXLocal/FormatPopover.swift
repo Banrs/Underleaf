@@ -45,11 +45,11 @@ struct FormatPanel: View {
     @FocusState private var focused: String?
     /// The level under the pointer or last reached by the keys, as a menu's highlight.
     @State private var highlighted: String?
-    /// 27.2: SwiftUI hands the keyboard to the first level as the popover opens; only a key's move of it is a highlight.
+    /// The keyboard starts at the caret's level as the popover opens; only a key's move of it is a highlight, as a menu's.
     @State private var keyed = false
     @State private var styles = TextStyles()
 
-    /// Notes' Aa, read through Accessibility (27.2): parts 7 pt apart and from the edges, dividers 7 pt in, rows at a 29 pt
+    /// Notes' Aa, measured through Accessibility: parts 7 pt apart and from the edges, dividers 7 pt in, rows at a 29 pt
     /// pitch 10 pt in with their content 16 pt in, 8 pt corners, list markers a word space from their text.
     fileprivate static let gap: CGFloat = 7, dividerInset: CGFloat = 7, rowInset: CGFloat = 10, rowGap: CGFloat = 1,
                            contentInset: CGFloat = 16, highlightRadius: CGFloat = 8, notesPitch: CGFloat = 29, markerGap: CGFloat = 4

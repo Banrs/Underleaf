@@ -52,7 +52,7 @@ struct FilesList: View {
                     }
                 }
             }
-            // None for no row: SwiftUI's asks AppKit for row -1's view, which raises (27.2).
+            // None for no row: SwiftUI's would ask AppKit for row -1's view, which raises.
             .contextMenu(forSelectionType: String.self) { paths in
                 if let path = paths.first, let node = project.tree.node(at: path) {
                     if node.isDirectory {

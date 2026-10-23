@@ -219,8 +219,8 @@ enum SyncTeXGeometry {
 }
 
 extension PDFPage {
-    /// The page's text and the clicked letter's index in it, for the core to find in the source. 27.2: `characterIndex` is
-    /// wrong for pdfTeX's T1 fonts, so each letter's selection is measured instead.
+    /// The page's text and the clicked letter's index in it, for the core to find in the source. `characterIndex` is a letter
+    /// behind for each line above, so each letter's selection is measured instead (`aClickSendsThePagesTextAndTheLetter`).
     func click(at point: CGPoint) -> PageClick? {
         // PDFKit's word lookup crashes on a page whose document has gone.
         guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }

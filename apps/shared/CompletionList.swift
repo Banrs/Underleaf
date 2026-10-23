@@ -5,7 +5,7 @@ import UIKit
 #endif
 import SwiftUI
 
-/// The core's completions under the caret, a view over the editor: 27.2's glass in a borderless panel that isn't key
+/// The core's completions under the caret, a view over the editor: Liquid Glass in a borderless panel that isn't key
 /// draws flat, and AppKit's own completion list is still its square box; UIKit has none. Typing stays in the document.
 final class CompletionList {
     private unowned let editor: SourceTextView
@@ -225,7 +225,7 @@ final class CompletionList {
     var height: CGFloat = 24
 }
 
-/// An NSMenu's measures on 27.2: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.
+/// An NSMenu's measures: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.
 /// On the iPad a UIMenu's: rows a touch's 44 pt, in its larger corners.
 struct CompletionRowsView: View {
     let rows: ChoiceRows<Completion>
