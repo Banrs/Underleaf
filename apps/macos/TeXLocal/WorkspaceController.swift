@@ -15,7 +15,6 @@ final class WorkspaceController: ThinSplitViewController {
     private var outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
     private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
-    private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
     private var appeared = false
@@ -39,7 +38,7 @@ final class WorkspaceController: ThinSplitViewController {
         }
         // Before the side columns, which open at the width AppKit's inspector does, and the area, which opens in the room
         // they leave; added after them.
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
         buildSidebar(height: size.height)
         // Collapsed before they are added: collapsed only once loaded, the inspector's form loses its grouped insets and
         // large section titles, and opens narrower.
@@ -63,10 +62,7 @@ final class WorkspaceController: ThinSplitViewController {
         if !project.panel.shown { panelItem.isCollapsed = true }
         collapses = [
             follow(sidebarItem) { [unowned self] in app.sideColumn(.sidebar, shown: $0, byWindow: foldedByWindow) },
-            follow(inspectorItem) { [unowned self] shown in
-                if shown { mount(inspectorItem.viewController, true) }
-                app.sideColumn(.inspector, shown: shown, byWindow: foldedByWindow)
-            },
+            follow(inspectorItem) { [unowned self] in app.sideColumn(.inspector, shown: $0, byWindow: foldedByWindow) },
             follow(sourceItem),
             follow(pdfItem),
             // A drag on the status bar's line, not the autosave's restore.
@@ -152,7 +148,7 @@ final class WorkspaceController: ThinSplitViewController {
         sourceItem.minimumThickness = ColumnMetrics.paneMinimum
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
-        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find), mounted: false))
+        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find)))
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
@@ -195,19 +191,15 @@ final class WorkspaceController: ThinSplitViewController {
     override func toggleInspector(_ sender: Any?) { app.inspectorShown.toggle() }
 
     /// Sized by the split item's limits: its content never sets the window's minimum.
-    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mounted: Bool? = nil) -> NSViewController {
-        let mount = mounted.map(Mount.init)
-        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app))
+    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0) -> NSViewController {
+        let host = NSHostingController(rootView: Pane(project: project, content: content).environment(app))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
-        if let mount { mounts[ObjectIdentifier(host.view)] = mount }
         return host
     }
 
-    private func hostingView(_ content: some View, mounted: Bool? = nil) -> NSHostingView<some View> {
-        let mount = mounted.map(Mount.init)
-        let host = NSHostingView(rootView: Pane(project: project, mount: mount, content: content).environment(app))
-        if let mount { mounts[ObjectIdentifier(host)] = mount }
+    private func hostingView(_ content: some View) -> NSHostingView<some View> {
+        let host = NSHostingView(rootView: Pane(project: project, content: content).environment(app))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -226,12 +218,6 @@ final class WorkspaceController: ThinSplitViewController {
     }
 
     private func outlineBarHeight(folded: Bool) -> CGFloat { folded ? BarMetrics.height : OutlineHeader.openHeight }
-
-    private func mount(_ controller: NSViewController, _ shown: Bool) {
-        guard let mount = mounts[ObjectIdentifier(controller.view)], mount.shown != shown else { return }
-        mount.shown = shown
-        if shown { controller.view.layoutSubtreeIfNeeded() }
-    }
 
     // MARK: - The models drive the panes
 
@@ -291,7 +277,6 @@ final class WorkspaceController: ThinSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
-        if !collapsed { mount(item.viewController, true) }
         quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { context in
@@ -304,7 +289,6 @@ final class WorkspaceController: ThinSplitViewController {
                 item.animator().isCollapsed = collapsed
                 if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
             }
-            if item.isCollapsed { mount(item.viewController, false) }
             quiet(false)
             done()
         }
@@ -325,22 +309,15 @@ final class WorkspaceController: ThinSplitViewController {
     /// A hidden accessory only folds to no height, and its controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
         guard accessory.isHidden != hidden else { return }
-        if !hidden {
-            mount(accessory, true)
-            accessory.view.isHidden = false
-        }
+        if !hidden { accessory.view.isHidden = false }
         guard animates else {
             (accessory.isHidden, accessory.view.isHidden) = (hidden, hidden)
-            if hidden { mount(accessory, false) }
             return
         }
         quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
-            if hidden, accessory.isHidden {
-                accessory.view.isHidden = true
-                mount(accessory, false)
-            }
+            if hidden, accessory.isHidden { accessory.view.isHidden = true }
             quiet(false)
         }
     }
@@ -401,17 +378,10 @@ private final class AreaSplitViewController: ThinSplitViewController {
     }
 }
 
-/// 27.2: a hidden hosting view still updates its content for every environment change (20 ms for the inspector).
-@Observable final class Mount {
-    var shown: Bool
-    init(_ shown: Bool) { self.shown = shown }
-}
-
 /// Off while a project opened over this one loads.
 private struct Pane<Content: View>: View {
     let project: ProjectModel
-    let mount: Mount?
     let content: Content
 
-    var body: some View { if mount?.shown ?? true { content.disabled(project.closed) } }
+    var body: some View { content.disabled(project.closed) }
 }
