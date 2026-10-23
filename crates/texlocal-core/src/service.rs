@@ -1,6 +1,7 @@
 //! The commands outside a project session, which every host forwards here, and the lock that
 //! takes a project's edits one at a time.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::compile::CompileManager;
 use crate::paths::Project;
-use crate::projects;
+use crate::projects::{self, History};
 use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
@@ -31,6 +32,9 @@ pub struct Service {
     /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
     /// then, and one waiting builds once it is. None found before the first look.
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
+    /// One for each store, so two sessions of a project take turns with it: one's pruning would
+    /// remove what the other has stored for a snapshot not yet written.
+    histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
 }
 
 impl Service {
@@ -41,7 +45,14 @@ impl Service {
             texpresso: Arc::default(),
             edits: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
+            histories: Mutex::default(),
         }
+    }
+
+    pub(crate) fn history(&self, project: &Project) -> Arc<Mutex<History>> {
+        let mut histories = lock(&self.histories);
+        let history = histories.entry(project.history.clone());
+        Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
     }
 
     /// Stop every compile and live preview, as a host does when it quits.

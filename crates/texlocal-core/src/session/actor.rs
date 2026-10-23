@@ -199,7 +199,7 @@ impl Actor {
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
         }
-        let history = Arc::new(Mutex::new(History::of(&project)));
+        let history = sessions.service.history(&project);
         let actor = Self {
             id,
             project_id,

@@ -135,18 +135,17 @@ impl History {
         Ok(files)
     }
 
-    /// One taken as `taken` says, then the history pruned.
+    /// One taken as `taken` says, then the history pruned. A record that can't be read is passed
+    /// over, as it is by the list.
     pub fn take(&self, now: i64, taken: Taken) -> Result<(), CoreError> {
-        let latest = match self.ids()?.first() {
-            Some(&id) => Some((id, self.read(id)?)),
-            None => None,
-        };
+        let ids = self.ids()?;
+        let latest = ids.iter().find_map(|&id| Some((id, self.read(id).ok()?)));
         let recent = |(id, _): &(i64, Snapshot)| now - id <= 10 * MINUTE;
         if matches!(taken, Taken::Auto) && latest.as_ref().is_some_and(recent) {
             return Ok(());
         }
         let files = self.files_now()?;
-        let next = latest.as_ref().map_or(now, |(id, _)| now.max(id + 1));
+        let next = ids.first().map_or(now, |id| now.max(id + 1));
         let unchanged = latest.filter(|(_, last)| last.files == files);
         let (id, snapshot) = match (taken, unchanged) {
             (Taken::Auto, Some(_)) => return Ok(()),
@@ -172,15 +171,23 @@ impl History {
             }
         };
         self.write(id, &snapshot)?;
-        self.prune(now)
+        self.prune(now);
+        Ok(())
     }
 
     /// Named snapshots stay; of the others, all from the last day, the last of each hour for a
-    /// week and of each day for 90 days. Then the contents no snapshot names go.
-    fn prune(&self, now: i64) -> Result<(), CoreError> {
-        let (mut periods, mut used) = (HashSet::new(), HashSet::new());
-        for id in self.ids()? {
-            let snapshot = self.read(id)?;
+    /// week and of each day for 90 days. Then the contents no snapshot names go, unless a record
+    /// couldn't be read, which may name any. As far as it can: the snapshot is taken already.
+    fn prune(&self, now: i64) {
+        let Ok(ids) = self.ids() else {
+            return;
+        };
+        let (mut periods, mut used, mut unread) = (HashSet::new(), HashSet::new(), false);
+        for id in ids {
+            let Ok(snapshot) = self.read(id) else {
+                unread = true;
+                continue;
+            };
             let age = now - id;
             // Newest first, so the first of a period is its last.
             let kept = snapshot.name.is_some()
@@ -190,17 +197,20 @@ impl History {
             if kept {
                 used.extend(snapshot.files.into_values());
             } else {
-                fs::remove_file(self.record(id))?;
+                let _ = fs::remove_file(self.record(id));
             }
         }
-        let objects = skip_unreadable(fs::read_dir(self.objects()))?;
-        for entry in objects.into_iter().flatten() {
-            let entry = entry?;
+        if unread {
+            return;
+        }
+        let Ok(objects) = fs::read_dir(self.objects()) else {
+            return;
+        };
+        for entry in objects.flatten() {
             if !used.contains(entry.file_name().to_string_lossy().as_ref()) {
-                fs::remove_file(entry.path())?;
+                let _ = fs::remove_file(entry.path());
             }
         }
-        Ok(())
     }
 
     /// Newest first, each with what changed since the one before it.
@@ -208,7 +218,9 @@ impl History {
         let mut entries = Vec::new();
         let mut before = BTreeMap::new();
         for id in self.ids()?.into_iter().rev() {
-            let snapshot = self.read(id)?;
+            let Ok(snapshot) = self.read(id) else {
+                continue;
+            };
             let time = chrono::DateTime::from_timestamp_millis(id).unwrap_or_default();
             entries.push(Entry {
                 id: id.to_string(),
@@ -357,6 +369,20 @@ mod tests {
         assert_eq!(history.ids().unwrap(), kept);
         let files = history.read(now).unwrap().files.len();
         assert_eq!(names_in(&history.objects()).len(), files);
+    }
+
+    /// It fails no change that takes a snapshot, nor leaves the others' files unkept.
+    #[test]
+    fn a_record_that_cant_be_read_is_passed_over_and_the_stored_files_stay() {
+        let (_dir, root) = project();
+        let history = history(&root);
+        history.take(0, Taken::Before("x")).unwrap();
+        fs::write(history.record(0), "not JSON").unwrap();
+        let stored = names_in(&history.objects()).len();
+        fs::write(root.join("main.tex"), "changed").unwrap();
+        history.take(100 * DAY, Taken::Before("x")).unwrap();
+        assert_eq!(history.list().unwrap().len(), 1);
+        assert_eq!(names_in(&history.objects()).len(), stored + 1);
     }
 
     /// The Before Restore snapshot can't keep it, so a restore would lose it for good.

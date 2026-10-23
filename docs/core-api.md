@@ -181,7 +181,8 @@ build folder and `.git`.
   taken beside the session, so no save waits on them; those before a change, before it.
 - **Pruned** after each snapshot: named ones are kept; of the others, all from the last day, the
   last of each hour for a week and of each day for 90 days, none older. Stored files no snapshot
-  names are removed.
+  names are removed, but none while a snapshot's record can't be read; such a record is passed
+  over, as the list leaves it out.
 
 ## Errors
 
