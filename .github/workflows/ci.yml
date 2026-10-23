@@ -1,7 +1,8 @@
 name: CI
 
 # One workflow: the Rust core on macOS and Windows, the Mac, iPad and
-# Windows apps, each only when a path it builds from changed. `ci-ok` is the one check to require.
+# Windows apps, each only when a path it builds from changed, and tools/metrics.py on every change.
+# `ci-ok` is the one check to require.
 on:
   pull_request:
   push:
@@ -188,8 +189,19 @@ jobs:
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'smoke timed out' }
           if ($p.ExitCode -ne 0) { Get-Content $err; throw "smoke exited $($p.ExitCode)" }
 
+  metrics:
+    name: Erosion and clones
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet lizard==1.24.2
+          "$RUNNER_TEMP/venv/bin/python" tools/metrics.py
+
   ci-ok:
-    needs: [changes, rust, mac, ipad, windows]
+    needs: [changes, rust, mac, ipad, windows, metrics]
     if: always()
     runs-on: ubuntu-latest
     steps:
