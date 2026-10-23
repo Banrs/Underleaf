@@ -156,7 +156,9 @@ final class PDFController: NSObject {
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreIfReady()
-        if let place { go(to: place) }
+        // A first document's first page meets the toolbar's edge: PDFKit's own start leaves it under the bar.
+        let start = document.page(at: 0).map { (index: 0, point: CGPoint(x: 0, y: $0.bounds(for: view.displayBox).maxY)) }
+        if let place = place ?? (restorePage == nil ? start : nil) { go(to: place) }
         pageChanged()
         find.rerun()
     }

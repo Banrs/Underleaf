@@ -14,6 +14,7 @@ final class WorkspaceController: ThinSplitViewController {
     private(set) var sidebarItem: NSSplitViewItem!
     private var outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
     private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
+    private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
 
     private var appeared = false
@@ -140,7 +141,21 @@ final class WorkspaceController: ThinSplitViewController {
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.paneMinimum
-        pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
+        // PDFKit's view in the pane itself, as Preview's, under SwiftUI's empty states while there is no PDF.
+        let pdfPane = NSViewController()
+        pdfPane.view = NSView(frame: NSRect(x: 0, y: 0, width: pdfWidth, height: 0))
+        let empty = NSHostingView(rootView: Pane(project: project, content: PDFEmptyState(project: project)).environment(app))
+        empty.sizingOptions = []
+        pdfEmpty = empty
+        for pane in [pdf.view, empty] as [NSView] {
+            pane.frame = pdfPane.view.bounds
+            pane.autoresizingMask = [.width, .height]
+            pdfPane.view.addSubview(pane)
+        }
+        pdf.view.onInverse = { [weak project] page, point, click in
+            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
+        }
+        pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
         pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find)))
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
@@ -226,6 +241,8 @@ final class WorkspaceController: ThinSplitViewController {
                 setCollapsed(outlineItem, state != .open)
             },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
+            // Over the pages, which stay laid out for the next PDF.
+            track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in
                 guard let self else { return }
                 setCollapsed(sidebarItem, false)

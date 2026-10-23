@@ -1,26 +1,19 @@
 import AppKit
 import SwiftUI
 
-struct PDFPane: View {
+/// In the PDF's place while there is none (`WorkspaceController.buildArea`).
+struct PDFEmptyState: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        if project.hasPDF {
-            // Not in a SwiftUI scroll view, which would take PDFKit's rubber-banding and insets (27.2).
-            PDFRepresentable(project: project, darkPaper: paper.isDark(in: colorScheme))
-                .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
-        } else {
-            emptyState
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.textSurface)
-        }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.textSurface)
     }
 
     @ViewBuilder
-    private var emptyState: some View {
+    private var content: some View {
         if app.installingTeX {
             ContentUnavailableView {
                 Label("Installing TinyTeX…", systemImage: "richtext.page")
@@ -73,21 +66,6 @@ struct PDFPane: View {
             }
         }
     }
-}
-
-struct PDFRepresentable: NSViewRepresentable {
-    let project: ProjectModel
-    let darkPaper: Bool
-
-    func makeNSView(context: Context) -> SyncPDFView {
-        let view = project.pdf.view
-        view.onInverse = { [weak project] page, point, click in
-            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
-        }
-        return view
-    }
-
-    func updateNSView(_ view: SyncPDFView, context: Context) { view.darkPaper = darkPaper }
 }
 
 struct PDFFindBar: View {

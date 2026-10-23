@@ -9,8 +9,21 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// PDFKit's scroll view isn't in its interface: its document view leads to it.
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
 
+    /// Settings' paper, white, dark, or the window's appearance's.
+    private var paperWatch: (any NSObjectProtocol)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        matchPaper()
+    }
+
+    private func matchPaper() {
+        let paper = PDFPaper(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.pdfPaper) ?? "") ?? .white
+        darkPaper = paper.isDark(onDark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
+
     /// Inverted with its hues turned back, as Smart Invert: Core Image over PDFKit's drawing, so a change redraws nothing.
-    var darkPaper = false {
+    private(set) var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
             for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] { overlay.dark = darkPaper }
@@ -125,6 +138,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override init(frame: NSRect) {
         super.init(frame: frame)
         pageOverlayViewProvider = self
+        paperWatch = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated { self?.matchPaper() }
+        }
+        matchPaper()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -176,12 +193,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     override func mouseMoved(with event: NSEvent) { if !updateDividerCursor(with: event) { super.mouseMoved(with: event) } }
     override func cursorUpdate(with event: NSEvent) { if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) } }
-
-    /// 27.2: SwiftUI reassigns unchanged frames, and PDFView's `setFrame:` refits the width, undoing a pinch.
-    override var frame: NSRect {
-        get { super.frame }
-        set { if newValue != super.frame { super.frame = newValue } }
-    }
 
     /// At the document's start, the first page's top stays at the toolbar's edge as the width or Fit Page changes.
     override func setFrameSize(_ newSize: NSSize) {
