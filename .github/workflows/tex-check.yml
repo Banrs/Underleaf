@@ -55,7 +55,7 @@ jobs:
         id: texpresso
         with:
           path: ${{ env.TEXPRESSO }}
-          key: texpresso-${{ steps.brew.outputs.versions }}-${{ steps.tinytex.outputs.tag }}-${{ hashFiles('tools/texpresso/*') }}
+          key: texpresso-${{ steps.brew.outputs.versions }}-${{ steps.tinytex.outputs.tag }}-${{ hashFiles('tools/texpresso/**') }}
       - if: steps.texpresso.outputs.cache-hit != 'true'
         run: |
           tools/texpresso/build.sh "$RUNNER_TEMP/texpresso-source"
