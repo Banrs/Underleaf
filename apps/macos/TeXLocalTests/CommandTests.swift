@@ -114,7 +114,7 @@ struct MenuStructureTests {
 struct OpenQuicklyTests {
     /// As Xcode's: the arrows stop at the ends, and each new list chooses its first.
     @Test func theArrowsStopAtTheEndsAndNewMatchesChooseTheFirst() {
-        let rows = QuickOpenRows()
+        let rows = ChoiceRows<QuickOpenItem> { [$0.title] }
         let item = QuickOpenItem(kind: "file", title: "main.tex", detail: "", path: "main.tex", line: nil)
         rows.items = [item, item, item]
         rows.move(-1)

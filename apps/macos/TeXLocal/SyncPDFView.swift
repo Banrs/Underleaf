@@ -221,7 +221,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if abs(up.x - down.x) <= 4, abs(up.y - down.y) <= 4 { goToSource(at: convert(down, from: nil)) }
     }
 
-    func jumpToSelection() {
+    /// ⌃L, on the responder chain while the pages have the keyboard, as the text view's is.
+    override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let selection = currentSelection, let page = selection.pages.first else { return }
         let box = selection.bounds(for: page)
         go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shownHeight / 2 / scaleFactor)))

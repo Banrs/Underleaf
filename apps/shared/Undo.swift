@@ -1,5 +1,8 @@
 import Foundation
 
+/// Each asynchronous Undo and Redo waits for the one before, so two quick ones reach the core and the disk in order (#36).
+private var undoLane: Task<Void, Never>?
+
 extension UndoManager {
     /// An Undo or Redo that does asynchronous work: `reversal` registers its opposite as the work starts, as an undo manager
     /// expects, and work that fails takes away every action of `target`.
@@ -8,7 +11,7 @@ extension UndoManager {
                                               work: @escaping @MainActor () async -> Bool) {
         registerUndo(withTarget: target) { [weak self] _ in
             reversal()
-            Task { if await !work() { self?.removeAllActions(withTarget: target) } }
+            _ = enqueue(&undoLane) { if await !work() { self?.removeAllActions(withTarget: target) } }
         }
         setActionName(actionName)
     }
@@ -23,8 +26,6 @@ final class UndoableTrash {
     private let trash: (UndoableTrash) async -> Bool
     private let changed: () async -> Void
     private let failed: (String, any Error) -> Void
-    /// A step waits for the last, so an Undo can't find the item not yet in the Trash (#36).
-    private var last: Task<Bool, Never>?
 
     init(original: URL, name: String, undoManager: UndoManager?,
          trash: @escaping (UndoableTrash) async -> Bool,
@@ -48,7 +49,7 @@ final class UndoableTrash {
 
     private func register(reversal: @escaping @MainActor () -> Void, step: @escaping @MainActor () async -> Bool) {
         undoManager?.registerAsyncUndo(withTarget: self, actionName: String(localized: "Move to Trash"), reversal: reversal) { [self] in
-            let done = await enqueue(&last, step).value
+            let done = await step()
             if done { await changed() }
             return done
         }

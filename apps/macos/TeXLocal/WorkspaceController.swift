@@ -65,9 +65,10 @@ final class WorkspaceController: ThinSplitViewController {
             follow(inspectorItem) { [unowned self] in app.sideColumn(.inspector, shown: $0, byWindow: foldedByWindow) },
             follow(sourceItem),
             follow(pdfItem),
-            // A drag on the status bar's line, not the autosave's restore.
+            // A drag on the status bar's line, not the autosave's restore nor a window's resize.
             follow(panelItem) { [unowned self] shown in
-                guard [.leftMouseDragged, .leftMouseUp].contains(NSApp.currentEvent?.type), project.panel.shown != shown else { return }
+                guard [.leftMouseDragged, .leftMouseUp].contains(NSApp.currentEvent?.type), view.window?.inLiveResize != true,
+                      project.panel.shown != shown else { return }
                 project.panel.shown = shown
             },
         ]

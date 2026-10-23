@@ -127,11 +127,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     @objc func performFindPanelAction(_ sender: Any?) { findAction(for: sender)?() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        switch item.action {
-        case #selector(performFindPanelAction(_:)): findAction(for: item) != nil
-        case #selector(centerSelectionInVisibleArea(_:)): workspace?.pdf.view.currentSelection?.pages.isEmpty == false
-        default: true
-        }
+        item.action != #selector(performFindPanelAction(_:)) || findAction(for: item) != nil
     }
 
     /// ⌘F, ⌘G and ⌘E go to the editor or to the PDF, by which has the keyboard or shows alone. On Home ⌘F is its search
@@ -175,15 +171,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var pdfPagesHaveKeyboard: Bool {
         guard let pdf = workspace?.pdf else { return false }
         return (window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true
-    }
-
-    override func centerSelectionInVisibleArea(_ sender: Any?) { workspace?.pdf.view.jumpToSelection() }
-
-    /// Only while the PDF's pages have the keyboard: elsewhere ⌃L falls off the responder chain, which beeps, where a
-    /// controller that always answered would take it in silence. The responder chain asks on the main thread.
-    override nonisolated func responds(to selector: Selector!) -> Bool {
-        guard selector == #selector(centerSelectionInVisibleArea(_:)) else { return super.responds(to: selector) }
-        return MainActor.assumeIsolated { pdfPagesHaveKeyboard }
     }
 
     // MARK: - Restoration

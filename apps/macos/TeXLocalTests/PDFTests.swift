@@ -180,7 +180,7 @@ struct PDFFindTests {
         let selection = try #require(view.currentSelection), page = try #require(selection.pages.first)
         func shows() -> Bool { view.bounds.intersects(view.convert(selection.bounds(for: page), from: page)) }
         #expect(!shows())
-        view.jumpToSelection()
+        view.centerSelectionInVisibleArea(nil)
         #expect(shows() && view.currentPage === page)
     }
 
