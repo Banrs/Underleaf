@@ -19,6 +19,7 @@ public sealed partial class SettingsPage : Page
         InitializeComponent();
         About.Description = $"Version {typeof(App).Assembly.GetName().Version?.ToString(3)} · MIT License";
         ThemeBox.SelectedIndex = Prefs.Theme;
+        PageColourBox.SelectedIndex = (int)Prefs.PageColour;
         var families = Prefs.MonospaceFamilies();
         FontBox.ItemsSource = families.Contains(Prefs.EditorFont) ? families : [.. families, Prefs.EditorFont];
         FontBox.SelectedItem = Prefs.EditorFont;
@@ -32,9 +33,14 @@ public sealed partial class SettingsPage : Page
             Prefs.Theme = ThemeBox.SelectedIndex;
             App.Window.ApplyTheme((ElementTheme)Prefs.Theme);
         };
+        PageColourBox.SelectionChanged += (_, _) => Prefs.PageColour = (PageColour)PageColourBox.SelectedIndex;
         FontBox.SelectionChanged += OnLook;
         SizeBox.SelectionChanged += OnLook;
         SyntaxBox.SelectionChanged += OnLook;
+        EngineBox.SelectionChanged += (_, _) =>
+        {
+            if (EngineBox.SelectedItem is Choice engine) Prefs.Engine = engine.Default ? "" : engine.Id;
+        };
         TexMissing.Installed += ShowTex;
         Loaded += (_, _) => ShowPreview();
         ActualThemeChanged += (_, _) => DispatcherQueue.TryEnqueue(ShowPreview);
@@ -42,7 +48,11 @@ public sealed partial class SettingsPage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
-        if (App.Core is { } core) ShowTex(await core.CallAsync<TexStatus>("status"));
+        if (App.Core is not { } core) return;
+        var engines = (await App.Catalogue()).Engines;
+        EngineBox.ItemsSource = engines;
+        EngineBox.SelectedItem = engines.FirstOrDefault(e => e.Id == Prefs.Engine) ?? engines.First(e => e.Default);
+        ShowTex(await core.CallAsync<TexStatus>("status"));
     }
 
     void OnOpenFolder(object sender, RoutedEventArgs e) => App.Reveal(Core.DefaultDataDir);

@@ -37,10 +37,12 @@ public sealed partial class MainWindow : Window
         {
             if (e.Key == (VirtualKey)188 && InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down)) OpenSettings();
         }), true);
-        // The mouse's back button, as in File Explorer and Settings.
+        // The mouse's back and forward buttons, as in File Explorer and Settings and, in a project, VS Code.
         Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
         {
-            if (e.GetCurrentPoint(Root).Properties.IsXButton1Pressed) GoBack();
+            var buttons = e.GetCurrentPoint(Root).Properties;
+            if (buttons.IsXButton1Pressed) Back();
+            else if (buttons.IsXButton2Pressed) (Pages.Content as WorkspacePage)?.Go(false);
         }), true);
         Root.Loaded += (_, _) => Root.XamlRoot.Changed += (_, _) => Fit();
         Activated += (_, e) =>
@@ -98,12 +100,13 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    /// With `file`, the project shows that file instead of its main file.
+    /// With `file`, the project shows that file instead of the one it was left at.
     public async void OpenProject(string id, string? file = null)
     {
         if (!await Leave()) return;
         ShowHome();
         Pages.Navigate(typeof(WorkspacePage), (id, file), new DrillInNavigationTransitionInfo());
+        Prefs.LastProject = id;
     }
 
     public async void OpenFolder()
@@ -147,6 +150,14 @@ public sealed partial class MainWindow : Window
         if (await Leave()) ShowHome();
     }
 
+    /// File › New project, as Word's File › New shows its gallery: Home, its templates focused.
+    public async void NewProject()
+    {
+        if (!await Leave()) return;
+        ShowHome();
+        (Pages.Content as HomePage)?.ShowTemplates();
+    }
+
     void ShowHome()
     {
         while (Pages.CanGoBack && Pages.Content is not HomePage) Pages.GoBack();
@@ -158,8 +169,14 @@ public sealed partial class MainWindow : Window
         if (Pages.CanGoBack && (Pages.Content is not WorkspacePage || await Leave())) Pages.GoBack();
     }
 
+    /// Alt+Left and the mouse's back button: in a project, its last place while there is one, as VS Code's Go back.
+    void Back()
+    {
+        if ((Pages.Content as WorkspacePage)?.Go(true) != true) GoBack();
+    }
+
     /// False, staying, when the open project's save fails or is asked about: the editor holds the only copy.
-    async Task<bool> Leave() => project is null || await project.Save();
+    async Task<bool> Leave() => project is null || await project.Leave();
 
     /// Back shows only where there is somewhere to go back to, as in Windows Settings.
     void OnNavigated(object sender, NavigationEventArgs e)
@@ -171,7 +188,7 @@ public sealed partial class MainWindow : Window
             project = page;
             return;
         }
-        if (e.Content is HomePage) project = null;
+        if (e.Content is HomePage) (project, Prefs.LastProject) = (null, "");
         SetMenu(null);
         SetTitle(null);
     }

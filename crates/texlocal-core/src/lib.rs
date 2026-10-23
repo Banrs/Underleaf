@@ -7,6 +7,7 @@
 
 mod analyze;
 mod atomic;
+mod checks;
 mod compile;
 mod error;
 pub mod events;
@@ -33,6 +34,10 @@ pub use error::CoreError;
 
 pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";
+/// A library project's history: in its folder, as all else of it is, but not in the build folder,
+/// which Clean Build Folder deletes. As a dotfile the tree leaves it out, and as `is_litter`
+/// exports and imports do.
+pub(crate) const HISTORY_DIR: &str = ".texlocal-history";
 
 /// The crate's mutexes guard bookkeeping that no panic leaves half-written,
 /// or nothing at all, so a poisoned one is still good: it must not fail

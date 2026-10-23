@@ -21,7 +21,7 @@ public sealed class NavItem
     public string Tail { get; init; } = "";
     public string Glyph { get; init; } = "";
     public bool HasGlyph => Glyph.Length > 0;
-    /// A file's hit count or a hit's line.
+    /// A file's hit count, a hit's line or a heading's words.
     public string Trailing { get; init; } = "";
     public bool IsMain { get; init; }
     public string Tip { get; init; } = "";
@@ -36,8 +36,8 @@ public sealed class NavItem
 }
 
 /// The sidebar, as Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results
-/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, session_search,
-/// which finds the open document's unsaved edits).
+/// as VS Code's search view. Outline, words and hits are the core's (session_analyze, session_outline_current, session_search
+/// and session_usages, which find the open document's unsaved edits).
 public sealed partial class WorkspacePage
 {
     readonly RenameFlyout rename = new();
@@ -69,9 +69,11 @@ public sealed partial class WorkspacePage
 
     List<NavItem> Headings(OutlineNode[] nodes) => [.. nodes.Select(n => new NavItem
     {
-        Lead = Title(n), Tip = Title(n), Key = n.FoldKey, IsExpanded = !folded.Contains(n.FoldKey), Target = n,
-        Children = n.Children is { } c ? Headings(c) : null,
+        Lead = Title(n), Tip = Title(n), Trailing = $"{n.Words:N0}", Spoken = $"{Title(n)}, {WordCount(n.Words)}", Key = n.FoldKey,
+        IsExpanded = !folded.Contains(n.FoldKey), Target = n, Children = n.Children is { } c ? Headings(c) : null,
     })];
+
+    static string WordCount(int words) => words == 1 ? "1 word" : $"{words:N0} words";
 
     /// An empty heading by its level, in sentence case: "Untitled subsection".
     static string Title(OutlineNode n) => n.Untitled ? Sentence(n.Title) : n.Title;
@@ -123,6 +125,7 @@ public sealed partial class WorkspacePage
         FilesTree.Visibility = Vis(tab == FilesTab);
         OutlineTree.Visibility = Vis(tab == OutlineTab && outlined);
         ResultsTree.Visibility = Vis(tab == ResultsTab && hits);
+        ResultsHeading.Visibility = Vis(tab == ResultsTab && ResultsHeading.Text.Length > 0);
         SelectCurrentHeading();
         SideNote.Text = tab == OutlineTab && !outlined ? Editor.Path is null ? "Open a file to see its outline." : "No sections in this document."
             : tab != ResultsTab || hits ? ""
@@ -168,17 +171,17 @@ public sealed partial class WorkspacePage
     void SaveFolds() => foldsSaved = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
     /// The project's UI state: as it opens, and after a rename, which moves the entry's paths.
-    void ReadFolds(JsonElement ui)
+    void ReadFolds(UiState ui)
     {
-        expanded = [.. ui.GetProperty("expandedFolders").EnumerateArray().Select(f => f.GetString()!)];
-        folded = [.. ui.GetProperty("foldedHeadings").EnumerateArray().Select(f => f.GetString()!)];
+        expanded = [.. ui.ExpandedFolders];
+        folded = [.. ui.FoldedHeadings];
     }
 
     async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
     {
-        TreeNode { Type: not "dir" } node => OpenDocument(node.Path, node.Kind),
-        OutlineNode { File: { } file } heading => Reveal(file, heading.Line),
-        SearchHit hit => Reveal(hit.File, hit.Line, hit.Column, hit.Length),
+        TreeNode { Type: not "dir" } node => Jump(node.Path, null),
+        OutlineNode { File: { } file } heading => Jump(file, heading.Line),
+        SearchHit hit => Jump(hit.File, hit.Line, hit.Column, hit.Length),
         _ => Task.CompletedTask,
     });
 
@@ -191,17 +194,19 @@ public sealed partial class WorkspacePage
         try { analysis = await Core.CallAsync<Analysis>("session_analyze", new { session, path }); }
         catch (CoreException) { return; }
         if (Editor.Path != path) return;
-        Words.Text = analysis.Words == 1 ? "1 word" : $"{analysis.Words:N0} words";
         (OutlineTree.ItemsSource, currentHeading) = (Headings(analysis.Tree), null);
         ShowSide();
         ShowHeadings(analysis.HeadingStyles);
         CaretSettled();
     }
 
-    /// The caret's heading, checked in Insert › Heading, and headingLine's, selected in the outline.
+    /// The caret's heading, checked in Insert › Heading, and headingLine's, selected in the outline; the words, as Word's
+    /// status bar counts them: the selection's of the document's while text is selected.
     void CaretSettled() => Run(null, async () =>
     {
         if (analysis is not { } shown || Editor.Path is not { } path) return;
+        var words = WordCount(shown.Words);
+        Words.Text = Editor.SelectedWords is { } selected ? $"{selected:N0} of {words}" : words;
         var line = Editor.Caret.Line;
         ShowInsertChecks(shown.Outline.FirstOrDefault(h => h.File == path && h.Line == line));
         var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line = headingLine });
@@ -275,14 +280,32 @@ public sealed partial class WorkspacePage
             try { files = await Core.CallAsync<SearchFile[]>("session_search", new { session, query }); }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != searches) return;
-        (searched, searchNote) = (query, error ?? replaced);
+        ShowResults(query, files, error ?? replaced);
+    }
+
+    /// Visual Studio's Find all references: each line that defines or uses the name at the caret, in Results under a
+    /// heading naming it. Where no name is, nothing changes, as for Go to definition.
+    void ShowUsages(int offset) => Run("Can't find references", async () =>
+    {
+        if (Editor.Path is not { } path) return;
+        var generation = ++searches;
+        var usages = await Core.CallAsync<Usages?>("session_usages", new { session, path, offset });
+        if (usages is not null && generation == searches) ShowResults(usages.Name, usages.Groups, null, $"Usages of {usages.Name}");
+    });
+
+    /// Hits by file, said as their count or the note. A heading names what found them other than the box's search, whose
+    /// matches Replace all would replace.
+    void ShowResults(string query, SearchFile[] files, string? note, string heading = "")
+    {
+        (searched, searchNote) = (query, note);
         ResultsTree.ItemsSource = Results(files);
-        ReplaceAll.IsEnabled = files.Length > 0;
+        ResultsHeading.Text = heading;
+        ReplaceAll.IsEnabled = heading.Length == 0 && files.Length > 0;
         if (query.Length > 0)
         {
             Split.IsPaneOpen = true;
             SideTabs.SelectedItem = ResultsTab;
-            Announce(Search, replaced ?? files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
+            Announce(Search, note ?? files.Sum(f => f.Hits.Length) switch { 0 => "No results", 1 => "1 result", var n => $"{n} results" }, "search");
         }
         ShowSide();
     }
@@ -363,7 +386,7 @@ public sealed partial class WorkspacePage
         // write that failed doesn't stop it.
         await Task.WhenAny(foldsSaved);
         if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
-            ReadFolds(renamed.GetProperty("ui"));
+            ReadFolds(renamed.GetProperty("ui").Deserialize<UiState>(Core.Json)!);
         await RefreshTree();
         Select(FilesTree, i => i.Key == to);
     });

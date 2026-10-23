@@ -3,20 +3,25 @@
 
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use serde_json::json;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::SETTINGS_FILE;
+use crate::analyze::{Files, analyze_project};
 use crate::atomic::{create_temp, persist};
+use crate::checks::bib_file;
 use crate::error::CoreError;
-use crate::paths::in_build_dir;
+use crate::paths::{Project, in_build_dir, safe_path, safe_rel_file};
 use crate::projects::is_litter;
+use crate::settings::read_settings;
 
-pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
+/// `added`: files of the export's own, each at its path in the archive in place of the project's.
+pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
     let parent = dest.parent().expect("a file is in a folder");
     let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
 
@@ -25,16 +30,66 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         writer: ZipWriter::new(file),
         archive_dir: dunce::canonicalize(parent).map_err(CoreError::at(dest))?,
         archive_names: [dest.file_name(), temp_path.file_name()],
+        added,
     };
     export.add_dir(root, "")?;
+    for (rel, bytes) in added {
+        export
+            .writer
+            .start_file(rel, options(Ok(SystemTime::now())))?;
+        export.writer.write_all(bytes)?;
+    }
     export.writer.finish()?.sync_all()?;
     persist(temp_path, dest).map_err(CoreError::at(dest))
+}
+
+/// What arXiv takes beside the project's files: the main file's .bbl from the build folder,
+/// beside the main file with its stem, and a 00README.json naming the compiler and the main file
+/// as the top-level source. Refused while shell escape is on, as arXiv compiles without it, and
+/// while the bibliography isn't compiled or is older than a .bib it names.
+pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
+    let settings = read_settings(&project.settings);
+    if settings.shell_escape {
+        return Err(CoreError::conflict(
+            "arXiv compiles without shell escape. Turn Shell Escape off for this project, check that it still compiles, then export again.",
+        ));
+    }
+    let main = safe_rel_file(&settings.main_file)?;
+    let readme = json!({
+        "spec_version": 1,
+        "process": { "compiler": settings.engine },
+        "sources": [{ "filename": main, "usage": "toplevel" }],
+    });
+    let readme = serde_json::to_vec_pretty(&readme).expect("JSON from JSON");
+    let mut added = vec![("00README.json".to_owned(), readme)];
+    let root = &project.root;
+    let files = Files::default();
+    let read = analyze_project(root, &files, &main, &main, None).files;
+    let facts = read.iter().filter_map(|file| files.at(root, file));
+    let named: Vec<String> = facts.flat_map(|f| f.bibliographies.clone()).collect();
+    if named.is_empty() {
+        return Ok(added);
+    }
+    // One outside the project is left alone.
+    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    let mut bibs = (named.iter())
+        .filter_map(|name| bib_file(name, |rel| modified(&safe_path(root, rel).ok()?)));
+    let bbl = settings.output(&project.build, "bbl")?;
+    if modified(&bbl).is_none_or(|compiled| bibs.any(|bib| bib > compiled)) {
+        return Err(CoreError::conflict(
+            "arXiv needs the bibliography as it was last compiled. Compile the project, then export again.",
+        ));
+    }
+    let beside_main = Path::new(&main).with_extension("bbl");
+    added.push((beside_main.to_string_lossy().into_owned(), fs::read(bbl)?));
+    Ok(added)
 }
 
 struct Export<'a> {
     writer: ZipWriter<File>,
     archive_dir: PathBuf,
     archive_names: [Option<&'a OsStr>; 2],
+    added: &'a [(String, Vec<u8>)],
 }
 
 impl Export<'_> {
@@ -60,7 +115,12 @@ impl Export<'_> {
 
     fn add_entry(&mut self, entry: &DirEntry, prefix: &str) -> Result<(), CoreError> {
         let rel = format!("{prefix}{}", entry.file_name().to_string_lossy());
-        if left_out(&rel) {
+        let replaced = || {
+            self.added
+                .iter()
+                .any(|(path, _)| path.eq_ignore_ascii_case(&rel))
+        };
+        if left_out(&rel) || replaced() {
             return Ok(());
         }
         let path = entry.path();
@@ -145,7 +205,7 @@ mod tests {
         write_settings(&settings, &serde_json::json!({ "engine": "lualatex" })).unwrap();
         fs::rename(settings, root.join(".TeXLocal.json")).unwrap();
         let dest = dir.path().join("out.zip");
-        export_zip(&root, &dest).unwrap();
+        export_zip(&root, &dest, &[]).unwrap();
         let kept = [
             ".gitignore",
             ".latexmkrc",
@@ -160,14 +220,14 @@ mod tests {
         assert_eq!(zip_names(&dest), kept);
         let inside = root.join("project.zip");
         fs::write(&inside, "old incomplete archive").unwrap();
-        export_zip(&root, &inside).unwrap();
+        export_zip(&root, &inside, &[]).unwrap();
         assert_eq!(zip_names(&inside), kept);
 
         let service = Service::new(dir.path().join("again"));
         let copy = service
             .data_dir
             .join(import_project(&service, &dest).unwrap().id);
-        export_zip(&copy, &dest).unwrap();
+        export_zip(&copy, &dest, &[]).unwrap();
         assert_eq!(zip_names(&dest), kept);
         let latexmkrc = fs::read_to_string(copy.join(".latexmkrc")).unwrap();
         assert_eq!(latexmkrc, "$pdf_mode = 1;");
@@ -181,7 +241,7 @@ mod tests {
     fn zip_export_dates_entries_as_their_files() {
         let (dir, root) = project();
         let dest = dir.path().join("out.zip");
-        export_zip(&root, &dest).unwrap();
+        export_zip(&root, &dest, &[]).unwrap();
         let mut archive = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
         let dated = archive.by_name("main.tex").unwrap().last_modified();
         let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
@@ -204,6 +264,7 @@ mod tests {
             writer: ZipWriter::new(File::create(&dest).unwrap()),
             archive_dir: PathBuf::new(),
             archive_names: [None, None],
+            added: &[],
         };
         export.add_entries(&listed, "").unwrap();
         export.writer.finish().unwrap();
@@ -214,8 +275,79 @@ mod tests {
     fn a_destination_that_cannot_be_written_is_named() {
         let (dir, root) = project();
         let dest = dir.path().join("no such folder/out.zip");
-        let err = export_zip(&root, &dest).unwrap_err();
+        let err = export_zip(&root, &dest, &[]).unwrap_err();
         assert_eq!(err.status, 404);
         assert!(err.message.contains("out.zip"), "{}", err.message);
+    }
+
+    fn read_entry(zip: &Path, name: &str) -> String {
+        let mut archive = zip::ZipArchive::new(File::open(zip).unwrap()).unwrap();
+        io::read_to_string(archive.by_name(name).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_arxiv_export_brings_the_bbl_beside_the_main_file_and_a_readme_naming_it() {
+        let (dir, root) = project();
+        fs::create_dir_all(root.join("tex")).unwrap();
+        fs::create_dir_all(root.join("build")).unwrap();
+        for (path, text) in [
+            ("tex/paper.tex", "\\documentclass{article}\n\\input{back}"),
+            // Named in a file the main file reads.
+            ("back.tex", "\\bibliography{refs}"),
+            ("refs.bib", "@book{k, title = {T}}"),
+            ("build/paper.bbl", "\\begin{thebibliography}{1}"),
+        ] {
+            fs::write(root.join(path), text).unwrap();
+        }
+        let settings = json!({ "mainFile": "tex/paper.tex", "engine": "lualatex" });
+        write_settings(&root.join(SETTINGS_FILE), &settings).unwrap();
+
+        let dest = dir.path().join("arxiv.zip");
+        let added = for_arxiv(&Project::in_folder(&root)).unwrap();
+        export_zip(&root, &dest, &added).unwrap();
+        let bbl = read_entry(&dest, "tex/paper.bbl");
+        assert_eq!(bbl, "\\begin{thebibliography}{1}");
+        let readme: serde_json::Value =
+            serde_json::from_str(&read_entry(&dest, "00README.json")).unwrap();
+        assert_eq!(
+            readme,
+            json!({
+                "spec_version": 1,
+                "process": { "compiler": "lualatex" },
+                "sources": [{ "filename": "tex/paper.tex", "usage": "toplevel" }],
+            })
+        );
+    }
+
+    #[test]
+    fn an_arxiv_export_is_refused_with_shell_escape_or_a_bibliography_not_compiled_since() {
+        let (_dir, root) = project();
+        fs::write(root.join("main.tex"), "\\addbibresource{refs.bib}").unwrap();
+        fs::write(root.join("refs.bib"), "@book{k, title = {T}}").unwrap();
+        let project = Project::in_folder(&root);
+        let refused = |text: &str| {
+            let err = for_arxiv(&project).unwrap_err();
+            assert_eq!(err.status, 409);
+            assert!(err.message.contains(text), "{}", err.message);
+        };
+        refused("Compile the project");
+
+        fs::create_dir_all(&project.build).unwrap();
+        let bbl = project.build.join("main.bbl");
+        fs::write(&bbl, "").unwrap();
+        let hour_ago = SystemTime::now() - std::time::Duration::from_secs(3600);
+        File::options()
+            .write(true)
+            .open(&bbl)
+            .unwrap()
+            .set_modified(hour_ago)
+            .unwrap();
+        refused("Compile the project");
+
+        let bib = File::options().write(true).open(root.join("refs.bib"));
+        bib.unwrap().set_modified(hour_ago).unwrap();
+        assert!(for_arxiv(&project).is_ok());
+        write_settings(&project.settings, &json!({ "shellEscape": true })).unwrap();
+        refused("shell escape");
     }
 }

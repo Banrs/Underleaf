@@ -10,6 +10,7 @@ nonisolated enum SessionEvent: Sendable {
     case conflict(ConflictEvent)
     case issues(IssuesEvent)
     case liveIssues(IssuesEvent)
+    case checks(ChecksEvent)
     case build(BuildState)
     case buildFinished(BuildFinished)
     case buildCleaned
@@ -31,6 +32,7 @@ nonisolated enum SessionEvent: Sendable {
         case "conflict": self = .conflict(try fields())
         case "issues": self = .issues(try fields())
         case "live_issues": self = .liveIssues(try fields())
+        case "checks": self = .checks(try fields())
         case "build": self = .build(try fields())
         case "build_finished": self = .buildFinished(try fields())
         case "build_cleaned": self = .buildCleaned
@@ -52,7 +54,14 @@ nonisolated struct SessionOpened: Decodable, Sendable {
 }
 
 nonisolated struct Located: Decodable, Sendable { let id, path: String }
-nonisolated struct UIState: Decodable, Sendable { let expandedFolders, foldedHeadings: [String] }
+/// The project's interface as it was left (docs/core-api.md).
+nonisolated struct UIState: Decodable, Sendable {
+    let expandedFolders, foldedHeadings: [String]
+    let file: String?
+    let line, page: Int?
+    let zoom: PDFController.Zoom?
+    let panel, livePreview: Bool
+}
 nonisolated struct Saved: Decodable, Sendable { let saved: Bool }
 nonisolated struct Closed: Decodable, Sendable { let closed: Bool }
 nonisolated struct Ready: Decodable, Sendable { let ready: Bool }
@@ -74,6 +83,7 @@ nonisolated struct PathsEvent: Decodable { let paths: [String] }
 nonisolated struct BuildState: Decodable { let compiling, auto, outdated: Bool }
 
 nonisolated struct BuildFinished: Decodable { let auto, announce, outdated: Bool, result: CompileResult }
+nonisolated struct ChecksEvent: Decodable { let items: [LogItem] }
 
 nonisolated struct IssuesEvent: Decodable {
     nonisolated struct Line: Decodable, Equatable {
@@ -87,6 +97,8 @@ nonisolated struct IssuesEvent: Decodable {
         /// Where the line has the undefined command, from its start.
         let tokens: [SourceRange]
         let others: [String]
+        /// Where the line's issues start in the session's list; none for Live Preview's.
+        let index: Int?
     }
 
     let path: String

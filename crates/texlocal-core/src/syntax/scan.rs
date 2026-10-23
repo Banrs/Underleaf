@@ -119,6 +119,11 @@ impl Group {
             command: None,
         }
     }
+
+    /// Maths a paragraph's end closes: an environment's goes on past it.
+    pub fn delimited(&self) -> bool {
+        matches!(self.end.as_ref(), "$" | "$$" | "\\)" | "\\]")
+    }
 }
 
 /// What a scan reports as it reads; callers merge the ranges.
@@ -130,6 +135,10 @@ pub(crate) trait Visit {
     fn comment(&mut self, _from: usize, _to: usize) {}
     fn at(&mut self, _groups: Vec<Group>) {}
     fn closed(&mut self, _group: &Group, _close: Range<usize>) {}
+    /// Every brace TeX groups with, matched or not.
+    fn brace(&mut self, _at: usize, _open: bool) {}
+    /// Maths a paragraph's end finds open, which TeX ends with an error.
+    fn unclosed(&mut self, _group: &Group) {}
 }
 
 impl Visit for () {}
@@ -182,7 +191,7 @@ impl Scanner {
             self.i += 1;
             let (mut code, mut read) = (false, self.i + 1);
             match char::from_u32(src[start] as u32).unwrap_or_default() {
-                '%' => {
+                '%' if !self.in_address(src) => {
                     self.comment(src, start, pending, visit);
                     continue;
                 }
@@ -192,6 +201,7 @@ impl Scanner {
                 }
                 '$' => self.dollar(src, start, visit),
                 '{' => {
+                    visit.brace(start, true);
                     let math = !self.text_argument && self.in_math();
                     self.stack.push(Group {
                         command: pending,
@@ -199,7 +209,10 @@ impl Scanner {
                     });
                     self.text_argument = false;
                 }
-                '}' => self.close(start..self.i, "}", visit),
+                '}' => {
+                    visit.brace(start, false);
+                    self.close(start..self.i, "}", visit);
+                }
                 '\\' if self.i < src.len() => (code, read) = self.control(src, start, visit),
                 _ => {
                     let space = tex_space(src[start]);
@@ -221,6 +234,15 @@ impl Scanner {
         }
         #[cfg(test)]
         READ.with(|read| read.set(read.get() + (self.i - from)));
+    }
+
+    /// In `\url`'s or `\href`'s address, whose `%` is the address's, not a comment's.
+    fn in_address(&self, src: &[u16]) -> bool {
+        let command = self.stack.top().and_then(|group| group.command);
+        command.is_some_and(|(start, name_end)| {
+            let mut buf = [0; NAME];
+            matches!(ascii(&src[start + 1..name_end], &mut buf), "url" | "href")
+        })
     }
 
     /// Prose, which keeps a command's argument coming, as a line feed does.
@@ -249,8 +271,8 @@ impl Scanner {
         self.reach = self.reach.max(next + 1);
         let ends = src.get(next) == Some(&NEWLINE);
         if ends {
-            let delimited = |g: &Group| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]");
-            self.stack.pop_to(true, delimited, |_| {});
+            self.stack
+                .pop_to(true, Group::delimited, |group| visit.unclosed(group));
             self.text_argument = false;
         } else {
             self.last_command = pending;
@@ -305,7 +327,7 @@ impl Scanner {
         let mut buf = [0; NAME];
         let name = ascii(&src[name_start..name_end], &mut buf);
         let (code, read) = match name {
-            "verb" => (true, self.verb(src)),
+            "verb" | "lstinline" | "mintinline" => (true, self.verb(src, name)),
             "begin" | "end" => self.environment(src, start, name == "end", in_math, visit),
             _ => {
                 self.text_argument = in_math && CATALOG.text_commands.contains(name);
@@ -323,14 +345,35 @@ impl Scanner {
         (code, read)
     }
 
-    /// It can't cross a line: unclosed, it ends where its line does.
-    fn verb(&mut self, src: &[u16]) -> usize {
-        self.i += src.get(self.i).is_some_and(|&u| is(u, '*')) as usize;
+    /// `\verb`'s code, or `\lstinline`'s after its options, or `\mintinline`'s after its options
+    /// and language, between two of one character or, but for `\verb`'s, in braces. It can't
+    /// cross a line: unclosed, it ends where its line does.
+    fn verb(&mut self, src: &[u16], name: &str) -> usize {
+        let line_end = find(src, self.i, &[NEWLINE]);
+        let line = &src[..line_end.unwrap_or(src.len())];
+        let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
+        let past = |i: usize, close| find(line, i, &[close as u16]).map_or(line.len(), |i| i + 1);
+        if name == "verb" {
+            self.i += at(self.i, '*') as usize;
+        } else if at(self.i, '[') {
+            self.i = past(self.i, ']');
+        }
+        if name == "mintinline" && at(self.i, '{') {
+            self.i = past(self.i, '}');
+        }
         let Some(&delimiter) = src.get(self.i) else {
             return self.i + 1;
         };
-        let line_end = find(src, self.i, &[NEWLINE]);
-        self.skip_literal(src, self.i + 1, &[delimiter], line_end);
+        if name != "verb" && is(delimiter, '{') {
+            let mut depth = 0;
+            let close = line[self.i..].iter().position(|&u| {
+                depth += is(u, '{') as i32 - is(u, '}') as i32;
+                depth == 0
+            });
+            self.i = close.map_or(line.len(), |close| self.i + close + 1);
+        } else {
+            self.skip_literal(src, self.i + 1, &[delimiter], line_end);
+        }
         line_end.unwrap_or(src.len()) + 1 // looking for the line's end
     }
 

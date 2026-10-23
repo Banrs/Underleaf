@@ -11,11 +11,13 @@ public sealed record ProjectInfo(string Id, string Name, long Mtime, string Main
     public override string ToString() => Name;
 }
 
-/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template.
-public sealed record Choice(string Id, string Title);
+/// One of a list the core offers, by its id, with the title to show: an editor theme, a project template, an engine.
+/// <param name="Default">The engine a new project has unless asked for another.</param>
+public sealed record Choice(string Id, string Title, bool Default);
 
-/// What a new project may start from, in the order Home shows it; each id is create_project's `template`.
-public sealed record Catalogue(Choice[] Templates);
+/// What a new project may start from, in the order Home shows it: each template's id is create_project's `template`,
+/// and each engine's its `engine` and a project's setting.
+public sealed record Catalogue(Choice[] Templates, Choice[] Engines);
 
 /// <param name="Path">"" for the project's folder.</param>
 public sealed record Located(string Id, string Path);
@@ -34,16 +36,26 @@ public sealed record TexStatus(bool Available, string? LatexmkVersion, string? T
 
 /// <param name="Name">For titles: an opened folder's id isn't one.</param>
 /// <param name="Pdf">The last build's, absolute, if it is on disk.</param>
-/// <param name="Ui">The project's UI state, as set_ui_state patches it.</param>
-public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, JsonElement Ui);
+public sealed record SessionOpened(string Name, string Root, string? Pdf, TreeNode[] Tree, JsonElement Settings, UiState Ui);
+
+/// A project's UI state, as set_ui_state patches it: the folders open, the headings folded and the place it was left at.
+/// <param name="Line">The caret's in File, from 1.</param>
+/// <param name="Page">The PDF's at the top of the view, from 1.</param>
+/// <param name="Zoom">The PDF's: "fitWidth", "fitPage" or a scale, 1 for 100%.</param>
+/// <param name="Panel">The issues panel shown.</param>
+public sealed record UiState(string[] ExpandedFolders, string[] FoldedHeadings, string? File, int? Line, int? Page, JsonElement Zoom, bool Panel);
 
 public sealed record Clash(string Path);
 
 public sealed record Imported(Clash[] Existing);
 
 /// <param name="Type">error or warning.</param>
-/// <param name="Missing">The package or class file LaTeX didn't find (“foo.sty”), for install_package.</param>
-public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Missing);
+/// <param name="Explain">What TeX's message means here and what usually fixes it.</param>
+public sealed record LogItem(string Type, string? File, int? Line, string Message, string Short, string? Explain, Fix? Fix);
+
+/// A button an issue offers, which the session runs by its id (session_fix).
+/// <param name="Confirm">Asked first, when there.</param>
+public sealed record Fix(string Id, string Title, string Help, string? Confirm);
 
 /// <param name="Pdf">Absolute.</param>
 /// <param name="PdfChanged">True only when this run finished and wrote the PDF it returns.</param>
@@ -54,11 +66,14 @@ public sealed record CompileResult(bool Ok, bool Stopped, long DurationMs, strin
 /// An `issues` event's line: the first issue on it, and the messages of the rest.
 /// <param name="Compact">For an undefined command, fewer words that keep its name.</param>
 /// <param name="Tokens">Where the line has that command, from the line's start.</param>
-public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others);
+/// <param name="Index">Where the line's issues start in the session's list; none for Live Preview's.</param>
+public sealed record IssueLine(int Line, bool Error, string Message, string Short, string? Compact, SourceRange[] Tokens, string[] Others, int? Index);
 
 /// A session event's fields, each type setting its own (docs/core-api.md, Events).
+/// <param name="Items">The checks', found without TeX.</param>
 public sealed record DocEvent(string? Path, string? Error, bool Held, string? Text, string? From, string? To, string? Kind,
-    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree);
+    IssueLine[]? Lines, bool Compiling, bool Auto, bool Outdated, bool Announce, CompileResult? Result, TreeNode[]? Tree, string[]? Paths,
+    LogItem[]? Items);
 
 /// <param name="Page">From 1; the box in TeX points from the page's top left.</param>
 public sealed record ForwardSync(double Page, double? H, double? V, double? Width, double? Height);
@@ -111,8 +126,9 @@ public sealed record MathSvg(string? Svg, double Width, double Height, string? E
 /// Index: its place in the outline read in order; FoldKey names its fold in the project's UI state.
 /// <param name="Command">Its sectioning command without the backslash: "section".</param>
 /// <param name="Title">Plain text; untitled, its level's: "Untitled Section".</param>
+/// <param name="Words">The prose words up to the next heading at its level or above, its children's too.</param>
 public sealed record OutlineNode(int Index, string Command, string Title, bool Untitled, int Line, string? File, string FoldKey,
-    OutlineNode[]? Children)
+    int Words, OutlineNode[]? Children)
 {
     public IEnumerable<OutlineNode> AndBelow => [this, .. (Children ?? []).SelectMany(c => c.AndBelow)];
 }
@@ -127,6 +143,10 @@ public sealed record SearchHit(string File, int Line, int Column, int Length, st
 
 public sealed record SearchFile(string File, SearchHit[] Hits);
 
+/// Every line that defines or uses a name, as a search's hits (session_usages).
+/// <param name="Name">As the source writes it: \label{x}, \foo, a file's path.</param>
+public sealed record Usages(string Name, SearchFile[] Groups);
+
 /// The open document's edits, against its text at Version, to apply at once as one undoable edit.
 public sealed record DocumentEdits(string Path, ulong Version, TextEdit[] Edits);
 
@@ -135,6 +155,20 @@ public sealed record FileCount(string File, int Count);
 /// session_replace's and session_rename_symbol's answer: the open document's edits, if it has a match, and the other
 /// files, which the core has written.
 public sealed record Replaced(DocumentEdits? Edits, FileCount[] Written);
+
+/// <param name="Change">added, deleted or changed, against the snapshot before.</param>
+public sealed record SnapshotChange(string Path, string Change);
+
+/// A version of the project's files the core keeps (session_history_list, newest first).
+/// <param name="Name">The reader's, from Save version; Reason the core's, as "Before Replace All"; an automatic one has neither.</param>
+public sealed record Snapshot(string Id, DateTimeOffset Time, string? Name, string? Reason, SnapshotChange[] Changed);
+
+/// A row of session_history_compare's unified diff: a line in both, the snapshot's alone or now's alone, or a count of
+/// unchanged lines folded away.
+public sealed record DiffRow(string? Same, string? Removed, string? Added, int? Skipped);
+
+/// session_history_restore's answer: the open document's edits, if it is among the files; the core wrote the others.
+public sealed record Restored(DocumentEdits? Edits);
 
 /// <param name="Shape">upright, italic or smallCaps.</param>
 public sealed record HeadingFont(double Scale, bool Bold, string Shape);
@@ -152,3 +186,19 @@ public sealed record MathSymbol(string Command);
 public sealed record SymbolGroup(string Title, MathSymbol[] Symbols);
 
 public sealed record Menus(Templates Templates, SymbolGroup[] SymbolGroups);
+
+/// A place Back and Forward go to: a project path and a line from 1.
+public sealed record Spot(string Path, int Line);
+
+/// Whether there is a place to go back or forward to; after Back or Forward, To is the place to show, or null for none.
+public sealed record Trail(bool Back, bool Forward, Spot? To);
+
+/// One of Go to all's results (session_quick_open).
+/// <param name="Kind">file, heading or label.</param>
+/// <param name="Detail">A file's folder, a heading's level and file (“Section · ch.tex”), what a label labels.</param>
+/// <param name="Line">From 1; null for a file.</param>
+public sealed record QuickItem(string Kind, string Title, string Detail, string Path, int? Line);
+
+/// What a name in the source is (session_quick_help): its detail a line or more, and where it is defined, if the project
+/// defines it.
+public sealed record QuickHelp(string Title, string Detail, Spot? Place);

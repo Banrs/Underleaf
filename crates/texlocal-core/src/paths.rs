@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::CoreError;
 use crate::projects::{self, is_opened};
-use crate::{BUILD_DIR, SETTINGS_FILE};
+use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE};
 
 /// A relative path's segments, `.` dropped and `..` popped; popping past the
 /// start is an escape. Empty for the base itself.
@@ -30,14 +30,15 @@ pub(crate) fn normalize_segments<'a>(
     Ok(segments)
 }
 
-/// Where a project keeps its files (`root`), its settings and ui state (files) and its build
-/// output (a folder).
+/// Where a project keeps its files (`root`), its settings and ui state (files), and its build
+/// output and history (folders).
 #[derive(Debug, Clone)]
 pub struct Project {
     pub root: PathBuf,
     pub settings: PathBuf,
     pub ui: PathBuf,
     pub build: PathBuf,
+    pub history: PathBuf,
 }
 
 impl Project {
@@ -71,6 +72,7 @@ impl Project {
             ui: settings.clone(),
             settings,
             build: root.join(BUILD_DIR),
+            history: root.join(HISTORY_DIR),
             root: root.to_path_buf(),
         }
     }

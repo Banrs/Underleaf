@@ -36,8 +36,9 @@ the call.
   that came before it is the newer tree.
 - `tl_call` may be called from any thread, several at once. `session_*` commands are quick
   (they never wait for a build or TeXpresso), but go through the session's queue: keep them off
-  the UI thread or use `tl_call_async`. `session_analyze` and `session_search` are taken in their
-  turn but worked out beside the session, which goes on with the commands after them.
+  the UI thread or use `tl_call_async`. `session_analyze`, `session_search`, `session_usages`,
+  `session_quick_open` and `session_quick_help` are taken in their turn but worked out beside
+  the session, which goes on with the commands after them; so is an Install fix's `session_fix`.
   `session_outline_current` is answered at once from the outline kept, on no queue, so a host may
   call it with `tl_call` on the UI thread; so may `locate`, which reads only the path's folders
   and the list of opened folders, for a drag that asks it as it moves.
@@ -72,7 +73,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings` as `get_settings`, `ui` as `set_ui_state` answers it: all a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings`: `{mainFile, engine, shellEscape, stopOnFirstError}`; `ui`: the ui state (below). All a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
@@ -80,33 +81,65 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
 | `session_save` | `reporting?` (true) | `{saved}` | Every unsaved document. A failed write is the error; a conflict is asked (`conflict`) and `saved` is false. With `reporting` false, a conflict isn't asked and a failed write is `saved: false`, not the error. A build follows when it wrote and automatic builds are on. |
 | `session_resolve` | `path`, `answer` | `{saved}` or null | Answers `conflict`: `changed` takes `save`, `revert`, `cancel`; `gone` takes `save`, `close`, `cancel`. |
-| `session_compile` | `auto?` | null | During a build, one more is queued. A failed save before a manual build is the error. |
+| `session_compile` | `auto?` | null | During a build, one more is queued. A failed save before a manual build is the error. A manual build runs until it ends or is stopped; an automatic one is stopped after 3 minutes, failed, with an error that says so. |
 | `session_stop_compile` | | null | Drops the queued build too. |
 | `session_clean` | | null | Stops the build, waits for it, removes the project's build folder; answers when done. Cleans asked together share one answer. |
-| `session_analyze` | `path` | `{tree, words, headingStyles}` | The document the main file reads, from the disk, with the file shown (`path`): when the main file doesn't reach it, the document is that file alone. `tree`: the outline's headings, each `{index, depth, command, level, title, untitled, line, file, foldKey, children?}`; `index` is its place in the outline read in order, `command` its sectioning command without the backslash, `level` that level's name (“Section”), `title` its title as plain text or, `untitled: true`, its level's (“Untitled Section”); `foldKey` names its fold in the ui state; a title that wraps onto the next line (up to a blank line) is still a heading. `words` counts prose only: headings' titles and text, not maths, code, comments, command names or commands' name arguments such as `\include`'s file name or `\usepackage`'s package. `headingStyles`: the levels the main file's class has (Normal Text first, `{title, command, font: {scale, bold, shape}, marker}`), the class read from the main file as the editor has it. The session keeps the outline for `session_outline_current`. Ask again after each `saved`, a tree or a file changed, and when another file is shown. |
+| `session_analyze` | `path` | `{tree, words, headingStyles}` | The document the main file reads, from the disk, with the file shown (`path`): when the main file doesn't reach it, the document is that file alone. `tree`: the outline's headings, each `{index, depth, command, level, title, untitled, line, file, foldKey, words, children?}`; `index` is its place in the outline read in order, `words` the prose words from it to the next heading at its level or above (its children's too, and the files it inputs), counted as `words` is, `command` its sectioning command without the backslash, `level` that level's name (“Section”), `title` its title as plain text or, `untitled: true`, its level's (“Untitled Section”); `foldKey` names its fold in the ui state; a title that wraps onto the next line (up to a blank line) is still a heading. `words` counts prose only: headings' titles and text, not maths, code, comments, command names or commands' name arguments such as `\include`'s file name or `\usepackage`'s package. `headingStyles`: the levels the main file's class has (Normal Text first, `{title, command, font: {scale, bold, shape}, marker}`), the class read from the main file as the editor has it. The session keeps the outline for `session_outline_current`. Ask again after each `saved`, a tree or a file changed, and when another file is shown. |
 | `session_search` | `query` | `[{file, hits: [{file, line, column, length, before, match, after}]}]` | The first 100 lines that have `query`, in any case, by file, the files in order of their paths. `line` counts from 1, a line ending where the editor's does (at a carriage return alone too); `column` (from 0) and `length` place a line's first match in UTF-16 units of the line as written, for the editor to select. The open document as the editor has it, the rest from the disk. |
+| `session_usages` | `path`, `offset` | `{name, groups}` or null | Every line of the .tex and .bib files that defines or uses the name at `offset` (UTF-16) in the open document `path`, which `definition` reads there: a label, citation, environment or command (used anywhere, defined by `\newcommand` and its kin), each definition and each use but those in comments and literal code; or the project's file an input or graphic there names, each input and graphic in the project that names it. `name` as the source writes it: `\label{x}`, `\cite{k}`, `\begin{env}`, `\foo`, or the file's path. `groups` as `session_search` answers, its `hits` each line's first place, by file, every line. The open documents as the editor has them, the rest from the disk. Null where no name is, or a file isn't found. A host lists them as a search's hits, headed “Usages of” and `name`. |
+| `session_navigate` | `from` | `{back, forward}` | A place is `{path, line}`: a project-relative path and a line from 1. Sent just before a jump that leaves where the caret is (Jump to Definition, a search or usages hit, an issue, an outline heading, Open Quickly, the PDF's double-click to the source, showing another file from the sidebar), `from` where the caret was: it goes on Back's places unless it is the latest there already, and Forward's are cleared. Each keeps its latest 50. `back`, `forward`: whether there is a place to go back or forward to, one whose file is there, for the commands' state. A `session_rename` moves the places in what it renames. |
+| `session_back` | `at` | `{to, back, forward}` | `to`: the latest of Back's places whose file is there still and that isn't `at` (those passed over are dropped), which the host shows as a jump does but without `session_navigate`; `at`, where the caret is, goes on Forward's. Null where there is none, and `at` is kept nowhere. |
+| `session_forward` | `at` | as `session_back` | The same, the other way. |
+| `session_quick_open` | `query` | `[{kind, title, detail, path, line}]` | Open Quickly's items, best first, 50 at most. `file`: each file the tree lists, `title` its name, `detail` its folder or `""`, `line` null. `heading`: each heading of the outline of the files the main file reaches, as `session_analyze`'s `tree` has them, `detail` its level and file (`Section · ch.tex`). `label`: each `\label` in those files, `detail` what it labels, as completion's, or `""`. An item matches when the query's characters are in its title (a file's path), in order and in any case; each scores more at a word's start (after `/ - _ : .` or a space, or where lower case turns upper) and just after the last, and of equal scores the shorter title comes first. An empty query lists the files alone, by path. The host opens an item as a click on it in the sidebar or outline does (`session_navigate` first), at `line` where there is one. |
+| `session_quick_help` | `path`, `offset` | `{title, detail, place}` or null | What the name at `offset` (UTF-16) in the open document `path` is, the open documents as edited, for a popover; `place` is where it is defined, to go to, or null. A `\cite` kin's key: `title` the key, `detail` its .bib entry's authors, title, year and journal, publisher or booktitle, a line each (`""` for a `\bibitem`). A `\ref` kin's label: `title` the label, `detail` its number and page from the main file's .aux in the build folder, or an `\include`d file's .aux that it inputs (`3 on page 2`), or `Compile to number it`, then on a line of its own what it labels, as completion says. A command the project defines (`\newcommand` and its kin): `title` the command with its backslash, `detail` the definition's line as written. Another command the catalogue knows a package of: `detail` `From the booktabs package`, `place` null. Null for anything else, a label or key nothing defines, or a document that isn't open. |
 | `session_replace` | `query`, `replacement` | `{edits, written}` | `replacement` in place of every match `session_search` would find (all on a line) in every text file. `edits`: the open document's, `{path, version, edits: [{start, length, text}]}` in UTF-16 against its text at `version`, or null; the host applies them at once as one undoable edit, as `toggle_style`'s, if its source still answers that `version` (typed in since, the edits no longer fit and it drops them), and the session saves it as any: the core doesn't write that file. `written`: `[{file, count}]`, the other files changed, by path, each read again and written under the project's lock, each line keeping its own ending. 409 while the open document's change on disk isn't settled (its `conflict` asked or cancelled, a `document_reload` not yet applied), as saves wait then, and with two open documents to edit; 400, writing nothing, for a file with a match that isn't UTF-8. It changes every file or none: one that can't be written answers the file system's error, as a save's, and the files written before it are put back. There is no undo across files. |
 | `session_rename_symbol` | `kind` (`label` or `citation`), `from`, `to` | as `session_replace` | `to` in place of `from` in the .tex and .bib files, the open document as the editor has it, wherever it is defined (`\label`; `\bibitem` or a .bib entry's key) and wherever a `\ref` or `\cite` kin or a .bib entry's `crossref` names it (`\nocite`, natbib's and biblatex's, `\nameref` and cleveref's too; alone of a list's keys), but not in comments or literal code. A `to` empty or with a space, comma, brace, `%` or `\` is 400, a `from` nothing defines 404 and a `to` defined already 409; and 409 or 400 as for `session_replace`. |
+| `session_fix` | `id` | `{edits, settings}` or null | Runs a build issue's fix (Explanations and fixes). `edits`: the open document's, as `session_replace`'s, or null; `settings`: as `session_open` gives them, always. Null when an install's dialog was cancelled: nothing to do. An `id` the core doesn't know is 400. It starts no build, automatic builds on or not: the host's follows, once it has applied `edits`. |
+| `session_history_list` | | `[{id, time, name, reason, changed}]` | The project's snapshots (History, below), newest first. `id` a string naming it to the commands below; `time` ISO 8601 in UTC to the second (`2026-10-22T09:41:00Z`); `name` the author's or null; `reason` null, or why the core took it (`Before Replace All`, `Before Rename`, `Before Adding a Package`, `Before Restore`); `changed` `[{path, change}]`, `change` `added`, `deleted` or `changed`, the files that differ from the snapshot before it, by path (the oldest's are all `added`). |
+| `session_history_save` | `name` | an entry, as listed | A snapshot of the files as they are, named; when nothing changed since the last, that one is named instead. A `name` empty once trimmed is 400. |
+| `session_history_compare` | `id`, `path` | `[row]` | The file's lines in that snapshot against now's (the open document's as edited, else the disk's; none where there is no such file), as a unified diff: each row `{same}`, `{removed}` or `{added}` with the line's text, removed before added where a block was replaced, and lines further than 3 from a change folded into `{skipped: n}`. Empty where the lines are the same. Text files only (`tex`, `bib` and `text` kinds): another is 400. |
+| `session_history_restore` | `id`, `paths?` | `{edits}` | Takes a `Before Restore` snapshot, then puts the snapshot's files back as they were, or those of them `paths` names, making those deleted since; files added since are left alone, and so is a file now over 20 MB, which no snapshot keeps. `edits`: the open document's, as `session_replace`'s (one edit, around what differs), to apply the same way; the core writes the other files. All or none, as `session_replace`, and 409 as for it. A snapshot no longer kept is 404. |
 | `session_outline_current` | `path`, `line` | index or null | The heading a line of `path` is under, as its `index` in the outline of the last `session_analyze` sent of those answered: the file's last at or above the line; null above its first. Ask once the analysis it should read has answered. |
-| `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. |
-| `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter. |
+| `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. The session's issues are the last build's errors, then its warnings, then the `checks` items: a host numbers its list's rows the same way. |
+| `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter (its `issues` line's `index`); `index` as `session_issue` numbers them. |
 | `session_rename` | `from`, `to` | `{from, to, mainFile, ui}` or null | Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `set_ui_state` answers it) with the entry's paths moved; a host sends its `set_ui_state` first. |
-| `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `get_settings`. A new main file stops the build, restarts the preview, builds. |
+| `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `session_open` gives them. A new main file stops the build, restarts the preview, builds. |
 | `session_prepare_delete` | `path` | `{ready}` | Saves, refuses the main file (409, its path compared as the volume compares names), then holds saves under `path` until `session_deleted`. Not `ready`: a save is asked about, and the host deletes nothing. The host trashes the item itself (undoable). |
 | `session_deleted` | `path`, `trashed?` (true) | null | Ends the hold on saves under `path`; when `trashed`, closes documents under it and reads the tree again. |
-| `session_live_start` | | live state | The user's Start. |
-| `session_live_stop` | | live state | |
+| `session_live_start` | | live state | The user's Start. Sets the ui state's `livePreview`. |
+| `session_live_stop` | | live state | Clears the ui state's `livePreview`. |
 | `session_live_view` | `first`, `last` | null | Pages in view, from 0. Send before Start and on scroll. |
 | `session_live_caret` | `path`, `offset` | null | On every caret move (UTF-16); told to TeXpresso once it settles (150 ms). |
 | `session_live_log` | `shown` | null | Whether the host shows the Live Preview Log. While it does, each `live` event carries the log, and one comes at once. |
 
 The service's other commands (`id` is the project's): `list_projects` (Opened folders, below),
-`rename_project {id, name}` (400 for an opened folder), `get_settings {id}`, `file_tree {id}`,
-`pdf_path {id}` (a new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest}`,
+`rename_project {id, name}` (400 for an opened folder), `file_tree {id}`, `pdf_path {id}` (a
+new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest, forArxiv?}`,
 `import_files {id, dir?, paths?, conflict}`, `set_tex_dir {dir}`, `set_texpresso_dir {dir}`,
 `synctex_forward {id, file, line, column}`, `synctex_inverse {id, page, x, y, text?, at?}` and
 `synctex_match {id, file, line, column, pages}`. While the PDF shown is the live document, pass
 `live: true, session: <the session's number>` to `synctex_forward` and `synctex_inverse`.
+
+`export_zip`'s `forArxiv: true` makes the ZIP arXiv takes: the main file's `.bbl` from the build
+folder goes beside the main file with its stem, and `00README.json` at the root names the
+compiler and the main file as the top-level source (`{"spec_version": 1, "process": {"compiler":
+"pdflatex"}, "sources": [{"filename": "main.tex", "usage": "toplevel"}]}`), each in place of a
+project file of that path. It is 409 with a sentence saying what to do while shell escape is on
+(arXiv compiles without it), and when the document the main file reads names a bibliography
+(`\bibliography` or `\addbibresource`) but the build folder has no `.bbl` for the main file, or
+one older than a `.bib` it names in the project.
+
+The ui state is what a host keeps of a project's interface: `{expandedFolders, foldedHeadings,
+file, line, page, zoom, panel, livePreview}`. `file` is the project path shown, `line` the caret's
+line (from 1), `page` the PDF page at the top of the view (from 1), `zoom` `"fitWidth"`,
+`"fitPage"` or a scale (1 is 100%), each null when there is none; `panel` whether the build panel
+shows. A host sends them in `set_ui_state` as it leaves a project (closing it, opening another,
+quitting) and shows them again from `session_open`'s `ui`, ignoring a file, line or page that is
+no longer there. `set_ui_state`'s `patch` replaces the keys it names and keeps the others; it
+answers the ui state. `livePreview` is the core's alone: true once `session_live_start` is asked,
+false once `session_live_stop` is, kept as the session closes, so a host starts Live Preview as
+the project opens when it is true. A renamed or moved entry takes `expandedFolders`' paths,
+`foldedHeadings`' files and `file` with it.
 
 ## Opened folders
 
@@ -114,8 +147,8 @@ A folder opened where it is (`open_path`) stays where it is; the library lists i
 `<library>/.opened/<key>/`, under the id `.<key>`, which no library project can have. The store
 holds `folder.json` (its path and identity), `project.json` (its ui state, and its settings unless
 the folder has a `.texlocal.json` of its own, which then holds them as it is when the project is
-resolved) and `build/`: latexmk's `-outdir` and `-auxdir` are absolute, so nothing is written in
-the folder but the author's files. Its top-level `build` and `.texlocal.json` keep the rules of a
+resolved), `build/` and `history/` (History, below): latexmk's `-outdir` and `-auxdir` are
+absolute, so nothing is written in the folder but the author's files. Its top-level `build` and `.texlocal.json` keep the rules of a
 library project's. Opened again, or found again at another path after a move (by its volume and
 file number), it keeps its id, settings and ui state.
 
@@ -123,6 +156,28 @@ file number), it keeps its id, settings and ui state.
 project's folder, `opened` for an opened folder, `missing` for one not where it was (moved,
 deleted, its volume away), dated 0 so it comes last. Commands on a missing folder are 404, with
 the path it was at.
+
+## History
+
+Autosave, Replace All and Rename write over the author's files, so the core keeps each project's
+history, locally and with no limit but pruning's: never in the folder's files or its git
+repository. An opened folder's is in its store (`history/`); a library project's in a hidden
+`.texlocal-history` in its folder, outside `build/`, which Clean Build Folder deletes. The tree,
+search, the outline and checks' scans, export ZIP and import leave it out, as they leave out the
+build folder and `.git`.
+
+- **A snapshot** records every file the tree lists (not `build/`, `.git` or dotfiles, so not
+  `.texlocal.json`) as it is on disk: an open document's text as saved. Each file is stored once
+  by its contents' SHA-256, so a file unchanged since another snapshot costs nothing; a file over
+  20 MB isn't kept.
+- **Taken** as the session opens and after each save, when the last snapshot is more than 10
+  minutes old and something changed since it; always just before `session_replace`,
+  `session_rename_symbol`, a `session_fix` that adds a package and `session_history_restore`,
+  with its `reason`; and when asked, named (`session_history_save`). Those after a save are
+  taken beside the session, so no save waits on them; those before a change, before it.
+- **Pruned** after each snapshot: named ones are kept; of the others, all from the last day, the
+  last of each hour for a week and of each day for 90 days, none older. Stored files no snapshot
+  names are removed.
 
 ## Errors
 
@@ -155,9 +210,9 @@ Service commands (`tl_call`):
 |---|---|---|---|
 | `catalogue` | none | `{templates: [{id, title}], engines: [{id, title, default}]}` | What a new project may start from, in the order Home shows it, with the titles to show; each `id` is what `create_project` takes, and one engine is `default`. |
 | `create_project` | `name`, `template?` (article), `engine?` | the project, as `list_projects` lists it | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
+| `duplicate_project` | `id`, `name` | the new project, as `list_projects` lists it | A copy of a library project's folder with its settings, leaving out what an export does (the build folder and the history among it) and, as it does, copying a link to a file as that file, named `name` or numbered past it as `create_project` is. Built beside and renamed into place, as a new or imported project is, so the list never shows half a copy. The host suggests the name in its system's words: the Mac “Paper copy”, Windows “Paper - Copy”. An opened folder is 409 with a sentence. |
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
-| `install_package` | `file` | `{package}` | Installs the TeX Live package with the file `file` (a build error's `missing`), through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 403 when the dialog is cancelled; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. It takes minutes: ask with `tl_call_async`. |
 | `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`; on Windows `%APPDATA%\TinyTeX`, or `%ProgramData%\TinyTeX` where that path has a space or a letter past ASCII), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
@@ -189,16 +244,37 @@ Each is `{"type", "session", …}`.
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
-| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others}]` | The gutter and line-end boxes; `[]` clears them (an edit does). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), “Needs Shell Escape” for a build that needed it, else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
+| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others, index}]` | The gutter and line-end boxes, of the last build's issues and then the `checks`: a build's issue wins its line and a check's message joins its `others`. `index`: the first of the line's issues in the session's list, which a click on the line sends to `session_choose_issue`. `[]` clears them (an edit does; the checks come back after its save). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), “Needs Shell Escape” for a build that needed it, else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
-| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). An error's `missing`: the package or class file LaTeX didn't find (“foo.sty”), for an Install that asks `install_package`. |
+| `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). Items of `errors` and `warnings` may have an `explain` and a `fix` (Explanations and fixes). |
 | `build_cleaned` | | Clear the PDF unless live. |
+| `checks` | `items` | What the session finds wrong without TeX, the whole list, items as a build result's `errors` and `warnings` (`type`, `file`, `line`, `message`, `short`), by file, then line. Sent once the session opens (`[]` for none) and whenever the list changes: after a save, another app's change, a rename, a build or a clean. A check on a file and line where the last build has an issue is left out, as that issue wins the line (`issues`). Show them in the issue list after the build's, and keep them through a build and a clean. In the files the main file reaches (none without one): warnings for a `\ref` kin's label no `\label` defines (unchecked with xr or xr-hyperref, whose labels are another document's; lastpage defines `LastPage`); a `\cite` kin's key no `\bibitem` or named .bib entry defines (`\nocite{*}` aside), checked only while every `\bibliography` and `\addbibresource` names a project file; a label, or a key of the named .bib files, defined again, at the second place in the order TeX reads them, the message saying where the first is; an `\input` kin's file in neither the project nor the installed TeX's ls-R (unchecked without one, as with MiKTeX); maths (`$`, `$$`, `\(`, `\[`) open at a paragraph's end; a `{` never closed and a `}` with nothing to close. Errors for an environment ended by another's `\end` (at the `\end`), an `\end` with no `\begin` and a `\begin` never ended (at it; not after a `{` never closed), pairing one a file leaves open with one a later file ends, by name in the order TeX reads them, and reporting neither while an input isn't found. Comments, `\verb`, `\lstinline`, `\mintinline` and the verbatim environments, escaped `\{`, `\}` and `\$`, a `%` in `\url`'s or `\href`'s address, `\begin` and `\end` inside braces (as a definition's are) and names a macro or parameter makes (`#1`) are left alone, as is everything after the first `\end{document}` outside braces, where TeX stops. |
 | `tree` | `tree` (as `file_tree`, whose main file's node has `main: true`) | Redraw the sidebar; it comes again when another main file is chosen, here or by another app in `.texlocal.json`. |
 | `files_changed` | `paths` | Listed files changed in place that aren't open (an image shown, say). |
 | `live` | `phase` (`stopped`/`starting`/`running`/`stopping`), `engine` (Live Preview's, as a project's: `xelatex`), `halted`, `failure`, `error`, `log`, `alert` | Title and toolbar; an `engine` not the project's: say so, as breaks may differ; `alert`: show the Live Preview Log. `phase: stopped` ends the live PDF (show the build's); the session's own planned restart stays `starting` throughout, with no `stopped` between. `log`: the Live Preview Log's whole text (what went wrong, TeXpresso's error, TeX's log and output) with `alert` and while `session_live_log` says it shows, else null: keep the last one. While it shows, the log comes at most every 200 ms. |
 | `live_document` | `path`, `pages`, `changed` (page ranges or null for any), `complete` | Read the PDF (mapped, it is replaced, never rewritten) and swap the pages. `complete: false`: keep pages past its end. |
-| `live_issues` | `path`, `lines` (as `issues`') | Live Preview's errors: draw them as issues, kept apart from the build's (a build's issue wins its line). They come once a run TeXpresso had every edit for has lasted a second (`[]`: none), follow their lines as text is typed above them, and go with an edit over their line's start, the document's reload, and Live Preview's stop or restart. |
+| `live_issues` | `path`, `lines` (as `issues`', `index` null) | Live Preview's errors: draw them as issues, kept apart from the build's (a build's issue wins its line). They come once a run TeXpresso had every edit for has lasted a second (`[]`: none), follow their lines as text is typed above them, and go with an edit over their line's start, the document's reload, and Live Preview's stop or restart. |
 | `live_page` | `page`, `path` | Draw over that page now if a live document shows and has it; otherwise drop it. The session forwards pages and documents one at a time, in the order TeXpresso writes them, and drops nothing: a page can come before its run's `live_document`. |
+
+### Explanations and fixes
+
+A build's items (`errors`, `warnings`, and the issue `session_issue` and `session_choose_issue`
+answer) carry `explain`: one or two sentences on what TeX's message means here and what usually
+fixes it, for the build panel under the message, when there is one. And `fix`, when there is one:
+`{id, title, help, confirm?}`, which a host shows as a button titled `title`, with `help` as its
+tooltip. `id` names the fix and its argument for the core alone to read, so it stays good however
+the issues change. On a click: when `confirm` is there, ask first with its text (Cancel does
+nothing); send `session_fix` with `id` through `tl_call_async`; an error answer is shown, and
+ends it, as does null; else apply `edits`, if any, as `session_replace`'s, show `settings`, then
+compile (`session_compile`, a manual build).
+A host knows no fix by name. The fixes:
+
+| `title` | `id` | When | Does |
+|---|---|---|---|
+| Install | `install:foo.sty` | A package or class file LaTeX didn't find (“foo.sty”). | Installs the TeX Live package with that file, through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. |
+| Add `\usepackage{name}` | `package:name` | An undefined command or environment that a package the catalogue knows defines. | `\usepackage{name}` on a line of its own in the main file, after the line its last `\usepackage`'s argument ends on, else `\documentclass`'s; nothing when the main file has neither or loads the package already (`\usepackage` or `\RequirePackage`, not in a comment). 409 as for `session_replace`. |
+| Use XeLaTeX | `engine:xelatex` | A Unicode character pdfLaTeX's fonts lack, or a package that needs XeTeX or LuaTeX (fontspec, unicode-math, polyglossia). | The engine, as `session_set_settings` sets it. |
+| Turn On Shell Escape | `shellEscape` | A build that needed shell escape; `confirm` says it lets the document run programs, for documents the user trusts. | Shell escape, as `session_set_settings` sets it. |
 
 ## The editor's source
 
@@ -211,9 +287,12 @@ editor's thread.
   move with the edit. It answers NULL, or, while a snippet's field is typed in, the edits that
   put what was typed in the field's other places (a JSON array, from the last; free with
   `tl_free`): the editor applies them with `mirroring` true, which answers NULL, then selects
-  what it had.
+  what it had. A brace or line break typed in a field ends the snippet, going in that place
+  alone.
 - `tl_source_select(source, start, length, mirroring)`: the (first) selection moved; a snippet
-  ends once it leaves its fields, unless `mirroring`.
+  ends once it leaves its fields, unless `mirroring`. With none open, a selection in the name of
+  a `\begin` or `\end` that has its partner makes the two names a snippet's one field, so what's
+  typed in one goes in the other.
 - `tl_source_text(source, &len)`: the whole text as `len` bytes of UTF-8, which may hold
   U+0000; free with `tl_source_free_text(text, len)`.
 - `tl_source_call(source, command, args_json)` answers JSON, or NULL for an unknown command or
@@ -222,26 +301,29 @@ editor's thread.
 
   | Command | Arguments (optional in brackets) | Answers |
   |---|---|---|
-  | `type` | `selection`, `text`, [`autoPair` true] | the key's edit, selection, bracket partner and completion step |
+  | `type` | `selection`, `text`, [`autoPair` true] | the key's edit, selection, bracket partner and completion step; `autoPair` pairs brackets and, where they open maths, dollars, a second typed in an empty pair making it a display's |
   | `delete_backward` | `selection`, [`autoPair` true] | as `type` |
-  | `insert_newline` | `selection` | as `type` |
+  | `insert_newline` | `selection` | as `type`; after a `\begin` (not a verbatim one's) and its arguments, a line a step in and the `\end` unless it has one; in a list, the next `\item`, or an empty one taken away |
   | `partner` | `at` | the matching bracket's offset, or null |
-  | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`; the project's own commands and environments come first; a citation from a .bib entry has a `detail` (“Knuth · 1984 · The TeXbook”: its authors' last names, year and title, as far as it has them), to show beside its key, and an item with none to say has no `detail` |
+  | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`, and in `\usepackage`, `\RequirePackage`, `\documentclass` or `\bibliographystyle`'s, in a session's source, the installed TeX's packages, classes or bibliography styles (from TeX Live's or TinyTeX's ls-R, read once a process; none from MiKTeX); the project's own commands and environments come first, but for an `\end`'s, where the innermost environment open there is first; a citation from a .bib entry has a `detail` (“Knuth · 1984 · The TeXbook”: its authors' last names, year and title, as far as it has them), to show beside its key, and a label one of what it labels (the title of the `\caption` or heading it follows or is in, else its line where that is plain text); an item with none to say has no `detail`. A citation is offered whose key holds what was typed, or whose `detail` has a word starting with it, in any case: keys starting with it first, then keys holding it, then details |
   | `definition` | `at` | `{kind, name, places: [{file, line, column, length}]}`, or null where no name is or nothing defines it. `kind` `label`, `citation`, `environment` or `command`: the key a `\ref` or `\cite` kin (one of a list) or a .bib entry's `crossref` names at `at` or a `\label`, `\bibitem` or .bib entry defines there, a `\begin` or `\end`'s environment, or a command's name, with every place the project defines it (`\label`, `\bibitem` or a .bib entry, `\newenvironment`, `\newcommand` and its kin, `\DeclareMathOperator` or `\def`), its files in the order of their paths, this document as it is now and the others as last scanned. `kind` `file`: the file an `\input`, `\include`, `\subfile`, `\import`, `\subimport` or `\includegraphics` names, found as TeX finds it, at its start (line 1, column 0, length 0). `line` counts from 1; `column` (from 0) and `length` are UTF-16 units of the line. A host goes to the first place. |
   | `start_snippet` | `fields`, `at` | the first field's range |
-  | `end_snippet` | | whether one was open |
+  | `end_snippet` | | whether one with a field to go to was open, which it ends; an environment's name, typed in its `\begin` and `\end` together, leaves Escape to the host |
   | `tab` | `selections`, [`step` 1] | the next field, or the indent |
   | `move_lines` | `selections`, `up` | the edit, or null |
+  | `duplicate_lines` | `selections` | the change: each selection's whole lines copied, the selection on the copy below |
+  | `delete_lines` | `selections` | the change: each selection's whole lines gone, the caret on the line after (the last line takes the break before it) |
   | `toggle_comment` | `selections` | edits |
   | `toggle_style` | `selections`, `style` (`bold`, `italic`, `underline`) | the change |
   | `wrap` | `selections`, `template` | the change |
   | `map_selections` | `edits`, `selections` | the selections after the edits |
   | `set_heading` | `caret`, `command` (a sectioning command, or none for plain text) | the insertion |
-  | `insert_block` | `id`, `selection` | the insertion, or null |
+  | `insert_block` | `id`, `selection` | the insertion, or null; a selected text goes in the block's first field, which spans it |
   | `insert_symbol` | `command`, `selection` | the insertion |
   | `math_at` | `caret` | the maths under the caret, `{start, tex, display}`, or null; in a session's source, `tex` begins with the definitions it uses, as the project was last scanned (`\newcommand` and its kin, `\DeclareMathOperator`, `\def` without parameters), as RaTeX takes them: `math_svg` draws it as it is |
   | `text_styles` | `selection` | the styles the selection has |
   | `code_ranges` | `selection`, `for` (`spelling` or `writingTools`) | `[{start, length}]`, merged: what the checker leaves alone that overlaps the range (or holds the caret) |
+  | `words` | `start`, `length` | `{words}`: the prose words in the range, counted as `session_analyze`'s `words` are, the text read whole so a range that starts in maths knows it; a word the range cuts counts |
   | `version` | | a session's document's count of its edits and reloads, which `session_replace`'s `edits` name; null for a source of the host's own |
 
   Lines end at a line feed, and a carriage return before it belongs to the break (CRLF is one).
@@ -276,8 +358,9 @@ editor's thread.
   latexmk is given rules (`-e`) for makeglossaries (`.glo`, `.acn`), makeindex with
   `nomencl.ist` (`.nlo`) and bib2gls (`.glstex`), which a user's or trusted project's own
   latexmkrc overrides.
-  `outdated`: edits since the shown PDF's build began. Issues mark a document's lines only if
-  it hasn't been edited since that build began, closed and opened again since or not.
+  `outdated`: edits since the shown PDF's build began. A build's issues mark a document's lines
+  only if it hasn't been edited since that build began, closed and opened again since or not;
+  the checks only if it hasn't since their scan began.
 - **Live preview**: keys go to TeXpresso as made; one its copy can't take sends the whole text
   (retried after 750 ms if TeXpresso couldn't be asked). A rename, a new main file or a file
   gone from the tree restarts it 180 ms later; files changed on disk are sent and rescanned.
@@ -287,4 +370,5 @@ editor's thread.
   each change it sends with its count of edits (`["mark", n]`) and reads the log only once
   TeXpresso says it has read the last (`["synced", n]`).
 - **Symbols** (labels and citations) are scanned when the session opens and 150 ms after a
-  save or another app's change; the session's documents complete from them.
+  save or another app's change (a rename's included); the session's documents complete from
+  them. The same scan, beside the session and from the files' kept facts, makes the `checks`.

@@ -4,7 +4,10 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
+use serde_json::json;
+
+use crate::syntax::catalog::CATALOG;
 
 /// How serious an item is: "error" or "warning" on the wire.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
@@ -25,25 +28,90 @@ pub struct LogItem {
     pub short: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
-    /// The package or class file LaTeX didn't find, for `install_package`.
+    /// What TeX's message means here and what usually fixes it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub missing: Option<String>,
+    pub explain: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<Fix>,
+}
+
+/// One action that usually ends an error, which a host offers as a button and has the session
+/// run by its id (`session_fix`), then compiles again.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Fix {
+    /// A package or class file LaTeX didn't find.
+    Install(String),
+    /// A package that defines what TeX doesn't know.
+    AddPackage(String),
+    Xelatex,
+    ShellEscape,
+}
+
+impl Fix {
+    /// The id a host sends back: the fix and its argument, which only this reads, so no table of
+    /// the issues is kept for it.
+    pub(crate) fn parse(id: &str) -> Option<Self> {
+        match id.split_once(':') {
+            Some(("install", file)) => Some(Self::Install(file.into())),
+            Some(("package", name)) => Some(Self::AddPackage(name.into())),
+            Some(("engine", "xelatex")) => Some(Self::Xelatex),
+            None if id == "shellEscape" => Some(Self::ShellEscape),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for Fix {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Install(file) => json!({
+                "id": format!("install:{file}"),
+                "title": "Install",
+                "help": format!("Installs the TeX Live package that has {file}, then compiles again."),
+            }),
+            Self::AddPackage(name) => json!({
+                "id": format!("package:{name}"),
+                "title": format!("Add \\usepackage{{{name}}}"),
+                "help": format!("Loads {name} in the main file's preamble, then compiles again."),
+            }),
+            Self::Xelatex => json!({
+                "id": "engine:xelatex",
+                "title": "Use XeLaTeX",
+                "help": "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.",
+            }),
+            Self::ShellEscape => json!({
+                "id": "shellEscape",
+                "title": "Turn On Shell Escape",
+                "help": "Lets the project's packages run programs as it compiles, then compiles again.",
+                "confirm": "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.",
+            }),
+        }
+        .serialize(serializer)
+    }
 }
 
 impl LogItem {
-    fn new(kind: Severity, file: Option<String>, line: Option<u32>, message: String) -> Self {
+    pub(crate) fn new(
+        kind: Severity,
+        file: Option<String>,
+        line: Option<u32>,
+        message: String,
+    ) -> Self {
         let flat = message.split_whitespace().collect::<Vec<_>>().join(" ");
         let short = flat
             .strip_prefix("LaTeX Error: ")
             .unwrap_or(&flat)
             .to_owned();
+        let command = undefined_command(&short);
+        let (explain, fix) = explained(&short, command.as_deref());
         Self {
             kind,
             file,
             line,
             message,
-            command: undefined_command(&short),
-            missing: MISSING.captures(&short).map(|m| m[1].to_owned()),
+            command,
+            explain,
+            fix,
             short,
         }
     }
@@ -61,6 +129,152 @@ fn undefined_command(message: &str) -> Option<String> {
     ((!name.is_empty() && letters) || name.chars().count() == 1).then(|| format!("\\{name}"))
 }
 
+/// What an entry of `EXPLAINED` offers to do.
+#[derive(Clone, Copy)]
+enum Offer {
+    Nothing,
+    /// Installing the file the message's first group names.
+    Install,
+    /// Loading the package that defines the command the message names undefined, or the
+    /// environment its first group names.
+    Package,
+    Xelatex,
+}
+
+/// TeX's and LaTeX's common messages, as `short` has them: the first that matches explains.
+/// Unanchored where a file TeX loaded may put its name first.
+static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
+    use Offer::{Install, Nothing, Package, Xelatex};
+    [
+        (
+            r"File `([^`'/\\\s]+\.(?:sty|cls))' not found\.",
+            Install,
+            "This package or class isn't installed in your TeX distribution. Install it, then compile again.",
+        ),
+        (
+            r"File `[^`']*' not found",
+            Nothing,
+            "TeX can't find this file. Check its name and folder, written from the main file's folder, and that the file is in the project.",
+        ),
+        (
+            r"Undefined control sequence",
+            Package,
+            "TeX doesn't know this command. Check its spelling, or load the package that defines it in the preamble.",
+        ),
+        (
+            r"^Environment (\S+) undefined",
+            Package,
+            "LaTeX doesn't know this environment. Check its spelling, or load the package that defines it in the preamble.",
+        ),
+        (
+            r"Missing \$ inserted",
+            Nothing,
+            "Something only maths may hold, such as ^, _ or a Greek letter, is outside maths, or a blank line breaks an equation. Put it between $ signs, or remove the blank line.",
+        ),
+        (
+            r"Extra \}, or forgotten|Too many \}'s",
+            Nothing,
+            "A closing brace has no opening one to match, or maths was left open before it. Look for a } too many, or a $ missing, on this line or just before it.",
+        ),
+        (
+            r"Missing \} inserted",
+            Nothing,
+            "A group was still open where TeX needed it closed: a { without its }, or maths left open. Look for the brace or $ missing on this line or just before it.",
+        ),
+        (
+            r"Runaway argument|Paragraph ended before \S+ was complete|File ended while scanning use of",
+            Nothing,
+            "A command's argument runs on into a blank line or the end of the file, usually because its closing brace is missing. Close the brace where the argument should end.",
+        ),
+        (
+            r"Misplaced alignment tab character",
+            Nothing,
+            r"An & is outside a table or aligned equation, where it only separates columns. Write \& for an ampersand in text.",
+        ),
+        (
+            r"Extra alignment tab has been changed",
+            Nothing,
+            "A row has more & than its table has columns. Add a column to the table's definition, or remove an & from the row.",
+        ),
+        (
+            r"\\begin\{[^}]*\} on input line \d+ ended by \\end",
+            Nothing,
+            r"An environment is closed by another's \end, or one inside it was left open. Make each \end name its \begin's environment, closing the inner ones first.",
+        ),
+        (
+            r"Missing \\begin\{document\}",
+            Nothing,
+            r"Something that typesets comes before \begin{document}, where only the preamble's settings may go. Move it below \begin{document}, or look for a stray character in the preamble.",
+        ),
+        (
+            r"Can be used only in preamble",
+            Nothing,
+            r"This command only works before \begin{document}. Move it to the preamble.",
+        ),
+        (
+            r"There's no line here to end",
+            Nothing,
+            r"A \\ or \newline comes where no line has begun, such as at a paragraph's start or after a heading. Remove it, or use \vspace for space between paragraphs.",
+        ),
+        (
+            r"Option clash for package",
+            Nothing,
+            r"The package is loaded twice with different options, perhaps once by the class or another package. Load it once with all its options, or give them earlier with \PassOptionsToPackage.",
+        ),
+        (
+            r"Emergency stop|no legal \\end found",
+            Nothing,
+            r"TeX stopped here and couldn't go on, often because the file ends before \end{document} or an earlier error left it nothing to read. Fix the first error above this one, and check that the main file ends with \end{document}.",
+        ),
+        (
+            r"^Citation .* undefined",
+            Nothing,
+            r"No bibliography entry or \bibitem has this key. Check its spelling against the .bib file's, and that the document names that file with \bibliography or \addbibresource.",
+        ),
+        (
+            r"Unicode character .* not set up for use with LaTeX",
+            Xelatex,
+            "pdfLaTeX's fonts have no letter for this character. XeLaTeX typesets it with a font that has one; or write it as a LaTeX command.",
+        ),
+        (
+            r"requires (?:either )?XeTeX|Cannot be run with pdfLaTeX",
+            Xelatex,
+            "This package needs XeLaTeX or LuaLaTeX, and the project compiles with pdfLaTeX. Compile it with XeLaTeX.",
+        ),
+        (
+            r"Command \\\S+ already defined",
+            Nothing,
+            r"\newcommand names a command that exists already, perhaps one a package defines. Choose another name, or use \renewcommand to replace it.",
+        ),
+    ]
+    .into_iter()
+    .map(|(pattern, offer, explain)| (Regex::new(pattern).unwrap(), offer, explain))
+    .collect()
+});
+
+/// What a message means and the fix it offers; `command` is the one it names undefined.
+fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Option<Fix>) {
+    if short == SHELL_ESCAPE {
+        return (None, Some(Fix::ShellEscape));
+    }
+    let Some((found, offer, explain)) = EXPLAINED
+        .iter()
+        .find_map(|(pattern, offer, explain)| Some((pattern.captures(short)?, *offer, *explain)))
+    else {
+        return (None, None);
+    };
+    let named = || found.get(1).map(|name| name.as_str().to_owned());
+    let fix = match offer {
+        Offer::Nothing => None,
+        Offer::Install => named().map(Fix::Install),
+        Offer::Package => (command.map(str::to_owned).or_else(named))
+            .and_then(|name| CATALOG.packages.get(&name).cloned())
+            .map(Fix::AddPackage),
+        Offer::Xelatex => Some(Fix::Xelatex),
+    };
+    (Some(explain), fix)
+}
+
 // `path:line: ` from -file-line-error for any file TeX reads, or TeX's own `! `; `error_start` also requires a path, which a time like "12:30: " is not.
 static ERROR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -68,9 +282,6 @@ static ERROR: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-// Unanchored: a file TeX loaded puts its name before a dependency it can't find.
-static MISSING: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"File `([^`'/\\\s]+\.(?:sty|cls))' not found\.").unwrap());
 static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+)").unwrap());
 static LAST_CS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
@@ -542,10 +753,68 @@ mod tests {
                    \n\
                    ./main.tex:5: LaTeX Error: File `../my.sty' not found.\n";
         let (items, _) = parse_log(log, "main.tex");
-        let missing: Vec<_> = items.iter().map(|it| it.missing.as_deref()).collect();
+        let fixes: Vec<_> = items.iter().map(|it| it.fix.clone()).collect();
         let long =
             "nosuchpackagewithaveryveryverylongnamethatwillwrapthelineatseventyninecolumnsx.sty";
-        assert_eq!(missing, [Some(long), None, Some("paper.cls"), None, None]);
+        let install = |file: &str| Some(Fix::Install(file.into()));
+        assert_eq!(
+            fixes,
+            [install(long), None, install("paper.cls"), None, None]
+        );
+    }
+
+    #[test]
+    fn a_common_error_is_explained_and_offers_the_fix_that_usually_ends_it() {
+        let log = "./main.tex:3: Undefined control sequence.\n\
+                   l.3 \\includegraphics\n\
+                   \n\
+                   ./main.tex:4: Undefined control sequence.\n\
+                   l.4 \\nosuchcommand\n\
+                   \n\
+                   ./main.tex:5: LaTeX Error: Environment tikzpicture undefined.\n\
+                   \n\
+                   ./main.tex:6: Package inputenc Error: Unicode character ж (U+0436)\n\
+                   (inputenc)                not set up for use with LaTeX.\n\
+                   \n\
+                   ./main.tex:7: Fatal Package fontspec Error: The fontspec package requires either XeTeX or\n\
+                   \n\
+                   ./main.tex:8: Misplaced alignment tab character &.\n\
+                   \n\
+                   ./main.tex:9: Something TeX alone says.\n";
+        let (items, _) = parse_log(log, "main.tex");
+        let found: Vec<_> = (items.iter())
+            .map(|it| (it.explain.is_some(), it.fix.clone()))
+            .collect();
+        let package = |name: &str| Some(Fix::AddPackage(name.into()));
+        let expected = [
+            (true, package("graphicx")),
+            (true, None),
+            (true, package("tikz")),
+            (true, Some(Fix::Xelatex)),
+            (true, Some(Fix::Xelatex)),
+            (true, None),
+            (false, None),
+        ];
+        assert_eq!(found, expected);
+        let shell_escape = serde_json::to_value(LogItem::error(SHELL_ESCAPE)).unwrap();
+        let fix = &shell_escape["fix"];
+        assert_eq!(fix["id"], "shellEscape");
+        assert!(fix["confirm"].as_str().unwrap().contains("trust"));
+        assert_eq!(shell_escape["explain"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_fixs_id_names_it_and_its_argument() {
+        let fixes = [
+            Fix::Install("a.sty".into()),
+            Fix::AddPackage("tikz".into()),
+            Fix::Xelatex,
+            Fix::ShellEscape,
+        ];
+        for fix in fixes {
+            let id = &serde_json::to_value(&fix).unwrap()["id"];
+            assert_eq!(Fix::parse(id.as_str().unwrap()), Some(fix));
+        }
     }
 
     #[test]

@@ -185,15 +185,20 @@ final class ProjectFlowTests {
         #expect(app.project == nil && app.alert != nil && !app.isOpening)
     }
 
-    @Test func aProjectOpensOnItsBuiltPDF() async throws {
+    @Test func aProjectOpensOnItsBuiltPDFWhereItWasLeft() async throws {
         let (info, folder) = try await project()
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
         #expect(try textPDF(["one", "two", "three"]).write(to: folder.appending(path: "build/main.pdf")))
-        let saved = SavedWorkspace(project: info.id, file: nil, line: 1, buildPanel: true, pdfPage: 2, pdfZoom: nil)
-        await app.open(info.id, restoring: saved)
+        let place: [String: any Sendable] = ["file": "gone.tex", "line": 9, "page": 2, "zoom": 1.5, "panel": true]
+        try await Core.shared.call("set_ui_state", ["id": info.id, "patch": place])
+        await app.open(info.id)
         let project = try #require(app.project)
         #expect(project.initialLoadComplete && project.openPath == info.mainFile && project.panel.shown)
-        #expect(project.hasPDF && project.pdf.view.document?.pageCount == 3)
+        #expect(project.hasPDF && project.pdf.view.document?.pageCount == 3 && project.pdf.keptZoom == .scale(1.5))
+        project.panel.shown = false
+        await app.close()
+        await app.open(info.id)
+        #expect(app.project?.panel.shown == false)
         await app.close()
     }
 
@@ -551,6 +556,28 @@ final class ProjectFlowTests {
         project.search.query = " "
         await project.search.run(in: project.session)
         #expect(project.search.groups == nil && project.search.hitCount == 0)
+        await app.close()
+    }
+
+    /// Find Usages puts its name in the field, and its hits stay, under their heading, until the query changes.
+    @Test func usagesShowUntilTheQueryChanges() async throws {
+        let project = try await opened("\\label{a} \\ref{a}").project
+        project.editor.textView.setSelectedRange(.caret(7))
+        await project.findUsages()
+        #expect(project.search.usages?.name == "\\label{a}" && project.search.query == "\\label{a}")
+        await project.search.run(in: project.session)
+        #expect(project.search.usages != nil && project.search.hitCount == 1)
+        project.search.query = "ref"
+        await project.search.run(in: project.session)
+        #expect(project.search.usages == nil && project.search.hitCount == 1)
+        await app.close()
+    }
+
+    /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.
+    @Test func aRefusedFixIsAnAlertAndEndsItsProgress() async throws {
+        let project = try await opened().project
+        await project.run(LogItem.Fix(id: "install:-foo.sty", title: "Install", help: "", confirm: nil))
+        #expect(app.alert?.title == "Couldn’t Install" && project.fixing == nil)
         await app.close()
     }
 

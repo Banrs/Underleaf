@@ -89,7 +89,7 @@ struct FilesList: View {
             .onChange(of: selection) { _, path in
                 if let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false {
                     Task {
-                        await project.open(path, focus: false)
+                        await project.open(path, focus: false, jump: true)
                         if project.openPath != path, selection == path { selection = project.openPath }
                     }
                 }
@@ -171,7 +171,21 @@ struct FilesList: View {
         .onChange(of: project.search.query, initial: true) { hit = nil }
         .onChange(of: hit) { _, id in open(id, focus: false) }
         .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
-        .safeAreaBar(edge: .top, spacing: 0) { replaceBar }
+        // Usages aren't the query's matches, which Replace All would replace.
+        .safeAreaBar(edge: .top, spacing: 0) {
+            if let usages = project.search.usages {
+                Text(String(localized: "Usages of \(usages.name)"))
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 9)
+            } else {
+                replaceBar
+            }
+        }
         .overlay {
             if let failure = project.search.failure {
                 ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
@@ -196,7 +210,7 @@ struct FilesList: View {
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {
         if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus) }
+            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus, jump: true) }
         }
     }
 
@@ -322,6 +336,7 @@ extension View {
 
 /// The main file's sections, under `OutlineHeader`, which folds them away. Takes no drops: files go into the list above.
 struct OutlineList: View {
+    @Environment(AppModel.self) private var app
     let project: ProjectModel
     @Environment(\.sidebarRowSize) private var rowSize
     @State private var chosen: Int?
@@ -340,7 +355,7 @@ struct OutlineList: View {
                 TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
-                    HeadingRow(item: node.item).equatable().tag(node.id)
+                    HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).equatable().tag(node.id)
                         // A double-click's second click is the list's primary action, into the source.
                         .simultaneousGesture(TapGesture().onEnded {
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
@@ -361,7 +376,7 @@ struct OutlineList: View {
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
                 let item = outline[id]
-                Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
+                Task { await project.open(item.file, line: item.line, atTop: true, focus: true, jump: true) }
             }
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil
@@ -417,15 +432,27 @@ private let sidebarListRoom: CGFloat = 10
 /// Equatable: as a plain view, a heading that takes the place of a leaf and has subheadings opens closed (27.2).
 private struct HeadingRow: View, Equatable {
     let item: OutlineItem
+    /// While the status bar counts the document's.
+    let words: Int?
 
     var body: some View {
-        Text(item.title)
-            .lineLimit(1)
-            .help(item.title)
-            .foregroundStyle(item.untitled ? .secondary : .primary)
-            .accessibilityValue(item.level)
-            // For scrollTo, inside the row: on it, the list would take it for the row's identity.
-            .id(item.id)
+        HStack {
+            Text(item.title)
+                .help(item.title)
+                .foregroundStyle(item.untitled ? .secondary : .primary)
+            if let words {
+                Spacer(minLength: 4)
+                Text(words, format: .number)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("^[\(words) word](inflect: true)")
+            }
+        }
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(item.level)
+        // For scrollTo, inside the row: on it, the list would take it for the row's identity.
+        .id(item.id)
     }
 }
 

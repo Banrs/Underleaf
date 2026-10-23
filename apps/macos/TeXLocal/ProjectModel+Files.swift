@@ -121,8 +121,9 @@ extension ProjectModel {
 
     // MARK: - Export
 
-    /// The core archives the files on disk, so the edits are saved first.
-    func exportZip() async throws -> URL {
+    /// The core archives the files on disk, so the edits are saved first. For arXiv, it refuses a project arXiv couldn't
+    /// build, in a sentence saying what to do.
+    func exportZip(forArxiv: Bool = false) async throws -> URL {
         guard await save() else {
             let name = openPath?.fileName ?? self.name
             throw CocoaError(.fileWriteUnknown, userInfo: [
@@ -134,7 +135,7 @@ extension ProjectModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
         let url = folder.appending(path: "\(name).zip")
-        try await core.call("export_zip", ["id": id, "dest": url.path(percentEncoded: false)])
+        try await core.call("export_zip", ["id": id, "dest": url.path(percentEncoded: false), "forArxiv": forArxiv])
         return url
     }
 

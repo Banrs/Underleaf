@@ -38,10 +38,10 @@ apps/windows/
                           Core.cs, Source.cs (a SafeHandle over TlSource), Models.cs (the JSON's records);
                           builds the DLL
   TeXLocal/               the WinUI 3 app: App, MainWindow, Prefs.cs (typed preferences);
-                          Pages/ Home, Workspace (.xaml.cs the session; .Sidebar.cs files, outline, search,
-                          words; .Insert.cs the Insert menu and symbol palette), Settings;
+                          Pages/ Home, Workspace (.xaml.cs the session and its jumps; .Sidebar.cs files, outline,
+                          search, words; .Insert.cs the Insert menu and symbol palette), Settings;
                           Controls/ Card, Shortcut, Sizer, RenameFlyout, PdfView, SourceView (+ .Find.cs),
-                          PagePreview; Themes/Generic.xaml (the custom controls' styles)
+                          PagePreview, HistoryDialog; Themes/Generic.xaml (the custom controls' styles)
   TeXLocal.Tests/         xUnit against TeXLocal.Core only: the bridge and smoke behaviour
 ```
 
@@ -58,10 +58,11 @@ apps/windows/
 - **Sources** are used from the UI thread only; offsets are UTF-16 on both sides.
 - **Close.** Remove the listener, `kill_all`, wait for calls in flight, `tl_close`.
 - **Preferences** (theme, window bounds, pane sizes, Compile automatically, sync after compile,
-  the editor's font, size, theme and typing switches, which raise `EditorChanged`) are `Prefs`'
-  typed properties over `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings`
-  (the registry, `HKCU\Software\Classes\Local Settings\Software\TeXLocal`). With `TEXLOCAL_DATA`
-  set a run keeps its own, "TeXLocal Dev", so a dev build never moves the installed app's window.
+  the PDF's page colour, the engine for new projects, the project to reopen, the editor's font,
+  size, theme and typing switches, which raise `EditorChanged`) are `Prefs`' typed properties over
+  `ApplicationData.GetForUnpackaged("TeXLocal", "TeXLocal").LocalSettings` (the registry,
+  `HKCU\Software\Classes\Local Settings\Software\TeXLocal`). With `TEXLOCAL_DATA` set a run
+  keeps its own, "TeXLocal Dev", so a dev build never moves the installed app's window.
 - **The DLL.** `TeXLocal.Core.csproj` runs `cargo rustc -p texlocal-ffi --lib --release
   --crate-type cdylib` at the repository root (incremental on `crates/**/*.rs`, `Cargo.lock` and
   `Cargo.toml`; skipped with `-p:SkipCargo=true`) and copies `target/release/texlocal_ffi.dll` to
@@ -80,16 +81,20 @@ apps/windows/
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView`, an opened folder's path under its name as in Word's | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
 | Dialogs | `ContentDialog` through `App.Show` | Each dialog setting its own root, theme and style |
+| Version history | A wide `ContentDialog`, as Word's Version History: versions and their changed files beside the file's comparison; Restore all's confirmation takes its place and gives it back on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem` with `SendToRecycleBin` | `DeleteAsync` deletes outright unpackaged |
 | Source editor | `RichEditBox` (it passed the editor gate) | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG; the palette a grouped `GridView` in a `Flyout` | A font's glyphs miss TeX's spacing |
 | Completion | A `ListView` in a `Popup`, never focused | A `Flyout` takes the keyboard |
 | Find | Notepad's find bar over `RichEditTextRange.FindText` | No find in `RichEditBox` |
+| Navigation | VS Code's Go back and Go forward (Alt+Left, the window's, which goes back a page where there's no place; Alt+Right; the mouse's buttons) over every jump (`WorkspacePage.Jump`); Visual Studio's Go to all (Ctrl+T), an `AutoSuggestBox` in a `Flyout` at the top centre | The title bar's back button stays the page's, as in Settings; a `ContentDialog` dims and blocks the window |
+| Quick info | VS Code's hover, a `Flyout` under the name after 500 ms at rest that goes as the pointer leaves, or at the caret (Ctrl+Shift+I) | A `ToolTip` holds no link; a `TeachingTip` points a tail at a word |
 | Layer corners | A rounded clip on each layer's composition visual | `CornerRadius` rounds only the border |
-| Issues | `ListView`; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a missing package's row an Install button, a `ProgressRing` beside it while tlmgr runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
+| Issues | `ListView`, the build's then the checks', an explanation in Caption under its message; line ends an `InfoBadge` and Caption, as Visual Studio 2022's inline diagnostics; a `Polyline` squiggle under an undefined command; one `InfoBar` for a failed build; a fix a button at the row's end, as the Store's Install, with a `ProgressRing` while it runs | A list of InfoBars is too heavy; RichEdit's own wavy underline would be an edit in the undo history |
 | Pickers | `Microsoft.Windows.Storage.Pickers` with `AppWindow.Id` | No HWND interop |
 | Packages | `Microsoft.WindowsAppSDK.WinUI` 2.3.9, `.Foundation` 2.3.12, `.InteractiveExperiences` 2.1.9 | The metapackage adds ~60 MB |
-| PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions |
+| PDF | `Windows.Data.Pdf` pages as `Image`s in a zooming `ScrollViewer`; PDFium in the core to come. Dark paper turns each page's pixels over (c + 1 − 2Y, the Mac's invert and half-turn of hue) off the UI thread | No text API; `ScrollView` and `ItemsRepeater` misplace scroll positions; composition's colour effects need Win2D |
+| Print | XAML's `PrintDocument` through `PrintManagerInterop` on the window's handle, each page a PNG from `Windows.Data.Pdf` at the printer's dpi up to 600 | XAML holds every sheet until the job spools; bitmaps would take hundreds of MB a page |
 
 **The editor gate** (a 5,000-line `.tex`, Debug, 200%): highlights go in as RTF, the first 200
 lines first (first frame in 12–53 ms, the rest by 0.6 s); a keystroke recolours in 6–7 ms. WinUI's
@@ -104,7 +109,7 @@ later WindowsAppSDK.
 ## Core gaps
 
 Logic the app needs that belongs in a crate, not C#. The numbers are those the app's comments
-cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
+cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
@@ -124,8 +129,8 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 14. **Issue indices on lines**: the `issues` event's lines don't say which issue they show, so a
     click on a line-end box looks up the first issue at that file and line.
 16. **TeX status for display**: the distribution's name ("TeX Live 2026").
-17. **Casing**: `menus` and `heading_styles` take a casing ("sentence" for Windows), and the host's
-    `Sentence()` goes.
+17. **Casing**: `menus`, `heading_styles` and `session_history_list`'s reasons take a casing
+    ("sentence" for Windows), and the host's `Sentence()` goes.
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the
     host's kind list and `.tex` test go.
@@ -137,8 +142,6 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 27. **Maths size**: both hosts keep the 1.21 ratio; a `math_preview {caret, size, color}` would
     take it.
 28. **Compositing**: Windows still pre-composites its secondary ink (`Over`).
-29. **The workspace's place**: the ui state keeps the file shown, the caret line, the PDF page and
-    zoom (fitWidth, fitPage or a scale).
 30. **Nearest-line inverse SyncTeX**: `synctex_inverse {nearest: true}`, for Go to source position
     in whitespace.
 31. **Default library**: `tl_open(NULL)` resolves the default folder (`TEXLOCAL_DATA`, else
@@ -150,25 +153,21 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 32, 33) leave holes.
 
 | Area | Mac | Windows | Why |
 |---|---|---|---|
-| App | Reopens the last project at its file, caret, panel, page and zoom | Home, main file, Fit width | Core 29 |
 | App | Open Recent, Dock menu, opens files from Finder | Open with and the command line; no jump list | UI |
-| Home | Engine for new projects, search, drop to import | No engine | Core 7 |
-| Workspace | Inspector with the engine | Build menu toggles, no engine | Design; UI |
+| Workspace | Inspector with the engine | Build menu: Engine and toggles | Design |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; the outline follows the scroll | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |
-| Editor | `drop_text`, per-file undo, double-click to the PDF | `drop_text`; undo cleared on switch | UI |
+| Editor | `drop_text`, per-file undo, double-click to the PDF, Quick Help | `drop_text`, double-click to the PDF, Quick info on Ctrl+Shift+I (`Shortcut` has no chord for Ctrl+K, Ctrl+I); undo cleared on switch | UI |
 | PDF | Find, selection, copy, SyncTeX to the word | None; to the line | Core 6 |
 | PDF | A mark where SyncTeX has no box; nearest line from whitespace | Scroll only; nothing | Core 10, 30 |
-| PDF | Print, scroll to the caret after compiling | Scroll to the caret after compiling; no print | UI |
-| PDF | Paper white, dark or automatic | White | UI |
 | Panel | Log find | The filter keeps matching lines | UI |
 | Live | Pane, log, restarts | None | Core 12 |
-| Settings | Template, engine, sync after compile, Live Preview | Sync after compile | Core 7, 12 |
+| Settings | Live Preview | None | Core 12 |
 
 Windows' own: an app theme setting, the editor preview in Settings, search in the symbol palette,
-ZIP export on Home and F6 region cycling. Also to come: multiple windows and the zip and winget
-release. Still to check by eye: a high-contrast theme, touch, and a real pointer over the sizers'
-grips.
+ZIP export on Home, Open PDF in default app and F6 region cycling. Also to come: multiple windows
+and the zip and winget release. Still to check by eye: a high-contrast theme, touch, and a real
+pointer over the sizers' grips.
 
 ## Live Preview on Windows
 
@@ -195,10 +194,11 @@ tests and installing are in AGENTS.md. `install.ps1` also adds Open with for .te
   runs per library).
 - `--smoke` exits 1 with the reason on stderr when it fails.
 - Drive dev builds with UI Automation, not clicks. Issue rows have the Invoke pattern, and inverse
-  SyncTeX is in the PDF's context menu (Go to source position), so only the PDF double-click needs
-  a real mouse: send it to a point `WindowFromPoint` confirms is in the dev build's window. A
-  `ToggleButton` toggled through UIA raises `Checked`/`Unchecked`, not `Click`, so handlers listen
-  to those.
+  SyncTeX is in the PDF's context menu (Go to source position), so only the double-clicks, the
+  PDF's to the source and the source's to the PDF, need a real mouse: send them to a point
+  `WindowFromPoint` confirms is in the dev build's window. Print needs a printer, or Microsoft
+  Print to PDF. A `ToggleButton` toggled through UIA raises `Checked`/`Unchecked`, not `Click`, so
+  handlers listen to those.
 - With the display asleep a new WinUI window never presents and captures come out black: wake it
   (`SetThreadExecutionState` with `ES_DISPLAY_REQUIRED`) first. Flyouts and dialogs are separate
   windows, which `PrintWindow` leaves out; capture the screen region for those.

@@ -166,7 +166,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let unwanted = [#selector(NSTextView.changeLayoutOrientation(_:)), #selector(NSTextView.startSpeaking(_:)),
                         #selector(NSResponder.uppercaseWord(_:))]
         let offered: [(MenuCommand, Bool)] = [
-            (.jumpToDefinition, true), (.editRename, textView.isEditable && renamable != nil),
+            (.jumpToDefinition, true), (.findUsages, true), (.editRename, textView.isEditable && renamable != nil),
             (.syncForward, textView.forwardSync(false) != nil), (.editComment, textView.isEditable),
         ]
         let ours = offered.filter(\.1).map { command, _ in
@@ -222,6 +222,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             let up = command == .moveLineUp
             let name = up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")
             guard textView.apply(document.moveLines(selections, up: up), named: name) else { return false }
+        case .duplicateLine:
+            textView.apply(document.duplicateLines(selections), named: String(localized: "Duplicate Line"))
+        case .deleteLine:
+            textView.apply(document.deleteLines(selections), named: String(localized: "Delete Line"))
         case .heading(let command):
             let level = document.setHeading(caret: selection.location, command: command)
             guard textView.insert(level, named: String(localized: "Section Level")) else { return false }
@@ -249,7 +253,7 @@ struct EditorView: NSViewRepresentable {
     @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
     @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
     @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
     @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
     @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
 
@@ -268,7 +272,7 @@ struct EditorView: NSViewRepresentable {
 }
 
 enum EditorCommand: Equatable {
-    case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown
+    case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown, duplicateLine, deleteLine
     /// Without its backslash; empty for Normal Text.
     case heading(String)
     case symbol(String)

@@ -44,7 +44,11 @@ fn stubs(service: &Service) -> String {
 async fn compile(service: &Service, root: &Path) -> CompileResult {
     let path = stubs(service);
     let project = Project::in_folder(root);
-    service.compile.compile(&project, &path).await.unwrap()
+    service
+        .compile
+        .compile(&project, &path, false)
+        .await
+        .unwrap()
 }
 
 async fn built(script: &str) -> CompileResult {
@@ -142,14 +146,17 @@ async fn outputs_a_run_did_not_write_are_not_reported_as_its_own() {
 }
 
 #[tokio::test]
-async fn a_timed_out_compile_is_killed_and_reported_failed_with_the_output_it_wrote() {
+async fn a_timed_out_automatic_build_is_killed_and_reported_failed_with_the_output_it_wrote() {
     let (_dir, service, root) = setup("echo 'Running pdflatex'\ntouch printed\nsleep 20\n");
     let started = Instant::now();
     // Once the stub has printed, tokio's clock jumps straight to the build's time limit.
-    let (result, ()) = tokio::join!(compile(&service, &root), async {
+    let (project, path) = (Project::in_folder(&root), stubs(&service));
+    let auto = service.compile.compile(&project, &path, true);
+    let (result, ()) = tokio::join!(auto, async {
         appears(&root.join("printed"), "latexmk did not print").await;
         tokio::time::pause();
     });
+    let result = result.unwrap();
 
     assert!(!result.ok);
     assert!(!result.stopped, "a timeout is a failure, not a Stop");
@@ -160,6 +167,21 @@ async fn a_timed_out_compile_is_killed_and_reported_failed_with_the_output_it_wr
     assert!(message.contains("stopped after"), "{result:?}");
     assert!(!message.contains("forever"), "{message}");
     promptly(started);
+}
+
+/// Asked for, a build runs past the automatic one's time limit until it ends.
+#[tokio::test]
+async fn a_build_asked_for_has_no_time_limit() {
+    let (_dir, service, root) = setup(
+        "touch printed\nwhile [ ! -f go ]; do sleep 0.01; done\nmkdir -p build\nprintf 'fake' > build/main.pdf\n",
+    );
+    let (result, ()) = tokio::join!(compile(&service, &root), async {
+        appears(&root.join("printed"), "latexmk did not print").await;
+        tokio::time::pause();
+        tokio::time::advance(super::COMPILE_TIMEOUT * 2).await;
+        fs::write(root.join("go"), "").unwrap();
+    });
+    assert!(result.ok, "{result:?}");
 }
 
 #[tokio::test]
@@ -222,7 +244,10 @@ async fn an_opened_folders_build_lands_in_its_store() {
     fs::write(folder.join("main.tex"), "").unwrap();
     let id = open_path(&service, &folder).unwrap().project.id;
     let project = service.project(&id).unwrap();
-    let result = service.compile.compile(&project, &stubs(&service)).await;
+    let result = service
+        .compile
+        .compile(&project, &stubs(&service), false)
+        .await;
     let pdf = project.build.join("main.pdf");
     assert_eq!(
         result.unwrap().pdf,
@@ -407,7 +432,11 @@ async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
     let status = tex_available(none).await;
     assert!(!status.available && status.latexmk_version.is_none());
     let project = Project::in_folder(&root);
-    let result = service.compile.compile(&project, none).await.unwrap();
+    let result = service
+        .compile
+        .compile(&project, none, false)
+        .await
+        .unwrap();
     let message = &result.errors[0].message;
     assert!(message.starts_with("Couldn't start latexmk"), "{message}");
     assert_eq!(FORKS.with(Cell::get), before);

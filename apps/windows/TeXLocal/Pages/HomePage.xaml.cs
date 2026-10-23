@@ -2,7 +2,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
-using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -27,6 +26,7 @@ public sealed partial class HomePage : Page
     ProjectInfo? target;
     string? focus;
     int loads;
+    bool newProject;
 
     public HomePage() => InitializeComponent();
 
@@ -68,7 +68,7 @@ public sealed partial class HomePage : Page
             {
                 listed = await Core.CallAsync<ProjectInfo[]>("list_projects");
                 if (templates.Length == 0)
-                    Templates.ItemsSource = templates = [.. (await Core.CallAsync<Catalogue>("catalogue")).Templates.Select(t => new ProjectTemplate(t.Id, t.Title))];
+                    Templates.ItemsSource = templates = [.. (await App.Catalogue()).Templates.Select(t => new ProjectTemplate(t.Id, t.Title))];
             }
             catch (CoreException ex) { error = ex.Message; }
         if (generation != loads) return;
@@ -77,7 +77,14 @@ public sealed partial class HomePage : Page
         if (error is not null) return;
         projects = listed;
         Show();
+        if (!newProject) return;
+        newProject = false;
+        Templates.UpdateLayout();
+        (FocusManager.FindFirstFocusableElement(Templates) as Control)?.Focus(FocusState.Keyboard);
     }
+
+    /// The gallery's first template focused, once listed: File › New project in a project.
+    public void ShowTemplates() => newProject = true;
 
     /// The projects whose names hold the search's text, as on the Mac.
     void Show()
@@ -155,7 +162,7 @@ public sealed partial class HomePage : Page
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             var deferral = args.GetDeferral();
-            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id })).Id; }
+            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id, engine = Prefs.Engine is "" ? null : Prefs.Engine })).Id; }
             catch (CoreException ex)
             {
                 args.Cancel = true;
@@ -170,7 +177,7 @@ public sealed partial class HomePage : Page
     void OnMenuOpening(object sender, object e)
     {
         var p = target = ProjectOf(((MenuFlyout)sender).Target)!;
-        RenameItem.Visibility = DeleteItem.Visibility = p.Opened ? Visibility.Collapsed : Visibility.Visible;
+        RenameItem.Visibility = DuplicateItem.Visibility = DeleteItem.Visibility = p.Opened ? Visibility.Collapsed : Visibility.Visible;
         ForgetItem.Visibility = p.Opened ? Visibility.Visible : Visibility.Collapsed;
         RevealItem.IsEnabled = ExportItem.IsEnabled = !p.Missing;
     }
@@ -187,19 +194,18 @@ public sealed partial class HomePage : Page
 
     void OnRenameItem(object sender, RoutedEventArgs e) => Rename(target!);
 
+    /// A copy beside it, named as File Explorer names one, its row focused.
+    async void OnDuplicateItem(object sender, RoutedEventArgs e)
+    {
+        try { Reload((await Core.CallAsync<ProjectInfo>("duplicate_project", new { id = target!.Id, name = $"{target.Name} - Copy" })).Id); }
+        catch (CoreException ex) { await App.Alert("Can't duplicate this project", ex.Message); }
+    }
+
     void OnRevealItem(object sender, RoutedEventArgs e) => App.Reveal(target!.Path);
 
     void OnDeleteItem(object sender, RoutedEventArgs e) => Delete(target!);
 
-    async void OnExportItem(object sender, RoutedEventArgs e)
-    {
-        var p = target!;
-        var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = p.Name };
-        picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
-        if (await picker.PickSaveFileAsync() is not { } picked) return;
-        try { await Core.CallAsync("export_zip", new { id = p.Id, dest = picked.Path }); }
-        catch (CoreException ex) { await App.Alert("Can't export", ex.Message); }
-    }
+    async void OnExportItem(object sender, RoutedEventArgs e) => await App.ExportZip(target!.Id, target.Name);
 
     /// Renames in place, at the row's name, as File Explorer does.
     void Rename(ProjectInfo p)

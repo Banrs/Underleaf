@@ -66,7 +66,7 @@ private struct GeneralSettings: View {
 private struct EditorSettings: View {
     @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
     @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.overleaf
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
     @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
     @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
     @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true

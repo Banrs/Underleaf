@@ -1,14 +1,15 @@
 //! Finding TeX: the PATH a GUI app's thin environment lacks, the programs on
-//! it, and whether latexmk runs.
+//! it, whether latexmk runs, and the packages it has.
 
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use regex::Regex;
 use serde::Serialize;
 
 use crate::process::run;
 use crate::settings::AppSettings;
+use crate::syntax::Installed;
 use crate::tinytex;
 
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
@@ -135,10 +136,84 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     }
 }
 
+/// Read once a process, on its first use, from the PATH `path_env` gives then: a TeX installed
+/// later is seen once the app opens again. Nothing without TeX, or from MiKTeX, which keeps no
+/// ls-R.
+pub(crate) fn installed(path_env: impl FnOnce() -> String) -> Arc<Installed> {
+    static INSTALLED: OnceLock<Arc<Installed>> = OnceLock::new();
+    let read = || {
+        let latexmk = find_tool("latexmk", &path_env());
+        Arc::new(latexmk.map_or_else(Installed::default, |l| installed_beside(&l)))
+    };
+    Arc::clone(INSTALLED.get_or_init(read))
+}
+
+/// From the ls-R database in the first texmf-dist above the program, as TeX Live and TinyTeX
+/// keep it; a link followed first, since a latexmk on the PATH may be a link into texmf-dist
+/// from another folder. Its folders under tex and bibtex hold what TeX loads, as its doc and
+/// source ones don't.
+fn installed_beside(program: &Path) -> Installed {
+    let program = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
+    let ls_r = program.ancestors().find_map(|dir| {
+        let ls_r = std::fs::read(dir.join("texmf-dist").join("ls-R")).ok()?;
+        Some(crate::lossy_string(ls_r))
+    });
+    let mut installed = Installed::default();
+    let mut loaded = false;
+    for line in ls_r.as_deref().unwrap_or_default().lines() {
+        if let Some(folder) = line.strip_suffix(':') {
+            loaded = folder.starts_with("./tex/") || folder.starts_with("./bibtex/");
+            continue;
+        }
+        let (name, list) = match line.rsplit_once('.') {
+            _ if !loaded => continue,
+            Some((name, "sty")) => (name, &mut installed.packages),
+            Some((name, "cls")) => (name, &mut installed.classes),
+            Some((name, "bst")) => (name, &mut installed.styles),
+            Some((name, "tex")) => (name, &mut installed.inputs),
+            _ => continue,
+        };
+        list.push(name.to_owned());
+    }
+    for list in [
+        &mut installed.packages,
+        &mut installed.classes,
+        &mut installed.styles,
+        &mut installed.inputs,
+    ] {
+        list.sort_unstable();
+        list.dedup();
+    }
+    installed
+}
+
 #[cfg(test)]
 mod tests {
-    use super::absolute_dirs;
+    use super::{Installed, absolute_dirs, installed_beside};
     use std::path::Path;
+
+    #[test]
+    fn the_installed_packages_classes_and_styles_are_read_from_ls_r_above_latexmk() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin").join("arch");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir(root.path().join("texmf-dist")).unwrap();
+        std::fs::write(bin.join("latexmk"), "").unwrap();
+        let ls_r = "% ls-R -- filename database for kpathsea; do not change this line.\n\
+            ./:\nls-R\ntex\n\n./tex/latex/amsmath:\namsthm.sty\namsmath.sty\n\n\
+            ./tex/latex-dev/amsmath:\namsmath.sty\n\n./tex/latex/base:\narticle.cls\nsize10.clo\n\n\
+            ./bibtex/bst/base:\nplain.bst\n\n./tex/generic/pdftex:\nglyphtounicode.tex\n\n\
+            ./doc/latex/amsmath:\nexample.sty\nexample.tex\n";
+        std::fs::write(root.path().join("texmf-dist").join("ls-R"), ls_r).unwrap();
+        let names = |names: &[&str]| names.iter().map(|&n| n.into()).collect();
+        let installed = Installed {
+            packages: names(&["amsmath", "amsthm"]),
+            classes: names(&["article"]),
+            styles: names(&["plain"]),
+            inputs: names(&["glyphtounicode"]),
+        };
+        assert_eq!(installed_beside(&bin.join("latexmk")), installed);
+    }
 
     #[test]
     fn tools_are_found_only_in_absolute_folders_of_the_path() {

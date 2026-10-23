@@ -13,19 +13,24 @@ use crate::paths::Project;
 use crate::projects::search::SearchHit;
 use crate::projects::testing::{fails_with, names_in, project};
 use crate::projects::{
-    Query, Symbols, create_free, create_project, file_tree, rename_entry, rename_project,
+    Query, Symbols, create_free, create_project, file_tree, is_text, rename_entry, rename_project,
     scan_symbols, search_project,
 };
 use crate::settings::{read_settings, write_settings};
 
 /// In any case and in part of a word, with nothing open, as the service searches.
 fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    search_project(root, &Query::new(query), &HashMap::new(), limit)
+    let found = |_: &str, text: &str| Query::new(query).places(text);
+    search_project(root, &HashMap::new(), &is_text, &found, limit)
 }
 
 /// With nothing open and nothing read before.
 fn scan(root: &Path) -> Result<Symbols, CoreError> {
     scan_symbols(root, &Files::default(), &HashMap::new())
+}
+
+fn labels(found: Symbols) -> Vec<String> {
+    found.labels.into_iter().map(|l| l.name).collect()
 }
 
 #[test]
@@ -124,7 +129,7 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     assert!(locked.children.as_ref().unwrap().is_empty());
     let hits: Vec<_> = hits.unwrap().into_iter().map(|hit| hit.file).collect();
     assert_eq!(hits, ["main.tex"]);
-    assert_eq!(symbols.unwrap().labels, ["sec:open"]);
+    assert_eq!(labels(symbols.unwrap()), ["sec:open"]);
 }
 
 #[test]
@@ -214,7 +219,7 @@ fn only_the_top_level_build_folder_is_the_compile_outputs() {
     let hits = search(&root, "needle", 10).unwrap();
     let files: Vec<_> = hits.iter().map(|h| h.file.as_str()).collect();
     assert_eq!(files, ["chapters/build/notes.tex"]);
-    assert_eq!(scan(&root).unwrap().labels, ["deep:one"]);
+    assert_eq!(labels(scan(&root).unwrap()), ["deep:one"]);
 }
 
 /// A Latin-1 .bib read as bytes by a Unicode-mode pattern loses the whole entry, so it is
@@ -238,6 +243,7 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
         citations, labels, ..
     } = scan(&root).unwrap();
     let citations: Vec<String> = citations.into_iter().map(|c| c.name).collect();
+    let labels: Vec<String> = labels.into_iter().map(|l| l.name).collect();
     assert_eq!(citations.len(), 4, "{citations:?}");
     assert_eq!(citations[..2], ["Smith2020", "Jones2021"]);
     assert!(citations[2].contains("ller2020") && citations[3] == "ok2021");
@@ -258,8 +264,8 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
         found.citations.iter().map(|c| c.name.clone()).collect()
     };
     let found = scan(&root).unwrap();
-    assert_eq!(found.labels, ["kept", "after-percent", "spaced", "eq:one"]);
     assert_eq!(keys(&found), ["knuth", "lamport"]);
+    assert_eq!(labels(found), ["kept", "after-percent", "spaced", "eq:one"]);
 
     fs::remove_file(root.join("main.tex")).unwrap();
     let bib = "@article{one,}\n@string{s=\"x\",}\n@Comment{gone,}\n@preamble{p,}\n@misc(three,)";
@@ -271,8 +277,8 @@ fn symbol_scan_reads_bibitems_skips_comments_and_keeps_file_order() {
         fs::write(root.join(file), text).unwrap();
     }
     let found = scan(&root).unwrap();
-    assert_eq!(found.labels, ["first", "shared", "last"]);
     assert_eq!(keys(&found), ["one", "three", "two"]);
+    assert_eq!(labels(found), ["first", "shared", "last"]);
 }
 
 #[test]
@@ -320,16 +326,16 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     let file = root.join("main.tex");
     fs::write(&file, "\\label{one}").unwrap();
     let facts = Files::default();
-    let labels = || scan_symbols(&root, &facts, &HashMap::new()).unwrap().labels;
-    assert_eq!(labels(), ["one"]);
+    let scanned = || labels(scan_symbols(&root, &facts, &HashMap::new()).unwrap());
+    assert_eq!(scanned(), ["one"]);
     let modified = fs::metadata(&file).unwrap().modified().unwrap();
     // Written in place at the same length and dated back, it stamps as before.
     fs::write(&file, "\\label{two}").unwrap();
     let written = fs::File::options().write(true).open(&file).unwrap();
     written.set_modified(modified).unwrap();
-    assert_eq!(labels(), ["one"]);
+    assert_eq!(scanned(), ["one"]);
     fs::write(&file, "\\label{three}").unwrap();
-    assert_eq!(labels(), ["three"]);
+    assert_eq!(scanned(), ["three"]);
 }
 
 /// A link to a file, inside or out (a shared .bib), is content. One to a folder, broken or in a
@@ -379,11 +385,11 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
         .collect();
     hits.sort();
     assert_eq!(hits, ["linked.tex", "source.txt"]);
-    let mut labels = scan(&root).unwrap().labels;
+    let mut labels = labels(scan(&root).unwrap());
     labels.sort();
     assert_eq!(labels, ["linked", "shared"]);
     let dest = root.with_file_name("out.zip");
-    export_zip(&root, &dest).unwrap();
+    export_zip(&root, &dest, &[]).unwrap();
     let zipped = [
         "external.tex",
         "figures/",
@@ -401,6 +407,6 @@ fn the_tree_scans_and_zip_follow_links_to_files_only() {
     // The destination spelled through a link into the project, as when a Save panel hands back
     // /private/var for a data folder under /var: a lexical comparison would archive the ZIP's
     // own half-written temporary file.
-    export_zip(&root, &alias.join("again.zip")).unwrap();
+    export_zip(&root, &alias.join("again.zip"), &[]).unwrap();
     assert_eq!(zip_names(&root.join("again.zip")), zip_names(&dest));
 }

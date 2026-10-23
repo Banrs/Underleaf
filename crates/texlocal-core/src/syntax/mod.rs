@@ -28,7 +28,8 @@ use serde::{Deserialize, Serialize};
 
 pub use call::call;
 use complete::SnippetField;
-pub use complete::{SymbolKind, Symbols};
+pub use complete::{Installed, SymbolKind, Symbols};
+pub(crate) use complete::{definitions, usages};
 use highlight::Highlight;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +260,13 @@ impl SourceDocument {
     pub fn reset_typing(&mut self) {
         self.typing = typing::Typing::default();
     }
+
+    /// The scan up to `at`, having read nothing past it: what is open where something would be typed.
+    fn scanned_to(&mut self, at: usize) -> scan::Scanner {
+        let mut scanner = self.scans.resume(&self.text, at, at).scanner;
+        scanner.run(&self.text.units[..at], at, &[], &mut ());
+        scanner
+    }
 }
 
 fn is(u: u16, c: char) -> bool {
@@ -281,6 +289,9 @@ fn comment_start(line: &[u16]) -> usize {
 }
 
 const NAME: usize = 64;
+
+/// What Tab indents by.
+const INDENT: &str = "  ";
 
 fn ascii<'a>(units: &[u16], buf: &'a mut [u8; NAME]) -> &'a str {
     if units.len() > buf.len() || units.iter().any(|&u| u > 0x7f) {

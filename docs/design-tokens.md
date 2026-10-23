@@ -5,10 +5,10 @@ appearance, defined once in the core (`crates/texlocal-core/src/syntax/theme.rs`
 
 ## Syntax themes
 
-Settings › Editor › Theme: Overleaf (the default), TeXstudio and System, each Light and Dark.
-Every theme has five colours, one per highlight kind (`theme_colors` answers them in the kinds'
-order). Text, braces and brackets, and what `\verb` and the verbatim environments hold, are plain;
-nothing is bold or italic.
+Settings › Editor › Theme: Overleaf (Windows' default), TeXstudio and System (the Mac's), each
+Light and Dark. Every theme has five colours, one per highlight kind (`theme_colors` answers them
+in the kinds' order). Text, braces and brackets, and what `\verb` and the verbatim environments
+hold, are plain; nothing is bold or italic.
 
 | Kind | Overleaf | TeXstudio | System |
 | --- | --- | --- | --- |

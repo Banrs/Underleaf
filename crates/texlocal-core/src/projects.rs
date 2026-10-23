@@ -1,6 +1,7 @@
 //! Project and file management over the modules below; all returned paths use forward slashes.
 
 mod files;
+mod history;
 mod library;
 mod opened;
 mod search;
@@ -17,6 +18,7 @@ use crate::error::CoreError;
 
 pub(crate) use files::{Trash, copy_paths, discard, discard_replaced, write_creating};
 pub use files::{create_free, rename_entry};
+pub(crate) use history::{History, Taken, put_back};
 pub use library::{
     ProjectInfo, create_project, free_project_name, list_projects, locate, rename_project,
 };

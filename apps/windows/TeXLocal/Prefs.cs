@@ -4,6 +4,8 @@ using Windows.Foundation.Collections;
 
 namespace TeXLocal;
 
+public enum PageColour { White, Dark, App }
+
 /// The host's preferences, typed, in LocalSettings (the registry, under HKCU\Software\Classes\Local Settings\Software\TeXLocal)
 /// until the core keeps validated shared ones; a run on a scratch library (TEXLOCAL_DATA) keeps its own, as "TeXLocal Dev".
 /// Settings › Editor's six raise EditorChanged.
@@ -18,7 +20,13 @@ public static unsafe partial class Prefs
     public static double IssuesHeight { get => Get("issuesHeight", 200.0); set => values["issuesHeight"] = value; }
     public static bool AutoCompile { get => Get("autoCompile", true); set => values["autoCompile"] = value; }
     public static bool SyncAfterCompile { get => Get("syncAfterCompile", false); set => values["syncAfterCompile"] = value; }
+    /// The catalogue's id of the engine a new project starts with; "" for the core's default.
+    public static string Engine { get => Get("engine", ""); set => values["engine"] = value; }
+    /// The project open as the app last closed, which the next launch opens again; "" for Home.
+    internal static string LastProject { get => Get("lastProject", ""); set => values["lastProject"] = value; }
     internal static int Theme { get => Get("theme", 0); set => values["theme"] = value; }
+    /// Settings › PDF's, which the PDF reads as it's shown again: Settings is a page over the workspace.
+    internal static PageColour PageColour { get => (PageColour)Get("pageColour", 0); set => values["pageColour"] = (int)value; }
     internal static string Bounds { get => Get("bounds", ""); set => values["bounds"] = value; }
     internal static bool Maximized { get => Get("maximized", false); set => values["maximized"] = value; }
 

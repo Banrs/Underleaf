@@ -45,6 +45,7 @@ impl SourceDocument {
             "math_at" => json(self.math_at(caret()?)),
             "text_styles" => json(self.text_styles(selection()?)),
             "code_ranges" => json(self.code_ranges(selection()?, get(a, "for")?)),
+            "words" => json(json!({ "words": self.words(TextRange::deserialize(a).ok()?) })),
             "type" => json(self.type_text(selection()?, &string("text")?, auto_pair()?)),
             "delete_backward" => json(self.delete_backward(selection()?, auto_pair()?)),
             "insert_newline" => json(self.insert_newline(selection()?)),
@@ -56,6 +57,8 @@ impl SourceDocument {
             "end_snippet" => json(self.end_snippet()),
             "tab" => json(self.tab(&selections()?, optional(a, "step", 1)?)),
             "move_lines" => json(self.move_lines(&selections()?, get(a, "up")?)),
+            "duplicate_lines" => json(self.duplicate_lines(&selections()?)),
+            "delete_lines" => json(self.delete_lines(&selections()?)),
             "toggle_style" => json(self.toggle_style(&selections()?, get(a, "style")?)),
             "wrap" => json(self.wrap(&selections()?, &string("template")?)),
             "map_selections" => json(map_selections(

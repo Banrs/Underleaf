@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::scan::{blank_line, closing_brace};
 use super::{
-    Insertion, Line, SourceDocument, Text, TextEdit, TextRange, catalog, clamp, comment_start,
-    complete, edit, indentation, is, span, splice, utf16,
+    INDENT, Insertion, Line, NEWLINE, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
+    comment_start, complete, edit, indentation, is, span, splice, utf16,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -41,6 +41,18 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
         lines.extend(text.line_index(from)..=text.line_index(end));
     }
     lines
+}
+
+/// The touched lines in runs of consecutive ones, each its first and last.
+fn runs(text: &Text, selections: &[TextRange]) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for line in touched_lines(text, selections) {
+        match runs.last_mut() {
+            Some(run) if line == run.1 + 1 => run.1 = line,
+            _ => runs.push((line, line)),
+        }
+    }
+    runs
 }
 
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
@@ -78,7 +90,7 @@ impl SourceDocument {
             .filter_map(|l| {
                 let start = text.lines[l];
                 if more {
-                    return Some(edit(start, 0, "  "));
+                    return Some(edit(start, 0, INDENT));
                 }
                 let line = text.line(l);
                 let indent = &line[..indentation(line)];
@@ -166,8 +178,20 @@ impl SourceDocument {
         let before = &text.units[text.lines[line] as usize..selection.start as usize];
         // After text, a line feed first; the template ends with its own.
         let newline = if blank_line(before) { "" } else { "\n" };
-        let (block, fields) =
+        let (mut block, mut fields) =
             complete::expand(text, selection.start, &format!("{newline}{template}"));
+        // Text the block is made over goes in, not away: a list of the selected line is that
+        // line as its item.
+        if let Some((first, rest)) = fields.split_first_mut().filter(|_| selection.length > 0) {
+            let (start, end) = selection.bounds();
+            let mut units: Vec<u16> = block.encode_utf16().collect();
+            let at = first.start as usize;
+            units.splice(at..at, text.units[start..end].iter().copied());
+            block = String::from_utf16_lossy(&units);
+            first.length = selection.length;
+            rest.iter_mut()
+                .for_each(|field| field.start += selection.length);
+        }
         Some(Insertion {
             caret: selection.start + fields.first().map_or(utf16(&block) as u32, |f| f.start),
             edit: edit(selection.start, selection.length, block),
@@ -179,9 +203,7 @@ impl SourceDocument {
     pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
         let at = selection.start as usize;
-        let mut scanner = self.scans.resume(&self.text, at, at).scanner;
-        scanner.run(&self.text.units[..at], at, &[], &mut ());
-        let text = if scanner.in_math() {
+        let text = if self.scanned_to(at).in_math() {
             command.to_string()
         } else {
             format!("${command}$")
@@ -197,16 +219,9 @@ impl SourceDocument {
     pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
         let text = &self.text;
         let (units, len) = (&text.units[..], text.units.len());
-        let mut runs: Vec<(usize, usize)> = Vec::new();
-        for line in touched_lines(text, selections) {
-            match runs.last_mut() {
-                Some(run) if line == run.1 + 1 => run.1 = line,
-                _ => runs.push((line, line)),
-            }
-        }
         let mut edits = Vec::new();
         let mut moves = Vec::new();
-        for (first, last) in runs {
+        for (first, last) in runs(text, selections) {
             let (start, end) = (text.bounds(first).start, text.bounds(last).next);
             if end == start || (if up { first == 0 } else { end >= len }) {
                 return None;
@@ -255,6 +270,47 @@ impl SourceDocument {
             })
             .collect();
         Some(Change { edits, selections })
+    }
+
+    /// The copy goes above, so the selections, moved down with the lines, are on the copy.
+    pub fn duplicate_lines(&self, selections: &[TextRange]) -> Change {
+        let text = &self.text;
+        let edits: Vec<TextEdit> = runs(text, selections)
+            .into_iter()
+            .map(|(first, last)| {
+                let start = text.bounds(first).start;
+                let Line { end, next, .. } = text.bounds(last);
+                let mut copy = text.units[start..next].to_vec();
+                // The text's last line has no break of its own: the line before lends its.
+                if end == next {
+                    let before = last.checked_sub(1).map(|line| text.bounds(line));
+                    copy.extend(before.map_or(&[NEWLINE][..], |b| &text.units[b.end..b.next]));
+                }
+                splice(start, 0, String::from_utf16_lossy(&copy))
+            })
+            .collect();
+        Change {
+            selections: map_selections(&edits, selections),
+            edits,
+        }
+    }
+
+    /// The caret goes to the line after, or to the end of the line before when none is after.
+    pub fn delete_lines(&self, selections: &[TextRange]) -> Change {
+        let text = &self.text;
+        let edits: Vec<TextEdit> = runs(text, selections)
+            .into_iter()
+            .map(|(first, last)| {
+                let (mut start, next) = (text.bounds(first).start, text.bounds(last).next);
+                if next == text.units.len() && first > 0 {
+                    start = text.bounds(first - 1).end;
+                }
+                splice(start, next - start, "")
+            })
+            .collect();
+        let mut selections = map_selections(&edits, selections);
+        selections.dedup();
+        Change { edits, selections }
     }
 
     pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
