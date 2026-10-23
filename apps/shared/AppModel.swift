@@ -324,6 +324,8 @@ final class AppModel {
         if opening.project.opened {
             #if os(iOS)
             kept = true
+            // One hold per folder, let go when it leaves the list.
+            if scoped { held.updateValue(url, forKey: opening.project.id)?.stopAccessingSecurityScopedResource() }
             // The chosen URL's, which carries its access to the next launch.
             bookmarks[opening.project.id] = try? url.bookmarkData()
             #else
@@ -332,6 +334,10 @@ final class AppModel {
         }
         return opening
     }
+
+    #if os(iOS)
+    @ObservationIgnored private var held: [String: URL] = [:]
+    #endif
 
     /// They find an opened folder again after a move: plain on the Mac, which isn't sandboxed; on the iPad, the way back
     /// into a folder from Files, which reads as missing at each launch until its bookmark is followed.
@@ -366,6 +372,9 @@ final class AppModel {
         if forgotten != nil {
             bookmarks[project.id] = nil
             recentProjects.removeAll { $0 == project.id }
+            #if os(iOS)
+            held.removeValue(forKey: project.id)?.stopAccessingSecurityScopedResource()
+            #endif
         }
         await refresh()
     }

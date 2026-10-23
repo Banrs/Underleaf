@@ -151,7 +151,10 @@ private struct BuildOptionItems: View {
 
     var body: some View {
         let project = app.commandProject
+        // iPadOS lets an app start no programs.
+        #if os(macOS)
         option("Shell Escape", project, \.shellEscape, SettingsChange.shellEscape)
+        #endif
         option("Stop on First Error", project, \.stopOnFirstError, SettingsChange.stopOnFirstError)
     }
 

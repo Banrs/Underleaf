@@ -23,10 +23,6 @@ struct TeXLocalApp: App {
             AppCommands(app: app)
             // Beneath iPadOS's own Settings item and its ⌘,, which open the app's page in the Settings app.
             CommandGroup(after: .appSettings) { Button("App Settings…") { settingsShown = true } }
-            CommandGroup(replacing: .help) {
-                Link("Visit TeXLocal on GitHub", destination: Links.repository)
-                Link("Report Issue", destination: Links.issues)
-            }
         }
     }
 }

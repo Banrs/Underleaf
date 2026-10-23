@@ -332,8 +332,8 @@ private struct PDFPane: View {
     }
 }
 
-/// Two panes and the line between them, which a finger drags from a 44 pt band: it stops at the even split, with the
-/// alignment haptic, as the Mac's divider does. One pane alone takes the width, the other kept at none.
+/// Two panes and the line between them, which a finger drags sideways from a 44 pt band: it stops at the even split, with
+/// the alignment haptic, as the Mac's divider does. One pane alone takes the width, the other kept at none.
 private struct SplitPanes<Leading: View, Trailing: View>: View {
     enum Shown { case leading, trailing, both }
 
@@ -360,30 +360,71 @@ private struct SplitPanes<Leading: View, Trailing: View>: View {
                 trailing.frame(maxWidth: .infinity).hidden(share == 1)
             }
             .overlay(alignment: .leading) {
-                if shown == .both { divider(at: total * share, total: total, limit: limit) }
+                if shown == .both {
+                    Color.clear
+                        .frame(width: 44)
+                        .offset(x: total * share - 22)
+                        .accessibilityRepresentation {
+                            Slider(value: $fraction, in: limit...(1 - limit)) { Text("Source and PDF Divider") }
+                        }
+                }
             }
-            .sensoryFeedback(.alignment, trigger: snapped) { _, now in now }
-        }
-    }
-
-    private func divider(at x: CGFloat, total: CGFloat, limit: Double) -> some View {
-        Color.clear
-            .frame(width: 44)
-            .contentShape(.rect)
-            .hoverEffect(.highlight)
-            .offset(x: x - 22)
-            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { drag in
+            .gesture(DividerPan(x: shown == .both ? total * share : nil) { moved in
+                guard let moved else { start = nil; return }
                 let from = start ?? fraction
                 start = from
-                var next = min(max(from + drag.translation.width / total, limit), 1 - limit)
+                var next = min(max(from + moved / total, limit), 1 - limit)
                 let even = abs(next - 0.5) * total < 12
                 if even { next = 0.5 }
                 snapped = even
                 fraction = next
-            }.onEnded { _ in start = nil })
-            .accessibilityRepresentation {
-                Slider(value: $fraction, in: limit...(1 - limit)) { Text("Source and PDF Divider") }
-            }
+            })
+            .sensoryFeedback(.alignment, trigger: snapped) { _, now in now }
+        }
+    }
+}
+
+/// A pan across the divider's band that begins only sideways, so taps, scrolls and selections there stay the panes'.
+private struct DividerPan: UIGestureRecognizerRepresentable {
+    let x: CGFloat?
+    /// The distance dragged, then nil at the end.
+    let moved: (CGFloat?) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Band { Band(converter: converter) }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) { context.coordinator.x = x }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        switch recognizer.state {
+        case .changed: moved(context.converter.localTranslation?.x ?? 0)
+        case .ended, .cancelled: moved(nil)
+        default: break
+        }
+    }
+
+    final class Band: NSObject, UIGestureRecognizerDelegate {
+        let converter: CoordinateSpaceConverter
+        var x: CGFloat?
+
+        init(converter: CoordinateSpaceConverter) { self.converter = converter }
+
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let x, let velocity = converter.localVelocity else { return false }
+            let start = converter.localLocation.x - (converter.localTranslation?.x ?? 0)
+            return abs(start - x) <= 22 && abs(velocity.x) > abs(velocity.y)
+        }
+
+        // A pane's scrolling waits for the band, which decides as soon as the finger moves; nothing that waits for a
+        // still finger, such as selection's long press, does.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            (other.view as? UIScrollView)?.panGestureRecognizer === other
+        }
     }
 }
 
