@@ -1022,8 +1022,8 @@ impl Actor {
     fn replace(&self, args: &Value) -> Result<Value, CoreError> {
         let (query, to) = (query(args)?, string_arg(args, "replacement")?);
         let open = self.texts_to_edit("replaced")?;
-        self.snapshot_before("Before Replace All")?;
-        self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
+        let found = |_: &str, text: &str| query.places(text);
+        self.edit_project("Before Replace All", &open, &projects::is_text, &found, to)
     }
 
     /// Where the project defines or uses the name at `offset` in the open document `path`, as
@@ -1102,12 +1102,11 @@ impl Actor {
                 "A {noun} “{to}” exists already."
             )));
         }
-        self.snapshot_before("Before Rename")?;
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
             syntax::usages(&facts, rel, kind, from, |_| None)
         };
-        self.edit_project(&open, &tex, &found, to)
+        self.edit_project("Before Rename", &open, &tex, &found, to)
     }
 
     /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
@@ -1148,14 +1147,14 @@ impl Actor {
         // As the disk spells it, which the walk compares, however the settings do.
         let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
-        self.snapshot_before("Before Adding a Package")?;
         let found = |_: &str, text: &str| {
             let facts = Facts::read(text, "tex");
             let loaded = facts.packages.iter().any(|package| package == name);
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
         let line = format!("\n\\usepackage{{{name}}}");
-        self.edit_project(&open, &|rel| Some(rel) == main, &found, &line)
+        let main = |rel: &str| Some(rel) == main;
+        self.edit_project("Before Adding a Package", &open, &main, &found, &line)
     }
 
     /// The open documents' paths, text and versions, unless one has a change on disk still to
@@ -1178,12 +1177,14 @@ impl Actor {
     }
 
     /// `to` in place of what `found` finds in each file `chosen` takes, given its text with line
-    /// feeds alone. An open document isn't written: its edits are answered against its version,
-    /// for the host to apply as one edit that the session saves as any other, and the answer
-    /// holds one document's. The other files are read again, written and counted under the
-    /// project's lock, but for those on their way to the Trash.
+    /// feeds alone, after a snapshot taken for `reason`. An open document isn't written: its edits
+    /// are answered against its version, for the host to apply as one edit that the session saves
+    /// as any other, and the answer holds one document's. The other files are read again, written
+    /// and counted under the project's lock, but for those on their way to the Trash. The
+    /// snapshot's id is answered, for a host that can't apply the edits to put the others back.
     fn edit_project(
         &self,
+        reason: &'static str,
         open: &[(String, String, u64)],
         chosen: &dyn Fn(&str) -> bool,
         found: &dyn Fn(&str, &str) -> Vec<Place>,
@@ -1206,11 +1207,12 @@ impl Actor {
         if edits.len() > 1 {
             return Err(CoreError::conflict(ONE_DOCUMENT));
         }
+        let snapshot = self.snapshot_before(reason)?;
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
         let written = self.service.with_project(&self.project_id, |project| {
             projects::replace_in_files(&project.root, &others, found, to)
         })?;
-        Ok(json!({ "edits": edits.pop(), "written": written }))
+        Ok(json!({ "edits": edits.pop(), "written": written, "snapshot": snapshot }))
     }
 
     // MARK: - Files

@@ -31,9 +31,10 @@ impl Actor {
         tokio::task::spawn_blocking(move || lock(&history).take(now(), Taken::Auto));
     }
 
-    /// On the session's task, as the change waits for it.
-    pub fn snapshot_before(&self, reason: &'static str) -> Result<(), CoreError> {
-        lock(&self.history).take(now(), Taken::Before(reason))
+    /// On the session's task, as the change waits for it: its id.
+    pub fn snapshot_before(&self, reason: &'static str) -> Result<Option<String>, CoreError> {
+        let taken = lock(&self.history).take(now(), Taken::Before(reason))?;
+        Ok(taken.map(|id| id.to_string()))
     }
 
     /// List, save and compare, which read the store but change no file of the project's.

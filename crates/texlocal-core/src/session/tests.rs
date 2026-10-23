@@ -1549,8 +1549,18 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
         "written": [{ "file": "ch.tex", "count": 2 }],
     });
-    assert_eq!(replace().await.unwrap(), answer);
+    let mut answered = replace().await.unwrap();
+    let snapshot = answered
+        .as_object_mut()
+        .unwrap()
+        .remove("snapshot")
+        .unwrap();
+    assert_eq!(answered, answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
+    // As a host whose editor was typed in since puts back the rest, not to leave it half replaced.
+    let restore = json!({ "id": snapshot, "paths": ["ch.tex"] });
+    rig.ok("history_restore", restore).await;
+    assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
 }
 
 /// A label's definition and each reference to it, the open document's as the editor has it, but
@@ -1604,7 +1614,8 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     for (from, to, status) in refusals {
         assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
     }
-    let renamed = rename("knuth", "knuth84").await.unwrap();
+    let mut renamed = rename("knuth", "knuth84").await.unwrap();
+    renamed.as_object_mut().unwrap().remove("snapshot");
     let edit = json!({ "start": 14, "length": 5, "text": "knuth84" });
     let answer = json!({
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },

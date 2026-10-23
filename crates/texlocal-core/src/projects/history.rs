@@ -135,20 +135,20 @@ impl History {
         Ok(files)
     }
 
-    /// One taken as `taken` says, then the history pruned. A record that can't be read is passed
-    /// over, as it is by the list.
-    pub fn take(&self, now: i64, taken: Taken) -> Result<(), CoreError> {
+    /// One taken as `taken` says, then the history pruned: its id, or None when an automatic one
+    /// isn't needed. A record that can't be read is passed over, as it is by the list.
+    pub fn take(&self, now: i64, taken: Taken) -> Result<Option<i64>, CoreError> {
         let ids = self.ids()?;
         let latest = ids.iter().find_map(|&id| Some((id, self.read(id).ok()?)));
         let recent = |(id, _): &(i64, Snapshot)| now - id <= 10 * MINUTE;
         if matches!(taken, Taken::Auto) && latest.as_ref().is_some_and(recent) {
-            return Ok(());
+            return Ok(None);
         }
         let files = self.files_now()?;
         let next = ids.first().map_or(now, |id| now.max(id + 1));
         let unchanged = latest.filter(|(_, last)| last.files == files);
         let (id, snapshot) = match (taken, unchanged) {
-            (Taken::Auto, Some(_)) => return Ok(()),
+            (Taken::Auto, Some(_)) => return Ok(None),
             (Taken::Named(name), Some((id, last))) => (
                 id,
                 Snapshot {
@@ -172,7 +172,7 @@ impl History {
         };
         self.write(id, &snapshot)?;
         self.prune(now);
-        Ok(())
+        Ok(Some(id))
     }
 
     /// Named snapshots stay; of the others, all from the last day, the last of each hour for a
