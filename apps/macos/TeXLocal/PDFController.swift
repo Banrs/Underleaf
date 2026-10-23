@@ -10,10 +10,10 @@ final class PDFController: NSObject {
 
     @ObservationIgnored let view = SyncPDFView()
     let find: PDFFind
-    private(set) var page = 0
-    private(set) var pageCount = 0
+    var page = 0
+    var pageCount = 0
     private(set) var scale: CGFloat = 1
-    private(set) var zoom = Zoom.fitWidth
+    var zoom = Zoom.fitWidth
     var zoomLabel: String { Self.label(scale) }
     var widestZoomLabel: String { Self.label(Self.maxScale) }
     var canZoomIn: Bool { scale < Self.maxScale }
@@ -23,7 +23,7 @@ final class PDFController: NSObject {
     @ObservationIgnored var restorePage: Int?
     @ObservationIgnored var restoreZoom: Zoom?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
-    @ObservationIgnored private var toldPages: ClosedRange<Int>?
+    @ObservationIgnored var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
     /// PDFKit keeps every replaced page's objects for its document's life (27.2): past this footprint the next is shown whole.
     @ObservationIgnored var wholeAt = UInt64.max
@@ -72,24 +72,6 @@ final class PDFController: NSObject {
         scrolling = NotificationCenter.default.addObserver(of: scrollView.contentView, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
 
-    @objc func pageChanged() {
-        guard let document = view.document, let page = view.currentPage else { return }
-        if let number = document.number(of: page) { self.page = number }
-        pageCount = document.pageCount
-    }
-
-    var visiblePages: ClosedRange<Int>? {
-        guard let document = view.document, view.hasShownArea else { return nil }
-        let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
-        return shown.min().flatMap { first in shown.max().map { first...$0 } }
-    }
-
-    @objc private func visiblePagesChanged() {
-        guard let pages = visiblePages, pages != toldPages else { return }
-        toldPages = pages
-        onVisiblePages(pages)
-    }
-
     @objc private func scaleChanged() {
         if view.liveScaleChanged { dropLive() }
         guard view.document != nil, view.hasShownArea else { return }
@@ -110,14 +92,6 @@ final class PDFController: NSObject {
         return min(view.shownHeight / (pageHeight + margins.top + margins.bottom), view.scaleFactorForSizeToFit)
     }
 
-    func apply(_ zoom: Zoom) {
-        switch zoom {
-        case .fitWidth: fitWidth()
-        case .fitPage: fitPage()
-        case .scale(let scale): setScale(CGFloat(scale))
-        }
-    }
-
     /// Off the fit at once; the new scale comes with PDFKit's change.
     func setScale(_ scale: CGFloat) {
         zoom = .scale(Double(self.scale))
@@ -128,15 +102,6 @@ final class PDFController: NSObject {
     func zoom(in zoomIn: Bool) {
         zoom = .scale(Double(scale))
         if zoomIn { view.zoomIn(nil) } else { view.zoomOut(nil) }
-    }
-
-    func go(toPage number: Int) {
-        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
-    }
-
-    func fitWidth() {
-        zoom = .fitWidth
-        view.autoScales = true
     }
 
     /// The fit after the scale, whose change ends a fit.
@@ -228,12 +193,5 @@ final class PDFController: NSObject {
         find.reset()
         view.document = nil
         (page, pageCount) = (0, 0)
-    }
-
-    /// The zoom before the page: where a page lands depends on the scale.
-    private func restoreIfReady() {
-        guard view.document != nil, view.hasShownArea else { return }
-        if let zoom = restoreZoom.take() { apply(zoom) }
-        if let number = restorePage.take() { go(toPage: number) }
     }
 }

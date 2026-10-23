@@ -15,8 +15,8 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
         return view
     }
 
-    /// A project session's document, whose edits it saves and previews, or the view's own.
-    private(set) var document = SourceDocument(text: "")
+    /// A project session's document, whose edits it saves and previews, or the view's own (`load`).
+    var document = SourceDocument(text: "")
     /// The storage's UTF-16 units in place: `text` bridges the whole text on every call.
     var source: NSString { textStorage.mutableString }
     var length: Int { textStorage.length }
@@ -33,20 +33,7 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     var undo = UndoManager()
     override var undoManager: UndoManager? { undo }
 
-    /// `source` is the session's document holding `text`.
-    func load(_ text: String, source: SourceDocument? = nil) {
-        // First: colours and line numbers read the storage against it.
-        document = source ?? SourceDocument(text: text)
-        show(text)
-    }
-
-    /// The disk's text, from the session's `document_reload`: shown without an edit.
-    func reload(_ text: String) {
-        document.reload(text)
-        show(text)
-    }
-
-    private func show(_ text: String) {
+    func show(_ text: String) {
         loading = true
         unmarkText()
         fragments.removeAll(keepingCapacity: true)
@@ -79,12 +66,6 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
         changing = nil
         // After the edit: a layout change mid-edit would lay out stale text.
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
-    }
-
-    /// The core's edits, and the selections after them. False for none.
-    @discardableResult
-    func apply(_ change: Change?, named name: String) -> Bool {
-        apply(change?.edits ?? [], named: name, selecting: change?.selections.map(\.range))
     }
 
     /// One undo step; the selections follow the edits unless `selecting` is given. False for none.
@@ -223,25 +204,24 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     // MARK: what is drawn under and over the text
 
     var gutter = EditorGutter()
-    /// The fragments TextKit last laid out in the viewport, by offset (+Viewport).
+    /// The current line, issues' bands, the partner and the line numbers, under the text (+Gutter).
+    let underlay = Underlay()
+    let gutterControl = GutterControl()
+    /// The fragments TextKit last laid out in the viewport, by offset (+Layout).
     var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
     /// Each time TextKit lays out the viewport.
     var laidOut: () -> Void = {}
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
     private(set) lazy var issues = IssueOverlay(in: self)
-    var issueClicked: (Int) -> Void = { _ in }
     var syntaxTheme = SyntaxTheme.system {
         didSet { if syntaxTheme != oldValue { fragmentColours.removeAllObjects(); colour(from: 0) } }
     }
     /// From where the text is to be coloured again at the viewport's next layout.
     var staleColours: Int?
-    /// The runs each fragment was last coloured with: a pass redraws only the fragments whose runs changed (+Colours).
+    /// The runs each fragment was last coloured with: a pass redraws only the fragments whose runs changed (+Layout).
     let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
     /// The bracket partner, or what `reveal` found, filled until the selection next changes (+Colours).
     var marked: (range: NSRange, found: Bool)?
-    /// The current line, issues' bands, the partner and the line numbers, under the text (+Gutter).
-    let underlay = Underlay()
-    let gutterControl = GutterControl()
     let gestures = EditorGestures()
     /// The prose's misspelt words (+Spelling).
     let spelling = Spelling()
@@ -250,7 +230,10 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     // MARK: the selection
 
     var caret: Int { selectedRange.location }
-    var selection: NSRange { selectedRange }
+    var selection: NSRange {
+        get { selectedRange }
+        set { selectedRange = newValue }
+    }
     var selections: [NSRange] { selectedRanges }
     func hasMarkedText() -> Bool { markedTextRange != nil }
 
@@ -287,23 +270,6 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     /// Whether the text has the window's keyboard, told as it takes and gives it up.
     var keyboardChanged: (Bool) -> Void = { _ in }
 
-    override func becomeFirstResponder() -> Bool {
-        defer { Task { self.previewMath() } }
-        guard super.becomeFirstResponder() else { return false }
-        keyboardChanged(true)
-        return true
-    }
-
-    override func resignFirstResponder() -> Bool {
-        defer {
-            mathCallout.close()
-            completions.close()
-        }
-        guard super.resignFirstResponder() else { return false }
-        keyboardChanged(false)
-        return true
-    }
-
     private var keyWatches: [any NSObjectProtocol] = []
     /// Asked before the view had a window, where taking the keyboard would loop UIKit's layout.
     private var focusWhenInWindow = false
@@ -331,35 +297,23 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
         if !isFirstResponder, GCKeyboard.coalesced != nil { _ = becomeFirstResponder() }
     }
 
-    private func keyChanged() {
-        if !hasKeyboard { completions.close() }
-        previewMath()
-    }
-
     var hasKeyboard: Bool { window?.isKeyWindow == true && isFirstResponder }
 
     // MARK: the maths preview
 
-    private(set) lazy var mathCallout = MathCallout(for: self)
+    private(set) lazy var mathPreview = MathCallout(for: self)
     /// Until the next edit.
-    private var lastMath: (caret: Int, value: MathPreview?)?
-    private var dismissedMath: Int?
-
-    private func math(at caret: Int) -> MathPreview? {
-        if let lastMath, lastMath.caret == caret { return lastMath.value }
-        let value = document.mathAt(caret: caret)
-        lastMath = (caret, value)
-        return value
-    }
+    var lastMath: (caret: Int, value: MathPreview?)?
+    var dismissedMath: Int?
 
     func previewMath() {
         // Escape's dismissal lasts while the caret is in that maths.
         let maths = loading ? nil : math(at: caret)
         if maths?.start != dismissedMath { dismissedMath = nil }
-        guard hasKeyboard, let maths, dismissedMath == nil else { return mathCallout.close() }
+        guard hasKeyboard, let maths, dismissedMath == nil else { return mathPreview.close() }
         let rect = caretRect(at: caret)
-        guard shownRect.contains(CGPoint(x: rect.minX, y: rect.midY)) else { return mathCallout.close() }
-        mathCallout.show(maths, size: fontSize, at: rect, avoiding: completions.offered != nil && completions.isAbove)
+        guard shownRect.contains(CGPoint(x: rect.minX, y: rect.midY)) else { return mathPreview.close() }
+        mathPreview.show(maths, size: fontSize, at: rect, avoiding: completions.offered != nil && completions.isAbove)
     }
 
     // MARK: typing: the core's brackets, indentation and snippet fields
@@ -367,19 +321,13 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     var autoPair = true, autoComplete = true
     /// Told as marked (IME) text comes and goes: the session's autosave waits for it to be committed.
     var composing: (Bool) -> Void = { _ in }
-    private var toldComposing = false
+    var toldComposing = false
     /// A key's edit is going in: the selection it moves keeps the completion list.
     private var typing = false
 
     /// What marked text took the place of, from its start until it's committed.
     private var composedOver: String?
     private var run: TypingRun?
-
-    private func markedTextChanged() {
-        guard hasMarkedText() != toldComposing else { return }
-        toldComposing.toggle()
-        composing(toldComposing)
-    }
 
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         if !hasMarkedText() { composedOver = source.substring(with: self.selectedRange) }
@@ -425,16 +373,6 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
             type(TextEdit(selectedRange, text))
         }
         finish(stroke)
-    }
-
-    private func finish(_ stroke: Keystroke) {
-        if let selection = stroke.selection { selectedRange = selection.range }
-        if let partner = stroke.partner { showPartner(of: partner) }
-        switch stroke.completions {
-        case .keep: break
-        case .offer: completions.offer()
-        case .close: completions.close()
-        }
     }
 
     override func deleteBackward() {
@@ -510,35 +448,6 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
         apply(edits, named: String(localized: "Replace All"))
     }
 
-    /// A snippet's next field, or the lines indented.
-    func tab(_ step: Int) {
-        let answer = document.tab(selections, step: step)
-        if let field = answer.field { return selectedRange = field.range }
-        apply(answer.edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
-    }
-
-    /// Shift Right and Shift Left: the lines, even from within a snippet's field, which Tab would leave for the next.
-    func shiftLines(_ step: Int) {
-        guard isEditable else { return }
-        _ = document.endSnippet()
-        tab(step)
-    }
-
-    /// Escape: the completion list closes, the snippet's fields are left, the maths preview is dismissed, or else the
-    /// completions are offered, as on the Mac.
-    func cancel() {
-        if completions.offered != nil {
-            completions.close()
-        } else if document.endSnippet() {
-            // Escape leaves the snippet's fields.
-        } else if mathCallout.isWanted, let maths = math(at: caret) {
-            dismissedMath = maths.start
-            mathCallout.close()
-        } else {
-            completions.complete(explicit: true)
-        }
-    }
-
     // MARK: completion
 
     private(set) lazy var completions = CompletionList(for: self)
@@ -549,28 +458,7 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     private var mirroring = false
     private var mirrorEdits: [TextEdit] = []
 
-    /// One undo step with the caret at the insertion's, then its snippet's first field selected. False for none.
-    @discardableResult
-    func insert(_ insertion: Insertion?, named name: String) -> Bool {
-        guard let insertion else { return false }
-        apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
-        if let first = document.startSnippet(insertion.fields, at: insertion.edit.start) { selectedRange = first }
-        return true
-    }
-
     // MARK: offsets
-
-    func offset(_ location: any NSTextLocation) -> Int {
-        guard let storage = textLayoutManager?.textContentManager else { return 0 }
-        return storage.offset(from: storage.documentRange.location, to: location)
-    }
-
-    func textRange(_ range: NSRange) -> NSTextRange? {
-        guard let storage = textLayoutManager?.textContentManager,
-              let start = storage.location(storage.documentRange.location, offsetBy: range.location),
-              let end = storage.location(start, offsetBy: range.length) else { return nil }
-        return NSTextRange(location: start, end: end)
-    }
 
     func range(_ range: UITextRange) -> NSRange {
         NSRange(location: offset(from: beginningOfDocument, to: range.start), length: offset(from: range.start, to: range.end))

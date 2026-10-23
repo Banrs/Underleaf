@@ -34,24 +34,6 @@ extension SourceTextView {
 
     override var textContainerOrigin: NSPoint { NSPoint(x: gutter.width, y: textContainerInset.height) }
 
-    var currentLine: (number: Int, rect: NSRect)? {
-        let selection = selectedRange(), length = text.length
-        guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }
-        let end = offset(entry.fragment.rangeInElement.endLocation)
-        guard selection.location < end || end == length else { return nil }
-        let lines = entry.fragment.lines(extra: selection.location == length)
-        return (document.line(at: selection.location), band(lines, of: entry.fragment))
-    }
-
-    /// The current line's or an issue's band over these lines, on the display's pixels.
-    func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> NSRect {
-        let frame = fragment.layoutFragmentFrame
-        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
-        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
-        return NSRect(x: EditorGutter.bandStart, y: top, width: bounds.width - EditorGutter.bandStart - EditorGutter.trailingMargin,
-                      height: bottom - top)
-    }
-
     func onPixels(_ y: CGFloat) -> CGFloat {
         let scale = window?.backingScaleFactor ?? 2
         return (y * scale).rounded() / scale
@@ -69,25 +51,5 @@ extension SourceTextView {
         guard let current, current.rect.intersects(rect) else { return }
         NSColor.secondarySystemFill.setFill()
         NSBezierPath(roundedRect: current.rect, xRadius: 4, yRadius: 4).fill()
-    }
-
-    func drawNumbers(in rect: NSRect, current: Int?) {
-        guard rect.minX < gutter.numbersEnd + 4, showsLineNumbers, let context = NSGraphicsContext.current?.cgContext else { return }
-        context.saveGState()
-        defer { context.restoreGState() }
-        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        for (offset, fragment) in fragments {
-            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textContainerOrigin.y)
-            guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
-            let lineNumber = document.line(at: offset)
-            func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
-                (lineNumber == current ? .labelColor : EditorGutter.numberColor).setFill()
-                let number = gutter.number(lineNumber)
-                context.textPosition = CGPoint(x: gutter.numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
-                CTLineDraw(number.line, context)
-            }
-            draw(lineNumber, on: line)
-            if let extra = fragment.extraLine { draw(lineNumber + 1, on: extra) }
-        }
     }
 }

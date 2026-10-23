@@ -235,7 +235,7 @@ final class ProjectModel {
             findHeadings()
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
-        editor.textView.issueClicked = { [weak self] line in
+        editor.textView.issues.clicked = { [weak self] line in
             guard let self else { return }
             if let index = editor.textView.issues.lines[line]?.index {
                 panel.show(.issues)

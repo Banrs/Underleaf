@@ -484,7 +484,7 @@ struct SourceEditorTests {
         try await waitUntilColoured("]", theme.color(.maths))
         text.undoManager?.undo()
         try await waitUntilColoured("]", theme.color(.invalid))
-        text.setSelectedRange(.caret(text.text.length))
+        text.setSelectedRange(.caret(text.length))
         type("\n\\section")
         try await waitUntilColoured("\\section", theme.color(.command))
     }
@@ -542,7 +542,7 @@ struct SourceEditorTests {
         text.layoutSubtreeIfNeeded()
         show(issue(2, "Missing $ inserted"))
         var asked: [Int] = []
-        text.issueClicked = { asked.append($0) }
+        text.issues.clicked = { asked.append($0) }
         func click(line: Int, shift: Bool = false) throws {
             let glyph = text.firstRect(forCharacterRange: NSRange(location: text.document.lineStart(line), length: 1), actualRange: nil)
             let inText = window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY))
@@ -656,7 +656,7 @@ struct SourceEditorTests {
         show(issue(2, "Missing $ inserted"))
         try layOut()
         var asked: [Int] = []
-        text.issueClicked = { asked.append($0) }
+        text.issues.clicked = { asked.append($0) }
         let message = try #require(text.issues.rows.first?.message).rect
         // In the window's coordinates.
         func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint { text.convert(NSPoint(x: x, y: y), to: nil) }
