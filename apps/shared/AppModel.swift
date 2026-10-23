@@ -348,8 +348,9 @@ final class AppModel {
               let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale)
         else { return false }
         #if os(iOS)
-        // Held while the folder is listed, as openPath holds a newly chosen one's.
-        _ = url.startAccessingSecurityScopedResource()
+        // Only to look at it, as refresh comes here for a missing folder each time; openPath holds the folder it opens.
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         #endif
         guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return false }
         try? FileManager.default.getRelationship(&trashed, of: .trashDirectory, in: .userDomainMask, toItemAt: url)

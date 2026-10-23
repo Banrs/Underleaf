@@ -108,6 +108,9 @@ extension ProjectModel {
     }
 
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
+        // On iPadOS a file from Files, iCloud Drive or another app can be read only while its URL's access is held.
+        let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
+        defer { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
         let args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }, "conflict": conflict]
         do {
             let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
