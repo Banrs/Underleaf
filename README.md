@@ -56,9 +56,9 @@ citation everywhere, and see what a citation, reference or command is without le
 can also open a file, section or label by typing a few letters of its name, and go back to where
 you jumped from.
 
-Each project keeps a history on your computer that you can compare files with and restore from,
-taken every ten minutes or so while you work and before a change across files such as Replace All.
-A version stays for 90 days, or for good once you name it, and an opened folder's history is
+Each project keeps a history on your computer that you can compare files with and restore from.
+A version is kept as you save, at most every ten minutes, and before a change across files such as
+Replace All. It stays for 90 days, or for good once you name it, and an opened folder's history is
 kept outside the folder and its git repository.
 
 ## Requirements
@@ -127,10 +127,11 @@ tools/texpresso-ios/build.sh
 python3 tools/texpresso-ios/tree.py /usr/local/texlive/2026 tools/texpresso-ios/build/texmf
 ```
 
-[tools/texpresso-ios/README.md](tools/texpresso-ios/README.md) lists what these need. Then open
-`apps/ipados/TeXLocal.xcodeproj` in Xcode, choose your iPad and press Run; Xcode asks for an Apple
-account to sign the app. Without the two commands above the app still builds, but it can't
-compile.
+[tools/texpresso-ios/README.md](tools/texpresso-ios/README.md) lists what these need. Then turn on
+Developer Mode on the iPad (Settings › Privacy & Security), open `apps/ipados/TeXLocal.xcodeproj` in
+Xcode, choose your iPad and press Run. Xcode asks for an Apple account to sign the app. A free one
+works, but the app it signs stops opening after seven days, until you run it from Xcode again.
+Without the two commands above the app still builds, but it can't compile.
 
 ### Live Preview on the Mac
 
@@ -149,10 +150,9 @@ explains how it works.
 ## Projects
 
 Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. On the
-iPad they're in the app's own folder, which Files shows as On My iPad › TeXLocal, and a folder
-you open from Files stays where it is. A project's
-own settings, like its main file and TeX engine, are kept in a `.texlocal.json` file next to your
-sources.
+iPad they're in the app's own folder, which Files shows as On My iPad › TeXLocal, and a folder you
+open from Files stays where it is. A project's own settings, like its main file and TeX engine, are
+kept in a `.texlocal.json` file next to your sources.
 
 ## Security
 
@@ -168,8 +168,9 @@ A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read 
 Most of the work is done by a Rust library in `crates/texlocal-core`, which all the apps share.
 The Mac app (`apps/macos`) is written with SwiftUI and AppKit, and the iPad app (`apps/ipados`)
 with SwiftUI and UIKit, sharing much of the Mac's code through `apps/shared`. The Windows app
-(`apps/windows`) is written with WinUI 3. [docs/core-api.md](docs/core-api.md) describes how the apps talk to the core, and
-[docs/windows.md](docs/windows.md) covers the Windows app's design and what it still lacks.
+(`apps/windows`) is written with WinUI 3. [docs/core-api.md](docs/core-api.md) describes how the
+apps talk to the core, and [docs/windows.md](docs/windows.md) covers the Windows app's design and
+what it still lacks.
 
 Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues). [AGENTS.md](AGENTS.md) holds
 the instructions for coding agents that work on the project.
