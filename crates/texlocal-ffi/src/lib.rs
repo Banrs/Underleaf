@@ -144,8 +144,8 @@ fn envelope(result: Result<Value, CoreError>) -> Value {
     }
 }
 
-/// A host's `done` for one call, called once: with the answer, or, should the
-/// command panic before it answers, with that error as this is dropped.
+/// A host's `done` for one call, called once: with the answer, or, dropped unanswered, with
+/// the command's panic or the close that came first.
 struct Done(Option<Callback>);
 
 impl Done {
@@ -159,7 +159,12 @@ impl Done {
 impl Drop for Done {
     fn drop(&mut self) {
         if let Some(done) = self.0.take() {
-            done.send(&envelope(Err(panicked())));
+            let unanswered = if std::thread::panicking() {
+                panicked()
+            } else {
+                CoreError::internal("TeXLocal closed before it answered.")
+            };
+            done.send(&envelope(Err(unanswered)));
         }
     }
 }
@@ -183,11 +188,16 @@ pub unsafe extern "C" fn tl_call_async(
         Ok(parsed) => parsed,
         Err(err) => return done.send(Err(err)),
     };
+    // `done` is called on the blocking pool, where it may call the core again, and which a
+    // close waits for once the sessions have answered.
     if command.starts_with("session_") && command != "session_open" {
         let Some(answer) = caught(|| handle.host.sessions.send(command, &args)) else {
             return done.send(Err(panicked()));
         };
-        handle.runtime.spawn(async move { done.send(answer.await) });
+        let runtime = handle.host.runtime.clone();
+        handle
+            .runtime
+            .spawn_blocking(move || done.send(runtime.block_on(answer)));
     } else {
         let (host, command) = (Arc::clone(&handle.host), command.to_owned());
         handle
