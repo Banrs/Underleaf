@@ -40,7 +40,7 @@ fn live_preview_follows_unsaved_edits() {
 const PATIENCE: Duration = Duration::from_secs(90);
 
 struct Client {
-    sessions: Sessions,
+    sessions: Arc<Sessions>,
     events: Arc<Mutex<Vec<Value>>>,
 }
 
@@ -51,7 +51,7 @@ impl Client {
     }
 
     async fn call(&self, command: &str, args: Value) -> Value {
-        let answer = self.sessions.call(command, &args).await;
+        let answer = self.sessions.call(command, args).await;
         answer.unwrap_or_else(|err| panic!("{command}: {} {}", err.status, err.message))
     }
 
@@ -143,7 +143,13 @@ fn retype(document: &Document, text: &str) {
     let backwards = old.iter().rev().zip(new.iter().rev());
     let end = backwards.take_while(|(a, b)| a == b).count();
     let inserted = String::from_utf16(&new[..new.len() - end]).unwrap();
-    document.edit(start as u32, (old.len() - end) as u32, &inserted);
+    document.edit(
+        start as u32,
+        (old.len() - end) as u32,
+        &inserted,
+        None,
+        false,
+    );
 }
 
 fn is_pdf(path: &Path) {
@@ -161,13 +167,13 @@ async fn run(library: &Path) {
     let project = service
         .call(
             "create_project",
-            &json!({ "name": "TeXpresso check", "template": "blank", "engine": "xelatex" }),
+            json!({ "name": "TeXpresso check", "template": "blank", "engine": "xelatex" }),
         )
         .await
         .unwrap();
     let id = project["id"].as_str().unwrap().to_owned();
     let root = service.project(&id).unwrap().root;
-    let sessions = Sessions::new(Arc::clone(&service));
+    let sessions = Arc::new(Sessions::new(Arc::clone(&service)));
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);
     sessions.set_listener(Some(Box::new(move |event| {
@@ -236,7 +242,7 @@ async fn run(library: &Path) {
     client.event(&mut from, a, "live_issues", on(4)).await;
     // Typed at the file's start, it starts TeX again from nothing, and the next edit comes as
     // that TeX starts.
-    main_doc.edit(0, 0, "%\n");
+    main_doc.edit(0, 0, "%\n", None, false);
     client.event(&mut from, a, "live_issues", on(5)).await;
     tokio::time::sleep(Duration::from_millis(20)).await;
     let recovered = unicode.replace("UL_MAIN_UNSAVED", "UL_MAIN_RECOVERED");
@@ -333,7 +339,7 @@ async fn run(library: &Path) {
     // An offset in UTF-16 units, past the é that is two bytes to TeXpresso.
     let mut from = client.settled().await;
     let began = Instant::now();
-    main_doc.edit(units_to(paged, "two"), 0, "number ");
+    main_doc.edit(units_to(paged, "two"), 0, "number ", None, false);
     let page = client
         .event(&mut from, a, "live_page", |e| e["page"] == 1)
         .await;
@@ -353,10 +359,10 @@ async fn run(library: &Path) {
     );
 
     let two = units_to(paged, "Page two");
-    main_doc.edit(two, 0, "\\textbf{");
+    main_doc.edit(two, 0, "\\textbf{", None, false);
     let halted = |halted: bool| move |e: &Value| e["halted"] == halted;
     client.event(&mut from, a, "live", halted(true)).await;
-    main_doc.edit(two, 8, "");
+    main_doc.edit(two, 8, "", None, false);
     client.event(&mut from, a, "live", halted(false)).await;
 
     // TeXpresso never ended on its own, and no failure was reported.

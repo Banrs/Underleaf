@@ -2,8 +2,6 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
-use std::io::Read;
 use std::ops::Range;
 use std::path::Path;
 
@@ -11,7 +9,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::files::{Planned, write_all};
-use super::skip_unreadable;
+use super::read_capped;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
@@ -136,23 +134,14 @@ fn utf16(chars: &[char]) -> u32 {
     chars.iter().map(|c| c.len_utf16() as u32).sum()
 }
 
-/// A file's bytes, or None if it can't be read or is too large to be where anyone looks; a
+/// What search reads of a file: one too large to be where anyone looks is passed over, but a
 /// .tex or .bib file is read at any size, as the symbols are, since a shared bibliography can
 /// be larger and a rename must reach its keys.
-fn read_capped(abs: &Path, rel: &str) -> Result<Option<Vec<u8>>, CoreError> {
-    let Some(file) = skip_unreadable(File::open(abs))? else {
-        return Ok(None);
-    };
-    let cap = match file_kind(rel) {
+fn cap(rel: &str) -> u64 {
+    match file_kind(rel) {
         "tex" | "bib" => u64::MAX,
         _ => SEARCH_FILE_MAX,
-    };
-    let mut bytes = Vec::new();
-    let Some(len) = skip_unreadable(file.take(cap.saturating_add(1)).read_to_end(&mut bytes))?
-    else {
-        return Ok(None);
-    };
-    Ok((len as u64 <= cap).then_some(bytes))
+    }
 }
 
 /// The first of `found`'s places on each line, which it gives in order, of each text file
@@ -173,7 +162,7 @@ pub fn search_project(
         }
         let text = match open.get(rel) {
             Some(text) => Cow::Borrowed(text.as_str()),
-            None => match read_capped(abs, rel)? {
+            None => match read_capped(abs, cap(rel))? {
                 Some(bytes) => Cow::Owned(lf(lossy_string(bytes))),
                 None => return Ok(true),
             },
@@ -234,7 +223,7 @@ pub(crate) fn replace_in_files(
 ) -> Result<Vec<Value>, CoreError> {
     // The file replaced, how many, and the file as it was.
     let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize, String)>, CoreError> {
-        let Some(bytes) = read_capped(abs, rel)? else {
+        let Some(bytes) = read_capped(abs, cap(rel))? else {
             return Ok(None);
         };
         let (file, utf8) = match String::from_utf8(bytes) {
@@ -329,8 +318,16 @@ mod tests {
         files.sort_unstable();
         assert_eq!(files, ["big.bib", "notes.tex"]);
         big.set_len(SEARCH_FILE_MAX).unwrap();
-        let at_the_cap = read_capped(&root.join("big.csv"), "big.csv").unwrap();
+        let at_the_cap = read_capped(&root.join("big.csv"), cap("big.csv")).unwrap();
         assert!(at_the_cap.is_some());
+    }
+
+    #[test]
+    fn a_file_ends_its_lines_as_its_first_line_break_does() {
+        assert_eq!(newline("a\r\nb\nc"), "\r\n");
+        assert_eq!(newline("a\rb"), "\r");
+        assert_eq!(newline("a\nb\r\n"), "\n");
+        assert_eq!(newline("a"), "\n");
     }
 
     #[test]

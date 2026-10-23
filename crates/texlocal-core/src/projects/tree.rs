@@ -28,29 +28,28 @@ pub struct TreeNode {
     pub main: bool,
 }
 
-pub(super) struct Entry {
+pub(crate) struct Entry {
     pub path: PathBuf,
+    /// Its path from the walk's root, in forward slashes on Windows too, where no name holds a
+    /// backslash.
+    pub rel: String,
     pub name: String,
     pub dir: bool,
+    pub link: bool,
 }
 
-impl Entry {
-    /// Its path from the root, in forward slashes on Windows too, where no name holds a
-    /// backslash.
-    fn rel(&self, root: &Path) -> String {
-        let rel = self.path.strip_prefix(root).unwrap().to_string_lossy();
-        if cfg!(windows) {
-            rel.replace('\\', "/")
-        } else {
-            rel.into_owned()
-        }
-    }
+/// What the tree lists, and so what search, the scans, history and a session's watcher see: no
+/// dotfiles, and no compile output, which is the top-level build folder alone (a nested build
+/// is the author's).
+pub(crate) fn listed(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    !name.starts_with('.') && !rel.eq_ignore_ascii_case(BUILD_DIR)
 }
 
-/// Shared tree rules for listing, search and symbols: hide dotfiles and top-level build output,
-/// follow links to files only (folder links can cycle), and leave out entries that vanish
-/// mid-walk.
-pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
+/// A folder's entries whose path `keep` takes, by name. Links are followed to files only, as
+/// folder links can cycle; an entry gone or unreadable by the time it's read is left out, but
+/// the root must be read.
+fn entries(root: &Path, dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
         fs::read_dir(dir)?
     } else {
@@ -64,84 +63,99 @@ pub(super) fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> 
         let Some(entry) = skip_unreadable(entry)? else {
             continue;
         };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        // Only top-level build/ is output; a nested build belongs to the author.
-        if name.starts_with('.') || (dir == root && name.eq_ignore_ascii_case(BUILD_DIR)) {
-            continue;
-        }
+        let path = entry.path();
+        let rel = path.strip_prefix(root).unwrap().to_string_lossy();
+        let rel = if cfg!(windows) {
+            rel.replace('\\', "/")
+        } else {
+            rel.into_owned()
+        };
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };
-        let path = entry.path();
-        let shown = if kind.is_symlink() {
-            path.is_file()
-        } else {
-            kind.is_file() || kind.is_dir()
-        };
-        if shown {
+        let link = kind.is_symlink();
+        if keep(&rel) && (kind.is_dir() || kind.is_file() || link && path.is_file()) {
+            let name = entry.file_name().to_string_lossy().into_owned();
             let dir = kind.is_dir();
-            out.push(Entry { path, name, dir });
+            out.push(Entry {
+                path,
+                rel,
+                name,
+                dir,
+                link,
+            });
         }
     }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
 
-/// Each file with its path from the root, until `visit` answers false.
-pub(super) fn visit_files(
+/// Each entry under `root` that `keep` takes, a folder before what's in it, until `visit`
+/// answers false.
+pub(crate) fn walk(
     root: &Path,
-    visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
+    keep: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
-    fn walk(
+    fn walk_in(
         root: &Path,
         dir: &Path,
-        visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
+        keep: &dyn Fn(&str) -> bool,
+        visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in entries(root, dir)? {
-            let go_on = if entry.dir {
-                walk(root, &entry.path, visit)?
-            } else {
-                visit(&entry.path, &entry.rel(root))?
-            };
-            if !go_on {
+        for entry in entries(root, dir, keep)? {
+            if !visit(&entry)? || entry.dir && !walk_in(root, &entry.path, keep, visit)? {
                 return Ok(false);
             }
         }
         Ok(true)
     }
-    walk(root, root, visit).map(drop)
+    walk_in(root, root, keep, visit).map(drop)
+}
+
+/// Each file the tree lists, with its path from the root, until `visit` answers false.
+pub(super) fn visit_files(
+    root: &Path,
+    visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
+) -> Result<(), CoreError> {
+    walk(root, &listed, &mut |entry| {
+        if entry.dir {
+            return Ok(true);
+        }
+        visit(&entry.path, &entry.rel)
+    })
 }
 
 /// The main file is marked however the settings spell it, as latexmk finds it.
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
-    fn walk(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
-        let mut nodes = Vec::new();
-        for entry in entries(root, dir)? {
+    fn nodes(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
+        let mut found = Vec::new();
+        for entry in entries(root, dir, &listed)? {
             let children = if entry.dir {
-                Some(walk(root, &entry.path, main)?)
+                Some(nodes(root, &entry.path, main)?)
             } else {
                 None
             };
-            let path = entry.rel(root);
-            nodes.push(TreeNode {
+            found.push(TreeNode {
                 kind: if entry.dir { "dir" } else { "file" },
-                main: !entry.dir && fold_case(&path) == main,
-                path,
+                main: !entry.dir && fold_case(&entry.rel) == main,
+                path: entry.rel,
                 file_kind: (!entry.dir).then(|| file_kind(&entry.name)),
                 name: entry.name,
                 children,
             });
         }
-        nodes.sort_by_cached_key(|n| {
+        found.sort_by_cached_key(|n| {
             (
                 n.children.is_none(),
                 n.name.to_lowercase(),
                 Reverse(n.name.clone()),
             )
         });
-        Ok(nodes)
+        Ok(found)
     }
     let main = read_settings(&project.settings).main_file;
-    walk(&project.root, &project.root, &fold_case(&main))
+    nodes(&project.root, &project.root, &fold_case(&main))
 }
 
 /// What the editor edits as text besides .tex and .bib, by extension.
