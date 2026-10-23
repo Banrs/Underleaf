@@ -84,6 +84,31 @@ enum MenuCommand: CaseIterable {
         }
     }
 
+    /// The editor's or the PDF's own command, where that is all it does.
+    var action: Action? {
+        switch self {
+        case .editBold: .edit(.bold)
+        case .editItalic: .edit(.italic)
+        case .editUnderline: .edit(.underline)
+        case .editMath: .edit(.math)
+        case .editComment: .edit(.comment)
+        case .editMoveLineUp: .edit(.moveLineUp)
+        case .editMoveLineDown: .edit(.moveLineDown)
+        case .editDuplicateLine: .edit(.duplicateLine)
+        case .editDeleteLine: .edit(.deleteLine)
+        case .pdfFind: .pdf(.find)
+        case .viewZoomIn: .pdf(.zoomIn)
+        case .viewZoomOut: .pdf(.zoomOut)
+        case .viewActualSize: .pdf(.actualSize)
+        case .viewFitWidth: .pdf(.fitWidth)
+        case .viewFitPage: .pdf(.fitPage)
+        case .syncInverse: .pdf(.inverseFromView)
+        default: nil
+        }
+    }
+
+    enum Action { case edit(EditorCommand), pdf(PDFAction) }
+
     /// The format toggles' symbol, and what they do (HIG, Offering help).
     var style: (symbol: String, help: String)? {
         switch self {
@@ -170,13 +195,16 @@ extension AppModel {
         isEnabled(command, on: project) && (!command.editsSelection || project?.sourceHasKeyboard == true)
     }
 
+    #if os(macOS)
+    /// The app Finder would open a PDF in, Preview or another the user chose, named as Finder names it: read once, not at
+    /// each menu's check.
+    private static let pdfApp = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
+        .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
+    #endif
+
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
-        // The app Finder would open it in, Preview or another the user chose, named as Finder names it.
         #if os(macOS)
-        if command == .pdfOpen, let app = NSWorkspace.shared.urlForApplication(toOpen: .pdf),
-           let name = try? app.resourceValues(forKeys: [.localizedNameKey]).localizedName {
-            return "Open PDF in \(name)"
-        }
+        if command == .pdfOpen, let app = Self.pdfApp { return "Open PDF in \(app)" }
         #endif
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarShown
@@ -200,6 +228,11 @@ extension AppModel {
 
     func perform(_ command: MenuCommand, on project: ProjectModel?) {
         guard isEnabled(command, on: project) else { return }
+        switch command.action {
+        case .edit(let edit)?: project?.editor.perform(edit)
+        case .pdf(let action)?: requestPDF(action)
+        case nil: break
+        }
         switch command {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
@@ -232,42 +265,27 @@ extension AppModel {
         case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
         case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
-        case .editBold: project?.editor.perform(.bold)
-        case .editItalic: project?.editor.perform(.italic)
-        case .editUnderline: project?.editor.perform(.underline)
-        case .editMath: project?.editor.perform(.math)
-        case .editComment: project?.editor.perform(.comment)
         case .editShiftRight: project?.editor.textView.shiftLines(1)
         case .editShiftLeft: project?.editor.textView.shiftLines(-1)
-        case .editMoveLineUp: project?.editor.perform(.moveLineUp)
-        case .editMoveLineDown: project?.editor.perform(.moveLineDown)
-        case .editDuplicateLine: project?.editor.perform(.duplicateLine)
-        case .editDeleteLine: project?.editor.perform(.deleteLine)
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .jumpToDefinition: project?.editor.jumpToDefinition()
         case .findUsages: Task { await project?.findUsages() }
         case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
         case .pdfGotoPage: prompt = .gotoPage
-        case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarShown.toggle()
         case .viewToggleSource: toggleSource()
         case .viewTogglePDF: togglePDF()
         case .viewToggleInspector: inspectorShown.toggle()
         case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
-        case .viewZoomIn: requestPDF(.zoomIn)
-        case .viewZoomOut: requestPDF(.zoomOut)
-        case .viewActualSize: requestPDF(.actualSize)
-        case .viewFitWidth: requestPDF(.fitWidth)
-        case .viewFitPage: requestPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .compileClean: Task { await project?.cleanBuildFolder() }
         case .syncForward: Task { await project?.forwardSync() }
-        case .syncInverse: requestPDF(.inverseFromView)
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
+        default: break
         }
     }
 

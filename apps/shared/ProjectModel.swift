@@ -36,11 +36,13 @@ final class ProjectModel {
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
-    private var documents: [String: DocumentState] = [:]
-    /// Why a document held after Cancel in an alert isn't saved.
-    private var heldReasons: [String: String] = [:]
-    @ObservationIgnored private var lineIssues: [String: [Int: IssuesEvent.Line]] = [:]
-    @ObservationIgnored private var liveIssues: [String: [Int: IssuesEvent.Line]] = [:]
+    private var documents: [String: OpenDocument] = [:]
+    private struct OpenDocument {
+        var state: DocumentState?
+        /// Why a document held after Cancel in an alert isn't saved.
+        var heldReason: String?
+        var lineIssues: [Int: IssuesEvent.Line] = [:], liveIssues: [Int: IssuesEvent.Line] = [:]
+    }
     @ObservationIgnored private var composingPath: String?
     /// A `tree` event came before the session's open answered with an older tree.
     @ObservationIgnored private var treeChanged = false
@@ -141,9 +143,9 @@ final class ProjectModel {
 
     /// The status bar's Not Saved: after a failed save, or Cancel in an alert about the file on disk.
     var saveFailure: String? {
-        for (path, state) in documents.sorted(by: { $0.key < $1.key }) {
-            if let error = state.error { return error }
-            if state.held { return heldReasons[path] ?? String(localized: "“\(path.fileName)” wasn’t saved.") }
+        for (path, document) in documents.sorted(by: { $0.key < $1.key }) {
+            if let error = document.state?.error { return error }
+            if document.state?.held == true { return document.heldReason ?? String(localized: "“\(path.fileName)” wasn’t saved.") }
         }
         return nil
     }
@@ -287,21 +289,18 @@ final class ProjectModel {
         case .reload(let reloaded): reload(reloaded)
         case .closed(let gone):
             // One this model closed has the next file shown already.
-            (documents[gone.path], heldReasons[gone.path], lineIssues[gone.path], liveIssues[gone.path]) = (nil, nil, nil, nil)
+            documents[gone.path] = nil
             if openPath == gone.path, gone.reason != "closed" { clearOpenFile() }
         case .renamed(let renamed):
             // The editor follows the rename's own answer (`performRename`).
             documents[renamed.to] = documents.removeValue(forKey: renamed.from)
-            heldReasons[renamed.to] = heldReasons.removeValue(forKey: renamed.from)
-            lineIssues[renamed.to] = lineIssues.removeValue(forKey: renamed.from)
-            liveIssues[renamed.to] = liveIssues.removeValue(forKey: renamed.from)
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .issues(let marked):
-            lineIssues[marked.path] = marked.byLine
+            documents[marked.path, default: OpenDocument()].lineIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.lines = marked.byLine }
         case .liveIssues(let marked):
-            liveIssues[marked.path] = marked.byLine
+            documents[marked.path, default: OpenDocument()].liveIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
         // After the build events before it, so the list numbers its rows as the session did then.
         case .checks(let found): inOrder { self.checks = found.items }
@@ -331,9 +330,9 @@ final class ProjectModel {
     }
 
     private func documentChanged(_ state: DocumentState) {
-        let before = documents[state.path]
-        documents[state.path] = state
-        if !state.held { heldReasons[state.path] = nil }
+        let before = documents[state.path]?.state
+        documents[state.path, default: OpenDocument()].state = state
+        if !state.held { documents[state.path]?.heldReason = nil }
         // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays until a save succeeds.
         if let error = state.error, before?.error == nil {
             let title = notSavedTitle(state.path)
@@ -404,8 +403,8 @@ final class ProjectModel {
         guard editsText else { return }
         guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
-        editor.textView.issues.lines = lineIssues[path] ?? [:]
-        editor.textView.issues.live = liveIssues[path] ?? [:]
+        editor.textView.issues.lines = documents[path]?.lineIssues ?? [:]
+        editor.textView.issues.live = documents[path]?.liveIssues ?? [:]
     }
 
     /// Saved first; it stays open, Not Saved, if that failed or asks about the disk.
@@ -448,7 +447,6 @@ final class ProjectModel {
         }
     }
 
-    /// The session keeps the outline, which `heading(at:)` asks about.
     func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath, let session else {
@@ -475,10 +473,10 @@ final class ProjectModel {
         if current != currentHeading { currentHeading = current }
     }
 
-    /// At once: the core answers from the outline it keeps, outside the session's queue.
+    /// The last at or before `line` in the file shown, whose name the disk may spell in another case.
     private func heading(at line: Int) -> Int? {
-        guard let session, let openPath, !outline.isEmpty else { return nil }
-        return try? core.now("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
+        guard let openPath else { return nil }
+        return outline.last { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }?.id
     }
 
     /// The matches the search shows, which the field may be ahead of.
@@ -613,7 +611,7 @@ final class ProjectModel {
     func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
-        if let reason { heldReasons[path] = reason }
+        if let reason { documents[path, default: OpenDocument()].heldReason = reason }
         if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
