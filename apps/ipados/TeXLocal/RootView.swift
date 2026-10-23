@@ -33,7 +33,7 @@ struct RootView: View {
         // The menus act on the project while its window is in front.
         .onChange(of: scenePhase, initial: true) {
             app.mainWindowIsKey = scenePhase == .active
-            if scenePhase != .active { saveEdits() }
+            if scenePhase == .active { app.project?.rescan() } else { saveEdits() }
         }
         .onChange(of: app.project?.id) { _, id in restored = id }
         .task {

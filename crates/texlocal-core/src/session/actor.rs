@@ -422,6 +422,10 @@ impl Actor {
                     self.auto_compile = auto;
                 }
             }
+            "rescan" => self.handle(Msg::Fs(vec![Change {
+                path: self.project.root.clone(),
+                structural: true,
+            }])),
             "open_document" => self.open_document(&path()?)?,
             "close_document" => return self.close_document(&path()?),
             "composing" => {

@@ -601,6 +601,11 @@ final class ProjectModel {
 
     // MARK: - Changes on disk
 
+    #if os(iOS)
+    /// The core watches nothing on iOS: other apps' changes are found as the window comes back to the front.
+    func rescan() { if let session, !closed { core.send("session_rescan", ["session": session]) } }
+    #endif
+
     /// `save`, `revert`, `close`, or `cancel` with the reason it is held, unsaved, until a save asks again.
     func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
