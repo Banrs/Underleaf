@@ -1,6 +1,5 @@
 import PDFKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The sidebar's files and outline beside the source and its PDF. As the window narrows the sidebar folds over the
 /// panes, then the source and PDF take turns in one pane (HIG, Layout, Split views): what each shows stays as it was.
@@ -89,21 +88,8 @@ private struct DetailView: View {
 
     /// A PDF command shows the PDF; from it, Go to Source shows the source.
     private func perform(_ action: PDFAction) {
-        let pdf = project.pdf
         if !sideBySide { pane = action.isInverse ? .source : .pdf }
-        guard project.hasPDF else { return }
-        switch action {
-        case .zoomIn: pdf.zoom(in: true)
-        case .zoomOut: pdf.zoom(in: false)
-        case .actualSize: pdf.setScale(1)
-        case .fitWidth: pdf.fitWidth()
-        case .fitPage: pdf.fitPage()
-        case .goToPage(let page): pdf.go(toPage: page)
-        case .find: pdf.view.findInteraction.presentFindNavigator(showingReplace: false)
-        case let .reveal(loc, source): pdf.reveal(loc, from: source)
-        case .inverseFromView:
-            if case let (page, point)? = pdf.sourcePoint() { Task { await project.inverseSync(page: page, x: point.x, y: point.y) } }
-        }
+        project.perform(action) { project.pdf.view.findInteraction.presentFindNavigator(showingReplace: false) }
     }
 }
 
@@ -417,18 +403,7 @@ private struct WorkspaceModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            .fileImporter(isPresented: Binding(get: { app.addingFiles && !project.closed }, set: { app.addingFiles = $0 }),
-                          allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
-                switch result {
-                case .success(let urls): Task { await project.importFiles(urls) }
-                case .failure(let error): app.alert = AppAlert("Couldn’t Add the Files", error)
-                }
-            }
-            .fileExporter(isPresented: Binding(get: { app.exporting != nil }, set: { if !$0 { app.exporting = nil } }),
-                          item: app.exporting, contentTypes: app.exporting.map { [$0.type] } ?? [],
-                          defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
-                if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
-            }
+            .modifier(ProjectDialogs(project: project))
             .alert(promptTitle, isPresented: Binding(get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }),
                    presenting: app.prompt) { prompt in
                 TextField(promptField(prompt), text: $promptText)
@@ -439,13 +414,6 @@ private struct WorkspaceModals: ViewModifier {
             .onChange(of: app.prompt) { _, prompt in
                 if case .rename(let symbol)? = prompt { promptText = symbol.name } else { promptText = "" }
             }
-            .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
-                Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
-                Button("Cancel", role: .cancel) {}
-            } message: { clash in
-                Text(clash.message)
-            }
             .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "", item: $project.diskConflict) { path in
                 Button("Save Anyway") { project.answer(path, "save") }
                 Button("Revert", role: .destructive) { project.answer(path, "revert") }
@@ -454,15 +422,6 @@ private struct WorkspaceModals: ViewModifier {
                 }
             } message: { path in
                 Text("Another app changed “\(path)” while it has unsaved changes here.")
-            }
-            .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "", item: $project.missingFile) { path in
-                Button("Save Again") { project.answer(path, "save") }
-                Button("Discard Changes", role: .destructive) { project.answer(path, "close") }
-                Button("Cancel", role: .cancel) {
-                    project.answer(path, "cancel", holding: String(localized: "Another app moved or deleted “\(path.fileName)”."))
-                }
-            } message: { path in
-                Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
             }
     }
 
