@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -52,6 +52,10 @@ enum Source {
 static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
 });
+
+/// Past a document's: a zip that unpacks to more is a mistake, or made to fill the disk.
+const MAX_UNZIPPED: u64 = 1 << 30;
+const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
 
 /// Packages that build only with XeLaTeX or LuaLaTeX, which a new project's engine follows.
 const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
@@ -415,13 +419,25 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     })
 }
 
-/// A new project's files, each written at its path in `root` from where it comes.
+/// A new project's files, each written at its path in `root` from where it comes. A zip's are
+/// taken at the sizes it gives them, which may come to `MAX_UNZIPPED` at most.
 fn write_files(
     root: &Path,
     files: &[(String, Source)],
     mut zip: Option<&mut ZipArchive<File>>,
 ) -> Result<(), CoreError> {
     validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
+    if let Some(zip) = zip.as_deref_mut() {
+        let mut unzipped = 0;
+        for (_, source) in files {
+            if let Source::Zip(i) = source {
+                unzipped += zip.by_index_raw(*i)?.size();
+            }
+        }
+        if unzipped > MAX_UNZIPPED {
+            return Err(CoreError::bad_request(TOO_LARGE));
+        }
+    }
     for (path, source) in files {
         let abs = root.join(rel_key(path)?);
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
@@ -433,7 +449,11 @@ fn write_files(
             }
             Source::Zip(i) => {
                 let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                io::copy(&mut entry, &mut dest)?;
+                // A byte past its size, so a sound entry is read to its end, where its checksum is.
+                let size = entry.size();
+                if io::copy(&mut Read::take(&mut entry, size + 1), &mut dest)? > size {
+                    return Err(CoreError::bad_request(TOO_LARGE));
+                }
             }
         }
         dest.flush()?;
@@ -818,6 +838,21 @@ mod tests {
         bytes[at.unwrap()] = b'X';
         fs::write(&src, bytes).unwrap();
         assert!(import_project(&service, &src).is_err());
+        assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_zip_that_unpacks_past_a_gigabyte_makes_no_project() {
+        let (dir, service) = library();
+        let src = dir.path().join("large.zip");
+        zip_of(&src, &[("main.tex", "x")]);
+        // Its central directory's uncompressed size, which a reader goes by, made 2 GB.
+        let mut bytes = fs::read(&src).unwrap();
+        let header = bytes.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        bytes[header + 24..header + 28].copy_from_slice(&(2u32 << 30).to_le_bytes());
+        fs::write(&src, bytes).unwrap();
+        let err = import_project(&service, &src).unwrap_err();
+        assert_eq!((err.status, err.message.as_str()), (400, TOO_LARGE));
         assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
     }
 

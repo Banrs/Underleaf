@@ -195,7 +195,7 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   or invalid `.texlocal.json` (a key of the wrong type, an unknown engine) is 409 and leaves
   the file as it is; read, such a file gives the defaults. A write keeps the keys it doesn't
   know, there and in its `ui`, as a newer build's in a synced folder.
-- A zip that can't be read (import) is 400.
+- A zip that can't be read (import) is 400, and so is one that unpacks to more than 1 GB.
 - Import and export leave out version-control folders (`.git`, `.hg`, `.svn`), `.DS_Store`,
   `__MACOSX`, AppleDouble `._*` files and the core's `.texlocal-*` temporary files, at any
   depth, and a top-level `build` and `.texlocal.json` (an import makes the new project's own).
