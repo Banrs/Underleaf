@@ -143,6 +143,8 @@ private struct TitleMenu: View {
         Divider()
         Button("Export as PDF…", systemImage: "square.and.arrow.up") { app.perform(.pdfSave, on: project) }
             .disabled(!app.isEnabled(.pdfSave, on: project))
+        // Where another app opens it, as the Mac's Open PDF in its default app.
+        if let url = project.buildPDF { ShareLink("Share PDF…", item: url) }
         Button("Export Project as ZIP…", systemImage: "doc.zipper") { app.perform(.projectExport, on: project) }
         Button("Print…", systemImage: "printer") { app.perform(.filePrint, on: project) }
             .disabled(!app.isEnabled(.filePrint, on: project))

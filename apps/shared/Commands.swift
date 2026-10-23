@@ -225,11 +225,11 @@ extension AppModel {
         case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .fileBrowseVersions: prompt = .versionHistory
         case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
-        case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
         #else
         // Not in the iPad's menus.
-        case .openQuickly, .fileBrowseVersions, .pdfOpen, .quickHelp: break
+        case .openQuickly, .fileBrowseVersions, .pdfOpen: break
         #endif
+        case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
         // The PDF, not the first responder (usually the source), and whether or not its pane shows.
         case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
         case .editBold: project?.editor.perform(.bold)

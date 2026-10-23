@@ -80,7 +80,7 @@ final class SourceEditor: NSObject, UITextViewDelegate {
                 + [UIAction(title: String(localized: "Learn Spelling")) { [weak self] _ in self?.textView.learnSpelling(word.range) }]
         } ?? []
         let offered: [(MenuCommand, Bool)] = [
-            (.jumpToDefinition, textView.document.definition(at: caret) != nil),
+            (.jumpToDefinition, textView.document.definition(at: caret) != nil), (.quickHelp, true),
             (.editRename, textView.isEditable && renamable != nil),
             (.syncForward, textView.forwardSync(false) != nil), (.editComment, textView.isEditable),
         ]

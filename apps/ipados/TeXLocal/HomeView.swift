@@ -83,6 +83,7 @@ struct HomeView: View {
             Button("Remove from List", systemImage: "minus.circle", role: .destructive) { Task { await app.forget(project) } }
         } else {
             Button("Delete", systemImage: "trash", role: .destructive) { Task { await app.delete(project) } }
+            Button("Duplicate", systemImage: "plus.square.on.square") { Task { await app.duplicate(project) } }
             Button("Rename", systemImage: "pencil") {
                 newName = project.name
                 renaming = project

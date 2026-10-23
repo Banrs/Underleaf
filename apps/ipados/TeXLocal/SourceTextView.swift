@@ -1,4 +1,5 @@
 import GameController
+import SwiftUI
 import UIKit
 
 /// The source editor's text view: TextKit 2 only, never `layoutManager`, which drops it to TextKit 1; with the core's
@@ -314,6 +315,27 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
         let rect = caretRect(at: caret)
         guard shownRect.contains(CGPoint(x: rect.minX, y: rect.midY)) else { return mathPreview.close() }
         mathPreview.show(maths, size: fontSize, at: rect, avoiding: completions.offered != nil && completions.isAbove)
+    }
+
+    // MARK: Quick Help
+
+    /// A popover under the name at `offset`, as the Mac's; a sheet where the window is compact.
+    func showQuickHelp(_ help: QuickHelp, at offset: Int, jump: @escaping (Place) -> Void) {
+        var presenter = window?.rootViewController
+        while let next = presenter?.presentedViewController { presenter = next }
+        let regular = font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let bold = UIFont(descriptor: regular.fontDescriptor.withSymbolicTraits(.traitBold) ?? regular.fontDescriptor, size: 0)
+        var close = {}
+        let content = UIHostingController(rootView: QuickHelpView(help: help, font: bold) { place in
+            close()
+            jump(place)
+        })
+        close = { [weak content] in content?.dismiss(animated: true) }
+        content.sizingOptions = .preferredContentSize
+        content.modalPresentationStyle = .popover
+        content.popoverPresentationController?.sourceView = self
+        content.popoverPresentationController?.sourceRect = caretRect(at: offset)
+        presenter?.present(content, animated: true)
     }
 
     // MARK: typing: the core's brackets, indentation and snippet fields

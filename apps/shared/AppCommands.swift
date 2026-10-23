@@ -106,10 +106,8 @@ struct AppCommands: Commands {
         }
         // No help book: the default item would only say so.
         CommandGroup(replacing: .help) {
-            #if os(macOS)
             items(.quickHelp)
             Divider()
-            #endif
             Link("Visit TeXLocal on GitHub", destination: Links.repository)
             Link("Report Issue", destination: Links.issues)
         }
