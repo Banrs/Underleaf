@@ -145,6 +145,5 @@ Agents' code runs long and erodes with each change (`docs/agent-code.md`), so:
 - Mac (Xcode 27, Rust stable): `zsh tools/install-mac.sh` builds this checkout's Release, quits
   TeXLocal, installs it to `/Applications`, verifies it and reopens it.
 - Windows (.NET 10 SDK, Rust stable): quit TeXLocal, then `apps/windows/install.ps1`.
-- The version is the same in the workspace `Cargo.toml`, `apps/macos/project.yml` and
-  `apps/ipados/project.yml`, both `.xcodeproj`s (`MARKETING_VERSION`) and
-  `apps/windows/TeXLocal/TeXLocal.csproj`.
+- The version is the same in the workspace `Cargo.toml`, `apps/ipados/project.yml`, both
+  `.xcodeproj`s (`MARKETING_VERSION`) and `apps/windows/TeXLocal/TeXLocal.csproj`.

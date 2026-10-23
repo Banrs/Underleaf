@@ -1,6 +1,7 @@
 //! The commands outside a project session, which every host forwards here, and the lock that
 //! takes a project's edits one at a time.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::compile::CompileManager;
 use crate::paths::Project;
-use crate::projects;
+use crate::projects::{self, History};
 use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
@@ -31,6 +32,9 @@ pub struct Service {
     /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
     /// then, and one waiting builds once it is. None found before the first look.
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
+    /// One for each store, so two sessions of a project take turns with it: one's pruning would
+    /// remove what the other has stored for a snapshot not yet written.
+    histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
 }
 
 impl Service {
@@ -41,7 +45,14 @@ impl Service {
             texpresso: Arc::default(),
             edits: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
+            histories: Mutex::default(),
         }
+    }
+
+    pub(crate) fn history(&self, project: &Project) -> Arc<Mutex<History>> {
+        let mut histories = lock(&self.histories);
+        let history = histories.entry(project.history.clone());
+        Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
     }
 
     /// Stop every compile and live preview, as a host does when it quits.
@@ -56,14 +67,14 @@ impl Service {
     }
 
     /// With `live`, the live preview of the client's project session (`session`) syncs, not
-    /// the build: its PDF is the one shown.
-    fn live_pdf(&self, args: &Value) -> Result<Option<PathBuf>, CoreError> {
+    /// the build: its number, and its PDF, the one shown.
+    fn live(&self, args: &Value) -> Result<Option<(u64, PathBuf)>, CoreError> {
         if !arg::<Option<bool>>(args, "live")?.unwrap_or(false) {
             return Ok(None);
         }
         let session = arg::<Option<u64>>(args, "session")?
             .ok_or_else(|| CoreError::bad_request("Live sync needs the project session"))?;
-        self.texpresso.live_pdf(session).map(Some)
+        Ok(Some((session, self.texpresso.live_pdf(session)?)))
     }
 
     /// Finds the project once the lock is held, so a rename or delete that held it first is seen.
@@ -169,19 +180,22 @@ impl Service {
                 &project()?,
                 s("file")?,
                 arg(args, "line")?,
-                self.live_pdf(args)?.as_deref(),
+                self.live(args)?.as_ref().map(|(_, pdf)| pdf.as_path()),
             )?),
             "synctex_inverse" => {
                 let project = project()?;
                 let click =
                     arg::<Option<String>>(args, "text")?.zip(arg::<Option<usize>>(args, "at")?);
+                let live = self.live(args)?;
+                let typeset = |rel: &str| self.texpresso.live_text(live.as_ref()?.0, rel);
                 out(synctex::synctex_inverse(
                     &project,
                     arg(args, "page")?,
                     arg(args, "x")?,
                     arg(args, "y")?,
                     click.as_ref().map(|(text, at)| (text.as_str(), *at)),
-                    self.live_pdf(args)?.as_deref(),
+                    live.as_ref().map(|(_, pdf)| pdf.as_path()),
+                    &typeset,
                 )?)
             }
             "synctex_match" => out(synctex::match_forward(
@@ -227,8 +241,7 @@ impl Service {
             )?),
             "open_path" => out(projects::open_path(self, Path::new(s("path")?))?),
             "forget_folder" => {
-                let _edits = lock(&self.edits);
-                projects::forget_folder(&self.data_dir, s("id")?, stop)?;
+                projects::forget_folder(self, s("id")?, stop)?;
                 Ok(Value::Null)
             }
             "set_ui_state" => out(self.with_project(s("id")?, |project| {

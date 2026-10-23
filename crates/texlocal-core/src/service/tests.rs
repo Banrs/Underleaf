@@ -220,6 +220,13 @@ async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
 // MARK: - The edit lock
 
 #[test]
+fn every_session_of_a_project_takes_turns_with_one_history() {
+    let (_dir, service) = with_project();
+    let history = || service.history(&service.project("P").unwrap());
+    assert!(Arc::ptr_eq(&history(), &history()));
+}
+
+#[test]
 fn a_panic_during_an_edit_does_not_stop_later_edits() {
     let (_dir, service) = with_project();
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

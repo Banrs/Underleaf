@@ -8,6 +8,7 @@ use super::edit::map_selections;
 use super::theme::{self, Rgba};
 use super::{SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
+use crate::projects::Query;
 
 fn json(value: impl Serialize) -> Option<String> {
     serde_json::to_string(&value).ok()
@@ -46,6 +47,13 @@ impl SourceDocument {
             "text_styles" => json(self.text_styles(selection()?)),
             "code_ranges" => json(self.code_ranges(selection()?, get(a, "for")?)),
             "words" => json(json!({ "words": self.words(TextRange::deserialize(a).ok()?) })),
+            "find" => {
+                let (case, whole) = (
+                    optional(a, "matchCase", false)?,
+                    optional(a, "wholeWord", false)?,
+                );
+                json(self.find(&Query::new(&string("query")?, case, whole)))
+            }
             "type" => json(self.type_text(selection()?, &string("text")?, auto_pair()?)),
             "delete_backward" => json(self.delete_backward(selection()?, auto_pair()?)),
             "insert_newline" => json(self.insert_newline(selection()?)),
@@ -184,6 +192,16 @@ mod tests {
         for (command, args, answer) in cases {
             assert_eq!(doc.call(command, args).as_deref(), answer, "{command}");
         }
+    }
+
+    #[test]
+    fn find_answers_every_match_in_utf16_units() {
+        let mut doc = SourceDocument::new("😀 Cat\ncat cats");
+        let found = r#"[{"start":3,"length":3},{"start":7,"length":3},{"start":11,"length":3}]"#;
+        assert_eq!(
+            doc.call("find", r#"{"query": "cat"}"#).as_deref(),
+            Some(found)
+        );
     }
 
     #[test]

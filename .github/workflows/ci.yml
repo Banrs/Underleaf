@@ -1,7 +1,8 @@
 name: CI
 
 # One workflow: the Rust core on macOS and Windows, the Mac, iPad and
-# Windows apps, each only when a path it builds from changed. `ci-ok` is the one check to require.
+# Windows apps, each only when a path it builds from changed, and tools/metrics.py on every change.
+# `ci-ok` is the one check to require.
 on:
   pull_request:
   push:
@@ -58,10 +59,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: runner.os == 'macOS'
@@ -81,13 +83,15 @@ jobs:
       APP_ID: com.texlocal.mac.ci${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+        with:
+          toolchain: stable
       - name: Select the newest Xcode
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           xcodebuild -version
       # Keyed on the deployment target: cargo doesn't rebuild when it changes.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: macos-app-27.0
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -123,14 +127,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
         with:
+          toolchain: stable
           targets: aarch64-apple-ios-sim
       - name: Select the newest Xcode
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           xcodebuild -version
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ipad-app-27.0
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -148,8 +153,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: windows-app
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -182,10 +189,22 @@ jobs:
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'smoke timed out' }
           if ($p.ExitCode -ne 0) { Get-Content $err; throw "smoke exited $($p.ExitCode)" }
 
+  metrics:
+    name: Erosion and clones
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet lizard==1.24.2
+          "$RUNNER_TEMP/venv/bin/python" tools/metrics.py
+
   ci-ok:
-    needs: [changes, rust, mac, ipad, windows]
+    needs: [changes, rust, mac, ipad, windows, metrics]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: |
-          echo '${{ toJSON(needs) }}' | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<< "$NEEDS"

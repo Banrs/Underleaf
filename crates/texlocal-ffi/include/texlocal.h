@@ -84,9 +84,10 @@ void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mi
 uint8_t *_Nullable tl_source_text(TlSource *source, size_t *_Nullable len);
 void tl_source_free_text(uint8_t *_Nullable text, size_t len);
 
-/* The editor now shows text whole, as a document_reload event gave it: not an
- * edit to save. */
-void tl_source_reload(TlSource *source, const uint8_t *_Nullable text, size_t len);
+/* The text whole, as a document_reload event gave it, before the editor shows
+ * it: not an edit to save. False, changing nothing, when keys were typed since
+ * the event was sent: the editor keeps its text, and a conflict follows. */
+bool tl_source_reload(TlSource *source, const uint8_t *_Nullable text, size_t len);
 
 uint32_t tl_source_line_at(TlSource *source, uint32_t offset);
 uint32_t tl_source_line_start(TlSource *source, uint32_t line);

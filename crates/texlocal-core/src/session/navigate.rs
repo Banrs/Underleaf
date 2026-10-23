@@ -11,9 +11,8 @@ use serde_json::{Value, json};
 
 use super::Reply;
 use super::actor::Actor;
-use crate::analyze::{self, Facts};
+use crate::analyze;
 use crate::paths;
-use crate::projects::file_kind;
 use crate::service::{arg, out};
 use crate::settings;
 use crate::syntax::SymbolKind;
@@ -195,13 +194,13 @@ impl Actor {
         let settings = settings::read_settings(&self.project.settings);
         let aux = settings.output(&self.project.build, "aux");
         tokio::task::spawn_blocking(move || {
+            let own = doc.facts();
             let found = doc.with(|source| {
-                let own = Facts::read(&source.text(), file_kind(&source.path));
                 let (kind, name, _) = source.symbol_at(&own, offset)?;
                 let defined = source.defined(&own, kind, &name).into_iter().next();
-                Some((kind, name, defined, own))
+                Some((kind, name, defined))
             });
-            let Some((kind, name, defined, own)) = found else {
+            let Some((kind, name, defined)) = found else {
                 return reply.send(Ok(Value::Null));
             };
             // The open document as edited, else the disk's.

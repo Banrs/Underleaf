@@ -15,7 +15,7 @@ use super::skip_unreadable;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
-use crate::{lf, lossy_string};
+use crate::{lf, lossy_string, newline};
 
 /// The largest file but a .tex or .bib that a search reads; a data set or log that size isn't
 /// where anyone looks.
@@ -54,31 +54,35 @@ pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
 
 // Keep one folded character per original character so snippet offsets agree.
 // ASCII, most of a TeX file, folds without Unicode's tables.
-fn lower_into(s: &str, out: &mut String) {
+fn fold_into(s: &str, match_case: bool, out: &mut String) {
     out.clear();
-    out.extend(s.chars().map(|c| {
-        if c.is_ascii() {
-            c.to_ascii_lowercase()
-        } else {
-            c.to_lowercase().next().unwrap_or(c)
-        }
+    out.extend(s.chars().map(|c| match c {
+        _ if match_case => c,
+        c if c.is_ascii() => c.to_ascii_lowercase(),
+        c => c.to_lowercase().next().unwrap_or(c),
     }));
 }
 
-/// What a search or a replace looks for, in any case.
+/// What a search or a replace looks for.
 pub struct Query {
     /// Folded as each line is.
     text: String,
     chars: usize,
+    match_case: bool,
+    whole_word: bool,
 }
 
 impl Query {
-    pub fn new(text: &str) -> Self {
+    /// In any case unless `match_case`; with `whole_word`, only where no letter, digit or `_` is
+    /// on either side, as editors take a word.
+    pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
         let mut folded = String::new();
-        lower_into(text, &mut folded);
+        fold_into(text, match_case, &mut folded);
         Self {
             chars: folded.chars().count(),
             text: folded,
+            match_case,
+            whole_word,
         }
     }
 
@@ -89,12 +93,21 @@ impl Query {
         if self.text.is_empty() {
             return found;
         }
-        lower_into(line, folded);
+        fold_into(line, self.match_case, folded);
+        let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         let (mut from, mut chars) = (0, 0);
         while let Some(at) = folded[from..].find(&self.text) {
-            chars += folded[from..from + at].chars().count();
+            let (start, end) = (from + at, from + at + self.text.len());
+            chars += folded[from..start].chars().count();
+            if self.whole_word
+                && (word(folded[..start].chars().next_back()) || word(folded[end..].chars().next()))
+            {
+                let next = folded[start..].chars().next().map_or(1, char::len_utf8);
+                (from, chars) = (start + next, chars + 1);
+                continue;
+            }
             found.push(chars..chars + self.chars);
-            (from, chars) = (from + at + self.text.len(), chars + self.chars);
+            (from, chars) = (end, chars + self.chars);
         }
         found
     }
@@ -260,8 +273,10 @@ pub(crate) fn replace_in_files(
 
 /// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
 /// and column count as they do with line feeds alone, so each line keeps its own ending, which
-/// in a file edited on more than one system needn't be the first's.
+/// in a file edited on more than one system needn't be the first's. A break in `to` is written
+/// as the file's own, as a save writes one.
 fn replaced(file: &str, places: &[Place], to: &str) -> String {
+    let to = &to.replace('\n', newline(file));
     // The byte the first `units` UTF-16 units of `s` end at.
     let byte = |s: &str, units: u32| {
         let mut seen = 0;
@@ -308,7 +323,7 @@ mod tests {
         fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
         let bib = fs::File::options().write(true).open(root.join("big.bib"));
         bib.unwrap().set_len(SEARCH_FILE_MAX + 1).unwrap();
-        let needle = |_: &str, text: &str| Query::new("needle").places(text);
+        let needle = |_: &str, text: &str| Query::new("needle", false, false).places(text);
         let hits = search_project(&root, &HashMap::new(), &is_text, &needle, 10).unwrap();
         let mut files: Vec<&str> = hits.iter().map(|hit| hit.file.as_str()).collect();
         files.sort_unstable();
@@ -316,6 +331,16 @@ mod tests {
         big.set_len(SEARCH_FILE_MAX).unwrap();
         let at_the_cap = read_capped(&root.join("big.csv"), "big.csv").unwrap();
         assert!(at_the_cap.is_some());
+    }
+
+    #[test]
+    fn a_line_break_in_a_replacement_is_written_as_the_files_own() {
+        let place = Place {
+            line: 2,
+            column: 0,
+            length: 1,
+        };
+        assert_eq!(replaced("a\r\nb\r\n", &[place], "x\ny"), "a\r\nx\r\ny\r\n");
     }
 
     /// Another app's write while the replace reads the project is kept, not written over.
@@ -328,7 +353,7 @@ mod tests {
             if other_app.replace(false) {
                 fs::write(root.join("a.tex"), "cat, their cat").unwrap();
             }
-            Query::new("cat").places(text)
+            Query::new("cat", false, false).places(text)
         };
         let written = replace_in_files(&root, &|rel| rel == "a.tex", &found, "dog").unwrap();
         assert_eq!(written, [json!({ "file": "a.tex", "count": 2 })]);
@@ -347,7 +372,7 @@ mod tests {
         let mut perms = fs::metadata(&b).unwrap().permissions();
         perms.set_readonly(true);
         fs::set_permissions(&b, perms.clone()).unwrap();
-        let found = |_: &str, text: &str| Query::new("cat").places(text);
+        let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
         let replaced = replace_in_files(&root, &|rel| rel != "main.tex", &found, "dog");
         assert_eq!(replaced.unwrap_err().status, 403);
         assert_eq!(fs::read_to_string(root.join("a.tex")).unwrap(), "cat");
@@ -361,7 +386,7 @@ mod tests {
     fn the_matcher_finds_every_match_on_a_line() {
         let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";
         let places = |query: &str| -> Vec<(u32, u32)> {
-            let found = Query::new(query).places(text);
+            let found = Query::new(query, false, false).places(text);
             let at = |place: &Place| {
                 assert_eq!(place.length as usize, query.len());
                 (place.line, place.column)
@@ -370,6 +395,8 @@ mod tests {
         };
         let every = [(1, 3), (1, 7), (1, 11), (2, 0), (2, 4), (2, 8)];
         assert_eq!(places("cat"), every);
+        let exact = |query| Query::new(query, true, true).places(text).len();
+        assert_eq!((exact("cat"), exact("Cat"), exact("CAT")), (2, 1, 0));
         assert_eq!(places("aa"), [(3, 0), (3, 2)]);
     }
 }
