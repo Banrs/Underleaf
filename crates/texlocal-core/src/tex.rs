@@ -2,13 +2,14 @@
 //! it, whether latexmk runs, and the packages it has.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use serde::Serialize;
 
 use crate::process::run;
 use crate::settings::AppSettings;
+use crate::stamp::Kept;
 use crate::syntax::Installed;
 use crate::tinytex;
 
@@ -136,31 +137,32 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     }
 }
 
-/// Read once a process, on its first use, from the PATH `path_env` gives then: a TeX installed
-/// later is seen once the app opens again. Nothing without TeX, or from MiKTeX, which keeps no
-/// ls-R.
-pub(crate) fn installed(path_env: impl FnOnce() -> String) -> Arc<Installed> {
-    static INSTALLED: OnceLock<Arc<Installed>> = OnceLock::new();
-    let read = || {
-        let latexmk = find_tool("latexmk", &path_env());
-        Arc::new(latexmk.map_or_else(Installed::default, |l| installed_beside(&l)))
-    };
-    Arc::clone(INSTALLED.get_or_init(read))
+/// The TeX that latexmk on `path_env` belongs to, read again once its ls-R changes, as a TeX or
+/// a package installed does. Nothing without TeX, or from MiKTeX, which keeps no ls-R.
+pub(crate) fn installed(path_env: &str) -> Arc<Installed> {
+    static READ: Kept<Installed> = Kept::new();
+    let ls_r = find_tool("latexmk", path_env).and_then(|latexmk| ls_r_above(&latexmk));
+    let installed = ls_r.and_then(|ls_r| READ.get(&ls_r, read_installed).ok());
+    installed.unwrap_or_default()
 }
 
-/// From the ls-R database in the first texmf-dist above the program, as TeX Live and TinyTeX
-/// keep it; a link followed first, since a latexmk on the PATH may be a link into texmf-dist
-/// from another folder. Its folders under tex and bibtex hold what TeX loads, as its doc and
-/// source ones don't.
-fn installed_beside(program: &Path) -> Installed {
+/// The ls-R database in the first texmf-dist above the program, as TeX Live and TinyTeX keep
+/// it; a link followed first, since a latexmk on the PATH may be a link into texmf-dist from
+/// another folder.
+fn ls_r_above(program: &Path) -> Option<PathBuf> {
     let program = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
-    let ls_r = program.ancestors().find_map(|dir| {
-        let ls_r = std::fs::read(dir.join("texmf-dist").join("ls-R")).ok()?;
-        Some(crate::lossy_string(ls_r))
-    });
+    let mut found = program
+        .ancestors()
+        .map(|dir| dir.join("texmf-dist").join("ls-R"));
+    found.find(|ls_r| ls_r.is_file())
+}
+
+/// Its folders under tex and bibtex hold what TeX loads, as its doc and source ones don't.
+fn read_installed(ls_r: &Path) -> std::io::Result<Installed> {
+    let ls_r = crate::lossy_string(std::fs::read(ls_r)?);
     let mut installed = Installed::default();
     let mut loaded = false;
-    for line in ls_r.as_deref().unwrap_or_default().lines() {
+    for line in ls_r.lines() {
         if let Some(folder) = line.strip_suffix(':') {
             loaded = folder.starts_with("./tex/") || folder.starts_with("./bibtex/");
             continue;
@@ -184,12 +186,12 @@ fn installed_beside(program: &Path) -> Installed {
         list.sort_unstable();
         list.dedup();
     }
-    installed
+    Ok(installed)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Installed, absolute_dirs, installed_beside};
+    use super::{Installed, absolute_dirs, ls_r_above, read_installed};
     use std::path::Path;
 
     #[test]
@@ -212,7 +214,8 @@ mod tests {
             styles: names(&["plain"]),
             inputs: names(&["glyphtounicode"]),
         };
-        assert_eq!(installed_beside(&bin.join("latexmk")), installed);
+        let ls_r = ls_r_above(&bin.join("latexmk")).unwrap();
+        assert_eq!(read_installed(&ls_r).unwrap(), installed);
     }
 
     #[test]

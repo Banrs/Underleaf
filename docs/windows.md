@@ -109,7 +109,7 @@ later WindowsAppSDK.
 ## Core gaps
 
 Logic the app needs that belongs in a crate, not C#. The numbers are those the app's comments
-cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
+cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 24, 26, 29, 32, 33) leave holes.
 
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
@@ -134,11 +134,7 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the
     host's kind list and `.tex` test go.
-24. **Paths after a change**: `create_entry {dir, name}` and `session_rename {from, name}` answer
-    the new path after the `tree` event; `Join`/`ParentOf`/`RefreshTree` and the tree dedupe go.
 25. **Unsaved in the document event**: the `document` event carries `unsaved`.
-26. **Find in the core**: a source `find {query, matchCase, wholeWord}` answering every match as a
-    UTF-16 range with `session_search`'s folding, so Ctrl+F and Ctrl+Shift+F agree.
 27. **Maths size**: both hosts keep the 1.21 ratio; a `math_preview {caret, size, color}` would
     take it.
 28. **Compositing**: Windows still pre-composites its secondary ink (`Over`).

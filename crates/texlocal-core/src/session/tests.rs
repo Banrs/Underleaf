@@ -10,7 +10,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use super::actor::newline;
 use super::build::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
@@ -21,7 +20,7 @@ use crate::projects::Symbols;
 use crate::projects::testing::names_in;
 use crate::service::Service;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
-use crate::{CoreError, lock};
+use crate::{CoreError, lock, newline};
 
 // MARK: - A fake engine
 
@@ -273,7 +272,8 @@ impl Rig {
         self.state().await;
         self.marks += 1;
         let mark = json!({ "type": "mark", "n": self.marks });
-        self.sessions.hub.queue.send(mark.clone()).unwrap();
+        let queued = crate::events::Queued::Event(mark.clone());
+        self.sessions.hub.queue.send(queued).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let mut seen = lock(&self.seen);
@@ -664,6 +664,21 @@ async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_o
 }
 
 #[tokio::test(start_paused = true)]
+async fn keys_typed_before_a_reload_reaches_the_editor_refuse_it_and_ask_about_the_change() {
+    let mut rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    rig.write_elsewhere("main.tex", "From elsewhere");
+    wait(300).await;
+    assert_eq!(rig.of_type("document_reload").await.len(), 1);
+    doc.edit(5, 0, "!");
+    assert!(!doc.reload("From elsewhere"));
+    assert_eq!(doc.snapshot().0, "Hello!");
+    assert_eq!(rig.of_type("conflict").await[0]["kind"], "changed");
+    wait(800).await;
+    assert_eq!(rig.disk("main.tex"), "From elsewhere");
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_sessions_own_save_is_not_another_apps_change() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
@@ -756,6 +771,32 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
     assert!(!rig.root.join("main.tex").exists());
     rig.resolve("save").await;
     assert_eq!(rig.disk("main.tex"), "Hello mine");
+}
+
+/// A folder that can't be read for now, as another app's lock leaves it, is no deletion.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn a_file_that_cant_be_read_for_now_shows_not_saved_and_isnt_taken_as_gone() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut rig = Rig::new(false).await;
+    fs::create_dir(rig.root.join("ch")).unwrap();
+    fs::write(rig.root.join("ch/a.tex"), "chapter").unwrap();
+    let doc = rig.open("ch/a.tex").await;
+    doc.edit(7, 0, " mine");
+    fs::write(rig.root.join("ch/a.tex"), "theirs").unwrap();
+    let folder = rig.root.join("ch");
+    let locked = |mode| fs::set_permissions(&folder, fs::Permissions::from_mode(mode));
+    locked(0o000).unwrap();
+    rig.changed("ch/a.tex", false);
+    wait(300).await;
+    let events = rig.events().await;
+    locked(0o755).unwrap();
+    assert!(
+        !events.iter().any(|e| e["type"] == "conflict"),
+        "{events:?}"
+    );
+    let shown = events.iter().rfind(|e| e["type"] == "document");
+    assert!(shown.unwrap()["error"].is_string(), "{events:?}");
 }
 
 #[tokio::test(start_paused = true)]
@@ -863,6 +904,23 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
 }
 
 // MARK: - Files
+
+/// So a host selects the entry in a tree that has it, with no tree of its own to read.
+#[tokio::test(start_paused = true)]
+async fn a_new_or_renamed_entry_is_answered_after_the_tree_that_lists_it() {
+    let rig = Rig::new(false).await;
+    let listed = |path: &str| {
+        let seen = lock(&rig.seen);
+        let last = seen.iter().rfind(|e| e["type"] == "tree");
+        last.is_some_and(|tree| tree.to_string().contains(path))
+    };
+    let made = rig.ok("create_entry", json!({ "folder": "ch", "name": "a.tex" }));
+    assert_eq!(made.await["path"], "ch/a.tex");
+    assert!(listed("ch/a.tex"));
+    let renamed = rig.ok("rename", json!({ "from": "ch/a.tex", "name": "b.tex" }));
+    assert_eq!(renamed.await["to"], "ch/b.tex");
+    assert!(listed("ch/b.tex"));
+}
 
 /// Its edits are saved first; a rename only in case moves it rather than closing it.
 #[tokio::test(start_paused = true)]
@@ -1412,6 +1470,21 @@ async fn cleans_asked_for_together_are_all_answered() {
     assert_eq!(rig.fake.called("clean"), 1);
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_build_asked_for_during_a_clean_starts_once_it_is_over() {
+    let mut rig = Rig::new(false).await;
+    let cleaned = rig
+        .sessions
+        .send("session_clean", &json!({ "session": rig.session }));
+    rig.ok("compile", json!({})).await;
+    cleaned.await.unwrap();
+    let events = rig.events().await;
+    let at = |test: &dyn Fn(&Value) -> bool| events.iter().position(test);
+    let started = at(&|e| e["type"] == "build" && e["compiling"] == true);
+    let cleaned = at(&|e| e["type"] == "build_cleaned");
+    assert!(cleaned.unwrap() < started.unwrap(), "{events:?}");
+}
+
 /// Until the document's symbols pass `test`, perhaps a scan or two later.
 async fn until(doc: &Document, test: impl Fn(&Symbols) -> bool) -> bool {
     for _ in 0..500 {
@@ -1493,8 +1566,18 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
         "written": [{ "file": "ch.tex", "count": 2 }],
     });
-    assert_eq!(replace().await.unwrap(), answer);
+    let mut answered = replace().await.unwrap();
+    let snapshot = answered
+        .as_object_mut()
+        .unwrap()
+        .remove("snapshot")
+        .unwrap();
+    assert_eq!(answered, answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
+    // As a host whose editor was typed in since puts back the rest, not to leave it half replaced.
+    let restore = json!({ "id": snapshot, "paths": ["ch.tex"] });
+    rig.ok("history_restore", restore).await;
+    assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
 }
 
 /// A label's definition and each reference to it, the open document's as the editor has it, but
@@ -1548,7 +1631,8 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     for (from, to, status) in refusals {
         assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
     }
-    let renamed = rename("knuth", "knuth84").await.unwrap();
+    let mut renamed = rename("knuth", "knuth84").await.unwrap();
+    renamed.as_object_mut().unwrap().remove("snapshot");
     let edit = json!({ "start": 14, "length": 5, "text": "knuth84" });
     let answer = json!({
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },

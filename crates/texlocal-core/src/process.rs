@@ -3,7 +3,7 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -20,8 +20,9 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 /// kill the tree from any thread while another awaits the tool.
 #[derive(Clone)]
 pub(crate) struct Tree {
+    /// None once the tool is to be reaped, after which its pid may be another's.
     #[cfg(unix)]
-    group: i32,
+    group: std::sync::Arc<std::sync::Mutex<Option<i32>>>,
     #[cfg(windows)]
     job: std::sync::Arc<std::os::windows::io::OwnedHandle>,
 }
@@ -32,18 +33,23 @@ impl Tree {
         {
             let child = command.process_group(0).spawn()?;
             let group = child.id().expect("a child just spawned has its pid") as i32;
+            let group = std::sync::Arc::new(std::sync::Mutex::new(Some(group)));
             Ok((child, Self { group }))
         }
         #[cfg(windows)]
         {
+            use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
             // A console of its own that is never shown: a console program a windowed app starts
-            // would open a window for each pass.
-            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+            // would open a window for each pass. Suspended until it is in the job, as what it
+            // started before would be outside it.
+            command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
             let mut child = command.spawn()?;
             let process = child
                 .raw_handle()
                 .expect("a child just spawned has its handle");
-            let job = job_of(process).inspect_err(|_| {
+            let pid = child.id().expect("a child just spawned has its pid");
+            let job = job_of(process).and_then(|job| resume(pid).map(|()| job));
+            let job = job.inspect_err(|_| {
                 let _ = child.start_kill();
             })?;
             Ok((child, Self { job: job.into() }))
@@ -51,16 +57,55 @@ impl Tree {
     }
 
     pub(crate) fn kill(&self) {
-        // SAFETY: plain system calls, on the group the tool leads or the job's open handle.
+        // SAFETY: plain system calls, on the group the tool leads, held so it isn't reaped
+        // meanwhile, or the job's open handle.
         #[cfg(unix)]
-        unsafe {
-            libc::killpg(self.group, libc::SIGKILL);
+        if let Some(group) = *crate::lock(&self.group) {
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
+            }
         }
         #[cfg(windows)]
         unsafe {
             use std::os::windows::io::AsRawHandle;
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job.as_raw_handle(), 1);
         }
+    }
+
+    /// The tool's exit, once what it started is killed too. On Unix the tree goes before the
+    /// tool is reaped: until then the tool's pid, which names the group, is no other process's.
+    pub(crate) async fn ended(&self, child: &mut Child) -> io::Result<ExitStatus> {
+        #[cfg(unix)]
+        {
+            let pid = child.id().expect("not reaped yet") as libc::id_t;
+            let _ = tokio::task::spawn_blocking(move || exited(pid)).await;
+            if let Some(group) = crate::lock(&self.group).take() {
+                // SAFETY: a plain system call on the group, its leader a zombie still.
+                unsafe {
+                    libc::killpg(group, libc::SIGKILL);
+                }
+            }
+            child.wait().await
+        }
+        #[cfg(windows)]
+        {
+            let status = child.wait().await;
+            self.kill();
+            status
+        }
+    }
+}
+
+/// Once the process `pid` has ended, which it leaves to be reaped.
+#[cfg(unix)]
+fn exited(pid: libc::id_t) {
+    // SAFETY: an info of the size waitid writes, for a child of this process.
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let flags = libc::WEXITED | libc::WNOWAIT;
+        while libc::waitid(libc::P_PID, pid, &raw mut info, flags) == -1
+            && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
+        {}
     }
 }
 
@@ -96,6 +141,45 @@ fn job_of(
             && AssignProcessToJobObject(handle, process) != 0
     };
     joined.then_some(job).ok_or_else(io::Error::last_os_error)
+}
+
+/// The threads of the process `pid` made suspended: its first, which std keeps no handle to.
+#[cfg(windows)]
+fn resume(pid: u32) -> io::Result<()> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+    // SAFETY: a snapshot of the system's threads, walked with an entry of its own size; each
+    // handle opened is owned, so closed.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let snapshot = OwnedHandle::from_raw_handle(snapshot);
+        let mut entry = THREADENTRY32 {
+            dwSize: size_of::<THREADENTRY32>() as u32,
+            ..THREADENTRY32::default()
+        };
+        let (mut more, mut resumed) = (
+            Thread32First(snapshot.as_raw_handle(), &raw mut entry),
+            false,
+        );
+        while more != 0 {
+            if entry.th32OwnerProcessID == pid {
+                let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                if !thread.is_null() {
+                    let thread = OwnedHandle::from_raw_handle(thread);
+                    resumed |= ResumeThread(thread.as_raw_handle()) != u32::MAX;
+                }
+            }
+            more = Thread32Next(snapshot.as_raw_handle(), &raw mut entry);
+        }
+        resumed.then_some(()).ok_or_else(io::Error::last_os_error)
+    }
 }
 
 pub(crate) fn command(program: &str, cwd: Option<&Path>, path_env: &str) -> io::Result<Command> {
@@ -210,6 +294,22 @@ mod tests {
         tree.kill();
         let ended = tokio::time::timeout(PROBE_TIMEOUT, child.wait());
         assert!(!ended.await.unwrap().unwrap().success());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_a_tool_leaves_running_ends_with_it() {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30 & exit 0"])
+            .stdout(Stdio::piped());
+        let (mut child, tree) = Tree::spawn(&mut command).unwrap();
+        let mut out = child.stdout.take().unwrap();
+        assert!(tree.ended(&mut child).await.unwrap().success());
+        // The sleep holds the pipe until it is killed.
+        let mut rest = Vec::new();
+        let closed = tokio::time::timeout(PROBE_TIMEOUT, out.read_to_end(&mut rest));
+        assert!(closed.await.is_ok());
     }
 
     #[tokio::test]

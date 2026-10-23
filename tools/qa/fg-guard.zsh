@@ -10,3 +10,5 @@ while ! mkdir $S/locks/xctest 2>/dev/null; do
   if [[ -n $(find $S/locks/xctest -maxdepth 0 -mmin +25 2>/dev/null) ]]; then rmdir $S/locks/xctest 2>/dev/null; else sleep 3; fi
 done
 fg_done() { date +%s > $S/qa/last-fg; rmdir $S/locks/xctest 2>/dev/null }
+# Also when the script fails, which would otherwise hold the test host's turn for 25 minutes.
+trap fg_done EXIT

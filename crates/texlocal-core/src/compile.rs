@@ -565,7 +565,7 @@ See \cite{knuth}.
 
         let shown = synctex_forward_at(&project, "ch/intro.tex", 1, None).unwrap();
         let (x, y) = (shown.h.unwrap() + 5.0, shown.v.unwrap() - 2.0);
-        let clicked = synctex_inverse(&project, shown.page, x, y, None, None);
+        let clicked = synctex_inverse(&project, shown.page, x, y, None, None, &|_| None);
         assert_eq!(clicked.unwrap().file, "ch/intro.tex");
     }
 }
