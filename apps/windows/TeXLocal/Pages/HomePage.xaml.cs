@@ -20,7 +20,6 @@ public sealed record ProjectTemplate(string Id, string Title)
 
 public sealed partial class HomePage : Page
 {
-    readonly RenameFlyout rename = new();
     ProjectTemplate[] templates = [];
     ProjectInfo[] projects = [];
     ProjectInfo? target;
@@ -141,34 +140,14 @@ public sealed partial class HomePage : Page
         if (templates.FirstOrDefault(t => t.Id == "article") is { } article) New(article);
     }
 
-    /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.
+    /// New project, as File Explorer's New folder: a free name, selected for typing over.
     void New(ProjectTemplate template) => App.Run("Can't create a project", async () =>
     {
         if (App.Core is null) return;
-        var box = new TextBox { Header = "Name", Width = 360, Text = (await Core.CallAsync("free_project_name")).GetProperty("name").GetString() ?? "" };
-        var dialog = new ContentDialog
-        {
-            Title = $"New {template.Title.ToLowerInvariant()} project",
-            Content = box,
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-        };
         string? id = null;
-        dialog.Opened += (_, _) => box.SelectAll();
-        box.TextChanged += (_, _) => box.Description = null;
-        dialog.PrimaryButtonClick += async (_, args) =>
-        {
-            var deferral = args.GetDeferral();
-            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id, engine = Prefs.Engine is "" ? null : Prefs.Engine })).Id; }
-            catch (Exception ex)
-            {
-                args.Cancel = true;
-                box.Description = ex.Message;
-            }
-            finally { deferral.Complete(); }
-        };
-        if (await App.Show(dialog) == ContentDialogResult.Primary && id is not null) App.Window.OpenProject(id);
+        if (await App.Prompt($"New {template.Title.ToLowerInvariant()} project", "Name", (await Core.CallAsync("free_project_name")).GetProperty("name").GetString() ?? "",
+            "Create", async name => id = (await Core.CallAsync<ProjectInfo>("create_project", new { name, template = template.Id, engine = Prefs.Engine is "" ? null : Prefs.Engine })).Id))
+            App.Window.OpenProject(id!);
     });
 
     /// An opened folder is the author's: it is never renamed or recycled from here.
@@ -202,11 +181,11 @@ public sealed partial class HomePage : Page
 
     void OnExportItem(object sender, RoutedEventArgs e) => App.Run("Can't export", () => App.ExportZip(target!.Id, target.Name));
 
-    /// Renames in place, at the row's name, as File Explorer does.
+    /// An opened folder is the author's, and keeps its name.
     void Rename(ProjectInfo p)
     {
-        if (!p.Opened && (List.ContainerFromItem(p) as ListViewItem)?.ContentTemplateRoot is FrameworkElement row && row.FindName("NameText") is FrameworkElement name)
-            rename.Show(name, p.Name, async to => Reload((await Core.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name = to })).Id));
+        if (!p.Opened) App.Run("Can't rename this project", () => App.Prompt("Rename", "Name", p.Name, "Rename", async to =>
+            Reload((await Core.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name = to })).Id)));
     }
 
     /// An opened folder is the author's, so it only leaves the list, without asking, as from Word's Recent.

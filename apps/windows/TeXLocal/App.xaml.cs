@@ -112,6 +112,49 @@ public partial class App : Application
         Title = title, Content = content, PrimaryButtonText = primary, SecondaryButtonText = secondary ?? "", CloseButtonText = "Cancel", DefaultButton = preferred,
     });
 
+    /// The one dialog that asks for a value, as File Explorer's New and Rename: `text` selected, only its stem with `stem`,
+    /// and `commit`'s refusal said under the box, which stays open for another try. True once committed.
+    public static async Task<bool> Prompt(string title, string header, string text, string primary, Func<string, Task> commit, bool stem = false)
+    {
+        var box = new TextBox { Header = header, Text = text, Width = 360 };
+        var dialog = new ContentDialog
+        {
+            Title = title, Content = box, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = text.Length > 0,
+        };
+        dialog.Opened += (_, _) =>
+        {
+            box.Focus(FocusState.Programmatic);
+            box.Select(0, stem && text.LastIndexOf('.') is var dot and > 0 ? dot : text.Length);
+        };
+        box.TextChanged += (_, _) => (box.Description, dialog.IsPrimaryButtonEnabled) = (null, box.Text.Trim().Length > 0);
+        dialog.PrimaryButtonClick += async (_, e) =>
+        {
+            var deferral = e.GetDeferral();
+            try { await commit(box.Text.Trim()); }
+            catch (Exception ex) { (e.Cancel, box.Description) = (true, ex.Message); }
+            deferral.Complete();
+        };
+        return await Show(dialog) == ContentDialogResult.Primary;
+    }
+
+    /// Segoe Fluent Icons' glyph for each kind the core names: a file's, a completion's, a result's, a change's.
+    public static string Glyph(string? kind) => kind switch
+    {
+        null => "\uE8B7",
+        "tex" or "file" or "entryType" => "\uE8A5",
+        "bib" or "citation" => "\uE8F1",
+        "image" => "\uE91B",
+        "pdf" => "\uEA90",
+        "heading" or "environment" => "\uE8FD",
+        "label" => "\uE8EC",
+        "command" => "\uE943",
+        "added" => "\uE710",
+        "deleted" => "\uE74D",
+        "changed" => "\uE70F",
+        _ => "\uE7C3",
+    };
+
     /// In a smoke run, which no one reads, an alert is its failure.
     public static Task Alert(string title, string message)
     {

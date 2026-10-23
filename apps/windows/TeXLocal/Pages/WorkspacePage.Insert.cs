@@ -95,33 +95,26 @@ public sealed partial class WorkspacePage
     /// shows.
     void ShowInsertChecks(OutlineNode? heading)
     {
-        var latex = SourceItem.IsChecked && Editor.Path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
+        var latex = Model.Latex = SourceItem.IsChecked && Editor.Path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
         foreach (var item in InsertMenu.Items) item.IsEnabled = latex;
-        foreach (var control in (Control[])[StyleButton, BoldButton, ItalicButton, UnderlineButton, EquationButton, SymbolButton, InsertButton])
-            control.IsEnabled = latex;
         var command = heading?.Command ?? "";
         foreach (var item in HeadingMenu.Items.Concat(StyleMenu.Items).OfType<RadioMenuFlyoutItem>())
             item.IsChecked = ((HeadingStyle)item.Tag).Command == command;
-        StyleText.Text = StyleMenu.Items.OfType<RadioMenuFlyoutItem>().FirstOrDefault(i => i.IsChecked) is { } level ? Sentence(((HeadingStyle)level.Tag).Title) : "Normal text";
+        Model.Style = StyleMenu.Items.OfType<RadioMenuFlyoutItem>().FirstOrDefault(i => i.IsChecked) is { } level ? Sentence(((HeadingStyle)level.Tag).Title) : "Normal text";
         var styles = latex ? Editor.Styles : new TextStyles(null, null, null);
-        (BoldItem.IsChecked, ItalicItem.IsChecked, UnderlineItem.IsChecked) = (styles.Bold is not null, styles.Italic is not null, styles.Underline is not null);
-        (BoldButton.IsChecked, ItalicButton.IsChecked, UnderlineButton.IsChecked) = (BoldItem.IsChecked, ItalicItem.IsChecked, UnderlineItem.IsChecked);
+        (Model.Bold, Model.Italic, Model.Underline) = (styles.Bold is not null, styles.Italic is not null, styles.Underline is not null);
     }
-
-    void OnStyle(object sender, RoutedEventArgs e) => Editor.ToggleStyle((string)((FrameworkElement)sender).Tag);
-    void OnInlineMaths(object sender, RoutedEventArgs e) => Editor.Wrap("$$0$");
-    void OnDisplayMaths(object sender, RoutedEventArgs e) => Editor.Wrap("\\[$0\\]");
 
     // MARK: the symbol palette
 
     /// Below the caret's line, never over it; drawn again in the text's colour when that has changed.
-    void OnSymbols(object sender, RoutedEventArgs e) => App.Run(null, async () =>
+    void ShowSymbols() => App.Run(null, async () =>
     {
         if (Editor.Path is null) return;
         if (symbols is null || inked != Editor.Ink) symbols = DrawSymbols(inked = Editor.Ink);
         await symbols;
         SymbolFilter.Text = "";
-        ShowSymbols();
+        FilterSymbols();
         var r = Editor.CaretRect;
         Palette.ShowAt(Editor, new FlyoutShowOptions { Position = new(r.X, r.Bottom), ExclusionRect = r, Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
     });
@@ -146,7 +139,7 @@ public sealed partial class WorkspacePage
         return groups;
     }
 
-    void ShowSymbols()
+    void FilterSymbols()
     {
         var filter = SymbolFilter.Text.Trim();
         Symbols.ItemsSource = new CollectionViewSource
@@ -156,8 +149,6 @@ public sealed partial class WorkspacePage
                 .Where(g => g.Count > 0).ToList(),
         }.View;
     }
-
-    void OnSymbolFilter(object sender, TextChangedEventArgs e) => ShowSymbols();
 
     void OnSymbol(object sender, ItemClickEventArgs e)
     {

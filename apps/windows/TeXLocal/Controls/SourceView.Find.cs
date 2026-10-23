@@ -16,21 +16,26 @@ public sealed partial class SourceView
 
     bool FindShown => FindBar.Visibility == Visibility.Visible;
 
-    public void ShowFind(bool replace)
+    public void ShowFind() => OpenFind(false);
+    public void ShowReplace() => OpenFind(true);
+    public void FindNext() => Step(true);
+    public void FindPrevious() => Step(false);
+
+    void OpenFind(bool replace)
     {
         if (source is null) return;
         CloseCompletions();
         var s = Selected;
         if (s.Length is > 0 and < 200 && Text.IndexOf('\n', s.Start, s.Length) < 0) FindBox.Text = Text.Substring(s.Start, s.Length);
         FindBar.Visibility = Visibility.Visible;
-        ShowReplace(replace || ReplaceBox.Visibility == Visibility.Visible);
+        ShowReplaceRow(replace || ReplaceBox.Visibility == Visibility.Visible);
         // Replace takes the keys only once there is something to find (VS Code, Notepad).
         (replace && FindBox.Text.Length > 0 ? ReplaceBox : FindBox).Focus(FocusState.Keyboard);
         FindBox.SelectAll();
         Count();
     }
 
-    void ShowReplace(bool show)
+    void ShowReplaceRow(bool show)
     {
         ReplaceBox.Visibility = ReplaceButtons.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         ReplaceChevron.Glyph = show ? "\uE70D" : "\uE76C";
@@ -52,11 +57,11 @@ public sealed partial class SourceView
         Editor.Focus(FocusState.Programmatic);
     }
 
-    public void FindNext(bool forward)
+    void Step(bool forward)
     {
         if (source is null) return;
         var s = Selected;
-        if (FindBox.Text.Length == 0) ShowFind(false);
+        if (FindBox.Text.Length == 0) ShowFind();
         else if ((Search(forward ? s.End : s.Start, forward) ?? Search(forward ? 0 : Text.Length, forward)) is { } found) Place(found);
         Count();
     }
@@ -91,16 +96,14 @@ public sealed partial class SourceView
         Count();
     }
 
-    void OnFindNext(object sender, RoutedEventArgs e) => FindNext(true);
-    void OnFindPrevious(object sender, RoutedEventArgs e) => FindNext(false);
     void OnFindClose(object sender, RoutedEventArgs e) => HideFind();
-    void OnReplaceToggle(object sender, RoutedEventArgs e) => ShowReplace(ReplaceBox.Visibility != Visibility.Visible);
+    void OnReplaceToggle(object sender, RoutedEventArgs e) => ShowReplaceRow(ReplaceBox.Visibility != Visibility.Visible);
 
     void OnFindKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Escape) HideFind();
         else if (e.Key == VirtualKey.Enter && ReferenceEquals(sender, ReplaceBox)) OnReplace(sender, e);
-        else if (e.Key == VirtualKey.Enter) FindNext(!Down(VirtualKey.Shift));
+        else if (e.Key == VirtualKey.Enter) Step(!Down(VirtualKey.Shift));
         else return;
         e.Handled = true;
     }
@@ -110,7 +113,7 @@ public sealed partial class SourceView
         if (source is null || FindBox.Text.Length == 0) return;
         var s = Selected;
         if (Search(s.Start, true) == s) Apply(new TextEdit(s.Start, s.Length, ReplaceBox.Text));
-        FindNext(true);
+        FindNext();
     }
 
     void OnReplaceAll(object sender, RoutedEventArgs e)

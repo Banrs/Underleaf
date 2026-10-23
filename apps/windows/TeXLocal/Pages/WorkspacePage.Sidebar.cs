@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -10,29 +9,13 @@ using Windows.ApplicationModel.DataTransfer;
 
 namespace TeXLocal.Pages;
 
-/// A row of the sidebar's trees: a file or folder, a heading, or a search hit under its file.
-public sealed class NavItem
+/// Results' rows: a file, then its hits.
+public sealed partial class ResultTemplates : DataTemplateSelector
 {
-    readonly string? spoken;
-
-    public string Lead { get; init; } = "";
-    /// The search match, in SemiBold between Lead and Tail.
-    public string Strong { get; init; } = "";
-    public string Tail { get; init; } = "";
-    public string Glyph { get; init; } = "";
-    public bool HasGlyph => Glyph.Length > 0;
-    /// A file's hit count, a hit's line or a heading's words.
-    public string Trailing { get; init; } = "";
-    public bool IsMain { get; init; }
-    public string Tip { get; init; } = "";
-    public int Lines { get; init; } = 1;
-    /// What its expansion is kept by in the project's UI state: a folder's path, a heading's fold.
-    public string Key { get; init; } = "";
-    public bool IsExpanded { get; set; }
-    /// The TreeNode, OutlineNode or SearchHit it shows.
-    public object? Target { get; init; }
-    public List<NavItem>? Children { get; init; }
-    public string Spoken { get => spoken ?? Lead + Strong + Tail + (IsMain ? ", main file" : ""); init => spoken = value; }
+    public DataTemplate File { get; set; } = null!;
+    public DataTemplate Hit { get; set; } = null!;
+    protected override DataTemplate SelectTemplateCore(object item) => item is SearchFile ? File : Hit;
+    protected override DataTemplate SelectTemplateCore(object item, DependencyObject container) => SelectTemplateCore(item);
 }
 
 /// The sidebar, as Word's navigation pane: Files, the Outline of the shown file's document, and project search's Results
@@ -40,8 +23,10 @@ public sealed class NavItem
 /// and session_usages, which find the open document's unsaved edits).
 public sealed partial class WorkspacePage
 {
-    readonly RenameFlyout rename = new();
-    HashSet<string> expanded = [], folded = [];
+    /// The folders open and the headings folded, kept in the project's UI state. Static, for the rows' templates to read
+    /// as they are drawn: one project is open at a time.
+    static HashSet<string> expanded = [], folded = [];
+    readonly Dictionary<string, TreeNode> nodes = [];
     TreeNode[] tree = [];
     string treeJson = "", searched = "";
     /// The search's error, or what the replace before it did.
@@ -49,7 +34,7 @@ public sealed partial class WorkspacePage
     int searches;
     bool fileUnshown;
     Analysis? analysis;
-    NavItem? currentHeading;
+    OutlineNode? currentHeading;
     /// The line whose heading the outline selects: the caret's, or the top line once a scroll passes a heading.
     int headingLine = 1;
     int? topHeading;
@@ -57,60 +42,52 @@ public sealed partial class WorkspacePage
     Task foldsSaved = Task.CompletedTask;
 
     TreeView[] SideTrees => [FilesTree, OutlineTree, ResultsTree];
-    TreeNode? Picked => (FilesTree.SelectedItem as NavItem)?.Target as TreeNode;
+    TreeNode? Picked => FilesTree.SelectedItem as TreeNode;
 
-    static string Glyph(string? kind) => kind switch { null => "\uE8B7", "tex" => "\uE8A5", "bib" => "\uE8F1", "image" => "\uE91B", "pdf" => "\uEA90", _ => "\uE7C3" };
-
-    List<NavItem> Files(TreeNode[] nodes) => [.. nodes.Select(n => new NavItem
-    {
-        Lead = n.Name, Glyph = Glyph(n.Kind), Tip = n.Path, Key = n.Path, IsMain = n.Main,
-        IsExpanded = expanded.Contains(n.Path), Target = n, Children = n.Children is { } c ? Files(c) : null,
-    })];
-
-    List<NavItem> Headings(OutlineNode[] nodes) => [.. nodes.Select(n => new NavItem
-    {
-        Lead = Title(n), Tip = Title(n), Trailing = $"{n.Words:N0}", Spoken = $"{Title(n)}, {WordCount(n.Words)}", Key = n.FoldKey,
-        IsExpanded = !folded.Contains(n.FoldKey), Target = n, Children = n.Children is { } c ? Headings(c) : null,
-    })];
+    public static string FileName(string name, bool main) => main ? $"{name}, main file" : name;
+    public static bool FolderOpen(string path) => expanded.Contains(path);
+    /// An empty heading by its level, in sentence case: "Untitled subsection".
+    public static string HeadingTitle(string title, bool untitled) => untitled ? Sentence(title) : title;
+    public static string HeadingName(string title, bool untitled, int words) => $"{HeadingTitle(title, untitled)}, {WordCount(words)}";
+    public static bool HeadingOpen(string key) => !folded.Contains(key);
+    public static string Thousands(int number) => $"{number:N0}";
+    public static string Number(int number) => $"{number}";
+    public static string HitCount(SearchHit[] hits) => $"{hits.Length}";
+    public static string ResultsName(string file, SearchHit[] hits) => $"{file}, {hits.Length} {(hits.Length == 1 ? "result" : "results")}";
+    public static string HitText(string before, string match, string after) => before + match + after;
+    public static string HitName(int line, string before, string match, string after) => $"Line {line}: {before}{match}{after}";
 
     static string WordCount(int words) => words == 1 ? "1 word" : $"{words:N0} words";
 
-    /// An empty heading by its level, in sentence case: "Untitled subsection".
-    static string Title(OutlineNode n) => n.Untitled ? Sentence(n.Title) : n.Title;
-
-    static List<NavItem> Results(SearchFile[] files) => [.. files.Select(f => new NavItem
+    /// Selects a file's row; its container, for a flyout to open at, when it's drawn.
+    FrameworkElement? SelectFile(string? path)
     {
-        Lead = f.File, Glyph = "\uE8A5", Trailing = $"{f.Hits.Length}", Tip = f.File, IsExpanded = true,
-        Spoken = $"{f.File}, {f.Hits.Length} {(f.Hits.Length == 1 ? "result" : "results")}",
-        Children = [.. f.Hits.Select(h => new NavItem
-        {
-            Lead = h.Before, Strong = h.Match, Tail = h.After, Lines = 2, Trailing = $"{h.Line}", Tip = h.Before + h.Match + h.After,
-            Spoken = $"Line {h.Line}: {h.Before}{h.Match}{h.After}", Target = h,
-        })],
-    })];
-
-    static NavItem? Find(IEnumerable<NavItem>? items, Func<NavItem, bool> match) =>
-        items?.Select(i => match(i) ? i : Find(i.Children, match)).FirstOrDefault(i => i is not null);
-
-    /// Selects a row; its container, for a flyout to open at, when it's drawn.
-    static FrameworkElement? Select(TreeView view, Func<NavItem, bool> match)
-    {
-        if (Find(view.ItemsSource as List<NavItem>, match) is not { } item) return null;
-        view.SelectedItem = item;
-        view.UpdateLayout();
-        return view.ContainerFromItem(item) as FrameworkElement;
+        if (path is null || !nodes.TryGetValue(path, out var node)) return null;
+        FilesTree.SelectedItem = node;
+        FilesTree.UpdateLayout();
+        return FilesTree.ContainerFromItem(node) as FrameworkElement;
     }
 
     /// The project's files. The watcher's tree after a RefreshTree is often the one it read, which shown again would take
     /// away a new file's row as its name is typed (core gap 24).
-    void ShowTree(TreeNode[] nodes, bool force = false)
+    void ShowTree(TreeNode[] shown, bool force = false)
     {
-        var json = JsonSerializer.Serialize(nodes, Core.Json);
+        var json = JsonSerializer.Serialize(shown, Core.Json);
         if (!force && json == treeJson) return;
-        (tree, treeJson) = (nodes, json);
-        var selected = (FilesTree.SelectedItem as NavItem)?.Key;
-        FilesTree.ItemsSource = Files(nodes);
-        if (selected is not null) Select(FilesTree, i => i.Key == selected);
+        (tree, treeJson) = (shown, json);
+        var selected = Picked?.Path;
+        nodes.Clear();
+        void Index(TreeNode[] level)
+        {
+            foreach (var node in level)
+            {
+                nodes[node.Path] = node;
+                Index(node.Children ?? []);
+            }
+        }
+        Index(shown);
+        FilesTree.ItemsSource = shown;
+        SelectFile(selected);
     }
 
     async Task RefreshTree() => ShowTree(await Core.CallAsync<TreeNode[]>("file_tree", new { id }));
@@ -120,8 +97,8 @@ public sealed partial class WorkspacePage
     {
         if (ResultsTree is null) return;
         var tab = SideTabs.SelectedItem;
-        var outlined = OutlineTree.ItemsSource is List<NavItem> { Count: > 0 };
-        var hits = ResultsTree.ItemsSource is List<NavItem> { Count: > 0 };
+        var outlined = OutlineTree.ItemsSource is OutlineNode[] { Length: > 0 };
+        var hits = ResultsTree.ItemsSource is SearchFile[] { Length: > 0 };
         FilesTree.Visibility = Vis(tab == FilesTab);
         OutlineTree.Visibility = Vis(tab == OutlineTab && outlined);
         ResultsTree.Visibility = Vis(tab == ResultsTab && hits);
@@ -144,34 +121,36 @@ public sealed partial class WorkspacePage
     void SelectShownFile()
     {
         fileUnshown = FilesTree.Visibility != Visibility.Visible;
-        if (fileUnshown || Editor.Path is not { } path || (FilesTree.SelectedItem as NavItem)?.Key == path) return;
+        if (fileUnshown || Editor.Path is not { } path || Picked?.Path == path) return;
         FilesTree.UpdateLayout();
-        Select(FilesTree, i => i.Key == path);
+        SelectFile(path);
     }
 
-    void OnShowOutline(object sender, RoutedEventArgs e)
+    void ShowOutline()
     {
         Split.IsPaneOpen = true;
         SideTabs.SelectedItem = OutlineTab;
         (OutlineTree.Visibility == Visibility.Visible ? (Control)OutlineTree : SideTabs).Focus(FocusState.Keyboard);
     }
 
-    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(sender, (NavItem)args.Item, true);
-    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(sender, (NavItem)args.Item, false);
+    void OnExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(args.Item, true);
+    void OnCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(args.Item, false);
 
-    /// Folders open and headings folded, kept together in the project's UI state.
-    void Fold(TreeView view, NavItem row, bool open)
+    void Fold(object row, bool open)
     {
-        row.IsExpanded = open;
-        var changed = view == FilesTree ? (open ? expanded.Add(row.Key) : expanded.Remove(row.Key))
-            : view == OutlineTree && (open ? folded.Remove(row.Key) : folded.Add(row.Key));
+        var changed = row switch
+        {
+            TreeNode folder => open ? expanded.Add(folder.Path) : expanded.Remove(folder.Path),
+            OutlineNode heading => open ? folded.Remove(heading.FoldKey) : folded.Add(heading.FoldKey),
+            _ => false,
+        };
         if (changed) SaveFolds();
     }
 
     void SaveFolds() => foldsSaved = Core.CallAsync("set_ui_state", new { id, patch = new { expandedFolders = expanded.Order(), foldedHeadings = folded.Order() } });
 
     /// The project's UI state: as it opens, and after a rename, which moves the entry's paths.
-    void ReadFolds(UiState ui)
+    static void ReadFolds(UiState ui)
     {
         expanded = [.. ui.ExpandedFolders];
         folded = [.. ui.FoldedHeadings];
@@ -179,7 +158,7 @@ public sealed partial class WorkspacePage
 
     void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
     {
-        switch ((args.InvokedItem as NavItem)?.Target)
+        switch (args.InvokedItem)
         {
             case TreeNode { Type: not "dir" } node: Jump(node.Path, null); break;
             case OutlineNode { File: { } file } heading: Jump(file, heading.Line); break;
@@ -196,7 +175,7 @@ public sealed partial class WorkspacePage
         var found = await Core.CallAsync<Analysis>("session_analyze", new { session, path });
         if (Editor.Path != path) return;
         analysis = found;
-        (OutlineTree.ItemsSource, currentHeading) = (Headings(found.Tree), null);
+        (OutlineTree.ItemsSource, currentHeading) = (found.Tree, null);
         ShowSide();
         ShowHeadings(found.HeadingStyles);
         CaretSettled();
@@ -208,12 +187,12 @@ public sealed partial class WorkspacePage
     {
         if (analysis is not { } shown || Editor.Path is not { } path) return;
         var words = WordCount(shown.Words);
-        Words.Text = Editor.SelectedWords is { } selected ? $"{selected:N0} of {words}" : words;
+        Model.Words = Editor.SelectedWords is { } selected ? $"{selected:N0} of {words}" : words;
         var line = Editor.Caret.Line;
         ShowInsertChecks(shown.Outline.FirstOrDefault(h => h.File == path && h.Line == line));
         var index = await Core.CallAsync<int?>("session_outline_current", new { session, path, line = headingLine });
         if (analysis != shown) return;
-        currentHeading = Find(OutlineTree.ItemsSource as List<NavItem>, i => i.Target is OutlineNode n && n.Index == index);
+        currentHeading = shown.Outline.FirstOrDefault(n => n.Index == index);
         SelectCurrentHeading();
     });
 
@@ -246,12 +225,12 @@ public sealed partial class WorkspacePage
 
     void OnSearchChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e)
     {
-        if (e.Reason == AutoSuggestionBoxTextChangeReason.UserInput) Restart(searchTimer);
+        if (e.Reason == AutoSuggestionBoxTextChangeReason.UserInput) searching.Restart();
     }
 
     void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e) => App.Run(null, async () =>
     {
-        searchTimer.Stop();
+        searching.Stop();
         await RunSearch();
         if (ResultsTree.Visibility == Visibility.Visible) ResultsTree.Focus(FocusState.Keyboard);
     });
@@ -264,7 +243,7 @@ public sealed partial class WorkspacePage
         e.Handled = true;
     }
 
-    void OnFindInProject(object sender, RoutedEventArgs e)
+    void FindInProject()
     {
         Split.IsPaneOpen = true;
         Search.Focus(FocusState.Keyboard);
@@ -300,7 +279,7 @@ public sealed partial class WorkspacePage
     void ShowResults(string query, SearchFile[] files, string? note, string heading = "")
     {
         (searched, searchNote) = (query, note);
-        ResultsTree.ItemsSource = Results(files);
+        ResultsTree.ItemsSource = files;
         ResultsHeading.Text = heading;
         ReplaceAll.IsEnabled = heading.Length == 0 && files.Length > 0;
         if (query.Length > 0)
@@ -312,7 +291,7 @@ public sealed partial class WorkspacePage
         ShowSide();
     }
 
-    void OnReplaceToggle(object sender, RoutedEventArgs e)
+    void ToggleReplace()
     {
         var show = ReplaceRow.Visibility != Visibility.Visible;
         ReplaceRow.Visibility = Vis(show);
@@ -321,7 +300,7 @@ public sealed partial class WorkspacePage
     }
 
     /// VS Code's Replace All, of the matches the results show; the core writes the files not open, and the search runs again.
-    void OnReplaceAll(object sender, RoutedEventArgs e) => App.Run("Can't replace", async () =>
+    void ReplaceInProject() => App.Run("Can't replace", async () =>
     {
         var replacement = ReplaceBox.Text;
         var replaced = await Core.CallAsync<Replaced>("session_replace", new { session, query = searched, replacement });
@@ -333,14 +312,14 @@ public sealed partial class WorkspacePage
 
     // MARK: files
 
-    string TargetDir(NavItem? item) => item?.Target is TreeNode n ? n.Type == "dir" ? n.Path : ParentOf(n.Path) : "";
+    static string TargetDir(TreeNode? node) => node is null ? "" : node.Type == "dir" ? node.Path : ParentOf(node.Path);
 
     static string ParentOf(string path) => path.LastIndexOf('/') is var i and > 0 ? path[..i] : "";
 
     static string Join(string dir, string name) => dir.Length == 0 ? name : $"{dir}/{name}";
 
     void OnFilesContext(UIElement sender, ContextRequestedEventArgs args) =>
-        FilesTree.SelectedItem = (args.OriginalSource as FrameworkElement)?.DataContext as NavItem;
+        FilesTree.SelectedItem = (args.OriginalSource as FrameworkElement)?.DataContext as TreeNode;
 
     /// The main file can't be deleted: setting another as the main file comes first. Set as the selection changes, not as
     /// the menu opens, since a disabled item's F2 or Delete doesn't fire.
@@ -352,53 +331,55 @@ public sealed partial class WorkspacePage
         MainItem.IsEnabled = node is { Kind: "tex", Main: false };
     }
 
-    /// A new entry beside the selection, named in place as File Explorer's New folder is.
-    void Create(string name, bool dir) => App.Run("Can't create this", async () =>
+    void NewFile() => Create("New file", "untitled.tex", false);
+    void NewFolder() => Create("New folder", "untitled folder", true);
+
+    /// A new entry beside the selection, named first, as File Explorer's New names it before it is made.
+    void Create(string title, string suggested, bool dir) => App.Run("Can't create this", async () =>
     {
-        var parent = TargetDir(FilesTree.SelectedItem as NavItem);
-        var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir })).GetProperty("path").GetString()!;
+        var parent = TargetDir(Picked);
+        string? made = null;
+        if (!await App.Prompt(title, "Name", suggested, "Create", async name =>
+            made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir })).GetProperty("path").GetString(), stem: !dir)) return;
         if (parent.Length > 0 && expanded.Add(parent)) SaveFolds();
         await RefreshTree();
-        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-        {
-            if (Select(FilesTree, i => i.Key == made) is { } row && Picked is { } node) Rename(node, row);
-        });
+        SelectFile(made);
     });
 
-    void OnNewFile(object sender, RoutedEventArgs e) => Create("untitled.tex", false);
-    void OnNewFolder(object sender, RoutedEventArgs e) => Create("untitled folder", true);
-
-    void OnSetMain(object sender, RoutedEventArgs e)
+    void SetMain()
     {
         if (Picked is not { Kind: "tex" } node) return;
         App.Run("Can't set the main file", () => Core.CallAsync("session_set_settings", new { session, patch = new { mainFile = node.Path } }));
     }
 
-    void OnRename(object sender, RoutedEventArgs e)
+    /// The core's refusal shows in the dialog. A rename above the main file moves it, and the folders open move with
+    /// it; the answer is null if the files couldn't be saved first.
+    void RenameFile()
     {
-        if (Picked is { } node && FilesTree.ContainerFromItem(FilesTree.SelectedItem) is FrameworkElement row) Rename(node, row);
+        if (Picked is not { } node) return;
+        var to = "";
+        App.Run("Can't rename this", async () =>
+        {
+            if (!await App.Prompt("Rename", "Name", node.Name, "Rename", async name =>
+            {
+                to = Join(ParentOf(node.Path), name);
+                // The core takes a session's service commands in no set order, and the rename moves the folds this wrote;
+                // a write that failed doesn't stop it.
+                await Task.WhenAny(foldsSaved);
+                if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
+                    ReadFolds(renamed.GetProperty("ui").Deserialize<UiState>(Core.Json)!);
+            }, stem: node.Type != "dir")) return;
+            await RefreshTree();
+            SelectFile(to);
+        });
     }
 
-    /// The core's refusal shows in the flyout. A rename above the main file moves it, and the folders open move with
-    /// it; the answer is null if the files couldn't be saved first.
-    void Rename(TreeNode node, FrameworkElement row) => rename.Show(row, node.Name, async name =>
-    {
-        var to = Join(ParentOf(node.Path), name);
-        // The core takes a session's service commands in no set order, and the rename moves the folds this wrote; a
-        // write that failed doesn't stop it.
-        await Task.WhenAny(foldsSaved);
-        if (await Core.CallAsync("session_rename", new { session, from = node.Path, to }) is { ValueKind: JsonValueKind.Object } renamed)
-            ReadFolds(renamed.GetProperty("ui").Deserialize<UiState>(Core.Json)!);
-        await RefreshTree();
-        Select(FilesTree, i => i.Key == to);
-    });
-
-    void OnReveal(object sender, RoutedEventArgs e)
+    void RevealFile()
     {
         if (Picked is { } node) App.Reveal(Full(node.Path), select: true);
     }
 
-    void OnDelete(object sender, RoutedEventArgs e)
+    void DeleteFile()
     {
         if (Picked is not { Main: false } node) return;
         App.Run("Can't delete this", async () =>
@@ -418,12 +399,12 @@ public sealed partial class WorkspacePage
         });
     }
 
-    string? KindOf(string path) => (Find(FilesTree.ItemsSource as List<NavItem>, i => i.Key == path)?.Target as TreeNode)?.Kind;
+    string? KindOf(string path) => nodes.GetValueOrDefault(path)?.Kind;
 
     /// A file dragged to the editor, as on the Mac; a folder, which a drop there does nothing with, isn't dragged.
     void OnFilesDrag(TreeView sender, TreeViewDragItemsStartingEventArgs args)
     {
-        if (args.Items.Count == 1 && args.Items[0] is NavItem { Target: TreeNode { Type: not "dir" } node })
+        if (args.Items.Count == 1 && args.Items[0] is TreeNode { Type: not "dir" } node)
         {
             args.Data.SetData(SourceView.FileFormat, Full(node.Path));
             args.Data.RequestedOperation = DataPackageOperation.Copy;
@@ -455,19 +436,19 @@ public sealed partial class WorkspacePage
     void OnDrop(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        var dir = TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as NavItem);
-        App.Run("Can't add these files", async () => await AddFiles(dir, await App.Dropped(e)));
+        var dir = TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as TreeNode);
+        App.Run("Can't add these files", async () => await Import(dir, await App.Dropped(e)));
     }
 
     /// Beside the selection, as New file.
-    void OnAddFiles(object sender, RoutedEventArgs e) => App.Run("Can't add these files", async () =>
+    void AddFiles() => App.Run("Can't add these files", async () =>
     {
         var picked = await new FileOpenPicker(App.Window.AppWindow.Id).PickMultipleFilesAsync();
-        if (picked.Count > 0) await AddFiles(TargetDir(FilesTree.SelectedItem as NavItem), [.. picked.Select(f => f.Path)]);
+        if (picked.Count > 0) await Import(TargetDir(Picked), [.. picked.Select(f => f.Path)]);
     });
 
     /// Copies of other files into a folder of the project; a clash asks as File Explorer does.
-    async Task AddFiles(string dir, string[] paths)
+    async Task Import(string dir, string[] paths)
     {
         var imported = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
         if (imported.Existing.Length > 0)
