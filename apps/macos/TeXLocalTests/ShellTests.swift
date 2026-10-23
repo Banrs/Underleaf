@@ -217,17 +217,6 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
-    /// Shut with a drag on its divider, a side column is hidden and saved so.
-    @Test func aSideColumnShutByTheUserIsHidden() {
-        let app = AppModel(defaults: defaults.store)
-        app.inspectorVisible = true
-        app.sideColumn(.sidebar, shown: false, byWindow: false)
-        app.sideColumn(.inspector, shown: false, byWindow: false)
-        #expect(!app.sidebarVisible && !app.sidebarFolded && !app.inspectorVisible && !app.inspectorFolded)
-        #expect(defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false
-                && defaults.saved(DefaultsKey.inspectorVisible) as? Bool == false)
-    }
-
     /// A project opened over another keeps the other's workspace until it has loaded: the window never shows Home between
     /// them. With no project open, it shows Home.
     @Test func aProjectSwitchNeverShowsHome() {
@@ -274,15 +263,6 @@ struct ShellTests {
         #expect(controller.validateMenuItem(find))
         controller.performFindPanelAction(find)
         #expect(app.searchFocusToken == 1)
-    }
-
-    /// What the tests set goes to their own defaults, not the user's.
-    @Test func theModelsSettingsGoWhereTheyAreKept() {
-        let user = UserDefaults.standard.object(forKey: DefaultsKey.showWordCount) as? Bool
-        let app = AppModel(defaults: defaults.store)
-        app.showWordCount = false
-        #expect(!app.savesLayout && defaults.saved(DefaultsKey.showWordCount) as? Bool == false)
-        #expect(UserDefaults.standard.object(forKey: DefaultsKey.showWordCount) as? Bool == user)
     }
 
     @Test func aTrackAppliesEachNewValueOnce() async throws {

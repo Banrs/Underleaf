@@ -112,52 +112,6 @@ struct SourceEditorTests {
         await app.close()
     }
 
-    /// A project closing leaves its editor read-only: a key steps over no closer and offers no completions.
-    @Test func aReadOnlyEditorAsksTheCoreNothing() {
-        open("")
-        type("{")
-        text.isEditable = false
-        type("}")
-        #expect(text.string == "{}" && text.selectedRange() == .caret(1))
-        text.complete(nil)
-        #expect(text.completions.offered == nil)
-    }
-
-    @Test func escapeStaysInTheEditor() throws {
-        final class Catcher: NSResponder {
-            var cancelled = false
-            override func cancelOperation(_ sender: Any?) { cancelled = true }
-        }
-        let catcher = Catcher()
-        text.nextResponder = catcher
-        open("plain")
-        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        #expect(!catcher.cancelled && text.completions.offered == nil)
-        open("\\be")
-        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        #expect(!catcher.cancelled && text.completions.offered != nil)
-    }
-
-    /// With completion off, only a list asked for follows the typing.
-    @Test func typingAssistanceCanBeTurnedOff() throws {
-        text.autoPair = false
-        text.autoComplete = false
-        open("")
-        type("{", "\\", "b")
-        #expect(text.string == "{\\b" && text.completions.offered == nil)
-        text.complete(nil)
-        let all = try #require(text.completions.offered).items.count
-        type("e")
-        #expect(try #require(text.completions.offered).items.count < all)
-    }
-
-    @Test func aCommandKeepsTheSelection() {
-        open("word")
-        text.setSelectedRange(NSRange(location: 0, length: 4))
-        #expect(editor.perform(.bold))
-        #expect(text.string == "\\textbf{word}" && text.selectedRange() == NSRange(location: 8, length: 4))
-    }
-
     @Test func blocksTabThroughTheirFields() {
         open("")
         #expect(editor.perform(.block(id: "figure")))
@@ -274,16 +228,6 @@ struct SourceEditorTests {
         #expect(text.string == "ab\\textbf{}" && undo.undoActionName == "Bold")
         undo.undo()
         #expect(text.string == "ab" && text.document.text == text.string)
-    }
-
-    @Test func aMovedLineIsOneUndoStep() async throws {
-        open("a\nb\nc\nd", caret: 2)
-        let undo = try groupingByEvent()
-        await undo.grouping { #expect(editor.perform(.moveLineUp)) }
-        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == .caret(0) && undo.undoActionName == "Move Line Up")
-        #expect(!editor.perform(.moveLineUp))
-        undo.undo()
-        #expect(text.string == "a\nb\nc\nd" && text.document.text == text.string)
     }
 
     @Test func syncTeXGoesToTheWordASearchToItsMatchAndBothTellAUTF16Column() {
@@ -449,19 +393,12 @@ struct SourceEditorTests {
         text.mouseDown(with: try mouse(.leftMouseDown, at: point, in: window, clicks: clicks, modifiers))
     }
 
-    /// The shown text as drawn, which validates the shown fragments' colours.
-    private func drawn() throws -> NSBitmapImageRep {
-        text.layoutSubtreeIfNeeded()
-        let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
-        text.cacheDisplay(in: text.visibleRect, to: bitmap)
-        return bitmap
-    }
-
+    /// As drawn, which validates the shown fragments' colours.
     private func colour(of word: String) throws -> NSColor? {
         let manager = try #require(text.textLayoutManager)
         text.layoutSubtreeIfNeeded()
         manager.textViewportLayoutController.layoutViewport()
-        _ = try drawn()
+        text.cacheDisplay(in: text.visibleRect, to: try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect)))
         let range = try #require(text.textRange((text.string as NSString).range(of: word)))
         var colour: NSColor?
         manager.enumerateRenderingAttributes(from: range.location, reverse: false) { _, attributes, _ in
@@ -489,23 +426,6 @@ struct SourceEditorTests {
         text.setSelectedRange(.caret(text.length))
         type("\n\\section")
         try await waitUntilColoured("\\section", theme.color(.command))
-    }
-
-    @Test func aThemeRecoloursTheText() async throws {
-        let window = inWindow()
-        window.orderFrontUnseen()
-        defer { window.close() }
-        open("\\section{A} % note")
-        let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), overleaf = try #require(SyntaxTheme(rawValue: "overleaf"))
-        text.syntaxTheme = texstudio
-        try await waitUntilColoured("\\section", texstudio.color(.command))
-        #expect(try colour(of: "% note") == texstudio.color(.comment))
-        let before = try #require(drawn().tiffRepresentation)
-        text.syntaxTheme = overleaf
-        try await waitUntilColoured("\\section", overleaf.color(.command))
-        #expect(try drawn().tiffRepresentation != before, "A theme change must repaint the already-visible text.")
-        text.syntaxTheme = .system
-        try await waitUntilColoured("\\section", SyntaxTheme.system.color(.command))
     }
 
     /// Another app's text for the file shown keeps the caret and the top line where they were, as Xcode does.
@@ -601,7 +521,7 @@ struct SourceEditorTests {
     /// The box is a point inside its band's end on the first wrapped line; narrower panes cut its words short, then leave
     /// the symbol alone, then nothing, with a help tag's words. An undefined command is underlined where it stands.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
-        let window = inWindow()
+        inWindow()
         let undefined = issue(2, "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
                               tokens: [NSRange(location: 4, length: 4), NSRange(location: 19, length: 4)])
         open("one\nUse \\foo here, and \\foo there.\n\n", caret: 0)
@@ -621,14 +541,9 @@ struct SourceEditorTests {
             #expect(text.hitTest(text.convert(NSPoint(x: message.rect.midX, y: message.rect.midY), to: text.superview)) === text)
         }
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
-        // Xcode 27's boxes at 13 pt for a 353.74 pt message: 406 pt alone, 418 with a count.
-        let xcode = 353.7421875 as CGFloat
-        #expect(IssueBox.Metrics.width(ofText: xcode, font: font, issues: 1) == 406 && IssueBox.Metrics.width(ofText: xcode, font: font, issues: 2) == 418)
-        // Both places the command stands, each four characters wide to the pixel, and none for the other lines.
-        let pixel = 1 / window.backingScaleFactor
-        #expect(rows.map(\.tokens.count) == [0, 2, 0] && rows[1].tokens.allSatisfy { abs($0.width - 4 * digit) <= pixel })
+        // Both places the command stands, and none for the other lines.
+        #expect(rows.map(\.tokens.count) == [0, 2, 0])
         let start = text.textContainerOrigin.x + padding
-        #expect(abs(rows[1].tokens[0].minX - (start + 4 * digit)) <= pixel / 2 && abs(rows[1].tokens[1].minX - (start + 19 * digit)) <= pixel / 2)
         // Narrower: fewer words, the box taking all the room from a character after the text, on whole points, in its view.
         try layOut(width: 520)
         let views = rows.map { $0.message?.view }

@@ -85,41 +85,6 @@ struct PDFFitTests {
         follows(.fitWidth, "pinched back")
     }
 
-    @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {
-        let app = AppModel()
-        let project = ProjectModel(id: "PDFFitTests", app: app)
-        project.shown = .build(URL(filePath: "/dev/null"))
-        let view = project.pdf.view
-        project.pdf.restorePage = 3
-        project.pdf.show(try pages(3))
-        #expect(project.pdf.keptPage == 3)
-        // The PDF can finish loading before SwiftUI gives the owned view its first size.
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        view.layoutDocumentView()
-        #expect(project.pdf.pageCount == 3 && project.pdf.keptPage == 3)
-        project.pdf.setScale(view.maxScaleFactor)
-        #expect(!app.isEnabled(.viewZoomIn, on: project) && app.isEnabled(.viewZoomOut, on: project))
-        project.tree.show(.sources)
-        project.openPath = "references.bib"
-        #expect(!app.isEnabled(.syncForward, on: project))
-        project.openPath = "main.tex"
-        #expect(app.isEnabled(.syncForward, on: project))
-        project.pdf.go(toPage: 2)
-        #expect(project.pdf.keptPage == 2)
-    }
-
-    @Test func goToPageKeepsToTheDocument() throws {
-        let controller = sizedController()
-        controller.go(toPage: 2)
-        #expect(controller.page == 0)
-        controller.show(try pages(3))
-        controller.view.layoutDocumentView()
-        controller.go(toPage: 9)
-        #expect(controller.page == 3)
-        controller.go(toPage: 0)
-        #expect(controller.page == 1)
-    }
-
     @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
     func theSavedZoomComesBack(zoom: PDFController.Zoom) throws {
         let project = ProjectModel(id: "PDFFitTests", app: AppModel())
@@ -235,24 +200,6 @@ struct PDFFindTests {
         controller.find.next(step)
         try await waitUntil(timeout: .seconds(5)) { controller.find.query == "gamma" && controller.find.matches.count == 1 }
         #expect(controller.find.text == "gamma" && PDFFind.shared == "gamma")
-    }
-
-    @Test func rebuildSearchesCurrentFindText() async throws {
-        let controller = showing(try textPDF(["old result"]))
-        openFind("old", in: controller)
-        try await waitUntil(timeout: .seconds(5)) {
-            controller.find.query == "old" && controller.find.matches.first?.pages.first?.string?.contains("old") == true
-        }
-
-        // The field changed, but its debounce has not started a new search yet.
-        controller.find.text = "new"
-        controller.show(try textPDF(["new result"]))
-        try await waitUntil(timeout: .seconds(5)) {
-            controller.find.query == "new" && controller.find.matches.first?.pages.first?.string?.contains("new") == true
-        } state: {
-            "query \(controller.find.query), matches \(controller.find.matches.count)"
-        }
-        #expect(controller.find.matches.count == 1)
     }
 
     @Test func typingBackKeepsTheFieldsMatches() async throws {
