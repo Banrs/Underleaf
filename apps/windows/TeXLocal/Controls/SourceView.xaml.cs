@@ -72,7 +72,7 @@ public sealed partial class SourceView : UserControl
     // Asynchronous, so the first text goes in after the layout pass that completes it.
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly List<(IssueLine Issue, IssueMark Label, Grid Mark, Polyline[] Squiggles)> marks = [];
-    readonly DispatcherQueueTimer partnerTimer, hoverTimer;
+    readonly Debounce partnerShown, hoverRest;
     readonly Windows.UI.ViewManagement.UISettings system = new();
     Source? source;
     ScrollViewer? scroller;
@@ -112,8 +112,8 @@ public sealed partial class SourceView : UserControl
     public event Action<Place>? DefinitionFound;
     /// Find all references, at the caret's offset.
     public event Action<int>? ReferencesAsked;
-    /// A label or citation to rename, and the name's rectangle in the view.
-    public event Action<Definition, Rect>? RenameAsked;
+    /// A label or citation to rename.
+    public event Action<Definition>? RenameAsked;
     /// A double-click in the text, once RichEdit has selected its word.
     public event Action? DoubleClicked;
     /// What the name at an offset is, asked with its character's rectangle in the view: true for the pointer at rest on it,
@@ -129,16 +129,11 @@ public sealed partial class SourceView : UserControl
     public SourceView()
     {
         InitializeComponent();
-        partnerTimer = DispatcherQueue.CreateTimer();
-        partnerTimer.Interval = TimeSpan.FromSeconds(1);
-        partnerTimer.Tick += (_, _) => HidePartner();
-        hoverTimer = DispatcherQueue.CreateTimer();
-        hoverTimer.Interval = TimeSpan.FromMilliseconds(500);
-        hoverTimer.IsRepeating = false;
-        hoverTimer.Tick += (_, _) =>
+        partnerShown = new(1000, HidePartner);
+        hoverRest = new(500, () =>
         {
             if (hovered is { } at && RectOf(at, at + 1) is { } r) HelpAsked?.Invoke(at, InView(r), true);
-        };
+        });
         Editor.TextChanging += (_, e) =>
         {
             if (setting || !e.IsContentChanging) return;
@@ -197,7 +192,7 @@ public sealed partial class SourceView : UserControl
         Editor.AddHandler(PointerMovedEvent, new PointerEventHandler(OnHover), true);
         Editor.PointerExited += (_, _) =>
         {
-            hoverTimer.Stop();
+            hoverRest.Stop();
             hovered = null;
         };
         SizeChanged += (_, e) => Clip = new RectangleGeometry { Rect = new(0, 0, e.NewSize.Width, e.NewSize.Height) };
@@ -242,13 +237,13 @@ public sealed partial class SourceView : UserControl
     void Recolour(bool now)
     {
         stale |= now;
-        if (stale && IsLoaded) DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, async () =>
+        if (stale && IsLoaded) DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => App.Run(null, async () =>
         {
             if (!stale || !IsLoaded || source is null || loading) return;
             var at = CaretOffset;
             await SetText(Text);
             Document.Selection.SetRange(at, at);
-        });
+        }));
     }
 
     internal static Color Fill(Rectangle r) => ((SolidColorBrush)r.Fill).Color;
@@ -300,16 +295,18 @@ public sealed partial class SourceView : UserControl
         return SetText(text);
     }
 
-    public async void Reload(string content)
+    /// Kept as it is when the core keeps its text, keys having been typed since the reload was sent, so the two never
+    /// differ; the change is asked about instead.
+    public void Reload(string content) => App.Run(null, async () =>
     {
         var (line, column) = Caret;
-        source!.Reload(content);
+        if (!source!.Reload(content)) return;
         await SetText(content);
         if (source is null) return;
         line = Math.Min(line, source.LineCount);
         var at = Math.Min(source.LineStart(line) + column, End(line));
         Document.Selection.SetRange(at, at);
-    }
+    });
 
     /// Shows text with no edit and no undo history, coloured whole, so later colouring is only an
     /// edit's own, inside that edit's undo group. RichEdit lays out all it is given at once, so the
@@ -428,11 +425,13 @@ public sealed partial class SourceView : UserControl
         }
         else if (source is null || composing) return;
         else if (ctrl && !alt && !shift && e.Key == VirtualKey.Space) Complete(true);
-        else if (alt && !ctrl && !shift && e.Key is VirtualKey.Up or VirtualKey.Down) MoveLines(e.Key == VirtualKey.Up);
-        else if (ctrl && !alt && !shift && e.Key == VirtualKey.D) ChangeLines("duplicate_lines");
-        else if (ctrl && !alt && shift && e.Key == VirtualKey.K) ChangeLines("delete_lines");
+        else if (alt && !ctrl && !shift && e.Key == VirtualKey.Up) MoveLineUp();
+        else if (alt && !ctrl && !shift && e.Key == VirtualKey.Down) MoveLineDown();
+        else if (ctrl && !alt && !shift && e.Key == VirtualKey.D) DuplicateLine();
+        else if (ctrl && !alt && shift && e.Key == VirtualKey.K) DeleteLine();
         // Ctrl+] and Ctrl+[: the keys of ] and [ on a US layout (VK_OEM_6, VK_OEM_4), as Visual Studio reads them.
-        else if (ctrl && !alt && !shift && (int)e.Key is 219 or 221) ShiftLines((int)e.Key == 221 ? 1 : -1);
+        else if (ctrl && !alt && !shift && (int)e.Key == 221) ShiftRight();
+        else if (ctrl && !alt && !shift && (int)e.Key == 219) ShiftLeft();
         else
         {
             e.Handled = offered is not null && plain && Completing(e.Key)
@@ -589,20 +588,31 @@ public sealed partial class SourceView : UserControl
         return true;
     }
 
-    /// Shift right and Shift left: the lines, even from within a snippet's field, which Tab would leave for the next.
-    public void ShiftLines(int step) => Command(() =>
+    public void ShiftRight() => ShiftLines(1);
+    public void ShiftLeft() => ShiftLines(-1);
+
+    /// The lines, even from within a snippet's field, which Tab would leave for the next.
+    void ShiftLines(int step) => Command(() =>
     {
         source!.Call<bool>("end_snippet", new { });
         Tab(step);
     });
 
-    public bool MoveLines(bool up) => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up }));
-
-    public bool ChangeLines(string command) => Apply(source?.Call<Change>(command, new { selections = new[] { Selected } }));
+    public void MoveLineUp() => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up = true }));
+    public void MoveLineDown() => Apply(source?.Call<Change>("move_lines", new { selections = new[] { Selected }, up = false }));
+    public void DuplicateLine() => Apply(source?.Call<Change>("duplicate_lines", new { selections = new[] { Selected } }));
+    public void DeleteLine() => Apply(source?.Call<Change>("delete_lines", new { selections = new[] { Selected } }));
 
     public void ToggleComment() => Command(() => Apply(source!.Call<TextEdit[]>("toggle_comment", new { selections = new[] { Selected } })));
 
-    public void ToggleStyle(string style) => Command(() => Apply(source!.Call<Change>("toggle_style", new { selections = new[] { Selected }, style })));
+    public void ToggleBold() => ToggleStyle("bold");
+    public void ToggleItalic() => ToggleStyle("italic");
+    public void ToggleUnderline() => ToggleStyle("underline");
+
+    void ToggleStyle(string style) => Command(() => Apply(source!.Call<Change>("toggle_style", new { selections = new[] { Selected }, style })));
+
+    public void InlineMaths() => Wrap("$$0$");
+    public void DisplayMaths() => Wrap("\\[$0\\]");
 
     public void Wrap(string template, bool complete = false) => Command(() =>
     {
@@ -655,13 +665,12 @@ public sealed partial class SourceView : UserControl
         Canvas.SetLeft(PartnerBox, r.X - 1);
         Canvas.SetTop(PartnerBox, r.Y);
         PartnerBox.Opacity = 1;
-        partnerTimer.Stop();
-        partnerTimer.Start();
+        partnerShown.Restart();
     }
 
     void HidePartner()
     {
-        partnerTimer.Stop();
+        partnerShown.Stop();
         PartnerBox.Opacity = 0;
     }
 
@@ -676,15 +685,7 @@ public sealed partial class SourceView : UserControl
             return;
         }
         offered = found;
-        var glyph = found.Kind switch
-        {
-            "environment" => "\uE8FD",
-            "label" => "\uE8EC",
-            "citation" => "\uE8F1",
-            "entryType" => "\uE8A5",
-            "file" => "\uE7C3",
-            _ => "\uE943",
-        };
+        var glyph = App.Glyph(found.Kind);
         CompletionList.ItemsSource = found.Items.Select(i => new CompletionRow(i, s.Start - found.Start, glyph)).ToList();
         CompletionList.SelectedIndex = 0;
         // Near the text's left edge the list reaches over the gutter, so its labels still line up with the typed text.
@@ -756,7 +757,7 @@ public sealed partial class SourceView : UserControl
             item.Detail is { } detail ? $"{item.Label}, {detail}" : item.Label, "completion");
     }
 
-    async void PreviewMath()
+    void PreviewMath() => App.Run(null, async () =>
     {
         var maths = source is null || loading || Selected.Length > 0 ? null : source.Call<MathPreview>("math_at", new { caret = CaretOffset });
         if (maths?.Start != dismissedMath) dismissedMath = null;
@@ -788,7 +789,7 @@ public sealed partial class SourceView : UserControl
         MathPopup.HorizontalOffset = Math.Clamp(at.X - w / 2, 0, Math.Max(0, Editor.ActualWidth - w - 16));
         MathPopup.VerticalOffset = line.Y - h - 8 >= Editor.Padding.Top ? line.Y - h - 8 : line.Bottom + 8;
         MathPopup.IsOpen = true;
-    }
+    });
 
     async Task ShowMaths(MathSvg? drawn)
     {
@@ -867,14 +868,18 @@ public sealed partial class SourceView : UserControl
     public void Paste() => OnPaste(Editor, null);
     public new void Focus(FocusState state) => Editor.Focus(state);
 
-    async void OnPaste(object sender, TextControlPasteEventArgs? e)
+    /// The clipboard throws while another app holds it.
+    void OnPaste(object sender, TextControlPasteEventArgs? e)
     {
         if (e is not null) e.Handled = true;
-        var content = Clipboard.GetContent();
-        if (source is null || !content.Contains(StandardDataFormats.Text)) return;
-        var pasted = (await content.GetTextAsync()).Replace("\r\n", "\n").Replace('\r', '\n');
-        var at = Selected;
-        Apply(new TextEdit(at.Start, at.Length, pasted));
+        App.Run("Can't paste", async () =>
+        {
+            var content = Clipboard.GetContent();
+            if (source is null || !content.Contains(StandardDataFormats.Text)) return;
+            var pasted = (await content.GetTextAsync()).Replace("\r\n", "\n").Replace('\r', '\n');
+            var at = Selected;
+            Apply(new TextEdit(at.Start, at.Length, pasted));
+        });
     }
 
     static bool HasFiles(DataPackageView data) => data.Contains(StandardDataFormats.StorageItems) || data.Contains(FileFormat);
@@ -887,16 +892,19 @@ public sealed partial class SourceView : UserControl
     }
 
     /// The offset is read before the paths, while the drop's point holds.
-    async void OnDrop(object sender, DragEventArgs e)
+    void OnDrop(object sender, DragEventArgs e)
     {
         if (source is null || !HasFiles(e.DataView)) return;
         e.Handled = true;
         var at = OffsetAt(e.GetPosition(Editor));
         var deferral = e.GetDeferral();
-        var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
-            : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
-        deferral.Complete();
-        FilesDropped?.Invoke(paths, at);
+        App.Run("Can't drop this", async () =>
+        {
+            var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
+                : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
+            deferral.Complete();
+            FilesDropped?.Invoke(paths, at);
+        });
     }
 
     /// The text's offset at a point of the editor's: RichEdit's points are the scrolled text's, inside its padding.
@@ -926,8 +934,8 @@ public sealed partial class SourceView : UserControl
         if (at is { } offset && !(RectOf(offset, offset + 1) is { } r && r.Contains(point.Position))) at = null;
         if (at == hovered) return;
         hovered = at;
-        hoverTimer.Stop();
-        if (at is not null) hoverTimer.Start();
+        if (at is null) hoverRest.Stop();
+        else hoverRest.Restart();
     }
 
     /// Visual Studio's Quick info, at the caret.
@@ -951,14 +959,10 @@ public sealed partial class SourceView : UserControl
     /// Shift+F12, at the caret: the session reads the project's other files.
     public void FindAllReferences() => ReferencesAsked?.Invoke(CaretOffset);
 
-    /// F2, VS Code's Rename Symbol: only a label or a citation, the names the core renames, its box under the name.
+    /// F2, VS Code's Rename Symbol: only a label or a citation, the names the core renames.
     public void RenameSymbol()
     {
-        var caret = CaretOffset;
-        if (DefinitionAt(caret) is not { Kind: "label" or "citation" } symbol) return;
-        // The name the caret is in or just after: the first that starts no further back than its length.
-        var start = Text.IndexOf(symbol.Name, Math.Max(0, caret - symbol.Name.Length), StringComparison.Ordinal);
-        if (RectOf(start, start + symbol.Name.Length) is { } r) RenameAsked?.Invoke(symbol, InView(r));
+        if (DefinitionAt(CaretOffset) is { Kind: "label" or "citation" } symbol) RenameAsked?.Invoke(symbol);
     }
 
     /// A rectangle of the text's, in the view's coordinates, past the gutter.

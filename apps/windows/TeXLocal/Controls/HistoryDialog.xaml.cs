@@ -18,7 +18,7 @@ public sealed record ChangeRow(SnapshotChange Change)
 {
     public string Path => Change.Path;
     public string State => Change.Change switch { "added" => "Added", "deleted" => "Deleted", _ => "Changed" };
-    public string Glyph => Change.Change switch { "added" => "\uE710", "deleted" => "\uE74D", _ => "\uE70F" };
+    public string Glyph => App.Glyph(State.ToLowerInvariant());
     public override string ToString() => $"{Path}, {State}";
 }
 
@@ -72,14 +72,9 @@ public sealed partial class HistoryDialog : ContentDialog
             var id = version.Snapshot.Id;
             if (answer == ContentDialogResult.Primary)
                 return await App.Core!.CallAsync<Restored>("session_history_restore", new { session, id, paths = new[] { ((ChangeRow)Files.SelectedItem).Path } });
-            var confirmed = await App.Show(new ContentDialog
-            {
-                Title = $"Restore all files to {(version.Snapshot.Name is { } name ? $"“{name}”" : $"the version of {version.When}")}?",
-                Content = "Files changed since go back to how they were, and deleted ones return; files added since stay. The project as it is now is kept as a version first.",
-                PrimaryButtonText = "Restore all",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-            });
+            var confirmed = await App.Ask($"Restore all files to {(version.Snapshot.Name is { } name ? $"“{name}”" : $"the version of {version.When}")}?",
+                "Files changed since go back to how they were, and deleted ones return; files added since stay. The project as it is now is kept as a version first.",
+                "Restore all");
             if (confirmed == ContentDialogResult.Primary) return await App.Core!.CallAsync<Restored>("session_history_restore", new { session, id });
         }
     }
@@ -93,7 +88,7 @@ public sealed partial class HistoryDialog : ContentDialog
     }
 
     /// A file deleted in the version has nothing to put back; a later comparison's answer wins over an earlier one's.
-    async void OnFile(object sender, SelectionChangedEventArgs e)
+    void OnFile(object sender, SelectionChangedEventArgs e) => App.Run(null, async () =>
     {
         var generation = ++comparisons;
         IsPrimaryButtonEnabled = Files.SelectedItem is ChangeRow { Change.Change: not "deleted" };
@@ -108,7 +103,7 @@ public sealed partial class HistoryDialog : ContentDialog
         }
         catch (CoreException ex) { note = ex.Message; }
         if (generation == comparisons) ShowLines(lines, note);
-    }
+    });
 
     /// The comparison, or the note in its place.
     void ShowLines(List<DiffLine> lines, string? note)

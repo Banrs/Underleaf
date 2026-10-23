@@ -10,41 +10,76 @@
     KeyboardAcceleratorPlacementMode="Hidden">
 
     <Page.Resources>
-        <!-- Margins rather than column spacing, so a row without a glyph starts where the glyph would. -->
-        <DataTemplate x:Key="NavTemplate" x:DataType="local:NavItem">
-            <TreeViewItem AutomationProperties.Name="{x:Bind Spoken}" IsExpanded="{x:Bind IsExpanded}" ItemsSource="{x:Bind Children}" ToolTipService.ToolTip="{x:Bind Tip}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon Margin="0,0,12,0" FontSize="16" Glyph="{x:Bind Glyph}" Visibility="{x:Bind HasGlyph}" />
-                    <TextBlock Grid.Column="1" VerticalAlignment="Center" MaxLines="{x:Bind Lines}" Style="{StaticResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis">
-                        <Run Text="{x:Bind Lead}" /><Run FontWeight="SemiBold" Text="{x:Bind Strong}" /><Run Text="{x:Bind Tail}" />
-                    </TextBlock>
-                    <TextBlock
-                        Grid.Column="2"
-                        Margin="12,0,0,0"
-                        VerticalAlignment="Center"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Style="{StaticResource CaptionTextBlockStyle}"
-                        Text="{x:Bind Trailing}"
-                        Typography.NumeralAlignment="Tabular" />
-                    <FontIcon Grid.Column="2" Margin="12,0,0,0" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE735;" Visibility="{x:Bind IsMain}" />
+        <!-- The commands found in more than one place, each named, drawn and run once. Their keys stay on the menu items
+             (Shortcut): a command's keys are copied onto every control that uses it, and WinUI 2.3.9 can end the app
+             formatting a tooltip that names an OEM key, as Alt+= does (microsoft-ui-xaml#708). -->
+        <XamlUICommand x:Key="BoldCommand" ExecuteRequested="{x:Bind Editor.ToggleBold}" Label="Bold">
+            <XamlUICommand.IconSource><FontIconSource Glyph="&#xE8DD;" /></XamlUICommand.IconSource>
+        </XamlUICommand>
+        <XamlUICommand x:Key="ItalicCommand" ExecuteRequested="{x:Bind Editor.ToggleItalic}" Label="Italic">
+            <XamlUICommand.IconSource><FontIconSource Glyph="&#xE8DB;" /></XamlUICommand.IconSource>
+        </XamlUICommand>
+        <XamlUICommand x:Key="UnderlineCommand" ExecuteRequested="{x:Bind Editor.ToggleUnderline}" Label="Underline">
+            <XamlUICommand.IconSource><FontIconSource Glyph="&#xE8DC;" /></XamlUICommand.IconSource>
+        </XamlUICommand>
+        <XamlUICommand x:Key="InlineMathsCommand" ExecuteRequested="{x:Bind Editor.InlineMaths}" Label="Inline maths" />
+        <XamlUICommand x:Key="DisplayMathsCommand" ExecuteRequested="{x:Bind Editor.DisplayMaths}" Label="Display maths" />
+        <XamlUICommand x:Key="SymbolCommand" ExecuteRequested="{x:Bind ShowSymbols}" Label="Symbol…" />
+        <XamlUICommand x:Key="NewFileCommand" ExecuteRequested="{x:Bind NewFile}" Label="New file" />
+        <XamlUICommand x:Key="NewFolderCommand" ExecuteRequested="{x:Bind NewFolder}" Label="New folder" />
+        <XamlUICommand x:Key="AddFilesCommand" ExecuteRequested="{x:Bind AddFiles}" Label="Add files…" />
+        <XamlUICommand x:Key="SaveCommand" ExecuteRequested="{x:Bind SaveNow}" Label="Save" />
+        <XamlUICommand x:Key="GoToLineCommand" ExecuteRequested="{x:Bind GoToLine}" Label="Go to line…" />
+        <XamlUICommand x:Key="GoToPageCommand" ExecuteRequested="{x:Bind GoToPage}" Label="Go to page…" />
+        <XamlUICommand x:Key="ZoomInCommand" ExecuteRequested="{x:Bind Pdf.ZoomIn}" Label="Zoom in" />
+        <XamlUICommand x:Key="ZoomOutCommand" ExecuteRequested="{x:Bind Pdf.ZoomOut}" Label="Zoom out" />
+
+        <!-- The navigation pane's rows are the core's records. Column spacing keeps a row's trailing slot, empty or not. -->
+        <DataTemplate x:Key="FileTemplate" x:DataType="bridge:TreeNode">
+            <TreeViewItem AutomationProperties.Name="{x:Bind local:WorkspacePage.FileName(Name, Main)}" IsExpanded="{x:Bind local:WorkspacePage.FolderOpen(Path)}" ItemsSource="{x:Bind Children}" ToolTipService.ToolTip="{x:Bind Path}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <FontIcon FontSize="16" Glyph="{x:Bind app:App.Glyph(Kind)}" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" MaxLines="1" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
+                    <FontIcon Grid.Column="2" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE735;" Visibility="{x:Bind Main}" />
                 </Grid>
             </TreeViewItem>
         </DataTemplate>
-        <Style TargetType="TreeView">
-            <Setter Property="CanDragItems" Value="False" />
-            <Setter Property="CanReorderItems" Value="False" />
-            <Setter Property="ItemTemplate" Value="{StaticResource NavTemplate}" />
-        </Style>
+        <DataTemplate x:Key="HeadingTemplate" x:DataType="bridge:OutlineNode">
+            <TreeViewItem AutomationProperties.Name="{x:Bind local:WorkspacePage.HeadingName(Title, Untitled, Words)}" IsExpanded="{x:Bind local:WorkspacePage.HeadingOpen(FoldKey)}" ItemsSource="{x:Bind Children}" ToolTipService.ToolTip="{x:Bind local:WorkspacePage.HeadingTitle(Title, Untitled)}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" MaxLines="1" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind local:WorkspacePage.HeadingTitle(Title, Untitled)}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind local:WorkspacePage.Thousands(Words)}" Typography.NumeralAlignment="Tabular" />
+                </Grid>
+            </TreeViewItem>
+        </DataTemplate>
+        <!-- VS Code's search view: each file with its count, over its lines with the match in SemiBold. -->
+        <DataTemplate x:Key="ResultFileTemplate" x:DataType="bridge:SearchFile">
+            <TreeViewItem AutomationProperties.Name="{x:Bind local:WorkspacePage.ResultsName(File, Hits)}" IsExpanded="True" ItemsSource="{x:Bind Hits}" ToolTipService.ToolTip="{x:Bind File}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <FontIcon FontSize="16" Glyph="&#xE8A5;" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" MaxLines="1" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind File}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind local:WorkspacePage.HitCount(Hits)}" Typography.NumeralAlignment="Tabular" />
+                </Grid>
+            </TreeViewItem>
+        </DataTemplate>
+        <DataTemplate x:Key="HitTemplate" x:DataType="bridge:SearchHit">
+            <TreeViewItem AutomationProperties.Name="{x:Bind local:WorkspacePage.HitName(Line, Before, Match, After)}" ToolTipService.ToolTip="{x:Bind local:WorkspacePage.HitText(Before, Match, After)}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis">
+                        <Run Text="{x:Bind Before}" /><Run FontWeight="SemiBold" Text="{x:Bind Match}" /><Run Text="{x:Bind After}" />
+                    </TextBlock>
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind local:WorkspacePage.Number(Line)}" Typography.NumeralAlignment="Tabular" />
+                </Grid>
+            </TreeViewItem>
+        </DataTemplate>
+        <local:ResultTemplates x:Key="ResultTemplates" File="{StaticResource ResultFileTemplate}" Hit="{StaticResource HitTemplate}" />
+        <Style TargetType="TreeView"><Setter Property="CanDragItems" Value="False" /><Setter Property="CanReorderItems" Value="False" /></Style>
         <!-- Word's Equation (π) and Symbol (Ω) buttons draw their letters in the maths font. -->
-        <Style x:Key="MathsIconStyle" TargetType="FontIcon">
-            <Setter Property="FontFamily" Value="Cambria Math" />
-            <Setter Property="FontSize" Value="18" />
-        </Style>
+        <Style x:Key="MathsIconStyle" TargetType="FontIcon"><Setter Property="FontFamily" Value="Cambria Math" /><Setter Property="FontSize" Value="18" /></Style>
         <!-- The status bar's zoom, as Word's: a slider between out and in, 100% at its middle. -->
         <Style x:Key="ZoomStepStyle" TargetType="RepeatButton" BasedOn="{StaticResource DefaultRepeatButtonStyle}">
             <Setter Property="Width" Value="24" />
@@ -56,31 +91,15 @@
         </Style>
         <!-- Visual Studio's Go to all: a search box whose list is the results, each by its kind's icon. -->
         <Flyout x:Name="GoToFlyout" Opened="OnGoToOpened">
-            <AutoSuggestBox
-                x:Name="GoToBox"
-                Width="400"
-                AutomationProperties.Name="Go to all"
-                PlaceholderText="Go to a file, heading or label"
-                PreviewKeyDown="OnGoToKey"
-                QuerySubmitted="OnGoToSubmitted"
-                TextChanged="OnGoToChanged"
-                UpdateTextOnSelect="False">
+            <AutoSuggestBox x:Name="GoToBox" Width="400" AutomationProperties.Name="Go to all" PlaceholderText="Go to a file, heading or label" PreviewKeyDown="OnGoToKey" QuerySubmitted="OnGoToSubmitted" TextChanged="OnGoToChanged" UpdateTextOnSelect="False">
                 <AutoSuggestBox.ItemTemplate>
                     <DataTemplate x:DataType="bridge:QuickItem">
                         <Grid Padding="0,4" AutomationProperties.Name="{x:Bind Title}" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="16" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon FontSize="16" Glyph="{x:Bind local:WorkspacePage.KindGlyph(Kind)}" />
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <FontIcon FontSize="16" Glyph="{x:Bind app:App.Glyph(Kind)}" />
                             <StackPanel Grid.Column="1">
                                 <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="{x:Bind Detail}"
-                                    TextTrimming="CharacterEllipsis"
-                                    TextWrapping="NoWrap" />
+                                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Detail}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                             </StackPanel>
                         </Grid>
                     </DataTemplate>
@@ -97,17 +116,10 @@
         </Flyout>
     </Page.Resources>
 
-    <Page.KeyboardAccelerators>
-        <KeyboardAccelerator Invoked="OnNextRegion" Key="F6" />
-        <KeyboardAccelerator Invoked="OnNextRegion" Key="F6" Modifiers="Shift" />
-    </Page.KeyboardAccelerators>
+    <Page.KeyboardAccelerators><KeyboardAccelerator Invoked="OnNextRegion" Key="F6" /><KeyboardAccelerator Invoked="OnNextRegion" Key="F6" Modifiers="Shift" /></Page.KeyboardAccelerators>
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" MinHeight="32" />
-        </Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" MinHeight="32" /></Grid.RowDefinitions>
 
         <!-- Narrow, the navigation pane overlays the layers on acrylic; wide (1008 and up, the Fluent breakpoint), it sits
              beside them on Mica, and the status bar has room for the zoom slider. The page's width sets the trigger:
@@ -115,9 +127,7 @@
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup>
                 <VisualState x:Name="Wide">
-                    <VisualState.StateTriggers>
-                        <StateTrigger x:Name="WideTrigger" />
-                    </VisualState.StateTriggers>
+                    <VisualState.StateTriggers><StateTrigger x:Name="WideTrigger" /></VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="Split.DisplayMode" Value="Inline" />
                         <Setter Target="Split.PaneBackground" Value="Transparent" />
@@ -132,26 +142,27 @@
             <MenuBar x:Name="MainMenu">
                 <MenuBarItem AccessKey="F" Title="File">
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+N" AccessKey="P" Click="{x:Bind app:App.Window.NewProject}" Text="New project…" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Click="OnNewFile" Text="New file" />
-                    <MenuFlyoutItem AccessKey="F" Click="OnNewFolder" Text="New folder" />
-                    <MenuFlyoutItem AccessKey="A" Click="OnAddFiles" Text="Add files…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+N" AccessKey="N" Command="{StaticResource NewFileCommand}" />
+                    <MenuFlyoutItem AccessKey="F" Command="{StaticResource NewFolderCommand}" />
+                    <MenuFlyoutItem AccessKey="A" Command="{StaticResource AddFilesCommand}" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutSubItem AccessKey="O" Text="Open">
+                    <!-- Word's Open: the places to open from, then the recent projects (ShowRecent). -->
+                    <MenuFlyoutSubItem x:Name="OpenMenu" AccessKey="O" Text="Open">
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" AccessKey="F" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…" />
                         <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+O" AccessKey="Z" Click="{x:Bind app:App.Window.OpenFile}" Text="ZIP or TeX file…" />
                     </MenuFlyoutSubItem>
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Click="OnSave" Text="Save" />
-                    <MenuFlyoutItem AccessKey="V" Click="OnSaveVersion" Text="Save version…" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+H" AccessKey="R" Click="OnHistory" Text="Version history" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+S" AccessKey="S" Command="{StaticResource SaveCommand}" />
+                    <MenuFlyoutItem AccessKey="V" Click="{x:Bind SaveVersion}" Text="Save version…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+H" AccessKey="R" Click="{x:Bind ShowHistory}" Text="Version history" />
                     <MenuFlyoutSeparator />
                     <!-- The PDF shown, as the Mac's Export as PDF and Share, and the project's files, as Home's Export as ZIP. -->
-                    <MenuFlyoutItem x:Name="ExportItem" AccessKey="E" Click="OnExportPdf" Text="Export as PDF…" />
-                    <MenuFlyoutItem AccessKey="Z" Click="OnExportZip" Text="Export project as ZIP…" />
-                    <MenuFlyoutItem x:Name="ArxivItem" AccessKey="X" Click="OnExportZip" Text="Export for arXiv…" />
-                    <MenuFlyoutItem x:Name="OpenPdfItem" AccessKey="D" Click="OnOpenPdf" Text="Open PDF in default app" />
-                    <MenuFlyoutItem x:Name="ShareItem" AccessKey="H" Click="OnSharePdf" Text="Share…" />
-                    <MenuFlyoutItem x:Name="PrintItem" controls:Shortcut.Keys="Ctrl+P" AccessKey="R" Click="{x:Bind Pdf.Print}" Text="Print…" />
+                    <MenuFlyoutItem AccessKey="E" Click="{x:Bind ExportPdf}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Text="Export as PDF…" />
+                    <MenuFlyoutItem AccessKey="Z" Click="{x:Bind ExportZip}" Text="Export project as ZIP…" />
+                    <MenuFlyoutItem AccessKey="X" Click="{x:Bind ExportArxiv}" Text="Export for arXiv…" />
+                    <MenuFlyoutItem AccessKey="D" Click="{x:Bind OpenPdf}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Text="Open PDF in default app" />
+                    <MenuFlyoutItem AccessKey="H" Click="{x:Bind SharePdf}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Text="Share…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+P" AccessKey="I" Click="{x:Bind Pdf.Print}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Text="Print…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+W" AccessKey="C" Click="{x:Bind app:App.Window.GoHome}" Text="Close project" />
                     <MenuFlyoutSeparator />
@@ -167,90 +178,84 @@
                     <MenuFlyoutItem AccessKey="C" Click="{x:Bind Editor.Copy}" KeyboardAcceleratorTextOverride="Ctrl+C" Text="Copy" />
                     <MenuFlyoutItem AccessKey="P" Click="{x:Bind Editor.Paste}" KeyboardAcceleratorTextOverride="Ctrl+V" Text="Paste" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+F" AccessKey="F" Click="OnFind" Text="Find…" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+H" AccessKey="E" Click="OnReplace" Text="Replace…" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="F3" AccessKey="N" Click="OnFindNext" Text="Find next" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F3" AccessKey="V" Click="OnFindPrevious" Text="Find previous" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+F" AccessKey="J" Click="OnFindInProject" Text="Find in project…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+F" AccessKey="F" Click="{x:Bind Editor.ShowFind}" Text="Find…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+H" AccessKey="E" Click="{x:Bind Editor.ShowReplace}" Text="Replace…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="F3" AccessKey="N" Click="{x:Bind Editor.FindNext}" Text="Find next" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F3" AccessKey="V" Click="{x:Bind Editor.FindPrevious}" Text="Find previous" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+F" AccessKey="J" Click="{x:Bind FindInProject}" Text="Find in project…" />
                     <MenuFlyoutSeparator />
                     <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+/" AccessKey="M" Click="{x:Bind Editor.ToggleComment}" Text="Toggle comment" />
-                    <MenuFlyoutItem AccessKey="H" Click="OnShiftRight" KeyboardAcceleratorTextOverride="Ctrl+]" Text="Shift right" />
-                    <MenuFlyoutItem AccessKey="L" Click="OnShiftLeft" KeyboardAcceleratorTextOverride="Ctrl+[" Text="Shift left" />
-                    <MenuFlyoutItem AccessKey="O" Click="OnMoveLineUp" KeyboardAcceleratorTextOverride="Alt+Up" Text="Move line up" />
-                    <MenuFlyoutItem AccessKey="W" Click="OnMoveLineDown" KeyboardAcceleratorTextOverride="Alt+Down" Text="Move line down" />
+                    <MenuFlyoutItem AccessKey="H" Click="{x:Bind Editor.ShiftRight}" KeyboardAcceleratorTextOverride="Ctrl+]" Text="Shift right" />
+                    <MenuFlyoutItem AccessKey="L" Click="{x:Bind Editor.ShiftLeft}" KeyboardAcceleratorTextOverride="Ctrl+[" Text="Shift left" />
+                    <MenuFlyoutItem AccessKey="O" Click="{x:Bind Editor.MoveLineUp}" KeyboardAcceleratorTextOverride="Alt+Up" Text="Move line up" />
+                    <MenuFlyoutItem AccessKey="W" Click="{x:Bind Editor.MoveLineDown}" KeyboardAcceleratorTextOverride="Alt+Down" Text="Move line down" />
                     <!-- Visual Studio's and VS Code's keys. No access keys: each of their letters is another item's. -->
-                    <MenuFlyoutItem Click="OnDuplicateLine" KeyboardAcceleratorTextOverride="Ctrl+D" Text="Duplicate line" />
-                    <MenuFlyoutItem Click="OnDeleteLine" KeyboardAcceleratorTextOverride="Ctrl+Shift+K" Text="Delete line" />
+                    <MenuFlyoutItem Click="{x:Bind Editor.DuplicateLine}" KeyboardAcceleratorTextOverride="Ctrl+D" Text="Duplicate line" />
+                    <MenuFlyoutItem Click="{x:Bind Editor.DeleteLine}" KeyboardAcceleratorTextOverride="Ctrl+Shift+K" Text="Delete line" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Click="OnGoToLine" Text="Go to line…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+G" AccessKey="G" Command="{StaticResource GoToLineCommand}" />
                     <!-- VS Code's and the browsers' keys: Alt+Left is the window's, which goes back a page where there's no
                          place to go back to. Go forward's letters are all other items'. -->
-                    <MenuFlyoutItem x:Name="BackItem" AccessKey="B" Click="OnBack" IsEnabled="False" KeyboardAcceleratorTextOverride="Alt+Left" Text="Go back" />
-                    <MenuFlyoutItem x:Name="ForwardItem" controls:Shortcut.Keys="Alt+Right" Click="OnForward" IsEnabled="False" Text="Go forward" />
+                    <MenuFlyoutItem AccessKey="B" Click="{x:Bind GoBack}" IsEnabled="{x:Bind Model.CanGoBack, Mode=OneWay}" KeyboardAcceleratorTextOverride="Alt+Left" Text="Go back" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Alt+Right" Click="{x:Bind GoForward}" IsEnabled="{x:Bind Model.CanGoForward, Mode=OneWay}" Text="Go forward" />
                     <!-- Visual Studio's keys. No access keys: each of their letters is another item's. -->
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+T" Click="OnGoToAll" Text="Go to all…" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+T" Click="{x:Bind GoToAll}" Text="Go to all…" />
                     <MenuFlyoutItem x:Name="DefinitionItem" controls:Shortcut.Keys="F12" Click="{x:Bind Editor.GoToDefinition}" Text="Go to definition" />
                     <!-- Visual Studio's Quick info is Ctrl+K, Ctrl+I, a chord Shortcut can't make. -->
                     <MenuFlyoutItem x:Name="QuickInfoItem" controls:Shortcut.Keys="Ctrl+Shift+I" AccessKey="Q" Click="{x:Bind Editor.ShowQuickInfo}" Text="Quick info" />
                     <MenuFlyoutItem x:Name="ReferencesItem" controls:Shortcut.Keys="Shift+F12" Click="{x:Bind Editor.FindAllReferences}" Text="Find all references" />
                     <!-- VS Code's key, the editor's: in Files, F2 renames the file. -->
                     <MenuFlyoutItem x:Name="RenameSymbolItem" controls:Shortcut.Keys="F2" AccessKey="Y" Click="{x:Bind Editor.RenameSymbol}" Text="Rename symbol" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+G" AccessKey="A" Click="OnGoToPage" Text="Go to page…" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+J" AccessKey="D" Click="OnForwardSync" Text="Go to PDF position" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+G" AccessKey="A" Command="{StaticResource GoToPageCommand}" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Alt+J" AccessKey="D" Click="{x:Bind ForwardSync}" Text="Go to PDF position" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem controls:Shortcut.Keys="F8" AccessKey="I" Click="OnNextIssue" Text="Next issue" />
-                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F8" AccessKey="S" Click="OnPreviousIssue" Text="Previous issue" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="F8" AccessKey="I" Click="{x:Bind NextIssue}" Text="Next issue" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F8" AccessKey="S" Click="{x:Bind PreviousIssue}" Text="Previous issue" />
                 </MenuBarItem>
                 <!-- The catalogue's templates follow MathsAnchor and InsertAnchor, and fill List and References. The keys
                      here are the editor's (Shortcut.Scope, set in code: the XAML compiler fails on x:Bind to it). -->
                 <MenuBarItem x:Name="InsertMenu" AccessKey="I" Title="Insert">
                     <MenuFlyoutSubItem x:Name="HeadingMenu" AccessKey="H" Text="Heading" />
                     <MenuFlyoutSeparator />
-                    <ToggleMenuFlyoutItem x:Name="BoldItem" controls:Shortcut.Keys="Ctrl+B" AccessKey="B" Click="OnStyle" Tag="bold" Text="Bold">
-                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DD;" /></ToggleMenuFlyoutItem.Icon>
-                    </ToggleMenuFlyoutItem>
-                    <ToggleMenuFlyoutItem x:Name="ItalicItem" controls:Shortcut.Keys="Ctrl+I" AccessKey="I" Click="OnStyle" Tag="italic" Text="Italic">
-                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DB;" /></ToggleMenuFlyoutItem.Icon>
-                    </ToggleMenuFlyoutItem>
-                    <ToggleMenuFlyoutItem x:Name="UnderlineItem" controls:Shortcut.Keys="Ctrl+U" AccessKey="U" Click="OnStyle" Tag="underline" Text="Underline">
-                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DC;" /></ToggleMenuFlyoutItem.Icon>
-                    </ToggleMenuFlyoutItem>
+                    <ToggleMenuFlyoutItem x:Name="BoldItem" controls:Shortcut.Keys="Ctrl+B" AccessKey="B" Command="{StaticResource BoldCommand}" IsChecked="{x:Bind Model.Bold, Mode=OneWay}" />
+                    <ToggleMenuFlyoutItem x:Name="ItalicItem" controls:Shortcut.Keys="Ctrl+I" AccessKey="I" Command="{StaticResource ItalicCommand}" IsChecked="{x:Bind Model.Italic, Mode=OneWay}" />
+                    <ToggleMenuFlyoutItem x:Name="UnderlineItem" controls:Shortcut.Keys="Ctrl+U" AccessKey="U" Command="{StaticResource UnderlineCommand}" IsChecked="{x:Bind Model.Underline, Mode=OneWay}" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="InlineItem" controls:Shortcut.Keys="Alt+=" AccessKey="M" Click="OnInlineMaths" Text="Inline maths" />
-                    <MenuFlyoutItem x:Name="MathsAnchor" AccessKey="D" Click="OnDisplayMaths" Text="Display maths" />
-                    <MenuFlyoutItem x:Name="SymbolItem" controls:Shortcut.Keys="Alt+Shift+=" AccessKey="Y" Click="OnSymbols" Text="Symbol…" />
+                    <MenuFlyoutItem x:Name="InlineItem" controls:Shortcut.Keys="Alt+=" AccessKey="M" Command="{StaticResource InlineMathsCommand}" />
+                    <MenuFlyoutItem x:Name="MathsAnchor" AccessKey="D" Command="{StaticResource DisplayMathsCommand}" />
+                    <MenuFlyoutItem x:Name="SymbolItem" controls:Shortcut.Keys="Alt+Shift+=" AccessKey="Y" Command="{StaticResource SymbolCommand}" />
                     <MenuFlyoutSeparator x:Name="InsertAnchor" />
                     <MenuFlyoutSubItem x:Name="ListMenu" AccessKey="L" Text="List" />
                     <MenuFlyoutSubItem x:Name="ReferencesMenu" AccessKey="R" Text="References and links" />
                 </MenuBarItem>
                 <MenuBarItem AccessKey="V" Title="View">
                     <ToggleMenuFlyoutItem controls:Shortcut.Keys="Ctrl+Shift+E" AccessKey="N" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Text="Navigation pane" />
-                    <MenuFlyoutItem AccessKey="O" Click="OnShowOutline" Text="Outline" />
+                    <MenuFlyoutItem AccessKey="O" Click="{x:Bind ShowOutline}" Text="Outline" />
                     <!-- No Ctrl+Alt+S: AltGr is Ctrl+Alt, and AltGr+S types ś. -->
                     <ToggleMenuFlyoutItem x:Name="SourceItem" AccessKey="S" IsChecked="True" Text="Source" />
                     <ToggleMenuFlyoutItem x:Name="PdfItem" controls:Shortcut.Keys="Ctrl+Alt+P" AccessKey="P" IsChecked="True" Text="PDF" />
-                    <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="OnIssuesPane" Text="Issues" />
+                    <ToggleMenuFlyoutItem x:Name="IssuesItem" controls:Shortcut.Keys="Ctrl+Shift+M" AccessKey="I" Click="{x:Bind ShowPanelChecked}" Text="Issues" />
                     <MenuFlyoutSeparator />
                     <!-- The PDF's, wherever the focus is: the editor has no zoom of its own. -->
                     <MenuFlyoutSubItem AccessKey="Z" Text="Zoom">
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Click="{x:Bind Pdf.ZoomIn}" Text="Zoom in" />
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Click="{x:Bind Pdf.ZoomOut}" Text="Zoom out" />
-                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+0" AccessKey="A" Click="OnActualSize" Text="Actual size" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+=; Ctrl+Add" AccessKey="I" Command="{StaticResource ZoomInCommand}" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+-; Ctrl+Subtract" AccessKey="O" Command="{StaticResource ZoomOutCommand}" />
+                        <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+0" AccessKey="A" Click="{x:Bind Pdf.ZoomToActualSize}" Text="Actual size" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem AccessKey="W" Click="{x:Bind Pdf.FitWidth}" Text="Fit width" />
                         <MenuFlyoutItem AccessKey="P" Click="{x:Bind Pdf.FitPage}" Text="Fit page" />
                     </MenuFlyoutSubItem>
                 </MenuBarItem>
                 <MenuBarItem AccessKey="B" Title="Build">
-                    <MenuFlyoutItem x:Name="CompileItem" controls:Shortcut.Keys="Ctrl+Enter; F5" AccessKey="C" Click="OnCompile" Text="Compile" />
-                    <MenuFlyoutItem x:Name="StopItem" controls:Shortcut.Keys="Shift+F5" AccessKey="S" Click="OnStop" IsEnabled="False" Text="Stop" />
-                    <MenuFlyoutItem AccessKey="L" Click="OnClean" Text="Clean build folder" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+Enter; F5" AccessKey="C" Click="{x:Bind Compile}" IsEnabled="{x:Bind Model.TexFound, Mode=OneWay}" Text="Compile" />
+                    <MenuFlyoutItem controls:Shortcut.Keys="Shift+F5" AccessKey="S" Click="{x:Bind Stop}" IsEnabled="{x:Bind Model.Compiling, Mode=OneWay}" Text="Stop" />
+                    <MenuFlyoutItem AccessKey="L" Click="{x:Bind Clean}" Text="Clean build folder" />
                     <MenuFlyoutSeparator />
                     <!-- The catalogue's engines, filled as the session opens. -->
                     <MenuFlyoutSubItem x:Name="EngineMenu" AccessKey="N" Text="Engine" />
-                    <ToggleMenuFlyoutItem x:Name="AutoCompileItem" AccessKey="A" Click="OnAutoCompile" IsChecked="{x:Bind app:Prefs.AutoCompile, Mode=OneTime}" Text="Compile automatically" />
-                    <ToggleMenuFlyoutItem x:Name="ShellEscapeItem" AccessKey="E" Click="OnBuildSetting" Text="Shell escape" />
-                    <ToggleMenuFlyoutItem x:Name="StopOnErrorItem" AccessKey="F" Click="OnBuildSetting" Text="Stop on first error" />
+                    <ToggleMenuFlyoutItem x:Name="AutoCompileItem" AccessKey="A" Click="{x:Bind ChooseAutoCompile}" IsChecked="{x:Bind app:Prefs.AutoCompile, Mode=OneTime}" Text="Compile automatically" />
+                    <ToggleMenuFlyoutItem x:Name="ShellEscapeItem" AccessKey="E" Click="{x:Bind SetBuildSettings}" Text="Shell escape" />
+                    <ToggleMenuFlyoutItem x:Name="StopOnErrorItem" AccessKey="F" Click="{x:Bind SetBuildSettings}" Text="Stop on first error" />
                 </MenuBarItem>
             </MenuBar>
         </Border>
@@ -259,7 +264,8 @@
              Symbol and Insert; the PDF and Compile at its end, as Visual Studio's Start. Commands without room go to its
              overflow. -->
         <Grid Padding="4,0,8,0">
-            <!-- Word's ribbon toggles: a checked one sits on a subtle fill, so Compile stays the one accent. -->
+            <!-- Word's ribbon toggles: a checked one sits on a subtle fill, so Compile stays the one accent. Default serves
+                 Light too; high contrast keeps the system's. -->
             <Grid.Resources>
                 <ResourceDictionary>
                     <ResourceDictionary.ThemeDictionaries>
@@ -273,81 +279,40 @@
                             <StaticResource x:Key="AppBarToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
                             <StaticResource x:Key="AppBarToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
                         </ResourceDictionary>
-                        <ResourceDictionary x:Key="Light">
-                            <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorSecondaryBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
-                            <StaticResource x:Key="AppBarToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
-                        </ResourceDictionary>
                         <ResourceDictionary x:Key="HighContrast" />
                     </ResourceDictionary.ThemeDictionaries>
                 </ResourceDictionary>
             </Grid.Resources>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <CommandBar
-                x:Name="Tools"
-                HorizontalAlignment="Left"
-                Background="Transparent"
-                DefaultLabelPosition="Right"
-                IsDynamicOverflowEnabled="True">
-                <AppBarToggleButton
-                    x:Name="PaneButton"
-                    Width="40"
-                    IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}"
-                    Label="Navigation pane"
-                    LabelPosition="Collapsed"
-                    ToolTipService.ToolTip="Navigation pane (Ctrl+Shift+E)">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <CommandBar x:Name="Tools" HorizontalAlignment="Left" Background="Transparent" DefaultLabelPosition="Right" IsDynamicOverflowEnabled="True">
+                <AppBarToggleButton Width="40" IsChecked="{x:Bind Split.IsPaneOpen, Mode=TwoWay}" Label="Navigation pane" LabelPosition="Collapsed" ToolTipService.ToolTip="Navigation pane (Ctrl+Shift+E)">
                     <AppBarToggleButton.Icon><FontIcon Glyph="&#xE700;" /></AppBarToggleButton.Icon>
                 </AppBarToggleButton>
                 <AppBarSeparator />
                 <AppBarElementContainer VerticalAlignment="Center" AutomationProperties.Name="Text style">
-                    <DropDownButton
-                        x:Name="StyleButton"
-                        Width="168"
-                        Margin="4,0"
-                        HorizontalContentAlignment="Left"
-                        AutomationProperties.Name="Text style"
-                        ToolTipService.ToolTip="Text style">
-                        <TextBlock x:Name="StyleText" Text="Normal text" TextTrimming="CharacterEllipsis" />
-                        <DropDownButton.Flyout>
-                            <MenuFlyout x:Name="StyleMenu" Placement="BottomEdgeAlignedLeft" />
-                        </DropDownButton.Flyout>
+                    <DropDownButton Width="168" Margin="4,0" HorizontalContentAlignment="Left" AutomationProperties.Name="Text style" IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" ToolTipService.ToolTip="Text style">
+                        <TextBlock Text="{x:Bind Model.Style, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                        <DropDownButton.Flyout><MenuFlyout x:Name="StyleMenu" Placement="BottomEdgeAlignedLeft" /></DropDownButton.Flyout>
                     </DropDownButton>
                 </AppBarElementContainer>
-                <AppBarToggleButton x:Name="BoldButton"
-                    Width="40" Click="OnStyle" Label="Bold" LabelPosition="Collapsed" Tag="bold" ToolTipService.ToolTip="Bold (Ctrl+B)">
-                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE8DD;" /></AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarToggleButton x:Name="ItalicButton"
-                    Width="40" Click="OnStyle" Label="Italic" LabelPosition="Collapsed" Tag="italic" ToolTipService.ToolTip="Italic (Ctrl+I)">
-                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE8DB;" /></AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarToggleButton x:Name="UnderlineButton"
-                    Width="40" Click="OnStyle" Label="Underline" LabelPosition="Collapsed" Tag="underline" ToolTipService.ToolTip="Underline (Ctrl+U)">
-                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE8DC;" /></AppBarToggleButton.Icon>
-                </AppBarToggleButton>
+                <AppBarToggleButton Width="40" Command="{StaticResource BoldCommand}" IsChecked="{x:Bind Model.Bold, Mode=OneWay}" IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" LabelPosition="Collapsed" ToolTipService.ToolTip="Bold (Ctrl+B)" />
+                <AppBarToggleButton Width="40" Command="{StaticResource ItalicCommand}" IsChecked="{x:Bind Model.Italic, Mode=OneWay}" IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" LabelPosition="Collapsed" ToolTipService.ToolTip="Italic (Ctrl+I)" />
+                <AppBarToggleButton Width="40" Command="{StaticResource UnderlineCommand}" IsChecked="{x:Bind Model.Underline, Mode=OneWay}" IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" LabelPosition="Collapsed" ToolTipService.ToolTip="Underline (Ctrl+U)" />
                 <AppBarSeparator />
-                <AppBarButton x:Name="EquationButton" Label="Equation" ToolTipService.ToolTip="Equation">
+                <AppBarButton IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" Label="Equation" ToolTipService.ToolTip="Equation">
                     <AppBarButton.Icon><FontIcon Glyph="π" Style="{StaticResource MathsIconStyle}" /></AppBarButton.Icon>
                     <AppBarButton.Flyout>
                         <MenuFlyout x:Name="EquationMenu" Placement="BottomEdgeAlignedLeft">
-                            <MenuFlyoutItem Click="OnInlineMaths" KeyboardAcceleratorTextOverride="Alt+=" Text="Inline maths" />
-                            <MenuFlyoutItem Click="OnDisplayMaths" Text="Display maths" />
+                            <MenuFlyoutItem Command="{StaticResource InlineMathsCommand}" KeyboardAcceleratorTextOverride="Alt+=" />
+                            <MenuFlyoutItem Command="{StaticResource DisplayMathsCommand}" />
                             <MenuFlyoutSeparator />
                         </MenuFlyout>
                     </AppBarButton.Flyout>
                 </AppBarButton>
-                <AppBarButton x:Name="SymbolButton" Click="OnSymbols" Label="Symbol" ToolTipService.ToolTip="Symbol (Alt+Shift+=)">
+                <AppBarButton Command="{StaticResource SymbolCommand}" IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" Label="Symbol" ToolTipService.ToolTip="Symbol (Alt+Shift+=)">
                     <AppBarButton.Icon><FontIcon Glyph="Ω" Style="{StaticResource MathsIconStyle}" /></AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton x:Name="InsertButton" Label="Insert" ToolTipService.ToolTip="Insert">
+                <AppBarButton IsEnabled="{x:Bind Model.Latex, Mode=OneWay}" Label="Insert" ToolTipService.ToolTip="Insert">
                     <AppBarButton.Icon><FontIcon Glyph="&#xE710;" /></AppBarButton.Icon>
                     <AppBarButton.Flyout>
                         <MenuFlyout x:Name="InsertFlyout" Placement="BottomEdgeAlignedLeft">
@@ -358,102 +323,43 @@
                     </AppBarButton.Flyout>
                 </AppBarButton>
             </CommandBar>
-            <CommandBar
-                Grid.Column="1"
-                Background="Transparent"
-                DefaultLabelPosition="Right"
-                OverflowButtonVisibility="Collapsed">
-                <AppBarToggleButton
-                    x:Name="PdfButton"
-                    Width="40"
-                    IsChecked="{x:Bind PdfItem.IsChecked, Mode=TwoWay}"
-                    Label="PDF"
-                    LabelPosition="Collapsed"
-                    ToolTipService.ToolTip="PDF (Ctrl+Alt+P)">
+            <CommandBar Grid.Column="1" Background="Transparent" DefaultLabelPosition="Right" OverflowButtonVisibility="Collapsed">
+                <AppBarToggleButton x:Name="PdfButton" Width="40" IsChecked="{x:Bind PdfItem.IsChecked, Mode=TwoWay}" Label="PDF" LabelPosition="Collapsed" ToolTipService.ToolTip="PDF (Ctrl+Alt+P)">
                     <AppBarToggleButton.Icon><FontIcon Glyph="&#xEA90;" /></AppBarToggleButton.Icon>
                 </AppBarToggleButton>
                 <AppBarSeparator />
                 <AppBarElementContainer VerticalAlignment="Center">
-                    <Button
-                        x:Name="CompileButton"
-                        MinWidth="112"
-                        Margin="4,0,0,0"
-                        AutomationProperties.Name="Compile"
-                        Click="OnCompileButton"
-                        Style="{StaticResource AccentButtonStyle}"
-                        ToolTipService.ToolTip="Compile (Ctrl+Enter)">
+                    <Button MinWidth="112" Margin="4,0,0,0" AutomationProperties.Name="{x:Bind local:WorkspaceModel.CompileLabel(Model.Compiling), Mode=OneWay}" Click="{x:Bind CompileOrStop}" IsEnabled="{x:Bind Model.TexFound, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{x:Bind local:WorkspaceModel.CompileTip(Model.Compiling), Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon x:Name="CompileIcon" FontSize="16" Glyph="&#xE768;" />
-                            <TextBlock x:Name="CompileLabel" Text="Compile" />
+                            <FontIcon FontSize="16" Glyph="{x:Bind local:WorkspaceModel.CompileGlyph(Model.Compiling), Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind local:WorkspaceModel.CompileLabel(Model.Compiling), Mode=OneWay}" />
                         </StackPanel>
                     </Button>
                 </AppBarElementContainer>
             </CommandBar>
         </Grid>
 
-        <SplitView
-            x:Name="Split"
-            Grid.Row="1"
-            OpenPaneLength="{x:Bind app:Prefs.SidebarWidth, Mode=OneTime}"
-            PaneBackground="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
+        <SplitView x:Name="Split" Grid.Row="1" OpenPaneLength="{x:Bind app:Prefs.SidebarWidth, Mode=OneTime}" PaneBackground="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
             <!-- Word's navigation pane: its search box over Files, the Outline of the shown file's document, and Results. -->
             <SplitView.Pane>
                 <Grid x:Name="SidePane" Padding="8,4,0,8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <!-- VS Code's search view: the chevron beside the search box shows Replace under it. -->
                     <Grid Margin="4,0,4,4" ColumnSpacing="4">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Button
-                            Width="32"
-                            Height="32"
-                            Padding="0"
-                            VerticalAlignment="Top"
-                            AutomationProperties.Name="Toggle replace"
-                            Click="OnReplaceToggle"
-                            Style="{StaticResource SubtleButtonStyle}"
-                            ToolTipService.ToolTip="Toggle replace">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Button Width="32" Height="32" Padding="0" VerticalAlignment="Top" AutomationProperties.Name="Toggle replace" Click="{x:Bind ToggleReplace}" Style="{StaticResource SubtleButtonStyle}" ToolTipService.ToolTip="Toggle replace">
                             <FontIcon x:Name="ReplaceChevron" FontSize="12" Glyph="&#xE76C;" />
                         </Button>
-                        <AutoSuggestBox
-                            x:Name="Search"
-                            Grid.Column="1"
-                            AutomationProperties.Name="Search in project"
-                            KeyDown="OnSearchKey"
-                            QuerySubmitted="OnSearchSubmitted"
-                            TextChanged="OnSearchChanged">
-                            <AutoSuggestBox.QueryIcon>
-                                <FontIcon FontSize="12" Glyph="&#xE721;" />
-                            </AutoSuggestBox.QueryIcon>
+                        <AutoSuggestBox x:Name="Search" Grid.Column="1" AutomationProperties.Name="Search in project" KeyDown="OnSearchKey" QuerySubmitted="OnSearchSubmitted" TextChanged="OnSearchChanged">
+                            <AutoSuggestBox.QueryIcon><FontIcon FontSize="12" Glyph="&#xE721;" /></AutoSuggestBox.QueryIcon>
                         </AutoSuggestBox>
                         <!-- A margin rather than row spacing, so a hidden row leaves no gap. -->
-                        <Grid
-                            x:Name="ReplaceRow"
-                            Grid.Row="1"
-                            Grid.Column="1"
-                            Margin="0,4,0,0"
-                            ColumnSpacing="4"
-                            Visibility="Collapsed">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                        <Grid x:Name="ReplaceRow" Grid.Row="1" Grid.Column="1" Margin="0,4,0,0" ColumnSpacing="4" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBox x:Name="ReplaceBox" AutomationProperties.Name="Replace in project" PlaceholderText="Replace" />
-                            <Button x:Name="ReplaceAll" Grid.Column="1" Click="OnReplaceAll" Content="Replace all" IsEnabled="False" />
+                            <Button x:Name="ReplaceAll" Grid.Column="1" Click="{x:Bind ReplaceInProject}" Content="Replace all" IsEnabled="False" />
                         </Grid>
                     </Grid>
                     <StackPanel Grid.Row="1" Margin="0,0,0,4">
@@ -463,89 +369,48 @@
                             <SelectorBarItem x:Name="ResultsTab" Text="Results" />
                         </SelectorBar>
                         <!-- Find all references' name, over its results. -->
-                        <TextBlock
-                            x:Name="ResultsHeading"
-                            Margin="12,4,4,0"
-                            AutomationProperties.HeadingLevel="Level2"
-                            Style="{StaticResource BodyStrongTextBlockStyle}"
-                            TextTrimming="CharacterEllipsis"
-                            Visibility="Collapsed" />
+                        <TextBlock x:Name="ResultsHeading" Margin="12,4,4,0" AutomationProperties.HeadingLevel="Level2" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
                     </StackPanel>
-                    <TreeView
-                        x:Name="FilesTree"
-                        Grid.Row="2"
-                        AllowDrop="True"
-                        AutomationProperties.Name="Files"
-                        CanDragItems="True"
-                        Collapsed="OnCollapsed"
-                        ContextRequested="OnFilesContext"
-                        DragItemsStarting="OnFilesDrag"
-                        DragOver="OnDragOver"
-                        Drop="OnDrop"
-                        Expanding="OnExpanding"
-                        ItemInvoked="OnInvoked"
-                        SelectionChanged="{x:Bind ShowFileCommands}">
+                    <TreeView x:Name="FilesTree" Grid.Row="2" AllowDrop="True" AutomationProperties.Name="Files" CanDragItems="True" Collapsed="OnCollapsed" ContextRequested="OnFilesContext" DragItemsStarting="OnFilesDrag" DragOver="OnDragOver" Drop="OnDrop" Expanding="OnExpanding" ItemInvoked="OnInvoked" ItemTemplate="{StaticResource FileTemplate}" SelectionChanged="{x:Bind ShowFileCommands}">
                         <!-- File Explorer's menu, with its icons. -->
                         <TreeView.ContextFlyout>
                             <MenuFlyout>
-                                <MenuFlyoutItem Click="OnNewFile" Text="New file">
+                                <MenuFlyoutItem Command="{StaticResource NewFileCommand}">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem Click="OnNewFolder" Text="New folder">
+                                <MenuFlyoutItem Command="{StaticResource NewFolderCommand}">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F4;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem Click="OnAddFiles" Text="Add files…">
+                                <MenuFlyoutItem Command="{StaticResource AddFilesCommand}">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
-                                <MenuFlyoutItem x:Name="MainItem" Click="OnSetMain" Text="Set as main file">
+                                <MenuFlyoutItem x:Name="MainItem" Click="{x:Bind SetMain}" Text="Set as main file">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE735;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem x:Name="RenameItem" controls:Shortcut.Keys="F2" Click="OnRename" Text="Rename">
+                                <MenuFlyoutItem x:Name="RenameItem" controls:Shortcut.Keys="F2" Click="{x:Bind RenameFile}" Text="Rename">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem x:Name="RevealItem" Click="OnReveal" Text="Show in File Explorer">
+                                <MenuFlyoutItem x:Name="RevealItem" Click="{x:Bind RevealFile}" Text="Show in File Explorer">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xEC50;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
-                                <MenuFlyoutItem x:Name="DeleteItem" controls:Shortcut.Keys="Delete" Click="OnDelete" Text="Delete">
+                                <MenuFlyoutItem x:Name="DeleteItem" controls:Shortcut.Keys="Delete" Click="{x:Bind DeleteFile}" Text="Delete">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>
                         </TreeView.ContextFlyout>
                     </TreeView>
-                    <TreeView
-                        x:Name="OutlineTree"
-                        Grid.Row="2"
-                        AutomationProperties.Name="Outline"
-                        Collapsed="OnCollapsed"
-                        Expanding="OnExpanding"
-                        ItemInvoked="OnInvoked"
-                        Visibility="Collapsed" />
-                    <TreeView
-                        x:Name="ResultsTree"
-                        Grid.Row="2"
-                        AutomationProperties.Name="Search results"
-                        ItemInvoked="OnInvoked"
-                        Visibility="Collapsed" />
-                    <TextBlock
-                        x:Name="SideNote"
-                        Grid.Row="2"
-                        Margin="12,8"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Style="{StaticResource BodyTextBlockStyle}"
-                        Visibility="Collapsed" />
+                    <TreeView x:Name="OutlineTree" Grid.Row="2" AutomationProperties.Name="Outline" Collapsed="OnCollapsed" Expanding="OnExpanding" ItemInvoked="OnInvoked" ItemTemplate="{StaticResource HeadingTemplate}" Visibility="Collapsed" />
+                    <TreeView x:Name="ResultsTree" Grid.Row="2" AutomationProperties.Name="Search results" ItemInvoked="OnInvoked" ItemTemplateSelector="{StaticResource ResultTemplates}" Visibility="Collapsed" />
+                    <TextBlock x:Name="SideNote" Grid.Row="2" Margin="12,8" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Visibility="Collapsed" />
                     <!-- The gap between the pane and the layers is its splitter. -->
                     <controls:Sizer x:Name="PaneSizer" Grid.RowSpan="3" Grid.Column="1" AutomationProperties.Name="Navigation pane width" />
                 </Grid>
             </SplitView.Pane>
 
             <Grid x:Name="Body" Margin="0,0,8,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition x:Name="IssuesRow" Height="0" />
-                </Grid.RowDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition x:Name="IssuesRow" Height="0" /></Grid.RowDefinitions>
 
                 <Grid x:Name="Panes">
                     <Grid.ColumnDefinitions>
@@ -561,19 +426,10 @@
                                 <FlyoutBase.AttachedFlyout>
                                     <Flyout x:Name="Palette">
                                         <StackPanel Spacing="8">
-                                            <TextBox x:Name="SymbolFilter" AutomationProperties.Name="Search symbols" PlaceholderText="Search symbols" TextChanged="OnSymbolFilter" />
-                                            <GridView
-                                                x:Name="Symbols"
-                                                Width="336"
-                                                Height="360"
-                                                AutomationProperties.Name="Symbols"
-                                                IsItemClickEnabled="True"
-                                                ItemClick="OnSymbol"
-                                                SelectionMode="None">
+                                            <TextBox x:Name="SymbolFilter" AutomationProperties.Name="Search symbols" PlaceholderText="Search symbols" TextChanged="{x:Bind FilterSymbols}" />
+                                            <GridView x:Name="Symbols" Width="336" Height="360" AutomationProperties.Name="Symbols" IsItemClickEnabled="True" ItemClick="OnSymbol" SelectionMode="None">
                                                 <GridView.ItemsPanel>
-                                                    <ItemsPanelTemplate>
-                                                        <ItemsWrapGrid MaximumRowsOrColumns="7" Orientation="Horizontal" />
-                                                    </ItemsPanelTemplate>
+                                                    <ItemsPanelTemplate><ItemsWrapGrid MaximumRowsOrColumns="7" Orientation="Horizontal" /></ItemsPanelTemplate>
                                                 </GridView.ItemsPanel>
                                                 <GridView.GroupStyle>
                                                     <GroupStyle>
@@ -605,11 +461,10 @@
                     <Border x:Name="PdfLayer" Grid.Column="2" Style="{StaticResource LayerStyle}">
                         <Grid x:Name="PdfClip">
                             <controls:PdfView x:Name="Pdf" />
+                            <ProgressBar VerticalAlignment="Top" AutomationProperties.Name="Compiling" IsIndeterminate="True" Visibility="{x:Bind Model.Compiling, Mode=OneWay}" />
                             <!-- Over the PDF, so it never covers the text or the find bar. -->
                             <InfoBar x:Name="BuildFailed" Margin="12" VerticalAlignment="Top" Severity="Error" Title="Build failed">
-                                <InfoBar.ActionButton>
-                                    <Button Click="OnShowIssues" Content="Show issues" />
-                                </InfoBar.ActionButton>
+                                <InfoBar.ActionButton><Button Click="{x:Bind ShowIssuesPanel}" Content="Show issues" /></InfoBar.ActionButton>
                             </InfoBar>
                         </Grid>
                     </Border>
@@ -620,10 +475,7 @@
                 <!-- Visual Studio's Error List: the build's issues, or its log. -->
                 <Border x:Name="IssuesPanel" Grid.Row="2" Style="{StaticResource LayerStyle}" Visibility="Collapsed">
                     <Grid x:Name="IssuesClip">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="44" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid Padding="4,0,4,0" ColumnSpacing="4">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -631,69 +483,35 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="OnIssueTab">
+                            <SelectorBar x:Name="IssueTabs" VerticalAlignment="Center" SelectionChanged="{x:Bind ShowIssueTab}">
                                 <SelectorBarItem x:Name="IssuesTab" IsSelected="True" Text="Issues" />
                                 <SelectorBarItem x:Name="LogTab" Text="Build log" />
                             </SelectorBar>
-                            <!-- The Error List's filter: warnings shown or not, with their count. -->
-                            <ToggleButton
-                                x:Name="WarningsToggle"
-                                Grid.Column="1"
-                                AutomationProperties.Name="Warnings"
-                                Checked="OnWarnings"
-                                IsChecked="True"
-                                IsEnabled="False"
-                                Unchecked="OnWarnings">
+                            <!-- The Error List's filter: warnings shown or not, with their count. Checked and Unchecked rather
+                                 than Click, which a toggle through UI Automation doesn't raise. -->
+                            <ToggleButton x:Name="WarningsToggle" Grid.Column="1" AutomationProperties.Name="Warnings" Checked="{x:Bind ShowIssues}" IsChecked="True" IsEnabled="False" Unchecked="{x:Bind ShowIssues}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="14" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
-                                    <TextBlock x:Name="WarningsLabel" Text="0 warnings" Typography.NumeralAlignment="Tabular" />
+                                    <FontIcon FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
+                                    <TextBlock Text="{x:Bind Model.WarningsLabel, Mode=OneWay}" Typography.NumeralAlignment="Tabular" />
                                 </StackPanel>
                             </ToggleButton>
-                            <Button x:Name="CopyLog" Grid.Column="1" Click="OnCopyLog" Visibility="Collapsed">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="14" Glyph="&#xE8C8;" />
-                                    <TextBlock Text="Copy log" />
-                                </StackPanel>
+                            <Button x:Name="CopyLog" Grid.Column="1" Click="{x:Bind CopyBuildLog}" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon FontSize="16" Glyph="&#xE8C8;" /><TextBlock Text="Copy log" /></StackPanel>
                             </Button>
                             <!-- The Mac's filter, one for each tab: issues by message or file, the log by line. -->
-                            <AutoSuggestBox
-                                x:Name="Filter"
-                                Grid.Column="2"
-                                Width="180"
-                                VerticalAlignment="Center"
-                                AutomationProperties.Name="Filter"
-                                PlaceholderText="Filter"
-                                TextChanged="OnFilter">
-                                <AutoSuggestBox.QueryIcon>
-                                    <FontIcon FontSize="12" Glyph="&#xE71C;" />
-                                </AutoSuggestBox.QueryIcon>
+                            <AutoSuggestBox x:Name="Filter" Grid.Column="2" Width="180" VerticalAlignment="Center" AutomationProperties.Name="Filter" PlaceholderText="Filter" TextChanged="OnFilter">
+                                <AutoSuggestBox.QueryIcon><FontIcon FontSize="12" Glyph="&#xE71C;" /></AutoSuggestBox.QueryIcon>
                             </AutoSuggestBox>
-                            <Button
-                                Grid.Column="3"
-                                Width="32"
-                                Height="32"
-                                Padding="0"
-                                AutomationProperties.Name="Close issues"
-                                Click="OnCloseIssues"
-                                Style="{StaticResource SubtleButtonStyle}"
-                                ToolTipService.ToolTip="Close (Ctrl+Shift+M)">
+                            <Button Grid.Column="3" Width="32" Height="32" Padding="0" AutomationProperties.Name="Close issues" Click="{x:Bind HidePanel}" Style="{StaticResource SubtleButtonStyle}" ToolTipService.ToolTip="Close (Ctrl+Shift+M)">
                                 <FontIcon FontSize="12" Glyph="&#xE711;" />
                             </Button>
                         </Grid>
-                        <ListView
-                            x:Name="IssueList"
-                            Grid.Row="1"
-                            Padding="0,0,0,4"
-                            AutomationProperties.Name="Issues"
-                            ContextRequested="OnIssueContext"
-                            IsItemClickEnabled="True"
-                            ItemClick="OnIssueClick"
-                            Visibility="Collapsed">
+                        <ListView x:Name="IssueList" Grid.Row="1" Padding="0,0,0,4" AutomationProperties.Name="Issues" ContextRequested="OnIssueContext" IsItemClickEnabled="True" ItemClick="OnIssueClick" Visibility="Collapsed">
                             <!-- The Mac's issue menu. -->
                             <ListView.ContextFlyout>
                                 <MenuFlyout>
-                                    <MenuFlyoutItem x:Name="IssuePlaceItem" Click="OnIssuePlace" Text="Go to line" />
-                                    <MenuFlyoutItem x:Name="CopyIssueItem" Click="OnCopyIssue" Text="Copy">
+                                    <MenuFlyoutItem x:Name="IssuePlaceItem" Click="{x:Bind GoToChosenIssue}" Text="Go to line" />
+                                    <MenuFlyoutItem x:Name="CopyIssueItem" Click="{x:Bind CopyIssue}" Text="Copy">
                                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C8;" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
                                 </MenuFlyout>
@@ -711,57 +529,20 @@
                                         <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" Visibility="{x:Bind IsWarning}" />
                                         <StackPanel Grid.Column="1" Spacing="2">
                                             <TextBlock MaxLines="2" Style="{StaticResource BodyTextBlockStyle}" Text="{x:Bind Item.Message}" />
-                                            <TextBlock
-                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                Style="{StaticResource CaptionTextBlockStyle}"
-                                                Text="{x:Bind Item.Explain}"
-                                                Visibility="{x:Bind HasExplain}" />
+                                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Item.Explain}" Visibility="{x:Bind HasExplain}" />
                                         </StackPanel>
-                                        <TextBlock
-                                            Grid.Column="2"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            Style="{StaticResource CaptionTextBlockStyle}"
-                                            Text="{x:Bind Place}"
-                                            Typography.NumeralAlignment="Tabular"
-                                            Visibility="{x:Bind HasPlace}" />
+                                        <TextBlock Grid.Column="2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Place}" Typography.NumeralAlignment="Tabular" Visibility="{x:Bind HasPlace}" />
                                         <!-- The Microsoft Store's inline Install, for any fix; the ring keeps its slot, so the button never moves. -->
-                                        <StackPanel
-                                            Grid.Column="3"
-                                            VerticalAlignment="Center"
-                                            Orientation="Horizontal"
-                                            Spacing="8"
-                                            Visibility="{x:Bind HasFix}">
+                                        <StackPanel Grid.Column="3" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8" Visibility="{x:Bind HasFix}">
                                             <ProgressRing Width="16" Height="16" IsActive="{x:Bind Running}" />
-                                            <Button
-                                                AutomationProperties.Name="{x:Bind FixName}"
-                                                Click="OnFix"
-                                                Content="{x:Bind Item.Fix.Title}"
-                                                IsEnabled="{x:Bind Idle}"
-                                                ToolTipService.ToolTip="{x:Bind Item.Fix.Help}" />
+                                            <Button AutomationProperties.Name="{x:Bind FixName}" Click="OnFix" Content="{x:Bind Item.Fix.Title}" IsEnabled="{x:Bind Idle}" ToolTipService.ToolTip="{x:Bind Item.Fix.Help}" />
                                         </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                        <TextBlock
-                            x:Name="NoIssues"
-                            Grid.Row="1"
-                            Margin="16,4"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource BodyTextBlockStyle}"
-                            Text="Compile to check for issues." />
-                        <TextBox
-                            x:Name="Log"
-                            Grid.Row="1"
-                            Margin="8,0,8,8"
-                            AcceptsReturn="True"
-                            AutomationProperties.Name="Build log"
-                            FontFamily="Cascadia Mono, Consolas"
-                            FontSize="12"
-                            IsReadOnly="True"
-                            ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                            ScrollViewer.VerticalScrollBarVisibility="Auto"
-                            Visibility="Collapsed" />
+                        <TextBlock x:Name="NoIssues" Grid.Row="1" Margin="16,4" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Text="Compile to check for issues." />
+                        <TextBox x:Name="Log" Grid.Row="1" Margin="8,0,8,8" AcceptsReturn="True" AutomationProperties.Name="Build log" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsReadOnly="True" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" Visibility="Collapsed" />
                     </Grid>
                 </Border>
             </Grid>
@@ -771,65 +552,45 @@
              in slots that keep their size, a line between groups. Narrow, the build's words trim and the slider goes, as
              Word's status bar gives way. -->
         <Grid Grid.Row="2" Padding="4,0,8,0" ColumnSpacing="4">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <Button AutomationProperties.Name="Issues" Click="OnIssueCounts" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Button AutomationProperties.Name="Issues" Click="{x:Bind TogglePanel}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Issues (Ctrl+Shift+M)">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <FontIcon FontSize="12" Glyph="&#xE783;" />
-                    <TextBlock x:Name="ErrorCount" MinWidth="12" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
+                    <TextBlock MinWidth="12" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Model.Errors, Mode=OneWay}" Typography.NumeralAlignment="Tabular" />
                     <FontIcon Margin="4,0,0,0" FontSize="12" Glyph="&#xE7BA;" />
-                    <TextBlock x:Name="WarningCount" MinWidth="12" Style="{StaticResource CaptionTextBlockStyle}" Text="0" Typography.NumeralAlignment="Tabular" />
+                    <TextBlock MinWidth="12" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Model.Warnings, Mode=OneWay}" Typography.NumeralAlignment="Tabular" />
                 </StackPanel>
             </Button>
-            <TextBlock
-                x:Name="BuildState"
-                Grid.Column="1"
-                Style="{StaticResource StatusTextStyle}"
-                Text="No build yet"
-                TextTrimming="CharacterEllipsis"
-                ToolTipService.ToolTip="{x:Bind BuildState.Text, Mode=OneWay}" />
+            <TextBlock x:Name="BuildState" Grid.Column="1" Style="{StaticResource StatusTextStyle}" Text="{x:Bind Model.BuildState, Mode=OneWay}" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Model.BuildState, Mode=OneWay}" />
             <StackPanel Grid.Column="2" Orientation="Horizontal">
                 <Grid MinWidth="96">
-                    <Button x:Name="NotSaved" AutomationProperties.Name="Not saved" Click="OnSave" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Save (Ctrl+S)" Visibility="Collapsed">
+                    <Button AutomationProperties.Name="Not saved" Command="{StaticResource SaveCommand}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Save (Ctrl+S)" Visibility="{x:Bind Model.Unsaved, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
                             <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="Not saved" />
                         </StackPanel>
                     </Button>
                 </Grid>
-                <Button MinWidth="96" Click="OnGoToLine" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to line (Ctrl+G)">
-                    <TextBlock x:Name="CaretText" Style="{StaticResource CaptionTextBlockStyle}" Text="Ln 1, Col 1" Typography.NumeralAlignment="Tabular" />
+                <Button MinWidth="96" Command="{StaticResource GoToLineCommand}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to line (Ctrl+G)">
+                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Model.Caret, Mode=OneWay}" Typography.NumeralAlignment="Tabular" />
                 </Button>
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
-                <TextBlock x:Name="Words" MinWidth="128" Style="{StaticResource StatusTextStyle}" TextAlignment="Center" />
+                <TextBlock MinWidth="128" Style="{StaticResource StatusTextStyle}" Text="{x:Bind Model.Words, Mode=OneWay}" TextAlignment="Center" />
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
-                <Button MinWidth="96" Click="OnGoToPage" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
-                    <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="No PDF" Typography.NumeralAlignment="Tabular" />
+                <Button MinWidth="96" Command="{StaticResource GoToPageCommand}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Go to page (Ctrl+Alt+G)">
+                    <TextBlock x:Name="PageText" Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Model.Page, Mode=OneWay}" Typography.NumeralAlignment="Tabular" />
                 </Button>
                 <Rectangle Style="{StaticResource StatusDividerStyle}" />
-                <StackPanel x:Name="ZoomBar" Margin="4,0,0,0" Orientation="Horizontal" Spacing="2">
-                    <RepeatButton AutomationProperties.Name="Zoom out" Click="{x:Bind Pdf.ZoomOut}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
+                <StackPanel Margin="4,0,0,0" Orientation="Horizontal" Spacing="2">
+                    <RepeatButton AutomationProperties.Name="Zoom out" Command="{StaticResource ZoomOutCommand}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom out (Ctrl+-)">
                         <FontIcon FontSize="12" Glyph="&#xE738;" />
                     </RepeatButton>
-                    <Slider
-                        x:Name="ZoomSlider"
-                        Width="112"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="Zoom"
-                        IsThumbToolTipEnabled="False"
-                        Maximum="2"
-                        Minimum="-2"
-                        StepFrequency="0.01"
-                        ValueChanged="OnZoomSlider"
-                        Visibility="Collapsed" />
-                    <RepeatButton AutomationProperties.Name="Zoom in" Click="{x:Bind Pdf.ZoomIn}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
+                    <Slider x:Name="ZoomSlider" Width="112" VerticalAlignment="Center" AutomationProperties.Name="Zoom" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" IsThumbToolTipEnabled="False" Maximum="2" Minimum="-2" StepFrequency="0.01" Value="{x:Bind Model.ZoomStep, Mode=OneWay}" ValueChanged="OnZoomSlider" Visibility="Collapsed" />
+                    <RepeatButton AutomationProperties.Name="Zoom in" Command="{StaticResource ZoomInCommand}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Style="{StaticResource ZoomStepStyle}" ToolTipService.ToolTip="Zoom in (Ctrl+=)">
                         <FontIcon FontSize="12" Glyph="&#xE710;" />
                     </RepeatButton>
-                    <Button MinWidth="56" Flyout="{x:Bind Pdf.ZoomMenu}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">
-                        <TextBlock x:Name="ZoomText" Style="{StaticResource CaptionTextBlockStyle}" Text="100%" Typography.NumeralAlignment="Tabular" />
+                    <Button MinWidth="56" Flyout="{x:Bind Pdf.ZoomMenu}" IsEnabled="{x:Bind Model.HasPdf, Mode=OneWay}" Style="{StaticResource StatusButtonStyle}" ToolTipService.ToolTip="Zoom">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="{x:Bind Model.Zoom, Mode=OneWay}" Typography.NumeralAlignment="Tabular" />
                     </Button>
                 </StackPanel>
             </StackPanel>

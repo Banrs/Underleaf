@@ -24,10 +24,7 @@
         </Style>
         <DataTemplate x:Key="IssueTemplate" x:DataType="local:IssueMark">
             <Grid ColumnSpacing="8" ToolTipService.ToolTip="{x:Bind Tip}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <InfoBadge VerticalAlignment="Center" Style="{x:Bind Badge}" />
                 <TextBlock
                     Grid.Column="1"
@@ -45,16 +42,11 @@
             <Setter Property="StrokeThickness" Value="1" />
             <Setter Property="IsHitTestVisible" Value="False" />
         </Style>
-        <Style x:Key="WarningSquiggleStyle" TargetType="Polyline" BasedOn="{StaticResource ErrorSquiggleStyle}">
-            <Setter Property="Stroke" Value="{ThemeResource SystemFillColorCautionBrush}" />
-        </Style>
+        <Style x:Key="WarningSquiggleStyle" TargetType="Polyline" BasedOn="{StaticResource ErrorSquiggleStyle}"><Setter Property="Stroke" Value="{ThemeResource SystemFillColorCautionBrush}" /></Style>
     </UserControl.Resources>
 
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
 
         <Grid Visibility="Collapsed">
             <Rectangle x:Name="PaperInk" Fill="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
@@ -64,16 +56,8 @@
         </Grid>
 
         <!-- Transparent, so a press between the numbers selects lines too. -->
-        <Canvas
-            x:Name="Gutter"
-            Background="Transparent"
-            PointerCaptureLost="OnGutterCaptureLost"
-            PointerMoved="OnGutterMoved"
-            PointerPressed="OnGutterPressed"
-            PointerReleased="OnGutterReleased" />
-        <Canvas x:Name="Backdrop" Grid.Column="1" AutomationProperties.AccessibilityView="Raw">
-            <Rectangle x:Name="CurrentLine" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" />
-        </Canvas>
+        <Canvas x:Name="Gutter" Background="Transparent" PointerCaptureLost="OnGutterCaptureLost" PointerMoved="OnGutterMoved" PointerPressed="OnGutterPressed" PointerReleased="OnGutterReleased" />
+        <Canvas x:Name="Backdrop" Grid.Column="1" AutomationProperties.AccessibilityView="Raw"><Rectangle x:Name="CurrentLine" Fill="{ThemeResource SubtleFillColorSecondaryBrush}" /></Canvas>
         <RichEditBox
             x:Name="Editor"
             Grid.Column="1"
@@ -85,9 +69,7 @@
             IsTextPredictionEnabled="False"
             SelectionHighlightColorWhenNotFocused="{ThemeResource TextControlSelectionHighlightColor}">
             <!-- The editor's own copy of the menu every text control shares, so the commands added to it stay its own. -->
-            <RichEditBox.ContextFlyout>
-                <TextCommandBarFlyout Opening="OnContextOpening" Placement="BottomEdgeAlignedLeft" />
-            </RichEditBox.ContextFlyout>
+            <RichEditBox.ContextFlyout><TextCommandBarFlyout Opening="OnContextOpening" Placement="BottomEdgeAlignedLeft" /></RichEditBox.ContextFlyout>
             <!-- No border in any state, so its brushes are never drawn. -->
             <RichEditBox.Resources>
                 <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
@@ -118,14 +100,9 @@
             Style="{StaticResource SurfaceStyle}"
             Translation="0,0,32"
             Visibility="Collapsed">
-            <Border.Shadow>
-                <ThemeShadow />
-            </Border.Shadow>
+            <Border.Shadow><ThemeShadow /></Border.Shadow>
             <Grid ColumnSpacing="4" RowSpacing="4">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="32" />
                     <ColumnDefinition Width="*" MinWidth="64" />
@@ -143,13 +120,7 @@
                     ToolTipService.ToolTip="Toggle replace (Ctrl+H)">
                     <FontIcon x:Name="ReplaceChevron" FontSize="12" Glyph="&#xE76C;" />
                 </Button>
-                <TextBox
-                    x:Name="FindBox"
-                    Grid.Column="1"
-                    AutomationProperties.Name="Find"
-                    KeyDown="OnFindKeyDown"
-                    PlaceholderText="Find"
-                    TextChanged="OnFindChanged" />
+                <TextBox x:Name="FindBox" Grid.Column="1" AutomationProperties.Name="Find" KeyDown="OnFindKeyDown" PlaceholderText="Find" TextChanged="OnFindChanged" />
                 <TextBlock
                     x:Name="FindCount"
                     Grid.Column="2"
@@ -163,24 +134,15 @@
                 <Button
                     Grid.Column="3"
                     AutomationProperties.Name="Find previous"
-                    Click="OnFindPrevious"
+                    Click="{x:Bind FindPrevious}"
                     Style="{StaticResource FindButtonStyle}"
                     ToolTipService.ToolTip="Find previous (Shift+F3)">
                     <FontIcon FontSize="16" Glyph="&#xE74A;" />
                 </Button>
-                <Button
-                    Grid.Column="4"
-                    AutomationProperties.Name="Find next"
-                    Click="OnFindNext"
-                    Style="{StaticResource FindButtonStyle}"
-                    ToolTipService.ToolTip="Find next (F3)">
+                <Button Grid.Column="4" AutomationProperties.Name="Find next" Click="{x:Bind FindNext}" Style="{StaticResource FindButtonStyle}" ToolTipService.ToolTip="Find next (F3)">
                     <FontIcon FontSize="16" Glyph="&#xE74B;" />
                 </Button>
-                <Button
-                    Grid.Column="5"
-                    AutomationProperties.Name="Find options"
-                    Style="{StaticResource FindButtonStyle}"
-                    ToolTipService.ToolTip="Find options">
+                <Button Grid.Column="5" AutomationProperties.Name="Find options" Style="{StaticResource FindButtonStyle}" ToolTipService.ToolTip="Find options">
                     <FontIcon FontSize="16" Glyph="&#xE71C;" />
                     <Button.Flyout>
                         <MenuFlyout Placement="BottomEdgeAlignedRight">
@@ -189,31 +151,11 @@
                         </MenuFlyout>
                     </Button.Flyout>
                 </Button>
-                <Button
-                    Grid.Column="6"
-                    AutomationProperties.Name="Close"
-                    Click="OnFindClose"
-                    Style="{StaticResource FindButtonStyle}"
-                    ToolTipService.ToolTip="Close (Esc)">
+                <Button Grid.Column="6" AutomationProperties.Name="Close" Click="OnFindClose" Style="{StaticResource FindButtonStyle}" ToolTipService.ToolTip="Close (Esc)">
                     <FontIcon FontSize="16" Glyph="&#xE711;" />
                 </Button>
-                <TextBox
-                    x:Name="ReplaceBox"
-                    Grid.Row="1"
-                    Grid.Column="1"
-                    AutomationProperties.Name="Replace"
-                    KeyDown="OnFindKeyDown"
-                    PlaceholderText="Replace"
-                    Visibility="Collapsed" />
-                <StackPanel
-                    x:Name="ReplaceButtons"
-                    Grid.Row="1"
-                    Grid.Column="2"
-                    Grid.ColumnSpan="5"
-                    HorizontalAlignment="Right"
-                    Orientation="Horizontal"
-                    Spacing="4"
-                    Visibility="Collapsed">
+                <TextBox x:Name="ReplaceBox" Grid.Row="1" Grid.Column="1" AutomationProperties.Name="Replace" KeyDown="OnFindKeyDown" PlaceholderText="Replace" Visibility="Collapsed" />
+                <StackPanel x:Name="ReplaceButtons" Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="5" HorizontalAlignment="Right" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
                     <Button x:Name="ReplaceOne" Click="OnReplace" Content="Replace" IsEnabled="False" />
                     <Button x:Name="ReplaceEvery" Click="OnReplaceAll" Content="Replace all" IsEnabled="False" />
                 </StackPanel>
@@ -222,23 +164,12 @@
 
         <!-- VS Code's hover: the maths the caret is in, drawn by RaTeX, above its line. -->
         <Popup x:Name="MathPopup" Grid.Column="1">
-            <Border
-                x:Name="MathSurface"
-                Padding="12,8"
-                IsHitTestVisible="False"
-                Style="{StaticResource SurfaceStyle}"
-                Translation="0,0,32">
-                <Border.Shadow>
-                    <ThemeShadow />
-                </Border.Shadow>
+            <Border x:Name="MathSurface" Padding="12,8" IsHitTestVisible="False" Style="{StaticResource SurfaceStyle}" Translation="0,0,32">
+                <Border.Shadow><ThemeShadow /></Border.Shadow>
                 <Grid>
                     <Image x:Name="MathImage" AutomationProperties.Name="Maths preview" Stretch="Fill" />
                     <StackPanel x:Name="MathError" Orientation="Horizontal" Spacing="8">
-                        <FontIcon
-                            VerticalAlignment="Top"
-                            FontSize="16"
-                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                            Glyph="&#xE783;" />
+                        <FontIcon VerticalAlignment="Top" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xE783;" />
                         <TextBlock x:Name="MathErrorText" MaxWidth="480" Style="{StaticResource CaptionTextBlockStyle}" />
                     </StackPanel>
                 </Grid>
@@ -247,15 +178,8 @@
 
         <!-- IntelliSense on the flyout surface: the list never takes the keyboard from the text. -->
         <Popup x:Name="CompletionPopup" Grid.Column="1">
-            <Border
-                MinWidth="240"
-                MaxWidth="480"
-                Padding="0,4"
-                Style="{StaticResource SurfaceStyle}"
-                Translation="0,0,32">
-                <Border.Shadow>
-                    <ThemeShadow />
-                </Border.Shadow>
+            <Border MinWidth="240" MaxWidth="480" Padding="0,4" Style="{StaticResource SurfaceStyle}" Translation="0,0,32">
+                <Border.Shadow><ThemeShadow /></Border.Shadow>
                 <ListView
                     x:Name="CompletionList"
                     MaxHeight="256"
@@ -272,11 +196,7 @@
                         <DataTemplate x:DataType="local:CompletionRow">
                             <!-- Margins rather than column spacing, so a row without a detail has no gap after its label. -->
                             <Grid AutomationProperties.Name="{x:Bind Item.Label}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="16" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <FontIcon FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="{x:Bind Glyph}" />
                                 <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                     <Run FontWeight="SemiBold" Text="{x:Bind Typed}" /><Run Text="{x:Bind Rest}" />

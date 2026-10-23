@@ -46,31 +46,30 @@ public sealed partial class SettingsPage : Page
         ActualThemeChanged += (_, _) => DispatcherQueue.TryEnqueue(ShowPreview);
     }
 
-    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    protected override void OnNavigatedTo(NavigationEventArgs e) => App.Run(null, async () =>
     {
         if (App.Core is not { } core) return;
         var engines = (await App.Catalogue()).Engines;
         EngineBox.ItemsSource = engines;
         EngineBox.SelectedItem = engines.FirstOrDefault(e => e.Id == Prefs.Engine) ?? engines.First(e => e.Default);
         ShowTex(await core.CallAsync<TexStatus>("status"));
-    }
+    });
 
     void OnOpenFolder(object sender, RoutedEventArgs e) => App.Reveal(Core.DefaultDataDir);
 
-    async void OnAutomatic(object sender, RoutedEventArgs e) => await SetTexDir(null);
+    void OnAutomatic(object sender, RoutedEventArgs e) => App.Run("Can't use this folder", () => SetTexDir(null));
 
-    async void OnChooseTex(object sender, RoutedEventArgs e)
+    void OnChooseTex(object sender, RoutedEventArgs e) => App.Run("Can't use this folder", async () =>
     {
         if (await new FolderPicker(App.Window.AppWindow.Id).PickSingleFolderAsync() is { } picked) await SetTexDir(picked.Path);
-    }
+    });
 
     /// Sets the folder latexmk runs from (null: find it), then shows what the core reports, whatever happened.
     async Task SetTexDir(string? dir)
     {
         if (App.Core is not { } core) return;
         try { await core.CallAsync("set_tex_dir", new { dir }); }
-        catch (CoreException ex) { await App.Alert("Can't use this folder", ex.Message); }
-        ShowTex(await core.CallAsync<TexStatus>("status"));
+        finally { ShowTex(await core.CallAsync<TexStatus>("status")); }
     }
 
     void ShowTex(TexStatus status)

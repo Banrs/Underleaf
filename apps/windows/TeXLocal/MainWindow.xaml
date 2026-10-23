@@ -2,27 +2,18 @@
     x:Class="TeXLocal.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Window.SystemBackdrop>
-        <MicaBackdrop />
-    </Window.SystemBackdrop>
+    <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
 
     <Grid x:Name="Root" Background="Transparent">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-        <Grid.KeyboardAccelerators>
-            <KeyboardAccelerator Invoked="{x:Bind Back}" Key="Left" Modifiers="Menu" />
-        </Grid.KeyboardAccelerators>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Grid.KeyboardAccelerators><KeyboardAccelerator Invoked="{x:Bind Back}" Key="Left" Modifiers="Menu" /></Grid.KeyboardAccelerators>
 
         <!-- A project's menus are its content, after the title, as Paint's and Visual Studio's sit in their title bars. -->
         <TitleBar x:Name="Bar" BackRequested="{x:Bind GoBack}" Title="TeXLocal">
             <TitleBar.Resources>
                 <HorizontalAlignment x:Key="TitleBarContentHorizontalAlignment">Left</HorizontalAlignment>
             </TitleBar.Resources>
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.ico" />
-            </TitleBar.IconSource>
+            <TitleBar.IconSource><ImageIconSource ImageSource="ms-appx:///Assets/TeXLocal.ico" /></TitleBar.IconSource>
             <TitleBar.RightHeader>
                 <Button
                     x:Name="SettingsButton"

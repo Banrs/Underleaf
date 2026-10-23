@@ -21,11 +21,7 @@
                         BorderThickness="{TemplateBinding BorderThickness}"
                         ColumnSpacing="16"
                         CornerRadius="{TemplateBinding CornerRadius}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="20" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <FontIcon FontSize="20" Glyph="{TemplateBinding Glyph}" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="{TemplateBinding Header}" />
@@ -91,12 +87,8 @@
     </Style>
 
     <!-- A template's page drawn in outline (PagePreview): text and headings. -->
-    <Style x:Key="PreviewBarStyle" TargetType="Rectangle">
-        <Setter Property="Fill" Value="{ThemeResource TextFillColorDisabledBrush}" />
-    </Style>
-    <Style x:Key="PreviewHeadStyle" TargetType="Rectangle">
-        <Setter Property="Fill" Value="{ThemeResource TextFillColorTertiaryBrush}" />
-    </Style>
+    <Style x:Key="PreviewBarStyle" TargetType="Rectangle"><Setter Property="Fill" Value="{ThemeResource TextFillColorDisabledBrush}" /></Style>
+    <Style x:Key="PreviewHeadStyle" TargetType="Rectangle"><Setter Property="Fill" Value="{ThemeResource TextFillColorTertiaryBrush}" /></Style>
 
     <!-- A heading over a group, as File Explorer's Home and Word's Home head theirs. -->
     <Style x:Key="GroupHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">

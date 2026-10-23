@@ -51,15 +51,17 @@ public sealed partial class MainWindow : Window
             (Pages.Content as HomePage)?.Refresh();
             (Pages.Content as WorkspacePage)?.CheckTex();
         };
-        // Held until the project's save answers, as the Mac's quit; one that fails keeps the window, and closing again
-        // saves again.
-        AppWindow.Closing += async (_, e) =>
+        // Held until the project's save answers, as the Mac's quit.
+        AppWindow.Closing += (_, e) =>
         {
             if (project is null) return;
             e.Cancel = true;
-            if (!await Leave()) return;
-            project = null;
-            Close();
+            App.Run(null, async () =>
+            {
+                if (!await Leave()) return;
+                project = null;
+                Close();
+            });
         };
         Closed += (_, _) =>
         {
@@ -75,7 +77,7 @@ public sealed partial class MainWindow : Window
     {
         if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter) presenter.Restore();
         Activate();
-        _ = Open(args);
+        Open(args);
     }
 
     /// The project's menus in the title bar; null takes them away.
@@ -101,42 +103,38 @@ public sealed partial class MainWindow : Window
     }
 
     /// With `file`, the project shows that file instead of the one it was left at.
-    public async void OpenProject(string id, string? file = null)
+    public void OpenProject(string id, string? file = null) => App.Run(null, async () =>
     {
         if (!await Leave()) return;
         ShowHome();
         Pages.Navigate(typeof(WorkspacePage), (id, file), new DrillInNavigationTransitionInfo());
         Prefs.LastProject = id;
-    }
+    });
 
-    public async void OpenFolder()
+    public void OpenFolder() => App.Run("Can't open this", async () =>
     {
         if (await new FolderPicker(AppWindow.Id).PickSingleFolderAsync() is { } picked) await Open(picked.Path);
-    }
+    });
 
-    public async void OpenFile()
+    public void OpenFile() => App.Run("Can't open this", async () =>
     {
         var picker = new FileOpenPicker(AppWindow.Id) { FileTypeFilter = { ".zip", ".tex" } };
         if (await picker.PickSingleFileAsync() is { } picked) await Open(picked.Path);
-    }
+    });
 
     /// The folders, .tex and .zip files of a command line or a drop on Home; as on the Mac, one alone opens.
-    public async Task Open(IEnumerable<string> paths)
+    public void Open(IEnumerable<string> paths) => App.Run("Can't open this", async () =>
     {
         string[] openable = [.. paths.Where(p => Directory.Exists(p) || Path.GetExtension(p).ToLowerInvariant() is ".tex" or ".zip").Select(Path.GetFullPath)];
         foreach (var path in openable) await Open(path, openable.Length == 1);
         if (openable.Length > 1) (Pages.Content as HomePage)?.Refresh();
-    }
+    });
 
     async Task Open(string path, bool show = true)
     {
         if (App.Core is null) return;
-        try
-        {
-            var opened = await App.Core.CallAsync<OpenedPath>("open_path", new { path });
-            if (show) OpenProject(opened.Project.Id, opened.File);
-        }
-        catch (CoreException ex) { await App.Alert("Can't open this", ex.Message); }
+        var opened = await App.Core.CallAsync<OpenedPath>("open_path", new { path });
+        if (show) OpenProject(opened.Project.Id, opened.File);
     }
 
     public void OpenSettings()
@@ -145,18 +143,18 @@ public sealed partial class MainWindow : Window
             Pages.Navigate(typeof(SettingsPage), null, new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight });
     }
 
-    public async void GoHome()
+    public void GoHome() => App.Run(null, async () =>
     {
         if (await Leave()) ShowHome();
-    }
+    });
 
     /// File › New project, as Word's File › New shows its gallery: Home, its templates focused.
-    public async void NewProject()
+    public void NewProject() => App.Run(null, async () =>
     {
         if (!await Leave()) return;
         ShowHome();
         (Pages.Content as HomePage)?.ShowTemplates();
-    }
+    });
 
     void ShowHome()
     {
@@ -164,10 +162,10 @@ public sealed partial class MainWindow : Window
     }
 
     /// Back from Settings returns to the project; back from the project leaves it.
-    async void GoBack()
+    void GoBack() => App.Run(null, async () =>
     {
         if (Pages.CanGoBack && (Pages.Content is not WorkspacePage || await Leave())) Pages.GoBack();
-    }
+    });
 
     /// Alt+Left and the mouse's back button: in a project, its last place while there is one, as VS Code's Go back.
     void Back()
