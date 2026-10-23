@@ -25,6 +25,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
     let toolbar = NSToolbar(identifier: "Workspace 5")
+    /// Compile as its symbol, where the workspace finds its word would be the first tool without room.
+    var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -213,14 +215,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private nonisolated struct State: Equatable {
         let sourceTools, hasPDF, canShare, showsPDF: Bool
         let zoomLabel: String
-        let canZoomIn, canZoomOut, compiling, canCompile: Bool
+        let canZoomIn, canZoomOut, compiling, canCompile, compactCompile: Bool
     }
 
     private var state: State {
         let open = !project.closed
         return State(sourceTools: open && project.sourceToolsEnabled, hasPDF: open && project.hasPDF, canShare: open && project.buildPDF != nil,
                      showsPDF: app.showPDF, zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-                     compiling: project.compiling, canCompile: canCompile)
+                     compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
     }
 
     /// Not a turn later as a `track` would: the toolbar would draw each frame of a sidebar's animation twice.
@@ -262,8 +264,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Stop on clear glass: a prominent item's glass stays its own, where a plain item's joins its neighbours'.
             update(item, \.backgroundTintColor, state.compiling ? .clear : nil)
             update(item, \.isEnabled, state.canCompile)
+            // A help tag for the symbol alone: the word says as much itself (HIG, Buttons).
+            update(item, \.toolTip, !state.compactCompile ? nil : state.compiling ? "Stop the build" : "Compile the project")
             if let host = item.view as? NSHostingView<CompileButton>,
-               (host.rootView.compiling, host.rootView.enabled) != (state.compiling, state.canCompile) {
+               (host.rootView.compiling, host.rootView.compact, host.rootView.enabled) != (state.compiling, state.compactCompile, state.canCompile) {
                 host.rootView = compileButton(state)
             }
         case .togglePDF:
@@ -309,7 +313,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
     private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, enabled: state.canCompile) { [weak self] in self?.compile() }
+        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in self?.compile() }
     }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
@@ -347,35 +351,57 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Stop in Compile's width, so the tools beside it stay put. It fills the item's glass, which passes no clicks to an
-/// undersized view.
+/// Stop in Compile's width, as its word and as its symbol, so the tools beside it stay put. It fills the item's glass,
+/// which passes no clicks to an undersized view, and changes form as AppKit's search item does.
 private struct CompileButton: View {
-    let compiling, enabled: Bool
+    let compiling, compact, enabled: Bool
     let action: () -> Void
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             ZStack {
-                Text(MenuCommand.compileRun.title).opacity(compiling ? 0 : 1)
+                idle.opacity(compiling ? 0 : 1)
                 // A button to VoiceOver still; the status bar says Compiling.
-                HStack(spacing: 4) {
-                    ProgressView().controlSize(.small)
-                    Text(MenuCommand.compileStop.title)
-                }
-                .opacity(compiling ? 1 : 0)
-                .accessibilityHidden(true)
+                busy.opacity(compiling ? 1 : 0).accessibilityHidden(true)
             }
             // Faint in a window that isn't the active one, as AppKit's own items.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
-            // The padding and height of AppKit's glass around an item's title.
-            .padding(.horizontal, 12)
-            .frame(minHeight: 36)
+            .animation(reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
+            // The padding and height of AppKit's glass around an item's title, and its circle around a symbol.
+            .padding(.horizontal, compact ? 0 : 12)
+            .frame(minWidth: 36, minHeight: 36)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
+    }
+
+    /// At the size AppKit draws an item's symbol.
+    @ViewBuilder private var idle: some View {
+        if compact {
+            Image(systemName: "play.fill").font(.system(size: 17))
+        } else {
+            Text(MenuCommand.compileRun.title).transition(.identity)
+        }
+    }
+
+    /// Round the symbol: the regular spinner touches the circle's edge, and the small one has no room inside.
+    @ViewBuilder private var busy: some View {
+        if compact {
+            ZStack {
+                ProgressView().controlSize(.regular).scaleEffect(0.8)
+                Image(systemName: "stop.fill").font(.system(size: 7))
+            }
+        } else {
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.small)
+                Text(MenuCommand.compileStop.title)
+            }
+            .transition(.identity)
+        }
     }
 }
 
