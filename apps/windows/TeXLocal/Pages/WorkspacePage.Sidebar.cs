@@ -177,32 +177,34 @@ public sealed partial class WorkspacePage
         folded = [.. ui.FoldedHeadings];
     }
 
-    async void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args) => await ((args.InvokedItem as NavItem)?.Target switch
+    void OnInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
     {
-        TreeNode { Type: not "dir" } node => Jump(node.Path, null),
-        OutlineNode { File: { } file } heading => Jump(file, heading.Line),
-        SearchHit hit => Jump(hit.File, hit.Line, hit.Column, hit.Length),
-        _ => Task.CompletedTask,
-    });
+        switch ((args.InvokedItem as NavItem)?.Target)
+        {
+            case TreeNode { Type: not "dir" } node: Jump(node.Path, null); break;
+            case OutlineNode { File: { } file } heading: Jump(file, heading.Line); break;
+            case SearchHit hit: Jump(hit.File, hit.Line, hit.Column, hit.Length); break;
+        }
+    }
 
     // MARK: the outline
 
     /// The outline and words of the document the shown file is in, again after each save.
-    async Task Analyze()
+    void Analyze() => App.Run(null, async () =>
     {
         if (Editor.Path is not { } path) return;
-        try { analysis = await Core.CallAsync<Analysis>("session_analyze", new { session, path }); }
-        catch (CoreException) { return; }
+        var found = await Core.CallAsync<Analysis>("session_analyze", new { session, path });
         if (Editor.Path != path) return;
-        (OutlineTree.ItemsSource, currentHeading) = (Headings(analysis.Tree), null);
+        analysis = found;
+        (OutlineTree.ItemsSource, currentHeading) = (Headings(found.Tree), null);
         ShowSide();
-        ShowHeadings(analysis.HeadingStyles);
+        ShowHeadings(found.HeadingStyles);
         CaretSettled();
-    }
+    });
 
     /// The caret's heading, checked in Insert › Heading, and headingLine's, selected in the outline; the words, as Word's
     /// status bar counts them: the selection's of the document's while text is selected.
-    void CaretSettled() => Run(null, async () =>
+    void CaretSettled() => App.Run(null, async () =>
     {
         if (analysis is not { } shown || Editor.Path is not { } path) return;
         var words = WordCount(shown.Words);
@@ -217,7 +219,7 @@ public sealed partial class WorkspacePage
 
     /// As on the Mac, the outline follows a scroll of the reader's only as the top line passes a heading, so a caret
     /// placed since keeps its heading until then.
-    void ScrollSettled() => Run(null, async () =>
+    void ScrollSettled() => App.Run(null, async () =>
     {
         var reader = !caretScrolled;
         caretScrolled = false;
@@ -247,12 +249,12 @@ public sealed partial class WorkspacePage
         if (e.Reason == AutoSuggestionBoxTextChangeReason.UserInput) Restart(searchTimer);
     }
 
-    async void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e)
+    void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e) => App.Run(null, async () =>
     {
         searchTimer.Stop();
         await RunSearch();
         if (ResultsTree.Visibility == Visibility.Visible) ResultsTree.Focus(FocusState.Keyboard);
-    }
+    });
 
     void OnSearchKey(object sender, KeyRoutedEventArgs e)
     {
@@ -285,7 +287,7 @@ public sealed partial class WorkspacePage
 
     /// Visual Studio's Find all references: each line that defines or uses the name at the caret, in Results under a
     /// heading naming it. Where no name is, nothing changes, as for Go to definition.
-    void ShowUsages(int offset) => Run("Can't find references", async () =>
+    void ShowUsages(int offset) => App.Run("Can't find references", async () =>
     {
         if (Editor.Path is not { } path) return;
         var generation = ++searches;
@@ -319,7 +321,7 @@ public sealed partial class WorkspacePage
     }
 
     /// VS Code's Replace All, of the matches the results show; the core writes the files not open, and the search runs again.
-    void OnReplaceAll(object sender, RoutedEventArgs e) => Run("Can't replace", async () =>
+    void OnReplaceAll(object sender, RoutedEventArgs e) => App.Run("Can't replace", async () =>
     {
         var replacement = ReplaceBox.Text;
         var replaced = await Core.CallAsync<Replaced>("session_replace", new { session, query = searched, replacement });
@@ -351,7 +353,7 @@ public sealed partial class WorkspacePage
     }
 
     /// A new entry beside the selection, named in place as File Explorer's New folder is.
-    void Create(string name, bool dir) => Run("Can't create this", async () =>
+    void Create(string name, bool dir) => App.Run("Can't create this", async () =>
     {
         var parent = TargetDir(FilesTree.SelectedItem as NavItem);
         var made = (await Core.CallAsync("create_entry", new { id, path = Join(parent, name), dir })).GetProperty("path").GetString()!;
@@ -369,7 +371,7 @@ public sealed partial class WorkspacePage
     void OnSetMain(object sender, RoutedEventArgs e)
     {
         if (Picked is not { Kind: "tex" } node) return;
-        Run("Can't set the main file", () => Core.CallAsync("session_set_settings", new { session, patch = new { mainFile = node.Path } }));
+        App.Run("Can't set the main file", () => Core.CallAsync("session_set_settings", new { session, patch = new { mainFile = node.Path } }));
     }
 
     void OnRename(object sender, RoutedEventArgs e)
@@ -399,7 +401,7 @@ public sealed partial class WorkspacePage
     void OnDelete(object sender, RoutedEventArgs e)
     {
         if (Picked is not { Main: false } node) return;
-        Run("Can't delete this", async () =>
+        App.Run("Can't delete this", async () =>
         {
             // Not ready: a save it needed is asked about, and nothing is deleted.
             var prepared = await Core.CallAsync("session_prepare_delete", new { session, path = node.Path });
@@ -430,7 +432,7 @@ public sealed partial class WorkspacePage
     }
 
     /// The first file of this project decides, as on the Mac: a figure goes in where it was dropped; another file opens.
-    void OnFilesDropped(string[] paths, int at) => Run(null, async () =>
+    void OnFilesDropped(string[] paths, int at) => App.Run(null, async () =>
     {
         foreach (var path in paths)
         {
@@ -450,22 +452,22 @@ public sealed partial class WorkspacePage
     }
 
     /// Files dropped from File Explorer, into the folder they're dropped on.
-    async void OnDrop(object sender, DragEventArgs e)
+    void OnDrop(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         var dir = TargetDir((e.OriginalSource as FrameworkElement)?.DataContext as NavItem);
-        AddFiles(dir, await App.Dropped(e));
+        App.Run("Can't add these files", async () => await AddFiles(dir, await App.Dropped(e)));
     }
 
     /// Beside the selection, as New file.
-    async void OnAddFiles(object sender, RoutedEventArgs e)
+    void OnAddFiles(object sender, RoutedEventArgs e) => App.Run("Can't add these files", async () =>
     {
         var picked = await new FileOpenPicker(App.Window.AppWindow.Id).PickMultipleFilesAsync();
-        if (picked.Count > 0) AddFiles(TargetDir(FilesTree.SelectedItem as NavItem), [.. picked.Select(f => f.Path)]);
-    }
+        if (picked.Count > 0) await AddFiles(TargetDir(FilesTree.SelectedItem as NavItem), [.. picked.Select(f => f.Path)]);
+    });
 
     /// Copies of other files into a folder of the project; a clash asks as File Explorer does.
-    void AddFiles(string dir, string[] paths) => Run("Can't add these files", async () =>
+    async Task AddFiles(string dir, string[] paths)
     {
         var imported = await Core.CallAsync<Imported>("import_files", new { id, dir, paths });
         if (imported.Existing.Length > 0)
@@ -488,5 +490,5 @@ public sealed partial class WorkspacePage
             await Core.CallAsync("import_files", new { id, dir, paths, conflict });
         }
         await RefreshTree();
-    });
+    }
 }

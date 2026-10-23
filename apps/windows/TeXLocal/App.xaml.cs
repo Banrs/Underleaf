@@ -15,17 +15,29 @@ public partial class App : Application
     public static MainWindow Window { get; private set; } = null!;
     public static readonly bool Smoke = Environment.GetCommandLineArgs().Contains("--smoke");
     static readonly TaskCompletionSource<MainWindow> shown = new();
+    static readonly SemaphoreSlim dialogs = new(1, 1);
     static Catalogue? catalogue;
 
     public App()
     {
         InitializeComponent();
-        // Written to stderr in any run, for a run whose stderr is redirected; a smoke run fails on it.
+        // Written to stderr in any run, for a run whose stderr is redirected; a smoke run fails on it, and any other goes on.
         UnhandledException += (_, e) =>
         {
             Console.Error.WriteLine(e.Exception);
             if (Smoke) Environment.Exit(1);
+            e.Handled = true;
         };
+    }
+
+    /// Every handler's awaited work goes through here, since an exception out of an async void method ends the app:
+    /// what it throws is alerted, titled `failure`; with no title, a refusal of the core's is dropped, as when the place
+    /// a jump asked for has gone.
+    public static async void Run(string? failure, Func<Task> work)
+    {
+        try { await work(); }
+        catch (CoreException) when (failure is null) { }
+        catch (Exception ex) { await Alert(failure ?? "Something went wrong", ex.Message); }
     }
 
     /// The core's templates and engines, which don't change while the app runs.
@@ -58,9 +70,7 @@ public partial class App : Application
     {
         var picker = new FileSavePicker(Window.AppWindow.Id) { SuggestedFileName = forArxiv ? $"{name} arXiv" : name };
         picker.FileTypeChoices.Add("ZIP archive", [".zip"]);
-        if (await picker.PickSaveFileAsync() is not { } picked) return;
-        try { await Core!.CallAsync("export_zip", new { id, dest = picked.Path, forArxiv }); }
-        catch (CoreException ex) { await Alert("Can't export", ex.Message); }
+        if (await picker.PickSaveFileAsync() is { } picked) await Core!.CallAsync("export_zip", new { id, dest = picked.Path, forArxiv });
     }
 
     /// Windows.Storage's DeleteAsync deletes outright when unpackaged.
@@ -79,13 +89,20 @@ public partial class App : Application
         return [.. items.Select(i => i.Path).Where(p => p.Length > 0)];
     }
 
-    public static Task<ContentDialogResult> Show(ContentDialog dialog)
+    /// One at a time, as WinUI allows: a dialog asked for while another shows, as for a file changed on disk, waits its
+    /// turn.
+    public static async Task<ContentDialogResult> Show(ContentDialog dialog)
     {
-        var root = (FrameworkElement)Window.Content;
-        dialog.XamlRoot = root.XamlRoot;
-        dialog.RequestedTheme = root.ActualTheme;
-        dialog.Style = (Style)Current.Resources["DefaultContentDialogStyle"];
-        return dialog.ShowAsync().AsTask();
+        await dialogs.WaitAsync();
+        try
+        {
+            var root = (FrameworkElement)Window.Content;
+            dialog.XamlRoot = root.XamlRoot;
+            dialog.RequestedTheme = root.ActualTheme;
+            dialog.Style = (Style)Current.Resources["DefaultContentDialogStyle"];
+            return await dialog.ShowAsync();
+        }
+        finally { dialogs.Release(); }
     }
 
     /// In a smoke run, which no one reads, an alert is its failure.
@@ -97,32 +114,28 @@ public partial class App : Application
 
     /// A later launch handed over by Program.Main, heard on a pool thread from before the window is made: AppInstance
     /// drops one that arrives with no handler, as Explorer's several files opened at once would.
-    internal static async void Arrived(object? sender, AppActivationArguments e)
+    internal static void Arrived(object? sender, AppActivationArguments e)
     {
         var words = Program.Arguments(e);
-        var window = await shown.Task;
-        window.DispatcherQueue.TryEnqueue(() => window.Arrive(words));
+        _ = shown.Task.ContinueWith(t => t.Result.DispatcherQueue.TryEnqueue(() => t.Result.Arrive(words)), TaskScheduler.Default);
     }
 
-    protected override async void OnLaunched(LaunchActivatedEventArgs args)
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var error = OpenCore();
         Window = new MainWindow();
         Window.Activate();
         shown.SetResult(Window);
-        // As on the Mac, the project open at the last close comes back, unless the launch names what to open.
+        if (Smoke && Core is null) ExitSmoke(error);
+        // As on the Mac, the project open at the last close comes back, unless the launch names what to open. A smoke run
+        // opens a new blank project instead, and the workspace ends the run once its session is open.
         var words = Program.Arguments(AppInstance.GetCurrent().GetActivatedEventArgs());
-        if (words.Length > 1) _ = Window.Open(words);
-        else if (Core is not null && Prefs.LastProject is { Length: > 0 } last)
-            try
-            {
-                if ((await Core.CallAsync<ProjectInfo[]>("list_projects")).Any(p => p.Id == last && !p.Missing)) Window.OpenProject(last);
-            }
-            catch (CoreException) { }
-        if (!Smoke) return;
-        // A new blank project, opened: the workspace ends the run once its session is open.
-        if (Core is null) ExitSmoke(error);
-        try { Window.OpenProject((await Core!.CallAsync<ProjectInfo>("create_project", new { name = "Smoke", template = "blank" })).Id); }
-        catch (CoreException ex) { ExitSmoke(ex.Message); }
+        if (Smoke) Run("Can't create a project", async () =>
+            Window.OpenProject((await Core!.CallAsync<ProjectInfo>("create_project", new { name = "Smoke", template = "blank" })).Id));
+        else if (words.Length > 1) Window.Open(words);
+        else if (Core is not null && Prefs.LastProject is { Length: > 0 } last) Run(null, async () =>
+        {
+            if ((await Core.CallAsync<ProjectInfo[]>("list_projects")).Any(p => p.Id == last && !p.Missing)) Window.OpenProject(last);
+        });
     }
 }

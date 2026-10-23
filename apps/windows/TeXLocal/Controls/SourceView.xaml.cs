@@ -242,13 +242,13 @@ public sealed partial class SourceView : UserControl
     void Recolour(bool now)
     {
         stale |= now;
-        if (stale && IsLoaded) DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, async () =>
+        if (stale && IsLoaded) DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => App.Run(null, async () =>
         {
             if (!stale || !IsLoaded || source is null || loading) return;
             var at = CaretOffset;
             await SetText(Text);
             Document.Selection.SetRange(at, at);
-        });
+        }));
     }
 
     internal static Color Fill(Rectangle r) => ((SolidColorBrush)r.Fill).Color;
@@ -300,7 +300,7 @@ public sealed partial class SourceView : UserControl
         return SetText(text);
     }
 
-    public async void Reload(string content)
+    public void Reload(string content) => App.Run(null, async () =>
     {
         var (line, column) = Caret;
         source!.Reload(content);
@@ -309,7 +309,7 @@ public sealed partial class SourceView : UserControl
         line = Math.Min(line, source.LineCount);
         var at = Math.Min(source.LineStart(line) + column, End(line));
         Document.Selection.SetRange(at, at);
-    }
+    });
 
     /// Shows text with no edit and no undo history, coloured whole, so later colouring is only an
     /// edit's own, inside that edit's undo group. RichEdit lays out all it is given at once, so the
@@ -756,7 +756,7 @@ public sealed partial class SourceView : UserControl
             item.Detail is { } detail ? $"{item.Label}, {detail}" : item.Label, "completion");
     }
 
-    async void PreviewMath()
+    void PreviewMath() => App.Run(null, async () =>
     {
         var maths = source is null || loading || Selected.Length > 0 ? null : source.Call<MathPreview>("math_at", new { caret = CaretOffset });
         if (maths?.Start != dismissedMath) dismissedMath = null;
@@ -788,7 +788,7 @@ public sealed partial class SourceView : UserControl
         MathPopup.HorizontalOffset = Math.Clamp(at.X - w / 2, 0, Math.Max(0, Editor.ActualWidth - w - 16));
         MathPopup.VerticalOffset = line.Y - h - 8 >= Editor.Padding.Top ? line.Y - h - 8 : line.Bottom + 8;
         MathPopup.IsOpen = true;
-    }
+    });
 
     async Task ShowMaths(MathSvg? drawn)
     {
@@ -867,14 +867,18 @@ public sealed partial class SourceView : UserControl
     public void Paste() => OnPaste(Editor, null);
     public new void Focus(FocusState state) => Editor.Focus(state);
 
-    async void OnPaste(object sender, TextControlPasteEventArgs? e)
+    /// The clipboard throws while another app holds it.
+    void OnPaste(object sender, TextControlPasteEventArgs? e)
     {
         if (e is not null) e.Handled = true;
-        var content = Clipboard.GetContent();
-        if (source is null || !content.Contains(StandardDataFormats.Text)) return;
-        var pasted = (await content.GetTextAsync()).Replace("\r\n", "\n").Replace('\r', '\n');
-        var at = Selected;
-        Apply(new TextEdit(at.Start, at.Length, pasted));
+        App.Run("Can't paste", async () =>
+        {
+            var content = Clipboard.GetContent();
+            if (source is null || !content.Contains(StandardDataFormats.Text)) return;
+            var pasted = (await content.GetTextAsync()).Replace("\r\n", "\n").Replace('\r', '\n');
+            var at = Selected;
+            Apply(new TextEdit(at.Start, at.Length, pasted));
+        });
     }
 
     static bool HasFiles(DataPackageView data) => data.Contains(StandardDataFormats.StorageItems) || data.Contains(FileFormat);
@@ -887,16 +891,19 @@ public sealed partial class SourceView : UserControl
     }
 
     /// The offset is read before the paths, while the drop's point holds.
-    async void OnDrop(object sender, DragEventArgs e)
+    void OnDrop(object sender, DragEventArgs e)
     {
         if (source is null || !HasFiles(e.DataView)) return;
         e.Handled = true;
         var at = OffsetAt(e.GetPosition(Editor));
         var deferral = e.GetDeferral();
-        var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
-            : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
-        deferral.Complete();
-        FilesDropped?.Invoke(paths, at);
+        App.Run("Can't drop this", async () =>
+        {
+            var paths = e.DataView.Contains(FileFormat) ? new[] { await e.DataView.GetDataAsync(FileFormat) as string ?? "" }
+                : (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToArray();
+            deferral.Complete();
+            FilesDropped?.Invoke(paths, at);
+        });
     }
 
     /// The text's offset at a point of the editor's: RichEdit's points are the scrolled text's, inside its padding.

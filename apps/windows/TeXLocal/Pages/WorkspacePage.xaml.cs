@@ -155,19 +155,19 @@ public sealed partial class WorkspacePage : Page
         // The Mac's double-click to the PDF; where the PDF is hidden, selecting a word doesn't open it.
         Editor.DoubleClicked += () =>
         {
-            if (PdfItem.IsChecked && Pdf.PageCount > 0) Run(null, SyncToCaret);
+            if (PdfItem.IsChecked && Pdf.PageCount > 0) App.Run(null, SyncToCaret);
         };
-        Editor.DefinitionFound += place => _ = Jump(place.File, place.Line, place.Column, place.Length);
+        Editor.DefinitionFound += place => Jump(place.File, place.Line, place.Column, place.Length);
         Editor.HelpAsked += ShowHelp;
         Editor.ReferencesAsked += ShowUsages;
         // The core's refusal shows in the flyout.
         Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Editor.Apply((await Core.CallAsync<Replaced>("session_rename_symbol",
             new { session, kind = symbol.Kind, from = symbol.Name, to })).Edits), at);
         Pdf.ViewMoved += ShowPage;
-        Pdf.Inverse += (page, x, y) => Run(null, async () =>
+        Pdf.Inverse += (page, x, y) => App.Run(null, async () =>
         {
             var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
-            await Jump(at.File, at.Line, at.Column ?? 0);
+            Jump(at.File, at.Line, at.Column ?? 0);
         });
         foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, ReferencesItem, RenameSymbolItem, QuickInfoItem]) Shortcut.SetScope(item, Editor);
         foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
@@ -186,7 +186,7 @@ public sealed partial class WorkspacePage : Page
         };
     }
 
-    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         (id, var file) = ((string, string?))e.Parameter;
         MenuSlot.Child = null;
@@ -200,13 +200,16 @@ public sealed partial class WorkspacePage : Page
             return;
         }
         Core.Event += OnEvent;
-        try { await OpenSession(file); }
-        catch (CoreException ex)
+        App.Run("Can't open this project", async () =>
         {
-            session = 0;
-            await App.Alert("Can't open this project", ex.Message);
-            App.Window.GoHome();
-        }
+            try { await OpenSession(file); }
+            catch
+            {
+                session = 0;
+                App.Window.GoHome();
+                throw;
+            }
+        });
     }
 
     /// Settings keeps the project open underneath: the page stays cached until it goes elsewhere.
@@ -242,15 +245,11 @@ public sealed partial class WorkspacePage : Page
         if (session == 0) return true;
         if (!await Save()) return false;
         var (page, zoom) = Pdf.Place;
-        // A place that can't be written is only lost.
-        try
+        // Waited for, but a place that can't be written is only lost.
+        await Task.WhenAny(Core.CallAsync("set_ui_state", new
         {
-            await Core.CallAsync("set_ui_state", new
-            {
-                id, patch = new { file = Editor.Path, line = Editor.Path is null ? (int?)null : Editor.Caret.Line, page, zoom, panel = IssuesItem.IsChecked },
-            });
-        }
-        catch (CoreException) { }
+            id, patch = new { file = Editor.Path, line = Editor.Path is null ? (int?)null : Editor.Caret.Line, page, zoom, panel = IssuesItem.IsChecked },
+        }));
         return true;
     }
 
@@ -296,8 +295,10 @@ public sealed partial class WorkspacePage : Page
         // The file it was left at, unless another was asked for; one gone since, the main file.
         var shown = file ?? (ui.File is { } left && KindOf(left) is not null ? left : opened.Settings.GetProperty("mainFile").GetString());
         Select(FilesTree, i => i.Key == shown);
-        if (Picked is { Type: not "dir" } node && await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount)
-            Editor.GoTo(line);
+        if (Picked is { Type: not "dir" } node) App.Run("Can't open this file", async () =>
+        {
+            if (await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount) Editor.GoTo(line);
+        });
     }
 
     /// Build › Engine, the catalogue's.
@@ -306,7 +307,7 @@ public sealed partial class WorkspacePage : Page
         foreach (var choice in (await App.Catalogue()).Engines)
         {
             var item = new RadioMenuFlyoutItem { Text = choice.Title, GroupName = "engine", Tag = choice.Id };
-            item.Click += (_, _) => Run("Can't change the engine", () => Core.CallAsync("session_set_settings", new { session, patch = new { engine = choice.Id } }));
+            item.Click += (_, _) => App.Run("Can't change the engine", () => Core.CallAsync("session_set_settings", new { session, patch = new { engine = choice.Id } }));
             EngineMenu.Items.Add(item);
         }
     }
@@ -327,7 +328,7 @@ public sealed partial class WorkspacePage : Page
         switch (e.Type)
         {
             case "tree": ShowTree(ev.Tree!); break;
-            case "saved": _ = Analyze(); break;
+            case "saved": Analyze(); break;
             case "document_reload": Reload(ev.Path!, ev.Text ?? ""); break;
             case "document_closed" when ev.Path == Editor.Path: CloseEditor(); break;
             case "document_renamed" when ev.From == Editor.Path:
@@ -337,7 +338,7 @@ public sealed partial class WorkspacePage : Page
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
             // As on the Mac: the outline and words are read from the disk, where another app has changed a file.
-            case "files_changed" when ev.Paths!.Any(p => KindOf(p) is "tex" or "bib"): _ = Analyze(); break;
+            case "files_changed" when ev.Paths!.Any(p => KindOf(p) is "tex" or "bib"): Analyze(); break;
             case "document":
                 var failed = ev.Error is not null;
                 if (failed && !unsaved.Contains(ev.Path!)) Announce(BuildState, "Wasn't saved", "save");
@@ -379,32 +380,24 @@ public sealed partial class WorkspacePage : Page
         // As a PDF command shows the PDF.
         SourceItem.IsChecked = true;
         if (Editor.Path == path) return true;
-        try
+        // Opened first and the shown one closed after, so a file that won't open leaves the editor as it was.
+        await Core.CallAsync("session_open_document", new { session, path });
+        if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
         {
-            // Opened first and the shown one closed after, so a file that won't open leaves the editor as it was.
-            await Core.CallAsync("session_open_document", new { session, path });
-            if (Editor.Path is { } shown && !(await Core.CallAsync("session_close_document", new { session, path = shown })).GetProperty("closed").GetBoolean())
-            {
-                // The session keeps no document the editor doesn't show; a later open of it opens it again.
-                Run(null, () => Core.CallAsync("session_close_document", new { session, path }));
-                return false;
-            }
-            if (Core.SessionSource(session, path) is not { } source) return false;
-            (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
-            await Editor.Show(path, source);
-            App.Window.SetTitle(name, path);
-            Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
-            ShowSaved();
-            ShowCaret();
-            SelectShownFile();
-            _ = Analyze();
-            return true;
-        }
-        catch (CoreException ex)
-        {
-            await App.Alert("Can't open this file", ex.Message);
+            // The session keeps no document the editor doesn't show; a later open of it opens it again.
+            App.Run(null, () => Core.CallAsync("session_close_document", new { session, path }));
             return false;
         }
+        if (Core.SessionSource(session, path) is not { } source) return false;
+        (Editor.Visibility, NoFile.Visibility) = (Visibility.Visible, Visibility.Collapsed);
+        await Editor.Show(path, source);
+        App.Window.SetTitle(name, path);
+        Editor.SetIssues(issueLines.GetValueOrDefault(path, []));
+        ShowSaved();
+        ShowCaret();
+        SelectShownFile();
+        Analyze();
+        return true;
     }
 
     /// A place in a file: a line from 1, or none for the file alone, a column from 0 and what to select from there. The
@@ -418,14 +411,14 @@ public sealed partial class WorkspacePage : Page
     }
 
     /// A jump from the caret's place, which Back then returns to (session_navigate), unless the caret is there still.
-    async Task Jump(string path, int? line, int column = 0, int length = 0)
+    void Jump(string path, int? line, int column = 0, int length = 0)
     {
         if (Editor.Path is { } shown)
         {
             var from = new Spot(shown, Editor.Caret.Line);
-            Run(null, async () => ShowTrail(await Core.CallAsync<Trail>("session_navigate", new { session, from })));
+            App.Run(null, async () => ShowTrail(await Core.CallAsync<Trail>("session_navigate", new { session, from })));
         }
-        await Reveal(path, line, column, length);
+        App.Run("Can't open this file", () => Reveal(path, line, column, length));
     }
 
     void ShowTrail(Trail trail) => (BackItem.IsEnabled, ForwardItem.IsEnabled) = (trail.Back, trail.Forward);
@@ -435,7 +428,7 @@ public sealed partial class WorkspacePage : Page
     public bool Go(bool back)
     {
         if (!(back ? BackItem : ForwardItem).IsEnabled) return false;
-        Run(null, async () =>
+        App.Run(null, async () =>
         {
             if (Editor.Path is not { } path) return;
             var trail = await Core.CallAsync<Trail>(back ? "session_back" : "session_forward", new { session, at = new Spot(path, Editor.Caret.Line) });
@@ -464,7 +457,7 @@ public sealed partial class WorkspacePage : Page
     }
 
     /// A later query's answer wins over an earlier one's.
-    void ListQuick(string query) => Run(null, async () =>
+    void ListQuick(string query) => App.Run(null, async () =>
     {
         var generation = ++quickQueries;
         var items = await Core.CallAsync<QuickItem[]>("session_quick_open", new { session, query });
@@ -478,7 +471,7 @@ public sealed partial class WorkspacePage : Page
     {
         if ((e.ChosenSuggestion ?? (sender.ItemsSource as QuickItem[])?.FirstOrDefault()) is not QuickItem item) return;
         GoToFlyout.Hide();
-        _ = Jump(item.Path, item.Line);
+        Jump(item.Path, item.Line);
     }
 
     /// One Escape closes it, list and all, as Visual Studio's does.
@@ -493,7 +486,7 @@ public sealed partial class WorkspacePage : Page
 
     /// VS Code's hover and Visual Studio's Quick info: what the core says the name is, by its character. Hovered, the
     /// keyboard stays in the text and the flyout goes as the pointer leaves it.
-    void ShowHelp(int offset, Rect at, bool hovered) => Run(null, async () =>
+    void ShowHelp(int offset, Rect at, bool hovered) => App.Run(null, async () =>
     {
         if (Editor.Path is not { } path || await Core.CallAsync<QuickHelp?>("session_quick_help", new { session, path, offset }) is not { } help
             || Editor.Path != path) return;
@@ -510,7 +503,7 @@ public sealed partial class WorkspacePage : Page
     void OnHelpPlace(object sender, RoutedEventArgs e)
     {
         HelpFlyout.Hide();
-        if (helpPlace is { } place) _ = Jump(place.Path, place.Line);
+        if (helpPlace is { } place) Jump(place.Path, place.Line);
     }
 
     /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
@@ -547,7 +540,7 @@ public sealed partial class WorkspacePage : Page
     }
 
     /// Another app changed or removed a file with edits here. Changed, the safe choice (Cancel) is the default.
-    async void Conflict(string path, string kind)
+    void Conflict(string path, string kind) => App.Run("Can't save this file", async () =>
     {
         var name = System.IO.Path.GetFileName(path);
         var changed = kind == "changed";
@@ -565,9 +558,9 @@ public sealed partial class WorkspacePage : Page
             ContentDialogResult.Secondary => changed ? "revert" : "close",
             _ => "cancel",
         };
-        Run("Can't save this file", () => Core.CallAsync("session_resolve", new { session, path, answer }));
         if (Editor.Path is not null) Editor.Focus(FocusState.Programmatic);
-    }
+        await Core.CallAsync("session_resolve", new { session, path, answer });
+    });
 
     // MARK: builds and issues
 
@@ -588,7 +581,7 @@ public sealed partial class WorkspacePage : Page
         if (ev.Announce) Announce(BuildState, failed ? $"Build failed, {done.Errors.Length} {(done.Errors.Length == 1 ? "error" : "errors")}" : "Build succeeded", "build");
         var shown = done.Pdf is { } pdf && (done.PdfChanged || Pdf.PageCount == 0) ? Pdf.Load(pdf) : Task.CompletedTask;
         // Settings › PDF, as on the Mac: only to a PDF that shows and has the caret's text.
-        if (done.Ok && !ev.Outdated && Prefs.SyncAfterCompile && PdfItem.IsChecked && Editor.Path is not null) Run(null, async () =>
+        if (done.Ok && !ev.Outdated && Prefs.SyncAfterCompile && PdfItem.IsChecked && Editor.Path is not null) App.Run(null, async () =>
         {
             await shown;
             await SyncToCaret();
@@ -673,21 +666,21 @@ public sealed partial class WorkspacePage : Page
     }
 
     /// The core's pick of an issue (a click, F8, a line end's mark): selected in the panel, and its place shown.
-    void GoToIssue(string command, object args) => Run("Can't show this issue", async () =>
+    void GoToIssue(string command, object args) => App.Run("Can't show this issue", async () =>
     {
         if (await Core.CallAsync<Chosen?>(command, args) is not { } chosen) return;
         ShowPanel(true);
         IssueTabs.SelectedItem = IssuesTab;
         IssueList.SelectedItem = (IssueList.ItemsSource as IssueItem[])?.FirstOrDefault(i => i.Index == chosen.Index);
         if (IssueList.SelectedItem is { } row) IssueList.ScrollIntoView(row);
-        if (chosen.Issue.File is { } file) await Jump(file, chosen.Issue.Line ?? 1);
+        if (chosen.Issue.File is { } file) Jump(file, chosen.Issue.Line ?? 1);
     });
 
     /// A bad box isn't one of the session's issues, so its place is opened here.
     void Choose(IssueItem row)
     {
         if (row.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
-        else if (row.Item.File is { } file) _ = Jump(file, row.Item.Line ?? 1);
+        else if (row.Item.File is { } file) Jump(file, row.Item.Line ?? 1);
     }
 
     void OnIssueClick(object sender, ItemClickEventArgs e) => Choose((IssueItem)e.ClickedItem);
@@ -700,32 +693,31 @@ public sealed partial class WorkspacePage : Page
 
     /// The core's fix, run without knowing which it is (docs/core-api.md, Explanations and fixes); one at a time, as an
     /// install takes minutes. The build's refusal is ignored, since the project may have closed meanwhile.
-    async void OnFix(object sender, RoutedEventArgs e)
+    void OnFix(object sender, RoutedEventArgs e)
     {
         var fix = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Fix!;
-        if (fix.Confirm is { } confirm && await App.Show(new ContentDialog
-            {
-                Title = fix.Title, Content = confirm, PrimaryButtonText = fix.Title, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
-            }) != ContentDialogResult.Primary) return;
-        fixing = fix.Id;
-        ShowIssues();
-        JsonElement answer = default;
-        CoreException? failure = null;
-        try { answer = await Core.CallAsync("session_fix", new { session, id = fix.Id }); }
-        catch (CoreException ex) { failure = ex; }
-        fixing = null;
-        ShowIssues();
-        if (failure is not null)
+        App.Run($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", async () =>
         {
-            await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
-            return;
-        }
-        // Null: the UAC prompt was cancelled.
-        if (answer.ValueKind == JsonValueKind.Null) return;
-        Editor.Apply(answer.GetProperty("edits").Deserialize<DocumentEdits?>(Core.Json));
-        // The menus send the settings they show, so they show the fix's.
-        ShowSettings(answer.GetProperty("settings"));
-        Run(null, () => Core.CallAsync("session_compile", new { session }));
+            if (fix.Confirm is { } confirm && await App.Show(new ContentDialog
+                {
+                    Title = fix.Title, Content = confirm, PrimaryButtonText = fix.Title, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
+                }) != ContentDialogResult.Primary) return;
+            fixing = fix.Id;
+            ShowIssues();
+            JsonElement answer;
+            try { answer = await Core.CallAsync("session_fix", new { session, id = fix.Id }); }
+            finally
+            {
+                fixing = null;
+                ShowIssues();
+            }
+            // Null: the UAC prompt was cancelled.
+            if (answer.ValueKind == JsonValueKind.Null) return;
+            Editor.Apply(answer.GetProperty("edits").Deserialize<DocumentEdits?>(Core.Json));
+            // The menus send the settings they show, so they show the fix's.
+            ShowSettings(answer.GetProperty("settings"));
+            await Core.CallAsync("session_compile", new { session });
+        });
     }
 
     /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during
@@ -776,17 +768,17 @@ public sealed partial class WorkspacePage : Page
 
     /// TeX installed while the app runs is found as the window comes to the front or the page back from Settings, as on
     /// the Mac.
-    public async void CheckTex()
+    public void CheckTex() => App.Run(null, async () =>
     {
         if (texAvailable) return;
         texAvailable = (await Core.CallAsync<TexStatus>("status")).Available;
         CompileButton.IsEnabled = CompileItem.IsEnabled = texAvailable;
         Pdf.TexMissing = !texAvailable;
-    }
+    });
 
-    void OnCompile(object sender, RoutedEventArgs e) => Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
-    void OnStop(object sender, RoutedEventArgs e) => Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
-    void OnClean(object sender, RoutedEventArgs e) => Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));
+    void OnCompile(object sender, RoutedEventArgs e) => App.Run("Can't compile", () => Core.CallAsync("session_compile", new { session }));
+    void OnStop(object sender, RoutedEventArgs e) => App.Run("Can't stop the build", () => Core.CallAsync("session_stop_compile", new { session }));
+    void OnClean(object sender, RoutedEventArgs e) => App.Run("Can't clean the build folder", () => Core.CallAsync("session_clean", new { session }));
 
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
@@ -799,10 +791,10 @@ public sealed partial class WorkspacePage : Page
     {
         AutoCompileItem.IsChecked = Prefs.AutoCompile;
         ShowBuild();
-        Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
+        App.Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
     }
 
-    void OnBuildSetting(object sender, RoutedEventArgs e) => Run("Can't change this setting", () => Core.CallAsync("session_set_settings",
+    void OnBuildSetting(object sender, RoutedEventArgs e) => App.Run("Can't change this setting", () => Core.CallAsync("session_set_settings",
         new { session, patch = new { shellEscape = ShellEscapeItem.IsChecked, stopOnFirstError = StopOnErrorItem.IsChecked } }));
 
     // MARK: the status bar, the panes and F6
@@ -913,26 +905,26 @@ public sealed partial class WorkspacePage : Page
         return await App.Show(dialog) == ContentDialogResult.Primary && !double.IsNaN(box.Value) ? (int)box.Value : null;
     }
 
-    async void OnGoToLine(object sender, RoutedEventArgs e)
+    void OnGoToLine(object sender, RoutedEventArgs e) => App.Run(null, async () =>
     {
         if (Editor.Path is null || await AskNumber("Go to line", $"Line (1–{Editor.LineCount})", Editor.Caret.Line, Editor.LineCount) is not { } line)
             return;
         SourceItem.IsChecked = true;
         Editor.GoTo(line);
-    }
+    });
 
-    async void OnGoToPage(object sender, RoutedEventArgs e)
+    void OnGoToPage(object sender, RoutedEventArgs e) => App.Run(null, async () =>
     {
         if (Pdf.PageCount > 0 && await AskNumber("Go to page", $"Page (1–{Pdf.PageCount})", Pdf.CurrentPage, Pdf.PageCount) is { } page)
             Pdf.GoToPage(page);
-    }
+    });
 
     /// Turns the PDF on if it's hidden, since that's where this goes.
     void OnForwardSync(object sender, RoutedEventArgs e)
     {
         if (Editor.Path is null || Pdf.PageCount == 0) return;
         PdfItem.IsChecked = true;
-        Run(null, SyncToCaret);
+        App.Run(null, SyncToCaret);
     }
 
     async Task SyncToCaret()
@@ -941,25 +933,22 @@ public sealed partial class WorkspacePage : Page
         Pdf.Reveal(await Core.CallAsync<ForwardSync>("synctex_forward", new { id, file = Editor.Path, line }));
     }
 
-    void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
+    void OnSave(object sender, RoutedEventArgs e) => App.Run("Can't save", () => Core.CallAsync("session_save", new { session }));
 
     /// Word's Save a version: a name the core keeps with the project's files as they are.
-    async void OnSaveVersion(object sender, RoutedEventArgs e)
+    void OnSaveVersion(object sender, RoutedEventArgs e) => App.Run("Can't save this version", async () =>
     {
         var box = new TextBox { Header = "Name" };
         var dialog = new ContentDialog { Title = "Save version", Content = box, PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, IsPrimaryButtonEnabled = false };
         box.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = box.Text.Trim().Length > 0;
         dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
         if (await App.Show(dialog) != ContentDialogResult.Primary) return;
-        Run("Can't save this version", async () =>
-        {
-            var saved = await Core.CallAsync<Snapshot>("session_history_save", new { session, name = box.Text.Trim() });
-            Announce(BuildState, $"Saved version “{saved.Name}”", "history");
-        });
-    }
+        var saved = await Core.CallAsync<Snapshot>("session_history_save", new { session, name = box.Text.Trim() });
+        Announce(BuildState, $"Saved version “{saved.Name}”", "history");
+    });
 
     /// A restore's edits of the open document, as Replace all's, at the version the core read.
-    void OnHistory(object sender, RoutedEventArgs e) => Run("Can't restore", async () =>
+    void OnHistory(object sender, RoutedEventArgs e) => App.Run("Can't restore", async () =>
     {
         if (await new HistoryDialog(session).Restore() is { } restored) Editor.Apply(restored.Edits);
     });
@@ -976,40 +965,34 @@ public sealed partial class WorkspacePage : Page
     void OnDeleteLine(object sender, RoutedEventArgs e) => Editor.ChangeLines("delete_lines");
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
 
-    async void OnExportPdf(object sender, RoutedEventArgs e)
+    void OnExportPdf(object sender, RoutedEventArgs e) => App.Run("Can't export", async () =>
     {
         if (Pdf.FilePath is not { } path) return;
         var picker = new FileSavePicker(App.Window.AppWindow.Id) { SuggestedFileName = name! };
         picker.FileTypeChoices.Add("PDF document", [".pdf"]);
-        if (await picker.PickSaveFileAsync() is not { } picked) return;
-        try { File.Copy(path, picked.Path, true); }
-        catch (Exception ex) { await App.Alert("Can't export", ex.Message); }
-    }
+        if (await picker.PickSaveFileAsync() is { } picked) File.Copy(path, picked.Path, true);
+    });
 
     void OnOpenPdf(object sender, RoutedEventArgs e) => Launch(Pdf.FilePath!);
 
-    async void OnExportZip(object sender, RoutedEventArgs e)
+    void OnExportZip(object sender, RoutedEventArgs e) => App.Run("Can't export", async () =>
     {
         if (await Save()) await App.ExportZip(id, name!, ReferenceEquals(sender, ArxivItem));
-    }
+    });
 
     /// Windows' share sheet, which a desktop app opens through its window.
-    async void OnSharePdf(object sender, RoutedEventArgs e)
+    void OnSharePdf(object sender, RoutedEventArgs e)
     {
         if (Pdf.FilePath is not { } path) return;
         var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
-        // The interop throws when Windows refuses the sheet, which unhandled would end the app.
-        DataTransferManager? sharing = null;
-        try
+        var sharing = DataTransferManagerInterop.GetForWindow(window);
+        sharing.DataRequested += Requested;
+        // The interop throws when Windows refuses the sheet.
+        try { DataTransferManagerInterop.ShowShareUIForWindow(window); }
+        catch
         {
-            sharing = DataTransferManagerInterop.GetForWindow(window);
-            sharing.DataRequested += Requested;
-            DataTransferManagerInterop.ShowShareUIForWindow(window);
-        }
-        catch (Exception ex)
-        {
-            if (sharing is not null) sharing.DataRequested -= Requested;
-            await App.Alert("Can't share", ex.Message);
+            sharing.DataRequested -= Requested;
+            throw;
         }
 
         // For this Share only: the manager is the window's, and outlives the page.
@@ -1028,14 +1011,6 @@ public sealed partial class WorkspacePage : Page
     }
 
     // MARK: helpers
-
-    /// A core command, its refusal shown in an alert titled `failure`; with no title, ignored.
-    static async void Run(string? failure, Func<Task> call)
-    {
-        try { await call(); }
-        catch (CoreException ex) when (failure is not null) { await App.Alert(failure, ex.Message); }
-        catch (CoreException) { }
-    }
 
     static void Announce(UIElement on, string text, string activity)
     {

@@ -158,20 +158,23 @@ public sealed partial class PdfView : UserControl
     }
 
     /// Draws for the view as it is now, one pass at a time: a call during a pass runs another after it.
-    async void Render()
+    void Render()
     {
         again = true;
         if (rendering) return;
         rendering = true;
-        try
+        App.Run("Can't show the PDF", async () =>
         {
-            while (again)
+            try
             {
-                again = false;
-                if (document is { } doc) await Draw(doc, pages, tops, Scroller.VerticalOffset / Zoom, Zoom);
+                while (again)
+                {
+                    again = false;
+                    if (document is { } doc) await Draw(doc, pages, tops, Scroller.VerticalOffset / Zoom, Zoom);
+                }
             }
-        }
-        finally { rendering = false; }
+            finally { rendering = false; }
+        });
     }
 
     /// Shows a PDF from a copy, which leaves the file free for the next build. It keeps the place, the
@@ -321,7 +324,7 @@ public sealed partial class PdfView : UserControl
 
     /// Windows' print dialog for the build's pages, on white, each fitted to the sheet and drawn at the printer's
     /// resolution up to 600 dpi: XAML holds every sheet until the job is spooled, and PNG keeps them small until then.
-    public async void Print()
+    public void Print() => App.Run("Can't print", async () =>
     {
         if (document is not { } doc) return;
         var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
@@ -333,28 +336,23 @@ public sealed partial class PdfView : UserControl
             paper = e.PrintTaskOptions.GetPageDescription(0).PageSize;
             printing.SetPreviewPageCount((int)doc.PageCount, PreviewPageCountType.Final);
         };
-        printing.GetPreviewPage += async (_, e) =>
-            printing.SetPreviewPage(e.PageNumber, await Sheet(doc, e.PageNumber - 1, paper, 96 * (XamlRoot?.RasterizationScale ?? 1)));
-        printing.AddPages += async (_, e) =>
+        printing.GetPreviewPage += (_, e) => App.Run("Can't print", async () =>
+            printing.SetPreviewPage(e.PageNumber, await Sheet(doc, e.PageNumber - 1, paper, 96 * (XamlRoot?.RasterizationScale ?? 1))));
+        printing.AddPages += (_, e) => App.Run("Can't print", async () =>
         {
             var sheet = e.PrintTaskOptions.GetPageDescription(0);
             for (var i = 0; i < doc.PageCount; i++) printing.AddPage(await Sheet(doc, i, sheet.PageSize, Math.Min(sheet.DpiX, 600)));
             printing.AddPagesComplete();
-        };
+        });
         var title = System.IO.Path.GetFileNameWithoutExtension(FilePath);
-        // The interop throws when Windows has no printing for the window, which unhandled would end the app.
-        PrintManager? manager = null;
-        try
-        {
-            manager = PrintManagerInterop.GetForWindow(window);
-            manager.PrintTaskRequested += Requested;
-            await PrintManagerInterop.ShowPrintUIForWindowAsync(window);
-        }
-        catch (Exception ex) { await App.Alert("Can't print", ex.Message); }
-        finally { manager?.PrintTaskRequested -= Requested; }
+        // The interop throws when Windows has no printing for the window.
+        var manager = PrintManagerInterop.GetForWindow(window);
+        manager.PrintTaskRequested += Requested;
+        try { await PrintManagerInterop.ShowPrintUIForWindowAsync(window); }
+        finally { manager.PrintTaskRequested -= Requested; }
 
         void Requested(PrintManager sender, PrintTaskRequestedEventArgs e) => e.Request.CreatePrintTask(title, r => r.SetSource(source));
-    }
+    });
 
     /// A page fitted to a sheet of paper in DIPs, drawn at a resolution in dpi.
     static async Task<Image> Sheet(PdfDocument doc, int index, Size paper, double dpi)

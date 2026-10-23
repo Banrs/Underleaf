@@ -114,7 +114,7 @@ public sealed partial class WorkspacePage
     // MARK: the symbol palette
 
     /// Below the caret's line, never over it; drawn again in the text's colour when that has changed.
-    async void OnSymbols(object sender, RoutedEventArgs e)
+    void OnSymbols(object sender, RoutedEventArgs e) => App.Run(null, async () =>
     {
         if (Editor.Path is null) return;
         if (symbols.Count == 0 || inked != Editor.Ink) await DrawSymbols();
@@ -122,7 +122,7 @@ public sealed partial class WorkspacePage
         ShowSymbols();
         var r = Editor.CaretRect;
         Palette.ShowAt(Editor, new FlyoutShowOptions { Position = new(r.X, r.Bottom), ExclusionRect = r, Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
-    }
+    });
 
     async Task DrawSymbols()
     {

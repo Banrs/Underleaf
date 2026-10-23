@@ -44,7 +44,7 @@ public sealed partial class RenameFlyout : Flyout
         OnCommit(sender, e);
     }
 
-    async void OnCommit(object sender, RoutedEventArgs e)
+    void OnCommit(object sender, RoutedEventArgs e) => App.Run(null, async () =>
     {
         Commit.IsEnabled = false;
         try
@@ -53,5 +53,5 @@ public sealed partial class RenameFlyout : Flyout
             Hide();
         }
         catch (CoreException ex) { Box.Description = ex.Message; }
-    }
+    });
 }

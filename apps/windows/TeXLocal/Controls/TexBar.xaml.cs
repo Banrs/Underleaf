@@ -14,26 +14,23 @@ public sealed partial class TexBar : InfoBar
     public TexBar()
     {
         InitializeComponent();
-        Loaded += async (_, _) =>
+        // The bar that started it alerts.
+        Loaded += (_, _) =>
         {
-            if (installing is not { } task) return;
-            // The bar that started it alerts.
-            try { await Follow(task); }
-            catch (CoreException) { }
+            if (installing is { } task) App.Run(null, () => Follow(task));
         };
     }
 
     /// The status an install answers.
     public event Action<TexStatus>? Installed;
 
-    async void OnInstall(object sender, RoutedEventArgs e)
+    void OnInstall(object sender, RoutedEventArgs e) => App.Run("Can't install TinyTeX", async () =>
     {
         if (App.Core is not { } core) return;
         installing = core.CallAsync<TexStatus>("install_tex");
         try { await Follow(installing); }
-        catch (CoreException ex) { await App.Alert("Can't install TinyTeX", ex.Message); }
         finally { installing = null; }
-    }
+    });
 
     async Task Follow(Task<TexStatus> task)
     {

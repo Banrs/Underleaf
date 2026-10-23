@@ -93,7 +93,7 @@ public sealed partial class HistoryDialog : ContentDialog
     }
 
     /// A file deleted in the version has nothing to put back; a later comparison's answer wins over an earlier one's.
-    async void OnFile(object sender, SelectionChangedEventArgs e)
+    void OnFile(object sender, SelectionChangedEventArgs e) => App.Run(null, async () =>
     {
         var generation = ++comparisons;
         IsPrimaryButtonEnabled = Files.SelectedItem is ChangeRow { Change.Change: not "deleted" };
@@ -108,7 +108,7 @@ public sealed partial class HistoryDialog : ContentDialog
         }
         catch (CoreException ex) { note = ex.Message; }
         if (generation == comparisons) ShowLines(lines, note);
-    }
+    });
 
     /// The comparison, or the note in its place.
     void ShowLines(List<DiffLine> lines, string? note)
