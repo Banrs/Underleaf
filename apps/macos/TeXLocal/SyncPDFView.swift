@@ -80,7 +80,16 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
               let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
                                                    .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
               surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
-        Self.drawLive(page, to: surface, box: page.bounds(for: .cropBox), scale: scaleFactor * pixel, from: part.origin)
+        let context = CGContext(data: surface.baseAddress, width: surface.width, height: surface.height, bitsPerComponent: 8,
+                                bytesPerRow: surface.bytesPerRow, space: Self.liveSpace,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        if let context {
+            let paper = page.bounds(for: .cropBox)
+            context.translateBy(x: -part.minX, y: -part.minY)
+            context.scaleBy(x: scaleFactor * pixel, y: scaleFactor * pixel)
+            context.translateBy(x: -paper.minX, y: -paper.minY)
+            Self.drawPaper(paper, to: context) { page.draw(with: .cropBox, to: context) }
+        }
         surface.unlock(options: [], seed: nil)
         if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
@@ -96,28 +105,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return true
     }
 
-    private nonisolated static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-
-    /// In two halves at once by Core Graphics, as PDFKit draws a page for one caller at a time (27.2).
-    private nonisolated static func drawLive(_ page: PDFPage, to surface: IOSurface, box: CGRect, scale: CGFloat, from corner: CGPoint) {
-        nonisolated(unsafe) let page = page
-        nonisolated(unsafe) let ref = page.rotation == 0 && box.origin == .zero && page.bounds(for: .mediaBox) == box ? page.pageRef : nil
-        let (width, height, halves) = (surface.width, surface.height, ref == nil ? 1 : 2)
-        DispatchQueue.concurrentPerform(iterations: halves) { half in
-            let rows = (height * half / halves)..<(height * (half + 1) / halves)
-            guard let context = CGContext(data: surface.baseAddress + rows.lowerBound * surface.bytesPerRow, width: width,
-                                          height: rows.count, bitsPerComponent: 8, bytesPerRow: surface.bytesPerRow, space: liveSpace,
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-            else { return }
-            // A context counts from its own bottom row, the picture's rows from its top.
-            context.translateBy(x: -corner.x, y: CGFloat(rows.upperBound - height) - corner.y)
-            context.scaleBy(x: scale, y: scale)
-            context.translateBy(x: -box.minX, y: -box.minY)
-            drawPaper(box, to: context) {
-                if let ref { context.drawPDFPage(ref) } else { page.draw(with: .cropBox, to: context) }
-            }
-        }
-    }
+    private static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
     func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
 
