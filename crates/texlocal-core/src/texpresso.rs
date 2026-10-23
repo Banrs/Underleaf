@@ -367,6 +367,62 @@ impl Manager {
     }
 }
 
+/// The editor's files as TeXpresso is first told them and as the session keeps them, then the
+/// pages in view and the caret. TeXpresso's idle reruns stay off: each restarts TeX from nothing
+/// after a pause in typing and shows no page until it is over.
+fn opening(root: &Path, files: &[FileBuffer], pane: &Pane) -> (HashMap<String, Rope>, Vec<Value>) {
+    let mut buffers = HashMap::new();
+    let mut opening = Vec::new();
+    for file in files {
+        opening.push(json!(["open", root.join(&file.path), file.text]));
+        buffers.insert(file.path.clone(), Rope::from_str(&file.text));
+    }
+    let view = pane
+        .view
+        .map(|(first, last)| json!(["view", first, last.max(first)]));
+    let caret = pane.caret.as_ref().and_then(|(rel, units)| {
+        let offset = byte_offset(buffers.get(rel)?, *units)?;
+        Some(json!(["caret", root.join(rel), offset]))
+    });
+    opening.extend(view.into_iter().chain(caret));
+    (buffers, opening)
+}
+
+/// TeXpresso's command line, building `main` from `root` into `build` and its pages into `pdf`.
+fn command(
+    executable: &Path,
+    path_env: &str,
+    build: &Path,
+    main: &Path,
+    root: &Path,
+    pdf: &Path,
+) -> tokio::process::Command {
+    let mut command = process::tool(executable, path_env);
+    command
+        .args(["-json", "-texlive", "-I"])
+        .arg(build)
+        .arg(main)
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .env("TEXPRESSO_PDF_OUTPUT", pdf);
+    // A Mac app runs with signals ignored or blocked that a child inherits across exec.
+    // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends.
+    // SAFETY: only async-signal-safe calls, between fork and exec.
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            for signal in 1..32 {
+                libc::signal(signal, libc::SIG_DFL);
+            }
+            let mut none: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&raw mut none);
+            libc::sigprocmask(libc::SIG_SETMASK, &raw const none, std::ptr::null_mut());
+            Ok(())
+        });
+    }
+    command
+}
+
 impl Preview for Manager {
     fn start(
         &self,
@@ -383,22 +439,7 @@ impl Preview for Manager {
         if !main.is_file() {
             return Err(CoreError::bad_request("The main file does not exist."));
         }
-        let mut buffers = HashMap::new();
-        let mut opening = Vec::new();
-        for file in files {
-            opening.push(json!(["open", root.join(&file.path), file.text]));
-            buffers.insert(file.path.clone(), Rope::from_str(&file.text));
-        }
-        // TeXpresso's idle reruns stay off: each restarts TeX from nothing after a pause in
-        // typing and shows no page until it is over.
-        let view = pane
-            .view
-            .map(|(first, last)| json!(["view", first, last.max(first)]));
-        let caret = pane.caret.as_ref().and_then(|(rel, units)| {
-            let offset = byte_offset(buffers.get(rel)?, *units)?;
-            Some(json!(["caret", root.join(rel), offset]))
-        });
-        opening.extend(view.into_iter().chain(caret));
+        let (buffers, opening) = opening(&root, files, pane);
         let failed = |error: String| {
             Ok(Status {
                 error: Some(error),
@@ -430,29 +471,7 @@ impl Preview for Manager {
             return failed(MISSING.into());
         };
         let (build, pdf) = self.prepare(owner, project)?;
-        let mut command = process::tool(&executable, path_env);
-        command
-            .args(["-json", "-texlive", "-I"])
-            .arg(&build)
-            .arg(&main)
-            .current_dir(&root)
-            .stdin(Stdio::piped())
-            .env("TEXPRESSO_PDF_OUTPUT", &pdf);
-        // A Mac app runs with signals ignored or blocked that a child inherits across exec.
-        // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends.
-        // SAFETY: only async-signal-safe calls, between fork and exec.
-        #[cfg(unix)]
-        unsafe {
-            command.pre_exec(|| {
-                for signal in 1..32 {
-                    libc::signal(signal, libc::SIG_DFL);
-                }
-                let mut none: libc::sigset_t = std::mem::zeroed();
-                libc::sigemptyset(&raw mut none);
-                libc::sigprocmask(libc::SIG_SETMASK, &raw const none, std::ptr::null_mut());
-                Ok(())
-            });
-        }
+        let mut command = command(&executable, path_env, &build, &main, &root, &pdf);
         let (mut child, tree) = match Tree::spawn(&mut command) {
             Ok(spawned) => spawned,
             Err(err) => {
