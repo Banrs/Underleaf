@@ -4,20 +4,7 @@ struct BuildPanel: View {
     let project: ProjectModel
 
     var body: some View {
-        Group {
-            switch project.panel.tab {
-            case .issues: issues
-            case .log: log
-            case .texpresso:
-                if project.texpresso.log.isEmpty {
-                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt", description: Text(
-                        project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
-                } else {
-                    LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: "Live Preview Log")
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        BuildPanelPage(project: project)
         .background(.textSurface)
         // The bar's own line is the edge, where SwiftUI draws none (an AppKit scroll view).
         .scrollEdgeEffectHidden(true, for: .bottom)
@@ -28,32 +15,6 @@ struct BuildPanel: View {
                 Divider()
                 BuildPanelBar(project: project)
             }
-        }
-    }
-
-    /// "No Issues" before any build too: the status bar says whether one has run.
-    @ViewBuilder private var issues: some View {
-        let items = project.panel.rows(of: project.listed)
-        if !items.isEmpty {
-            IssueList(items: items, project: project)
-        } else if !project.panel.showsWarnings, project.listed.contains(where: { !$0.isError && project.panel.matches($0) }) {
-            ContentUnavailableView {
-                Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
-            } actions: {
-                Button("Show Warnings") { project.panel.showsWarnings = true }
-            }
-        } else if !project.panel.issueFilter.isEmpty {
-            ContentUnavailableView.search(text: project.panel.issueFilter)
-        } else {
-            ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
-        }
-    }
-
-    @ViewBuilder private var log: some View {
-        if let text = project.result?.log, !text.isEmpty {
-            LogPane(text: text, filter: project.panel.logFilter)
-        } else {
-            ContentUnavailableView("No Log", systemImage: "text.page", description: Text("Compile to see the log here."))
         }
     }
 }
@@ -106,7 +67,7 @@ struct BuildPanelBar: View {
     }
 }
 
-private struct IssueList: View {
+struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
 
@@ -114,7 +75,7 @@ private struct IssueList: View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
         ScrollViewReader { proxy in
             List(items, id: \.offset, selection: selection) {
-                IssueRow(item: $0.element, chosen: $0.offset == project.chosenIssue, project: project)
+                IssueRow(item: $0.element, place: $0.offset, project: project)
             }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
@@ -140,68 +101,6 @@ private struct IssueList: View {
     private func item(_ id: Int) -> LogItem? { items.first { $0.offset == id }?.element }
 
     private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line, jump: true) } } }
-}
-
-private struct IssueRow: View {
-    let item: LogItem
-    let chosen: Bool
-    let project: ProjectModel
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            label
-            if let fix = item.fix { offer(fix) }
-        }
-    }
-
-    /// The explanation under the message, as Xcode shows an issue's note.
-    private var label: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.message).lineLimit(chosen ? nil : 3)
-                if let explain = item.explain { Text(explain).foregroundStyle(.secondary) }
-                if let location = location(line: ":") {
-                    Text(location)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        } icon: {
-            Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .symbolRenderingMode(.multicolor)
-        }
-        .help([item.message, item.explain].compactMap(\.self).joined(separator: "\n"))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
-        .accessibilityValue([item.explain, location(line: ", line ")].compactMap(\.self).joined(separator: " "))
-    }
-
-    /// As Xcode's Fix: a small button at the row's end, its progress in its place.
-    @ViewBuilder private func offer(_ fix: LogItem.Fix) -> some View {
-        Spacer()
-        if project.fixing == fix {
-            ProgressView().controlSize(.small).accessibilityLabel(fix.title)
-        } else {
-            Button(fix.title) { Task { if await confirmed(fix) { await project.run(fix) } } }
-                .controlSize(.small)
-                .disabled(project.fixing != nil)
-                .help(fix.help)
-        }
-    }
-
-    /// AppKit's, as the window's other questions are: the fix's title on the default button (HIG, Alerts).
-    private func confirmed(_ fix: LogItem.Fix) async -> Bool {
-        guard let confirm = fix.confirm else { return true }
-        let alert = NSAlert()
-        alert.messageText = "\(fix.title)?"
-        alert.informativeText = confirm
-        alert.addButton(withTitle: fix.title)
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        guard let window = project.editor.textView.window else { return alert.runModal() == .alertFirstButtonReturn }
-        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
-    }
-
-    private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
 }
 
 /// A SwiftUI Text lays out megabyte logs whole on every change.

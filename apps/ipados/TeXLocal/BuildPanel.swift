@@ -9,47 +9,32 @@ struct BuildPanel: View {
         VStack(spacing: 0) {
             BuildPanelBar(project: project)
             Divider()
-            Group {
-                switch project.panel.tab {
-                case .issues: issues
-                case .log:
-                    if let text = project.result?.log, !text.isEmpty {
-                        LogPane(text: text, filter: project.panel.logFilter)
-                    } else {
-                        ContentUnavailableView("No Log", systemImage: "text.page", description: Text("Compile to see the log here."))
-                    }
-                case .texpresso:
-                    if project.texpresso.log.isEmpty {
-                        ContentUnavailableView(project.texpresso.title, systemImage: "bolt", description: Text(
-                            project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
-                    } else {
-                        LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: "Live Preview Log")
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            BuildPanelPage(project: project)
         }
         .background(Color(uiColor: .systemBackground))
     }
+}
 
-    @ViewBuilder private var issues: some View {
-        let items = project.panel.rows(of: project.listed)
-        if !items.isEmpty {
-            List(items, id: \.offset) { row in
-                IssueRow(item: row.element, place: row.offset, project: project)
-            }
-            .listStyle(.plain)
-        } else if !project.panel.showsWarnings, project.listed.contains(where: { !$0.isError && project.panel.matches($0) }) {
-            ContentUnavailableView {
-                Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
-            } actions: {
-                Button("Show Warnings") { project.panel.showsWarnings = true }
-            }
-        } else if !project.panel.issueFilter.isEmpty {
-            ContentUnavailableView.search(text: project.panel.issueFilter)
-        } else {
-            ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
+/// A tap goes to the issue; a long press offers it to copy.
+struct IssueList: View {
+    let items: [(offset: Int, element: LogItem)]
+    let project: ProjectModel
+
+    var body: some View {
+        List(items, id: \.offset) { row in
+            let item = row.element
+            IssueRow(item: item, place: row.offset, project: project)
+                .listRowBackground(row.offset == project.chosenIssue ? Color.accentColor.opacity(0.15) : nil)
+                .contextMenu {
+                    if item.file != nil {
+                        Button(item.line == nil ? "Open File" : "Go to Line", systemImage: "arrow.right") {
+                            project.chooseIssue(row.offset, focus: true)
+                        }
+                    }
+                    Button("Copy", systemImage: "document.on.document") { UIPasteboard.general.string = item.message }
+                }
         }
+        .listStyle(.plain)
     }
 }
 
@@ -110,41 +95,6 @@ private struct BuildPanelBar: View {
             .textInputAutocapitalization(.never)
             .frame(minWidth: 120, maxWidth: 200)
     }
-}
-
-private struct IssueRow: View {
-    let item: LogItem
-    let place: Int
-    let project: ProjectModel
-
-    var body: some View {
-        Button { project.chooseIssue(place, focus: true) } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.message).lineLimit(place == project.chosenIssue ? nil : 3)
-                    if let location = location(line: ":") {
-                        Text(location).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }
-            } icon: {
-                Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .foregroundStyle(.primary)
-        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
-        .accessibilityValue(location(line: ", line ") ?? "")
-        .listRowBackground(place == project.chosenIssue ? Color.accentColor.opacity(0.15) : nil)
-        .contextMenu {
-            if item.file != nil {
-                Button(item.line == nil ? "Open File" : "Go to Line", systemImage: "arrow.right") { project.chooseIssue(place, focus: true) }
-            }
-            Button("Copy", systemImage: "document.on.document") { UIPasteboard.general.string = item.message }
-        }
-    }
-
-    private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
 }
 
 /// A read-only text view: SwiftUI's Text lays a megabyte log out whole on every change. It follows the end as the log grows,

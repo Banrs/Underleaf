@@ -17,11 +17,7 @@ struct SidebarView: View {
         }
         .navigationTitle(project.name)
         .searchable(text: $search.query, placement: .sidebar, prompt: "Find in Project")
-        .task(id: project.search.query) {
-            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !Task.isCancelled else { return }
-            await project.search.run(in: project.session)
-        }
+        .searching(project)
         .toolbar {
             if sizeClass == .compact {
                 ToolbarItem(placement: .topBarLeading) { CloseProjectButton() }
@@ -45,7 +41,9 @@ struct SidebarView: View {
     private var files: some View {
         List {
             Section("Files") {
-                TreeRows(nodes: project.tree.nodes, project: project) { node in
+                TreeRows(nodes: project.tree.nodes, children: \.children, isExpanded: { node in
+                    disclosure(\.expandedFolders, of: project, key: node.path)
+                }) { node in
                     row(node)
                         .contextMenu { actions(node) }
                         .swipeActions { swipe(node) }
@@ -53,7 +51,9 @@ struct SidebarView: View {
             }
             if project.isLaTeX {
                 Section("Outline", isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
-                    OutlineRows(nodes: project.outlineTree, project: project, showSource: showSource)
+                    TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
+                        disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true)
+                    }) { heading($0.item) }
                 }
             }
         }
@@ -98,6 +98,19 @@ struct SidebarView: View {
         .accessibilityLabel(node.main == true ? "\(node.name), Main File" : node.name)
         .accessibilityAddTraits(node.path == project.openPath ? .isSelected : [])
         .draggable(project.url(node.path) ?? URL(filePath: "/"))
+    }
+
+    /// The current heading is marked, and a tap goes to it.
+    private func heading(_ item: OutlineItem) -> some View {
+        Button {
+            showSource()
+            project.reveal(item)
+        } label: {
+            Text(item.title).lineLimit(1).foregroundStyle(item.untitled ? .secondary : .primary)
+        }
+        .listRowBackground(item.id == project.currentHeading ? Color.accentColor.opacity(0.12) : nil)
+        .accessibilityValue(item.level)
+        .accessibilityAddTraits(item.id == project.currentHeading ? .isSelected : [])
     }
 
     @ViewBuilder private func addItems(in folder: String) -> some View {
@@ -147,115 +160,5 @@ struct SidebarView: View {
         }
         let folder = node.path.parentFolder
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
-    }
-}
-
-/// Folders as disclosure groups whose open state is the project's, kept with its settings.
-private struct TreeRows<Row: View>: View {
-    let nodes: [TreeNode]
-    let project: ProjectModel
-    @ViewBuilder let row: (TreeNode) -> Row
-
-    var body: some View {
-        ForEach(nodes) { node in
-            if let children = node.children {
-                DisclosureGroup(isExpanded: Binding(get: { project.expandedFolders.contains(node.path) }, set: { open in
-                    if open { project.expandedFolders.insert(node.path) } else { project.expandedFolders.remove(node.path) }
-                })) {
-                    TreeRows(nodes: children, project: project, row: row)
-                } label: {
-                    row(node)
-                }
-            } else {
-                row(node)
-            }
-        }
-    }
-}
-
-/// The open file's headings; the current one is marked, and a tap goes to it.
-private struct OutlineRows: View {
-    let nodes: [OutlineNode]
-    let project: ProjectModel
-    let showSource: () -> Void
-
-    var body: some View {
-        ForEach(nodes) { node in
-            if let children = node.children, !children.isEmpty {
-                DisclosureGroup(isExpanded: Binding(get: { !project.foldedHeadings.contains(node.foldKey) }, set: { open in
-                    if open { project.foldedHeadings.remove(node.foldKey) } else { project.foldedHeadings.insert(node.foldKey) }
-                })) {
-                    OutlineRows(nodes: children, project: project, showSource: showSource)
-                } label: {
-                    heading(node.item)
-                }
-            } else {
-                heading(node.item)
-            }
-        }
-    }
-
-    private func heading(_ item: OutlineItem) -> some View {
-        Button {
-            showSource()
-            project.reveal(item)
-        } label: {
-            Text(item.title).lineLimit(1).foregroundStyle(item.untitled ? .secondary : .primary)
-        }
-        .listRowBackground(item.id == project.currentHeading ? Color.accentColor.opacity(0.12) : nil)
-        .accessibilityValue(item.level)
-        .accessibilityAddTraits(item.id == project.currentHeading ? .isSelected : [])
-    }
-}
-
-private struct SearchResults: View {
-    let project: ProjectModel
-    let showSource: () -> Void
-
-    var body: some View {
-        @Bindable var search = project.search
-        List {
-            Section {
-                HStack {
-                    TextField("Replace With", text: $search.replacement)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    Button("Replace All") { Task { await project.replaceAll() } }
-                        .disabled(project.search.hitCount == 0)
-                }
-            }
-            ForEach(project.search.groups ?? []) { group in
-                Section {
-                    ForEach(group.hits) { hit in
-                        Button {
-                            showSource()
-                            Task { await project.open(hit.file, line: hit.line, column: hit.column, length: hit.length) }
-                        } label: {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)").lineLimit(2)
-                                Spacer(minLength: 4)
-                                Text("\(hit.line)").font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
-                                    .accessibilityLabel("Line \(hit.line)")
-                            }
-                        }
-                        .foregroundStyle(.primary)
-                    }
-                } header: {
-                    HStack {
-                        Text(group.file).truncationMode(.middle)
-                        Spacer()
-                        Text(group.hits.count, format: .number).monospacedDigit()
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .overlay {
-            if let failure = project.search.failure {
-                ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass", description: Text(failure))
-            } else if project.search.groups?.isEmpty == true {
-                ContentUnavailableView.search(text: project.search.searched)
-            }
-        }
     }
 }

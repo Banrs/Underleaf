@@ -4,7 +4,6 @@ struct FilesList: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
     @State private var selection: String?
-    @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
     @FocusState private var listFocused: Bool
 
@@ -12,19 +11,10 @@ struct FilesList: View {
         // The File Outline's header is the files' bottom bar, as high as the pane's bottom safe area.
         GeometryReader { geometry in
             // Two lists: one diffed from the tree to grouped hits and back keeps stale rows.
-            Group { if project.search.isSearching { results } else { files } }
+            Group { if project.search.isSearching { SearchResults(project: project) } else { files } }
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
-        // Each search reads every file: it waits for typing to pause.
-        .task(id: project.search.query) {
-            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !Task.isCancelled else { return }
-            await project.search.run(in: project.session)
-            // VoiceOver hears the count, as it does the PDF's find count.
-            guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
-            let count = project.search.hitCount
-            project.notices.announce(count == 0 ? String(localized: "Not found") : matches(count), queued: true)
-        }
+        .searching(project)
         .onChange(of: app.newEntry, initial: true) { _, entry in
             // A project left for another still shows while the next loads, whose list takes the entry.
             guard let entry, !project.closed else { return }
@@ -137,87 +127,6 @@ struct FilesList: View {
                     moveToTrash: { Task { await project.deleteEntry(node.path) } })
     }
 
-    private var results: some View {
-        List(selection: $hit) {
-            ForEach(project.search.groups ?? []) { group in
-                Section {
-                    ForEach(group.hits) { hit in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
-                                .lineLimit(2)
-                            Spacer(minLength: 4)
-                            Text("\(hit.line)")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .accessibilityLabel("Line \(hit.line)")
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                } header: {
-                    HStack {
-                        Text(group.file).truncationMode(.middle)
-                        Spacer()
-                        Text(group.hits.count, format: .number).monospacedDigit()
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(group.file), \(matches(group.hits.count))")
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .accessibilityLabel("Search Results")
-        // A new query can reuse a hit's ID: the first click on the new hit opens it.
-        .onChange(of: project.search.query, initial: true) { hit = nil }
-        .onChange(of: hit) { _, id in open(id, focus: false) }
-        .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
-        // Usages aren't the query's matches, which Replace All would replace.
-        .safeAreaBar(edge: .top, spacing: 0) {
-            if let usages = project.search.usages {
-                Text(String(localized: "Usages of \(usages.name)"))
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityAddTraits(.isHeader)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 9)
-            } else {
-                replaceBar
-            }
-        }
-        .overlay {
-            if let failure = project.search.failure {
-                ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
-                                       description: Text(failure))
-            } else if project.search.groups?.isEmpty == true {
-                ContentUnavailableView.search(text: project.search.searched)
-            }
-        }
-    }
-
-    /// Under the search field, as Xcode's Find navigator in Replace mode, at the inset and spacing the field's accessory has
-    /// (measured, 27.2).
-    private var replaceBar: some View {
-        HStack {
-            SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
-            Button("Replace All") { Task { await project.replaceAll() } }
-                .disabled(project.search.hitCount == 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 9)
-    }
-
-    private func open(_ id: SearchHit.ID?, focus: Bool) {
-        if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus, jump: true) }
-        }
-    }
-
-    private func matches(_ count: Int) -> String {
-        String(AttributedString(localized: "^[\(count) match](inflect: true)").characters)
-    }
-
     private func row(_ node: TreeNode) -> some View {
         let isMain = node.main == true
         return Label {
@@ -265,47 +174,6 @@ struct FilesList: View {
             if selection == node.path, project.tree.node(at: path) != nil { selection = path }
         }
     }
-}
-
-private struct TreeRows<Node: Identifiable, Row: View>: View {
-    let nodes: [Node]
-    let children: (Node) -> [Node]?
-    let isExpanded: (Node) -> Binding<Bool>
-    var insert: (([URL]) -> Void)?
-    @ViewBuilder let row: (Node) -> Row
-
-    var body: some View {
-        let rows = ForEach(nodes) { node in
-            if let kids = children(node) {
-                DisclosureGroup(isExpanded: isExpanded(node)) {
-                    TreeRows(nodes: kids, children: children, isExpanded: isExpanded, row: row)
-                } label: {
-                    row(node)
-                }
-            } else {
-                row(node)
-            }
-        }
-        if let insert {
-            rows.dropDestination(for: URL.self) { urls, _ in
-                let files = urls.filter(\.isFileURL)
-                if !files.isEmpty { insert(files) }
-            }
-        } else {
-            rows
-        }
-    }
-}
-
-/// Not a `Binding` of the set: two changes in one click would each start from the set as it was. Option takes the
-/// `subtree`'s keys with it (HIG, Outline views).
-private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String>>, of project: ProjectModel, key: String,
-                        inverted: Bool = false, subtree: @autoclosure @escaping () -> [String]) -> Binding<Bool> {
-    Binding(get: { project[keyPath: set].contains(key) != inverted },
-            set: { on in
-                let keys = NSEvent.modifierFlags.contains(.option) ? [key] + subtree() : [key]
-                if on != inverted { project[keyPath: set].formUnion(keys) } else { project[keyPath: set].subtract(keys) }
-            })
 }
 
 extension View {
