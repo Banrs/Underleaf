@@ -14,7 +14,6 @@ final class WorkspaceController: ThinSplitViewController {
     private(set) var sidebarItem: NSSplitViewItem!
     private var outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
     private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
-    private var outlineBarHeight: NSLayoutConstraint!
     private let searchField = FieldHandle()
 
     private var appeared = false
@@ -106,18 +105,12 @@ final class WorkspaceController: ThinSplitViewController {
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = 100
-        // Never hidden before its first layout, when it would still inset its pane (27.2).
+        // Never hidden before its first layout, when it would still inset its pane (27.2). The status bar's height, folded
+        // or open: it rides the files' foot as the outline opens, one motion with the outline's rows under it.
         let header = hostingView(OutlineHeader())
-        header.translatesAutoresizingMaskIntoConstraints = false
-        let bar = NSView()
-        bar.addSubview(header)
-        // Its content keeps one place as the bar's height animates, so folded it lines up with the status bar.
-        outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineState(of: project) != .open))
-        NSLayoutConstraint.activate([outlineBarHeight, header.topAnchor.constraint(equalTo: bar.topAnchor),
-                                     header.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-                                     header.trailingAnchor.constraint(equalTo: bar.trailingAnchor)])
+        header.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
         // The files draw the edge (`HeaderEdge`); the accessory's own would lay AppKit's glass over them.
-        outlineBar = accessory(bar, edge: .soft)
+        outlineBar = accessory(header, edge: .soft)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
         outlineItem.minimumThickness = 80
@@ -218,8 +211,6 @@ final class WorkspaceController: ThinSplitViewController {
         return accessory
     }
 
-    private func outlineBarHeight(folded: Bool) -> CGFloat { folded ? BarMetrics.height : OutlineHeader.openHeight }
-
     // MARK: - The models drive the panes
 
     private func watch() {
@@ -282,13 +273,7 @@ final class WorkspaceController: ThinSplitViewController {
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { context in
                 if !animates { context.duration = 0 }
-                // One animation carries the outline's pane and its header's height.
-                if item === outlineItem {
-                    context.allowsImplicitAnimation = true
-                    outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
-                }
                 item.animator().isCollapsed = collapsed
-                if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
             }
             quiet(false)
             done()

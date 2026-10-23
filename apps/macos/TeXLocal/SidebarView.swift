@@ -255,46 +255,39 @@ struct OutlineList: View {
     }
 }
 
-/// The system's collapsible sidebar section with no rows, at the files' foot; its whole row folds and unfolds, level with
-/// the status bar.
+/// A sidebar section's header at the files' foot, level with the status bar: its whole row folds and unfolds the outline,
+/// and its chevron shows under the pointer, as a sidebar section's does.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
-
-    /// A sidebar section header's row (measured, 27.2).
-    private static let row: CGFloat = 19
-    /// Centred in the status bar's height, as folded, and kept there open.
-    private static let top = (BarMetrics.height - row) / 2
-    static let openHeight = top + row
+    @State private var hovering = false
 
     var body: some View {
-        let expanded = Binding(get: { app.outlineOpen(of: app.project) }, set: { app.outlineCollapsed = !$0 })
-        List {
-            Section(isExpanded: expanded) {
-            } header: {
-                Button { expanded.wrappedValue.toggle() } label: {
-                    Text("File Outline")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                // It covers the system's disclosure.
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
+        let open = app.outlineOpen(of: app.project)
+        Button { app.outlineCollapsed = open } label: {
+            HStack {
+                Text("File Outline")
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .opacity(hovering ? 1 : 0)
+                    .accessibilityHidden(true)
             }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 18)
+            .frame(maxHeight: .infinity)
+            .contentShape(.rect)
         }
-        .listStyle(.sidebar)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .disabled(app.project?.isLaTeX != true)
-        .scrollContentBackground(.hidden)
-        .scrollDisabled(true)
-        .frame(height: sidebarListRoom + Self.row + sidebarListRoom, alignment: .top)
-        // AppKit animates the bar's height with the split; the header keeps its size and place.
-        .offset(y: Self.top - sidebarListRoom)
-        .frame(height: Self.openHeight, alignment: .top)
-        .clipped()
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
     }
 }
 
-/// The room a sidebar list leaves over its first row, inside its table (27.2), which `contentMargins` doesn't reach.
+/// The room a sidebar list leaves over its first row, inside its table (measured), which `contentMargins` doesn't reach: the
+/// header above stands for it.
 private let sidebarListRoom: CGFloat = 10
 
 /// Equatable: as a plain view, a heading that takes the place of a leaf and has subheadings opens closed (27.2).
