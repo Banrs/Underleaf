@@ -31,6 +31,8 @@ final class ProjectModel {
     @ObservationIgnored private var currentLine = 1
     /// For the rest of the turn the caret moved in: a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
+    /// Go Back's and Go Forward's, from the session's last answer.
+    private(set) var trail = Trail()
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
@@ -45,9 +47,11 @@ final class ProjectModel {
 
     var compiling = false
     var outdated = false
-    /// The missing file whose package is installing: one at a time, as tlmgr takes one.
-    var installing: String?
+    /// One at a time, as tlmgr takes one and a fix is followed by a build.
+    var fixing: LogItem.Fix?
     var result: CompileResult?
+    /// What the session finds wrong without TeX, kept through builds and cleans.
+    var checks: [LogItem] = []
     @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
     nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
@@ -59,7 +63,11 @@ final class ProjectModel {
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
-    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
+    /// In the session's order, which `session_choose_issue` numbers.
+    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) + checks }
+    /// The bad boxes after the issues, as Overleaf lists its typesetting warnings: numbered on from them, which the session
+    /// numbers alone.
+    var listed: [LogItem] { issues + (result?.badBoxes ?? []) }
 
     var openURL: URL? { openPath.flatMap(url) }
     var diskConflict: String?
@@ -143,8 +151,9 @@ final class ProjectModel {
     /// One spelling for every failed save, as `AppModel.report` drops an alert whose title is the one showing.
     func notSavedTitle(_ path: String? = nil) -> String { String(localized: "“\((path ?? openPath)?.fileName ?? name)” Wasn’t Saved") }
 
-    var errorCount: Int { result?.errors.count ?? 0 }
-    var warningCount: Int { result?.warnings.count ?? 0 }
+    /// With the checks', as Xcode's counts include its live issues.
+    var errorCount: Int { issues.count(where: \.isError) }
+    var warningCount: Int { issues.count - errorCount }
 
     var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
 
@@ -156,20 +165,22 @@ final class ProjectModel {
 
     let notices = ProjectNotices()
 
-    var saved: SavedWorkspace {
-        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: panel.shown, pdfPage: pdf.restorePage ?? pdf.page,
-                       pdfZoom: pdf.restoreZoom ?? pdf.zoom)
+    /// As the project is left and on quit, for `load` to show again; one that never loaded has no place of its own to keep.
+    func savePlace() async {
+        guard initialLoadComplete else { return }
+        saveUIState(["file": openPath, "line": cursorLine, "page": pdf.keptPage, "zoom": pdf.keptZoom.json, "panel": panel.shown])
+        await uiStateWrites?.value
     }
 
     // MARK: - Loading
 
     /// Stops if the project is left meanwhile.
-    func load(restoring saved: SavedWorkspace?) async {
+    func load() async {
         connectEditor()
-        if let saved { (panel.shown, pdf.restorePage, pdf.restoreZoom) = (saved.buildPanel, saved.pdfPage, saved.pdfZoom) }
         let session = core.observe { [weak self] event in self?.handle(event) }
-        // Shown before the workspace appears, so the pane doesn't open empty.
+        // Shown before the workspace appears, so the pane doesn't open empty; the PDF's place waits for the view's size.
         async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
+        let ui: UIState
         do {
             // With automatic builds and no PDF, the session starts one.
             let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
@@ -179,10 +190,12 @@ final class ProjectModel {
             name = opened.name
             root = URL(filePath: opened.root, directoryHint: .isDirectory)
             settings = opened.settings
-            showUIState(opened.ui)
+            ui = opened.ui
+            showUIState(ui)
+            (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
             if !treeChanged { tree.show(opened.tree) }
-            let restored = saved?.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
-            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line, showsSource: false) }
+            let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
+            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
             await analysis?.value
         } catch {
             core.forget(session)
@@ -197,6 +210,8 @@ final class ProjectModel {
         _ = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
+        // The core remembers the user's last Start or Stop, so Live Preview is per project.
+        if ui.livePreview, canSwitchLivePreview { livePreview = true }
     }
 
     private func connectEditor() {
@@ -222,9 +237,9 @@ final class ProjectModel {
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.issueClicked = { [weak self] line in
             guard let self else { return }
-            if let place = issues.firstIndex(where: { $0.file == self.openPath && $0.line == line }) {
+            if let index = editor.textView.issues.lines[line]?.index {
                 panel.show(.issues)
-                chooseIssue(place, focus: false, open: false)
+                chooseIssue(index, focus: false, open: false)
             } else if editor.textView.issues.live[line] != nil {
                 // Its log has TeX's own words round the error.
                 panel.show(.texpresso)
@@ -238,8 +253,11 @@ final class ProjectModel {
             self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
         }
         editor.textView.openDefinition = { [weak self] place in
-            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length) }
+            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
         }
+        #if os(macOS)
+        editor.textView.quickHelp = { [weak self] offset in Task { await self?.quickHelp(at: offset) } }
+        #endif
         editor.command = { [weak self] in self?.app?.perform($0, on: self) }
     }
 
@@ -285,6 +303,8 @@ final class ProjectModel {
         case .liveIssues(let marked):
             liveIssues[marked.path] = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
+        // After the build events before it, so the list numbers its rows as the session did then.
+        case .checks(let found): inOrder { self.checks = found.items }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
@@ -336,16 +356,21 @@ final class ProjectModel {
     // MARK: - Editing
 
     /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
-    /// the editor never shows a file without its document. It shows the source, as a PDF command shows the PDF, but for the
-    /// project's own first file and a file its rename reopens.
+    /// the editor never shows a file without its document. A `jump` is one the person makes away from the caret, whose place
+    /// Go Back returns to. It shows the source, as a PDF command shows the PDF, but for the project's own first file and a
+    /// file its rename reopens.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
-              showsSource: Bool = true) async {
+              jump: Bool = false, showsSource: Bool = true) async {
         openRequests += 1
         let request = openRequests
         let latest = { request == self.openRequests && !self.closed }
         await enqueue(&opens) { [self] in
             guard latest() else { return }
             if showsSource { app?.showSource = true }
+            if jump, let session, let from = caretPlace,
+               let trail = try? await core.call("session_navigate", ["session": session, "from": from], as: Trail.self) {
+                self.trail = trail
+            }
             if path != openPath {
                 guard let session else { return }
                 // A file made a moment ago may not be in the tree yet.
@@ -472,6 +497,51 @@ final class ProjectModel {
         await search.run(in: session)
     }
 
+    /// Xcode's Find Selected Symbol in Workspace: the name at the selection's start, defined and used, in the sidebar as a
+    /// search's hits. Enabled wherever the caret is, so where no name is it beeps, as Jump to Definition does.
+    func findUsages() async {
+        guard let session, let path = editor.path else { return }
+        let offset = editor.textView.selection.location
+        guard let found = await alerting("Couldn’t Find Usages", {
+            try await core.call("session_usages", ["session": session, "path": path, "offset": offset], as: Usages?.self)
+        }) else { return }
+        guard let found else {
+            #if os(macOS)
+            NSSound.beep()
+            #endif
+            return
+        }
+        search.show(found)
+        app?.sidebarShown = true
+    }
+
+    #if os(macOS)
+    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or a beep where the core knows nothing of it.
+    func quickHelp(at offset: Int) async {
+        guard let session, let path = editor.path else { return }
+        guard let answer = await alerting("Couldn’t Show Quick Help", {
+            try await core.call("session_quick_help", ["session": session, "path": path, "offset": offset], as: QuickHelp?.self)
+        }), editor.path == path else { return }
+        guard let help = answer else { return NSSound.beep() }
+        editor.textView.showQuickHelp(help, at: offset) { [weak self] place in
+            Task { await self?.open(place.path, line: place.line, jump: true) }
+        }
+    }
+    #endif
+
+    /// Where the caret is, for the places Go Back and Go Forward keep.
+    private var caretPlace: [String: any Sendable]? { openPath.map { ["path": $0, "line": editsText ? cursorLine : 1] } }
+
+    /// Go Back, or Go Forward: shown as a jump is, but leaving no place behind.
+    func retrace(back: Bool) async {
+        guard let session, let at = caretPlace,
+              let step = await alerting(back ? "Couldn’t Go Back" : "Couldn’t Go Forward", {
+                  try await core.call(back ? "session_back" : "session_forward", ["session": session, "at": at], as: Trail.self)
+              }) else { return }
+        trail = step
+        if let to = step.to { await open(to.path, line: to.line) }
+    }
+
     /// A refusal is the core's sentence, for the sheet to show.
     func renameSymbol(_ symbol: Definition, to name: String) async throws {
         guard let session else { return }
@@ -479,16 +549,54 @@ final class ProjectModel {
                               named: String(localized: "Rename"))
     }
 
+    /// As Pages' Save a Version: a name for the project as it is, which the history keeps however old it gets.
+    func saveVersion(named name: String) async throws {
+        guard let session else { return }
+        let saved = try await core.call("session_history_save", ["session": session, "name": name], as: Snapshot.self)
+        notices.note(String(localized: "Saved Version “\(saved.title)”"))
+    }
+
+    /// The snapshot's `paths`, or all its files, after the core keeps the project as it is in a snapshot of its own. A refusal
+    /// is the core's sentence, for the history sheet to show.
+    func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
+        guard let session else { return }
+        apply(try await core.call("session_history_restore", ["session": session, "id": snapshot.id, "paths": paths], as: Edited.self).edits,
+              named: String(localized: "Restore"))
+    }
+
     /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
     /// session saves as any.
     @discardableResult
     private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
         let answer = try await core.call(command, args, as: ProjectEdits.self)
-        // A file shown since has text of its own, as one typed in since does.
-        if let edits = answer.edits, edits.path == editor.path, edits.version == editor.textView.document.version {
+        apply(answer.edits, named: name)
+        return answer
+    }
+
+    /// A file shown since has text of its own, as one typed in since does.
+    private func apply(_ edits: ProjectEdits.Document?, named name: String) {
+        if let edits, edits.path == editor.path, edits.version == editor.textView.document.version {
             editor.textView.apply(edits.edits, named: name)
         }
-        return answer
+    }
+
+    /// The session runs it, then a build (docs/core-api.md, Explanations and fixes).
+    func run(_ fix: LogItem.Fix) async {
+        guard let session else { return }
+        fixing = fix
+        defer { fixing = nil }
+        let answer: Edited?
+        do {
+            answer = try await core.call("session_fix", ["session": session, "id": fix.id], as: Edited?.self)
+        } catch {
+            if !closed { app?.report(error, "Couldn’t \(fix.title)") }
+            return
+        }
+        // None: the password dialog was cancelled.
+        guard let answer, !closed else { return }
+        apply(answer.edits, named: fix.title)
+        if let updated = answer.settings { settings = updated }
+        await compile()
     }
 
     // MARK: - Changes on disk
@@ -571,17 +679,8 @@ final class ProjectModel {
     func reveal(_ item: OutlineItem) {
         // Already there: a click chooses the row as it goes down, then taps it.
         guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
-        Task { await open(item.file, line: item.line, atTop: true, focus: false) }
+        Task { await open(item.file, line: item.line, atTop: true, focus: false, jump: true) }
     }
-}
-
-nonisolated struct SavedWorkspace: Codable, Equatable {
-    var project: String
-    var file: String?
-    var line: Int
-    var buildPanel: Bool
-    var pdfPage: Int
-    var pdfZoom: PDFController.Zoom?
 }
 
 /// None: the file dropped opens.
@@ -599,4 +698,10 @@ private nonisolated struct ProjectEdits: Decodable {
 
     var edits: Document?
     var written: [Written]
+}
+
+/// What a restore or a fix answers that the window shows: the open document's edits, and a fix's settings.
+private nonisolated struct Edited: Decodable {
+    let edits: ProjectEdits.Document?
+    let settings: ProjectSettings?
 }

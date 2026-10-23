@@ -15,12 +15,12 @@ use super::files::occupied;
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
 use super::tree::{entries, file_kind};
-use crate::SETTINGS_FILE;
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::syntax::SourceDocument;
 use crate::templates;
+use crate::{SETTINGS_FILE, atomic};
 
 /// `missing`: an opened folder that isn't where it was (moved, deleted, its volume away), dated
 /// 0 so it is listed last.
@@ -120,7 +120,8 @@ pub fn create_project(
 }
 
 /// A project in a new folder named `name`, or "name 2" and so on when that is taken, as Finder
-/// numbers copies, filled by `fill`; removed if that fails.
+/// numbers copies, filled by `fill` in a folder beside it and renamed into place, so the library
+/// never lists half a project; nothing is left if that fails.
 pub(crate) fn new_project(
     data_dir: &Path,
     name: &str,
@@ -128,20 +129,19 @@ pub(crate) fn new_project(
 ) -> Result<ProjectInfo, CoreError> {
     let name = sanitize_name(name)?;
     fs::create_dir_all(data_dir)?;
-    for id in project_names(&name) {
-        let root = data_dir.join(&id);
-        // One create, passing over anything there, a dangling link or case alias too.
-        match fs::create_dir(&root) {
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
-            created => created?,
-        }
-        if let Err(err) = fill(&root) {
-            let _ = fs::remove_dir_all(&root);
-            return Err(err);
-        }
-        return Ok(ProjectInfo::read(data_dir, &id)?);
-    }
-    unreachable!("a free name")
+    let temp = atomic::temp_builder(0o777).tempdir_in(data_dir)?;
+    fill(temp.path())?;
+    // Passing over anything there, a dangling link or case alias too, and what another create
+    // of the name moved there since. Once it is moved, its drop finds nothing to remove.
+    let taken = |id: &str| fs::symlink_metadata(data_dir.join(id)).is_ok();
+    let id = project_names(&name)
+        .filter(|id| !taken(id))
+        .find_map(|id| match fs::rename(temp.path(), data_dir.join(&id)) {
+            Err(_) if taken(&id) => None,
+            moved => Some(moved.map(|()| id)),
+        })
+        .expect("a free name")?;
+    Ok(ProjectInfo::read(data_dir, &id)?)
 }
 
 /// The first free name in the series "Untitled", "Untitled 2", …, however the volume spells

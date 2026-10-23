@@ -15,9 +15,7 @@ use crate::settings::{self, AppSettings, Engine};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{
-    CoreError, import, inprocess, lock, packages, templates, tinytex, wordmatch, zipexport,
-};
+use crate::{CoreError, import, inprocess, lock, templates, tinytex, wordmatch, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
@@ -149,6 +147,7 @@ impl Service {
                     engine.as_deref(),
                 )?)
             }
+            "duplicate_project" => out(import::duplicate_project(self, s("id")?, s("name")?)?),
             "free_project_name" => {
                 Ok(json!({ "name": projects::free_project_name(&self.data_dir)? }))
             }
@@ -158,7 +157,6 @@ impl Service {
                     projects::rename_project(&self.data_dir, id, name, stop)
                 })?)
             }
-            "get_settings" => out(settings::read_settings(&project()?.settings)),
             "file_tree" => out(projects::file_tree(&project()?)?),
             "create_entry" => {
                 let path = s("path")?;
@@ -200,21 +198,21 @@ impl Service {
                     settings::read_settings(&project.settings).output(&project.build, "pdf")?;
                 Ok(json!(pdf.to_string_lossy()))
             }
-            "export_zip" => out(zipexport::export_zip(
-                &project()?.root,
-                Path::new(s("dest")?),
-            )?),
+            "export_zip" => {
+                let project = project()?;
+                let added = match arg::<Option<bool>>(args, "forArxiv")? {
+                    Some(true) => zipexport::for_arxiv(&project)?,
+                    _ => Vec::new(),
+                };
+                let dest = Path::new(s("dest")?);
+                out(zipexport::export_zip(&project.root, dest, &added)?)
+            }
             // On quit, while a compile may be in flight, stop the latexmk trees that would outlive the app.
             "kill_all" => {
                 self.kill_all();
                 Ok(Value::Null)
             }
-            "install_package" | "install_tex" if inprocess::IN_PROCESS => {
-                Err(inprocess::no_installs())
-            }
-            "install_package" => Ok(json!({
-                "package": packages::install_package(s("file")?, &self.tool_paths().0).await?
-            })),
+            "install_tex" if inprocess::IN_PROCESS => Err(inprocess::no_installs()),
             "install_tex" => {
                 tinytex::install(&self.tool_paths().0).await?;
                 out(self.status().await)
@@ -234,7 +232,7 @@ impl Service {
                 Ok(Value::Null)
             }
             "set_ui_state" => out(self.with_project(s("id")?, |project| {
-                settings::write_ui(&project.ui, arg(args, "patch")?)
+                settings::write_ui(&project.ui, &arg(args, "patch")?)
             })?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }

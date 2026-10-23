@@ -122,7 +122,7 @@ fn as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Result<Comma
 /// The exit code and everything printed, stderr after stdout.
 pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError> {
     let (mut child, tree) = Tree::spawn(command.stdin(Stdio::null()))?;
-    let (code, mut out, err, timed_out) = drive(&mut child, &tree, TIMEOUT).await;
+    let (code, mut out, err, timed_out) = drive(&mut child, &tree, Some(TIMEOUT)).await;
     if timed_out {
         return Err(CoreError::new(
             504,

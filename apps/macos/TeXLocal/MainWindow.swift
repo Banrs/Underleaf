@@ -11,7 +11,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var home: NSViewController?
     private(set) var workspace: WorkspaceController?
     private let modals: NSHostingView<WindowModals>
-    private var restored: SavedWorkspace?
+    /// The project the window showed as the app last quit.
+    private var restored: String?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
     private let findEditor = FindPassingTextView()
@@ -40,7 +41,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             track({ [app, weak self] in app.workspaceProject(after: self?.workspace?.project).map { ObjectIdentifier($0) } }) {
                 [weak self] _ in self?.showProject()
             },
-            track({ [app] in app.project?.saved }) { [weak self] _ in self?.window?.invalidateRestorableState() },
+            track({ [app] in app.project?.id }) { [weak self] _ in self?.window?.invalidateRestorableState() },
             track({ [app] in app.project?.saveFailure != nil }) { [weak self] in self?.window?.isDocumentEdited = $0 },
         ]
     }
@@ -55,11 +56,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             async let tex: Void = app.refreshTeXStatus()
             await app.refresh()
             await tex
-            let saved = restored.flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
-            restored = nil
-            if let id = app.launchProject.take() ?? saved?.project, app.project == nil, !app.isOpening {
-                await app.open(id, restoring: saved)
-            }
+            let restored = self.restored.take().flatMap { id in app.projects.contains { $0.id == id } ? id : nil }
+            if let id = app.launchProject.take() ?? restored, app.project == nil, !app.isOpening { await app.open(id) }
         }
     }
 
@@ -199,17 +197,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     /// Only with the window's state: with "Close windows when quitting an app" on, the next launch shows the projects.
     func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
-        if let saved = app.project?.saved, let data = try? JSONEncoder().encode(saved) {
-            state.encode(data as NSData, forKey: Self.workspaceKey)
-        }
+        if let id = app.project?.id { state.encode(id as NSString, forKey: Self.projectKey) }
     }
 
     func window(_ window: NSWindow, didDecodeRestorableState state: NSCoder) {
-        restored = (state.decodeObject(of: NSData.self, forKey: Self.workspaceKey) as Data?)
-            .flatMap { try? JSONDecoder().decode(SavedWorkspace.self, from: $0) }
+        restored = state.decodeObject(of: NSString.self, forKey: Self.projectKey) as String?
     }
 
-    private static let workspaceKey = "workspace"
+    private static let projectKey = "project"
 }
 
 private struct WindowModals: View {

@@ -577,7 +577,7 @@ fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) 
 
 /// The change from one whole text to the next, in bytes. Both boundaries must be UTF-8
 /// boundaries even when differing characters share leading or trailing bytes.
-fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
+pub(crate) fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
     let mut start = common(a.iter(), b.iter());
     while !old.is_char_boundary(start) || !new.is_char_boundary(start) {

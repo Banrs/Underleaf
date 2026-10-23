@@ -12,12 +12,19 @@ final class ProjectSearch {
     private(set) var groups: [SearchGroup]?
     private(set) var searched = ""
     private(set) var failure: String?
+    /// Find Usages' answer, whose hits show under its heading until the query, its name, changes.
+    private(set) var usages: Usages?
 
     var hitCount: Int { groups?.reduce(0) { $0 + $1.hits.count } ?? 0 }
+
+    func show(_ found: Usages) {
+        (usages, groups, failure, searched, query) = (found, found.groups, nil, found.name, found.name)
+    }
 
     /// The session's, which searches the open document as the editor has it.
     func run(in session: UInt64?) async {
         let query = query
+        guard query != usages?.name else { return }
         var found: [SearchGroup]?, why: String?
         if isSearching, let session {
             do {
@@ -27,6 +34,6 @@ final class ProjectSearch {
             }
             guard !Task.isCancelled else { return }
         }
-        (groups, failure, searched) = (found, why, query)
+        (groups, failure, searched, usages) = (found, why, query, nil)
     }
 }

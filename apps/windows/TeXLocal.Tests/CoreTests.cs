@@ -52,13 +52,14 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Home draws a page for each of these ids (PagePreview).
+    /// Home draws a page for each of these ids (PagePreview); Prefs' engine for new projects is pdflatex until one is chosen.
     [Fact]
-    public async Task CatalogueNamesHomesTemplates()
+    public async Task CatalogueNamesHomesTemplatesAndEngines()
     {
-        var templates = (await core.CallAsync<Catalogue>("catalogue")).Templates;
+        var (templates, engines) = await core.CallAsync<Catalogue>("catalogue");
         Assert.Equal(new[] { "blank", "article", "report", "beamer" }, templates.Select(t => t.Id));
         Assert.Equal("Presentation", templates[3].Title);
+        Assert.Contains(engines, e => e.Id == "pdflatex");
     }
 
     [Fact]
@@ -86,7 +87,7 @@ public sealed class CoreTests : IDisposable
         const ulong session = 7;
         var opened = await core.CallAsync<SessionOpened>("session_open", new { id = made.Id, session });
         Assert.Equal("main.tex", opened.Settings.GetProperty("mainFile").GetString());
-        Assert.Equal(JsonValueKind.Array, opened.Ui.GetProperty("expandedFolders").ValueKind);
+        Assert.Empty(opened.Ui.ExpandedFolders);
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
         using (var source = core.SessionSource(session, "main.tex")) Assert.Equal(text, source?.Text);
         var analysis = await core.CallAsync<Analysis>("session_analyze", new { session, path = "main.tex" });
@@ -99,9 +100,10 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_close", new { session });
     }
 
-    /// Search's hits by file; Replace's edits of the open document at its version, and the other files counted.
+    /// Search's hits by file, and usages' as theirs under their heading; Replace's edits of the open document at its
+    /// version, and the other files counted.
     [Fact]
-    public async Task SearchAndReplaceDecode()
+    public async Task SearchUsagesAndReplaceDecode()
     {
         var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Search" });
         File.WriteAllText(Path.Combine(dir, made.Id, "notes.tex"), "a needle\n");
@@ -109,15 +111,74 @@ public sealed class CoreTests : IDisposable
         await core.CallAsync("session_open", new { id = made.Id, session });
         await core.CallAsync("session_open_document", new { session, path = "main.tex" });
         using var source = core.SessionSource(session, "main.tex")!;
-        source.Edit(0, 0, "needle ");
+        source.Edit(0, 0, "needle \\label{x} ");
         var found = await core.CallAsync<SearchFile[]>("session_search", new { session, query = "needle" });
         var hit = Assert.Single(Assert.Single(found, f => f.File == "notes.tex").Hits);
         Assert.Equal(("a ", "needle", 1, 2, 6), (hit.Before, hit.Match, hit.Line, hit.Column, hit.Length));
+        var usages = (await core.CallAsync<Usages?>("session_usages", new { session, path = "main.tex", offset = 14 }))!;
+        Assert.Equal("\\label{x}", usages.Name);
+        Assert.Equal(("main.tex", 14), (usages.Groups[0].File, Assert.Single(usages.Groups[0].Hits).Column));
         var replaced = await core.CallAsync<Replaced>("session_replace", new { session, query = "needle", replacement = "pin" });
         Assert.Equal("main.tex", replaced.Edits?.Path);
         Assert.Equal(source.Call<ulong?>("version", new { }), replaced.Edits?.Version);
         Assert.Equal(new[] { new TextEdit(0, 6, "pin") }, replaced.Edits?.Edits);
         Assert.Equal(new[] { new FileCount("notes.tex", 1) }, replaced.Written);
+        await core.CallAsync("session_close", new { session });
+    }
+
+    /// A place sent and Back's answer, as the workspace's jumps and menu read them.
+    [Fact]
+    public async Task PlacesGoBack()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Places" });
+        const ulong session = 11;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        await core.CallAsync("session_navigate", new { session, from = new Spot("main.tex", 1) });
+        var back = await core.CallAsync<Trail>("session_back", new { session, at = new Spot("main.tex", 3) });
+        Assert.Equal(new Trail(false, true, new Spot("main.tex", 1)), back);
+        await core.CallAsync("session_close", new { session });
+    }
+
+    /// Go to all's results: a heading and a label, each with its place.
+    [Fact]
+    public async Task GoToAllDecodes()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Quick" });
+        File.WriteAllText(Path.Combine(dir, made.Id, "main.tex"), "\\section{Intro}\\label{sec:intro}\n");
+        const ulong session = 13;
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        QuickItem[] found = [new("heading", "Intro", "Section · main.tex", "main.tex", 1), new("label", "sec:intro", "Intro", "main.tex", 1)];
+        Assert.Equal(found, await core.CallAsync<QuickItem[]>("session_quick_open", new { session, query = "intro" }));
+        await core.CallAsync("session_close", new { session });
+    }
+
+    /// session_history_list's entries and session_history_compare's rows, as docs/core-api.md has them.
+    [Fact]
+    public void HistoryDecodes()
+    {
+        const string listed = """[{"id":"a1","time":"2026-10-22T09:41:00Z","name":null,"reason":"Before Replace All","changed":[{"path":"main.tex","change":"changed"}]}]""";
+        var snapshot = Assert.Single(JsonSerializer.Deserialize<Snapshot[]>(listed, Core.Json)!);
+        Assert.Equal(("a1", null, "Before Replace All"), (snapshot.Id, snapshot.Name, snapshot.Reason));
+        Assert.Equal(new DateTimeOffset(2026, 10, 22, 9, 41, 0, TimeSpan.Zero), snapshot.Time);
+        Assert.Equal(new SnapshotChange("main.tex", "changed"), Assert.Single(snapshot.Changed));
+        Assert.Equal([new DiffRow(null, "a", null, null), new DiffRow(null, null, null, 2)], JsonSerializer.Deserialize<DiffRow[]>("""[{"removed":"a"},{"skipped":2}]""", Core.Json)!);
+    }
+
+    /// The checks the session sends as it opens, as the issues panel lists them.
+    [Fact]
+    public async Task ChecksDecode()
+    {
+        var made = await core.CallAsync<ProjectInfo>("create_project", new { name = "Checks" });
+        File.WriteAllText(Path.Combine(dir, made.Id, "main.tex"), "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\end{document}\n");
+        const ulong session = 9;
+        var checks = new TaskCompletionSource<LogItem[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        core.Event += e =>
+        {
+            if (e.Type == "checks" && e.Session == session) checks.TrySetResult(e.Json.Deserialize<DocEvent>(Core.Json)!.Items!);
+        };
+        await core.CallAsync("session_open", new { id = made.Id, session });
+        var check = Assert.Single(await checks.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(("warning", "main.tex", 3), (check.Type, check.File, check.Line));
         await core.CallAsync("session_close", new { session });
     }
 

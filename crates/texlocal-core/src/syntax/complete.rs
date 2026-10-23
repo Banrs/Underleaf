@@ -10,8 +10,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{SourceDocument, Text, catalog, escaped, indentation, is, letter, utf16};
-use crate::analyze::{Defined, Facts, Named, Place};
+use super::{SourceDocument, Text, catalog, indentation, utf16};
+use crate::analyze::{Defined, Facts, Input, Named, Place};
 use crate::paths;
 use crate::projects::file_kind;
 
@@ -48,13 +48,34 @@ pub enum SymbolKind {
 #[derive(Default)]
 pub struct Symbols {
     pub citations: Vec<Named>,
-    pub labels: Vec<String>,
+    pub labels: Vec<Named>,
     pub commands: Vec<Defined>,
     pub environments: Vec<String>,
     /// The project's, from its folder, to complete a file's name.
     pub files: Vec<String>,
     /// Each .tex and .bib file's, by its name.
     pub by_file: BTreeMap<String, Arc<Facts>>,
+    pub installed: Arc<Installed>,
+}
+
+impl Symbols {
+    /// The project's file that `rel` names, spelt as the project spells it.
+    pub(crate) fn spelt(&self, rel: &str) -> Option<String> {
+        let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
+        let mut files = self.files.iter();
+        files.find(|file| paths::fold_case(file) == rel).cloned()
+    }
+}
+
+/// The names, without their extensions, of the .sty, .cls, .bst and .tex files the installed TeX
+/// has, each list sorted.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Installed {
+    pub packages: Vec<String>,
+    pub classes: Vec<String>,
+    pub styles: Vec<String>,
+    /// What `\input` finds outside the project.
+    pub inputs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -76,7 +97,7 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    pub fn completions(&self, caret: u32, explicit: bool) -> Option<Completions> {
+    pub fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         let from = text.lines[line].max(caret.saturating_sub(250));
@@ -95,19 +116,34 @@ impl SourceDocument {
             let start = before.len() - before[start..].trim_start().len();
             let typed = &before[start..];
             let listed: Vec<String>;
+            let installed = &self.symbols.installed;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    let cited = matching(&self.symbols.citations, typed, |c| &c.name).into_iter();
-                    let items = cited.map(|c| word(c.name.clone(), c.detail.clone()));
-                    return offer(start, SymbolKind::Citation, items.collect());
+                    let cited = cited(&self.symbols.citations, typed);
+                    return offer(start, SymbolKind::Citation, described(cited));
                 }
-                c if catalog.ref_commands.contains(c) => (&self.symbols.labels, SymbolKind::Label),
+                c if catalog.ref_commands.contains(c) => {
+                    let labels = matching(&self.symbols.labels, typed, |l| &l.name);
+                    return offer(start, SymbolKind::Label, described(labels));
+                }
                 "begin" | "end" => {
+                    // The environment an \end closes comes first, for Return to complete.
+                    let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
+                    let groups = (&c[1] == "end").then(|| self.scanned_to(at).groups());
+                    let mut groups = groups.into_iter().flatten().rev();
+                    let open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
                     let own = &self.symbols.environments;
                     let others = catalog.environments.iter().filter(|e| !own.contains(e));
-                    listed = own.iter().chain(others).cloned().collect();
+                    let rest = own
+                        .iter()
+                        .chain(others)
+                        .filter(|e| Some(*e) != open.as_ref());
+                    listed = open.iter().chain(rest).cloned().collect();
                     (&listed, SymbolKind::Environment)
                 }
+                "usepackage" | "RequirePackage" => (&installed.packages, SymbolKind::File),
+                "documentclass" => (&installed.classes, SymbolKind::File),
+                "bibliographystyle" => (&installed.styles, SymbolKind::File),
                 command => {
                     // \input's and \bibliography's names go without their extension, as LaTeX
                     // takes them.
@@ -172,101 +208,145 @@ impl SourceDocument {
     /// command, from the last scan and this document as it is now, or the file an input or a
     /// graphic names, from its start. None where no name is, or nothing defines it.
     pub fn definition(&self, at: u32) -> Option<Value> {
-        let (text, at) = (&self.text, at.min(self.text.len()));
         let own = Facts::read(&self.text(), file_kind(&self.path));
+        let (kind, name, file) = self.symbol_at(&own, at)?;
+        let places = match kind {
+            SymbolKind::File => {
+                let start = Place {
+                    line: 1,
+                    column: 0,
+                    length: 0,
+                };
+                file.map(|file| (file, start)).into_iter().collect()
+            }
+            kind => self.defined(&own, kind, &name),
+        };
+        let places: Vec<Value> = places
+            .into_iter()
+            .map(|(file, at)| {
+                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
+            })
+            .collect();
+        (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
+    }
+
+    /// The name at `at` in this document, whose facts are `own`, as written, with its kind and,
+    /// for a file, the project's file it names, found as TeX finds it.
+    pub(crate) fn symbol_at(
+        &self,
+        own: &Facts,
+        at: u32,
+    ) -> Option<(SymbolKind, String, Option<String>)> {
+        let (text, at) = (&self.text, at.min(self.text.len()));
         let line = text.line_index(at);
         let column = at - text.lines[line];
         let holds = |place: &Place| {
             place.line as usize == line + 1
                 && (place.column..=place.column + place.length).contains(&column)
         };
-        let found = |rel: &str| {
-            let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
-            let mut files = self.symbols.files.iter();
-            files.find(|file| paths::fold_case(file) == rel).cloned()
-        };
-        let start = |file: Option<String>| -> Vec<Value> {
-            let start = |file| json!({ "file": file, "line": 1, "column": 0, "length": 0 });
-            file.map(start).into_iter().collect()
-        };
-        let (kind, name, places) =
-            if let Some(input) = own.inputs.iter().find(|input| holds(&input.place)) {
-                let parent = self.path.rsplit_once('/').map_or("", |(parent, _)| parent);
-                // The folder an \import gave this file isn't known here: the main file's is the
-                // likeliest, then the file's own.
-                let file = input.resolve(&self.path, "", found);
-                let file = file.or_else(|| input.resolve(&self.path, parent, found));
-                let places = start(file.map(|(file, _)| file));
-                (SymbolKind::File, input.name.clone(), places)
-            } else if let Some(used) = own.uses.iter().find(|used| holds(&used.place)) {
-                let name = &used.name;
-                let places = match used.kind {
-                    SymbolKind::File => {
-                        let graphic = GRAPHICS.iter().find_map(|ext| found(&(name.clone() + ext)));
-                        start(graphic)
-                    }
-                    kind => self.defined(&own, kind, name),
-                };
-                (used.kind, name.clone(), places)
-            } else if let Some((kind, named)) = [
-                (SymbolKind::Label, &own.labels),
-                (SymbolKind::Citation, &own.citations),
-            ]
-            .into_iter()
-            .find_map(|(kind, list)| Some((kind, list.iter().find(|n| holds(&n.place))?)))
-            {
-                // At a definition itself, so Rename can start there as from a reference.
-                (
-                    kind,
-                    named.name.clone(),
-                    self.defined(&own, kind, &named.name),
-                )
-            } else {
-                let units = &text.units;
-                let at = at as usize;
-                // The backslash is the command's too.
-                let at = at + usize::from(units.get(at).is_some_and(|&u| is(u, '\\')));
-                let start = at - units[..at].iter().rev().take_while(|&&u| letter(u)).count();
-                let end = at + units[at..].iter().take_while(|&&u| letter(u)).count();
-                let slash = start.checked_sub(1).filter(|&slash| {
-                    start < end && is(units[slash], '\\') && !escaped(units, slash)
-                })?;
-                let name = String::from_utf16_lossy(&units[slash..end]);
-                let places = self.defined(&own, SymbolKind::Command, &name);
-                (SymbolKind::Command, name, places)
-            };
-        (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
+        let found = |rel: &str| self.symbols.spelt(rel);
+        if let Some(input) = own.inputs.iter().find(|input| holds(&input.place)) {
+            let file = input_file(input, &self.path, found);
+            return Some((SymbolKind::File, input.name.clone(), file));
+        }
+        // Uses from the last, so a click on a command's backslash is that command's, not the one
+        // it ends; then definitions, so Rename can start at one as from a reference.
+        let uses = own.uses.iter().rev();
+        let mut names = uses.chain(&own.labels).chain(&own.citations);
+        let named = names.find(|named| holds(&named.place))?;
+        let file = (named.kind == SymbolKind::File)
+            .then(|| graphic(&named.name, found))
+            .flatten();
+        Some((named.kind, named.name.clone(), file))
     }
 
     /// Where each file defines `name` as a `kind`, the files in the order of their names, this
     /// one as it is now, `own`.
-    fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<Value> {
+    pub(crate) fn defined(
+        &self,
+        own: &Facts,
+        kind: SymbolKind,
+        name: &str,
+    ) -> Vec<(String, Place)> {
         let others = self.symbols.by_file.iter();
         let others = others.filter(|(file, _)| **file != self.path);
         let mut files: Vec<(&str, &Facts)> =
             others.map(|(file, facts)| (&**file, &**facts)).collect();
         files.push((&self.path, own));
         files.sort_by_key(|&(file, _)| file);
-        let named = |list: &[Named]| -> Vec<Place> {
-            let list = list.iter().filter(|named| named.name == name);
-            list.map(|named| named.place).collect()
-        };
         let places = files.into_iter().flat_map(|(file, facts)| {
-            let places = match kind {
-                SymbolKind::Label => named(&facts.labels),
-                SymbolKind::Citation => named(&facts.citations),
-                SymbolKind::Environment => named(&facts.environments),
-                _ => {
-                    let commands = facts.commands.iter().filter(|c| c.name == name);
-                    commands.map(|c| c.place).collect()
-                }
-            };
-            places.into_iter().map(move |at| {
-                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
-            })
+            let places = definitions(facts, kind, name).into_iter();
+            places.map(move |at| (file.to_owned(), at))
         });
         places.collect()
     }
+}
+
+/// Where `facts` define `name` as a `kind`.
+pub(crate) fn definitions(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
+    let named = |list: &[Named]| -> Vec<Place> {
+        let list = list.iter().filter(|named| named.name == name);
+        list.map(|named| named.place).collect()
+    };
+    match kind {
+        SymbolKind::Label => named(&facts.labels),
+        SymbolKind::Citation => named(&facts.citations),
+        SymbolKind::Environment => named(&facts.environments),
+        _ => {
+            let commands = facts.commands.iter().filter(|c| c.name == name);
+            commands.map(|c| c.place).collect()
+        }
+    }
+}
+
+/// Every place `facts`, `file`'s, define or use `name` as a `kind`, in order; for a file, each
+/// input or graphic that names it, as `found` spells the project's files.
+pub(crate) fn usages(
+    facts: &Facts,
+    file: &str,
+    kind: SymbolKind,
+    name: &str,
+    found: impl Fn(&str) -> Option<String>,
+) -> Vec<Place> {
+    let mut places = if kind == SymbolKind::File {
+        let inputs = facts
+            .inputs
+            .iter()
+            .filter(|input| input_file(input, file, &found).as_deref() == Some(name));
+        let graphics = facts.uses.iter().filter(|used| {
+            used.kind == kind && graphic(&used.name, &found).as_deref() == Some(name)
+        });
+        let places = inputs.map(|input| input.place);
+        places.chain(graphics.map(|used| used.place)).collect()
+    } else {
+        let used = facts
+            .uses
+            .iter()
+            .filter(|used| used.kind == kind && used.name == name);
+        let mut places = definitions(facts, kind, name);
+        places.extend(used.map(|used| used.place));
+        places
+    };
+    places.sort_by_key(|place| (place.line, place.column));
+    // A command's definition is also where its name is written.
+    places.dedup();
+    places
+}
+
+/// The file `input` names, read from `file`. The folder an \import gave `file` isn't known
+/// here: the main file's is the likeliest, then the file's own.
+fn input_file(input: &Input, file: &str, found: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let parent = file.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let named = input.resolve(file, "", &found);
+    let named = named.or_else(|| input.resolve(file, parent, &found));
+    named.map(|(named, _)| named)
+}
+
+/// The file a graphic named `name` is.
+fn graphic(name: &str, found: impl Fn(&str) -> Option<String>) -> Option<String> {
+    GRAPHICS
+        .iter()
+        .find_map(|ext| found(&format!("{name}{ext}")))
 }
 
 /// A graphic named without its extension is looked for with pdfTeX's, in its order.
@@ -282,24 +362,67 @@ fn word(label: String, detail: Option<String>) -> Completion {
     }
 }
 
-fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
-    let (lower, ascii) = (typed.to_lowercase(), typed.is_ascii());
-    // ASCII names are compared in place: lowercasing a copy per key was most of a citation's offer. Others are
-    // lowercased by Unicode's full mapping, which may lower a character to ASCII (the kelvin sign).
-    let starts = |n: &str| {
-        if ascii && n.is_ascii() {
-            let head = n.as_bytes().get(..typed.len());
-            head.is_some_and(|head| head.eq_ignore_ascii_case(typed.as_bytes()))
+fn described(named: Vec<&Named>) -> Vec<Completion> {
+    let word = |n: &Named| word(n.name.clone(), n.detail.clone());
+    named.into_iter().map(word).collect()
+}
+
+/// Where in a name what was typed is found, regardless of case.
+enum At {
+    Start,
+    Word,
+    Anywhere,
+}
+
+/// ASCII names are compared in place: lowercasing a copy per key was most of a citation's offer. Others are
+/// lowercased by Unicode's full mapping, which may lower a character to ASCII (the kelvin sign).
+fn finder(typed: &str) -> impl Fn(&str, At) -> bool + '_ {
+    let lower = typed.to_lowercase();
+    move |name, at| {
+        let folded;
+        let (name, typed) = if typed.is_ascii() && name.is_ascii() {
+            (name, typed)
         } else {
-            n.to_lowercase().starts_with(&lower)
+            folded = name.to_lowercase();
+            (folded.as_str(), lower.as_str())
+        };
+        let here = |i: usize| {
+            let part = name.as_bytes().get(i..i + typed.len());
+            part.is_some_and(|part| part.eq_ignore_ascii_case(typed.as_bytes()))
+        };
+        let word = |i: usize| {
+            let before = name.get(..i).map(|before| before.chars().next_back());
+            before.is_some_and(|c| c.is_none_or(|c| !c.is_alphanumeric()))
+        };
+        match at {
+            At::Start => here(0),
+            At::Word => (0..=name.len()).any(|i| word(i) && here(i)),
+            At::Anywhere => (0..=name.len()).any(here),
         }
-    };
+    }
+}
+
+fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
+    let found = finder(typed);
     let (mut exact, folded): (Vec<_>, Vec<_>) = items
         .iter()
-        .filter(|i| starts(name(i)))
+        .filter(|i| found(name(i), At::Start))
         .partition(|i| name(i).starts_with(typed));
     exact.extend(folded);
     exact
+}
+
+/// Keys that start with what was typed, then those that hold it, then those whose entry's
+/// authors, year or title has a word that starts with it.
+fn cited<'a>(citations: &'a [Named], typed: &str) -> Vec<&'a Named> {
+    let found = finder(typed);
+    let mut cited = matching(citations, typed, |c| &c.name);
+    let others = citations.iter().filter(|c| !found(&c.name, At::Start));
+    let (keys, others): (Vec<_>, Vec<_>) = others.partition(|c| found(&c.name, At::Anywhere));
+    cited.extend(keys);
+    let detailed = |c: &&Named| c.detail.as_deref().is_some_and(|d| found(d, At::Word));
+    cited.extend(others.into_iter().filter(detailed));
+    cited
 }
 
 /// Fields named "#{name}" show their name as text, and fields with the same name are one; later lines take `at`'s
@@ -335,7 +458,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
 mod tests {
     use std::sync::Arc;
 
-    use super::{Completion, Defined, Place, SnippetField, Symbols};
+    use super::{Completion, Defined, Installed, Place, SnippetField, Symbols};
     use crate::syntax::SourceDocument;
     use crate::syntax::tests::cited;
 
@@ -384,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn a_files_argument_offers_the_projects_files_of_its_kind() {
+    fn a_files_argument_offers_the_projects_or_the_installed_files_of_its_kind() {
         let files = [
             "chapters/One.TEX",
             "figs/a.png",
@@ -393,9 +516,16 @@ mod tests {
             "notes.txt",
             "refs.bib",
         ];
+        let names = |names: &[&str]| names.iter().map(|&n| n.into()).collect();
         let offered = |before: &str| {
             let symbols = Symbols {
                 files: files.map(String::from).to_vec(),
+                installed: Arc::new(Installed {
+                    packages: names(&["amsmath", "amsthm", "graphicx"]),
+                    classes: names(&["article"]),
+                    styles: names(&["plain"]),
+                    ..Installed::default()
+                }),
                 ..Symbols::default()
             };
             labels(before, symbols)
@@ -406,7 +536,13 @@ mod tests {
         assert_eq!(graphics, ["figs/a.png", "figs/b.pdf"]);
         assert_eq!(offered("\\bibliography{main,"), ["refs"]);
         assert_eq!(offered("\\addbibresource{"), ["refs.bib"]);
-        assert!(offered("\\usepackage{").is_empty());
+        assert_eq!(
+            offered("\\usepackage[x]{graphicx,ams"),
+            ["amsmath", "amsthm"]
+        );
+        assert_eq!(offered("\\RequirePackage{g"), ["graphicx"]);
+        assert_eq!(offered("\\documentclass{"), ["article"]);
+        assert_eq!(offered("\\bibliographystyle{"), ["plain"]);
     }
 
     #[test]
@@ -440,6 +576,16 @@ mod tests {
     }
 
     #[test]
+    fn an_end_offers_the_environment_it_closes_first() {
+        let open =
+            "\\begin{document}\n\\begin{itemize}\\begin{center}\\end{center}\n\\item x\n\\end{";
+        assert_eq!(
+            labels(open, Symbols::default())[..2],
+            ["itemize", "document"]
+        );
+    }
+
+    #[test]
     fn case_matches_come_first() {
         let names = labels("\\s", Symbols::default());
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
@@ -462,6 +608,23 @@ mod tests {
         assert_eq!(offered("é"), ["émile2", "Émile"]);
         assert_eq!(offered("ÉMILE"), ["Émile", "émile2"]);
         assert_eq!(offered("\u{212a}n"), ["Knuth84", "knuth86", "Kn"]);
+    }
+
+    #[test]
+    fn a_citation_is_found_in_its_key_then_by_a_word_of_its_entry() {
+        let bib = "@book{knuth84, author = {Knuth}, year = 1984, title = {The TeXbook}}\n\
+            @book{texbook2, author = {Donald Knuth}, title = {Computers}}\n@misc{dk-knuth,}\n\
+            @misc{lamport94, author = {Lamport}, year = 1994, title = {LaTeX}}";
+        let offered = |typed: &str| {
+            let symbols = Symbols {
+                citations: crate::analyze::Facts::read(bib, "bib").citations,
+                ..Symbols::default()
+            };
+            labels(&format!("\\cite{{{typed}"), symbols)
+        };
+        assert_eq!(offered("knuth"), ["knuth84", "dk-knuth", "texbook2"]);
+        assert_eq!(offered("TEX"), ["texbook2", "knuth84"]);
+        assert_eq!(offered("199"), ["lamport94"]);
     }
 
     #[test]

@@ -15,7 +15,31 @@ extension PDFController {
         return document
     }
 
-    nonisolated enum Zoom: Codable, Hashable { case fitWidth, fitPage, scale(Double) }
+    /// What a project keeps of the view, the restored place while it waits.
+    var keptPage: Int? { restorePage ?? (page > 0 ? page : nil) }
+    var keptZoom: Zoom { restoreZoom ?? zoom }
+
+    /// As a project's ui state keeps it (docs/core-api.md): "fitWidth", "fitPage" or a scale.
+    nonisolated enum Zoom: Decodable, Hashable {
+        case fitWidth, fitPage, scale(Double)
+
+        init(from decoder: any Decoder) throws {
+            let value = try decoder.singleValueContainer()
+            if let scale = try? value.decode(Double.self) {
+                self = .scale(scale)
+            } else {
+                self = try value.decode(String.self) == "fitPage" ? .fitPage : .fitWidth
+            }
+        }
+
+        var json: any Sendable {
+            switch self {
+            case .fitWidth: "fitWidth"
+            case .fitPage: "fitPage"
+            case .scale(let scale): scale
+            }
+        }
+    }
 
     /// The source's word, found by the core in the text round SyncTeX's boxes (`synctex_match`), is selected; where it
     /// isn't found once, SyncTeX's box flashes.

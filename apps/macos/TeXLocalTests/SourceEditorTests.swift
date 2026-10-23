@@ -74,7 +74,7 @@ struct SourceEditorTests {
         #expect(text.string == "{}" && text.selectedRange() == .caret(2))
         open("  a{}", caret: 4)
         text.insertNewline(nil)
-        #expect(text.string == "  a{\n  \n  }" && text.selectedRange().location == 7)
+        #expect(text.string == "  a{\n    \n  }" && text.selectedRange().location == 9)
         open("x", caret: 0)
         text.insertTab(nil)
         #expect(text.string == "  x" && text.document.text == text.string)
@@ -198,10 +198,10 @@ struct SourceEditorTests {
                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         let shown = try #require(editor.textView(text, menu: menu, for: event, at: 0))
         #expect(shown.items.map { $0.isSeparatorItem ? "-" : $0.title }
-            == ["Jump to Definition", "Go to PDF Position", "Comment Selection", "-", "Cut"])
+            == ["Jump to Definition", "Find Usages", "Go to PDF Position", "Comment Selection", "-", "Cut"])
         var performed: [MenuCommand] = []
         editor.command = { performed.append($0) }
-        let sync = shown.items[1]
+        let sync = shown.items[2]
         NSApp.sendAction(try #require(sync.action), to: sync.target, from: sync)
         #expect(performed == [.syncForward])
     }
@@ -478,7 +478,7 @@ struct SourceEditorTests {
     @Test func anEditRecoloursTheLinesBelowIt() async throws {
         inWindow()
         open("a\nb\nxyz\n\\]", caret: 0)
-        let theme = SyntaxTheme.overleaf
+        let theme = SyntaxTheme.system
         try await waitUntilColoured("]", theme.color(.invalid))
         text.insertText("\\[\n", replacementRange: .caret(2))
         try await waitUntilColoured("]", theme.color(.maths))
@@ -494,16 +494,16 @@ struct SourceEditorTests {
         window.orderFrontUnseen()
         defer { window.close() }
         open("\\section{A} % note")
-        let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), system = try #require(SyntaxTheme(rawValue: "system"))
+        let texstudio = try #require(SyntaxTheme(rawValue: "texstudio")), overleaf = try #require(SyntaxTheme(rawValue: "overleaf"))
         text.syntaxTheme = texstudio
         try await waitUntilColoured("\\section", texstudio.color(.command))
         #expect(try colour(of: "% note") == texstudio.color(.comment))
         let before = try #require(drawn().tiffRepresentation)
-        text.syntaxTheme = system
-        try await waitUntilColoured("\\section", system.color(.command))
+        text.syntaxTheme = overleaf
+        try await waitUntilColoured("\\section", overleaf.color(.command))
         #expect(try drawn().tiffRepresentation != before, "A theme change must repaint the already-visible text.")
-        text.syntaxTheme = .overleaf
-        try await waitUntilColoured("\\section", SyntaxTheme.overleaf.color(.command))
+        text.syntaxTheme = .system
+        try await waitUntilColoured("\\section", SyntaxTheme.system.color(.command))
     }
 
     /// Another app's text for the file shown keeps the caret and the top line where they were, as Xcode does.
@@ -583,7 +583,7 @@ struct SourceEditorTests {
     private func issue(_ line: Int, _ message: String, error: Bool = true, compact: String? = nil, tokens: [NSRange] = [],
                        others: [String] = []) -> IssuesEvent.Line {
         IssuesEvent.Line(line: line, error: error, message: message, short: message, compact: compact,
-                         tokens: tokens.map { SourceRange(start: $0.location, length: $0.length) }, others: others)
+                         tokens: tokens.map { SourceRange(start: $0.location, length: $0.length) }, others: others, index: nil)
     }
 
     private func show(_ issues: IssuesEvent.Line...) {

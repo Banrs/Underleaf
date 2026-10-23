@@ -1,12 +1,18 @@
-//! Typing as the source editor assists it: brackets that close and are stepped over, Delete back to an indent stop,
-//! Return keeping indentation, and a bracket's partner. The closers put in are kept between keys, as the snippet's fields are.
+//! Typing as the source editor assists it: brackets and dollars that close and are stepped over, Delete back to an
+//! indent stop, Return keeping indentation, closing an environment and going on with a list, and a bracket's partner.
+//! The closers put in are kept between keys, as the snippet's fields are.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use serde::Serialize;
 
+use super::scan::{Group, Visit, arguments, blank_line};
 use super::snippet::Snippet;
-use super::{SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice};
+use super::{
+    INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, span, splice,
+    utf16,
+};
 
 /// What a key does instead of the editor: an edit typed as a key types (so it undoes with the typing around it),
 /// and where the selection goes.
@@ -61,9 +67,7 @@ fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
 
 impl SourceDocument {
     pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
-        let typing = &mut self.typing;
-        typing.pending = None;
-        let units = &self.text.units[..];
+        self.typing.pending = None;
         // More than a character, as an input method commits, goes in as it is.
         let Some(key) = typed
             .encode_utf16()
@@ -77,13 +81,30 @@ impl SourceDocument {
         };
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let length = end - start;
+        let dollar = auto_pair && is(key, '$');
+        // A dollar closes maths or opens it, which only the scan can tell.
+        let innermost = (dollar && length == 0)
+            .then(|| self.scanned_to(start).groups().pop())
+            .flatten();
+        let typing = &mut self.typing;
+        let units = &self.text.units[..];
         let next = units.get(start).copied();
-        if length == 0 && typing.closers.contains(&start) && is_closing(key) {
+        if length == 0 && typing.closers.contains(&start) && (is_closing(key) || dollar) {
+            // An empty pair of dollars the editor put in becomes a display's.
+            let empty = |g: &Group| g.end == "$" && g.open + 1 == start;
+            if dollar && next == Some(key) && innermost.as_ref().is_some_and(empty) {
+                typing.pending = Some((start, start + 1));
+                return Keystroke {
+                    edit: Some(splice(start, 0, "$$")),
+                    selection: Some(span(start + 1, 0)),
+                    ..Keystroke::default()
+                };
+            }
             // A closer put in as \] or \}: its bracket steps over both, and a backslash typed for it goes. A
             // backslash alone is typed in, being a command's as often as the closer's.
             let escaped_closer =
                 next.is_some_and(|u| is(u, '\\')) && units.get(start + 1) == Some(&key);
-            if next == Some(key) || escaped_closer {
+            if next == Some(key) && !(dollar && escaped(units, start)) || escaped_closer {
                 typing.closers.remove(&start);
                 let mut bracket = start + escaped_closer as usize;
                 let mut keystroke = Keystroke::default();
@@ -97,7 +118,8 @@ impl SourceDocument {
                 return keystroke;
             }
         }
-        if let Some(close) = closing_of(key).filter(|_| auto_pair) {
+        let close = closing_of(key).or(dollar.then_some('$'));
+        if let Some(close) = close.filter(|_| auto_pair) {
             if length > 0 {
                 let selected = String::from_utf16_lossy(&units[start..end]);
                 typing.pending = Some((start, end + 1));
@@ -108,7 +130,14 @@ impl SourceDocument {
                 };
             }
             let before = |c: char| c.is_whitespace() || CLOSE_BEFORE.contains(c);
-            if next.is_none_or(|n| char::from_u32(n.into()).is_some_and(before)) {
+            // In maths a dollar closes it, and \$ is one in the text. One just after a dollar closes a display: the scan,
+            // reading only to the caret, took that first one as closing it.
+            let literal = dollar
+                && (innermost.is_some_and(|g| g.math)
+                    || escaped(units, start)
+                    || units[..start].last().is_some_and(|&u| is(u, '$'))
+                        && !escaped(units, start - 1));
+            if next.is_none_or(|n| char::from_u32(n.into()).is_some_and(before)) && !literal {
                 let slash = if escaped(units, start) { "\\" } else { "" };
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
@@ -138,9 +167,10 @@ impl SourceDocument {
             completions: Completing::Close,
             ..Keystroke::default()
         };
+        let dollars = units[caret - 1..].starts_with(&['$' as u16; 2]);
         if auto_pair
             && self.typing.closers.contains(&caret)
-            && let Some(closer) = closer_after(units, caret)
+            && let Some(closer) = closer_after(units, caret).or(dollars.then_some(1))
         {
             return delete(caret - 1, caret + closer);
         }
@@ -154,34 +184,87 @@ impl SourceDocument {
 
     pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
         self.typing.pending = None;
-        let units = &self.text.units[..];
         let (mut start, end) = clamp(selection, self.text.len()).bounds();
         let mut length = end - start;
         let line = self.text.around(start);
+        let groups = if length == 0 {
+            self.scanned_to(start).groups()
+        } else {
+            vec![]
+        };
+        let units = &self.text.units[..];
         let indent = indentation(&units[line.start..line.end]);
         let indented = String::from_utf16_lossy(&units[line.start..line.start + indent]);
-        let mut insert = format!("\n{indented}");
-        if length == 0 && closer_after(units, start).is_some() {
-            insert.push('\n');
-            insert.push_str(&indented);
-        } else {
-            while start + length < line.end
-                && (is(units[start + length], ' ') || is(units[start + length], '\t'))
-            {
-                length += 1;
-            }
-            let before = &units[line.start..start];
-            if !before.is_empty() && indentation(before) == before.len() {
-                length += start - line.start;
-                start = line.start;
-            }
-        }
-        Keystroke {
+        let rest = units.get(start..line.end).unwrap_or_default();
+        let key = |start: usize, length: usize, insert: String, caret: usize| Keystroke {
             edit: Some(splice(start, length, insert)),
-            selection: Some(span(start + 1 + indent, 0)),
+            selection: Some(span(caret, 0)),
             completions: Completing::Close,
             ..Keystroke::default()
+        };
+        // The \begin just before the caret, with its arguments, its name the first.
+        let begun = groups
+            .last()
+            .filter(|g| g.open >= line.start)
+            .and_then(|g| {
+                let name = g.end.strip_prefix("env:")?;
+                let mut read = (g.open + "\\begin".len(), true);
+                while read.1 {
+                    read = arguments(&units[..start], read.0, |_, _| {});
+                }
+                (read.0 == start).then_some((name, g.open))
+            });
+        let step = match begun {
+            // A document's body is written at its \begin's indentation.
+            Some(("document", _)) => "",
+            _ if indented.starts_with('\t') => "\t",
+            _ => INDENT,
+        };
+        let inner = format!("\n{indented}{step}");
+        let caret = start + utf16(&inner);
+        if let Some((name, begin)) = begun
+            && blank_line(rest)
+        {
+            let rest = rest.len();
+            let close = match self.environment_partner(begin) {
+                Some(_) => String::new(),
+                None => format!("\n{indented}\\end{{{name}}}"),
+            };
+            return key(start, rest, inner + &close, caret);
         }
+        let end_tag = |(name, _)| crate::utf16_lossy(rest).starts_with(&format!("\\end{{{name}}}"));
+        if begun.is_some_and(end_tag) || length == 0 && closer_after(units, start).is_some() {
+            return key(start, 0, format!("{inner}\n{indented}"), caret);
+        }
+        let list = groups.iter().rev().find_map(|g| g.end.strip_prefix("env:"));
+        let from = line.start + indent;
+        let content = crate::utf16_lossy(units.get(from..start).unwrap_or_default());
+        let item = content.strip_prefix("\\item");
+        if matches!(list, Some("itemize" | "enumerate" | "description"))
+            && blank_line(rest)
+            // A bare \item is left to Return, as some write its text on the next line.
+            && let Some(after) =
+                item.filter(|after| after.starts_with(|c: char| !c.is_ascii_alphabetic()))
+        {
+            // An empty item ends the list, as a word processor's empty bullet does.
+            if after.trim().is_empty() {
+                return key(from, line.end - from, String::new(), from);
+            }
+            let next = format!("\n{indented}\\item ");
+            let caret = start + utf16(&next);
+            return key(start, rest.len(), next, caret);
+        }
+        while start + length < line.end
+            && (is(units[start + length], ' ') || is(units[start + length], '\t'))
+        {
+            length += 1;
+        }
+        let before = &units[line.start..start];
+        if !before.is_empty() && indentation(before) == before.len() {
+            length += start - line.start;
+            start = line.start;
+        }
+        key(start, length, format!("\n{indented}"), start + 1 + indent)
     }
 
     /// `changing`, the range the editor said it would change, stands for `old` when it is within it from the same start.
@@ -234,6 +317,25 @@ impl SourceDocument {
         }
         let line = self.text.around(start).start;
         typing.closers.retain(|&p| p >= line);
+        if !mirroring && typing.snippet.is_none() {
+            self.typing.snippet = self.environment_names(selection);
+        }
+    }
+
+    /// The `\end` closing the `\begin` at `at`, or the `\begin` the `\end` at `at` closes. An unclosed `\begin`
+    /// is dropped by the `\end` of an environment around it, which ends the search.
+    pub(super) fn environment_partner(&mut self, at: usize) -> Option<usize> {
+        let mut scanner = self.scans.resume(&self.text, at, at).scanner;
+        let units = &self.text.units;
+        let mut partner = Partner { at, found: None };
+        scanner.run(units, at + 1, &[], &mut partner);
+        while partner.found.is_none()
+            && scanner.i < units.len()
+            && scanner.groups().iter().any(|g| g.open == at)
+        {
+            scanner.run(units, scanner.i + 1024, &[], &mut partner);
+        }
+        partner.found
     }
 
     /// Brackets in comments are no one's, and an escaped one pairs only with the escaped.
@@ -272,6 +374,21 @@ impl SourceDocument {
             matched(brackets[..=here].iter().rev(), start)
         };
         found.map(|i| i as u32)
+    }
+}
+
+struct Partner {
+    at: usize,
+    found: Option<usize>,
+}
+
+impl Visit for Partner {
+    fn closed(&mut self, group: &Group, close: Range<usize>) {
+        if group.open == self.at {
+            self.found = Some(close.start);
+        } else if close.start == self.at {
+            self.found = Some(group.open);
+        }
     }
 }
 

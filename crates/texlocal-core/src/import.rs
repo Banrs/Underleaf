@@ -1,7 +1,7 @@
-//! Bringing outside files into the library: a Finder drop onto a project, and a .zip, or a file
-//! whose folder doesn't open where it is (`open_path`), made a new project. Both read host-chosen
-//! absolute paths and block on the disk; hosts call them off their UI thread, as they do every
-//! `tl_call`.
+//! Bringing files into the library: a Finder drop onto a project, and a .zip, a file whose folder
+//! doesn't open where it is (`open_path`) or a library project's files made a new project. They
+//! read host-chosen absolute paths and block on the disk; hosts call them off their UI thread, as
+//! they do every `tl_call`.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
+use crate::analyze::Facts;
 use crate::paths::{self, after_entry, fold_case, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, Trash};
 use crate::service::Service;
@@ -52,6 +53,21 @@ static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
 });
 
+/// Packages that build only with XeLaTeX or LuaLaTeX, which a new project's engine follows.
+const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
+    (
+        "xelatex",
+        &[
+            "fontspec",
+            "unicode-math",
+            "polyglossia",
+            "xeCJK",
+            "mathspec",
+        ],
+    ),
+    ("lualatex", &["luacode", "luatexja", "luaotfload"]),
+];
+
 /// `name` in the project folder `dir` ("" is the project's own).
 fn in_folder(dir: &str, name: &str) -> String {
     if dir.is_empty() {
@@ -61,12 +77,14 @@ fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
-/// The files under a dropped path, each by its path named from the path's own name `rel`.
-/// Links inside a folder stay behind: a drop imports what was dropped.
+/// The files under a path, each by its path named from the path's own name `rel`. A drop leaves
+/// links inside a folder behind, as it imports what was dropped; a duplicate follows `links` to
+/// files, as the tree and an export do.
 fn collect(
     abs: &Path,
     rel: String,
     meta: &fs::Metadata,
+    links: bool,
     files: &mut Vec<(String, PathBuf)>,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
@@ -76,8 +94,14 @@ fn collect(
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !projects::is_litter(&name) {
-                let meta = entry.metadata()?;
-                collect(&entry.path(), in_folder(&rel, &name), &meta, files)?;
+                let path = entry.path();
+                // An entry's own metadata doesn't follow a link; a folder's could cycle.
+                let meta = if links && path.is_file() {
+                    fs::metadata(&path)?
+                } else {
+                    entry.metadata()?
+                };
+                collect(&path, in_folder(&rel, &name), &meta, links, files)?;
             }
         }
     }
@@ -100,7 +124,7 @@ pub fn import_files(
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
-        collect(abs, name.into_owned(), &meta, &mut files)?;
+        collect(abs, name.into_owned(), &meta, false, &mut files)?;
     }
     let root = service.project(id)?.root;
     let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
@@ -329,7 +353,8 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
 
 /// The settings a folder's sources name, `chosen` the top-level .tex opened: the main file is
 /// the root that .tex names, else that .tex, else the likeliest top-level one, else none; the
-/// engine is the one the chosen .tex or the main file names.
+/// engine is the one the chosen .tex or the main file names, else the one the main file's
+/// packages need.
 pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
     // latexmk would read a name starting with "-" as an option.
     let chosen = chosen.filter(|main| !main.starts_with('-'));
@@ -343,11 +368,18 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
         Some(main) => Some(main),
         None => projects::guess_main_file(root)?,
     };
-    let program = program.or_else(|| magic_comments(&root.join(main.as_ref()?)).1);
+    let main_path = main.as_ref().map(|main| root.join(main));
+    let program = program.or_else(|| magic_comments(main_path.as_ref()?).1);
     let program = program.unwrap_or_default().to_lowercase();
-    let engine = ["xelatex", "lualatex", "pdflatex"]
+    let named = ["xelatex", "lualatex", "pdflatex"]
         .into_iter()
         .find(|engine| program.contains(engine));
+    let engine = named.or_else(|| {
+        let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, "tex");
+        let loads = |names: &[&str]| facts.packages.iter().any(|p| names.contains(&p.as_str()));
+        let needed = ENGINE_PACKAGES.into_iter().find(|(_, names)| loads(names));
+        needed.map(|(engine, _)| engine)
+    });
     let mut settings = json!({});
     if let Some(main) = main {
         settings["mainFile"] = main.into();
@@ -371,23 +403,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     files.retain(|(path, _)| !left_out(path));
 
     projects::new_project(&service.data_dir, &base, |root| {
-        validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
-        for (path, source) in &files {
-            let abs = root.join(rel_key(path)?);
-            fs::create_dir_all(abs.parent().unwrap_or(root))?;
-            let mut dest = BufWriter::new(File::create_new(abs)?);
-            match source {
-                Source::File(path) => {
-                    let mut origin = File::open(path).map_err(CoreError::at(path))?;
-                    io::copy(&mut origin, &mut dest)?;
-                }
-                Source::Zip(i) => {
-                    let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                    io::copy(&mut entry, &mut dest)?;
-                }
-            }
-            dest.flush()?;
-        }
+        write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
         if settings.get("mainFile").is_none() {
             let (file, content) = templates::files("blank")[0];
@@ -396,6 +412,63 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         }
         write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())
+    })
+}
+
+/// A new project's files, each written at its path in `root` from where it comes.
+fn write_files(
+    root: &Path,
+    files: &[(String, Source)],
+    mut zip: Option<&mut ZipArchive<File>>,
+) -> Result<(), CoreError> {
+    validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
+    for (path, source) in files {
+        let abs = root.join(rel_key(path)?);
+        fs::create_dir_all(abs.parent().unwrap_or(root))?;
+        let mut dest = BufWriter::new(File::create_new(abs)?);
+        match source {
+            Source::File(path) => {
+                let mut origin = File::open(path).map_err(CoreError::at(path))?;
+                io::copy(&mut origin, &mut dest)?;
+            }
+            Source::Zip(i) => {
+                let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
+                io::copy(&mut entry, &mut dest)?;
+            }
+        }
+        dest.flush()?;
+    }
+    Ok(())
+}
+
+/// A library project's copy named `name`, made as an import is: what an export leaves out stays
+/// behind (the build folder and the history among it), but the settings come along.
+pub(crate) fn duplicate_project(
+    service: &Service,
+    id: &str,
+    name: &str,
+) -> Result<ProjectInfo, CoreError> {
+    if projects::is_opened(id) {
+        return Err(CoreError::conflict(
+            "A folder opened where it is can't be duplicated here. Copy the folder itself, then open the copy.",
+        ));
+    }
+    let root = service.project(id)?.root;
+    let mut found = Vec::new();
+    let meta = fs::metadata(&root)?;
+    collect(&root, String::new(), &meta, true, &mut found)?;
+    let files: Vec<_> = (found.into_iter())
+        .filter(|(path, _)| !left_out(path))
+        .map(|(path, abs)| (path, Source::File(abs)))
+        .collect();
+    projects::new_project(&service.data_dir, name, |copy| {
+        write_files(copy, &files, None)?;
+        // Copied apart, as the generic writes refuse it; a folder put in the library by hand may
+        // have none.
+        match fs::copy(root.join(SETTINGS_FILE), copy.join(SETTINGS_FILE)) {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            copied => Ok(copied.map(drop)?),
+        }
     })
 }
 
@@ -684,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_guessed_are_the_root_and_program_a_tex_names_where_they_hold() {
+    fn the_settings_guessed_are_what_a_tex_names_else_the_engine_its_packages_need() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("Book");
         write_all(&src, &[("parts/book.tex", "\\documentclass{book}")]);
@@ -702,6 +775,17 @@ mod tests {
                 Some("xelatex"),
             ),
             ("% !TEX root = gone.tex\n", "chapter.tex", None),
+            // Without a program, the packages loaded name the engine they need.
+            (
+                "\\documentclass{book}\n% \\usepackage{luacode}\n\\usepackage{amsmath, fontspec}\n",
+                "chapter.tex",
+                Some("xelatex"),
+            ),
+            (
+                "% !TEX program = pdflatex\n\\usepackage{fontspec}\n",
+                "chapter.tex",
+                Some("pdflatex"),
+            ),
         ] {
             let chapter = format!("{chapter_head}\\chapter{{A}}");
             fs::write(src.join("chapter.tex"), chapter).unwrap();
@@ -810,6 +894,56 @@ mod tests {
             import_files(&service, "P", "", &paths, None, remove).unwrap();
             assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
             assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
+        }
+    }
+
+    #[test]
+    fn a_duplicate_leaves_the_build_and_history_keeps_the_settings_and_takes_a_free_name() {
+        let (dir, service) = with_project();
+        let root = service.data_dir.join("P");
+        write_all(
+            &root,
+            &[
+                ("chapters/a.tex", "a"),
+                (".latexmkrc", "$pdf_mode = 1;"),
+                ("build/main.pdf", "output"),
+                (".texlocal-history/snapshots/1.json", "{}"),
+            ],
+        );
+        write_settings(&root.join(SETTINGS_FILE), &json!({ "engine": "xelatex" })).unwrap();
+
+        assert_eq!(
+            duplicate_project(&service, "P", "P copy").unwrap().id,
+            "P copy"
+        );
+        let copy = service.data_dir.join("P copy");
+        assert_eq!(files_in(&copy), ["chapters/a.tex", "main.tex"]);
+        assert!(copy.join(".latexmkrc").is_file());
+        for left in ["build", crate::HISTORY_DIR] {
+            assert!(!copy.join(left).exists(), "{left}");
+        }
+        let engine = crate::settings::read_settings(&copy.join(SETTINGS_FILE)).engine;
+        assert_eq!(engine, crate::settings::Engine::Xelatex);
+        assert_eq!(
+            duplicate_project(&service, "P", "P copy").unwrap().id,
+            "P copy 2"
+        );
+
+        let folder = dir.path().join("Elsewhere");
+        write_all(&folder, &[("main.tex", "\\documentclass{article}")]);
+        let opened = projects::open_path(&service, &folder).unwrap().project.id;
+        let refused = duplicate_project(&service, &opened, "Elsewhere copy").unwrap_err();
+        assert_eq!(refused.status, 409);
+
+        // A link to a file, as to a shared .bib, is copied as what it points at.
+        #[cfg(unix)]
+        {
+            let shared = dir.path().join("shared.bib");
+            fs::write(&shared, "@book{k,}").unwrap();
+            std::os::unix::fs::symlink(&shared, root.join("refs.bib")).unwrap();
+            let linked = duplicate_project(&service, "P", "Linked").unwrap().id;
+            let bib = fs::read(service.data_dir.join(linked).join("refs.bib"));
+            assert_eq!(bib.unwrap(), b"@book{k,}");
         }
     }
 }

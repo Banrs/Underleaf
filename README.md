@@ -14,23 +14,31 @@ Preview. There is no Linux version.
 
 You start a project from a template (blank, article, report or Beamer presentation), or open a
 folder, `.tex` file or `.zip` you already have. The source sits on the left and the PDF on the
-right.
+right. A project opens again where you left it, on the same file, line, page and zoom.
 
 A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
 and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
 projects folder.
 
-The editor completes LaTeX commands and environments, `\cite{}` keys from your `.bib` files and
-`\ref{}` labels from the document. It closes brackets as you type and shows the maths under the
-cursor in a small preview. Its colours can follow Overleaf, TeXstudio or the system.
+The editor completes LaTeX commands, environments and the packages your TeX installation has,
+`\cite{}` keys from your `.bib` files by key, author or title, and `\ref{}` labels, each shown with
+the caption or heading it labels. It closes brackets, dollar signs and environments as you type and
+shows the maths under the cursor in a small preview. Its colours can follow Overleaf, TeXstudio or
+the system.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
 needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
 nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
 first error. You get the PDF along with every error and warning, each marked on its line in the
 source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
-compiles on its own when you pause typing; Settings can turn that off. When a package is missing,
-the Mac app can install it with TeX Live's tlmgr and compile again.
+compiles on its own when you pause typing; Settings can turn that off.
+
+The errors new users meet most come with a sentence on what TeX means and what usually fixes it.
+Where one click can fix an error, such as a missing package to install with TeX Live's tlmgr or a
+`\usepackage` to add, a button beside it does so and compiles again. TeXLocal also checks the
+document as you write, without running TeX, for references and citations that point nowhere, labels
+defined twice, missing input files, and environments, braces or maths left open. What it finds is
+listed and marked on its line with the build's issues, even before you first compile.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
 (SyncTeX). The Mac and iPad apps find the exact word and can also search the PDF. Windows finds
@@ -38,11 +46,20 @@ the line.
 
 Live Preview, on the Mac and iPad and still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
-brings it new citations and references.
+brings it new citations and references. It stays on for a project until you turn it off.
 
-There's also a file tree, an outline of the current file, a word count, search and replace across
-the project, renaming a label or citation everywhere it's used, and export to ZIP. Deleted files go
-to the Trash or the Recycle Bin.
+There's also a file tree, a word count, an outline of the current file that counts each section's
+words, search and replace across the project, and export to ZIP, or to a ZIP ready for arXiv with
+the compiled bibliography and the 00README.json arXiv reads. Deleted files go to the Trash or the
+Recycle Bin. You can list every place a label, citation, command or file is used, rename a label or
+citation everywhere, and see what a citation, reference or command is without leaving the text. You
+can also open a file, section or label by typing a few letters of its name, and go back to where
+you jumped from.
+
+Each project keeps a history on your computer that you can compare files with and restore from,
+taken every ten minutes or so while you work and before a change across files such as Replace All.
+A version stays for 90 days, or for good once you name it, and an opened folder's history is
+kept outside the folder and its git repository.
 
 ## Requirements
 

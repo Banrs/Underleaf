@@ -100,15 +100,23 @@ nonisolated struct SettingsChange {
     }
 }
 
-nonisolated struct LogItem: Decodable, Equatable {
+nonisolated struct LogItem: Decodable {
     let type: String
     let file: String?
     let line: Int?
     let message: String
-    /// The package or class file LaTeX didn't find, for Install.
-    let missing: String?
+    /// What TeX's message means here and what usually fixes it.
+    let explain: String?
+    let fix: Fix?
 
     var isError: Bool { type == "error" }
+
+    /// Run by the session by its id (docs/core-api.md, Explanations and fixes): the app knows no fix by name.
+    nonisolated struct Fix: Decodable, Equatable {
+        let id, title, help: String
+        /// Asked before it runs.
+        let confirm: String?
+    }
 }
 
 /// A failed build may still have written a PDF; `stopped`: Stop, a newer build or quitting ended it.
@@ -121,9 +129,6 @@ nonisolated struct CompileResult: Decodable {
     let log: String
 
     var failed: Bool { !ok && !stopped }
-    /// The bad boxes after the warnings, as Overleaf lists its typesetting warnings: numbered on from the issues, which the
-    /// session numbers alone.
-    var listed: [LogItem] { errors + warnings + badBoxes }
 
     var durationText: String {
         Duration.milliseconds(durationMs)
@@ -146,6 +151,13 @@ nonisolated struct SearchGroup: Decodable, Identifiable {
     var id: String { file }
 }
 
+/// Every line that defines or uses a name, as a search's hits (`session_usages`).
+nonisolated struct Usages: Decodable {
+    /// As the source writes it: `\label{x}`, `\foo`, a file's path.
+    let name: String
+    let groups: [SearchGroup]
+}
+
 /// In PDF points, origin at the page's top-left: the baseline point (h, v) and the box's width and height above it.
 nonisolated struct ForwardLoc: Decodable {
     let page: Double
@@ -154,6 +166,24 @@ nonisolated struct ForwardLoc: Decodable {
 }
 
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
+
+/// A line, from 1, of a project's file: where Back and Forward go, and where Quick Help's name is defined.
+nonisolated struct Place: Decodable {
+    let path: String
+    let line: Int
+}
+
+/// Whether Back and Forward have somewhere to go, and where one went (`session_navigate`, `session_back`).
+nonisolated struct Trail: Decodable {
+    var back = false, forward = false
+    var to: Place?
+}
+
+/// `session_quick_help`'s, for the popover.
+nonisolated struct QuickHelp: Decodable {
+    let title, detail: String
+    let place: Place?
+}
 
 /// Where a forward search began, for `synctex_match`; the column in UTF-16.
 nonisolated struct SyncSource: Sendable {
@@ -172,6 +202,39 @@ nonisolated struct RenameResult: Decodable {
     let from, to, mainFile: String
     let ui: UIState
 }
+
+/// One of `session_history_list`'s: what it was taken for, and the files that differ from the one before it.
+nonisolated struct Snapshot: Decodable, Identifiable {
+    nonisolated struct Change: Decodable {
+        nonisolated enum Kind: String, Decodable { case added, deleted, changed }
+
+        let path: String
+        let change: Kind
+    }
+
+    let id: String
+    let time: Date
+    let name, reason: String?
+    let changed: [Change]
+
+    private enum Keys: CodingKey { case id, time, name, reason, changed }
+
+    /// `time` is ISO 8601, which `Core`'s plain decoder doesn't read.
+    init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Keys.self)
+        id = try fields.decode(String.self, forKey: .id)
+        time = try Date(fields.decode(String.self, forKey: .time), strategy: .iso8601)
+        name = try fields.decodeIfPresent(String.self, forKey: .name)
+        reason = try fields.decodeIfPresent(String.self, forKey: .reason)
+        changed = try fields.decode([Change].self, forKey: .changed)
+    }
+
+    var title: String { name ?? reason ?? String(localized: "Automatic") }
+}
+
+/// A row of `session_history_compare`'s unified diff: a line in both, the snapshot's alone or now's alone, or a count of
+/// unchanged lines folded away.
+nonisolated struct DiffLine: Decodable { let same, removed, added: String?; let skipped: Int? }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }

@@ -47,6 +47,10 @@ extension SourceEditor {
             let up = command == .moveLineUp
             let name = up ? String(localized: "Move Line Up") : String(localized: "Move Line Down")
             guard textView.apply(document.moveLines(selections, up: up), named: name) else { return false }
+        case .duplicateLine:
+            textView.apply(document.duplicateLines(selections), named: String(localized: "Duplicate Line"))
+        case .deleteLine:
+            textView.apply(document.deleteLines(selections), named: String(localized: "Delete Line"))
         case .heading(let command):
             let level = document.setHeading(caret: selection.location, command: command)
             guard textView.insert(level, named: String(localized: "Section Level")) else { return false }

@@ -230,7 +230,7 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
     private(set) lazy var issues = IssueOverlay(in: self)
     var issueClicked: (Int) -> Void = { _ in }
-    var syntaxTheme = SyntaxTheme.overleaf {
+    var syntaxTheme = SyntaxTheme.system {
         didSet { if syntaxTheme != oldValue { fragmentColours.removeAllObjects(); colour(from: 0) } }
     }
     /// From where the text is to be coloured again at the viewport's next layout.

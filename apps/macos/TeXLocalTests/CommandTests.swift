@@ -116,3 +116,18 @@ struct MenuStructureTests {
         #expect(row.items.allSatisfy { $0.state == .off })
     }
 }
+
+struct OpenQuicklyTests {
+    /// As Xcode's: the arrows stop at the ends, and each new list chooses its first.
+    @Test func theArrowsStopAtTheEndsAndNewMatchesChooseTheFirst() {
+        let rows = QuickOpenRows()
+        let item = QuickOpenItem(kind: "file", title: "main.tex", detail: "", path: "main.tex", line: nil)
+        rows.items = [item, item, item]
+        rows.move(-1)
+        #expect(rows.selection == 0)
+        for _ in 0..<3 { rows.move(1) }
+        #expect(rows.selection == 2)
+        rows.items = [item, item]
+        #expect(rows.selection == 0)
+    }
+}

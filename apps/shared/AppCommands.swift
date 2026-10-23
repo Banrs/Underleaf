@@ -21,11 +21,18 @@ struct AppCommands: Commands {
                 Button("Clear Menu") { app.recentProjects = [] }
                     .disabled(app.recents.isEmpty)
             }
+            #if os(macOS)
+            items(.openQuickly)
+            #endif
             Divider()
             items(.fileUpload)
         }
         CommandGroup(after: .saveItem) {
-            items(.fileSave)
+            items(.fileSave, .fileSaveVersion)
+            #if os(macOS)
+            // As the document apps' Revert To, which lists Browse All Versions.
+            Menu("Revert To") { items(.fileBrowseVersions) }
+            #endif
             Divider()
             items(.projectClose)
             #if os(macOS)
@@ -35,7 +42,11 @@ struct AppCommands: Commands {
             #endif
         }
         CommandGroup(replacing: .importExport) {
-            items(.pdfSave, .projectExport)
+            #if os(macOS)
+            items(.pdfSave, .pdfOpen, .projectExport, .projectExportArxiv)
+            #else
+            items(.pdfSave, .projectExport, .projectExportArxiv)
+            #endif
             Divider()
             if let project, let url = project.buildPDF {
                 ShareLink(item: url)
@@ -46,10 +57,10 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .printItem) { items(.filePrint) }
         // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
-        CommandGroup(before: .textEditing) { items(.projectSearch, .pdfFind) }
+        CommandGroup(before: .textEditing) { items(.projectSearch, .findUsages, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
-            items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown)
+            items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine)
             Divider()
             items(.editRename)
         }
@@ -67,6 +78,8 @@ struct AppCommands: Commands {
             items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
         }
         CommandMenu("Go") {
+            items(.goBack, .goForward)
+            Divider()
             items(.editGotoLine, .pdfGotoPage)
             Divider()
             items(.jumpToDefinition)
@@ -88,7 +101,17 @@ struct AppCommands: Commands {
             LivePreviewItem(app: app)
             Divider()
             Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
+            BuildOptionItems(app: app)
             SetMainFileItem(app: app)
+        }
+        // No help book: the default item would only say so.
+        CommandGroup(replacing: .help) {
+            #if os(macOS)
+            items(.quickHelp)
+            Divider()
+            #endif
+            Link("Visit TeXLocal on GitHub", destination: Links.repository)
+            Link("Report Issue", destination: Links.issues)
         }
     }
 }
@@ -119,6 +142,26 @@ private struct LivePreviewItem: View {
         let project = app.commandProject
         Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
             .disabled(project?.canSwitchLivePreview != true)
+    }
+}
+
+/// The inspector's switches, dim with no project as the Engine picker is.
+private struct BuildOptionItems: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.commandProject
+        option("Shell Escape", project, \.shellEscape, SettingsChange.shellEscape)
+        option("Stop on First Error", project, \.stopOnFirstError, SettingsChange.stopOnFirstError)
+    }
+
+    private func option(_ title: LocalizedStringKey, _ project: ProjectModel?, _ setting: KeyPath<ProjectSettings, Bool>,
+                        _ change: @escaping (Bool) -> SettingsChange) -> some View {
+        let isOn = project?.settings?[keyPath: setting]
+        return Toggle(title, isOn: Binding(get: { isOn ?? false }, set: { on in
+            if let project { Task.immediate { await project.patchSettings(change(on)) } }
+        }))
+        .disabled(isOn == nil)
     }
 }
 

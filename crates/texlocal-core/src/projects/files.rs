@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::json;
@@ -53,6 +53,42 @@ pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreE
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| atomic::write(abs, contents))
         .map_err(|err| write_error(abs, err))
+}
+
+/// A file one of `write_all`'s writes: `was` what it held, None if there was none, and `done`
+/// what the caller answers for it.
+pub(crate) struct Planned<D> {
+    pub abs: PathBuf,
+    pub bytes: Vec<u8>,
+    pub was: Option<Vec<u8>>,
+    pub done: D,
+}
+
+/// What `plan` makes of each item, written in turn, all or none: a plan or write that fails is the
+/// error, and the files written before it are put back as they were, or removed if they weren't.
+pub(crate) fn write_all<T, D>(
+    items: impl IntoIterator<Item = T>,
+    mut plan: impl FnMut(T) -> Result<Option<Planned<D>>, CoreError>,
+) -> Result<Vec<D>, CoreError> {
+    let mut written = Vec::new();
+    let writing = items.into_iter().try_for_each(|item| {
+        if let Some(planned) = plan(item)? {
+            write_creating(&planned.abs, &planned.bytes)?;
+            written.push(planned);
+        }
+        Ok(())
+    });
+    if let Err(err) = writing {
+        // Each was just written where it is, so can be again.
+        for Planned { abs, was, .. } in &written {
+            let _ = match was {
+                Some(was) => write_creating(abs, was).map(drop),
+                None => fs::remove_file(abs).map_err(CoreError::from),
+            };
+        }
+        return Err(err);
+    }
+    Ok(written.into_iter().map(|planned| planned.done).collect())
 }
 
 /// A failed write in Foundation's words, as the hosts show it in an alert whose title already
@@ -195,7 +231,7 @@ pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
 mod tests {
     use super::*;
     use crate::projects::testing::project;
-    use crate::settings::{UiPatch, UiState, read_ui, write_ui};
+    use crate::settings::{read_ui, write_ui};
 
     #[cfg(unix)]
     #[test]
@@ -236,20 +272,24 @@ mod tests {
         let (_dir, root) = project();
         let project = Project::in_folder(&root);
         create_free(&root, "chapters/a.tex", false).unwrap();
-        let list = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let patch = UiPatch {
-            expanded_folders: Some(list(&["other", "chapters/deep", "chapters"])),
-            folded_headings: Some(list(&["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"])),
-        };
-        write_ui(&project.ui, patch).unwrap();
+        let patch = json!({
+            "expandedFolders": ["other", "chapters/deep", "chapters"],
+            "foldedHeadings": ["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"],
+            "file": "chapters/a.tex",
+        });
+        write_ui(&project.ui, &patch).unwrap();
         rename_entry(&project, "chapters", "content").unwrap();
-        let state = UiState {
-            expanded_folders: list(&["content", "content/deep", "other"]),
-            folded_headings: list(&["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"]),
-        };
-        assert_eq!(read_ui(&project.ui), state);
+        let state = read_ui(&project.ui);
+        assert_eq!(state.expanded_folders, ["content", "content/deep", "other"]);
+        let folds = ["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"];
+        assert_eq!(state.folded_headings, folds);
+        assert_eq!(state.file.as_deref(), Some("content/a.tex"));
         rename_entry(&project, "content/a.tex", "content/b.tex").unwrap();
-        let folds = read_ui(&project.ui).folded_headings;
-        assert_eq!(folds, ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]);
+        let state = read_ui(&project.ui);
+        assert_eq!(
+            state.folded_headings,
+            ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]
+        );
+        assert_eq!(state.file.as_deref(), Some("content/b.tex"));
     }
 }

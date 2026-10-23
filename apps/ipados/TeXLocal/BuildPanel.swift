@@ -33,13 +33,13 @@ struct BuildPanel: View {
     }
 
     @ViewBuilder private var issues: some View {
-        let items = project.panel.rows(of: project.result)
+        let items = project.panel.rows(of: project.listed)
         if !items.isEmpty {
             List(items, id: \.offset) { row in
                 IssueRow(item: row.element, place: row.offset, project: project)
             }
             .listStyle(.plain)
-        } else if !project.panel.showsWarnings, project.result?.listed.contains(where: { !$0.isError && project.panel.matches($0) }) == true {
+        } else if !project.panel.showsWarnings, project.listed.contains(where: { !$0.isError && project.panel.matches($0) }) {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {

@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -13,22 +14,27 @@ using Microsoft.Windows.Storage.Pickers;
 using TeXLocal.Bridge;
 using TeXLocal.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 using VirtualKey = Windows.System.VirtualKey;
 
 namespace TeXLocal.Pages;
 
-/// An issues panel row: a build's error or warning, by its index among the build's issues, or a bad box, which is none.
-/// <param name="Installing">Its missing file's package is being installed.</param>
-public sealed record IssueItem(int? Index, LogItem Item, bool Installing = false)
+/// An issues panel row: a build's error or warning or a check, by its index among the session's issues, or a bad box,
+/// which is none.
+/// <param name="Fixing">The id of the fix that runs, if one does: its rows' rings turn and every fix waits. A list rebuilt
+/// meanwhile, by a build or new checks, has new items with the same fix.</param>
+public sealed record IssueItem(int? Index, LogItem Item, string? Fixing = null)
 {
-    public bool Installable => Item.Missing is not null;
-    public bool Idle => !Installing;
-    public string InstallName => $"Install the package with {Item.Missing}";
+    public bool HasFix => Item.Fix is not null;
+    public bool Running => Item.Fix is { } fix && fix.Id == Fixing;
+    public bool Idle => Fixing is null;
+    public string FixName => $"{Item.Fix?.Title}: {Item.Fix?.Help}";
+    public bool HasExplain => Item.Explain is not null;
     public bool IsError => Item.Type == "error";
     public bool IsWarning => !IsError;
     public bool HasPlace => Item.File is not null;
     public string Place => Item.Line is { } line ? $"{Item.File}:{line}" : Item.File ?? "";
-    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Item.Message}{(HasPlace ? $", {Place}" : "")}";
+    public override string ToString() => $"{(IsError ? "Error" : "Warning")}: {Item.Message}{(HasPlace ? $", {Place}" : "")}{(HasExplain ? $". {Item.Explain}" : "")}";
 }
 
 /// A project: the sidebar, the editor and the PDF, builds and their issues, all through the project's session.
@@ -38,19 +44,24 @@ public sealed partial class WorkspacePage : Page
 
     static ulong sessions;
     readonly DispatcherQueueTimer searchTimer, caretTimer, scrollTimer;
-    readonly HashSet<string> unsaved = [], installing = [];
+    readonly HashSet<string> unsaved = [];
     readonly Dictionary<string, IssueLine[]> issueLines = [];
     string id = "", root = "", issueFilter = "", logFilter = "";
-    string? name;
+    string? name, fixing;
     ulong session;
     bool texAvailable, compiling, outdated, zooming, sidebarWanted = true;
+    int quickQueries;
     double ratio = Prefs.SplitRatio;
+    /// Where the quick info shown says its name is defined.
+    Spot? helpPlace;
     CompileResult? result;
+    LogItem[] checks = [];
     UIElement? beforeMenu;
 
     static Core Core => App.Core!;
     bool Inline => Split.DisplayMode == SplitViewDisplayMode.Inline;
-    LogItem[] BuildIssues => result is null ? [] : [.. result.Errors, .. result.Warnings];
+    /// The session's, numbered as session_choose_issue numbers them.
+    LogItem[] Issues => [.. result?.Errors ?? [], .. result?.Warnings ?? [], .. checks];
 
     public WorkspacePage()
     {
@@ -113,6 +124,7 @@ public sealed partial class WorkspacePage : Page
         // A scroll within the caret's wait of a move, either side, is the caret's.
         Editor.CaretMoved += () =>
         {
+            HelpFlyout.Hide();
             ShowCaret();
             headingLine = Editor.Caret.Line;
             caretScrolled |= scrollTimer.IsRunning;
@@ -120,6 +132,7 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.Scrolled += () =>
         {
+            HelpFlyout.Hide();
             caretScrolled |= caretTimer.IsRunning;
             Restart(scrollTimer);
         };
@@ -136,11 +149,17 @@ public sealed partial class WorkspacePage : Page
         };
         Editor.IssueInvoked += line =>
         {
-            var index = Array.FindIndex(BuildIssues, i => i.File == Editor.Path && i.Line == line.Line);
-            if (index >= 0) GoToIssue("session_choose_issue", new { session, index });
+            if (line.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
         };
         Editor.FilesDropped += OnFilesDropped;
-        Editor.DefinitionFound += place => _ = Reveal(place.File, place.Line, place.Column, place.Length);
+        // The Mac's double-click to the PDF; where the PDF is hidden, selecting a word doesn't open it.
+        Editor.DoubleClicked += () =>
+        {
+            if (PdfItem.IsChecked && Pdf.PageCount > 0) Run(null, SyncToCaret);
+        };
+        Editor.DefinitionFound += place => _ = Jump(place.File, place.Line, place.Column, place.Length);
+        Editor.HelpAsked += ShowHelp;
+        Editor.ReferencesAsked += ShowUsages;
         // The core's refusal shows in the flyout.
         Editor.RenameAsked += (symbol, at) => rename.Show(Editor, symbol.Name, async to => Editor.Apply((await Core.CallAsync<Replaced>("session_rename_symbol",
             new { session, kind = symbol.Kind, from = symbol.Name, to })).Edits), at);
@@ -148,9 +167,9 @@ public sealed partial class WorkspacePage : Page
         Pdf.Inverse += (page, x, y) => Run(null, async () =>
         {
             var at = await Core.CallAsync<InverseSync>("synctex_inverse", new { id, page, x, y });
-            await Reveal(at.File, at.Line, at.Column ?? 0);
+            await Jump(at.File, at.Line, at.Column ?? 0);
         });
-        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, RenameSymbolItem]) Shortcut.SetScope(item, Editor);
+        foreach (var item in (UIElement[])[BoldItem, ItalicItem, UnderlineItem, InlineItem, SymbolItem, DefinitionItem, ReferencesItem, RenameSymbolItem, QuickInfoItem]) Shortcut.SetScope(item, Editor);
         foreach (var item in (UIElement[])[RenameItem, DeleteItem]) Shortcut.SetScope(item, FilesTree);
         DeleteItem.KeyboardAcceleratorTextOverride = "Del";
         SetUpInsert();
@@ -174,7 +193,12 @@ public sealed partial class WorkspacePage : Page
         App.Window.SetMenu(MainMenu);
         App.Window.SetTitle(name, Editor.Path);
         CheckTex();
-        if (session != 0) return;
+        if (session != 0)
+        {
+            // Settings › Compiling may have changed it while the page waited underneath.
+            if (AutoCompileItem.IsChecked != Prefs.AutoCompile) SetAutoCompile();
+            return;
+        }
         Core.Event += OnEvent;
         try { await OpenSession(file); }
         catch (CoreException ex)
@@ -211,11 +235,29 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// Before the project goes, as on the Mac: session_close saves quietly, so edits a conflict's Cancel held or a write
-    /// refused would be lost. False, staying, when this save is asked about or fails.
-    public async Task<bool> Save()
+    /// Before the project goes: saved, and the place it's left at kept in its ui state for the next open. False,
+    /// staying, when the save is asked about or fails.
+    public async Task<bool> Leave()
     {
         if (session == 0) return true;
+        if (!await Save()) return false;
+        var (page, zoom) = Pdf.Place;
+        // A place that can't be written is only lost.
+        try
+        {
+            await Core.CallAsync("set_ui_state", new
+            {
+                id, patch = new { file = Editor.Path, line = Editor.Path is null ? (int?)null : Editor.Caret.Line, page, zoom, panel = IssuesItem.IsChecked },
+            });
+        }
+        catch (CoreException) { }
+        return true;
+    }
+
+    /// As on the Mac, before the project goes, since session_close saves quietly and would lose edits a conflict's Cancel
+    /// held or a write refused, and before its ZIP, which has what is on disk. False when this save is asked about or fails.
+    async Task<bool> Save()
+    {
         try { return (await Core.CallAsync("session_save", new { session })).GetProperty("saved").GetBoolean(); }
         catch (CoreException ex)
         {
@@ -239,14 +281,43 @@ public sealed partial class WorkspacePage : Page
         (name, root) = (opened.Name, opened.Root);
         App.Window.SetTitle(name);
         Search.PlaceholderText = $"Search {name}";
-        ShellEscapeItem.IsChecked = opened.Settings.GetProperty("shellEscape").GetBoolean();
-        StopOnErrorItem.IsChecked = opened.Settings.GetProperty("stopOnFirstError").GetBoolean();
-        ReadFolds(opened.Ui);
+        await ShowEngines();
+        ShowSettings(opened.Settings);
+        var ui = opened.Ui;
+        ReadFolds(ui);
         ShowTree(treeJson.Length > 0 ? tree : opened.Tree, true);
-        if (opened.Pdf is { } pdf && result is null) await Pdf.Load(pdf);
+        if (opened.Pdf is { } pdf && result is null)
+        {
+            await Pdf.Load(pdf);
+            Pdf.GoTo(ui.Page, ui.Zoom);
+        }
         ShowBuild();
-        Select(FilesTree, i => i.Key == (file ?? opened.Settings.GetProperty("mainFile").GetString()));
-        if (Picked is { Type: not "dir" } main) await OpenDocument(main.Path, main.Kind);
+        ShowPanel(ui.Panel);
+        // The file it was left at, unless another was asked for; one gone since, the main file.
+        var shown = file ?? (ui.File is { } left && KindOf(left) is not null ? left : opened.Settings.GetProperty("mainFile").GetString());
+        Select(FilesTree, i => i.Key == shown);
+        if (Picked is { Type: not "dir" } node && await OpenDocument(node.Path, node.Kind) && node.Path == ui.File && ui.Line is { } line && line <= Editor.LineCount)
+            Editor.GoTo(line);
+    }
+
+    /// Build › Engine, the catalogue's.
+    async Task ShowEngines()
+    {
+        foreach (var choice in (await App.Catalogue()).Engines)
+        {
+            var item = new RadioMenuFlyoutItem { Text = choice.Title, GroupName = "engine", Tag = choice.Id };
+            item.Click += (_, _) => Run("Can't change the engine", () => Core.CallAsync("session_set_settings", new { session, patch = new { engine = choice.Id } }));
+            EngineMenu.Items.Add(item);
+        }
+    }
+
+    /// The Build menu's, as session_open and session_set_settings give them.
+    void ShowSettings(JsonElement settings)
+    {
+        ShellEscapeItem.IsChecked = settings.GetProperty("shellEscape").GetBoolean();
+        StopOnErrorItem.IsChecked = settings.GetProperty("stopOnFirstError").GetBoolean();
+        var engine = settings.GetProperty("engine").GetString();
+        foreach (var item in EngineMenu.Items.OfType<RadioMenuFlyoutItem>()) item.IsChecked = (string)item.Tag == engine;
     }
 
     void OnEvent(CoreEvent e)
@@ -265,6 +336,8 @@ public sealed partial class WorkspacePage : Page
                 break;
             case "conflict": Conflict(ev.Path!, ev.Kind!); break;
             case "build_cleaned": Pdf.Clear(); break;
+            // As on the Mac: the outline and words are read from the disk, where another app has changed a file.
+            case "files_changed" when ev.Paths!.Any(p => KindOf(p) is "tex" or "bib"): _ = Analyze(); break;
             case "document":
                 var failed = ev.Error is not null;
                 if (failed && !unsaved.Contains(ev.Path!)) Announce(BuildState, "Wasn't saved", "save");
@@ -286,6 +359,10 @@ public sealed partial class WorkspacePage : Page
                 ShowBuild();
                 break;
             case "build_finished": Finished(ev); break;
+            case "checks":
+                checks = ev.Items!;
+                ShowIssues();
+                break;
         }
     }
 
@@ -296,7 +373,7 @@ public sealed partial class WorkspacePage : Page
     {
         if (kind is not ("tex" or "bib" or "text"))
         {
-            Process.Start(new ProcessStartInfo(Full(path)) { UseShellExecute = true });
+            Launch(Full(path));
             return false;
         }
         // As a PDF command shows the PDF.
@@ -330,11 +407,110 @@ public sealed partial class WorkspacePage : Page
         }
     }
 
-    /// A place in a file: a line from 1, a column from 0 and what to select from there. The file opens as Files would open
-    /// it, so a graphic a definition names opens in its own app.
-    async Task Reveal(string path, int line, int column = 0, int length = 0)
+    /// A place in a file: a line from 1, or none for the file alone, a column from 0 and what to select from there. The
+    /// file opens as Files would open it, so a graphic a definition names opens in its own app. False if the editor doesn't
+    /// show it.
+    async Task<bool> Reveal(string path, int? line, int column = 0, int length = 0)
     {
-        if (await OpenDocument(path, KindOf(path) ?? "tex")) Editor.GoTo(line, column, length);
+        if (!await OpenDocument(path, KindOf(path) ?? "tex")) return false;
+        if (line is { } at) Editor.GoTo(at, column, length);
+        return true;
+    }
+
+    /// A jump from the caret's place, which Back then returns to (session_navigate), unless the caret is there still.
+    async Task Jump(string path, int? line, int column = 0, int length = 0)
+    {
+        if (Editor.Path is { } shown)
+        {
+            var from = new Spot(shown, Editor.Caret.Line);
+            Run(null, async () => ShowTrail(await Core.CallAsync<Trail>("session_navigate", new { session, from })));
+        }
+        await Reveal(path, line, column, length);
+    }
+
+    void ShowTrail(Trail trail) => (BackItem.IsEnabled, ForwardItem.IsEnabled) = (trail.Back, trail.Forward);
+
+    /// VS Code's Go back and Go forward, through the session's places, the caret's going on the other way's; also the
+    /// window's Alt+Left and the mouse's buttons, false where there's no place to go to.
+    public bool Go(bool back)
+    {
+        if (!(back ? BackItem : ForwardItem).IsEnabled) return false;
+        Run(null, async () =>
+        {
+            if (Editor.Path is not { } path) return;
+            var trail = await Core.CallAsync<Trail>(back ? "session_back" : "session_forward", new { session, at = new Spot(path, Editor.Caret.Line) });
+            ShowTrail(trail);
+            if (trail.To is { } to) await Reveal(to.Path, to.Line);
+        });
+        return true;
+    }
+
+    void OnBack(object sender, RoutedEventArgs e) => Go(true);
+    void OnForward(object sender, RoutedEventArgs e) => Go(false);
+
+    /// Visual Studio's Go to all, at the workspace's top centre: the files first, then what the query matches.
+    void OnGoToAll(object sender, RoutedEventArgs e)
+    {
+        GoToBox.Text = "";
+        GoToFlyout.ShowAt(Split, new FlyoutShowOptions { Position = new(Split.ActualWidth / 2, 8), Placement = FlyoutPlacementMode.Bottom });
+        ListQuick("");
+    }
+
+    void OnGoToOpened(object sender, object e) => GoToBox.Focus(FocusState.Programmatic);
+
+    void OnGoToChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs e)
+    {
+        if (e.Reason == AutoSuggestionBoxTextChangeReason.UserInput) ListQuick(sender.Text);
+    }
+
+    /// A later query's answer wins over an earlier one's.
+    void ListQuick(string query) => Run(null, async () =>
+    {
+        var generation = ++quickQueries;
+        var items = await Core.CallAsync<QuickItem[]>("session_quick_open", new { session, query });
+        if (generation != quickQueries) return;
+        GoToBox.ItemsSource = items;
+        GoToBox.IsSuggestionListOpen = items.Length > 0;
+    });
+
+    /// Enter without a result chosen takes the best.
+    void OnGoToSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs e)
+    {
+        if ((e.ChosenSuggestion ?? (sender.ItemsSource as QuickItem[])?.FirstOrDefault()) is not QuickItem item) return;
+        GoToFlyout.Hide();
+        _ = Jump(item.Path, item.Line);
+    }
+
+    /// One Escape closes it, list and all, as Visual Studio's does.
+    void OnGoToKey(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Escape) return;
+        e.Handled = true;
+        GoToFlyout.Hide();
+    }
+
+    public static string KindGlyph(string kind) => kind switch { "heading" => "\uE8FD", "label" => "\uE8EC", _ => "\uE8A5" };
+
+    /// VS Code's hover and Visual Studio's Quick info: what the core says the name is, by its character. Hovered, the
+    /// keyboard stays in the text and the flyout goes as the pointer leaves it.
+    void ShowHelp(int offset, Rect at, bool hovered) => Run(null, async () =>
+    {
+        if (Editor.Path is not { } path || await Core.CallAsync<QuickHelp?>("session_quick_help", new { session, path, offset }) is not { } help
+            || Editor.Path != path) return;
+        (HelpTitle.Text, HelpDetail.Text, helpPlace) = (help.Title, help.Detail, help.Place);
+        HelpDetail.Visibility = Vis(help.Detail.Length > 0);
+        HelpPlace.Visibility = Vis(help.Place is not null);
+        HelpFlyout.ShowAt(Editor, new FlyoutShowOptions
+        {
+            Position = new(at.X, at.Bottom), ExclusionRect = at,
+            ShowMode = hovered ? FlyoutShowMode.TransientWithDismissOnPointerMoveAway : FlyoutShowMode.Standard,
+        });
+    });
+
+    void OnHelpPlace(object sender, RoutedEventArgs e)
+    {
+        HelpFlyout.Hide();
+        if (helpPlace is { } place) _ = Jump(place.Path, place.Line);
     }
 
     /// Another app's text, or the disk's after Revert, shown without an edit. The session holds the document's saves until
@@ -366,6 +542,7 @@ public sealed partial class WorkspacePage : Page
     void ShowLook()
     {
         Editor.SetLook(Prefs.EditorFont, Prefs.EditorFontSize, Prefs.EditorTheme);
+        HelpTitle.FontFamily = SourceView.Font(Prefs.EditorFont);
         (Editor.AutoPair, Editor.AutoComplete, Editor.LineNumbers) = (Prefs.AutoPair, Prefs.AutoComplete, Prefs.LineNumbers);
     }
 
@@ -397,9 +574,6 @@ public sealed partial class WorkspacePage : Page
     void Finished(DocEvent ev)
     {
         var done = result = ev.Result!;
-        (ErrorCount.Text, WarningCount.Text) = ($"{done.Errors.Length}", $"{done.Warnings.Length}");
-        WarningsToggle.IsEnabled = done.Warnings.Length + done.BadBoxes.Length > 0;
-        WarningsLabel.Text = done.Warnings.Length == 1 ? "1 warning" : $"{done.Warnings.Length} warnings";
         ShowLog();
         ShowIssues();
         var failed = !done.Ok && !done.Stopped;
@@ -439,10 +613,15 @@ public sealed partial class WorkspacePage : Page
         BuildState.Text = outdated && !compiling && result is not null && !Prefs.AutoCompile ? $"{state} · PDF out of date" : state;
     }
 
-    /// The bad boxes after the warnings, as on the Mac; the Warnings toggle hides them too.
+    /// The bad boxes last; the Warnings toggle hides them too.
     void ShowIssues()
     {
-        IssueList.ItemsSource = BuildIssues.Select((item, i) => new IssueItem(i, item, item.Missing is { } file && installing.Contains(file))).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
+        var issues = Issues;
+        var warnings = issues.Count(i => i.Type != "error");
+        (ErrorCount.Text, WarningCount.Text) = ($"{issues.Length - warnings}", $"{warnings}");
+        WarningsToggle.IsEnabled = warnings + (result?.BadBoxes.Length ?? 0) > 0;
+        WarningsLabel.Text = warnings == 1 ? "1 warning" : $"{warnings} warnings";
+        IssueList.ItemsSource = issues.Select((item, i) => new IssueItem(i, item, fixing)).Concat((result?.BadBoxes ?? []).Select(box => new IssueItem(null, box)))
             .Where(i => (WarningsToggle.IsChecked == true || i.IsError) && (Has(i.Item.Message, issueFilter) || Has(i.Item.File, issueFilter))).ToArray();
         ShowIssueTab();
     }
@@ -501,14 +680,14 @@ public sealed partial class WorkspacePage : Page
         IssueTabs.SelectedItem = IssuesTab;
         IssueList.SelectedItem = (IssueList.ItemsSource as IssueItem[])?.FirstOrDefault(i => i.Index == chosen.Index);
         if (IssueList.SelectedItem is { } row) IssueList.ScrollIntoView(row);
-        if (chosen.Issue.File is { } file) await Reveal(file, chosen.Issue.Line ?? 1);
+        if (chosen.Issue.File is { } file) await Jump(file, chosen.Issue.Line ?? 1);
     });
 
     /// A bad box isn't one of the session's issues, so its place is opened here.
     void Choose(IssueItem row)
     {
         if (row.Index is { } index) GoToIssue("session_choose_issue", new { session, index });
-        else if (row.Item.File is { } file) _ = Reveal(file, row.Item.Line ?? 1);
+        else if (row.Item.File is { } file) _ = Jump(file, row.Item.Line ?? 1);
     }
 
     void OnIssueClick(object sender, ItemClickEventArgs e) => Choose((IssueItem)e.ClickedItem);
@@ -519,20 +698,34 @@ public sealed partial class WorkspacePage : Page
     void OnIssueCounts(object sender, RoutedEventArgs e) => ShowPanel(!IssuesItem.IsChecked);
     void OnCloseIssues(object sender, RoutedEventArgs e) => ShowPanel(false);
 
-    /// tlmgr takes minutes, behind UAC for a TeX Live installed for all users, whose Cancel (403) needs no alert. The
-    /// build runs again with its refusal ignored, since the project may have closed meanwhile.
-    async void OnInstall(object sender, RoutedEventArgs e)
+    /// The core's fix, run without knowing which it is (docs/core-api.md, Explanations and fixes); one at a time, as an
+    /// install takes minutes. The build's refusal is ignored, since the project may have closed meanwhile.
+    async void OnFix(object sender, RoutedEventArgs e)
     {
-        var file = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Missing!;
-        installing.Add(file);
+        var fix = ((IssueItem)((FrameworkElement)sender).DataContext).Item.Fix!;
+        if (fix.Confirm is { } confirm && await App.Show(new ContentDialog
+            {
+                Title = fix.Title, Content = confirm, PrimaryButtonText = fix.Title, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
+            }) != ContentDialogResult.Primary) return;
+        fixing = fix.Id;
         ShowIssues();
+        JsonElement answer = default;
         CoreException? failure = null;
-        try { await Core.CallAsync("install_package", new { file }); }
+        try { answer = await Core.CallAsync("session_fix", new { session, id = fix.Id }); }
         catch (CoreException ex) { failure = ex; }
-        installing.Remove(file);
+        fixing = null;
         ShowIssues();
-        if (failure is null) Run(null, () => Core.CallAsync("session_compile", new { session }));
-        else if (failure.Status != 403) await App.Alert($"Can't install {file}", failure.Message);
+        if (failure is not null)
+        {
+            await App.Alert($"Can't {char.ToLower(fix.Title[0])}{fix.Title[1..]}", failure.Message);
+            return;
+        }
+        // Null: the UAC prompt was cancelled.
+        if (answer.ValueKind == JsonValueKind.Null) return;
+        Editor.Apply(answer.GetProperty("edits").Deserialize<DocumentEdits?>(Core.Json));
+        // The menus send the settings they show, so they show the fix's.
+        ShowSettings(answer.GetProperty("settings"));
+        Run(null, () => Core.CallAsync("session_compile", new { session }));
     }
 
     /// Checked and Unchecked rather than Click, which a toggle through UI Automation doesn't raise; the first comes during
@@ -598,6 +791,13 @@ public sealed partial class WorkspacePage : Page
     void OnAutoCompile(object sender, RoutedEventArgs e)
     {
         Prefs.AutoCompile = AutoCompileItem.IsChecked;
+        SetAutoCompile();
+    }
+
+    /// The menu and the session follow Prefs, which the menu or Settings set.
+    void SetAutoCompile()
+    {
+        AutoCompileItem.IsChecked = Prefs.AutoCompile;
         ShowBuild();
         Run("Can't change this setting", () => Core.CallAsync("session_set_options", new { session, autoCompile = Prefs.AutoCompile }));
     }
@@ -617,7 +817,7 @@ public sealed partial class WorkspacePage : Page
         PageText.Text = shown ? $"Page {Pdf.CurrentPage} of {Pdf.PageCount}" : "No PDF";
         ZoomText.Text = $"{Pdf.Zoom * 100:0}%";
         foreach (var control in ZoomBar.Children.OfType<Control>()) control.IsEnabled = shown;
-        ExportItem.IsEnabled = ShareItem.IsEnabled = shown;
+        ExportItem.IsEnabled = OpenPdfItem.IsEnabled = ShareItem.IsEnabled = PrintItem.IsEnabled = shown;
         zooming = true;
         ZoomSlider.Value = Math.Log2(Pdf.Zoom);
         zooming = false;
@@ -742,6 +942,28 @@ public sealed partial class WorkspacePage : Page
     }
 
     void OnSave(object sender, RoutedEventArgs e) => Run("Can't save", () => Core.CallAsync("session_save", new { session }));
+
+    /// Word's Save a version: a name the core keeps with the project's files as they are.
+    async void OnSaveVersion(object sender, RoutedEventArgs e)
+    {
+        var box = new TextBox { Header = "Name" };
+        var dialog = new ContentDialog { Title = "Save version", Content = box, PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, IsPrimaryButtonEnabled = false };
+        box.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = box.Text.Trim().Length > 0;
+        dialog.Opened += (_, _) => box.Focus(FocusState.Programmatic);
+        if (await App.Show(dialog) != ContentDialogResult.Primary) return;
+        Run("Can't save this version", async () =>
+        {
+            var saved = await Core.CallAsync<Snapshot>("session_history_save", new { session, name = box.Text.Trim() });
+            Announce(BuildState, $"Saved version “{saved.Name}”", "history");
+        });
+    }
+
+    /// A restore's edits of the open document, as Replace all's, at the version the core read.
+    void OnHistory(object sender, RoutedEventArgs e) => Run("Can't restore", async () =>
+    {
+        if (await new HistoryDialog(session).Restore() is { } restored) Editor.Apply(restored.Edits);
+    });
+
     void OnFind(object sender, RoutedEventArgs e) => Editor.ShowFind(false);
     void OnReplace(object sender, RoutedEventArgs e) => Editor.ShowFind(true);
     void OnFindNext(object sender, RoutedEventArgs e) => Editor.FindNext(true);
@@ -750,6 +972,8 @@ public sealed partial class WorkspacePage : Page
     void OnShiftLeft(object sender, RoutedEventArgs e) => Editor.ShiftLines(-1);
     void OnMoveLineUp(object sender, RoutedEventArgs e) => Editor.MoveLines(true);
     void OnMoveLineDown(object sender, RoutedEventArgs e) => Editor.MoveLines(false);
+    void OnDuplicateLine(object sender, RoutedEventArgs e) => Editor.ChangeLines("duplicate_lines");
+    void OnDeleteLine(object sender, RoutedEventArgs e) => Editor.ChangeLines("delete_lines");
     void OnActualSize(object sender, RoutedEventArgs e) => Pdf.ZoomTo(1);
 
     async void OnExportPdf(object sender, RoutedEventArgs e)
@@ -760,6 +984,13 @@ public sealed partial class WorkspacePage : Page
         if (await picker.PickSaveFileAsync() is not { } picked) return;
         try { File.Copy(path, picked.Path, true); }
         catch (Exception ex) { await App.Alert("Can't export", ex.Message); }
+    }
+
+    void OnOpenPdf(object sender, RoutedEventArgs e) => Launch(Pdf.FilePath!);
+
+    async void OnExportZip(object sender, RoutedEventArgs e)
+    {
+        if (await Save()) await App.ExportZip(id, name!, ReferenceEquals(sender, ArxivItem));
     }
 
     /// Windows' share sheet, which a desktop app opens through its window.
@@ -827,6 +1058,9 @@ public sealed partial class WorkspacePage : Page
     }
 
     static Visibility Vis(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
+
+    /// In the app Windows opens the file with.
+    static void Launch(string path) => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
 
     string Full(string path) => System.IO.Path.Combine(root, path.Replace('/', '\\'));
 }

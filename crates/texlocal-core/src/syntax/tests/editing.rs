@@ -176,7 +176,7 @@ fn completions_are_offered_for_what_is_typed() {
     for (before, explicit, expected) in cases {
         let mut doc = SourceDocument::new(before);
         doc.set_symbols(std::sync::Arc::new(Symbols {
-            labels: vec!["sec:intro".into()],
+            labels: Facts::read("\\label{sec:intro}", "tex").labels,
             citations: cited(&["knuth84"]),
             ..Symbols::default()
         }));

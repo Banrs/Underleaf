@@ -1,12 +1,14 @@
 //! Project sessions: what a host would keep per open project (open files' text, autosave,
-//! conflicts, builds and issues, live preview, the folder's watcher), kept once here.
+//! conflicts, builds and issues, live preview, the folder's watcher, history), kept once here.
 //! Each session is one task (`actor.rs`) taking messages one at a time; a host numbers its
 //! sessions, so it listens for one before opening it. docs/core-api.md is the contract.
 
 mod actor;
 mod build;
 mod document;
+mod history;
 mod live;
+mod navigate;
 #[cfg(test)]
 mod tests;
 mod watch;
@@ -21,6 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::analyze::{self, Heading};
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
+use crate::logparse::LogItem;
 use crate::projects::Symbols;
 use crate::service::{Service, arg, out, string_arg};
 use crate::syntax::TextEdit;
@@ -45,7 +48,13 @@ pub(crate) enum Msg {
     },
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
-    Symbols(u64, Result<Symbols, CoreError>),
+    /// A symbol scan's, numbered, with what the project's checks found and the session's count
+    /// of edits as the scan began.
+    Symbols {
+        seq: u64,
+        edits: u64,
+        result: Result<(Symbols, Vec<LogItem>), CoreError>,
+    },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
 }

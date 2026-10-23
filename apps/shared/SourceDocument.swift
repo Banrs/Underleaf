@@ -74,6 +74,8 @@ final class SourceDocument {
     }
     func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
+    /// The prose words in `range`, counted as the document's are.
+    func words(in range: NSRange) -> Int { (call("words", range.json) as WordCount?)?.words ?? 0 }
     /// The name at `offset` and the places the project defines it, the first where a jump goes.
     func definition(at offset: Int) -> Definition? { call("definition", ["at": offset]) }
     /// What the session's replaces and renames of its document are made against; nil for the editor's own text.
@@ -112,6 +114,10 @@ final class SourceDocument {
 
     /// Nil when a line has nowhere to go.
     func moveLines(_ selections: [NSRange], up: Bool) -> Change? { call("move_lines", ["selections": selections.map(\.json), "up": up]) }
+
+    func duplicateLines(_ selections: [NSRange]) -> Change? { call("duplicate_lines", ["selections": selections.map(\.json)]) }
+
+    func deleteLines(_ selections: [NSRange]) -> Change? { call("delete_lines", ["selections": selections.map(\.json)]) }
 
     func toggle(_ style: TextStyle, _ selections: [NSRange]) -> Change? {
         call("toggle_style", ["selections": selections.map(\.json), "style": style.rawValue])
@@ -256,6 +262,8 @@ nonisolated struct Definition: Decodable, Hashable {
     var name: String
     var places: [Place]
 }
+
+private nonisolated struct WordCount: Decodable { var words: Int }
 
 nonisolated struct MathPreview: Decodable, Equatable {
     var start: Int

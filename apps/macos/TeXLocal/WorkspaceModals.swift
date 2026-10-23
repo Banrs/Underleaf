@@ -47,6 +47,10 @@ struct WorkspaceModals: ViewModifier {
                     }
                 case .rename(let symbol):
                     RenameSheet(name: symbol.name) { try await project.renameSymbol(symbol, to: $0) }
+                case .saveVersion:
+                    SaveVersionSheet(project: project)
+                case .versionHistory:
+                    VersionHistorySheet(project: project)
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in

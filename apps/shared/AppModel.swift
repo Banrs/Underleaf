@@ -394,6 +394,16 @@ final class AppModel {
         })
     }
 
+    /// Named as Finder names a copy, numbered on by the core where that's taken; the copy's id once the list has it.
+    func duplicate(_ project: ProjectInfo) async -> String? {
+        let copy = await alerting("Couldn’t Duplicate “\(project.name)”") {
+            try await core.call("duplicate_project", ["id": project.id, "name": String(localized: "\(project.name) copy")],
+                                as: ProjectInfo.self)
+        }
+        await refresh()
+        return copy?.id
+    }
+
     var undoManager: UndoManager? { undoSource() }
     #if os(macOS)
     @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
@@ -445,7 +455,7 @@ final class AppModel {
     @ObservationIgnored var launchProject: String?
 
     /// `project` goes from one to the next, never nil between, so the window keeps the workspace.
-    func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
+    func open(_ id: String) async {
         openGeneration += 1
         let generation = openGeneration
         guard project?.id != id || project?.closed == true else { return }
@@ -458,7 +468,7 @@ final class AppModel {
         recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(Self.recentLimit))
         let model = ProjectModel(id: id, app: self)
         project = model
-        await model.load(restoring: saved?.project == id ? saved : nil)
+        await model.load()
     }
 
     /// False, staying, when the save fails: the editor holds the only copy.
@@ -485,6 +495,7 @@ final class AppModel {
         guard let project else { return true }
         if !project.closed {
             guard await project.save(), generation == openGeneration else { return false }
+            await project.savePlace()
             project.close()
         }
         await project.waitUntilClosed()

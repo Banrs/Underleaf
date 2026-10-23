@@ -1,6 +1,6 @@
 //! Building a project with latexmk, or where TeX runs inside the app with the passes latexmk
-//! would make (`passes`): Stop and quit, the timeout, and the stale-output guard. A session
-//! runs one build at a time.
+//! would make (`passes`): Stop and quit, an automatic build's timeout, and the stale-output
+//! guard. A session runs one build at a time.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -21,9 +21,11 @@ use crate::process::{self, Tree, drive};
 use crate::settings::read_settings;
 use crate::stamp::Stamp;
 
+/// An automatic build's alone: one asked for runs until it ends or is stopped, but a document
+/// that loops would start a build that never ends at each pause in typing.
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 const LOG_TAIL: usize = 200_000;
-/// A log that loops on `\message` until the timeout can reach gigabytes.
+/// A log that loops on `\message` can reach gigabytes before a timeout or Stop.
 const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
 /// The outputs whose stamps tell whether a run wrote them.
 const STAMPED: [&str; 4] = ["log", "pdf", "blg", "aux"];
@@ -172,6 +174,7 @@ impl CompileManager {
         &self,
         project: &Project,
         path_env: &str,
+        auto: bool,
     ) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let root = &project.root;
@@ -246,7 +249,7 @@ impl CompileManager {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
             Ok((mut child, tree)) => {
                 let (code, mut output, stderr, timed_out) =
-                    drive(&mut child, &tree, COMPILE_TIMEOUT).await;
+                    drive(&mut child, &tree, auto.then_some(COMPILE_TIMEOUT)).await;
                 output.push_str(&stderr);
                 let end = if timed_out {
                     End::TimedOut
@@ -336,7 +339,7 @@ fn finish(run: &CompileRun, end: &End, tool: &str, output: String) -> CompileRes
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
     match end {
         End::TimedOut => errors.push(LogItem::error(format!(
-            "The build was stopped after {} minutes without finishing. The Build Log shows how far it got.",
+            "This automatic build was stopped after {} minutes without finishing. Compile to build without a time limit; the Build Log shows how far it got.",
             COMPILE_TIMEOUT.as_secs() / 60
         ))),
         End::Unstarted(err) => {
@@ -502,7 +505,11 @@ mod tests {
         )
         .unwrap();
         let path = std::env::var("PATH").unwrap();
-        let result = service.compile.compile(&project, &path).await.unwrap();
+        let result = service
+            .compile
+            .compile(&project, &path, false)
+            .await
+            .unwrap();
         assert!(result.ok, "{}", result.log);
         for (ext, entry) in [
             ("gls", r"\glossentry{tex}"),
@@ -545,7 +552,11 @@ See \cite{knuth}.
         let opened = crate::projects::open_path(&service, &folder).unwrap();
         let project = service.project(&opened.project.id).unwrap();
         let path = std::env::var("PATH").unwrap();
-        let result = service.compile.compile(&project, &path).await.unwrap();
+        let result = service
+            .compile
+            .compile(&project, &path, false)
+            .await
+            .unwrap();
         assert!(result.ok, "{}", result.log);
         let bbl = std::fs::read_to_string(project.build.join("main.bbl")).unwrap();
         assert!(bbl.contains("The TeXbook"), "{bbl}");

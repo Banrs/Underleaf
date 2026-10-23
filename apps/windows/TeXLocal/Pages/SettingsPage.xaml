@@ -46,7 +46,7 @@
                         <Button Click="OnOpenFolder" Content="Open in File Explorer" />
                     </controls:Card>
 
-                    <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="TeX" />
+                    <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="Compiling" />
                     <!-- Collapsed while closed, so a closed bar leaves no gap. -->
                     <controls:TexBar x:Name="TexMissing" Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}" />
                     <controls:Card Glyph="&#xE838;" Header="TeX location">
@@ -61,6 +61,17 @@
                             <Button x:Name="AutomaticButton" Click="OnAutomatic" Content="Use automatic" Visibility="Collapsed" />
                             <Button Click="OnChooseTex" Content="Choose folder…" />
                         </StackPanel>
+                    </controls:Card>
+                    <controls:Card Description="Compiles shortly after you stop typing" Glyph="&#xE768;" Header="Compile automatically">
+                        <ToggleSwitch MinWidth="0" AutomationProperties.Name="Compile automatically" IsOn="{x:Bind app:Prefs.AutoCompile, Mode=TwoWay}" />
+                    </controls:Card>
+                    <controls:Card Description="Each project can change its engine in the Build menu" Glyph="&#xE950;" Header="Engine for new projects">
+                        <ComboBox
+                            x:Name="EngineBox"
+                            MinWidth="200"
+                            AutomationProperties.Name="Engine for new projects"
+                            DisplayMemberPath="Title"
+                            SelectedValuePath="Id" />
                     </controls:Card>
 
                     <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="Editor" />
@@ -103,6 +114,13 @@
                     </controls:Card>
 
                     <TextBlock Style="{StaticResource SettingsSectionStyle}" Text="PDF" />
+                    <controls:Card Description="Dark inverts the pages for reading at night, keeping their colours' hues" Glyph="&#xE7C3;" Header="Page colour">
+                        <ComboBox x:Name="PageColourBox" MinWidth="200" AutomationProperties.Name="Page colour">
+                            <x:String>White</x:String>
+                            <x:String>Dark</x:String>
+                            <x:String>Use app theme</x:String>
+                        </ComboBox>
+                    </controls:Card>
                     <controls:Card Description="Scrolls the PDF to the line you are editing" Glyph="&#xEA90;" Header="Scroll to the cursor after compiling">
                         <ToggleSwitch MinWidth="0" AutomationProperties.Name="Scroll to the cursor after compiling" IsOn="{x:Bind app:Prefs.SyncAfterCompile, Mode=TwoWay}" />
                     </controls:Card>

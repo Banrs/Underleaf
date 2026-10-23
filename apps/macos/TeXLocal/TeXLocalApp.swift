@@ -9,11 +9,6 @@ struct TeXLocalApp: App {
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
-            // No help book: the default item would only say so.
-            CommandGroup(replacing: .help) {
-                Link("Visit TeXLocal on GitHub", destination: Links.repository)
-                Link("Report Issue", destination: Links.issues)
-            }
         }
     }
 }
@@ -60,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             let saved = await app.project?.save() ?? true
             if saved {
+                await app.project?.savePlace()
                 // Compiles run in their own process groups; nothing else stops them.
                 try? await Core.shared.call("kill_all", [:])
             } else if mainWindow.window?.isVisible != true {

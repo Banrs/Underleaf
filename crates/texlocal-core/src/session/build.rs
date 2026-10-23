@@ -21,17 +21,17 @@ use crate::service::Service;
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 pub(crate) trait Engine: Send + Sync {
-    fn compile(&self, project: Project) -> Fut<Result<CompileResult, CoreError>>;
+    fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>>;
     fn stop_compile(&self, root: &Path);
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
 impl Engine for Arc<Service> {
-    fn compile(&self, project: Project) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         let service = Self::clone(self);
         Box::pin(async move {
             let tex_path = service.tool_paths().0;
-            service.compile.compile(&project, &tex_path).await
+            service.compile.compile(&project, &tex_path, auto).await
         })
     }
 
@@ -59,12 +59,33 @@ pub(crate) struct Builds {
     outdated: bool,
     issues: Vec<LogItem>,
     error_count: usize,
+    /// None until the first scan has checked the project.
+    checks: Option<Vec<LogItem>>,
+    checks_shown: Value,
+    /// The session's count of edits as the checks' scan began.
+    checked: u64,
     chosen: Option<usize>,
     result_edits: u64,
     pub cleaners: Vec<Reply>,
     /// Whether live preview ran as the clean began, and the Start it ran for.
     cleaning: Option<(bool, u64)>,
     shown: Value,
+}
+
+impl Builds {
+    /// The checks but those on a line the last build has an issue on, whose issue wins the line.
+    fn checks(&self) -> impl Iterator<Item = &LogItem> {
+        let checks = self.checks.iter().flatten();
+        checks.filter(|check| {
+            let built = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
+            !self.issues.iter().any(built)
+        })
+    }
+
+    /// The session's issues: the last build's errors, then its warnings, then the checks.
+    fn listed(&self) -> impl Iterator<Item = &LogItem> {
+        self.issues.iter().chain(self.checks())
+    }
 }
 
 impl Actor {
@@ -92,7 +113,10 @@ impl Actor {
         (self.builds.compiling, self.builds.auto) = (true, auto);
         self.builds.built = self.edits;
         self.publish_build();
-        let (build, tx) = (self.engine.compile(self.project.clone()), self.tx.clone());
+        let (build, tx) = (
+            self.engine.compile(self.project.clone(), auto),
+            self.tx.clone(),
+        );
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });
@@ -140,6 +164,7 @@ impl Actor {
         let announce = !result.stopped && (!auto || builds.error_count != before);
         let outdated = builds.outdated;
         self.mark_issues();
+        self.publish_checks();
         // Live Preview reads the build folder's .aux and .bbl; TeXpresso goes back only as far
         // as their first changed byte. A stopped build may have left them half written.
         if !result.stopped {
@@ -214,6 +239,7 @@ impl Actor {
             (builds.pdf, builds.outdated) = (false, false);
             (builds.issues, builds.error_count, builds.chosen) = (Vec::new(), 0, None);
             self.mark_issues();
+            self.publish_checks();
             self.publish_build();
             self.emit("build_cleaned", json!({}));
             if self.auto_compile {
@@ -227,6 +253,23 @@ impl Actor {
 
     // MARK: - Issues
 
+    pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {
+        (self.builds.checked, self.builds.checks) = (edits, Some(checks));
+        self.publish_checks();
+        self.mark_issues();
+    }
+
+    fn publish_checks(&mut self) {
+        if self.builds.checks.is_none() {
+            return;
+        }
+        let items = json!(self.builds.checks().collect::<Vec<_>>());
+        if items != self.builds.checks_shown {
+            self.builds.checks_shown = items.clone();
+            self.emit("checks", json!({ "items": items }));
+        }
+    }
+
     pub fn clear_issues(&mut self, path: &str) {
         if let Some(doc) = self.docs.get_mut(path)
             && !doc.issues.is_empty()
@@ -236,16 +279,25 @@ impl Actor {
         }
     }
 
-    /// A document edited since the last build began isn't marked: its lines may have moved.
+    /// A document edited since the last build or check began isn't marked with its issues: its
+    /// lines may have moved.
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
+        let builds = &self.builds;
         for (path, doc) in &mut self.docs {
             let edits = self.last_edits.get(path).copied().unwrap_or(0);
-            let lines = if edits <= self.builds.result_edits {
-                issue_lines(&self.builds.issues, path, &doc.doc)
-            } else {
-                Vec::new()
+            let built = builds
+                .issues
+                .iter()
+                .filter(|_| edits <= builds.result_edits);
+            let checks = builds.checks.iter().flatten();
+            let checks = checks.filter(|_| edits <= builds.checked);
+            let index = |line| {
+                let on =
+                    |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
+                builds.listed().position(on)
             };
+            let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             if lines != doc.issues {
                 doc.issues.clone_from(&lines);
                 changed.push(json!({ "path": path, "lines": lines }));
@@ -258,18 +310,19 @@ impl Actor {
 
     pub fn choose_issue(&mut self, index: Option<usize>) -> Value {
         self.builds.chosen = index;
-        let issues = &self.builds.issues;
-        let Some(index) = index.filter(|i| *i < issues.len()) else {
-            return Value::Null;
-        };
-        json!({ "index": index, "issue": issues[index] })
+        let issue = index.and_then(|index| self.builds.listed().nth(index));
+        match (index, issue) {
+            (Some(index), Some(issue)) => json!({ "index": index, "issue": issue }),
+            _ => Value::Null,
+        }
     }
 
     /// The next or previous issue with a place, round the list's ends.
     pub fn next_issue(&mut self, next: bool) -> Value {
-        let issues = &self.builds.issues;
-        let places: Vec<usize> = (0..issues.len())
-            .filter(|&i| issues[i].file.is_some())
+        let issues = self.builds.listed().enumerate();
+        let places: Vec<usize> = issues
+            .filter(|(_, issue)| issue.file.is_some())
+            .map(|(i, _)| i)
             .collect();
         let chosen = self.builds.chosen;
         let place = if next {
@@ -288,11 +341,13 @@ impl Actor {
 
 /// Each line's first issue, with the messages of the others there. An undefined command's
 /// issue has where the line has the command (`tokens`), and a `compact` message that names it
-/// in fewer words; so does one that needs shell escape.
+/// in fewer words; so does one that needs shell escape. `index`: where a line's issues start in
+/// the session's list, for a click on it.
 pub(super) fn issue_lines<'a>(
     issues: impl IntoIterator<Item = &'a LogItem>,
     path: &str,
     doc: &Document,
+    index: impl Fn(u32) -> Option<usize>,
 ) -> Vec<Value> {
     let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
@@ -322,6 +377,7 @@ pub(super) fn issue_lines<'a>(
             "compact": compact,
             "tokens": tokens,
             "others": others,
+            "index": index(line),
         })
     };
     lines.into_iter().map(line).collect()

@@ -33,7 +33,7 @@ final class BuildPanelModel {
     }
 
     /// Enumerated before filtering: duplicate messages keep distinct, stable row IDs.
-    func rows(of result: CompileResult?) -> [(offset: Int, element: LogItem)] {
-        (result?.listed ?? []).enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
+    func rows(of listed: [LogItem]) -> [(offset: Int, element: LogItem)] {
+        listed.enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
     }
 }

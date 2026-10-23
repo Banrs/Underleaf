@@ -17,20 +17,24 @@ use tokio::time::Instant;
 
 use super::build::Builds;
 use super::live::Live;
+use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Document, Engine, Msg, Outline, Preview, Reply, Sessions};
-use crate::analyze::{self, Facts, Named, Place};
+use crate::analyze::{self, Facts, Place};
+use crate::logparse::{Fix, LogItem};
 use crate::paths::{self, Project, within};
-use crate::projects::{self, Query, Symbols, file_kind};
+use crate::projects::{self, History, Query, Symbols, file_kind};
 use crate::service::{Service, arg, out, string_arg};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::{SymbolKind, Text, TextEdit};
-use crate::{CoreError, lf, lock};
+use crate::syntax::{self, SymbolKind, Text, TextEdit};
+use crate::{CoreError, checks, lf, lock, packages, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
 const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
+pub(super) const ONE_DOCUMENT: &str =
+    "Only one open document can be edited at once: close the others first.";
 const NOT_UTF8: &str =
     "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
 
@@ -129,7 +133,7 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
-    project_id: String,
+    pub project_id: String,
     pub project: Project,
     pub service: Arc<Service>,
     pub engine: Arc<dyn Engine>,
@@ -141,7 +145,7 @@ pub(crate) struct Actor {
     next_doc: u64,
     symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
-    facts: Arc<analyze::Files>,
+    pub facts: Arc<analyze::Files>,
     pub edits: u64,
     /// Kept for the session's life: a document closed since isn't marked with a build's
     /// issues on lines that may have moved.
@@ -158,6 +162,8 @@ pub(crate) struct Actor {
     deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
+    pub history: Arc<Mutex<History>>,
+    pub trail: Trail,
     closed: bool,
 }
 
@@ -192,6 +198,7 @@ impl Actor {
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
         }
+        let history = Arc::new(Mutex::new(History::of(&project)));
         let actor = Self {
             id,
             project_id,
@@ -221,8 +228,11 @@ impl Actor {
             deleting: BTreeSet::new(),
             live: Live::default(),
             later,
+            history,
+            trail: Trail::default(),
             closed: false,
         };
+        actor.snapshot_soon();
         Ok((actor, opened))
     }
 
@@ -308,7 +318,7 @@ impl Actor {
             Msg::Command { name, args, reply } => self.command(&name, &args, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
-            Msg::Symbols(seq, result) => self.symbols_done(seq, result),
+            Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
             Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
@@ -368,12 +378,28 @@ impl Actor {
     fn command(&mut self, name: &str, args: &Value, reply: Reply) {
         match name {
             "clean" => self.clean(reply),
+            "fix" => self.fix(args, reply),
             "analyze" => match string_arg(args, "path").and_then(paths::rel_key) {
                 Ok(path) => self.analyze(path, reply),
                 Err(err) => reply.send(Err(err)),
             },
             "search" => match query(args) {
                 Ok(query) => self.search(query, reply),
+                Err(err) => reply.send(Err(err)),
+            },
+            "history_list" | "history_save" | "history_compare" => {
+                self.history_command(name, args, reply);
+            }
+            "usages" | "quick_help" => {
+                let path = string_arg(args, "path").and_then(paths::rel_key);
+                match path.and_then(|path| Ok((path, arg::<u32>(args, "offset")?))) {
+                    Ok((path, offset)) if name == "usages" => self.usages(&path, offset, reply),
+                    Ok((path, offset)) => self.quick_help(&path, offset, reply),
+                    Err(err) => reply.send(Err(err)),
+                }
+            }
+            "quick_open" => match string_arg(args, "query") {
+                Ok(query) => self.quick_open(query.to_owned(), reply),
                 Err(err) => reply.send(Err(err)),
             },
             #[cfg(test)]
@@ -420,9 +446,13 @@ impl Actor {
                 let from = paths::rel_key(string_arg(args, "from")?)?;
                 return self.rename(&from, string_arg(args, "to")?);
             }
+            "navigate" => return self.navigate(args),
+            "back" => return self.step(args, true),
+            "forward" => return self.step(args, false),
             "replace" => return self.replace(args),
             "rename_symbol" => return self.rename_symbol(args),
-            "set_settings" => return self.set_settings(&arg(args, "patch")?),
+            "history_restore" => return self.history_restore(args),
+            "set_settings" => return self.set_settings(&arg(args, "patch")?, true),
             "prepare_delete" => return self.prepare_delete(&path()?),
             "deleted" => {
                 let path = path()?;
@@ -435,10 +465,7 @@ impl Actor {
                 }
             }
             "live_start" => return Ok(self.live_start_asked()),
-            "live_stop" => {
-                self.live_stop();
-                return Ok(self.live_state());
-            }
+            "live_stop" => return Ok(self.live_stop_asked()),
             "live_log" => self.show_live_log(arg(args, "shown")?),
             "live_view" => self.live_view(arg(args, "first")?, arg(args, "last")?),
             "live_caret" => self.live_caret(path()?, arg(args, "offset")?),
@@ -606,7 +633,7 @@ impl Actor {
     }
 
     /// On its way to the Trash, alone or in a folder.
-    fn deleting(&self, path: &str) -> bool {
+    pub fn deleting(&self, path: &str) -> bool {
         self.deleting.iter().any(|entry| within(path, entry))
     }
 
@@ -655,6 +682,7 @@ impl Actor {
                     (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
                     self.after(Timer::Symbols);
+                    self.snapshot_soon();
                     self.emit("saved", json!({ "path": path }));
                     Ok(true)
                 }
@@ -859,7 +887,7 @@ impl Actor {
         }
     }
 
-    fn reload_tree(&mut self) {
+    pub fn reload_tree(&mut self) {
         let Ok(tree) = projects::file_tree(&self.project) else {
             return;
         };
@@ -883,18 +911,38 @@ impl Actor {
         let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
+        let (service, main, edits) = (
+            Arc::clone(&self.service),
+            self.tree.main.clone(),
+            self.edits,
+        );
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
-            let symbols = symbols.map(|symbols| Symbols { files, ..symbols });
-            let _ = tx.send(Msg::Symbols(seq, symbols));
+            let installed = tex::installed(|| service.tool_paths().0);
+            let result = symbols.map(|symbols| {
+                let symbols = Symbols {
+                    files,
+                    installed,
+                    ..symbols
+                };
+                let checks = main.map_or_else(Vec::new, |main| checks::check(&symbols, &main));
+                (symbols, checks)
+            });
+            let _ = tx.send(Msg::Symbols { seq, edits, result });
         });
     }
 
-    fn symbols_done(&mut self, seq: u64, result: Result<Symbols, CoreError>) {
-        if let Ok(symbols) = result
+    fn symbols_done(
+        &mut self,
+        seq: u64,
+        edits: u64,
+        result: Result<(Symbols, Vec<LogItem>), CoreError>,
+    ) {
+        if let Ok((symbols, checks)) = result
             && seq == self.symbols_seq
         {
             *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
+            self.checks_done(checks, edits);
         }
     }
 
@@ -934,7 +982,9 @@ impl Actor {
     fn search(&self, query: Query, reply: Reply) {
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
-            let hits = projects::search_project(&root, &query, &texts(&docs), 100);
+            let found = |_: &str, text: &str| query.places(text);
+            let open = texts(&docs);
+            let hits = projects::search_project(&root, &open, &projects::is_text, &found, 100);
             reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
         });
     }
@@ -942,7 +992,46 @@ impl Actor {
     fn replace(&self, args: &Value) -> Result<Value, CoreError> {
         let (query, to) = (query(args)?, string_arg(args, "replacement")?);
         let open = self.texts_to_edit("replaced")?;
+        self.snapshot_before("Before Replace All")?;
         self.edit_project(&open, &projects::is_text, &|_, text| query.places(text), to)
+    }
+
+    /// Where the project defines or uses the name at `offset` in the open document `path`, as
+    /// a search's hits: worked out beside the session, as a search is.
+    fn usages(&self, path: &str, offset: u32, reply: Reply) {
+        let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
+            return reply.send(Ok(Value::Null));
+        };
+        let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
+        tokio::task::spawn_blocking(move || {
+            let symbol = doc.with(|source| {
+                let own = Facts::read(&source.text(), file_kind(&source.path));
+                source.symbol_at(&own, offset)
+            });
+            // A file by the project's name for it, which every input of it elsewhere resolves to.
+            let named = symbol.and_then(|(kind, name, file)| match kind {
+                SymbolKind::File => Some((kind, file?)),
+                kind => Some((kind, name)),
+            });
+            let Some((kind, name)) = named else {
+                return reply.send(Ok(Value::Null));
+            };
+            let symbols = doc.symbols();
+            let found = |rel: &str, text: &str| {
+                let facts = Facts::read(text, file_kind(rel));
+                syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
+            };
+            let hits = projects::search_project(&root, &texts(&docs), &tex, &found, usize::MAX);
+            // As the source writes it, for a host's heading: a command has its backslash already.
+            let name = match kind {
+                SymbolKind::Label => format!("\\label{{{name}}}"),
+                SymbolKind::Citation => format!("\\cite{{{name}}}"),
+                SymbolKind::Environment => format!("\\begin{{{name}}}"),
+                _ => name,
+            };
+            let groups = hits.map(projects::search_groups);
+            reply.send(groups.map(|groups| json!({ "name": name, "groups": groups })));
+        });
     }
 
     /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
@@ -971,7 +1060,7 @@ impl Actor {
         let symbols = projects::scan_symbols(&self.project.root, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = symbols.by_file.values();
-            files.any(|facts| definitions(facts, kind).iter().any(|n| n.name == name))
+            files.any(|facts| !syntax::definitions(facts, kind, name).is_empty())
         };
         if !defines(from) {
             return Err(CoreError::not_found(format!(
@@ -983,23 +1072,65 @@ impl Actor {
                 "A {noun} “{to}” exists already."
             )));
         }
-        let tex = |rel: &str| matches!(file_kind(rel), "tex" | "bib");
+        self.snapshot_before("Before Rename")?;
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
-            let used = facts.uses.iter().filter(|u| u.kind == kind);
-            let named = definitions(&facts, kind).iter().map(|n| (&n.name, n.place));
-            let named = named.chain(used.map(|u| (&u.name, u.place)));
-            let mut places: Vec<Place> =
-                named.filter(|(n, _)| *n == from).map(|(_, p)| p).collect();
-            places.sort_by_key(|place| (place.line, place.column));
-            places
+            syntax::usages(&facts, rel, kind, from, |_| None)
         };
         self.edit_project(&open, &tex, &found, to)
     }
 
+    /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
+    /// analysis does; its password or UAC dialog cancelled answers null, nothing to do.
+    fn fix(&mut self, args: &Value, reply: Reply) {
+        let unknown = || CoreError::bad_request("There's no such fix.");
+        let fix = string_arg(args, "id").and_then(|id| Fix::parse(id).ok_or_else(unknown));
+        let edits = match fix {
+            Ok(Fix::Install(file)) => {
+                let (service, settings) =
+                    (Arc::clone(&self.service), self.project.settings.clone());
+                tokio::spawn(async move {
+                    let installed = packages::install_package(&file, &service.tool_paths().0).await;
+                    reply.send(match installed {
+                        Err(err) if err.status == 403 => Ok(Value::Null),
+                        installed => installed.map(|_| fixed(Value::Null, &settings)),
+                    });
+                });
+                return;
+            }
+            Ok(Fix::AddPackage(name)) => self
+                .add_package(&name)
+                .map(|mut added| added["edits"].take()),
+            Ok(Fix::Xelatex) => self
+                .set_settings(&json!({ "engine": "xelatex" }), false)
+                .map(|_| Value::Null),
+            Ok(Fix::ShellEscape) => self
+                .set_settings(&json!({ "shellEscape": true }), false)
+                .map(|_| Value::Null),
+            Err(err) => Err(err),
+        };
+        reply.send(edits.map(|edits| fixed(edits, &self.project.settings)));
+    }
+
+    /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
+    /// file loads the package already.
+    fn add_package(&self, name: &str) -> Result<Value, CoreError> {
+        // As the disk spells it, which the walk compares, however the settings do.
+        let main = self.tree.main.as_deref();
+        let open = self.texts_to_edit("added")?;
+        self.snapshot_before("Before Adding a Package")?;
+        let found = |_: &str, text: &str| {
+            let facts = Facts::read(text, "tex");
+            let loaded = facts.packages.iter().any(|package| package == name);
+            facts.new_package.filter(|_| !loaded).into_iter().collect()
+        };
+        let line = format!("\n\\usepackage{{{name}}}");
+        self.edit_project(&open, &|rel| Some(rel) == main, &found, &line)
+    }
+
     /// The open documents' paths, text and versions, unless one has a change on disk still to
     /// settle, when nothing is edited, as nothing is saved.
-    fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
+    pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
         let unsettled =
             |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || doc.reload.is_some();
@@ -1043,9 +1174,7 @@ impl Actor {
             })
             .collect();
         if edits.len() > 1 {
-            return Err(CoreError::conflict(
-                "Only one open document can be edited at once: close the others first.",
-            ));
+            return Err(CoreError::conflict(ONE_DOCUMENT));
         }
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
         let written = self.service.with_project(&self.project_id, |project| {
@@ -1068,6 +1197,7 @@ impl Actor {
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
+        self.trail.moved(from, to);
         // Names compare without case, so a rename only in case leaves the entry itself at the
         // new name: that one moves rather than closes.
         for path in self.docs_within(to) {
@@ -1101,7 +1231,9 @@ impl Actor {
         Ok(answer)
     }
 
-    fn set_settings(&mut self, patch: &Value) -> Result<Value, CoreError> {
+    /// With `build`, an automatic build follows; after a fix the host builds, once it has applied
+    /// the fix's edits.
+    fn set_settings(&mut self, patch: &Value, build: bool) -> Result<Value, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
             let updated = settings::write_settings(&project.settings, patch)?;
@@ -1113,7 +1245,7 @@ impl Actor {
         })?;
         if main_changed {
             self.main_file_changed();
-        } else if self.auto_compile {
+        } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
         out(updated)
@@ -1143,13 +1275,14 @@ impl Actor {
     }
 }
 
-/// What `facts` defines as a label, or as a citation (a `\bibitem` or a .bib entry's key).
-fn definitions(facts: &Facts, kind: SymbolKind) -> &[Named] {
-    if kind == SymbolKind::Label {
-        &facts.labels
-    } else {
-        &facts.citations
-    }
+/// The settings always, so a host shows the engine and toggles as a fix leaves them.
+fn fixed(edits: Value, settings: &Path) -> Value {
+    json!({ "edits": edits, "settings": settings::read_settings(settings) })
+}
+
+/// The files a symbol is defined and used in.
+fn tex(rel: &str) -> bool {
+    matches!(file_kind(rel), "tex" | "bib")
 }
 
 fn query(args: &Value) -> Result<Query, CoreError> {

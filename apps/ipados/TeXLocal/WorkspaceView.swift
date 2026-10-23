@@ -471,6 +471,7 @@ private struct WorkspaceModals: ViewModifier {
         case .gotoLine: String(localized: "Go to Line")
         case .gotoPage: String(localized: "Go to Page")
         case .rename(let symbol): String(localized: "Rename “\(symbol.name)”")
+        case .saveVersion: String(localized: "Save Version")
         case nil: ""
         }
     }
@@ -480,11 +481,16 @@ private struct WorkspaceModals: ViewModifier {
         case .gotoLine: String(localized: "Line number")
         case .gotoPage: project.pdf.pageCount > 0 ? "1–\(project.pdf.pageCount)" : String(localized: "Page number")
         case .rename: String(localized: "New Name")
+        case .saveVersion: String(localized: "Name")
         }
     }
 
     private func promptAction(_ prompt: Prompt) -> String {
-        if case .rename = prompt { String(localized: "Rename") } else { String(localized: "Go") }
+        switch prompt {
+        case .rename: String(localized: "Rename")
+        case .saveVersion: String(localized: "Save")
+        case .gotoLine, .gotoPage: String(localized: "Go")
+        }
     }
 
     private func answer(_ prompt: Prompt) {
@@ -499,6 +505,9 @@ private struct WorkspaceModals: ViewModifier {
         case .rename(let symbol):
             guard !text.isEmpty, text != symbol.name else { return }
             Task { await project.alerting("Couldn’t Rename “\(symbol.name)”") { try await project.renameSymbol(symbol, to: text) } }
+        case .saveVersion:
+            guard !text.isEmpty else { return }
+            Task { await project.alerting("Couldn’t Save the Version") { try await project.saveVersion(named: text) } }
         }
     }
 }

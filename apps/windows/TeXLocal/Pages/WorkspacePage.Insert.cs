@@ -63,7 +63,7 @@ public sealed partial class WorkspacePage
     }
 
     /// Windows' sentence case for the catalogue's titles: "Aligned Equations" is "Aligned equations"; "URL" stays (core gap 17).
-    static string Sentence(string title) => string.Join(' ', title.Split(' ').Select((word, i) =>
+    internal static string Sentence(string title) => string.Join(' ', title.Split(' ').Select((word, i) =>
         i == 0 || word.Length < 2 || word.Skip(1).Any(char.IsUpper) ? word : char.ToLowerInvariant(word[0]) + word[1..]));
 
     /// Insert › Heading and the command bar's text style, as Word's styles gallery: each level in its own size, weight

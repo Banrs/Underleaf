@@ -9,7 +9,7 @@ struct RootView: View {
     @Binding var settingsShown: Bool
     @Environment(\.scenePhase) private var scenePhase
     /// The window's project, file, line and PDF place, which iPadOS restores with the window, as AppKit does the Mac's.
-    @SceneStorage("workspace") private var restoration: Data?
+    @SceneStorage("project") private var restored: String?
 
     var body: some View {
         Group {
@@ -35,7 +35,7 @@ struct RootView: View {
             app.mainWindowIsKey = scenePhase == .active
             if scenePhase != .active { saveEdits() }
         }
-        .onChange(of: app.project?.saved) { _, saved in restoration = saved.flatMap { try? JSONEncoder().encode($0) } }
+        .onChange(of: app.project?.id) { _, id in restored = id }
         .task {
             app.undoSource = { [undoManager] in undoManager }
             guard Core.shared.isOpen else { return }
@@ -43,22 +43,21 @@ struct RootView: View {
             async let tex: Void = app.refreshTeXStatus()
             await app.refresh()
             await tex
-            let saved = restoration.flatMap { try? JSONDecoder().decode(SavedWorkspace.self, from: $0) }
-                .flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
-            if let id = app.launchProject.take() ?? saved?.project, app.project == nil, !app.isOpening {
-                await app.open(id, restoring: saved)
-            }
+            // Its place is the core's ui state, as the Mac's is.
+            let restored = restored.flatMap { id in app.projects.contains { $0.id == id } ? id : nil }
+            if let id = app.launchProject.take() ?? restored, app.project == nil, !app.isOpening { await app.open(id) }
         }
     }
 
-    /// iPadOS ends an app put away, or closed from the app switcher, without a word, so what was typed is saved as the
-    /// window stops being active, as the Mac's is at Quit, in the time a background task gives.
+    /// iPadOS ends an app put away, or closed from the app switcher, without a word, so what was typed and the project's
+    /// place are saved as the window stops being active, as the Mac's are at Quit, in the time a background task gives.
     private func saveEdits() {
         guard let project = app.project else { return }
         let application = UIApplication.shared
         let task = application.beginBackgroundTask(withName: "Save")
         Task {
             await project.save()
+            await project.savePlace()
             application.endBackgroundTask(task)
         }
     }

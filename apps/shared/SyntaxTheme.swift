@@ -13,7 +13,7 @@ struct SyntaxTheme: RawRepresentable, Hashable, Identifiable {
 
     private init(_ id: String) { rawValue = id }
 
-    static let overleaf = SyntaxTheme("overleaf")
+    static let system = SyntaxTheme("system")
     static let all = listed.map { SyntaxTheme($0.id) }
 
     var title: String { Self.listed.first { $0.id == rawValue }?.title ?? rawValue }
