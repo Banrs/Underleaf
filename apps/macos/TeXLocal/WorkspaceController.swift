@@ -185,7 +185,8 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        // 27.2: collapsed at the first layout, it leaves the source without the toolbar's scroll edge.
+        // Shown at the first layout whatever the autosave says, as `viewDidAppear` folds it by the model: folded then, it
+        // left the source without the toolbar's scroll edge, which no test can see.
         pdfItem.isCollapsed = false
 
         // As Xcode's editor bar, over an empty accessory in each pane: one across both gave its edge to one only.

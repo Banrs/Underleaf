@@ -223,7 +223,7 @@ struct OutlineList: View {
                 TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
-                    HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).equatable().tag(node.id)
+                    HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).tag(node.id)
                         // A double-click's second click is the list's primary action, into the source.
                         .simultaneousGesture(TapGesture().onEnded {
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
@@ -290,8 +290,7 @@ struct OutlineHeader: View {
 /// header above stands for it.
 private let sidebarListRoom: CGFloat = 10
 
-/// Equatable: as a plain view, a heading that takes the place of a leaf and has subheadings opens closed (27.2).
-private struct HeadingRow: View, Equatable {
+private struct HeadingRow: View {
     let item: OutlineItem
     /// While the status bar counts the document's.
     let words: Int?
