@@ -18,7 +18,7 @@ final class WorkspaceController: ThinSplitViewController {
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private let searchField = FieldHandle()
 
-    private var appeared = false, joining = false
+    private var appeared = false
     private var panelHeight: CGFloat = 0
     private var paneAnimations = 0, quieting = 0
     private var quietScrollViews: [NSScrollView] = []
@@ -106,32 +106,6 @@ final class WorkspaceController: ThinSplitViewController {
         let area = max(sourceItem.minimumThickness + pdf + ColumnMetrics.toolbarInset, ColumnMetrics.toolbarMinimum - ColumnMetrics.windowControls)
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
         fitToolbar()
-        // A turn on, once the toolbar has laid its sections out for the panes as they now are.
-        guard appeared, !joining else { return }
-        joining = true
-        Task { [weak self] in
-            self?.joining = false
-            self?.joinDivider()
-        }
-    }
-
-    /// The separator follows the divider only as far as each section's tools leave it room (27.2), so the divider goes to
-    /// it.
-    private func joinDivider() {
-        let split = columns.splitView
-        guard paneAnimations == 0, !pdfItem.isCollapsed, let line = separatorLine(),
-              abs(line - split.arrangedSubviews[0].frame.maxX) >= 0.5 else { return }
-        split.setPosition(line, ofDividerAt: 0)
-    }
-
-    /// The toolbar's source|PDF separator, in the columns' coordinates. No API tells its place: its view is found by class,
-    /// and without it nothing moves.
-    func separatorLine() -> CGFloat? {
-        guard let content = view.window?.contentView, let frame = content.superview else { return nil }
-        let split = columns.splitView, divider = split.arrangedSubviews[0].frame.maxX
-        let lines = frame.subviews.filter { $0 !== content }.flatMap { $0.descendants(named: "NSSeparatorToolbarItemView") }
-            .map { split.convert($0.bounds, from: $0).minX }
-        return lines.min(by: { abs($0 - divider) < abs($1 - divider) })
     }
 
     /// Customize Toolbar changed the tools, which Compile's form goes by.
