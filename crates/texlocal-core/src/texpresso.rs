@@ -462,7 +462,7 @@ impl Preview for Manager {
                 ));
             }
         };
-        let (session, queued) = self.open(owner, root, pdf, buffers, sink, Some(tree));
+        let (session, queued) = self.open(owner, root, pdf, buffers, sink, Some(tree.clone()));
         let (stdin, stdout, stderr) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let weak = Arc::downgrade(&session);
@@ -470,7 +470,7 @@ impl Preview for Manager {
         tokio::spawn(read_output(stdout.unwrap(), Arc::clone(&session), true));
         tokio::spawn(read_output(stderr.unwrap(), Arc::clone(&session), false));
         let exit = async move {
-            match child.wait().await {
+            match tree.ended(&mut child).await {
                 Ok(status) if status.success() => None,
                 result => Some(result.map_or_else(|e| e.to_string(), |s| s.to_string())),
             }
