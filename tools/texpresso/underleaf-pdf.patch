@@ -115,73 +115,38 @@ index 333408e..23db8db 100644
  
  int ttstub_shell_escape(const unsigned short *cmd, size_t len)
 diff --git a/src/frontend/Makefile b/src/frontend/Makefile
-index c922019..5e24e65 100644
+index c922019..10af953 100644
 --- a/src/frontend/Makefile
 +++ b/src/frontend/Makefile
 @@ -1,4 +1,4 @@
 -OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
-+OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o live.o
++OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
  
  BUILD=../../build
  DIR=$(BUILD)/frontend
-diff --git a/src/frontend/driver.c b/src/frontend/driver.c
-index 9337b08..365be66 100644
---- a/src/frontend/driver.c
-+++ b/src/frontend/driver.c
-@@ -27,6 +27,7 @@
- #include <mupdf/fitz.h>
- #include "logo.h"
- #include "driver.h"
-+#include "live.h"
+@@ -9,8 +9,9 @@ TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
+ all: $(TARGETS)
  
- #ifdef __APPLE__
- #include <sys/syslimits.h>
-@@ -127,8 +128,40 @@ static void usage(void)
-           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
- }
+ texpresso: $(BUILD)/texpresso
+-$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
+-	$(LDCC) -o $@ $^ $(LIBS)
++# Underleaf's: live.c alone, with no window and so no SDL.
++$(BUILD)/texpresso: $(DIR)/live.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
++	$(LDCC) -o $@ $^ $(filter-out -lSDL2,$(LIBS))
  
-+/* Writing pages for an editor's own PDF view (live.c), stderr holds a keystroke's
-+   diagnostics until the loop waits, so the editor reading them wakes once, not forty
-+   times. What was said before a crash is what explains it: the buffer is written as it
-+   is, as fflush isn't safe in a signal handler (Darwin's FILE). */
-+static char diagnostics[1 << 15];
-+
-+static void crashed(int sig)
-+{
-+  (void)sig;
-+  write(STDERR_FILENO, diagnostics, stderr->_p - (unsigned char *)diagnostics);
-+}
-+
-+static int live(int argc, const char **argv, const char *pdf_output)
-+{
-+  setvbuf(stderr, diagnostics, _IOFBF, sizeof diagnostics);
-+  struct sigaction crash = {.sa_handler = crashed, .sa_flags = SA_RESETHAND};
-+  sigaction(SIGABRT, &crash, NULL);
-+  sigaction(SIGSEGV, &crash, NULL);
-+  sigaction(SIGBUS, &crash, NULL);
-+  char exe_path[PATH_MAX];
-+  if (!get_executable_path(exe_path) && !realpath(argv[0], exe_path))
-+  {
-+    perror("finding executable path");
-+    return 1;
-+  }
-+  return txp_live_main(argc, argv, exe_path, pdf_output);
-+}
-+
- int main(int argc, const char **argv)
- {
-+  const char *pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
-+  if (pdf_output && *pdf_output)
-+    return live(argc, argv, pdf_output);
-+
-   // Unbuffered stderr so debug/[fatal] lines hit disk before a crash.
-   setvbuf(stderr, NULL, _IONBF, 0);
- 
+ texpresso-dev: $(BUILD)/texpresso-dev
+ $(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..64eb83e 100644
+index 6face98..3222f0e 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
-@@ -320,6 +320,43 @@ bool editor_parse(fz_context *ctx,
+@@ -1,5 +1,4 @@
+ #include "editor.h"
+-#include "driver.h"
+ #include "vstack.h"
+ 
+ static enum editor_protocol protocol = EDITOR_SEXP;
+@@ -320,6 +319,43 @@ bool editor_parse(fz_context *ctx,
        goto arity;
      *out = (struct editor_command){.tag = EDIT_RERUN_ONCE, .rerun_once = {}};
    }
@@ -225,7 +190,7 @@ index 6face98..64eb83e 100644
    else
    {
      fprintf(stderr, "[command] unknown verb: %s\n", verb);
-@@ -338,6 +375,13 @@ arguments:
+@@ -338,6 +374,13 @@ arguments:
  
  // Sending output
  
@@ -239,7 +204,7 @@ index 6face98..64eb83e 100644
  static void output_json_string(FILE *f, const char *ptr, int len)
  {
    for (const char *lim = ptr + len; ptr < lim; ptr++)
-@@ -469,7 +513,7 @@ static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
+@@ -469,7 +512,7 @@ static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
  
  void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
  {
@@ -248,7 +213,7 @@ index 6face98..64eb83e 100644
      return;
    const char *data = (const char *)buf->data;
    if (line_output)
-@@ -531,6 +575,9 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
+@@ -531,6 +574,9 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
  
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
  {
@@ -258,7 +223,7 @@ index 6face98..64eb83e 100644
    int count = buf ? buf->len : 0;
  
    if (line_output && buf)
-@@ -554,6 +601,58 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+@@ -554,6 +600,58 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
    }
  }
  
@@ -317,7 +282,7 @@ index 6face98..64eb83e 100644
  void editor_flush(void)
  {
    switch (protocol)
-@@ -607,7 +706,7 @@ void editor_reset_sync(void)
+@@ -607,7 +705,7 @@ void editor_reset_sync(void)
  
  void editor_notify_file_opened(int index, const char *path, int len)
  {
@@ -326,7 +291,7 @@ index 6face98..64eb83e 100644
      return;
    switch (protocol)
    {
-@@ -631,6 +730,9 @@ void editor_notify_lookup(const char *path,
+@@ -631,6 +729,9 @@ void editor_notify_lookup(const char *path,
                            bool read,
                            enum EDITOR_LOOKUP_STATUS status)
  {
@@ -337,10 +302,28 @@ index 6face98..64eb83e 100644
    const char *status_msg;
  
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..286ff2e 100644
+index 05fdd1c..4332087 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
-@@ -37,6 +37,9 @@ enum EDITOR_COMMAND
+@@ -1,9 +1,16 @@
+ #ifndef EDITOR_H_
+ #define EDITOR_H_
+ 
+-#include "driver.h"
++#include <stdbool.h>
++#include <mupdf/fitz/buffer.h>
+ #include "vstack.h"
+ 
++enum editor_protocol
++{
++  EDITOR_SEXP,
++  EDITOR_JSON,
++};
++
+ void editor_set_protocol(enum editor_protocol protocol);
+ void editor_set_line_output(bool line);
+ 
+@@ -37,6 +44,9 @@ enum EDITOR_COMMAND
    EDIT_RESUME,
    EDIT_RERUN,
    EDIT_RERUN_ONCE,
@@ -350,7 +333,7 @@ index 05fdd1c..286ff2e 100644
  };
  
  struct editor_change
-@@ -136,6 +139,19 @@ struct editor_command
+@@ -136,6 +146,19 @@ struct editor_command
  
      struct {
      } rerun_once;
@@ -370,7 +353,7 @@ index 05fdd1c..286ff2e 100644
    };
  };
  
-@@ -155,6 +171,16 @@ enum EDITOR_INFO_BUFFER
+@@ -155,6 +178,16 @@ enum EDITOR_INFO_BUFFER
  void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos);
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
  void editor_flush(void);
@@ -949,23 +932,6 @@ index 852f744..e26e1e9 100644
 +void incdvi_take_resources(incdvi_t *d, incdvi_t *from);
 +
  #endif /*!INCDVI_H*/
-diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..dcaa3ad 100644
---- a/src/frontend/main.c
-+++ b/src/frontend/main.c
-@@ -1134,6 +1134,12 @@ static void interpret_command(struct persistent_state *ps,
-       fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
-       schedule_event(SCAN_EVENT);
-       break;
-+
-+    // Live Preview's (live.c): a window shows every page itself.
-+    case EDIT_VIEW:
-+    case EDIT_MARK:
-+    case EDIT_CARET:
-+      break;
-   }
- }
- 
 diff --git a/src/frontend/state.h b/src/frontend/state.h
 index 4854531..db8d100 100644
 --- a/src/frontend/state.h

@@ -2,8 +2,11 @@
  * MIT License
  *
  * TeXpresso without a window, for an editor that shows the pages in its own PDF
- * view: the TEXPRESSO_PDF_OUTPUT mode of Underleaf's patches to TeXpresso, run by
- * the program's driver.c. It needs no SDL; engine_tex.c gives it its engine.
+ * view: Underleaf's patches build the texpresso program from this file alone, with
+ * no SDL and none of upstream's window (driver.c, main.c, renderer.c);
+ * engine_tex.c gives it its engine. Run with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf
+ * and [-I dir]... main.tex, it reads JSON commands from stdin until it closes and
+ * writes JSON messages to stdout (editor.c), diagnostics to stderr.
  *
  * The editor says which pages it shows (["view", first, last]). A change is
  * typeset as far as the last of them, and each page in view whose content
@@ -24,16 +27,17 @@
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <mach-o/dyld.h>
 #include <mupdf/fitz.h>
 #include "base64.h"
 #include "editor.h"
 #include "engine.h"
-#include "live.h"
 #include "mydvi.h"
 #include "prot_parser.h"
 #include "providers.h"
@@ -761,9 +765,42 @@ static void usage(void)
                   "with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf\n");
 }
 
-int txp_live_main(int argc, const char *const *argv, const char *exe_path,
-                  const char *pdf_output)
+/* The program beside which its TeX is, as a real file. */
+static bool executable_path(const char *argv0, char path[PATH_MAX])
 {
+  char exe_path[PATH_MAX];
+  uint32_t size = PATH_MAX;
+  return (_NSGetExecutablePath(exe_path, &size) == 0 && realpath(exe_path, path)) ||
+         realpath(argv0, path);
+}
+
+/* stderr holds a keystroke's diagnostics until the loop waits, so the editor
+   reading them wakes once, not forty times. What was said before a crash is what
+   explains it: the buffer is written as it is, as fflush isn't safe in a signal
+   handler (Darwin's FILE). */
+static char diagnostics[1 << 15];
+
+static void crashed(int sig)
+{
+  (void)sig;
+  write(STDERR_FILENO, diagnostics, stderr->_p - (unsigned char *)diagnostics);
+}
+
+int main(int argc, const char **argv)
+{
+  setvbuf(stderr, diagnostics, _IOFBF, sizeof diagnostics);
+  struct sigaction crash = {.sa_handler = crashed, .sa_flags = SA_RESETHAND};
+  sigaction(SIGABRT, &crash, NULL);
+  sigaction(SIGSEGV, &crash, NULL);
+  sigaction(SIGBUS, &crash, NULL);
+  const char *pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
+  char exe_path[PATH_MAX];
+  if (!executable_path(argv[0], exe_path))
+  {
+    perror("finding executable path");
+    return 1;
+  }
+
   const char *doc_arg = NULL;
   char inputs[8192] = "";
   for (int i = 1; i < argc; i++)

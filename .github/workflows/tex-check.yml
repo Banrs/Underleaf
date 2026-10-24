@@ -30,8 +30,8 @@ jobs:
       - name: TeXpresso's dependencies
         id: brew
         run: |
-          brew install pkgconf mupdf sdl2 icu4c harfbuzz graphite2
-          echo "versions=$(brew list --versions mupdf sdl2 icu4c harfbuzz graphite2 | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          brew install pkgconf mupdf icu4c harfbuzz graphite2
+          echo "versions=$(brew list --versions mupdf icu4c harfbuzz graphite2 | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
       # TinyTeX's latest monthly release, whose tlmgr installs what it lacks. The core's test reads
       # it from here, as GitHub's API refuses the runners' shared addresses without a token.
       - name: TinyTeX release
