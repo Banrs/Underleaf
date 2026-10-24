@@ -86,7 +86,12 @@ extension ProjectModel {
         }
         core.send("session_deleted", ["session": session, "path": path])
         editor.forget(path: path)
-        if let open = openPath, open == path || open.hasPrefix(path + "/") { clearOpenFile() }
+        let gone = { (file: String) in file == path || file.hasPrefix(path + "/") }
+        if let shown = openPath, gone(shown) {
+            clearOpenFile()
+            // As Overleaf: the main file in its place, not an empty pane.
+            if let main = settings?.mainFile, !gone(main) { await open(main, focus: false) }
+        }
         return true
     }
 

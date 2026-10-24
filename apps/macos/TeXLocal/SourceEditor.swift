@@ -35,9 +35,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.textContainerInset = NSSize(width: 0, height: 7)
         text.fontSize = NSFont.systemFontSize
         text.allowsUndo = true
-        // Smart dashes and quotes would rewrite the LaTeX; spelling and Writing Tools keep to the prose (below).
+        // Smart dashes and quotes, corrections and text replacements would rewrite the LaTeX, and a term in the prose, as
+        // Xcode keeps them off; spelling and Writing Tools keep to the prose (below).
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
+        text.isAutomaticSpellingCorrectionEnabled = false
+        text.isAutomaticTextReplacementEnabled = false
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
         text.isAutomaticLinkDetectionEnabled = false

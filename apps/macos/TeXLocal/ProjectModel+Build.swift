@@ -120,7 +120,8 @@ extension ProjectModel {
         Task {
             guard let chosen = try? await core.call("session_issue", ["session": session, "next": next], as: ChosenIssue?.self),
                   !closed else { return }
-            panel.show(.issues)
+            // In the source, as Xcode's Jump to Next Issue: a panel shut stays so.
+            if panel.shown { panel.tab = .issues }
             chosenIssue = chosen.index
             if let file = chosen.issue.file { await open(file, line: chosen.issue.line, focus: true, jump: true) }
         }

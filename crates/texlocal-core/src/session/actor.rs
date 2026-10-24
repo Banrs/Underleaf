@@ -389,7 +389,11 @@ impl Actor {
             Command::Clean => return self.clean(reply),
             Command::Fix { id } => return self.fix(&id, reply),
             Command::Analyze { path } => return self.analyze(path.0, reply),
-            Command::Search { query } => return self.search(&query, reply),
+            Command::Search {
+                query,
+                match_case,
+                whole_word,
+            } => return self.search(Query::new(&query, match_case, whole_word), reply),
             Command::Usages { path, offset } => return self.usages(&path.0, offset, reply),
             Command::QuickHelp { path, offset } => return self.quick_help(&path.0, offset, reply),
             Command::QuickOpen { query } => return self.quick_open(query, reply),
@@ -423,7 +427,12 @@ impl Actor {
             Command::Navigate { from } => Ok(self.navigate(from)),
             Command::Back { at } => Ok(self.step(at, true)),
             Command::Forward { at } => Ok(self.step(at, false)),
-            Command::Replace { query, replacement } => self.replace(&query, &replacement),
+            Command::Replace {
+                query,
+                replacement,
+                match_case,
+                whole_word,
+            } => self.replace(&Query::new(&query, match_case, whole_word), &replacement),
             Command::RenameSymbol { kind, from, to } => self.rename_symbol(&kind, &from, &to),
             Command::HistoryRestore { id, paths } => self.history_restore(&id, paths),
             Command::SetSettings { patch } => self.set_settings(&patch, true),
@@ -1011,8 +1020,7 @@ impl Actor {
     // MARK: - Search and replace
 
     /// Worked out beside the session, as an analysis is: it reads every text file.
-    fn search(&self, query: &str, reply: Reply) {
-        let query = Query::new(query, false, false);
+    fn search(&self, query: Query, reply: Reply) {
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
@@ -1022,8 +1030,7 @@ impl Actor {
         });
     }
 
-    fn replace(&self, query: &str, to: &str) -> Result<Value, CoreError> {
-        let query = Query::new(query, false, false);
+    fn replace(&self, query: &Query, to: &str) -> Result<Value, CoreError> {
         let open = self.texts_to_edit("replaced")?;
         let found = |_: &str, text: &str| query.places(text);
         self.edit_project("Before Replace All", &open, &projects::is_text, &found, to)

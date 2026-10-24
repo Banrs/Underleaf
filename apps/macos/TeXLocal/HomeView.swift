@@ -89,6 +89,8 @@ struct HomeView: View {
         }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in shown.first { $0.id == id }.map(actions) }
+        // The latest, as Xcode's welcome window selects it, so Return opens it again.
+        .onChange(of: app.projectsLoaded, initial: true) { if selection == nil { selection = app.projects.first?.id } }
     }
 
     private func actions(_ project: ProjectInfo) -> ItemActions {

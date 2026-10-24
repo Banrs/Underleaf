@@ -3,7 +3,6 @@ import SwiftUI
 /// Find in Project's matches by file, or Find Usages' under the name; a hit opens as a jump, which Go Back returns from.
 struct SearchResults: View {
     let project: ProjectModel
-    @State private var hit: SearchHit.ID?
     /// At the inset and spacing the search field's accessory has (measured).
     private static let inset: (side: CGFloat, below: CGFloat) = (10, 9)
 
@@ -33,16 +32,14 @@ struct SearchResults: View {
                     ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
                                            description: Text(failure))
                 } else if project.search.groups?.isEmpty == true {
-                    ContentUnavailableView.search(text: project.search.searched)
+                    ContentUnavailableView.search(text: project.search.searched.query)
                 }
             }
     }
 
     private var list: some View {
-        List(selection: $hit) { sections { row($0) } }
-            // A new query can reuse a hit's ID: the first click on the new hit opens it.
-            .onChange(of: project.search.query, initial: true) { hit = nil }
-            .onChange(of: hit) { _, id in open(id, focus: false) }
+        List(selection: Bindable(project.search).chosen) { sections { row($0) } }
+            .onChange(of: project.search.chosen) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
     }
 
@@ -104,7 +101,7 @@ extension View {
     /// The project's search as its query changes, once typing pauses, as each search reads every file. VoiceOver hears the
     /// count, as it does the PDF's find count.
     func searching(_ project: ProjectModel) -> some View {
-        task(id: project.search.query) {
+        task(id: project.search.asked) {
             if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
             guard !Task.isCancelled else { return }
             await project.search.run(in: project.session)

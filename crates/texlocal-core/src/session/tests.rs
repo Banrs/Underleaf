@@ -1517,6 +1517,8 @@ async fn the_symbol_scan_and_a_search_read_an_open_document_as_the_editor_has_it
     let found = rig.ok("search", json!({ "query": "typed" })).await;
     assert_eq!(found[0]["hits"][0]["file"], "main.tex");
     assert_eq!(found[0]["hits"][0]["column"], 13);
+    let exact = json!({ "query": "Typed", "matchCase": true, "wholeWord": true });
+    assert_eq!(rig.ok("search", exact).await, json!([]));
     assert_eq!(rig.disk("main.tex"), "Hello");
 }
 

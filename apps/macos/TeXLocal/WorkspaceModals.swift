@@ -16,9 +16,9 @@ struct WorkspaceModals: ViewModifier {
                         app.requestPDF(.goToPage($0))
                     }
                 case .gotoLine:
-                    GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) {
-                        app.showSource = true
-                        project.editor.reveal(line: $0)
+                    // A jump, as Xcode's, which Go Back returns from.
+                    GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) { line in
+                        if let path = project.openPath { Task { await project.open(path, line: line, jump: true) } }
                     }
                 case .rename(let symbol):
                     RenameSheet(name: symbol.name) { try await project.renameSymbol(symbol, to: $0) }

@@ -483,9 +483,9 @@ final class ProjectFlowTests {
         await project.search.run(in: project.session)
         #expect(project.search.groups?.first?.hits.first?.column == 2)
         project.search.query = "needles"
-        #expect(project.search.searched == "needle")
+        #expect(project.search.searched.query == "needle")
         await project.search.run(in: project.session)
-        #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
+        #expect(project.search.groups?.isEmpty == true && project.search.searched.query == "needles")
         project.search.query = " "
         await project.search.run(in: project.session)
         #expect(project.search.groups == nil && project.search.hitCount == 0)
@@ -522,6 +522,12 @@ final class ProjectFlowTests {
         project.search.query = "needle"
         await project.search.run(in: project.session)
         project.search.replacement = "pin"
+        // Return steps through the hits, round from the last to the first.
+        let hits = project.search.groups?.flatMap(\.hits).map(\.id)
+        project.search.step(-1)
+        #expect(project.search.chosen == hits?.last)
+        project.search.step(1)
+        #expect(project.search.chosen == hits?.first)
         await project.replaceAll()
         #expect(text.string == "a pin" && text.undoManager?.undoActionName == "Replace")
         #expect(try String(contentsOf: folder.appending(path: "b.tex"), encoding: .utf8) == "pin b")

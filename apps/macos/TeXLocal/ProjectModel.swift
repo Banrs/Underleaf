@@ -247,8 +247,10 @@ final class ProjectModel {
             guard let self else { return [] }
             return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.title) }
         }
+        // A double-click's, quiet, only to a PDF in view: it would bring a hidden one back at each word selected.
         editor.textView.forwardSync = { [weak self] quietly in
-            self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync(quietly: quietly) } } : nil
+            guard let self, hasPDF, isLaTeX, !quietly || app?.showPDF == true else { return nil }
+            return { Task { await self.forwardSync(quietly: quietly) } }
         }
         editor.textView.openDefinition = { [weak self] place in
             Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
@@ -476,10 +478,10 @@ final class ProjectModel {
     /// The matches the search shows, which the field may be ahead of.
     func replaceAll() async {
         guard let session else { return }
-        let query = search.searched
-        guard let answer = await alerting("Couldn’t Replace “\(query)”", {
-            try await editProject("session_replace", ["session": session, "query": query, "replacement": search.replacement],
-                                  named: String(localized: "Replace"))
+        let asked = search.searched
+        let args = asked.arguments.merging(["session": session, "replacement": search.replacement]) { $1 }
+        guard let answer = await alerting("Couldn’t Replace “\(asked.query)”", {
+            try await editProject("session_replace", args, named: String(localized: "Replace"))
         }) else { return }
         let count = (answer.edits?.edits.count ?? 0) + answer.written.reduce(0) { $0 + $1.count }
         let files = answer.written.count + (answer.edits == nil ? 0 : 1)
@@ -556,19 +558,26 @@ final class ProjectModel {
     }
 
     /// The core writes the other files, with no undo; the open document's edits are one undo step, as a command's, which the
-    /// session saves as any.
+    /// session saves as any. Edits typed past meanwhile no longer fit: the files written go back as the snapshot before has
+    /// them, so the project isn't left half changed.
     @discardableResult
     private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
         let answer = try await core.call(command, args, as: ProjectEdits.self)
-        apply(answer.edits, named: name)
-        return answer
+        if apply(answer.edits, named: name) { return answer }
+        if let session, let snapshot = answer.snapshot, !answer.written.isEmpty {
+            _ = try await core.call("session_history_restore", ["session": session, "id": snapshot, "paths": answer.written.map(\.file)],
+                                    as: Edited.self)
+        }
+        throw CoreError(message: String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
     }
 
-    /// A file shown since has text of its own, as one typed in since does.
-    private func apply(_ edits: ProjectEdits.Document?, named name: String) {
-        if let edits, edits.path == editor.path, edits.version == editor.textView.document.version {
-            editor.textView.apply(edits.edits, named: name)
-        }
+    /// False where they no longer fit: a file shown since has text of its own, as one typed in since does.
+    @discardableResult
+    private func apply(_ edits: ProjectEdits.Document?, named name: String) -> Bool {
+        guard let edits else { return true }
+        guard edits.path == editor.path, edits.version == editor.textView.document.version else { return false }
+        editor.textView.apply(edits.edits, named: name)
+        return true
     }
 
     /// The session runs it, then a build (docs/core-api.md, Explanations and fixes).
@@ -686,10 +695,15 @@ private nonisolated struct ProjectEdits: Decodable {
         var edits: [TextEdit]
     }
 
-    nonisolated struct Written: Decodable { var count: Int }
+    nonisolated struct Written: Decodable {
+        var file: String
+        var count: Int
+    }
 
     var edits: Document?
     var written: [Written]
+    /// Taken just before; none where the history couldn't be kept.
+    var snapshot: String?
 }
 
 /// What a restore or a fix answers that the window shows: the open document's edits, and a fix's settings.

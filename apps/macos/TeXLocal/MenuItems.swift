@@ -12,7 +12,7 @@ struct SectionLevelItems: View {
                    isOn: Binding(get: { project?.headingCommand == style.command },
                                  set: { _ in project?.editor.perform(.heading(style.command)) }))
         }
-        .disabled(project?.isLaTeX != true)
+        .disabled(project?.sourceToolsEnabled != true)
     }
 }
 
@@ -40,7 +40,7 @@ struct SymbolItems: View {
                             }
                             .help(symbol.command)
                         }
-                        .disabled(project?.isLaTeX != true)
+                        .disabled(project?.sourceToolsEnabled != true)
                     }
                     .controlGroupStyle(.palette)
                 }
@@ -49,7 +49,7 @@ struct SymbolItems: View {
     }
 }
 
-/// Its items dim outside LaTeX, not its submenus (HIG Menus).
+/// Its items dim outside LaTeX or with the source hidden, not its submenus (HIG Menus).
 struct MathMenuItems: View {
     let project: ProjectModel?
     var shortcut: KeyboardShortcut?
@@ -58,7 +58,7 @@ struct MathMenuItems: View {
     let inlineMath: () -> Void
 
     var body: some View {
-        let off = project?.isLaTeX != true
+        let off = project?.sourceToolsEnabled != true
         Button(action: inlineMath) {
             Text(MenuCommand.editMath.title)
             Text(verbatim: "$ … $")
@@ -98,7 +98,7 @@ struct InsertMenuItems: View {
         ForEach(templates, id: \.title) { template in
             Button(template.title) { project?.insert(template) }
         }
-        .disabled(project?.isLaTeX != true)
+        .disabled(project?.sourceToolsEnabled != true)
     }
 }
 
