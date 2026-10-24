@@ -91,8 +91,6 @@ fn commands_and_bad_input_answer_through_the_c_abi() {
     assert_eq!(call_raw(handle, "nope", None)["status"], 404);
     unsafe {
         tl_free(ptr::null_mut());
-        tl_close(handle);
-        tl_close(ptr::null_mut());
     }
 }
 
@@ -159,7 +157,8 @@ fn a_session_documents_source_is_the_sessions_document() {
         let key = source_call(source, "type", typed(1, ")")).unwrap();
         assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
         tl_source_free(source);
-        tl_close(handle);
+        // The handle outlives the test, as the app's does; its listener must not.
+        tl_set_listener(handle, None, ptr::null_mut());
     }
 }
 
@@ -193,22 +192,23 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open(dir.path());
     let (sink, answers) = mpsc::channel();
+    // The handle outlives the test, as the app's does, and may call `done` after it.
+    let sink = Box::leak(Box::new(sink));
     let seven = json!({ "id": "P", "session": 7 });
-    call_async(handle, "session_open", seven, collect, context(&sink));
+    call_async(handle, "session_open", seven, collect, context(sink));
     assert_eq!(until(&answers, |_| true)["ok"]["name"], "P");
     let main = json!({ "session": 7, "path": "main.tex" });
     let commands = ["session_open_document", "session_close_document"];
     for round in 0..50 {
         let open = round % 2 == 0;
         for command in commands.iter().cycle().skip(usize::from(open)).take(4) {
-            call_async(handle, command, main.clone(), collect, context(&sink));
+            call_async(handle, command, main.clone(), collect, context(sink));
         }
         call(handle, "session_save", json!({ "session": 7 }));
         let source = unsafe { session_source(handle, 7, "main.tex") };
         assert_eq!(!source.is_null(), open, "round {round}");
         unsafe { tl_source_free(source) };
     }
-    unsafe { tl_close(handle) };
 }
 
 /// As a host's continuation may, resumed on the thread that answered.
@@ -222,8 +222,7 @@ fn a_session_commands_done_may_call_the_core() {
     let handle = open(dir.path());
     open_main(handle);
     let (sink, answers) = mpsc::channel();
-    let (within, save) = ((handle, sink), json!({ "session": 1 }));
-    call_async(handle, "session_save", save, call_within, context(&within));
+    let (within, save) = (Box::leak(Box::new((handle, sink))), json!({ "session": 1 }));
+    call_async(handle, "session_save", save, call_within, context(within));
     assert_eq!(until(&answers, |_| true)["ok"][0]["id"], "P");
-    unsafe { tl_close(handle) };
 }

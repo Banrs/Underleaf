@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
@@ -281,15 +281,5 @@ impl Sessions {
             }
             answer
         }
-    }
-
-    /// Every session closed, saving what it can, and every build and live preview stopped, as
-    /// a host quits.
-    pub async fn close_all(&self) {
-        let ids: Vec<u64> = lock(&self.open).keys().copied().collect();
-        for session in ids {
-            let _ = self.send("close", json!({ "session": session })).await;
-        }
-        self.service.kill_all();
     }
 }

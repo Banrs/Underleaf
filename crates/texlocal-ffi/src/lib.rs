@@ -70,8 +70,7 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
 }
 
 /// # Safety
-/// `handle` came from `tl_open` and is not closed; the strings are null or
-/// NUL-terminated.
+/// `handle` came from `tl_open`; the strings are null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_call(
     handle: *const TlHandle,
@@ -115,8 +114,8 @@ fn envelope(result: Result<Value, CoreError>) -> Value {
     }
 }
 
-/// A host's `done` for one call, called once: with the answer, or, dropped unanswered, with
-/// the command's panic or the close that came first.
+/// A host's `done` for one call, called once: with the answer, or with the panic of a command
+/// that dropped it unanswered. A session that closes with commands queued answers them itself.
 struct Done(Option<Callback>);
 
 impl Done {
@@ -130,19 +129,14 @@ impl Done {
 impl Drop for Done {
     fn drop(&mut self) {
         if let Some(done) = self.0.take() {
-            let unanswered = if std::thread::panicking() {
-                panicked()
-            } else {
-                CoreError::internal("TeXLocal closed before it answered.")
-            };
-            done.send(&envelope(Err(unanswered)));
+            done.send(&envelope(Err(panicked())));
         }
     }
 }
 
 /// # Safety
 /// As `tl_call`; `done`, if not null, may be called from any thread with
-/// `ctx`, until the handle is closed.
+/// `ctx`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_call_async(
     handle: *const TlHandle,
@@ -162,8 +156,7 @@ pub unsafe extern "C" fn tl_call_async(
     let Some(answer) = caught(|| handle.sessions.call(command, args)) else {
         return done.send(Err(panicked()));
     };
-    // `done` is called on the blocking pool, where it may call the core again, and which a
-    // close waits for once the sessions have answered.
+    // `done` is called on the blocking pool, where it may call the core again.
     let runtime = handle.runtime.handle().clone();
     handle
         .runtime
@@ -171,9 +164,8 @@ pub unsafe extern "C" fn tl_call_async(
 }
 
 /// # Safety
-/// `handle` came from `tl_open` and is not closed; `listener`, if not null,
-/// may be called from that thread with `ctx` until it is replaced or the
-/// handle closed.
+/// `handle` came from `tl_open`; `listener`, if not null, may be called on a
+/// core thread with `ctx` until it is replaced.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_set_listener(
     handle: *const TlHandle,
@@ -196,21 +188,6 @@ pub unsafe extern "C" fn tl_set_listener(
 pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     if !text.is_null() {
         drop(unsafe { CString::from_raw(text) });
-    }
-}
-
-/// # Safety
-/// `handle` is null or came from `tl_open`, with no call on it in flight, and is
-/// closed once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
-    if !handle.is_null() {
-        let handle = unsafe { Box::from_raw(handle) };
-        caught(move || {
-            handle.runtime.block_on(handle.sessions.close_all());
-            handle.sessions.set_listener(None);
-            drop(handle);
-        });
     }
 }
 
@@ -252,7 +229,7 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
 }
 
 /// # Safety
-/// `handle` came from `tl_open` and is not closed; `path` is null or NUL-terminated.
+/// `handle` came from `tl_open`; `path` is null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_session_source(
     handle: *const TlHandle,

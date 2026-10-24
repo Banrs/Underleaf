@@ -10,7 +10,7 @@ C ABI (`crates/texlocal-ffi/include/texlocal.h`; the app links the static librar
 
 | Function | Use |
 |---|---|
-| `tl_open(data_dir)` / `tl_close(h)` | One handle per app. `tl_close` closes every session (saving what it can) and stops builds and previews; no call may be in flight. |
+| `tl_open(data_dir)` | One handle per app, for its lifetime; `kill_all` stops builds and previews as it quits. |
 | `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out, never NULL; free with `tl_free`. Never on the UI thread. |
 | `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope there, and may call the core itself. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
 | `tl_set_listener(h, listener, ctx)` | Events, below. NULL removes it; it returns once no call to the old listener runs. |
@@ -187,8 +187,7 @@ An error is `{"error": message, "status": code}`; the message is for the person 
 - A command the core doesn't know is 404 “Unknown command”. Arguments that aren't a JSON object
   are 400, and so are ones missing a key or with one of the wrong type: “Invalid arguments: ”
   and serde's words, which name the key. Keys a command doesn't take are ignored.
-- An async call still unanswered when `tl_close` ends its session answers 500 “TeXLocal closed
-  before it answered.”; one whose command panicked, 500 “The command panicked”.
+- A call whose command panicked answers 500 “The command panicked”.
 - File-system failures keep their kind: 404 not there, 403 not allowed, 409 already there,
   else 500. The message is the OS's words without its “(os error N)”, and names the file
   (“path”: …) where a person chose it.
@@ -218,7 +217,7 @@ Service commands (`tl_call`):
 | `duplicate_project` | `id`, `name` | the new project, as `list_projects` lists it | A copy of a library project's folder with its settings, leaving out what an export does (the build folder and the history among it) and, as it does, copying a link to a file as that file, named `name` or numbered past it as `create_project` is. Built beside and renamed into place, as a new or imported project is, so the list never shows half a copy. The host suggests the name in its system's words, the Mac's “Paper copy”. An opened folder is 409 with a sentence. |
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
-| `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
+| `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
 | `open_path` | `path` | `{project, file}` | What File › Open, Finder and a drop on the Dock open, in one call. `project` as `list_projects` lists it, `file` the project path to show or null. A path in a project is that project (a folder inside an opened folder opens as one of its own). A folder opens where it is; a .tex opens its folder where it is, at the .tex, its main file guessed from it if the folder is new to the list. A .tex whose folder is refused (it holds the library, or has more than 20,000 files: both 400 for a folder) comes alone into a new library project, as a .zip's files do. 400 for a folder new to the list or a .zip that holds no .tex, and for any other file: nothing else becomes a project. 404 if not there. |
 | `forget_folder` | `id` | null | Takes an opened folder off the list, stopping its build and preview, and removes its settings and build output; the folder stays as it is. A library project's id is 400. |

@@ -1359,7 +1359,6 @@ async fn the_folders_watcher_tells_another_apps_changes() {
     let reload = until_event(&rig.seen, |e| e["type"] == "document_reload");
     assert_eq!(reload.expect("reloaded")["text"], "theirs");
     assert!(until_event(&rig.seen, |e| e["type"] == "tree").is_some());
-    rig.sessions.close_all().await;
 }
 
 #[tokio::test]

@@ -17,7 +17,8 @@ extern "C" {
 typedef struct TlHandle TlHandle;
 
 /* The service over the library folder data_dir, a UTF-8 path; NULL for a NULL
- * data_dir, or on failure. */
+ * data_dir, or on failure. The handle lives as long as the app: kill_all stops
+ * builds and live previews as it quits. */
 TlHandle *_Nullable tl_open(const char *_Nullable data_dir);
 
 /* Blocking; call off the UI thread. Returns {"ok": value} or {"error": message,
@@ -41,10 +42,6 @@ void tl_call_async(const TlHandle *handle, const char *command, const char *_Nul
  * thread. NULL removes the listener, returning once no call to the previous
  * one is running. */
 void tl_set_listener(const TlHandle *handle, TlCallback _Nullable listener, void *_Nullable ctx);
-
-/* Closes the sessions, saving what they can, and stops compiles and live
- * previews. No call may be in flight; no listener call follows. */
-void tl_close(TlHandle *_Nullable handle);
 
 /* The source editor's view of a file's text. Calls on one TlSource must not
  * overlap, queries included. Offsets and lengths count UTF-16 units; lines
