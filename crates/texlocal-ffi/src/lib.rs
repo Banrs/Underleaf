@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use texlocal_core::CoreError;
-use texlocal_core::events::Listener;
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
 use texlocal_core::syntax::{self, SourceDocument, TextRange};
@@ -53,16 +52,24 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
 }
 
 /// # Safety
-/// `data_dir` is null or a NUL-terminated string.
+/// `data_dir` is null or a NUL-terminated string; `listener`, if not null, may be called on a
+/// core thread with `ctx` for as long as the handle lives.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
-    let Some(dir) = unsafe { str_arg(data_dir) }.map(PathBuf::from) else {
+pub unsafe extern "C" fn tl_open(
+    data_dir: *const c_char,
+    listener: Option<extern "C" fn(*mut c_void, *const c_char)>,
+    ctx: *mut c_void,
+) -> *mut TlHandle {
+    let (Some(dir), Some(call)) = (unsafe { str_arg(data_dir) }.map(PathBuf::from), listener)
+    else {
         return std::ptr::null_mut();
     };
+    let callback = Callback { call, ctx };
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
-        let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir))));
+        let listen = Box::new(move |event: &Value| callback.send(event));
+        let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen));
         Some(Box::new(TlHandle { runtime, sessions }))
     })
     .flatten()
@@ -161,25 +168,6 @@ pub unsafe extern "C" fn tl_call_async(
     handle
         .runtime
         .spawn_blocking(move || done.send(runtime.block_on(answer)));
-}
-
-/// # Safety
-/// `handle` came from `tl_open`; `listener`, if not null, may be called on a
-/// core thread with `ctx` until it is replaced.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_set_listener(
-    handle: *const TlHandle,
-    listener: Option<extern "C" fn(*mut c_void, *const c_char)>,
-    ctx: *mut c_void,
-) {
-    let Some(handle) = (unsafe { handle.as_ref() }) else {
-        return;
-    };
-    let listener = listener.map(|call| {
-        let callback = Callback { call, ctx };
-        Box::new(move |event: &Value| callback.send(event)) as Listener
-    });
-    caught(|| handle.sessions.set_listener(listener));
 }
 
 /// # Safety

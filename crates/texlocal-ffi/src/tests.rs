@@ -53,9 +53,12 @@ fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {
     call_raw(handle, command, Some(&args.to_string()))
 }
 
-/// The service over `data`, holding a blank project "P".
-fn open(data: &Path) -> *mut TlHandle {
-    let handle = unsafe { tl_open(c(data.to_str().unwrap()).as_ptr()) };
+extern "C" fn ignore(_ctx: *mut c_void, _json: *const c_char) {}
+
+/// The service over `data`, telling `listener` its events, holding a blank project "P".
+fn open(data: &Path, listener: Done, ctx: *mut c_void) -> *mut TlHandle {
+    let data = c(data.to_str().unwrap());
+    let handle = unsafe { tl_open(data.as_ptr(), Some(listener), ctx) };
     assert!(!handle.is_null());
     let blank = json!({ "name": "P", "template": "blank" });
     assert_eq!(call(handle, "create_project", blank)["ok"]["id"], "P");
@@ -79,10 +82,13 @@ unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *
 #[test]
 fn commands_and_bad_input_answer_through_the_c_abi() {
     assert_eq!(call_raw(ptr::null(), "list_projects", None)["status"], 400);
-    assert!(unsafe { tl_open(ptr::null()) }.is_null());
-
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
+    let path = c(dir.path().to_str().unwrap());
+    let null = ptr::null_mut();
+    assert!(unsafe { tl_open(ptr::null(), Some(ignore), null) }.is_null());
+    assert!(unsafe { tl_open(path.as_ptr(), None, null) }.is_null());
+
+    let handle = open(dir.path(), ignore, null);
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
     assert_eq!(
         call_raw(handle, "list_projects", Some("{not json"))["status"],
@@ -131,9 +137,9 @@ fn syntax_commands_round_trip_through_the_c_abi() {
 #[test]
 fn a_session_documents_source_is_the_sessions_document() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
     let (sink, events) = mpsc::channel();
-    unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
+    // The handle outlives the test, as the app's does, and may tell its listener after it.
+    let handle = open(dir.path(), collect, context(Box::leak(Box::new(sink))));
     let session = open_main(handle);
     let typed =
         |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text });
@@ -157,8 +163,6 @@ fn a_session_documents_source_is_the_sessions_document() {
         let key = source_call(source, "type", typed(1, ")")).unwrap();
         assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
         tl_source_free(source);
-        // The handle outlives the test, as the app's does; its listener must not.
-        tl_set_listener(handle, None, ptr::null_mut());
     }
 }
 
@@ -190,7 +194,7 @@ fn call_async(handle: *const TlHandle, command: &str, args: Value, done: Done, c
 #[test]
 fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
+    let handle = open(dir.path(), ignore, ptr::null_mut());
     let (sink, answers) = mpsc::channel();
     // The handle outlives the test, as the app's does, and may call `done` after it.
     let sink = Box::leak(Box::new(sink));
@@ -219,7 +223,7 @@ fn a_session_commands_done_may_call_the_core() {
         let _ = sink.send(call(*handle, "list_projects", json!({})));
     }
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
+    let handle = open(dir.path(), ignore, ptr::null_mut());
     open_main(handle);
     let (sink, answers) = mpsc::channel();
     let (within, save) = (Box::leak(Box::new((handle, sink))), json!({ "session": 1 }));

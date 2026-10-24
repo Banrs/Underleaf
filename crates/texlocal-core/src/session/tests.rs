@@ -232,12 +232,12 @@ impl Rig {
             ..Fake::default()
         });
         let (engine, preview) = (Arc::clone(&fake), Arc::clone(&fake));
-        let sessions = Arc::new(Sessions::with_engine(service, engine, preview, watch));
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
-        sessions.set_listener(Some(Box::new(move |event| {
-            lock(&sink).push(event.clone());
-        })));
+        let listen = Box::new(move |event: &Value| lock(&sink).push(event.clone()));
+        let sessions = Arc::new(Sessions::with_engine(
+            service, engine, preview, watch, listen,
+        ));
         let session = 1;
         let args = json!({ "id": "P", "session": session, "autoCompile": auto_compile });
         sessions.call("session_open", args).await.unwrap();

@@ -16,10 +16,16 @@ extern "C" {
 
 typedef struct TlHandle TlHandle;
 
-/* The service over the library folder data_dir, a UTF-8 path; NULL for a NULL
- * data_dir, or on failure. The handle lives as long as the app: kill_all stops
- * builds and live previews as it quits. */
-TlHandle *_Nullable tl_open(const char *_Nullable data_dir);
+/* Called with the pointer it was given and a JSON text valid only during the
+ * call, on a core thread: hop to the UI thread before touching the UI. */
+typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
+
+/* The service over the library folder data_dir, a UTF-8 path, telling listener
+ * the sessions' events, one JSON object at a time, in order, on one core
+ * thread. NULL for a NULL data_dir or listener, or on failure. The handle
+ * lives as long as the app: kill_all stops builds and live previews as it
+ * quits. */
+TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable listener, void *_Nullable ctx);
 
 /* Blocking; call off the UI thread. Returns {"ok": value} or {"error": message,
  * "status": code}. Free with tl_free. */
@@ -27,21 +33,12 @@ char *tl_call(const TlHandle *handle, const char *command, const char *_Nullable
 
 void tl_free(char *_Nullable text);
 
-/* Called with the pointer it was given and a JSON text valid only during the
- * call, on a core thread: hop to the UI thread before touching the UI. */
-typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
-
 /* tl_call without blocking: done gets the envelope tl_call would return; a NULL
  * done runs the command for its effect alone. A session's commands (every
  * session_* but session_open) are queued before this returns, so it takes them
  * in the order sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
                    TlCallback _Nullable done, void *_Nullable ctx);
-
-/* The sessions' events, one JSON object at a time, in order, on one core
- * thread. NULL removes the listener, returning once no call to the previous
- * one is running. */
-void tl_set_listener(const TlHandle *handle, TlCallback _Nullable listener, void *_Nullable ctx);
 
 /* The source editor's view of a file's text. Calls on one TlSource must not
  * overlap, queries included. Offsets and lengths count UTF-16 units; lines

@@ -10,10 +10,9 @@ C ABI (`crates/texlocal-ffi/include/texlocal.h`; the app links the static librar
 
 | Function | Use |
 |---|---|
-| `tl_open(data_dir)` | One handle per app, for its lifetime; `kill_all` stops builds and previews as it quits. |
+| `tl_open(data_dir, listener, ctx)` | One handle per app, for its lifetime; `kill_all` stops builds and previews as it quits. `listener(ctx, event_json)` gets the events, below; NULL for a NULL `data_dir` or `listener`. |
 | `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out, never NULL; free with `tl_free`. Never on the UI thread. |
 | `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope there, and may call the core itself. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
-| `tl_set_listener(h, listener, ctx)` | Events, below. NULL removes it; it returns once no call to the old listener runs. |
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |

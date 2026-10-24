@@ -174,10 +174,10 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    pub fn new(service: Arc<Service>) -> Self {
+    pub fn new(service: Arc<Service>, listener: Listener) -> Self {
         let engine = Arc::new(Arc::clone(&service));
         let preview = Arc::clone(&service.texpresso);
-        Self::with_engine(service, engine, preview, true)
+        Self::with_engine(service, engine, preview, true, listener)
     }
 
     pub(crate) fn with_engine(
@@ -185,19 +185,16 @@ impl Sessions {
         engine: Arc<dyn Engine>,
         preview: Arc<dyn Preview>,
         watch: bool,
+        listener: Listener,
     ) -> Self {
         Self {
             service,
-            hub: Hub::default(),
+            hub: Hub::new(listener),
             engine,
             preview,
             watch,
             open: Arc::default(),
         }
-    }
-
-    pub fn set_listener(&self, listener: Option<Listener>) {
-        self.hub.set_listener(listener);
     }
 
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
