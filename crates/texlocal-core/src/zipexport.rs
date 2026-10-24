@@ -40,6 +40,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
     walk(
         root,
         &|rel| !left_out(rel) && !replaced(rel),
+        true,
         &mut |entry| {
             if entry.dir {
                 let modified = fs::metadata(&entry.path).and_then(|meta| meta.modified());

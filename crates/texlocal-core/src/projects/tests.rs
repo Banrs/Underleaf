@@ -279,10 +279,10 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
 
 /// The walk the tree, search, the scans, history and export share: links followed to files
 /// only, inside or out (a shared .bib), as one to a folder may loop; an entry unreadable read
-/// as empty; and, with the tree's rule, no dotfiles and no top-level build folder in any case,
+/// as empty, but by a copy refused; and, with the tree's rule, no dotfiles and no top-level build folder in any case,
 /// though a build deeper in is the author's.
 #[test]
-fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read() {
+fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read_unless_copying() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     use crate::projects::{listed, walk};
@@ -310,13 +310,15 @@ fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read() {
     lock(0o000).unwrap();
     // Running as root, permissions lock nothing.
     let locked = fs::read_dir(root.join("locked")).is_err();
+    let whole = walk(&root, &listed, true, &mut |_| Ok(true)).map_err(|err| err.status);
     let mut walked = Vec::new();
-    let walk = walk(&root, &listed, &mut |entry| {
+    let walk = walk(&root, &listed, false, &mut |entry| {
         walked.push(entry.rel.clone());
         Ok(true)
     });
     lock(0o755).unwrap();
     walk.unwrap();
+    assert_eq!(whole, if locked { Err(403) } else { Ok(()) });
     let mut listed = vec![
         "chapters",
         "chapters/build",

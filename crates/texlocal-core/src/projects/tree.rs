@@ -4,6 +4,7 @@
 use std::cmp::Reverse;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::ErrorKind::{NotFound, PermissionDenied};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -47,15 +48,19 @@ pub(crate) fn listed(rel: &str) -> bool {
 
 /// A folder's entries whose path `keep` takes, by name. Links are followed to files only, as
 /// folder links can cycle; an entry gone or unreadable by the time it's read is left out, but
-/// the root must be read.
-fn entries(root: &Path, dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<Entry>, CoreError> {
-    let read = if dir == root {
-        fs::read_dir(dir)?
-    } else {
-        match skip_unreadable(fs::read_dir(dir))? {
-            Some(read) => read,
-            None => return Ok(Vec::new()),
+/// the root must be read, and for a `whole` walk, which a copy needs, every folder.
+fn entries(
+    root: &Path,
+    dir: &Path,
+    keep: &dyn Fn(&str) -> bool,
+    whole: bool,
+) -> Result<Vec<Entry>, CoreError> {
+    let read = match fs::read_dir(dir) {
+        Err(err) if dir == root => return Err(err.into()),
+        Err(err) if err.kind() == NotFound || !whole && err.kind() == PermissionDenied => {
+            return Ok(Vec::new());
         }
+        read => read.map_err(CoreError::at(dir))?,
     };
     let mut out = Vec::new();
     for entry in read {
@@ -93,22 +98,24 @@ fn entries(root: &Path, dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<E
 pub(crate) fn walk(
     root: &Path,
     keep: &dyn Fn(&str) -> bool,
+    whole: bool,
     visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
     fn walk_in(
         root: &Path,
         dir: &Path,
         keep: &dyn Fn(&str) -> bool,
+        whole: bool,
         visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in entries(root, dir, keep)? {
-            if !visit(&entry)? || entry.dir && !walk_in(root, &entry.path, keep, visit)? {
+        for entry in entries(root, dir, keep, whole)? {
+            if !visit(&entry)? || entry.dir && !walk_in(root, &entry.path, keep, whole, visit)? {
                 return Ok(false);
             }
         }
         Ok(true)
     }
-    walk_in(root, root, keep, visit).map(drop)
+    walk_in(root, root, keep, whole, visit).map(drop)
 }
 
 /// Each file the tree lists, with its path from the root, until `visit` answers false.
@@ -116,7 +123,7 @@ pub(super) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
-    walk(root, &listed, &mut |entry| {
+    walk(root, &listed, false, &mut |entry| {
         if entry.dir {
             return Ok(true);
         }
@@ -128,7 +135,7 @@ pub(super) fn visit_files(
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     fn nodes(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut found = Vec::new();
-        for entry in entries(root, dir, &listed)? {
+        for entry in entries(root, dir, &listed, false)? {
             let children = if entry.dir {
                 Some(nodes(root, &entry.path, main)?)
             } else {
