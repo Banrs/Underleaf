@@ -16,8 +16,9 @@ extension NSColor {
                 "fill": NSColor.currentLine.rgba(in: appearance)]
     }
 
+    /// Xcode 27's Default (Light) and Default (Dark) themes' `DVTSourceTextCurrentLineHighlightColor`, in sRGB.
     static let currentLine = NSColor(name: nil) {
-        srgb($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? SourceTextView.currentLineRGBA.dark : SourceTextView.currentLineRGBA.light)
+        srgb($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? [0.138526, 0.146864, 0.169283, 1] : [0.909804, 0.94902, 1, 1])
     }
 
     /// Raised by the core to the HIG's 4.5:1 on the editor's background and current line, 7:1 with Increase Contrast, or `ratio`.

@@ -522,8 +522,7 @@ final class ProjectModel {
         app?.sidebarShown = true
     }
 
-    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or on the Mac a beep where the core knows
-    /// nothing of it.
+    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or a beep where the core knows nothing of it.
     func quickHelp(at offset: Int) async {
         guard let session, let path = editor.path else { return }
         guard let answer = await alerting("Couldn’t Show Quick Help", {

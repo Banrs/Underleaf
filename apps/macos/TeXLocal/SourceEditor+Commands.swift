@@ -1,9 +1,8 @@
 import AppKit
 
-/// The editor's commands, the core's answers put into each platform's text view the same way.
+/// The editor's commands: the core's answers put into the text view.
 extension SourceEditor {
-    /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps on the Mac,
-    /// which has a beep.
+    /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
     func jumpToDefinition() {
         guard let place = textView.document.definition(at: textView.selection.location)?.places.first else {
             NSSound.beep()

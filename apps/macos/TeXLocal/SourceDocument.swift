@@ -75,11 +75,11 @@ final class SourceDocument {
     }
     func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
-    /// The prose words in `range`, counted as the document's are.
     /// One a line, by the line that stays and the last it hides, 1-based.
     struct Fold: Decodable, Hashable { let line: Int, end: Int }
 
     func folds() -> [Fold] { call("folds", [:]) ?? [] }
+    /// The prose words in `range`, counted as the document's are.
     func words(in range: NSRange) -> Int { (call("words", range.json) as WordCount?)?.words ?? 0 }
     /// The name at `offset` and the places the project defines it, the first where a jump goes.
     func definition(at offset: Int) -> Definition? { call("definition", ["at": offset]) }

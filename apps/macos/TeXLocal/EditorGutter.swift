@@ -9,6 +9,27 @@ struct EditorGutter {
     /// Xcode's: four-digit numbers end 39.7 pt in at 13 pt, and the text starts on a whole point, 51 pt in.
     private static let firstDigitEnd: CGFloat = 19.8, numbersToText: CGFloat = 11
 
+    /// Xcode's numbers: SF at the issue symbol's size, 74 on its width axis, tabular, with the open 4, 6 and 9, at least 10 pt.
+    static func font(forText size: CGFloat) -> NSFont {
+        let numbers = NSFont.systemFont(ofSize: max(10, IssueBox.Metrics.small(size)), weight: .regular, width: NSFont.Width(rawValue: -0.1))
+        var axes = CTFontCopyVariation(numbers) as? [NSNumber: NSNumber] ?? [:]
+        axes[0x7764_7468 as NSNumber] = 74 // 'wdth'
+        return NSFont(descriptor: numbers.fontDescriptor.addingAttributes([
+            NSFontDescriptor.AttributeName(kCTFontVariationAttribute as String): axes,
+            .featureSettings: [
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector],
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kStylisticAlternativesType, .selectorIdentifier: kStylisticAltOneOnSelector],
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kStylisticAlternativesType, .selectorIdentifier: kStylisticAltTwoOnSelector]]]),
+            size: 0) ?? numbers
+    }
+
+    /// Raised with Increase Contrast, as the syntax colours are.
+    static let numberColor: NSColor = {
+        let raised: [NSAppearance.Name] = [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        return .adapting(Dictionary(uniqueKeysWithValues: raised.map { ($0, NSColor.tertiaryLabelColor.legibleAsText(in: $0)) }),
+                         fallback: .tertiaryLabelColor)
+    }()
+
     /// From the view's edge to the text container, less its line fragment padding.
     private(set) var width: CGFloat = 0
     private(set) var digits = 0

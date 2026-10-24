@@ -1,4 +1,4 @@
-import SwiftUI
+import AppKit
 
 /// The file the editor shows, and where in it the caret and the shown text are.
 extension SourceEditor {
@@ -57,31 +57,4 @@ extension SourceEditor {
 
     func reportTop() { if let line = textView.topLine { onScroll(line) } }
     func reportCursor() { onCursor(currentLine, currentColumn) }
-}
-
-struct EditorView {
-    let editor: SourceEditor
-    let shown: Bool
-    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
-    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
-    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
-    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
-
-    private func update() {
-        // A new size only: setting one builds the font.
-        if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
-        editor.textView.fontName = fontName
-        editor.textView.showsLineNumbers = lineNumbers
-        editor.textView.syntaxTheme = syntaxTheme
-        editor.textView.autoPair = autoPair
-        editor.textView.autoComplete = autoComplete
-        if editor.shown != shown { editor.shown = shown }
-    }
-}
-
-extension EditorView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
-    func updateNSView(_ view: NSScrollView, context: Context) { update() }
 }

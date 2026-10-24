@@ -22,6 +22,30 @@ struct SourceColumn: View {
     }
 }
 
+private struct EditorView: NSViewRepresentable {
+    let editor: SourceEditor
+    let shown: Bool
+    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
+    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
+    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
+    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
+    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
+
+    func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
+
+    func updateNSView(_ view: NSScrollView, context: Context) {
+        // A new size only: setting one builds the font.
+        if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
+        editor.textView.fontName = fontName
+        editor.textView.showsLineNumbers = lineNumbers
+        editor.textView.syntaxTheme = syntaxTheme
+        editor.textView.autoPair = autoPair
+        editor.textView.autoComplete = autoComplete
+        if editor.shown != shown { editor.shown = shown }
+    }
+}
+
 private struct FilePreview: NSViewRepresentable {
     let url: URL
     let version: Int
