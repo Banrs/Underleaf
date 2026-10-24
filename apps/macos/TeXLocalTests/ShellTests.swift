@@ -217,6 +217,22 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
+    /// Hidden as the workspace opens, the inspector opens with its grouped form's sections 20 pt in, as the form lays out
+    /// built in the open column; built in the hidden one, they keep 10 pt insets under small grey headers.
+    @Test func aHiddenInspectorOpensWithItsFormsLook() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let inspector = try #require(workspace.splitViewItems.last)
+        workspace.app.perform(.viewToggleInspector, on: workspace.project)
+        try await waitUntil { !inspector.isCollapsed }
+        try await resize(window, to: 1300)
+        let view = inspector.viewController.view
+        func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
+        let form = try #require(all(view).compactMap { $0 as? NSScrollView }.first)
+        let section = try #require(form.documentView?.subviews.first?.subviews.first)
+        #expect(section.frame.minX == 20 && section.frame.width == view.bounds.width - 40, "\(section.frame)")
+    }
+
     /// A project opened over another keeps the other's workspace until it has loaded: the window never shows Home between
     /// them. With no project open, it shows Home.
     @Test func aProjectSwitchNeverShowsHome() {
