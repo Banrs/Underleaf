@@ -33,7 +33,7 @@ pub use opened::{forget_folder, open_path};
 pub(crate) use search::replace_in_files;
 pub use search::{Query, search_groups, search_project};
 pub use symbols::{Symbols, scan_symbols};
-pub(crate) use tree::{Entry, is_text, listed, walk};
+pub(crate) use tree::{is_text, listed, walk};
 pub use tree::{TreeNode, file_kind, file_tree};
 
 fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError> {

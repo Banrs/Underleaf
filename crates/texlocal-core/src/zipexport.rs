@@ -1,7 +1,6 @@
-//! Project ZIP export, built in a sibling temporary file and moved into place on success, so a failure leaves no partial ZIP.
+//! Project ZIP export, written where the host asks: the Mac app exports into a fresh folder of its own outside the project.
 //! What goes in is what an import takes back: all but what `left_out` names.
 
-use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -12,27 +11,14 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::SETTINGS_FILE;
-use crate::atomic::{create_temp, persist};
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, in_build_dir, safe_rel_file};
-use crate::projects::{Entry, is_litter, walk};
+use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
 
 /// `added`: files of the export's own, each at its path in the archive in place of the project's.
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
-    let parent = dest.parent().expect("a file is in a folder");
-    let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
-    // Resolved as the walk resolves the project, so a destination spelled through a link is recognised.
-    let archive_dir = std::fs::canonicalize(parent).map_err(CoreError::at(dest))?;
-    let archive = |entry: &Entry| {
-        let names = [dest.file_name(), temp_path.file_name()];
-        names.contains(&Some(OsStr::new(&entry.name)))
-            && entry
-                .path
-                .parent()
-                .and_then(|dir| std::fs::canonicalize(dir).ok())
-                == Some(archive_dir.clone())
-    };
+    let file = File::create(dest).map_err(CoreError::at(dest))?;
     let replaced = |rel: &str| added.iter().any(|(path, _)| path.eq_ignore_ascii_case(rel));
     let mut writer = ZipWriter::new(file);
     walk(
@@ -43,7 +29,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
             if entry.dir {
                 let modified = fs::metadata(&entry.path).and_then(|meta| meta.modified());
                 writer.add_directory(format!("{}/", entry.rel), options(modified))?;
-            } else if !archive(entry) {
+            } else {
                 // One gone since it was listed is left out.
                 match add_file(&mut writer, &entry.rel, &entry.path) {
                     Err(err) if err.status == 404 => {}
@@ -58,7 +44,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
         writer.write_all(bytes)?;
     }
     writer.finish()?.sync_all()?;
-    persist(temp_path, dest).map_err(CoreError::at(dest))
+    Ok(())
 }
 
 fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), CoreError> {
@@ -187,16 +173,6 @@ mod tests {
             "sub/.texlocal.json",
         ];
         assert_eq!(zip_names(&dest), kept);
-        let inside = root.join("project.zip");
-        fs::write(&inside, "old incomplete archive").unwrap();
-        export_zip(&root, &inside, &[]).unwrap();
-        assert_eq!(zip_names(&inside), kept);
-        // Spelt through a link into the project, as when a Save panel hands back /private/var
-        // for a data folder under /var: a lexical comparison would archive the half-written ZIP.
-        let alias = root.with_file_name("alias");
-        std::os::unix::fs::symlink(&root, &alias).unwrap();
-        export_zip(&root, &alias.join("project.zip"), &[]).unwrap();
-        assert_eq!(zip_names(&inside), kept);
 
         let service = Service::new(dir.path().join("again"));
         let copy = service
