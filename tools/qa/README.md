@@ -32,6 +32,7 @@ Without the screen:
 - Never answer a system prompt; never Print in the QA copy (it raises the local-network prompt).
 - Steps that must not interleave with another caller: `qa lock -- ./script.sh`.
 - Builds go into the scratchpad, never `/tmp`, and the copy running must be the build just made.
+- Trackpad gestures, the divider's haptic, interactive IME and materials are checked by hand.
 
 ## qa
 
