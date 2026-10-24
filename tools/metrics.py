@@ -7,7 +7,7 @@ import csv, io, json, math, re, subprocess, sys, tempfile
 
 # The share of complexity (CC × √lines) in functions with CC over 10, per language's app code;
 # and the share of lines jscpd finds repeated.
-LIMITS = {"rs": 0.48, "swift": 0.23, "clones": 0.37}
+LIMITS = {"rs": 0.47, "swift": 0.25, "clones": 0.05}
 
 files = subprocess.run(["git", "ls-files", "crates/*.rs", "apps/*.swift"],
                        capture_output=True, text=True, check=True).stdout.split()

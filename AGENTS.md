@@ -3,8 +3,8 @@
 Rules for agents. The repository is Underleaf; the app is TeXLocal, as are its names on disk
 (`~/TeXLocal`, `.texlocal.json`, `TEXLOCAL_DATA`), so existing projects keep working. The core's
 contract is `docs/core-api.md`, what is open `docs/handoff.md`; `docs/texpresso.md` and
-`docs/design-tokens.md` are Live Preview and the themes. The iPad and Windows apps are parked at the
-`archive/windows-ipad` tag: the repository is the Mac's alone until they come back.
+`docs/design-tokens.md` are Live Preview and the themes. The iPad and Windows apps are parked on the
+`archived-multi-platform` branch: the repository is the Mac's alone until they come back.
 
 ## Shape
 

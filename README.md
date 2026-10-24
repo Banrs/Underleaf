@@ -7,7 +7,7 @@ source. It does much of what Overleaf does, but on your own computer: you don't 
 a connection, and each project is an ordinary folder on your disk.
 
 There were also iPad and Windows apps. They are parked while the Mac app is finished, and the
-`archive/windows-ipad` tag holds them as they were.
+`archived-multi-platform` branch holds them as they were.
 
 ## What it does
 

@@ -55,7 +55,7 @@ trailing space and a heading that replaces a leaf opening closed want a look on 
 
 ## Parked
 
-The iPad and Windows apps, and what was open in them, are at the `archive/windows-ipad` tag
+The iPad and Windows apps, and what was open in them, are on the `archived-multi-platform` branch
 (its `docs/handoff.md` and `docs/windows.md`). Coming back means building them against the core as
 it is then: the C ABI dropped `tl_set_engine` and the in-process engine the iPad's TeX ran on.
 
