@@ -184,7 +184,7 @@ final class SyncPDFView: PDFView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        surround = backgroundColor ?? .clear
+        surround = backgroundColor
         // A double tap goes to the source, as a double-click does on the Mac.
         let tap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped))
         tap.numberOfTapsRequired = 2

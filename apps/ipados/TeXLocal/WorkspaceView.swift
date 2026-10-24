@@ -1,26 +1,30 @@
 import PDFKit
+import QuickLook
 import SwiftUI
 
-/// The sidebar's files and outline beside the source and its PDF. As the window narrows the sidebar folds over the
-/// panes, then the source and PDF take turns in one pane (HIG, Layout, Split views): what each shows stays as it was.
+/// The sidebar's files and outline over the source and its PDF, which keep their width; in a narrow window the source
+/// and PDF take turns in one pane (HIG, Layout, Split views): what each shows stays as it was.
 struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    /// iPadOS's own choice at first, which floats the sidebar over the panes where they need the width; View ▸ Sidebar
-    /// sets it.
-    @State private var columns = NavigationSplitViewVisibility.automatic
     /// Where the split collapses to one column (a narrow window): the source and PDF, which the sidebar's back button
     /// leaves and a file or heading chosen there returns to.
     @State private var compactColumn = NavigationSplitViewColumn.detail
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
+        NavigationSplitView(columnVisibility: sidebar, preferredCompactColumn: $compactColumn) {
             SidebarView(project: project) { compactColumn = .detail }
         } detail: {
             DetailView(project: project)
         }
-        .onChange(of: app.sidebarShown) { _, shown in columns = shown ? .all : .detailOnly }
+        .navigationSplitViewStyle(.prominentDetail)
         .modifier(WorkspaceModals(project: project))
+    }
+
+    /// View ▸ Sidebar's, both ways: a tap on the panes that puts the sidebar away is the menu's Show Sidebar again, and
+    /// Find Usages brings it back.
+    private var sidebar: Binding<NavigationSplitViewVisibility> {
+        Binding(get: { app.sidebarShown ? .all : .detailOnly }, set: { app.sidebarShown = $0 != .detailOnly })
     }
 }
 
@@ -59,13 +63,18 @@ private struct DetailView: View {
         .navigationTitle(project.openPath?.fileName ?? project.name)
         .navigationSubtitle(BuildStatus(project: project, app: app).text)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarRole(.editor)
+        // The open file at the head of the title's menu, to share or drag, as the Mac's title has it; on a view of its own,
+        // as there's no file to give while none is open.
+        .background { if let url = project.openURL { Color.clear.navigationDocument(url) } }
         .toolbar { WorkspaceToolbar(project: project, sideBySide: sideBySide, pane: $pane) }
         .toolbarTitleMenu { TitleMenu(project: project) }
         .inspector(isPresented: $app.inspectorVisible) {
             InspectorView(project: project)
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
         }
+        // On the column's root, outside the inspector's container: inside it, a first launch's bar now and then lays out
+        // without it, the title centred and the tools in its overflow menu.
+        .toolbarRole(.editor)
         .sheet(isPresented: Binding(get: { project.panel.shown && !panelBelow }, set: { project.panel.shown = $0 })) {
             BuildPanel(project: project)
                 .presentationDetents([.medium, .large])
@@ -151,6 +160,7 @@ private struct TitleMenu: View {
     }
 }
 
+/// The editing tools in one group in the middle, as Pages' and Freeform's; the view's toggles and Compile at the end.
 private struct WorkspaceToolbar: ToolbarContent {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -188,8 +198,8 @@ private struct WorkspaceToolbar: ToolbarContent {
                 }))
             }
             Toggle("Inspector", systemImage: "info.circle", isOn: Bindable(app).inspectorVisible)
-            CompileButton(project: project, wide: sideBySide)
         }
+        ToolbarItem(placement: .primaryAction) { CompileButton(project: project, wide: sideBySide) }
     }
 }
 
@@ -252,9 +262,11 @@ private struct SourcePane: View {
 
     var body: some View {
         ZStack {
+            // Under the bar, as Notes' note is, for the bar's edge effect to frost what scrolls beneath it.
             EditorView(editor: project.editor, shown: project.editsText)
-            if let path = project.openPath, !project.editsText, let url = project.url(path) {
-                FilePreview(url: url, kind: project.openKind, version: project.previewVersion)
+                .ignoresSafeArea(.container, edges: .top)
+            if !project.editsText, let url = project.openURL {
+                FilePreview(url: url, version: project.previewVersion)
             } else if project.openPath == nil, project.initialLoadComplete {
                 ContentUnavailableView("No File Open", systemImage: "text.document", description: Text("Choose a file in the sidebar."))
             }
@@ -262,39 +274,39 @@ private struct SourcePane: View {
     }
 }
 
-/// An image or PDF in the project, shown as Quick Look would.
-private struct FilePreview: View {
+/// What isn't text, as Quick Look shows it, as on the Mac.
+private struct FilePreview: UIViewControllerRepresentable {
     let url: URL
-    let kind: FileKind?
     let version: Int
 
-    var body: some View {
-        Group {
-            if kind == .image, let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) {
-                Image(uiImage: image).resizable().scaledToFit().padding()
-            } else if kind == .pdf {
-                PDFFileView(url: url)
-            } else {
-                ContentUnavailableView("No Preview", systemImage: "doc", description: Text(url.lastPathComponent))
-            }
+    func makeCoordinator() -> Shown { Shown(url: url, version: version) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        let shown = context.coordinator
+        if shown.url != url {
+            shown.url = url
+            controller.reloadData()
+        } else if shown.version != version {
+            controller.refreshCurrentPreviewItem()
         }
-        .id(version)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemBackground))
-    }
-}
-
-private struct PDFFileView: UIViewRepresentable {
-    let url: URL
-
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.document = PDFDocument(url: url)
-        return view
+        shown.version = version
     }
 
-    func updateUIView(_ view: PDFView, context: Context) {}
+    final class Shown: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+        var version: Int
+
+        init(url: URL, version: Int) { (self.url, self.version) = (url, version) }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
+    }
 }
 
 private struct PDFPane: View {
@@ -309,6 +321,7 @@ private struct PDFPane: View {
             // Inverted with its hues turned back, as the Mac's pages and Smart Invert, by SwiftUI as UIKit has no layer
             // filters; round the pages, the view's own colour is outside it.
             PDFRepresentable(project: project, darkPaper: dark)
+                .ignoresSafeArea(.container, edges: .top)
                 .contrast(dark ? -1 : 1)
                 .hueRotation(.degrees(dark ? 180 : 0))
                 .background(Color(uiColor: project.pdf.view.surround))

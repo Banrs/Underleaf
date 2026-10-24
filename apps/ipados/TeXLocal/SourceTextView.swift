@@ -291,6 +291,16 @@ final class SourceTextView: UITextView, NSTextStorageDelegate {
         }
     }
 
+    /// The bar's height over the text, which UIKit learns only once the text is in the window, after a file has opened at
+    /// the top: the line there stays there as it changes.
+    private var barInset: CGFloat = 0
+
+    override func adjustedContentInsetDidChange() {
+        super.adjustedContentInsetDidChange()
+        contentOffset.y -= adjustedContentInset.top - barInset
+        barInset = adjustedContentInset.top
+    }
+
     /// The software keyboard covers half the screen, so the text takes the keyboard by itself only with a hardware one, as
     /// Notes' does; a tap in it brings the software keyboard up.
     func focus() {
