@@ -62,8 +62,7 @@ private struct BuildStatus: View {
     private var label: some View {
         HStack {
             if project.compiling {
-                // The build's one spinner: the toolbar's Stop is a symbol alone.
-                ProgressView().controlSize(.small)
+                // The toolbar's Stop has the build's one spinner.
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {

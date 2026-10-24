@@ -20,8 +20,11 @@ final class WorkspaceController: ThinSplitViewController {
 
     private var appeared = false
     private var panelHeight: CGFloat = 0
+    private var quieting = 0
+    private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
+    private var resizes: [NotificationCenter.ObservationToken] = []
 
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
@@ -72,6 +75,12 @@ final class WorkspaceController: ThinSplitViewController {
                 project.panel.shown = shown
             },
         ]
+        // The splits tell of a resize before the nested panes have their frames.
+        resizes = [sourceItem, pdfItem].map { pane in
+            let view = pane!.viewController.view
+            view.postsFrameChangedNotifications = true
+            return NotificationCenter.default.addObserver(of: view, for: .frameDidChange) { [weak self] _ in self?.fitToolbar() }
+        }
     }
 
     /// Unless a divider was dragged shut: a column AppKit folds as a toggle opens the other has the click as its event.
@@ -98,6 +107,22 @@ final class WorkspaceController: ThinSplitViewController {
         let both = !sourceItem.isCollapsed && !pdfItem.isCollapsed
         let area = both ? 2 * ColumnMetrics.paneMinimum + columns.splitView.dividerThickness : ColumnMetrics.paneMinimum
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
+        fitToolbar()
+    }
+
+    /// Compile's word goes before AppKit would take Zoom or Compile to the overflow menu, where it is the first tool
+    /// without room, and comes back once no pane moves.
+    private func fitToolbar() {
+        func edges(_ item: NSSplitViewItem) -> NSRect { item.viewController.view.convert(item.viewController.view.bounds, to: splitView) }
+        let source = edges(sourceItem), area = edges(areaItem)
+        let leading = max(source.minX, ColumnMetrics.windowControls)
+        let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
+        let tools = trailing - leading - ColumnMetrics.sourceTools
+        // A PDF sliding in is already at its width.
+        let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
+            : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
+        let compact = room < ColumnMetrics.compile
+        if compact || quieting == 0 { toolbar.compactCompile = compact }
     }
 
     // MARK: - Layout
@@ -296,16 +321,31 @@ final class WorkspaceController: ThinSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
+        quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { context in
                 if !animates { context.duration = 0 }
                 item.animator().isCollapsed = collapsed
             }
+            quiet(false)
             done()
         }
     }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
+
+    /// Scroll bars come with scrolling (HIG, Scroll views), not with a drag's or animation's live resize, which an
+    /// animation puts every pane in.
+    func quiet(_ resizing: Bool) {
+        quieting += resizing ? 1 : -1
+        guard quieting == (resizing ? 1 : 0) else { return }
+        if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
+        for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
+        if !resizing {
+            quietScrollViews = []
+            fitToolbar()
+        }
+    }
 
     /// A hidden accessory only folds to no height, and its controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
@@ -315,9 +355,11 @@ final class WorkspaceController: ThinSplitViewController {
             (accessory.isHidden, accessory.view.isHidden) = (hidden, hidden)
             return
         }
+        quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
             if hidden, accessory.isHidden { accessory.view.isHidden = true }
+            quiet(false)
         }
     }
 
@@ -360,6 +402,7 @@ final class WorkspaceController: ThinSplitViewController {
         // The next workspace's columns are AppKit's to fold afresh.
         (app.sidebarFolded, app.inspectorFolded) = (false, false)
         collapses = []
+        resizes = []
         toolbar.close()
     }
 
