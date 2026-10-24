@@ -1,12 +1,11 @@
-//! Building a project with latexmk, or where TeX runs inside the app with the passes latexmk
-//! would make (`passes`): Stop and quit, an automatic build's timeout, and the stale-output
-//! guard. A session runs one build at a time.
+//! Building a project with latexmk: Stop and quit, an automatic build's timeout, and the
+//! stale-output guard. A session runs one build at a time.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -71,8 +70,6 @@ struct Running {
     /// latexmk's record, until a good run ends. After a fatal TeX error it
     /// holds the truncated .aux's state, which fails every later run.
     record: Option<PathBuf>,
-    /// Set to end a build that runs inside the app.
-    cancel: Arc<AtomicI32>,
 }
 
 #[derive(Default)]
@@ -295,7 +292,6 @@ impl CompileManager {
 
 impl Running {
     fn halt(&self) {
-        self.cancel.store(1, Ordering::Release);
         if let Some(tree) = &self.tree {
             tree.kill();
         }

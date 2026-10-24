@@ -224,7 +224,7 @@ mod tests {
 
         let (_dir, service) = crate::projects::testing::library();
         let builds = crate::templates::TEMPLATES
-            .map(|(template, _)| (template, None))
+            .map(|template| (template, None))
             .into_iter()
             .chain([("article", Some("xelatex"))]);
         for (n, (template, engine)) in builds.enumerate() {

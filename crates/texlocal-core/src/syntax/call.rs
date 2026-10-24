@@ -10,7 +10,6 @@ use super::edit::{Style, map_selections};
 use super::theme::{self, Appearance, Rgba};
 use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
-use crate::projects::Query;
 use crate::service::parse;
 
 /// A source's commands (docs/core-api.md): a table, one a line.
@@ -27,7 +26,6 @@ enum Command {
     TextStyles { selection: TextRange },
     CodeRanges { selection: TextRange, #[serde(rename = "for")] checker: Checker },
     Words { #[serde(flatten)] range: TextRange },
-    Find { query: String, #[serde(default)] match_case: bool, #[serde(default)] whole_word: bool },
     Type { selection: TextRange, text: String, auto_pair: Option<bool> },
     DeleteBackward { selection: TextRange, auto_pair: Option<bool> },
     InsertNewline { selection: TextRange },
@@ -87,11 +85,6 @@ impl SourceDocument {
                 json(self.code_ranges(selection, checker))
             }
             Command::Words { range } => json(json!({ "words": self.words(range) })),
-            Command::Find {
-                query,
-                match_case,
-                whole_word,
-            } => json(self.find(&Query::new(&query, match_case, whole_word))),
             Command::Type {
                 selection,
                 text,
@@ -246,16 +239,6 @@ mod tests {
         for (command, args, answer) in cases {
             assert_eq!(doc.call(command, args).as_deref(), answer, "{command}");
         }
-    }
-
-    #[test]
-    fn find_answers_every_match_in_utf16_units() {
-        let mut doc = SourceDocument::new("😀 Cat\ncat cats");
-        let found = r#"[{"start":3,"length":3},{"start":7,"length":3},{"start":11,"length":3}]"#;
-        assert_eq!(
-            doc.call("find", r#"{"query": "cat"}"#).as_deref(),
-            Some(found)
-        );
     }
 
     #[test]

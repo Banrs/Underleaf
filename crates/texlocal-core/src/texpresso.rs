@@ -187,8 +187,8 @@ fn splice(text: &mut Rope, start: usize, remove: usize, inserted: &str) -> Optio
 /// A running session's way to TeXpresso: dropping it closes TeXpresso's input, which ends it.
 struct Link {
     lines: mpsc::UnboundedSender<Vec<u8>>,
-    /// The program's and its engine's processes; none for the engine inside the app.
-    tree: Option<Tree>,
+    /// The program's and its engine's processes.
+    tree: Tree,
 }
 
 #[derive(Default)]
@@ -217,9 +217,7 @@ impl Session {
         let mut state = lock(&self.state);
         if let Some(link) = state.link.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
-            if let Some(tree) = link.tree {
-                tree.kill();
-            }
+            link.tree.kill();
             remove_pdf_folder(&self.pdf);
             state.error.clone_from(&error);
             if let Ok(mut files) = self.files.try_lock() {
@@ -334,7 +332,7 @@ impl Manager {
         pdf: PathBuf,
         buffers: HashMap<String, Rope>,
         sink: Sink,
-        tree: Option<Tree>,
+        tree: Tree,
     ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
         let (lines, queued) = mpsc::unbounded_channel();
         let session = Arc::new(Session {
@@ -453,7 +451,7 @@ impl Preview for Manager {
                 ));
             }
         };
-        let (session, queued) = self.open(owner, root, pdf, buffers, sink, Some(tree.clone()));
+        let (session, queued) = self.open(owner, root, pdf, buffers, sink, tree.clone());
         let (stdin, stdout, stderr) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let weak = Arc::downgrade(&session);

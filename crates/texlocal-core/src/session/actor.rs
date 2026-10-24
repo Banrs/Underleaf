@@ -1109,7 +1109,7 @@ impl Actor {
     }
 
     /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
-    /// analysis does; its password or UAC dialog cancelled answers null, nothing to do.
+    /// analysis does; its password dialog cancelled answers null, nothing to do.
     fn fix(&mut self, id: &str, reply: Reply) {
         let edits = match Fix::parse(id) {
             Some(Fix::Install(file)) => {

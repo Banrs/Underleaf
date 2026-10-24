@@ -54,16 +54,6 @@ pub enum Engine {
 }
 
 impl Engine {
-    pub(crate) const ALL: [Self; 3] = [Self::Pdflatex, Self::Xelatex, Self::Lualatex];
-
-    pub(crate) fn title(self) -> &'static str {
-        match self {
-            Self::Pdflatex => "pdfLaTeX",
-            Self::Xelatex => "XeLaTeX",
-            Self::Lualatex => "LuaLaTeX",
-        }
-    }
-
     pub(crate) fn flag(self) -> &'static str {
         match self {
             Self::Pdflatex => "-pdf",
