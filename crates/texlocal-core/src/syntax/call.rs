@@ -125,12 +125,19 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     }
 }
 
-/// What a file dropped on the editor does: an image or PDF on a LaTeX file is `\includegraphics` at the caret;
-/// any other file opens.
+/// What a file dropped on the editor does: an image or PDF graphicx reads, on a LaTeX file, is
+/// `\includegraphics` at the caret; any other file opens.
 fn dropped(path: &str, kind: &str, into: &str) -> Value {
+    // pdfTeX, XeTeX and LuaTeX alike: not GIF, SVG, WebP or BMP.
+    let graphic = || {
+        let ext = path.rsplit_once('.').map_or("", |(_, ext)| ext);
+        ["png", "jpg", "jpeg", "pdf"]
+            .iter()
+            .any(|known| ext.eq_ignore_ascii_case(known))
+    };
     match kind {
         "" => Value::Null,
-        "image" | "pdf" if into == "tex" && tex_reads(path) => {
+        "image" | "pdf" if into == "tex" && graphic() && tex_reads(path) => {
             json!({ "insert": format!("\\includegraphics{{{path}}}") })
         }
         _ => json!({ "open": true }),
@@ -255,6 +262,11 @@ mod tests {
         assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
         let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
         assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
+        // Of images, those graphicx reads, in any case.
+        let jpeg = r#"{"path": "Shot.JPG", "kind": "image"}"#;
+        assert!(drop(jpeg).unwrap().contains("includegraphics{Shot.JPG}"));
+        let svg = r#"{"path": "logo.svg", "kind": "image"}"#;
+        assert_eq!(drop(svg).as_deref(), Some(r#"{"open":true}"#));
         let taken = r#"{"path": "figs/a b_c&{d}~$^.png", "kind": "image"}"#;
         assert!(
             drop(taken)

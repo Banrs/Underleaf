@@ -24,7 +24,9 @@ The editor completes LaTeX commands, environments and the packages your TeX inst
 the caption or heading it labels. It closes brackets, dollar signs and environments as you type and
 shows the maths under the cursor in a small preview. An environment, a section or a run of comments
 folds away from the gutter's arrows or the Edit menu, as code folds in Xcode. Its colours can follow
-Overleaf, TeXstudio or the system.
+Overleaf, TeXstudio or the system. Drop a PNG, JPEG or PDF on the source, from the project or from
+Finder, or paste a screenshot, and it goes in with `\includegraphics`, copied beside the file you're
+editing if it came from outside.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
 needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
@@ -48,7 +50,7 @@ save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the backgroun
 brings it new citations and references. It stays on for a project until you turn it off.
 
 There's also a file tree, a word count, an outline of the current file that counts each section's
-words, search and replace across the project, and export to ZIP, or to a ZIP ready for arXiv with
+words, search and replace across the project, optionally matching case or whole words, and export to ZIP, or to a ZIP ready for arXiv with
 the compiled bibliography and the 00README.json arXiv reads. Deleted files go to the Trash. You can list every place a label, citation, command or file is used, rename a label or
 citation everywhere, and see what a citation, reference or command is without leaving the text. You
 can also open a file, section or label by typing a few letters of its name, and go back to where

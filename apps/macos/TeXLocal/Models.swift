@@ -196,7 +196,12 @@ nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }
 /// For `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index.
 nonisolated struct PageClick: Equatable, Sendable { let text: String, at: Int }
 
-nonisolated struct Imported: Decodable { let existing: [PathEvent] }
+nonisolated struct Imported: Decodable {
+    /// A name taken, and the free one Keep Both gives it.
+    nonisolated struct Clash: Decodable { let path, keepBoth: String }
+
+    let existing: [Clash]
+}
 
 nonisolated struct RenameResult: Decodable {
     let from, to, mainFile: String

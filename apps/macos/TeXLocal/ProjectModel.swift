@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import UniformTypeIdentifiers
 
 /// A project's window state over its core session (docs/core-api.md), which owns its text, saves, builds and Live Preview.
 @Observable
@@ -425,10 +426,32 @@ final class ProjectModel {
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        guard let path = projectPath(url), let kind = tree.node(at: path)?.kind else { return nil }
-        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue, "into": openKind?.rawValue ?? ""])
+        let into = openKind?.rawValue ?? ""
+        guard let path = projectPath(url) else {
+            // From outside, only a figure to insert: the sidebar adds other files.
+            let type = UTType(filenameExtension: url.pathExtension)
+            let kind = type?.conforms(to: .pdf) == true ? "pdf" : type?.conforms(to: .image) == true ? "image" : ""
+            let drop: DropText? = Syntax.call("drop_text", ["path": url.lastPathComponent, "kind": kind, "into": into])
+            return drop?.insert == nil ? nil : .copy { [weak self] in await self?.copyFigure(url) }
+        }
+        guard let kind = tree.node(at: path)?.kind else { return nil }
+        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue, "into": into])
         if let insert = drop?.insert { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
+    }
+
+    /// Beside the file shown, as a copy is named where its name is taken: its `\includegraphics`.
+    private func copyFigure(_ url: URL) async -> String? {
+        let folder = openPath?.parentFolder ?? ""
+        let args: [String: any Sendable] = ["id": id, "dir": folder, "paths": [url.path(percentEncoded: false)], "conflict": "keepBoth"]
+        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", {
+            try await core.call("import_files", args, as: Imported.self)
+        }) else { return nil }
+        await tree.reload()
+        let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
+        guard let kind = tree.node(at: path)?.kind else { return nil }
+        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue])
+        return drop?.insert
     }
 
     /// A build follows when automatic.

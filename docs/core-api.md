@@ -231,7 +231,7 @@ Syntax commands (`tl_syntax_call`), JSON in, JSON out; `math_svg` and `glyph_svg
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. An `image` or `pdf` dropped on a `tex` file inserts `\includegraphics{path}` at the caret, unless TeX can't read the path as written (`%`, `#`, `\` or unpaired braces); any other file opens (`{"open": true}`). The path is written as given. |
+| `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. A PNG, JPEG or PDF, which graphicx reads in every engine, dropped on a `tex` file inserts `\includegraphics{path}` at the caret, unless TeX can't read the path as written (`%`, `#`, `\` or unpaired braces); any other file opens (`{"open": true}`). The path is written as given. |
 | `themes` | | `[{id, title}]` | |
 | `theme_colors` | `theme`, `dark`, `increaseContrast?`, `background`, `fill`, `system?` | `[[r, g, b, a]]`, one per highlight kind | `system` maps the System theme's colour names to the host's values; each colour is made `legible`. |
 | `menus` | | `{templates, symbolGroups}` | The Insert and Math menus' catalogue. |
