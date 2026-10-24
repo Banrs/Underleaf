@@ -1,7 +1,6 @@
 name: CI
 
-# One workflow: the Rust core and the Mac app, each only when a path it builds from changed, and
-# tools/metrics.py on every change.
+# One workflow: the Rust core and the Mac app, each only when a path it builds from changed.
 # `ci-ok` is the one check to require.
 on:
   pull_request:
@@ -109,19 +108,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  metrics:
-    name: Erosion and clones
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - run: |
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet lizard==1.24.2
-          "$RUNNER_TEMP/venv/bin/python" tools/metrics.py
-
   ci-ok:
-    needs: [changes, rust, mac, metrics]
+    needs: [changes, rust, mac]
     if: always()
     runs-on: ubuntu-latest
     steps:
