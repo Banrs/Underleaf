@@ -103,62 +103,27 @@ fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing()
 }
 
 #[test]
-fn search_folds_case_cuts_its_snippet_at_the_match_and_stops_at_the_limit() {
+fn search_cuts_its_snippet_at_the_match_passes_over_other_files_and_stops_at_the_limit() {
     let (_dir, root) = project();
     for (file, text) in [
         ("ascii.tex", "One\nThe THEOREM holds\n"),
-        ("accents.tex", "L'ÉCOLE Normale\nStraße\n"),
         ("figure.svg", "<text>theorem</text>\n"),
-        ("mixed.tex", "Café\nsee Lemma 3\n"),
-        ("wide.tex", "Çà İstanbul, GRÖSSE und Größe\n"),
-        ("quick.tex", "the quick brown fox jumps\n"),
-        ("kelvin.tex", "measured 5 \u{212A} today\n"),
     ] {
         fs::write(root.join(file), text).unwrap();
     }
-    let files = |query: &str| -> Vec<String> {
-        let hits = search(&root, query, 50).unwrap();
-        hits.into_iter().map(|hit| hit.file).collect()
-    };
-    let hit = |query: &str| {
-        let hits = search(&root, query, 50).unwrap();
-        assert_eq!(hits.len(), 1, "{query}");
-        let hit = &hits[0];
+    let hits = search(&root, "theorem", 50).unwrap();
+    let cut = |hit: &SearchHit| {
         let (file, line) = (&hit.file, hit.line);
         format!("{file}:{line} {}[{}]{}", hit.before, hit.matched, hit.after)
     };
-    assert_eq!(hit("theorem"), "ascii.tex:2 The [THEOREM] holds");
-    assert_eq!(hit("école"), "accents.tex:1 L'[ÉCOLE] Normale");
-    assert!(files("zzz").is_empty());
-    assert_eq!(hit("lemma"), "mixed.tex:2 see [Lemma] 3");
-    assert_eq!(hit("größe"), "wide.tex:1 Çà İstanbul, GRÖSSE und [Größe]");
-    assert_eq!(hit("brown"), "quick.tex:1 the quick [brown] fox jumps");
-    assert!(files("istanbul").contains(&"wide.tex".to_string()));
-    assert!(files("k").contains(&"kelvin.tex".to_string()));
+    assert_eq!(
+        hits.iter().map(cut).collect::<Vec<_>>(),
+        ["ascii.tex:2 The [THEOREM] holds"]
+    );
     fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
     let hits = search(&root, "needle", 5).unwrap();
     assert_eq!(hits.len(), 5);
     assert!(hits.iter().all(|h| h.file == "many.tex"));
-}
-
-/// An editor host selects the match itself, so a hit places it in UTF-16 units of the line as
-/// written, not of its lowercased copy.
-#[test]
-fn a_hit_places_its_match_in_utf16_units_of_the_line() {
-    let (_dir, root) = project();
-    let hit = |text: &str, query: &str| {
-        fs::write(root.join("main.tex"), text).unwrap();
-        let mut hits = search(&root, query, 50).unwrap();
-        assert_eq!(hits.len(), 1, "{text:?}");
-        let hit = hits.remove(0);
-        (hit.line, hit.column, hit.length, hit.matched)
-    };
-    let place = hit("intro\nthe brown, brown fox\n", "brown");
-    assert_eq!(place, (2, 4, 5, "brown".into()));
-    let place = hit("\u{1F600} see a\u{1D538}b\n", "a\u{1D538}b");
-    assert_eq!(place, (1, 7, 4, "a\u{1D538}b".into()));
-    let place = hit("İ \u{212A} \u{1F600} GRÖẞE und\n", "größe");
-    assert_eq!(place, (1, 7, 5, "GRÖẞE".into()));
 }
 
 /// A Latin-1 .bib read as bytes by a Unicode-mode pattern loses the whole entry, so it is

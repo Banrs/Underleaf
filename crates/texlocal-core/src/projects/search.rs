@@ -393,7 +393,8 @@ mod tests {
         fs::set_permissions(&b, perms).unwrap();
     }
 
-    /// Apart from each other and in any case; in UTF-16 units, where the emoji is two.
+    /// Apart from each other and in any case, folded as Unicode folds it; placed in UTF-16 units
+    /// of the line as written, not of its folded copy, as an editor host selects the match.
     #[test]
     fn the_matcher_finds_every_match_on_a_line() {
         let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";
@@ -410,5 +411,18 @@ mod tests {
         let exact = |query| Query::new(query, true, true).places(text).len();
         assert_eq!((exact("cat"), exact("Cat"), exact("CAT")), (2, 1, 0));
         assert_eq!(places("aa"), [(3, 0), (3, 2)]);
+
+        let at = |text: &str, query: &str| -> Vec<(u32, u32, u32)> {
+            let found = Query::new(query, false, false).places(text);
+            found.iter().map(|p| (p.line, p.column, p.length)).collect()
+        };
+        assert_eq!(at("L'ÉCOLE Normale", "école"), [(1, 2, 5)]);
+        let wide = "Çà İstanbul, GRÖSSE und Größe";
+        assert_eq!(at(wide, "größe"), [(1, 24, 5)]);
+        assert_eq!(at(wide, "istanbul"), [(1, 3, 8)]);
+        assert_eq!(at("measured 5 \u{212A} today", "k"), [(1, 11, 1)]);
+        let astral = at("\u{1F600} see a\u{1D538}b", "a\u{1D538}b");
+        assert_eq!(astral, [(1, 7, 4)]);
+        assert_eq!(at("İ \u{212A} \u{1F600} GRÖẞE und", "größe"), [(1, 7, 5)]);
     }
 }
