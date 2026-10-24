@@ -6,6 +6,7 @@ enum MenuCommand: CaseIterable {
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
+    case editFold, editUnfold, editFoldAll, editUnfoldAll
     case pdfFind, pdfGotoPage
     case viewToggleSidebar, viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
@@ -46,6 +47,11 @@ enum MenuCommand: CaseIterable {
         case .editDuplicateLine: ("Duplicate Line", KeyboardShortcut("d"))
         case .editDeleteLine: ("Delete Line", KeyboardShortcut("k", modifiers: [.control, .shift]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
+        // Xcode's.
+        case .editFold: ("Fold", KeyboardShortcut(.leftArrow, modifiers: [.command, .option]))
+        case .editUnfold: ("Unfold", KeyboardShortcut(.rightArrow, modifiers: [.command, .option]))
+        case .editFoldAll: ("Fold All", KeyboardShortcut(.leftArrow, modifiers: [.command, .option, .shift]))
+        case .editUnfoldAll: ("Unfold All", KeyboardShortcut(.rightArrow, modifiers: [.command, .option, .shift]))
         case .goBack: ("Go Back", KeyboardShortcut(.leftArrow, modifiers: [.command, .control]))
         case .goForward: ("Go Forward", KeyboardShortcut(.rightArrow, modifiers: [.command, .control]))
         case .jumpToDefinition: ("Jump to Definition", KeyboardShortcut("j", modifiers: [.command, .control]))
@@ -79,7 +85,8 @@ enum MenuCommand: CaseIterable {
     var editsSelection: Bool {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
-             .editMoveLineDown, .editDuplicateLine, .editDeleteLine, .jumpToDefinition, .findUsages, .quickHelp, .editRename: true
+             .editMoveLineDown, .editDuplicateLine, .editDeleteLine, .jumpToDefinition, .findUsages, .quickHelp, .editRename,
+             .editFold, .editUnfold, .editFoldAll, .editUnfoldAll: true
         default: false
         }
     }
@@ -96,6 +103,10 @@ enum MenuCommand: CaseIterable {
         case .editMoveLineDown: .edit(.moveLineDown)
         case .editDuplicateLine: .edit(.duplicateLine)
         case .editDeleteLine: .edit(.deleteLine)
+        case .editFold: .edit(.fold)
+        case .editUnfold: .edit(.unfold)
+        case .editFoldAll: .edit(.foldAll)
+        case .editUnfoldAll: .edit(.unfoldAll)
         case .pdfFind: .pdf(.find)
         case .viewZoomIn: .pdf(.zoomIn)
         case .viewZoomOut: .pdf(.zoomOut)
@@ -168,7 +179,7 @@ extension AppModel {
         switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine,
-             .editGotoLine, .jumpToDefinition, .findUsages, .quickHelp:
+             .editGotoLine, .jumpToDefinition, .findUsages, .quickHelp, .editFold, .editUnfold, .editFoldAll, .editUnfoldAll:
             project?.editsText == true
         case .goBack: project.map { $0.openPath != nil && $0.trail.back } ?? false
         case .goForward: project.map { $0.openPath != nil && $0.trail.forward } ?? false

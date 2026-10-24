@@ -11,6 +11,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         view.textStorage?.delegate = view
+        (view.textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = view
         view.installColouring()
         view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
             of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.needsDisplay = true }
@@ -40,6 +41,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issues.place()
         inputContext?.discardMarkedText()
         unmarkText()
+        folded = []
+        foldCache = nil
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
         lastMath = nil
@@ -65,9 +68,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
+        let old = NSRange(location: edited.location, length: edited.length - delta)
         // A snippet field's other places take what's typed once the change is done (`didChangeText`).
-        mirrorEdits = document.edit(NSRange(location: edited.location, length: edited.length - delta),
-                                    with: textStorage.mutableString.substring(with: edited), changing: changing, mirroring: mirroring)
+        mirrorEdits = document.edit(old, with: textStorage.mutableString.substring(with: edited), changing: changing, mirroring: mirroring)
+        foldsEdited(old, delta: delta)
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         changing = nil
@@ -159,6 +163,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The bracket partner filled in place of the find indicator, with Reduce Motion (+Colours).
     var partnerMark: NSRange?
     var partnerDrawn: NSRect?
+    /// The folds' hidden lines, whole paragraphs, in order (+Folding).
+    var folded: [NSRange] = []
+    var foldCache: [Int: SourceDocument.Fold]?
+    var foldMarks: [(rect: CGRect, range: NSRange)] = []
+    var gutterHovered = false
+    var stepping = false
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -167,6 +177,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issues.draw(in: rect, currentLine: current?.number)
         drawPartner(in: rect)
         drawNumbers(in: rect, current: current?.number)
+        drawFolds(in: rect)
     }
 
     override func viewDidChangeBackingProperties() {
@@ -177,8 +188,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     // MARK: the selection
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        let old = selectedRange()
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
+        if let over = selectionMoved(from: old) {
+            super.setSelectedRanges([NSValue(range: over)], affinity: affinity, stillSelecting: stillSelecting)
+        }
         if !typing {
             completions.close()
             endFieldTyping()
@@ -361,13 +376,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// move through it and Return or Tab accepts.
     override func doCommand(by selector: Selector) {
         if selector == #selector(cancelOperation(_:)) { return cancelOperation(nil) }
-        guard completions.offered != nil else { return super.doCommand(by: selector) }
+        guard completions.offered != nil else { return keyCommand(selector) }
         switch selector {
         case #selector(moveUp(_:)): completions.move(-1)
         case #selector(moveDown(_:)): completions.move(1)
         case #selector(insertNewline(_:)), #selector(insertTab(_:)): completions.accept()
-        default: super.doCommand(by: selector)
+        default: keyCommand(selector)
         }
+    }
+
+    /// A key's own command: a caret it moves steps over a fold (+Folding).
+    private func keyCommand(_ selector: Selector) {
+        stepping = NSStringFromSelector(selector).hasPrefix("move")
+        defer { stepping = false }
+        super.doCommand(by: selector)
     }
 
     // MARK: snippet fields
@@ -416,6 +438,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// The text view sets its cursor on every move, over the list's own cursor rect.
     private func setsCursor(with event: NSEvent) -> Bool {
+        gutterHover(inGutter(event))
         if updateDividerCursor(with: event) { return true }
         guard inGutter(event) || issue(at: event) != nil || completions.contains(event.locationInWindow) else { return false }
         NSCursor.arrow.set()
@@ -433,7 +456,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func mouseEntered(with event: NSEvent) { if !setsCursor(with: event) { super.mouseEntered(with: event) } }
     override func cursorUpdate(with event: NSEvent) { if !setsCursor(with: event) { super.cursorUpdate(with: event) } }
 
+    override func mouseExited(with event: NSEvent) {
+        gutterHover(false)
+        super.mouseExited(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        if event.type == .leftMouseDown, foldClick(at: convert(event.locationInWindow, from: nil)) { return }
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
         let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
         if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {

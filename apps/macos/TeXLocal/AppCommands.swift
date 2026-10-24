@@ -51,6 +51,7 @@ struct AppCommands: Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
             items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine)
+            Menu("Code Folding") { items(.editFold, .editUnfold, .editFoldAll, .editUnfoldAll) }
             Divider()
             items(.editRename)
         }

@@ -135,6 +135,8 @@ pub(crate) trait Visit {
     fn comment(&mut self, _from: usize, _to: usize) {}
     fn at(&mut self, _groups: Vec<Group>) {}
     fn closed(&mut self, _group: &Group, _close: Range<usize>) {}
+    /// A verbatim environment, from its \begin to its \end, which opens no group.
+    fn literal(&mut self, _open: usize, _close: Range<usize>) {}
     /// Every brace TeX groups with, matched or not.
     fn brace(&mut self, _at: usize, _open: bool) {}
     /// Maths a paragraph's end finds open, which TeX ends with an error.
@@ -397,6 +399,9 @@ impl Scanner {
         } else if CATALOG.verbatim_environments.contains(name) {
             let end: Vec<u16> = format!("\\end{{{name}}}").encode_utf16().collect();
             self.skip_literal(src, after, &end, None);
+            if src[..self.i].ends_with(&end) {
+                visit.literal(start, self.i - end.len()..self.i);
+            }
             return (true, read);
         } else {
             let bare = name.strip_suffix('*').unwrap_or(name);

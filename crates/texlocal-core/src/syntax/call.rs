@@ -42,6 +42,7 @@ enum Command {
     ToggleStyle { selections: Vec<TextRange>, style: Style },
     Wrap { selections: Vec<TextRange>, template: String },
     MapSelections { edits: Vec<TextEdit>, selections: Vec<TextRange> },
+    Folds,
 }
 
 /// The commands that need no document.
@@ -119,6 +120,7 @@ impl SourceDocument {
             Command::MapSelections { edits, selections } => {
                 json(map_selections(&edits, &selections))
             }
+            Command::Folds => json(self.folds()),
         }
     }
 }

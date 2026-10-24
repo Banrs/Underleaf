@@ -6,6 +6,7 @@ mod call;
 pub(crate) mod catalog;
 mod complete;
 mod edit;
+mod folds;
 pub(crate) mod headings;
 mod highlight;
 mod preview;

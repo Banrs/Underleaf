@@ -2,6 +2,7 @@ import SwiftUI
 
 enum EditorCommand: Equatable {
     case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown, duplicateLine, deleteLine
+    case fold, unfold, foldAll, unfoldAll
     /// Without its backslash; empty for Normal Text.
     case heading(String)
     case symbol(String)

@@ -325,6 +325,7 @@ editor's thread.
   | `toggle_style` | `selections`, `style` (`bold`, `italic`, `underline`) | the change |
   | `wrap` | `selections`, `template` | the change |
   | `map_selections` | `edits`, `selections` | the selections after the edits |
+  | `folds` | | `[{line, end}]`, one a line, outer before inner: where the editor can fold, keeping `line` and hiding those after it to `end` (1-based). An environment's body between its `\begin` and `\end` lines (a verbatim one's too, but not the document's), a heading's section up to the next heading at its level or above or `\end{document}`, and a run of comment lines under its first, each without its trailing blank lines; none that would hide no line. |
   | `set_heading` | `caret`, `command` (a sectioning command, or none for plain text) | the insertion |
   | `insert_block` | `id`, `selection` | the insertion, or null; a selected text goes in the block's first field, which spans it |
   | `insert_symbol` | `command`, `selection` | the insertion |

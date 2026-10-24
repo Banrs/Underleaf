@@ -22,8 +22,9 @@ projects folder.
 The editor completes LaTeX commands, environments and the packages your TeX installation has,
 `\cite{}` keys from your `.bib` files by key, author or title, and `\ref{}` labels, each shown with
 the caption or heading it labels. It closes brackets, dollar signs and environments as you type and
-shows the maths under the cursor in a small preview. Its colours can follow Overleaf, TeXstudio or
-the system.
+shows the maths under the cursor in a small preview. An environment, a section or a run of comments
+folds away from the gutter's arrows or the Edit menu, as code folds in Xcode. Its colours can follow
+Overleaf, TeXstudio or the system.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
 needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or

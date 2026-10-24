@@ -45,6 +45,10 @@ extension SourceEditor {
             textView.apply(document.duplicateLines(selections), named: String(localized: "Duplicate Line"))
         case .deleteLine:
             textView.apply(document.deleteLines(selections), named: String(localized: "Delete Line"))
+        case .fold: textView.foldAtCaret()
+        case .unfold: textView.unfoldAtCaret()
+        case .foldAll: textView.foldAll()
+        case .unfoldAll: textView.unfoldAll()
         case .heading(let command):
             let level = document.setHeading(caret: selection.location, command: command)
             guard textView.insert(level, named: String(localized: "Section Level")) else { return false }
