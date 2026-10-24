@@ -25,13 +25,13 @@ impl Actor {
     /// As the session opens, so the files as they were before its edits are kept, and after each
     /// save; beside the session, so no save waits on the store.
     pub fn snapshot_soon(&self) {
-        let history = Arc::clone(&self.history);
-        tokio::task::spawn_blocking(move || lock(&history).take(now(), Taken::Auto));
+        let (history, root) = (Arc::clone(&self.history), self.project.root.clone());
+        tokio::task::spawn_blocking(move || lock(&history).take(&root, now(), Taken::Auto));
     }
 
     /// On the session's task, as the change waits for it: its id.
     pub fn snapshot_before(&self, reason: &'static str) -> Result<Option<String>, CoreError> {
-        let taken = lock(&self.history).take(now(), Taken::Before(reason))?;
+        let taken = lock(&self.history).take(&self.project.root, now(), Taken::Before(reason))?;
         Ok(taken.map(|id| id.to_string()))
     }
 
@@ -55,8 +55,9 @@ impl Actor {
         if name.is_empty() {
             return reply.send(Err(CoreError::bad_request("A version needs a name.")));
         }
+        let root = self.project.root.clone();
         let save = move |history: &History| {
-            history.take(now(), Taken::Named(name))?;
+            history.take(&root, now(), Taken::Named(name))?;
             out(history.list()?.first())
         };
         self.beside(save, reply);
