@@ -553,13 +553,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard isEditable else { return false }
         setSelectedRange(.caret(characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))))
         window?.makeFirstResponder(self)
-        insertFigure(drop)
+        Task.immediate { await insertFigure(drop) }
         return true
     }
 
     override func paste(_ sender: Any?) {
-        if isEditable, let drop = pasted(NSPasteboard.general) { return insertFigure(drop) }
-        super.paste(sender)
+        guard isEditable, let drop = pasted(NSPasteboard.general) else { return super.paste(sender) }
+        Task.immediate { await insertFigure(drop) }
     }
 
     /// A copied file as a dropped one, but one that would open, whose name pastes; a copied image without text, as a
@@ -593,20 +593,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
     }
 
-    /// At the selection; a copy's once made, unless another file is shown by then.
-    private func insertFigure(_ drop: FileDrop) {
-        let insert = { [self] (text: String) in
-            let at = selection
-            apply([TextEdit(at, text)], named: String(localized: "Insert Figure"),
-                  selecting: [NSRange(location: at.location, length: (text as NSString).length)])
+    /// At the selection; a copy's once made, unless another file is shown by then. A selection made meanwhile isn't
+    /// replaced: an edit meanwhile puts it at the caret.
+    func insertFigure(_ drop: FileDrop) async {
+        let shown = document, at = selection, version = document.version
+        let text: String? = switch drop {
+        case .open: nil
+        case .insert(let text): text
+        case .copy(let copy): await copy()
         }
-        switch drop {
-        case .open: break
-        case .insert(let text): insert(text)
-        case .copy(let copy):
-            let shown = document
-            Task { if let text = await copy(), document === shown, isEditable { insert(text) } }
-        }
+        guard let text, document === shown, isEditable else { return }
+        let target = document.version == version ? at : .caret(caret)
+        apply([TextEdit(target, text)], named: String(localized: "Insert Figure"),
+              selecting: [NSRange(location: target.location, length: (text as NSString).length)])
     }
 
     // MARK: VoiceOver's rotors

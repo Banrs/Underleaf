@@ -540,6 +540,25 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A selection made while a figure is copied in isn't replaced: the figure goes where it was asked for, or after an
+    /// edit meanwhile, at the caret.
+    @Test func aFigureCopiedInReplacesNoSelectionMadeMeanwhile() async throws {
+        let text = try await opened("abc def").project.editor.textView
+        text.selection = .caret(0)
+        await text.insertFigure(.copy {
+            text.selection = NSRange(location: 4, length: 3)
+            return "F"
+        })
+        text.selection = .caret(0)
+        await text.insertFigure(.copy {
+            text.apply([TextEdit(.caret(text.length), "!")], named: "Typing")
+            text.selection = NSRange(location: 2, length: 3)
+            return "G"
+        })
+        #expect(text.string == "FaGbc def!")
+        await app.close()
+    }
+
     /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
     @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
         let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])
