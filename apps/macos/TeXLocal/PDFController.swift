@@ -23,7 +23,7 @@ final class PDFController: NSObject {
     @ObservationIgnored var restorePage: Int?
     @ObservationIgnored var restoreZoom: Zoom?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
-    @ObservationIgnored var toldPages: ClosedRange<Int>?
+    @ObservationIgnored private var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
     /// PDFKit keeps every replaced page's objects for its document's life: past this footprint the next is shown whole
     /// (`aDocumentIsShownWholeOnceTheAppHasGrown`).
@@ -61,6 +61,24 @@ final class PDFController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(visiblePagesChanged), name: .PDFViewVisiblePagesChanged, object: view)
         // Only as a pinch ends; the scroll view's magnification follows each step.
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
+    }
+
+    @objc func pageChanged() {
+        guard let document = view.document, let page = view.currentPage else { return }
+        if let number = document.number(of: page) { self.page = number }
+        pageCount = document.pageCount
+    }
+
+    var visiblePages: ClosedRange<Int>? {
+        guard let document = view.document, view.hasShownArea else { return nil }
+        let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
+        return shown.min().flatMap { first in shown.max().map { first...$0 } }
+    }
+
+    @objc func visiblePagesChanged() {
+        guard let pages = visiblePages, pages != toldPages else { return }
+        toldPages = pages
+        onVisiblePages(pages)
     }
 
     private func watchScrollView() {
@@ -112,6 +130,47 @@ final class PDFController: NSObject {
         let scale = pageScale
         if view.scaleFactor != scale { view.scaleFactor = scale }
         zoom = .fitPage
+    }
+
+    func apply(_ zoom: Zoom) {
+        switch zoom {
+        case .fitWidth: fitWidth()
+        case .fitPage: fitPage()
+        case .scale(let scale): setScale(CGFloat(scale))
+        }
+    }
+
+    func go(toPage number: Int) {
+        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
+    }
+
+    func fitWidth() {
+        zoom = .fitWidth
+        view.autoScales = true
+    }
+
+    /// The zoom before the page: where a page lands depends on the scale.
+    func restoreIfReady() {
+        guard view.document != nil, view.hasShownArea else { return }
+        if let zoom = restoreZoom.take() { apply(zoom) }
+        if let number = restorePage.take() { go(toPage: number) }
+    }
+
+    /// What a project keeps of the view, the restored place while it waits.
+    var keptPage: Int? { restorePage ?? (page > 0 ? page : nil) }
+    var keptZoom: Zoom { restoreZoom ?? zoom }
+
+    /// Read whole: the next build rewrites the file in place.
+    @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
+        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
+        for index in 0..<document.pageCount {
+            for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
+                let border = PDFBorder()
+                border.lineWidth = 0
+                link.border = border
+            }
+        }
+        return document
     }
 
     /// The file given (the build's during Live Preview, as the document showing is TeXpresso's), or the document showing.
@@ -198,5 +257,67 @@ final class PDFController: NSObject {
         find.reset()
         view.document = nil
         (page, pageCount) = (0, 0)
+    }
+
+    /// As a project's ui state keeps it (docs/core-api.md): "fitWidth", "fitPage" or a scale.
+    nonisolated enum Zoom: Decodable, Hashable {
+        case fitWidth, fitPage, scale(Double)
+
+        init(from decoder: any Decoder) throws {
+            let value = try decoder.singleValueContainer()
+            if let scale = try? value.decode(Double.self) {
+                self = .scale(scale)
+            } else {
+                self = try value.decode(String.self) == "fitPage" ? .fitPage : .fitWidth
+            }
+        }
+
+        var json: any Sendable {
+            switch self {
+            case .fitWidth: "fitWidth"
+            case .fitPage: "fitPage"
+            case .scale(let scale): scale
+            }
+        }
+    }
+}
+
+extension PDFDocument {
+    /// `page(at:)` raises outside the document.
+    func page(ifAt index: Int) -> PDFPage? { (0..<pageCount).contains(index) ? page(at: index) : nil }
+
+    /// PDFKit answers NSNotFound for a page that has left the document.
+    func number(of page: PDFPage) -> Int? {
+        let index = index(for: page)
+        return index == NSNotFound ? nil : index + 1
+    }
+
+    /// `new` in before the old page out, so the document is never shorter than the place being read.
+    func replacePage(at index: Int, with new: PDFPage) -> PDFPage? {
+        guard let old = page(ifAt: index) else { return nil }
+        insert(new, at: index)
+        removePage(at: index + 1)
+        return old
+    }
+
+    func replacePages(with other: PDFDocument) {
+        let pages = (0..<other.pageCount).compactMap { other.page(at: $0)?.copy() as? PDFPage }
+        for (index, page) in pages.enumerated() {
+            if replacePage(at: index, with: page) == nil { insert(page, at: index) }
+        }
+        while pageCount > pages.count { removePage(at: pageCount - 1) }
+        func here(_ destination: PDFDestination?) -> PDFDestination? {
+            guard let destination, let target = destination.page, target.document === other,
+                  let page = page(ifAt: other.index(for: target)) else { return nil }
+            let local = PDFDestination(page: page, at: destination.point)
+            local.zoom = destination.zoom
+            return local
+        }
+        for link in pages.flatMap(\.annotations) where link.type == "Link" {
+            if let destination = here(link.destination) { link.destination = destination }
+            if let goTo = link.action as? PDFActionGoTo, let destination = here(goTo.destination) {
+                link.action = PDFActionGoTo(destination: destination)
+            }
+        }
     }
 }
