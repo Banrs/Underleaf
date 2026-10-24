@@ -29,6 +29,9 @@ const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
+const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh (docs/texpresso.md).";
+/// The patch's protocol, which its first message names.
+const LIVE_VERSION: u64 = 2;
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
 #[derive(Debug)]
@@ -61,12 +64,12 @@ pub enum LiveEvent {
     },
     /// The whole document, complete on disk, its SyncTeX beside it. `run`: how the run ended
     /// (`complete`, `stopped`, or `partial` while still typeset). `changed`: first/last page
-    /// ranges that differ from before. Both None from a build that doesn't say.
+    /// ranges that differ from before.
     Document {
         path: String,
         pages: u32,
-        run: Option<String>,
-        changed: Option<Vec<[u32; 2]>>,
+        run: String,
+        changed: Vec<[u32; 2]>,
     },
     Done(String),
     /// TeXpresso has read every change sent before the mark of this number.
@@ -78,9 +81,8 @@ pub enum LiveEvent {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of `project` for the session `owner`, in place of any the owner had. A
-    /// patched build writes the document for the `pane` instead of opening a window; upstream
-    /// opens its window all the same.
+    /// A preview of `project` for the session `owner`, in place of any the owner had, written
+    /// for the `pane` by a TeXpresso with Underleaf's patch.
     fn start(
         &self,
         owner: u64,
@@ -199,6 +201,8 @@ struct State {
     link: Option<Link>,
     output: Output,
     log: Output,
+    /// The patch's handshake has come.
+    live: bool,
     protocol_seen: bool,
     stderr: Output,
     error: Option<String>,
@@ -674,15 +678,19 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
 fn apply_message(session: &Session, message: &Value) {
     let verb = message[0].as_str().unwrap_or_default();
     let number = |index: usize| message[index].as_u64().map(|n| n as u32);
-    let event = match verb {
-        "reset-sync" => {
-            let files = lock(&session.files);
-            let messages: Vec<_> = (files.iter())
-                .map(|(rel, text)| json!(["open", session.root.join(rel), String::from(text)]))
-                .collect();
-            session.send(&messages);
+    let live = {
+        let mut state = lock(&session.state);
+        if !state.live && verb == "live" && message[1] == LIVE_VERSION {
+            (state.live, state.protocol_seen) = (true, true);
             return;
         }
+        state.live
+    };
+    // Upstream's first message under -json is TeX's output or log.
+    if !live {
+        return session.stop(Some(UNPATCHED.into()));
+    }
+    let event = match verb {
         "page" => {
             let folder = session.pdf.parent();
             let path = (message[2].as_str()).filter(|path| Path::new(path).parent() == folder);
@@ -695,15 +703,15 @@ fn apply_message(session: &Session, message: &Value) {
             }
         }
         "pdf" => {
-            let changed = message[4].as_array().map(|ranges| {
-                let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
-                ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
-            });
+            let (Some(run), Some(ranges)) = (message[3].as_str(), message[4].as_array()) else {
+                return;
+            };
+            let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
             LiveEvent::Document {
                 path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
-                run: message[3].as_str().map(str::to_owned),
-                changed,
+                run: run.to_owned(),
+                changed: ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect(),
             }
         }
         "done" => match message[1].as_str() {
@@ -809,7 +817,7 @@ mod tests {
         });
         let long = format!(r#"["append","out",3,"{}"]"#, "x".repeat(MAX_MESSAGE));
         let text = format!(
-            "[\"append\",\"out\",0,\"rea\"]\n{long}\n[\"append\",\"out\",3,\"dy\"]\n[\"append\",\"log\",0,\"cut"
+            "[\"live\",2]\n[\"append\",\"out\",0,\"rea\"]\n{long}\n[\"append\",\"out\",3,\"dy\"]\n[\"append\",\"log\",0,\"cut"
         );
         read_output(text.as_bytes(), Arc::clone(&session), true).await;
         let status = session.status();
@@ -831,7 +839,7 @@ here=${0%/bin/texpresso}
 echo $! > "$here/engine.pid"
 pages=${TEXPRESSO_PDF_OUTPUT%/*}
 n=0
-printf '["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]]]\n' "$TEXPRESSO_PDF_OUTPUT"
+printf '["live",2]\n["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]]]\n' "$TEXPRESSO_PDF_OUTPUT"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$here/commands"
   case "$line" in
@@ -1011,12 +1019,26 @@ done
             until(|| unsafe { libc::kill(engine, 0) == -1 }).await;
         }
 
+        /// Upstream's first message under -json is TeX's output.
+        #[tokio::test]
+        async fn a_texpresso_without_the_patch_fails_saying_how_to_build_it() {
+            let (tmp, root, path_env) = setup();
+            let upstream =
+                "#!/bin/sh\nprintf '[\"append\",\"out\",0,\"x\"]\\n'\nexec /bin/sleep 300\n";
+            fs::write(tmp.path().join("bin/texpresso"), upstream).unwrap();
+            let manager = Manager::default();
+            let (_, mut events) = start(&manager, &root, &path_env, None, &Pane::default());
+            let ended = next(&mut events, |e| matches!(e, LiveEvent::Ended(_))).await;
+            assert_eq!(ended, LiveEvent::Ended(Some(UNPATCHED.into())));
+        }
+
         #[tokio::test]
         async fn the_log_follows_backtracking_and_has_the_programs_own_output_once_it_fails() {
             let (_tmp, root, path_env) = setup();
             let manager = Manager::default();
             begin(&manager, &root, &path_env);
             let session = manager.owned(OWNER).unwrap();
+            until(|| lock(&session.state).live).await;
             // Backtracking drops TeX's log, and the process's historical stderr is
             // not put in its place.
             let diagnostic = "Undefined control sequence";
@@ -1094,10 +1116,7 @@ done
             else {
                 panic!("{first:?}")
             };
-            assert_eq!(
-                (run.as_deref(), changed),
-                (Some("partial"), Some(vec![[0, 2]]))
-            );
+            assert_eq!((run.as_str(), changed), ("partial", vec![[0, 2]]));
             assert!(manager.live_pdf(OWNER).is_err(), "no SyncTeX yet");
             let folder = PathBuf::from(&path).parent().unwrap().to_owned();
             for n in 1..=2 {
@@ -1112,8 +1131,8 @@ done
             let whole = LiveEvent::Document {
                 path,
                 pages: 4,
-                run: Some("complete".into()),
-                changed: Some(vec![[1, 1], [3, 3]]),
+                run: "complete".into(),
+                changed: vec![[1, 1], [3, 3]],
             };
             assert_eq!(next(&mut events, shown).await, whole);
             let done = next(&mut events, shown).await;

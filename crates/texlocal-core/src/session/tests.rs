@@ -1120,8 +1120,8 @@ async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_bef
     rig.fake.tell(LiveEvent::Document {
         path: "/tmp/live.pdf".into(),
         pages: 4,
-        run: Some("partial".into()),
-        changed: Some(vec![[1, 1]]),
+        run: "partial".into(),
+        changed: vec![[1, 1]],
     });
     rig.fake.tell(page("/tmp/page.pdf"));
     let events = rig.events().await;
