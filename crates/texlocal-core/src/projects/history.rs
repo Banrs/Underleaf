@@ -22,7 +22,7 @@ const MINUTE: i64 = 60_000;
 const HOUR: i64 = 60 * MINUTE;
 const DAY: i64 = 24 * HOUR;
 /// A larger file is data or video, not writing: a copy at each change would fill the disk.
-const MAX_KEPT: u64 = 20 << 20;
+pub(super) const MAX_KEPT: u64 = 20 << 20;
 
 pub(crate) enum Taken {
     /// Only when the last is more than 10 minutes old and something changed since it.

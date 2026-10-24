@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::files::{Planned, inside, write_all};
+use super::history::MAX_KEPT;
 use super::read_capped;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
@@ -213,8 +214,9 @@ pub fn search_project(
 /// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
 /// given its text with line feeds alone, each written with its lines ending as they did:
 /// `{file, count}` for each, in the order of their paths. One too large to search is left out;
-/// one that isn't UTF-8, which writing would change, refuses them all before any is written,
-/// and one that can't be written puts back those written before it.
+/// one that isn't UTF-8, which writing would change, or too large, before or after, for the
+/// version history to keep, which a host puts the files back from, refuses them all before any is
+/// written, and one that can't be written puts back those written before it.
 pub(crate) fn replace_in_files(
     root: &Path,
     chosen: &dyn Fn(&str) -> bool,
@@ -239,7 +241,13 @@ pub(crate) fn replace_in_files(
                 "“{rel}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it."
             )));
         }
-        Ok(Some((replaced(&file, &places, to), places.len(), file)))
+        let now = replaced(&file, &places, to);
+        if file.len().max(now.len()) as u64 > MAX_KEPT {
+            return Err(CoreError::bad_request(format!(
+                "“{rel}” is too large for the version history to keep, so nothing was changed, as it couldn’t be put back."
+            )));
+        }
+        Ok(Some((now, places.len(), file)))
     };
     let mut edited = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
@@ -371,6 +379,26 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(fs::read_to_string(outside).unwrap(), "cat");
+    }
+
+    /// Neither one already too large nor one the change would make so: the history the host puts
+    /// files back from couldn't keep it.
+    #[test]
+    fn a_replace_refuses_them_all_for_a_file_too_large_for_the_history() {
+        let (_dir, root) = project();
+        fs::write(root.join("a.tex"), "cat").unwrap();
+        let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
+        let kept = MAX_KEPT as usize;
+        for (big, to) in [(kept + 1, "cat"), (kept, "dogs")] {
+            fs::write(root.join("big.tex"), format!("cat{}", " ".repeat(big - 3))).unwrap();
+            let err = replace_in_files(&root, &|_| true, &found, to).unwrap_err();
+            assert!(
+                err.message.starts_with("“big.tex” is too large"),
+                "{}",
+                err.message
+            );
+            assert_eq!(fs::read_to_string(root.join("a.tex")).unwrap(), "cat");
+        }
     }
 
     /// A file refused partway, read only here, leaves those before it as they were.
