@@ -39,6 +39,9 @@ pub(super) const ONE_DOCUMENT: &str =
     "Only one open document can be edited at once: close the others first.";
 const NOT_UTF8: &str =
     "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
+/// A data set or log far larger would freeze the editor, which holds it whole, as each save
+/// writes it.
+pub(super) const MAX_EDITED: u64 = 64 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -183,15 +186,16 @@ impl Actor {
             .watch
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let settings = settings::read_settings(&project.settings);
-        let pdf = settings.output(&project.build, "pdf").ok();
+        let pdf = settings::read_settings(&project.settings)
+            .output(&project.build, "pdf")
+            .ok();
         let pdf = pdf.filter(|pdf| pdf.is_file());
         let opened = json!({
             "name": project.name(),
             "root": project.root.to_string_lossy(),
             "pdf": pdf.as_ref().map(|pdf| pdf.to_string_lossy()),
             "tree": out(&tree)?,
-            "settings": settings,
+            "settings": settings::shown(&project),
             "ui": settings::read_ui(&project.ui),
         });
         let mut builds = Builds::default();
@@ -507,7 +511,15 @@ impl Actor {
         if self.docs.contains_key(path) {
             return Ok(());
         }
-        let (disk, stamp) = read_disk(&paths::safe_path(&self.project.root, path)?)?;
+        let abs = paths::safe_path(&self.project.root, path)?;
+        let size = fs::metadata(&abs).map_err(CoreError::at(&abs))?.len();
+        if size > MAX_EDITED {
+            return Err(CoreError::bad_request(format!(
+                "It's {} MB, too large to edit here. Open it in another app.",
+                size >> 20
+            )));
+        }
+        let (disk, stamp) = read_disk(&abs)?;
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
@@ -1101,13 +1113,12 @@ impl Actor {
     fn fix(&mut self, id: &str, reply: Reply) {
         let edits = match Fix::parse(id) {
             Some(Fix::Install(file)) => {
-                let (service, settings) =
-                    (Arc::clone(&self.service), self.project.settings.clone());
+                let (service, project) = (Arc::clone(&self.service), self.project.clone());
                 tokio::spawn(async move {
                     let installed = packages::install_package(&file, &service.tool_paths().0).await;
                     reply.send(match installed {
                         Err(err) if err.status == 403 => Ok(Value::Null),
-                        installed => installed.map(|_| fixed(Value::Null, &settings)),
+                        installed => installed.map(|_| fixed(Value::Null, &project)),
                     });
                 });
                 return;
@@ -1123,7 +1134,7 @@ impl Actor {
                 .map(|_| Value::Null),
             None => Err(CoreError::bad_request("There's no such fix.")),
         };
-        reply.send(edits.map(|edits| fixed(edits, &self.project.settings)));
+        reply.send(edits.map(|edits| fixed(edits, &self.project)));
     }
 
     /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
@@ -1263,19 +1274,27 @@ impl Actor {
     fn set_settings(&mut self, patch: &Value, build: bool) -> Result<Value, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
+            let grant = patch.get("shellEscape").map(|on| {
+                on.as_bool()
+                    .ok_or_else(|| CoreError::bad_request("Invalid settings: shellEscape"))
+            });
+            let grant = grant.transpose()?;
             let updated = settings::write_settings(&project.settings, patch)?;
+            if let Some(on) = grant {
+                settings::grant(project, on)?;
+            }
             let main_changed = updated.main_file != main;
             if main_changed {
                 self.preview.stop(&project.root)?;
             }
-            Ok((updated, main_changed))
+            Ok((settings::shown(project), main_changed))
         })?;
         if main_changed {
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
-        out(updated)
+        Ok(updated)
     }
 
     fn main_file_changed(&mut self) {
@@ -1303,8 +1322,8 @@ impl Actor {
 }
 
 /// The settings always, so a host shows the engine and toggles as a fix leaves them.
-fn fixed(edits: Value, settings: &Path) -> Value {
-    json!({ "edits": edits, "settings": settings::read_settings(settings) })
+fn fixed(edits: Value, project: &Project) -> Value {
+    json!({ "edits": edits, "settings": settings::shown(project) })
 }
 
 /// The files a symbol is defined and used in.

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use super::Msg;
 use crate::SETTINGS_FILE;
 use crate::analyze::disk_spelling;
-use crate::paths::within;
+use crate::paths::{fold_case, within};
 use crate::projects::{TreeNode, listed};
 
 #[derive(Debug)]
@@ -132,7 +132,7 @@ pub(crate) fn classify(
         if change.structural && shown_folder && !listed_as_before(root, &rel, index) {
             meaning.tree = true;
         }
-        meaning.settings |= rel.eq_ignore_ascii_case(SETTINGS_FILE);
+        meaning.settings |= fold_case(&rel) == SETTINGS_FILE;
         if index.contains(&rel) {
             meaning.listed.insert(rel);
         }

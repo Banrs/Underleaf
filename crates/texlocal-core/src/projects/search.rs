@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::files::{Planned, write_all};
+use super::files::{Planned, inside, write_all};
 use super::read_capped;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
@@ -243,7 +243,7 @@ pub(crate) fn replace_in_files(
     };
     let mut edited = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
-        if chosen(rel) && replace(abs, rel)?.is_some() {
+        if chosen(rel) && inside(root, abs) && replace(abs, rel)?.is_some() {
             edited.insert(rel.to_owned(), abs.to_owned());
         }
         Ok(true)
@@ -356,6 +356,21 @@ mod tests {
         assert_eq!(written, [json!({ "file": "a.tex", "count": 2 })]);
         let disk = fs::read_to_string(root.join("a.tex")).unwrap();
         assert_eq!(disk, "dog, their dog");
+    }
+
+    #[test]
+    fn a_replace_leaves_a_file_a_link_leads_out_of_the_project_to() {
+        let (dir, root) = project();
+        let outside = dir.path().join("zshrc");
+        fs::write(&outside, "cat").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("notes.txt")).unwrap();
+        let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
+        assert!(
+            replace_in_files(&root, &|_| true, &found, "dog")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(fs::read_to_string(outside).unwrap(), "cat");
     }
 
     /// A file refused partway, read only here, leaves those before it as they were.

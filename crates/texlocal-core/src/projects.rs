@@ -19,6 +19,10 @@ use std::path::Path;
 
 use crate::error::CoreError;
 
+/// A whole repository or home folder, not a document's: the tree and the scans would walk it all
+/// on each change.
+pub(crate) const MAX_FILES: usize = 20_000;
+
 pub(crate) use files::{Trash, copy_paths, discard, discard_replaced, write_creating};
 pub use files::{create_free, rename_entry};
 pub(crate) use history::{History, Taken, put_back};

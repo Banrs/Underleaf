@@ -80,6 +80,13 @@ impl Project {
     }
 }
 
+/// The volume and file number of what `path` names, which stay as it moves on its volume.
+pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
 /// `.texlocal.json` at the root is written only through write_settings; its
 /// case aliases too, as macOS volumes ignore case.
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
@@ -89,9 +96,7 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     let segments = normalize_segments(rel, "Path escapes project")?;
     match segments[..] {
         [] => Err(CoreError::bad_request("Path escapes project")),
-        [name] if name.eq_ignore_ascii_case(SETTINGS_FILE) => {
-            Err(CoreError::bad_request("Reserved file"))
-        }
+        [name] if fold_case(name) == SETTINGS_FILE => Err(CoreError::bad_request("Reserved file")),
         _ => Ok(segments),
     }
 }
@@ -101,7 +106,7 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
 pub(crate) fn in_build_dir(rel: &str) -> bool {
     rel.split('/')
         .next()
-        .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
+        .is_some_and(|top| fold_case(top) == BUILD_DIR)
 }
 
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
@@ -128,8 +133,10 @@ pub(crate) fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
+/// As a macOS volume compares names, in any case as Unicode folds it: `ſ` is an `s`, and the
+/// Kelvin sign a `k`, which lowercasing alone keeps.
 pub(crate) fn fold_case(path: &str) -> String {
-    path.to_lowercase()
+    path.to_uppercase().to_lowercase()
 }
 
 /// What follows the entry `entry` in `path`, names compared as the volume
@@ -243,7 +250,10 @@ mod tests {
             fails_with(safe_path(&root, path), "Path escapes project");
         }
         fails_with(safe_path(&root, ""), "Missing path");
-        fails_with(safe_path(&root, ".TexLocal.Json"), "Reserved file");
+        // As the volume opens them: in any case, and `ſ` as `s`.
+        for alias in [".TexLocal.Json", ".texlocal.j\u{17f}on"] {
+            fails_with(safe_path(&root, alias), "Reserved file");
+        }
         assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
         fails_with(safe_write_path(&root, "Build/x.tex"), "compiled PDF");
         assert!(safe_path(&root, "build/main.pdf").is_ok());

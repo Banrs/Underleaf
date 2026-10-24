@@ -670,10 +670,16 @@ pub fn analyze_project(
     let mut analysis = Analysis::default();
     if let Ok(open) = paths::rel_key(open) {
         let mut seen = HashSet::new();
-        walk(root, files, main, "", &mut seen, &mut analysis);
+        walk(root, files, (main, "", 0), &mut seen, &mut analysis);
         if !seen.contains(&paths::fold_case(&open)) {
             analysis = Analysis::default();
-            walk(root, files, &open, "", &mut HashSet::new(), &mut analysis);
+            walk(
+                root,
+                files,
+                (&open, "", 0),
+                &mut HashSet::new(),
+                &mut analysis,
+            );
         }
     }
     let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
@@ -702,15 +708,22 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
     path.is_file().then(|| spelt.join("/"))
 }
 
-/// `within` is the folder an \import gave the file, where its own inputs are looked for first.
+/// TeX Live's `max_in_open`: TeX reads inputs no deeper, and a walk that did could run out of
+/// stack on a chain made to.
+pub(crate) const INPUT_DEPTH: usize = 15;
+
+/// `within` is the folder an \import gave the file, where its own inputs are looked for first;
+/// `depth` the inputs it is in.
 fn walk(
     root: &Path,
     files: &Files,
-    file: &str,
-    within: &str,
+    (file, within, depth): (&str, &str, usize),
     seen: &mut HashSet<String>,
     into: &mut Analysis,
 ) {
+    if depth == INPUT_DEPTH {
+        return;
+    }
     let Some(file) = paths::rel_key(file)
         .ok()
         .and_then(|file| disk_spelling(root, &file))
@@ -748,7 +761,7 @@ fn walk(
         into.outline.extend(before.iter().map(placed));
         at = input.before;
         if let Some((input, within)) = input.resolve(&file, within, found) {
-            walk(root, files, &input, &within, seen, into);
+            walk(root, files, (&input, &within, depth + 1), seen, into);
         }
         credit(&mut into.outline, input.words);
     }
@@ -1276,6 +1289,20 @@ mod tests {
         assert_eq!(words(&analysis.tree), [12, 2]);
         assert_eq!(words(&analysis.tree[0].children), [9]);
         assert_eq!(analysis.words, 16);
+    }
+
+    #[test]
+    fn inputs_are_read_no_deeper_than_tex_reads_them() {
+        let files: Vec<(String, String)> = (0..INPUT_DEPTH + 5)
+            .map(|i| (format!("{i}.tex"), format!("\\input{{{}}}", i + 1)))
+            .collect();
+        let files: Vec<_> = files
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect();
+        let dir = project(&files);
+        let read = analyze_project(dir.path(), &Files::default(), "0.tex", "0.tex", None).files;
+        assert_eq!(read.len(), INPUT_DEPTH);
     }
 
     #[test]

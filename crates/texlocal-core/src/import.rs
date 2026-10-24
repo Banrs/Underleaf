@@ -234,6 +234,11 @@ impl Opened {
     /// A zip's visible files; the contents of its one top folder if it has one, as a zipped
     /// project folder unpacks.
     fn of_zip(base: String, mut zip: ZipArchive<File>) -> Result<Self, CoreError> {
+        if zip.len() > projects::MAX_FILES {
+            return Err(CoreError::bad_request(format!(
+                "“{base}” has more than 20,000 files, more than a document has."
+            )));
+        }
         let mut files = Vec::new();
         for i in 0..zip.len() {
             let entry = zip.by_index_raw(i)?;
@@ -836,6 +841,24 @@ mod tests {
         bytes[at.unwrap()] = b'X';
         fs::write(&src, bytes).unwrap();
         assert!(import_project(&service, &src).is_err());
+        assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_zip_of_more_files_than_a_document_has_makes_no_project() {
+        let (dir, service) = library();
+        let src = dir.path().join("many.zip");
+        let names: Vec<_> = (0..=projects::MAX_FILES)
+            .map(|n| format!("{n}.tex"))
+            .collect();
+        let files: Vec<_> = names.iter().map(|name| (name.as_str(), "")).collect();
+        zip_of(&src, &files);
+        let err = import_project(&service, &src).unwrap_err();
+        assert!(
+            err.message.contains("more than 20,000 files"),
+            "{}",
+            err.message
+        );
         assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
     }
 

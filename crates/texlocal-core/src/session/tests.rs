@@ -867,6 +867,17 @@ async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_file_too_large_to_edit_doesnt_open() {
+    let rig = Rig::new(false).await;
+    let data = fs::File::create(rig.root.join("data.txt")).unwrap();
+    data.set_len(super::actor::MAX_EDITED + 1).unwrap();
+    let refused = rig
+        .call("open_document", json!({ "path": "data.txt" }))
+        .await;
+    assert!(refused.unwrap_err().message.contains("too large to edit"));
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
     let mut rig = Rig::new(false).await;
     let latin = b"caf\xe9";

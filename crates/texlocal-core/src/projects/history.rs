@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::files::{Planned, write_all};
+use super::files::{Planned, inside, write_all};
 use super::tree::visit_files;
 use super::{read_capped, skip_unreadable};
 use crate::atomic;
@@ -137,7 +137,8 @@ impl History {
     pub fn take(&self, now: i64, taken: Taken) -> Result<Option<i64>, CoreError> {
         let ids = self.ids()?;
         let latest = ids.iter().find_map(|&id| Some((id, self.read(id).ok()?)));
-        let recent = |(id, _): &(i64, Snapshot)| now - id <= 10 * MINUTE;
+        // Not one dated later, by a clock once ahead: none would be taken until that time.
+        let recent = |(id, _): &(i64, Snapshot)| (0..=10 * MINUTE).contains(&(now - id));
         if matches!(taken, Taken::Auto) && latest.as_ref().is_some_and(recent) {
             return Ok(None);
         }
@@ -267,15 +268,16 @@ fn changes(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) 
     changed.collect()
 }
 
-/// Files of the project's as they were, written all or none, but those that are so already and
-/// those now too large to keep, which the snapshot before couldn't save.
+/// Files of the project's as they were, written all or none, but those that are so already,
+/// those now too large to keep, which the snapshot before couldn't save, and those a link leads
+/// out of the project to.
 pub(crate) fn put_back(
     root: &Path,
     files: Vec<(String, Vec<u8>)>,
 ) -> Result<Vec<String>, CoreError> {
     write_all(files, |(rel, bytes)| {
         let abs = safe_write_path(root, &rel)?;
-        if fs::metadata(&abs).is_ok_and(|meta| meta.len() > MAX_KEPT) {
+        if !inside(root, &abs) || fs::metadata(&abs).is_ok_and(|meta| meta.len() > MAX_KEPT) {
             return Ok(None);
         }
         let was = match fs::read(&abs) {
@@ -328,6 +330,11 @@ mod tests {
             history.take(at, Taken::Auto).unwrap();
         }
         assert_eq!(history.ids().unwrap(), [10 * MINUTE + 1, 0]);
+        // One dated a day ahead, as by a clock once wrong, keeps no later one from being taken.
+        fs::write(root.join("main.tex"), "changed again").unwrap();
+        history.take(DAY, Taken::Before("x")).unwrap();
+        fs::write(root.join("main.tex"), "and again").unwrap();
+        assert!(history.take(HOUR, Taken::Auto).unwrap().is_some());
     }
 
     #[test]

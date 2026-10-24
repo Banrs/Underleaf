@@ -16,9 +16,9 @@ use crate::analyze::{Files, analyze_project};
 use crate::atomic::{create_temp, persist};
 use crate::checks::bib_file;
 use crate::error::CoreError;
-use crate::paths::{Project, in_build_dir, safe_path, safe_rel_file};
+use crate::paths::{Project, fold_case, in_build_dir, safe_path, safe_rel_file};
 use crate::projects::{Entry, is_litter, walk};
-use crate::settings::read_settings;
+use crate::settings::{granted, read_settings};
 
 /// `added`: files of the export's own, each at its path in the archive in place of the project's.
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
@@ -79,7 +79,7 @@ fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), 
 /// while the bibliography isn't compiled or is older than a .bib it names.
 pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     let settings = read_settings(&project.settings);
-    if settings.shell_escape {
+    if granted(project) {
         return Err(CoreError::conflict(
             "arXiv compiles without shell escape. Turn Shell Escape off for this project, check that it still compiles, then export again.",
         ));
@@ -119,7 +119,7 @@ pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, Cor
 /// project: `is_litter` at any depth, and the compile output and the project's
 /// own settings at the top, in any case.
 pub(crate) fn left_out(rel: &str) -> bool {
-    in_build_dir(rel) || rel.eq_ignore_ascii_case(SETTINGS_FILE) || rel.split('/').any(is_litter)
+    in_build_dir(rel) || fold_case(rel) == SETTINGS_FILE || rel.split('/').any(is_litter)
 }
 
 /// A deflated entry dated as `modified`. ZIP stores local time, as unzipping
@@ -293,7 +293,7 @@ mod tests {
         let bib = File::options().write(true).open(root.join("refs.bib"));
         bib.unwrap().set_modified(hour_ago).unwrap();
         assert!(for_arxiv(&project).is_ok());
-        write_settings(&project.settings, &json!({ "shellEscape": true })).unwrap();
+        crate::settings::grant(&project, true).unwrap();
         refused("shell escape");
     }
 }

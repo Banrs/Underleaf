@@ -64,6 +64,14 @@ pub(crate) struct Planned<D> {
     pub done: D,
 }
 
+/// Whether what `abs` names is in the project at `root`, resolved: a link there to a file
+/// elsewhere, as a cloned repository may hold, isn't, and a write across the project leaves it be.
+pub(crate) fn inside(root: &Path, abs: &Path) -> bool {
+    fs::canonicalize(abs)
+        .ok()
+        .is_none_or(|real| real.starts_with(root))
+}
+
 /// What `plan` makes of each item, written in turn, all or none: a plan or write that fails is the
 /// error, and the files written before it are put back as they were, or removed if they weren't.
 pub(crate) fn write_all<T, D>(

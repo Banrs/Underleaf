@@ -18,7 +18,7 @@ use crate::logparse::{
 };
 use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
-use crate::settings::read_settings;
+use crate::settings::{granted, read_settings};
 use crate::stamp::Stamp;
 
 /// An automatic build's alone: one asked for runs until it ends or is stopped, but a document
@@ -177,7 +177,7 @@ impl CompileManager {
     ) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let root = &project.root;
-        let settings = read_settings(&project.settings);
+        let (settings, trusted) = (read_settings(&project.settings), granted(project));
         let main_rel = safe_rel_file(&settings.main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
@@ -198,7 +198,7 @@ impl CompileManager {
         let command = process::command("latexmk", Some(root), path_env).map(|mut command| {
             // A project's own latexmkrc runs Perl on every build, so only a trusted project's
             // is read.
-            if settings.shell_escape {
+            if trusted {
                 command.arg("-shell-escape");
             } else {
                 command.arg("-norc");

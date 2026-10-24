@@ -135,16 +135,16 @@ pub(crate) async fn drive(
         let readers = async {
             tokio::join!(read_capped(stdout, &mut out), read_capped(stderr, &mut err));
         };
+        // What the tool leaves running ends with it, as nothing could stop it after.
         let wait = async {
             let Some(timeout) = timeout else {
-                return (child.wait().await.ok(), false);
+                return (tree.ended(child).await.ok(), false);
             };
-            match tokio::time::timeout(timeout, child.wait()).await {
+            match tokio::time::timeout(timeout, tree.ended(child)).await {
                 Ok(status) => (status.ok(), false),
                 Err(_) => {
                     tree.kill();
-                    let _ = child.start_kill();
-                    (child.wait().await.ok(), true)
+                    (tree.ended(child).await.ok(), true)
                 }
             }
         };
@@ -181,17 +181,13 @@ mod tests {
 
     #[tokio::test]
     async fn what_a_tool_leaves_running_ends_with_it() {
-        let mut command = Command::new("sh");
-        command
-            .args(["-c", "sleep 30 & exit 0"])
-            .stdout(Stdio::piped());
-        let (mut child, tree) = Tree::spawn(&mut command).unwrap();
-        let mut out = child.stdout.take().unwrap();
-        assert!(tree.ended(&mut child).await.unwrap().success());
-        // The sleep holds the pipe until it is killed.
-        let mut rest = Vec::new();
-        let closed = tokio::time::timeout(PROBE_TIMEOUT, out.read_to_end(&mut rest));
-        assert!(closed.await.is_ok());
+        // The sleep holds the output's pipe until it is killed, past the drain's grace.
+        let ran = run("sh", &["-c", "sleep 30 & echo done"], None, "/bin");
+        let (code, out) = tokio::time::timeout(DRAIN_GRACE, ran)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((code, out.as_str()), (0, "done\n"));
     }
 
     #[tokio::test]

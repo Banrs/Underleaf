@@ -111,7 +111,9 @@ kept in a `.texlocal.json` file next to your sources.
 ## Security
 
 Shell escape (`-shell-escape`) lets a document run programs on your computer, so it's off unless
-you turn it on for a project. Only do that for documents you trust.
+you turn it on for a project. Only do that for documents you trust. A project can't turn it on for
+itself: TeXLocal keeps your choice for that folder, not in the project's files, so a folder you
+download, clone or copy starts with it off.
 
 A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read a project's own
 `latexmkrc` only when that project has shell escape on. Your personal one (`~/.latexmkrc` or

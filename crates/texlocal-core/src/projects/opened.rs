@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
 use super::tree::{file_kind, visit_files};
 use crate::error::CoreError;
-use crate::paths::Project;
+use crate::paths::{Project, identity};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::{BUILD_DIR, SETTINGS_FILE, atomic, import, lock};
@@ -20,9 +21,6 @@ use crate::{BUILD_DIR, SETTINGS_FILE, atomic, import, lock};
 const STORE: &str = ".opened";
 const FOLDER: &str = "folder.json";
 const SIDECAR: &str = "project.json";
-/// A whole repository or home folder, not a document's: the tree and the scans would walk it all
-/// on each change.
-const MAX_FILES: usize = 20_000;
 
 /// Where an opened folder is, and which folder it is wherever it moves on its volume.
 #[derive(Serialize, Deserialize)]
@@ -62,11 +60,13 @@ pub(super) fn folders(data_dir: &Path) -> Vec<(String, Folder)> {
     stores.flatten().filter_map(folder).collect()
 }
 
-/// Its own `.texlocal.json` holds its settings while it has one.
+/// Its own `.texlocal.json` holds its settings while it has one, but not a link, whose file
+/// elsewhere a settings write would change.
 fn project(root: &Path, store: &Path) -> Project {
     let (own, sidecar) = (root.join(SETTINGS_FILE), store.join(SIDECAR));
+    let own_file = fs::symlink_metadata(&own).is_ok_and(|meta| meta.is_file());
     Project {
-        settings: if own.is_file() { own } else { sidecar.clone() },
+        settings: if own_file { own } else { sidecar.clone() },
         ui: sidecar,
         build: store.join(BUILD_DIR),
         history: store.join("history"),
@@ -215,12 +215,6 @@ pub fn forget_folder(
     fs::remove_file(store.join(FOLDER))?;
     drop(edits);
     Ok(fs::remove_dir_all(store)?)
-}
-
-fn identity(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = fs::metadata(path).ok()?;
-    Some((meta.dev(), meta.ino()))
 }
 
 #[cfg(test)]
