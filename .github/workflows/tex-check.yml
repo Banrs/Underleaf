@@ -32,12 +32,15 @@ jobs:
         run: |
           brew install pkgconf mupdf sdl2 icu4c harfbuzz graphite2
           echo "versions=$(brew list --versions mupdf sdl2 icu4c harfbuzz graphite2 | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
-      # TinyTeX's latest monthly release, whose tlmgr installs what it lacks.
+      # TinyTeX's latest monthly release, whose tlmgr installs what it lacks. The core's test reads
+      # it from here, as GitHub's API refuses the runners' shared addresses without a token.
       - name: TinyTeX release
         id: tinytex
         env:
           GH_TOKEN: ${{ github.token }}
-        run: echo "tag=$(gh release view -R rstudio/tinytex-releases --json tagName -q .tagName)" >> "$GITHUB_OUTPUT"
+        run: |
+          gh api repos/rstudio/tinytex-releases/releases/latest > "$RUNNER_TEMP/tinytex-release.json"
+          echo "tag=$(jq -r .tag_name "$RUNNER_TEMP/tinytex-release.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         id: tex
         with:
@@ -70,3 +73,4 @@ jobs:
       - run: cargo test -p texlocal-core -- --ignored --nocapture --skip a_replaced_file_goes_to_the_trash
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso
+          TEXLOCAL_TINYTEX_RELEASE: file://${{ runner.temp }}/tinytex-release.json

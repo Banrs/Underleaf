@@ -11,6 +11,8 @@ use crate::packages::{checked, run};
 use crate::process;
 use crate::tex::{find_tool, join_path};
 
+/// TEXLOCAL_TINYTEX_RELEASE, a URL curl reads, in its place for CI: GitHub's API refuses the
+/// runners' shared addresses without a token.
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
 /// TinyTeX-1 has pdfLaTeX, XeTeX (Live Preview's), latexmk and the templates' packages but
 /// beamer; TinyTeX-0 has no LaTeX, and the bundle without a number is three times the size.
@@ -71,7 +73,8 @@ async fn install_into(root: &Path, path_env: &str) -> Result<(), CoreError> {
 /// Downloads the latest release's bundle into `temp`, checks it, and unpacks it there.
 async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
     let release = temp.join("release.json");
-    fetch(RELEASE, &release, path_env).await?;
+    let asked = std::env::var("TEXLOCAL_TINYTEX_RELEASE").unwrap_or_else(|_| RELEASE.into());
+    fetch(&asked, &release, path_env).await?;
     let release = serde_json::from_slice(&std::fs::read(&release)?)
         .map_err(|err| CoreError::internal(err.to_string()))?;
     let (url, digest) = bundle(&release).ok_or_else(|| {
