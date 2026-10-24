@@ -20,8 +20,6 @@ final class WorkspaceController: ThinSplitViewController {
 
     private var appeared = false
     private var panelHeight: CGFloat = 0
-    private var quieting = 0
-    private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
 
@@ -298,28 +296,16 @@ final class WorkspaceController: ThinSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
-        quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { context in
                 if !animates { context.duration = 0 }
                 item.animator().isCollapsed = collapsed
             }
-            quiet(false)
             done()
         }
     }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
-
-    /// Scroll bars come with scrolling (HIG, Scroll views), not with a drag's or animation's live resize, which an
-    /// animation puts every pane in.
-    func quiet(_ resizing: Bool) {
-        quieting += resizing ? 1 : -1
-        guard quieting == (resizing ? 1 : 0) else { return }
-        if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
-        for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
-        if !resizing { quietScrollViews = [] }
-    }
 
     /// A hidden accessory only folds to no height, and its controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
@@ -329,11 +315,9 @@ final class WorkspaceController: ThinSplitViewController {
             (accessory.isHidden, accessory.view.isHidden) = (hidden, hidden)
             return
         }
-        quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
             if hidden, accessory.isHidden { accessory.view.isHidden = true }
-            quiet(false)
         }
     }
 

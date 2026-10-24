@@ -30,31 +30,11 @@ extension NSView {
         if resizing { (hit is NSTextView || hit is NSTextField ? NSCursor.iBeam : .arrow).set() }
         return false
     }
-
-    func descendants<View: NSView>(of type: View.Type) -> [View] {
-        [self as? View].compactMap(\.self) + subviews.flatMap { $0.descendants(of: type) }
-    }
-}
-
-/// AppKit tracks a divider's drag within the press on it, the only place a split view itself is hit.
-class DraggedSplitView: NSSplitView {
-    private(set) var dragging = false
-
-    override func mouseDown(with event: NSEvent) {
-        let workspace = window?.contentViewController as? WorkspaceController
-        dragging = true
-        workspace?.quiet(true)
-        defer {
-            dragging = false
-            workspace?.quiet(false)
-        }
-        super.mouseDown(with: event)
-    }
 }
 
 /// Thin dividers, AppKit's default, which a split view of its own would otherwise lose.
 class ThinSplitViewController: NSSplitViewController {
-    init(splitView: DraggedSplitView = DraggedSplitView(), isVertical: Bool = true) {
+    init(splitView: NSSplitView = NSSplitView(), isVertical: Bool = true) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = isVertical
         splitView.dividerStyle = .thin
@@ -80,7 +60,7 @@ class ThinSplitViewController: NSSplitViewController {
 final class SidebarSplitViewController: ThinSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: DraggedSplitView { override func drawDivider(in rect: NSRect) {} }
+    private final class SplitView: NSSplitView { override func drawDivider(in rect: NSRect) {} }
 
     init() { super.init(splitView: SplitView(), isVertical: false) }
 
@@ -95,26 +75,20 @@ final class SidebarSplitViewController: ThinSplitViewController {
     }
 }
 
-final class ColumnsSplitView: DraggedSplitView {
+final class ColumnsSplitView: NSSplitView {
+    private(set) var dragging = false
+
+    /// AppKit tracks a divider's drag within the press on it, the only place a split view itself is hit.
+    override func mouseDown(with event: NSEvent) {
+        dragging = true
+        defer { dragging = false }
+        super.mouseDown(with: event)
+    }
+
     /// Short of the status bar, whose line is AppKit's scroll edge's. A split view is flipped.
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }
 
     var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
-}
-
-extension NSScrollView {
-    /// Shown again, a scroller is swapped out and in, which resets AppKit's fade: it stays hidden until the next scroll.
-    func hideOverlayScrollers(_ hidden: Bool) {
-        guard scrollerStyle == .overlay else { return }
-        for key in [\NSScrollView.verticalScroller, \NSScrollView.horizontalScroller] {
-            guard let scroller = self[keyPath: key] else { continue }
-            if !hidden {
-                self[keyPath: key] = NSScroller()
-                self[keyPath: key] = scroller
-            }
-            scroller.alphaValue = hidden ? 0 : 1
-        }
-    }
 }
