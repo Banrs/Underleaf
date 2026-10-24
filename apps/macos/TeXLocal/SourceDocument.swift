@@ -170,7 +170,7 @@ nonisolated enum Syntax {
         }
     }
 
-    /// `math_svg`'s or `glyph_svg`'s.
+    /// `math_svg`'s.
     nonisolated struct Drawing: Decodable, Sendable {
         var svg: String?
         var width, height: Double?
