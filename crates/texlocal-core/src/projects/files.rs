@@ -67,10 +67,17 @@ pub(crate) struct Planned<D> {
 
 /// Whether what `abs` names is in the project at `root`, resolved: a link there to a file
 /// elsewhere, as a cloned repository may hold, isn't, and a write across the project leaves it be.
+/// A file not there yet is where its nearest folder that is resolves to, as a write would create
+/// it there; a link to nothing, or a folder that can't be looked in, isn't.
 pub(crate) fn inside(root: &Path, abs: &Path) -> bool {
-    fs::canonicalize(abs)
-        .ok()
-        .is_none_or(|real| real.starts_with(root))
+    for path in abs.ancestors() {
+        match fs::symlink_metadata(path) {
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(_) => return false,
+            Ok(_) => return fs::canonicalize(path).is_ok_and(|real| real.starts_with(root)),
+        }
+    }
+    false
 }
 
 /// What `plan` makes of each item, written in turn, all or none: a plan or write that fails is the
@@ -250,6 +257,32 @@ mod tests {
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
         let said = "You don’t have permission to save the file “main.tex” in the folder “Thesis”.";
         assert_eq!((err.status, err.message.as_str()), (403, said));
+    }
+
+    #[test]
+    fn a_file_is_inside_where_it_or_its_nearest_folder_resolves() {
+        use std::os::unix::fs::symlink;
+        let (dir, root) = project();
+        let outside = fs::canonicalize(dir.path()).unwrap().join("elsewhere");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("zshrc"), "").unwrap();
+        symlink(&outside, root.join("chapters")).unwrap();
+        symlink(outside.join("zshrc"), root.join("notes.txt")).unwrap();
+        symlink(outside.join("gone"), root.join("broken.tex")).unwrap();
+        symlink(root.join("main.tex"), root.join("same.tex")).unwrap();
+        let inside = |rel: &str| inside(&root, &root.join(rel));
+        for rel in ["main.tex", "same.tex", "new.tex", "figures/new/a.png"] {
+            assert!(inside(rel), "{rel}");
+        }
+        for rel in [
+            "chapters/a.tex",
+            "chapters/new/a.tex",
+            "notes.txt",
+            "broken.tex",
+            "broken.tex/a",
+        ] {
+            assert!(!inside(rel), "{rel}");
+        }
     }
 
     #[test]
