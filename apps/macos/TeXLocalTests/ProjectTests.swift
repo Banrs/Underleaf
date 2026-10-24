@@ -231,7 +231,7 @@ final class ProjectFlowTests {
         try """
         #!/bin/sh
         cp '\(pdf.path)' "$TEXPRESSO_PDF_OUTPUT"
-        printf '["pdf","%s",1]\\n' "$TEXPRESSO_PDF_OUTPUT"
+        printf '["live",2]\\n["pdf","%s",1,"complete",[[0,0]]]\\n' "$TEXPRESSO_PDF_OUTPUT"
         exec cat > /dev/null
         """.write(to: script, atomically: true, encoding: .utf8)
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
