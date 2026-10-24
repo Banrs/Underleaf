@@ -177,6 +177,33 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
+    /// Far down a long file, whose heights TextKit 2 has only estimated.
+    private func farLine() -> NSRange {
+        inWindow()
+        open((1...6000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
+        return NSRange(location: text.document.lineStart(5000), length: 4)
+    }
+
+    /// Within a line: TextKit settles the heights above as it lays out what now shows.
+    @Test func jumpToSelectionCentresIt() throws {
+        let range = farLine()
+        text.setSelectedRange(range)
+        text.centerSelectionInVisibleArea(nil)
+        let fragment = try #require(text.textRange(.caret(range.location))
+            .flatMap { text.textLayoutManager?.textLayoutFragment(for: $0.location) })
+        let line = try #require(fragment.textLineFragments.first)
+        let middle = fragment.layoutFragmentFrame.minY + line.typographicBounds.midY + text.textContainerOrigin.y
+        let lineHeight = text.defaultParagraphStyle?.minimumLineHeight ?? 18
+        #expect(abs(middle - text.shownRect.midY) < lineHeight, "Line at \(middle), centre \(text.shownRect.midY)")
+    }
+
+    @Test func aFarRangeScrolledToShows() throws {
+        let range = farLine()
+        text.scrollRangeToVisible(range)
+        let segments = try #require(text.segments(range))
+        #expect(text.shownRect.contains(segments), "Range at \(segments), shown \(text.shownRect)")
+    }
+
     /// Until a scroll prepares content, TextKit's content view can end at the scroll view's insets, which left the lines
     /// under the status bar undrawn after a launch or a resize. Once laid out, the source has prepared all that shows.
     @Test func theShownTextIsPreparedBeforeAnyScroll() async throws {

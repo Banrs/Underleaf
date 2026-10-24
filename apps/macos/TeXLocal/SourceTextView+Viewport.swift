@@ -24,15 +24,11 @@ extension SourceTextView {
 
     var scrollY: CGFloat? { enclosingScrollView?.contentView.bounds.minY }
 
-    /// AppKit's Jump to Selection lands lines off where TextKit 2 has only estimated the heights above.
+    /// AppKit's Jump to Selection lands lines off where TextKit 2 has only estimated the heights above
+    /// (`jumpToSelectionCentresIt`).
     override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let location = textRange(.caret(selectedRange().location))?.location else { return super.centerSelectionInVisibleArea(sender) }
         center(location)
-    }
-
-    override func scrollRangeToVisible(_ range: NSRange) {
-        guard enclosingScrollView != nil, let target = textRange(range) else { return super.scrollRangeToVisible(range) }
-        settle(target) { segments(range).map(scrollToVisible) ?? false }
     }
 
     /// Only in a window, where TextKit lays a viewport out.
