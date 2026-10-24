@@ -5,8 +5,7 @@ import UniformTypeIdentifiers
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var query = ""
-    @State private var renaming: ProjectInfo?
-    @State private var newName = ""
+    @State private var rename = InPlaceRename<ProjectInfo.ID>()
 
     var body: some View {
         @Bindable var app = app
@@ -26,14 +25,6 @@ struct HomeView: View {
             if case .success(let urls) = $0 { Task { await app.open(urls) } }
         }
         .sheet(item: $app.newProjectDraft) { NewProjectSheet(draft: $0) }
-        .alert("Rename Project", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { project in
-            TextField("Name", text: $newName)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                let name = newName.trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty, name != project.name { Task { await app.rename(project, to: name) } }
-            }
-        }
         .refreshable { await app.refresh() }
     }
 
@@ -63,13 +54,19 @@ struct HomeView: View {
                     row(Text(url.lastPathComponent), detail: Text("Opening…"), progress: "Opening")
                 }
                 ForEach(shown) { project in
-                    Button { Task { await app.open(project.id) } } label: {
-                        row(Text(project.name), detail: detail(project), symbol: project.opened ? "folder" : "text.document",
-                            dimmed: project.missing, progress: project.id == app.opening ? "Opening" : nil)
+                    Group {
+                        // Not in the button while it's edited, where a tap in the name would open the project.
+                        if rename.id == project.id {
+                            row(RenameField(text: $rename.name, ended: {}) { commitRename(project) } cancel: { rename.cancel() },
+                                project: project)
+                        } else {
+                            Button { Task { await app.open(project.id) } } label: { row(Text(project.name), project: project) }
+                                .foregroundStyle(.primary)
+                        }
                     }
-                    .foregroundStyle(.primary)
                     .contextMenu { actions(project) }
-                    .swipeActions { actions(project) }
+                    .swipeActions { swipe(project) }
+                    .renameAction { rename.begin(project.id, name: project.name) }
                 }
                 if app.projectsLoaded, shown.isEmpty { NoProjects(query: query) }
             }
@@ -77,22 +74,41 @@ struct HomeView: View {
         .listStyle(.insetGrouped)
     }
 
-    /// The same few for a long press and a swipe; an opened folder isn't the library's to rename or delete.
+    /// A long press's, the destructive one last as the sidebar's; an opened folder isn't the library's to rename or delete.
     @ViewBuilder private func actions(_ project: ProjectInfo) -> some View {
+        if !project.opened {
+            Button("Duplicate", systemImage: "plus.square.on.square") { Task { await app.duplicate(project) } }
+            RenameButton()
+        }
+        remove(project)
+    }
+
+    /// A swipe's, the full swipe's first.
+    @ViewBuilder private func swipe(_ project: ProjectInfo) -> some View {
+        remove(project)
+        if !project.opened { RenameButton() }
+    }
+
+    @ViewBuilder private func remove(_ project: ProjectInfo) -> some View {
         if project.opened {
             Button("Remove from List", systemImage: "minus.circle", role: .destructive) { Task { await app.forget(project) } }
         } else {
             Button("Delete", systemImage: "trash", role: .destructive) { Task { await app.delete(project) } }
-            Button("Duplicate", systemImage: "plus.square.on.square") { Task { await app.duplicate(project) } }
-            Button("Rename", systemImage: "pencil") {
-                newName = project.name
-                renaming = project
-            }
         }
     }
 
+    private func row(_ name: some View, project: ProjectInfo) -> some View {
+        row(name, detail: detail(project), symbol: project.opened ? "folder" : "text.document", dimmed: project.missing,
+            progress: project.id == app.opening ? "Opening" : nil)
+    }
+
+    private func commitRename(_ project: ProjectInfo) {
+        guard let name = rename.end(project.id, from: project.name) else { return }
+        Task { await app.rename(project, to: name) }
+    }
+
     /// A touch's 44 pt, the whole row.
-    private func row(_ name: Text, detail: Text, symbol: String = "text.document", dimmed: Bool = false,
+    private func row(_ name: some View, detail: Text, symbol: String = "text.document", dimmed: Bool = false,
                      progress: String?) -> some View {
         ProjectLabel(detail: detail, symbol: symbol, dimmed: dimmed, progress: progress) { name.font(.headline) }
             .frame(minHeight: 44)

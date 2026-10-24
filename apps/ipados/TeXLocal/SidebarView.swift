@@ -7,8 +7,7 @@ struct SidebarView: View {
     /// Back to the source, where the split has collapsed to one column.
     let showSource: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var renaming: TreeNode?
-    @State private var newName = ""
+    @State private var rename = InPlaceRename<String>()
 
     var body: some View {
         @Bindable var search = project.search
@@ -26,11 +25,6 @@ struct SidebarView: View {
                 Menu("Add", systemImage: "plus") { addItems(in: "") }
             }
         }
-        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { node in
-            TextField("Name", text: $newName).autocorrectionDisabled().textInputAutocapitalization(.never)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") { rename(node) }
-        }
         .onChange(of: app.newEntry, initial: true) { _, entry in
             guard let entry, !project.closed else { return }
             app.newEntry = nil
@@ -38,8 +32,14 @@ struct SidebarView: View {
         }
     }
 
+    /// The open file is the list's selection, which a hardware keyboard's arrows move (HIG, Keyboards and Split views); a
+    /// folder, which the rows' paths as tags make one too, opens nothing.
     private var files: some View {
-        List {
+        List(selection: Binding(get: { project.openPath }, set: { path in
+            guard let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false else { return }
+            showSource()
+            Task { await project.open(path) }
+        })) {
             Section("Files") {
                 TreeRows(nodes: project.tree.nodes, children: \.children, isExpanded: { node in
                     disclosure(\.expandedFolders, of: project, key: node.path)
@@ -47,6 +47,7 @@ struct SidebarView: View {
                     row(node)
                         .contextMenu { actions(node) }
                         .swipeActions { swipe(node) }
+                        .renameAction { rename.begin(node.path, name: node.name) }
                 }
             }
             if project.isLaTeX {
@@ -78,12 +79,12 @@ struct SidebarView: View {
     }
 
     private func row(_ node: TreeNode) -> some View {
-        Button {
-            guard !node.isDirectory else { return }
-            showSource()
-            Task { await project.open(node.path) }
-        } label: {
-            Label {
+        Label {
+            if rename.id == node.path {
+                RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: {}) { commitRename(node) } cancel: {
+                    rename.cancel()
+                }
+            } else {
                 HStack {
                     Text(node.name).truncationMode(.middle)
                     if node.main == true {
@@ -91,12 +92,9 @@ struct SidebarView: View {
                         Image(systemName: "star.fill").foregroundStyle(.yellow).imageScale(.small).accessibilityHidden(true)
                     }
                 }
-            } icon: { Image(systemName: node.symbol) }
-        }
-        .foregroundStyle(.primary)
-        .listRowBackground(node.path == project.openPath ? Color.accentColor.opacity(0.18) : nil)
+            }
+        } icon: { Image(systemName: node.symbol) }
         .accessibilityLabel(node.main == true ? "\(node.name), Main File" : node.name)
-        .accessibilityAddTraits(node.path == project.openPath ? .isSelected : [])
         .draggable(project.url(node.path) ?? URL(filePath: "/"))
     }
 
@@ -128,18 +126,13 @@ struct SidebarView: View {
                 .disabled(node.main == true)
             Divider()
         }
-        Button("Rename", systemImage: "pencil") { beginRename(node) }
+        RenameButton()
         Button("Delete", systemImage: "trash", role: .destructive) { Task { await project.deleteEntry(node.path) } }
     }
 
     @ViewBuilder private func swipe(_ node: TreeNode) -> some View {
         Button("Delete", systemImage: "trash", role: .destructive) { Task { await project.deleteEntry(node.path) } }
-        Button("Rename", systemImage: "pencil") { beginRename(node) }
-    }
-
-    private func beginRename(_ node: TreeNode) {
-        newName = node.name
-        renaming = node
+        RenameButton()
     }
 
     private func create(in folder: String, directory: Bool) {
@@ -147,17 +140,12 @@ struct SidebarView: View {
         Task {
             guard let path = await project.createEntry(in: folder, directory: directory), let node = project.tree.node(at: path) else { return }
             project.expandedFolders.formUnion(sequence(first: path.parentFolder) { $0.parentFolder }.prefix { !$0.isEmpty })
-            beginRename(node)
+            rename.begin(path, name: node.name)
         }
     }
 
-    private func rename(_ node: TreeNode) {
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, name != node.name else { return }
-        guard !name.contains("/") else {
-            app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
-            return
-        }
+    private func commitRename(_ node: TreeNode) {
+        guard let name = rename.end(node.path, from: node.name) else { return }
         let folder = node.path.parentFolder
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
     }
