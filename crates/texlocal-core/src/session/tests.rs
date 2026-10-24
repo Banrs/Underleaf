@@ -1883,10 +1883,19 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
     fn help_of(title: &str, detail: &str, place: Value) -> Value {
         json!({ "title": title, "detail": detail, "place": place })
     }
+    fn at(file: &str, line: u32, column: u32, length: u32) -> Value {
+        json!({ "file": file, "line": line, "column": column, "length": length })
+    }
     let entry = "Donald E. Knuth, Leslie Lamport\nThe TeXbook\n1984\nAddison-Wesley";
-    let cited = help_of("knuth", entry, at("refs.bib", 1));
+    let cited = help_of("knuth", entry, at("refs.bib", 1, 6, 5));
     assert_eq!(help("knuth").await, cited);
-    let label = |number| help_of("sec:a", &format!("{number}\nIntro"), at("main.tex", 2));
+    let label = |number| {
+        help_of(
+            "sec:a",
+            &format!("{number}\nIntro"),
+            at("main.tex", 2, 22, 5),
+        )
+    };
     assert_eq!(help("sec:a").await, label("Compile to number it"));
     fs::create_dir(rig.root.join("build")).unwrap();
     let aux = "\\relax\n\\newlabel{sec:a@cref}{{[section][1][]1}{[1][3][]3}}\n\
@@ -1898,7 +1907,11 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
     fs::write(rig.root.join("build/ch.aux"), included).unwrap();
     fs::write(rig.root.join("build/main.aux"), "\\@input{ch.aux}\n").unwrap();
     assert_eq!(help("sec:a").await, label("2 on page 5"));
-    let defined = help_of("\\R", "\\newcommand{\\R}{\\mathbb{R}}", at("main.tex", 1));
+    let defined = help_of(
+        "\\R",
+        "\\newcommand{\\R}{\\mathbb{R}}",
+        at("main.tex", 1, 12, 2),
+    );
     assert_eq!(help("\\R ").await, defined);
     let known = help_of("\\toprule", "From the booktabs package", Value::Null);
     assert_eq!(help("\\toprule").await, known);

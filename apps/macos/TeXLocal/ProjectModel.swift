@@ -540,9 +540,7 @@ final class ProjectModel {
             NSSound.beep()
             return
         }
-        editor.textView.showQuickHelp(help, at: offset) { [weak self] place in
-            Task { await self?.open(place.path, line: place.line, jump: true) }
-        }
+        editor.textView.showQuickHelp(help, at: offset)
     }
 
     /// Where the caret is, for the places Go Back and Go Forward keep.

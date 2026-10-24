@@ -167,7 +167,7 @@ nonisolated struct ForwardLoc: Decodable {
 
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
-/// A line, from 1, of a project's file: where Back and Forward go, and where Quick Help's name is defined.
+/// A line, from 1, of a project's file: where Back and Forward go.
 nonisolated struct Place: Decodable {
     let path: String
     let line: Int
@@ -182,7 +182,7 @@ nonisolated struct Trail: Decodable {
 /// `session_quick_help`'s, for the popover.
 nonisolated struct QuickHelp: Decodable {
     let title, detail: String
-    let place: Place?
+    let place: Definition.Place?
 }
 
 /// Where a forward search began, for `synctex_match`; the column in UTF-16.

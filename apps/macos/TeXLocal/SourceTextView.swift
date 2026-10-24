@@ -266,12 +266,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }()
 
     /// Under the name at `offset`.
-    func showQuickHelp(_ help: QuickHelp, at offset: Int, jump: @escaping (Place) -> Void) {
+    func showQuickHelp(_ help: QuickHelp, at offset: Int) {
         guard let rect = popoverRect(at: offset) else { return }
         let bold = NSFontManager.shared.convert(font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular), toHaveTrait: .boldFontMask)
-        let content = NSHostingController(rootView: QuickHelpView(help: help, font: bold) { [helpPopover] place in
-            helpPopover.close()
-            jump(place)
+        let content = NSHostingController(rootView: QuickHelpView(help: help, font: bold) { [weak self] place in
+            self?.helpPopover.close()
+            self?.openDefinition(place)
         })
         content.sizingOptions = .preferredContentSize
         helpPopover.contentViewController = content

@@ -236,9 +236,8 @@ impl Actor {
                 }
                 _ => None,
             };
-            let place = defined.map(|(path, at)| Place {
-                path: RelPath(path),
-                line: at.line,
+            let place = defined.map(|(file, at)| {
+                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
             });
             let help =
                 detail.map(|detail| json!({ "title": name, "detail": detail, "place": place }));
