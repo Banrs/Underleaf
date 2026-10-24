@@ -218,22 +218,11 @@ nonisolated struct Snapshot: Decodable, Identifiable {
     }
 
     let id: String
-    let time: Date
+    private let time: Double
     let name, reason: String?
     let changed: [Change]
 
-    private enum Keys: CodingKey { case id, time, name, reason, changed }
-
-    /// `time` is ISO 8601, which `Core`'s plain decoder doesn't read.
-    init(from decoder: any Decoder) throws {
-        let fields = try decoder.container(keyedBy: Keys.self)
-        id = try fields.decode(String.self, forKey: .id)
-        time = try Date(fields.decode(String.self, forKey: .time), strategy: .iso8601)
-        name = try fields.decodeIfPresent(String.self, forKey: .name)
-        reason = try fields.decodeIfPresent(String.self, forKey: .reason)
-        changed = try fields.decode([Change].self, forKey: .changed)
-    }
-
+    var date: Date { Date(timeIntervalSince1970: time / 1000) }
     var title: String { name ?? reason ?? String(localized: "Automatic") }
 }
 

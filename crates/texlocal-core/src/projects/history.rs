@@ -44,7 +44,8 @@ struct Snapshot {
 #[derive(Debug, Serialize)]
 pub(crate) struct Entry {
     id: String,
-    time: String,
+    /// Milliseconds since 1970, as the id.
+    time: i64,
     name: Option<String>,
     reason: Option<String>,
     changed: Vec<Changed>,
@@ -217,10 +218,9 @@ impl History {
             let Ok(snapshot) = self.read(id) else {
                 continue;
             };
-            let time = chrono::DateTime::from_timestamp_millis(id).unwrap_or_default();
             entries.push(Entry {
                 id: id.to_string(),
-                time: time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                time: id,
                 name: snapshot.name,
                 reason: snapshot.reason,
                 changed: changes(&before, &snapshot.files),

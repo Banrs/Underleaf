@@ -80,7 +80,7 @@ struct VersionHistorySheet: View {
             Button("Restore All") { restore(snapshot, paths: nil) }
             Button("Cancel", role: .cancel) {}
         } message: { snapshot in
-            let time = snapshot.time.formatted(date: .long, time: .shortened)
+            let time = snapshot.date.formatted(date: .long, time: .shortened)
             Text("Every file goes back to how it was on \(time). Files added since stay as they are, and the version history keeps the project as it is now.")
         }
         .alert($alert)
@@ -90,7 +90,7 @@ struct VersionHistorySheet: View {
         List(snapshots ?? [], selection: $chosen) { snapshot in
             VStack(alignment: .leading, spacing: 2) {
                 Text(snapshot.title).fontWeight(snapshot.name == nil ? .regular : .bold)
-                Text(snapshot.time, formatter: Self.listDates)
+                Text(snapshot.date, formatter: Self.listDates)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

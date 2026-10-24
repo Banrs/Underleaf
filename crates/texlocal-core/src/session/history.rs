@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -18,7 +19,8 @@ use crate::texpresso::delta;
 use crate::{CoreError, lf, lock, lossy_string};
 
 fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    let since = SystemTime::now().duration_since(UNIX_EPOCH);
+    since.map_or(0, |since| since.as_millis() as i64)
 }
 
 impl Actor {

@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use zip::write::SimpleFileOptions;
@@ -123,12 +123,22 @@ pub(crate) fn left_out(rel: &str) -> bool {
 /// A deflated entry dated as `modified`. ZIP stores local time, as unzipping
 /// tools show it; undated, every entry would say 1 January 1980.
 fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {
+    fn local(modified: SystemTime) -> Option<zip::DateTime> {
+        let secs = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
+        let secs = libc::time_t::try_from(secs).ok()?;
+        // SAFETY: both pointers are to live locals; the call fills `tm`, or returns null, checked.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
+            return None;
+        }
+        let field = |value: libc::c_int| u8::try_from(value).ok();
+        let year = u16::try_from(tm.tm_year + 1900).ok()?;
+        let (month, day) = (field(tm.tm_mon + 1)?, field(tm.tm_mday)?);
+        let (hour, minute, second) = (field(tm.tm_hour)?, field(tm.tm_min)?, field(tm.tm_sec)?);
+        zip::DateTime::from_date_and_time(year, month, day, hour, minute, second).ok()
+    }
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    let Ok(modified) = modified else {
-        return options;
-    };
-    let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();
-    let date = zip::DateTime::try_from(local).ok();
+    let date = modified.ok().and_then(local);
     date.map_or(options, |date| options.last_modified_time(date))
 }
 
@@ -210,9 +220,17 @@ mod tests {
         let mut archive = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
         let dated = archive.by_name("main.tex").unwrap().last_modified();
         let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
-        let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
-        let minute = local.format("%Y-%m-%d %H:%M").to_string();
-        assert_eq!(dated.unwrap().to_string()[..16], minute);
+        let secs = modified
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let date = std::process::Command::new("/bin/date")
+            .args(["-r", &secs.to_string(), "+%Y-%m-%d %H:%M"])
+            .output()
+            .unwrap();
+        let minute = String::from_utf8(date.stdout).unwrap();
+        assert_eq!(dated.unwrap().to_string()[..16], *minute.trim_end());
     }
 
     #[test]
