@@ -815,7 +815,7 @@ mod tests {
     mod stub {
         use super::*;
 
-        const OWNER: u64 = 1;
+        pub(super) const OWNER: u64 = 1;
         const SOON: Duration = Duration::from_secs(3);
 
         /// TeXpresso as a build with Underleaf's patch speaks, beside an engine it starts. It
@@ -898,7 +898,7 @@ done
         }
 
         /// A start for `OWNER`, with `main.tex` open in the editor at `text` if given.
-        fn start(
+        pub(super) fn start(
             manager: &Manager,
             root: &Path,
             path_env: &str,
@@ -1119,5 +1119,63 @@ done
             manager.stop(&root).unwrap();
             assert_eq!(next(&mut events, shown).await, LiveEvent::Ended(None));
         }
+    }
+
+    /// With TeX and the patched TeXpresso: `TEXLOCAL_TEXPRESSO=… cargo test -p texlocal-core
+    /// finishing_pass -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs TeX and the patched TeXpresso"]
+    async fn a_finishing_pass_that_stops_on_an_error_leaves_the_pages_shown_and_typing_goes_on() {
+        // The pass, which reads the label, stops on its second page with 100 errors.
+        let main = r"\documentclass{article}
+\begin{document}
+Section~\ref{a}.
+\newpage
+\makeatletter\@ifundefined{r@a}{}{\loop\undefined\iftrue\repeat}\makeatother
+\section{A}\label{a}
+\end{document}
+";
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("main.tex"), main).unwrap();
+        let manager = Manager::default();
+        let path = std::env::var("PATH").unwrap();
+        let (_, mut events) =
+            stub::start(&manager, tmp.path(), &path, Some(main), &Pane::default());
+        // What shows until the next page or end of a run.
+        let mut until_shown = async || {
+            let mut shown = Vec::new();
+            let read = async {
+                while let Some(event) = events.recv().await {
+                    let last = matches!(event, LiveEvent::Done(_) | LiveEvent::Page { .. });
+                    if event != LiveEvent::Log {
+                        shown.push(event);
+                    }
+                    if last {
+                        break;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(60), read)
+                .await
+                .expect("an event");
+            shown
+        };
+        let first = until_shown().await;
+        assert_eq!(first.last(), Some(&LiveEvent::Done("complete".into())));
+        // The first run's whole document, then the end of the pass, with no page of the pass's.
+        let pass = until_shown().await;
+        assert_eq!(
+            pass.last(),
+            Some(&LiveEvent::Done("complete".into())),
+            "{pass:?}"
+        );
+        let at = main.find("Section").unwrap();
+        manager.edit(stub::OWNER, "main.tex", at, 0, "X").unwrap();
+        let typed = until_shown().await;
+        assert!(
+            matches!(typed.last(), Some(LiveEvent::Page { page: 0, .. })),
+            "{typed:?}"
+        );
+        manager.stop(tmp.path()).unwrap();
     }
 }

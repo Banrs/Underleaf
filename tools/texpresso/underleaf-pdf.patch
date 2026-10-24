@@ -437,7 +437,7 @@ index 13e945d..ac1b6ba 100644
                                    const char *dvi_path,
                                    dvi_reshooks hooks);
 diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
-index 5866b1b..6f4e573 100644
+index 5866b1b..205bb6c 100644
 --- a/src/frontend/engine_tex.c
 +++ b/src/frontend/engine_tex.c
 @@ -38,6 +38,7 @@
@@ -448,7 +448,7 @@ index 5866b1b..6f4e573 100644
  
  typedef struct
  {
-@@ -102,8 +103,24 @@ struct tex_engine
+@@ -102,8 +103,25 @@ struct tex_engine
  
    bool aux_dirty;
    bool finishing;
@@ -458,6 +458,7 @@ index 5866b1b..6f4e573 100644
 +  char *root;              // the document's folder
 +  struct tex_engine *pass; // a finishing pass under way (txp_tex_rerun)
 +  struct tex_engine *next; // and once it is over, the engine to go on with
++  bool pass_failed;        // the last stopped on an error: another would too, until a change
 +  struct {
 +    fileentry_t *entry;
 +    int position;
@@ -473,7 +474,7 @@ index 5866b1b..6f4e573 100644
  // Backtrackable process state & VFS representation
  
  static process_t *get_process(struct tex_engine *t)
-@@ -207,6 +224,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
+@@ -207,6 +225,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
    {
      self->deferred.active = false;
      log_rollback(ctx, self->log, self->restart);
@@ -483,7 +484,7 @@ index 5866b1b..6f4e573 100644
      self->process_count = 1;
      process_t *p = get_process(self);
      p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
-@@ -305,6 +325,25 @@ static void decimate_processes(struct tex_engine *self)
+@@ -305,6 +326,25 @@ static void decimate_processes(struct tex_engine *self)
      }
    }
  
@@ -509,7 +510,7 @@ index 5866b1b..6f4e573 100644
    int i = 0;
    for (int j = 0; j < self->process_count; j++)
    {
-@@ -332,16 +371,33 @@ static void decimate_processes(struct tex_engine *self)
+@@ -332,16 +372,33 @@ static void decimate_processes(struct tex_engine *self)
  
  // Engine class implementation
  
@@ -543,7 +544,7 @@ index 5866b1b..6f4e573 100644
    fz_free(ctx, self);
  }
  
-@@ -474,7 +530,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
+@@ -474,7 +531,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
  static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
  {
    // Fences are pending: don't snapshot now
@@ -552,7 +553,7 @@ index 5866b1b..6f4e573 100644
      return 0;
  
    int process = self->process_count - 1;
-@@ -550,6 +606,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -550,6 +607,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
            if (!fs_path)
            {
              e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -560,7 +561,7 @@ index 5866b1b..6f4e573 100644
              if (e->promised && !self->deferred.active)
              {
                // File was promised and is missing: notify the editor and wait
-@@ -581,6 +638,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -581,6 +639,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
  
        if (!e)
          e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -569,7 +570,7 @@ index 5866b1b..6f4e573 100644
  
        log_filecell(ctx, self->log, cell);
        log_fileentry(ctx, self->log, e);
-@@ -742,6 +801,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -742,6 +802,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
        if (fork)
        {
          a.tag = A_FORK;
@@ -578,7 +579,7 @@ index 5866b1b..6f4e573 100644
          self->fence_pos -= 1;
        }
        else if (need_snapshot(ctx, self, q->time))
-@@ -754,6 +815,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -754,6 +816,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
          a.tag = A_READ;
          a.read.size = n;
        }
@@ -587,7 +588,7 @@ index 5866b1b..6f4e573 100644
        if (0)
        {
          if (fork)
-@@ -986,7 +1049,9 @@ static void revert_trace(trace_entry_t *te)
+@@ -986,7 +1050,9 @@ static void revert_trace(trace_entry_t *te)
  static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
  {
    self->deferred.active = false;
@@ -598,7 +599,7 @@ index 5866b1b..6f4e573 100644
  
    fprintf(
      stderr,
-@@ -1018,7 +1083,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
+@@ -1018,7 +1084,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
              p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
    }
  
@@ -610,7 +611,7 @@ index 5866b1b..6f4e573 100644
      pop_process(ctx, self);
  
    int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
-@@ -1066,6 +1134,7 @@ static bool possible_fence(trace_entry_t *te)
+@@ -1066,6 +1135,7 @@ static bool possible_fence(trace_entry_t *te)
  static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
  {
    self->fence_pos = -1;
@@ -618,7 +619,7 @@ index 5866b1b..6f4e573 100644
  
    if (trace <= 0)
      return trace;
-@@ -1074,6 +1143,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
+@@ -1074,6 +1144,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
      mabort();
  
    self->fence_pos = 0;
@@ -628,7 +629,7 @@ index 5866b1b..6f4e573 100644
  
    offset = (offset - 64) & ~(64 - 1);
    if (offset < self->trace[trace].seen)
-@@ -1143,9 +1215,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
+@@ -1143,9 +1216,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
    return dl;
  }
  
@@ -642,7 +643,7 @@ index 5866b1b..6f4e573 100644
    if (restart_if_needed)
      prepare_process(ctx, self);
  
-@@ -1169,7 +1245,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
+@@ -1169,7 +1246,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
      int fd = get_process(self)->fd;
      if (fd == -1)
        return 0;
@@ -651,16 +652,17 @@ index 5866b1b..6f4e573 100644
        return 0;
      if (!read_query(self, self->c, &q))
      {
-@@ -1368,6 +1444,8 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
+@@ -1368,6 +1445,9 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
  
  static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
  {
 +  // The pass would show the document as it was.
 +  drop_pass(ctx, self);
++  self->pass_failed = false;
    int trace_len = self->rollback.trace_len;
    // if (changed > 0) changed--;
  
-@@ -1584,6 +1662,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
+@@ -1584,6 +1664,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
  static txp_engine_status engine_get_status(txp_engine *_self)
  {
    SELF;
@@ -669,7 +671,7 @@ index 5866b1b..6f4e573 100644
    if (self->process_count == 0)
      return DOC_TERMINATED;
    return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
-@@ -1609,6 +1689,243 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
+@@ -1609,6 +1691,253 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
    return filesystem_lookup_or_create(ctx, self->fs, path);
  }
  
@@ -749,6 +751,8 @@ index 5866b1b..6f4e573 100644
 +bool txp_tex_aux_changed(txp_engine *_self)
 +{
 +  SELF;
++  if (self->pass_failed)
++    return false;
 +  fileentry_t *e;
 +  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
 +  {
@@ -875,6 +879,14 @@ index 5866b1b..6f4e573 100644
 +  editor_mute(false);
 +  if (engine_get_status((txp_engine *)pass) == DOC_RUNNING)
 +    return stepped;
++  // Stopped on an error, it shows no document in place of one that reached its end.
++  if (txp_tex_outcome((txp_engine *)pass) != RUN_COMPLETE)
++  {
++    fprintf(stderr, "[live] finishing pass stopped on an error, dropped\n");
++    drop_pass(ctx, self);
++    self->pass_failed = true;
++    return false;
++  }
 +  // Over, it takes this engine's place, with its fonts.
 +  incdvi_take_resources(pass->dvi, self->dvi);
 +  resend_output(pass);

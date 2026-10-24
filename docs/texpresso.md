@@ -89,7 +89,9 @@ TEXLOCAL_TEXPRESSO=/absolute/path/to/texpresso \
   cargo test -p texlocal-core --test texpresso_live -- --ignored --nocapture
 ```
 
-Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --workspace`.
+The engine alone, with the same variable and TeX: a finishing pass that stops on an error leaves
+the pages shown (`cargo test -p texlocal-core --lib finishing_pass -- --ignored`). Stub-engine
+tests in `src/session/tests.rs` cover the session in `cargo test --workspace`.
 
 CI has no TeX, so `.github/workflows/tex-check.yml` runs this nightly on macOS, with TinyTeX and
 the engine built from `tools/texpresso`, beside the core's other tests that need TeX Live.
