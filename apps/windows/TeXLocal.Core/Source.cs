@@ -41,7 +41,8 @@ public sealed unsafe class Source : SafeHandleZeroOrMinusOneIsInvalid
         }
     }
 
-    public void Reload(string text) => tl_source_reload(handle, text, Bytes(text));
+    /// False, keeping its text, when keys were typed after the session sent the reload: a conflict follows.
+    public bool Reload(string text) => tl_source_reload(handle, text, Bytes(text));
     public int LineAt(int offset) => (int)tl_source_line_at(handle, (uint)offset);
     public int LineStart(int line) => (int)tl_source_line_start(handle, (uint)line);
     public int LineCount => (int)tl_source_line_count(handle);

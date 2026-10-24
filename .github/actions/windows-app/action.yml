@@ -1,0 +1,37 @@
+name: Windows app
+description: The core's DLL and the Windows app built, its tests run, and the app started once with --smoke.
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+      with:
+        toolchain: stable
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: windows-app
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 10.0.x
+    - uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ hashFiles('apps/windows/**/*.csproj', 'apps/windows/Directory.Build.props') }}
+    - shell: pwsh
+      run: cargo rustc -p texlocal-ffi --lib --release --crate-type cdylib
+    - shell: pwsh
+      run: dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64 -p:SkipCargo=true
+    - shell: pwsh
+      run: dotnet test apps/windows/TeXLocal.Tests -c Debug -p:SkipCargo=true
+    - name: Smoke
+      shell: pwsh
+      env:
+        TEXLOCAL_DATA: ${{ runner.temp }}\tl-smoke
+      run: |
+        $exe = Get-ChildItem apps/windows/TeXLocal/bin -Recurse -Filter TeXLocal.exe | Select-Object -First 1
+        if (-not (Test-Path (Join-Path $exe.DirectoryName 'texlocal_ffi.dll'))) { throw 'texlocal_ffi.dll missing' }
+        $err = Join-Path $env:RUNNER_TEMP smoke.err
+        $p = Start-Process $exe.FullName -ArgumentList '--smoke' -PassThru -RedirectStandardError $err
+        $null = $p.Handle  # else ExitCode can read null once it has exited
+        if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'smoke timed out' }
+        if ($p.ExitCode -ne 0) { Get-Content $err; throw "smoke exited $($p.ExitCode)" }

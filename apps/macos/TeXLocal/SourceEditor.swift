@@ -9,10 +9,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// The top line.
     var onScroll: (Int) -> Void = { _ in }
 
-    private(set) var path: String?
+    var path: String?
     /// Their state and scroll come back only if their text is unchanged since, as Xcode's do.
-    private var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
-    private var undo = UndoManager()
+    var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
 
     /// Hidden, it is out of the key view loop; shown, it takes the focus a file's open asked for.
     var shown = false {
@@ -21,7 +20,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             if shown, !oldValue, focusWhenShown { focus() }
         }
     }
-    private var focusWhenShown = false
+    var focusWhenShown = false
 
     private var scrolling: NotificationCenter.ObservationToken?
     let changes = EditorChanges()
@@ -66,57 +65,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.laidOut = { [weak self] in self?.reportTop() }
     }
 
-    func undoManager(for view: NSTextView) -> UndoManager? { undo }
-
-    // MARK: - Files
-
-    /// `source` is the session's document of `path`, which holds `text`.
-    func open(path: String, text: String, source: SourceDocument? = nil, focus: Bool) {
-        if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
-        // By UTF-16, as the undo stack counts: Swift's `==` holds across Unicode normal forms.
-        let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
-        self.path = path
-        textView.load(text, source: source)
-        undo = prior?.undo ?? UndoManager()
-        textView.setSelectedRange(prior?.selection ?? .caret(0))
-        scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
-        if let top = prior?.top { textView.scroll(toShownTop: top) }
-        reportCursor()
-        focusWhenShown = focus
-        if focus { self.focus() }
-    }
-
-    /// Another app's text for the file shown: a new undo, and the caret and top line where they were, as Xcode's.
-    func reload(text: String) {
-        undo = UndoManager()
-        let selection = textView.selectedRange(), top = textView.shownTop
-        textView.reload(text)
-        let length = textView.text.length, start = min(selection.location, length)
-        textView.setSelectedRange(NSRange(location: start, length: min(NSMaxRange(selection), length) - start))
-        top.map(textView.scroll(toShownTop:))
-        reportCursor()
-    }
-
-    func forget(path: String) { kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") } }
-
-    /// Whatever is kept at the new name is stale, a file gone outside the app: the name was free.
-    func rename(from: String, to: String) {
-        if to != from { forget(path: to) }
-        kept = Dictionary(uniqueKeysWithValues: kept.map { (remapPath($0.key, from: from, to: to), $0.value) })
-        path = path.map { remapPath($0, from: from, to: to) }
-    }
-
-    func focus() {
-        guard shown else { return }
-        textView.window?.makeFirstResponder(textView)
-    }
-
-    // MARK: - Where it is
-
-    var caret: Int { textView.selectedRange().location }
-    var currentLine: Int { textView.document.line(at: caret) }
-    var currentColumn: Int { caret - textView.document.lineStart(currentLine) }
+    func undoManager(for view: NSTextView) -> UndoManager? { textView.undo }
 
     /// The find indicator bounces, so not with Reduce Motion, where the selection is the mark.
     func reveal(line: Int, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true) {
@@ -127,9 +76,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         // Once the scroll's layout is done.
         if found.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: found) } }
     }
-
-    private func reportTop() { if let line = textView.topLine { onScroll(line) } }
-    private func reportCursor() { onCursor(currentLine, currentColumn) }
 
     func textDidChange(_ notification: Notification) { changes.count += 1 }
 
@@ -178,28 +124,4 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var command: (MenuCommand) -> Void = { _ in }
 
     @objc private func choose(_ item: NSMenuItem) { (item.representedObject as? MenuCommand).map(command) }
-}
-
-struct EditorView: NSViewRepresentable {
-    let editor: SourceEditor
-    let shown: Bool
-    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
-    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
-    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
-    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
-
-    func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
-
-    func updateNSView(_ view: NSScrollView, context: Context) {
-        // A new size only: setting one builds the font.
-        if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
-        editor.textView.fontName = fontName
-        editor.textView.showsLineNumbers = lineNumbers
-        editor.textView.syntaxTheme = syntaxTheme
-        editor.textView.autoPair = autoPair
-        editor.textView.autoComplete = autoComplete
-        if editor.shown != shown { editor.shown = shown }
-    }
 }

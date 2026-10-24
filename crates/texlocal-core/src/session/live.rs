@@ -12,7 +12,7 @@ use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
 use crate::logparse::{LogItem, parse_live_log};
-use crate::projects::is_text;
+use crate::projects::{is_text, read_capped};
 use crate::settings::{self, Engine};
 use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
@@ -429,11 +429,8 @@ impl Actor {
             }
             others = true;
             let file = self.project.root.join(&path);
-            let name = path.rsplit('/').next().unwrap_or(&path);
-            if !name.starts_with('.')
-                && is_text(name)
-                && std::fs::metadata(&file).is_ok_and(|meta| meta.len() <= MAX_FILE)
-                && let Ok(bytes) = std::fs::read(&file)
+            if is_text(&path)
+                && let Ok(Some(bytes)) = read_capped(&file, MAX_FILE)
             {
                 let text = crate::lossy_string(bytes);
                 self.live.pending.insert(path, Some(text));

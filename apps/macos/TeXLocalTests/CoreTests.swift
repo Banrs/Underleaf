@@ -33,7 +33,7 @@ struct CoreTests {
         let opened = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
         #expect(opened.settings.mainFile == info.mainFile)
         try await core.call("session_open_document", ["session": session, "path": info.mainFile])
-        _ = try await core.call("session_close_document", ["session": session, "path": info.mainFile], as: Closed.self)
+        try await core.call("session_close_document", ["session": session, "path": info.mainFile])
         try await waitUntil {
             events.contains { if case .closed(let closed) = $0 { closed.path == info.mainFile && closed.reason == "closed" } else { false } }
         }

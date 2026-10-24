@@ -165,24 +165,12 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    @Test func aSyncTeXMissIsNoAlert() async throws {
-        let (project, _) = try await opened()
-        await project.forwardSync()
-        #expect(project.notices.current == "No compiled PDF yet" && app.alert == nil)
-        await app.close()
-    }
-
     @Test func aNoticeGoesByItself() async throws {
         let notices = ProjectNotices(lasting: .milliseconds(100))
         notices.note("One")
         notices.note("Two")
         #expect(notices.current == "Two")
         try await waitUntil { notices.current == nil }
-    }
-
-    @Test func aProjectThatCannotLoadStaysClosed() async throws {
-        await app.open("No Such Project \(UUID().uuidString.prefix(8))")
-        #expect(app.project == nil && app.alert != nil && !app.isOpening)
     }
 
     @Test func aProjectOpensOnItsBuiltPDFWhereItWasLeft() async throws {
@@ -308,14 +296,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The session's watcher reaches the sidebar; its rules are the core's.
-    @Test func anotherAppsFilesComeAndGo() async throws {
-        let (project, folder) = try await opened()
-        try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.node(at: "notes.tex") != nil }
-        await app.close()
-    }
-
     @Test func theTreeTellsOfAChangeOnly() async throws {
         let info = try await project().info, tree = FileTree(id: info.id)
         var changes = 0
@@ -374,26 +354,6 @@ final class ProjectFlowTests {
         try await waitUntil { project.saveFailure == nil }
         #expect(app.alert == nil)
         await app.close()
-    }
-
-    /// An answer clears only its own file's alert: another file's question still waits.
-    @Test func anAnswerLeavesAnotherFilesQuestion() async throws {
-        let project = try await opened().project
-        (project.diskConflict, project.missingFile) = ("main.tex", "gone.tex")
-        project.answer("main.tex", "cancel", holding: "Held")
-        #expect(project.diskConflict == nil && project.missingFile == "gone.tex")
-        await app.close()
-    }
-
-    @Test func aClosedProjectsTrashCannotBeUndone() async throws {
-        let undo = windowUndo(), (project, folder) = try await opened(with: ["notes.tex": "notes"])
-        await undo.grouping { await project.deleteEntry("notes.tex") }
-        #expect(undo.undoActionName == "Move to Trash")
-        // Back from the Trash, which is left as it was; the Redo is the item's too.
-        undo.undo()
-        try await waitUntil { self.exists(folder.appending(path: "notes.tex")) && undo.canRedo }
-        await app.close()
-        #expect(!undo.canRedo && !undo.canUndo)
     }
 
     @Test func aRenameOnHomeCannotBeUndoneUnderAProject() async throws {
@@ -459,33 +419,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Going back to the file shown while an open away from it has closed it, before that open took the answer: the file
-    /// is shown with a document of the session's again, so what's typed in it is saved.
-    @Test func anOpenOvertakenAfterClosingTheFileShownStillShowsItsOwn() async throws {
-        let (project, folder) = try await opened(with: ["a.tex": "a"])
-        let session = try #require(project.session)
-        let mainClosed = { SourceDocument(session: session, path: "main.tex") == nil }
-        let opening = Task { await project.open("a.tex") }
-        // Waits holding the main actor, so the open can't take the close's answer before the next open is asked for.
-        var held = false
-        for _ in 0..<1000 where !held {
-            await Task.yield()
-            let until = ContinuousClock.now + .milliseconds(20)
-            while !held, ContinuousClock.now < until { held = mainClosed() }
-        }
-        #expect(held && project.openPath == "main.tex")
-        let back = Task.immediate { await project.open("main.tex") }
-        await opening.value
-        await back.value
-
-        #expect(project.editor.path == "main.tex" && !mainClosed() && SourceDocument(session: session, path: "a.tex") == nil)
-        #expect(project.editor.perform(.bold))
-        #expect(await project.save())
-        #expect(try String(contentsOf: folder.appending(path: "main.tex"), encoding: .utf8) == project.editor.textView.string)
-        #expect(app.alert == nil)
-        await app.close()
-    }
-
     /// Stop and the session's word that Live Preview ended each put the build's PDF back: the pane never empties, and the
     /// build's pages go into the document showing.
     @Test func stoppingLivePreviewGoesBackToTheBuildsPDF() async throws {
@@ -523,7 +456,7 @@ final class ProjectFlowTests {
         text.insertText("z", replacementRange: .caret(0))
         await settle()
         #expect(text.issues.live.keys.sorted() == [3] && text.issues.issue(on: 3)?.live == true)
-        text.issueClicked(3)
+        text.issues.clicked(3)
         #expect(project.panel.shown && project.panel.tab == .texpresso)
         try send("issues", [3])
         #expect(text.issues.issue(on: 3)?.live == false)

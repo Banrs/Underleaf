@@ -14,7 +14,8 @@ tools/texpresso-ios/build.sh [folder]     # default tools/texpresso-ios/build
 ```
 
 It needs Xcode, and Homebrew's `mupdf` for the Mac program it also builds. It checks out
-TeXpresso at the pinned commit, applies the patch, builds MuPDF 1.28.5 without the formats TeX
+TeXpresso at the pinned commit, applies the patch, copies in the Live Preview loop and Type 1
+fonts it shares with the Mac's (`tools/texpresso/src`), builds MuPDF 1.28.5 without the formats TeX
 never needs, and writes `Texpresso.xcframework` (`texpresso.h`, device and simulator slices) and
 `macos/texpresso`. The engines' C comes from `make fetch-engine`; with
 `TEXPRESSO_IOS_FROM_SOURCE=1`, and always for BibTeX, makeindex and xdvipdfmx, it is built from
@@ -30,7 +31,7 @@ ICU_DATA=<folder>/texpresso/engines/build-wasm2c-xetex TEXLOCAL_TEXPRESSO=<folde
 
 `test/run-sim.sh <folder> <doc> <out> [tree]` runs `test/host.c` in a booted simulator: a session
 of `<doc>/main.tex` with edits to `<doc>/body.tex`, then pdflatex, BibTeX, pdflatex, and xelatex
-with xdvipdfmx, beside it.
+with xdvipdfmx, beside it, and last a Stop of a run that computes without end.
 
 ## In the app
 
@@ -43,7 +44,8 @@ The app gives the three functions to the core with `tl_set_engine` before `tl_op
 `txp_live_start` takes the arguments the core gives the program (`-json -I <build> main.tex`,
 relative to the working directory) and returns three pipes: commands in, protocol lines and log
 out. `txp_run` runs one program to its end on the calling thread, in a folder, as latexmk would
-run it; it can run while a session is open.
+run it; it can run while a session is open. Either ends with status 134, not the app, where the
+program would have aborted.
 
 ## The tree
 

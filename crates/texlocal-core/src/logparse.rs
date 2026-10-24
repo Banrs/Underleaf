@@ -255,7 +255,10 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
 /// What a message means and the fix it offers; `command` is the one it names undefined.
 fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Option<Fix>) {
     if short == SHELL_ESCAPE {
-        return (None, Some(Fix::ShellEscape));
+        return (
+            None,
+            (!crate::inprocess::IN_PROCESS).then_some(Fix::ShellEscape),
+        );
     }
     let Some((found, offer, explain)) = EXPLAINED
         .iter()
@@ -466,6 +469,67 @@ pub fn parse_live_log(log: &str, main_file: &str, ours: Ours) -> Vec<LogItem> {
         .collect()
 }
 
+/// An error or warning as the lines from its start (`lines[i]`, matched as `m`) give it.
+struct Diagnostic<'a> {
+    named: Option<&'a str>,
+    error: bool,
+    /// Its message, with the lines that carry it on.
+    message: String,
+    line: Option<u32>,
+    /// Where an error's echo of the source line is.
+    echo: Option<usize>,
+    /// A fatal summary, which repeats the error that stopped TeX.
+    summary: bool,
+}
+
+fn diagnostic<'a>(lines: &[&str], i: usize, m: &Captures<'a>) -> Diagnostic<'a> {
+    let named = m.name("file").map(|m| m.as_str());
+    let error = named.is_some() || lines[i].starts_with("! ");
+    let mut message = m["message"].to_string();
+    let echo = if error { echo_of(lines, i) } else { None };
+    let tag = continuation_tag(if error { &m["message"] } else { lines[i] });
+    let mut prev = lines[i];
+    for next in lines[i + 1..].iter().take_while(|next| !starts_new(next)) {
+        let Some((text, joiner)) = continuation(prev, next, tag) else {
+            break;
+        };
+        if !text.is_empty() {
+            if !joiner.is_empty() {
+                message.truncate(message.trim_end().len());
+            }
+            message.push_str(joiner);
+            message.push_str(text);
+        }
+        prev = next;
+    }
+    let summary = error && message.trim_start().starts_with("==>");
+    if message
+        .trim_start()
+        .starts_with("Undefined control sequence.")
+        && let Some(j) = echo
+        && let Some(m) = lines[i + 1..=j].iter().find_map(|l| LAST_CS.captures(l))
+    {
+        message = format!("Undefined control sequence: {}", &m[1]);
+    }
+    let line = if summary && named.is_some() {
+        None
+    } else if error {
+        m.name("line")
+            .or_else(|| echo.and_then(|j| L_NO.captures(lines[j])?.get(1)))
+            .and_then(|line| line.as_str().parse().ok())
+    } else {
+        ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok())
+    };
+    Diagnostic {
+        named,
+        error,
+        message,
+        line,
+        echo,
+        summary,
+    }
+}
+
 fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<LogItem>) {
     let opens = |token: &str| opens_file(token) || ours.is_some() && named_file(token);
     let project = |path: &str| ours.map_or_else(|| project_path(path), |ours| ours(path));
@@ -479,65 +543,32 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
     for (i, &line) in lines.iter().enumerate() {
         // Skip the regexes for most lines: an error starts "! " or has colons.
         let may_err = line.starts_with("! ") || line.contains(':');
-        let diagnostic = may_err
+        let start = may_err
             .then(|| error_start(line))
             .flatten()
             .or_else(|| warning_start(line));
-        if let Some(m) = diagnostic {
-            let named = m.name("file").map(|m| m.as_str());
-            let error = named.is_some() || line.starts_with("! ");
-            let mut message = m["message"].to_string();
-            let echo = if error { echo_of(&lines, i) } else { None };
-            if error {
-                quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
+        if let Some(m) = start {
+            let mut found = diagnostic(&lines, i, &m);
+            if found.error {
+                quiet_until = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             }
-            let tag = continuation_tag(if error { &m["message"] } else { line });
-            let mut prev = line;
-            for next in lines[i + 1..].iter().take_while(|next| !starts_new(next)) {
-                let Some((text, joiner)) = continuation(prev, next, tag) else {
-                    break;
-                };
-                if !text.is_empty() {
-                    if !joiner.is_empty() {
-                        message.truncate(message.trim_end().len());
-                    }
-                    message.push_str(joiner);
-                    message.push_str(text);
-                }
-                prev = next;
-            }
-            // A fatal summary repeats the stopping error; keep it only alone.
-            let summary = error && message.trim_start().starts_with("==>");
-            if summary && items.iter().any(|item| item.kind == Severity::Error) {
+            // A summary is kept only alone.
+            if found.summary && items.iter().any(|item| item.kind == Severity::Error) {
                 continue;
             }
-            if message
-                .trim_start()
-                .starts_with("Undefined control sequence.")
-                && let Some(j) = echo
-                && let Some(m) = lines[i + 1..=j].iter().find_map(|l| LAST_CS.captures(l))
-            {
-                message = format!("Undefined control sequence: {}", &m[1]);
-            }
-            let line_no = if summary && named.is_some() {
-                None
-            } else if error {
-                m.name("line")
-                    .or_else(|| echo.and_then(|j| L_NO.captures(lines[j])?.get(1)))
-                    .and_then(|line| line.as_str().parse().ok())
+            let message = &mut found.message;
+            let (file, line_no) =
+                locate(found.named, found.line, &open, main_file, message, &project);
+            let kind = if found.error {
+                Severity::Error
             } else {
-                ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok())
+                Severity::Warning
             };
-            let (file, line_no) = locate(named, line_no, &open, main_file, &mut message, &project);
             items.push(LogItem::new(
-                if error {
-                    Severity::Error
-                } else {
-                    Severity::Warning
-                },
+                kind,
                 file,
                 line_no,
-                message.trim().to_string(),
+                found.message.trim().into(),
             ));
         } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
             quiet_until = blank_from(&lines, i + 1);
@@ -599,7 +630,12 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     items
 }
 
-pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
+pub(crate) const SHELL_ESCAPE: &str = if crate::inprocess::IN_PROCESS {
+    // TeX inside the app (iPadOS) can start no program, whatever the project says.
+    "A package here runs programs as it builds, which needs Shell Escape, and Shell Escape isn't available on this device."
+} else {
+    "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project."
+};
 
 /// A failed build's error that asks for shell escape (minted's "invoke LaTeX with the
 /// -shell-escape flag") says where to allow it; without one, a program TeX refused

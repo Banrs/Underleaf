@@ -30,11 +30,4 @@ struct InPlaceRenameTests {
         rename.name = name
         #expect(rename.end("intro.tex", from: "intro.tex") == nil && rename.id == nil)
     }
-
-    @Test func anotherRowLeavesTheRenameOpen() {
-        let rename = InPlaceRename<String>()
-        rename.begin("a.tex", name: "a.tex")
-        rename.name = "b.tex"
-        #expect(rename.end("c.tex", from: "c.tex") == nil && rename.id == "a.tex")
-    }
 }

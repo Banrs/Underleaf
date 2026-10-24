@@ -1,6 +1,7 @@
 /* Runs TeXpresso in-process as the iPad app would, and times it: Live Preview of
  * <doc>/main.tex with edits to <doc>/body.tex, then Compile with pdfTeX into
- * <out>/compile. run-sim.sh runs it in the simulator.
+ * <out>/compile, then a Stop of a Compile that computes without end. run-sim.sh
+ * runs it in the simulator.
  *
  * host <doc folder> <out folder> */
 #include <dirent.h>
@@ -200,6 +201,18 @@ static void *compile(void *arg)
   return NULL;
 }
 
+static volatile int stop;
+static double stopped_at;
+
+static void *stop_later(void *arg)
+{
+  (void)arg;
+  sleep(1);
+  stopped_at = ms();
+  stop = 1;
+  return NULL;
+}
+
 int main(int argc, char **argv)
 {
   if (argc != 3) { fprintf(stderr, "usage: host <doc> <out>\n"); return 2; }
@@ -275,5 +288,25 @@ int main(int argc, char **argv)
   pthread_join(logger, NULL);
   printf("live again: ended with status %d\n", status);
   footprint("at the end");
+
+  /* Stop: a Compile that computes without end, touching no file, cancelled after a second. */
+  {
+    char dir[1100], tex[1200], fmt[1100], fmtv[1200];
+    snprintf(dir, sizeof dir, "%s/loop", out);
+    snprintf(tex, sizeof tex, "%s/loop.tex", dir);
+    snprintf(fmt, sizeof fmt, "%s/formats", out);
+    snprintf(fmtv, sizeof fmtv, "TEXFORMATS=%s", fmt);
+    mkdir(dir, 0755);
+    FILE *f = fopen(tex, "w");
+    fputs("\\def\\x{\\x}\\x\n", f);
+    fclose(f);
+    const char *loop_env[] = {fmtv, NULL};
+    const char *loop[] = {"pdflatex", "-interaction=nonstopmode", "loop.tex"};
+    pthread_t stopper;
+    pthread_create(&stopper, NULL, stop_later, NULL);
+    int r = txp_run("pdftex", 3, loop, dir, open("/dev/null", O_WRONLY), loop_env, &stop);
+    printf("stop: status %d, %.0f ms after the cancel\n", r, ms() - stopped_at);
+    pthread_join(stopper, NULL);
+  }
   return 0;
 }

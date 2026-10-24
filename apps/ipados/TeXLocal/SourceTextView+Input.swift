@@ -110,26 +110,16 @@ extension SourceTextView {
 
     override var accessibilityCustomRotors: [UIAccessibilityCustomRotor]? {
         get {
-            [UIAccessibilityCustomRotor(systemType: .heading) { [weak self] in self?.rotorItem(issues: false, $0) },
-             UIAccessibilityCustomRotor(name: String(localized: "Issues")) { [weak self] in self?.rotorItem(issues: true, $0) }]
+            [UIAccessibilityCustomRotor(systemType: .heading) { [weak self] in self?.rotorResult(issues: false, $0) },
+             UIAccessibilityCustomRotor(name: String(localized: "Issues")) { [weak self] in self?.rotorResult(issues: true, $0) }]
         }
         set {}
     }
 
-    private func rotorItem(issues listed: Bool, _ search: UIAccessibilityCustomRotorSearchPredicate) -> UIAccessibilityCustomRotorItemResult? {
-        let items = !listed ? headings() : Set(issues.lines.keys).union(issues.live.keys).sorted().compactMap { line in
-            issues.issue(on: line).map { issue, live in
-                let place = live ? String(localized: "Live Preview error on line \(line)")
-                    : issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
-                return (line, String(localized: "\(place): \(issue.message)"))
-            }
-        }
+    private func rotorResult(issues listed: Bool, _ search: UIAccessibilityCustomRotorSearchPredicate) -> UIAccessibilityCustomRotorItemResult? {
         let current = search.currentItem.targetRange.map { document.line(at: min(offset(from: beginningOfDocument, to: $0.start), length)) }
-        guard let found = search.searchDirection == .next ? items.first(where: { $0.line > current ?? 0 })
-                                                          : items.last(where: { $0.line < current ?? .max })
-        else { return nil }
-        // The outline and the issues are a moment behind the text: within what there is of it.
-        guard let range = uiRange(source.lineRange(for: .caret(min(document.lineStart(found.line), length)))) else { return nil }
+        guard let found = rotorItem(issues: listed, from: current, next: search.searchDirection == .next),
+              let range = uiRange(found.range) else { return nil }
         // A rotor's item is spoken as its text, so an issue's words are said too.
         if listed { UIAccessibility.post(notification: .announcement, argument: found.title) }
         return UIAccessibilityCustomRotorItemResult(targetElement: self, targetRange: range)

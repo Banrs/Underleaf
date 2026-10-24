@@ -27,7 +27,11 @@ extension UIColor {
     /// The core's colour commands' arguments for an appearance: the editor's background and current line's fill.
     static func contrastArguments(in appearance: TextAppearance) -> [String: Any] {
         ["dark": appearance.dark, "increaseContrast": appearance.increaseContrast,
-         "background": editorBackground.rgba(in: appearance), "fill": UIColor.secondarySystemFill.rgba(in: appearance)]
+         "background": editorBackground.rgba(in: appearance), "fill": currentLine.rgba(in: appearance)]
+    }
+
+    static let currentLine = UIColor {
+        srgb($0.userInterfaceStyle == .dark ? SourceTextView.currentLineRGBA.dark : SourceTextView.currentLineRGBA.light)
     }
 
     /// Raised by the core to the HIG's 4.5:1 on the editor's background and current line, 7:1 with Increase Contrast.

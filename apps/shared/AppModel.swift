@@ -324,6 +324,8 @@ final class AppModel {
         if opening.project.opened {
             #if os(iOS)
             kept = true
+            // One hold per folder, let go when it leaves the list.
+            if scoped { held.updateValue(url, forKey: opening.project.id)?.stopAccessingSecurityScopedResource() }
             // The chosen URL's, which carries its access to the next launch.
             bookmarks[opening.project.id] = try? url.bookmarkData()
             #else
@@ -332,6 +334,10 @@ final class AppModel {
         }
         return opening
     }
+
+    #if os(iOS)
+    @ObservationIgnored private var held: [String: URL] = [:]
+    #endif
 
     /// They find an opened folder again after a move: plain on the Mac, which isn't sandboxed; on the iPad, the way back
     /// into a folder from Files, which reads as missing at each launch until its bookmark is followed.
@@ -366,6 +372,9 @@ final class AppModel {
         if forgotten != nil {
             bookmarks[project.id] = nil
             recentProjects.removeAll { $0 == project.id }
+            #if os(iOS)
+            held.removeValue(forKey: project.id)?.stopAccessingSecurityScopedResource()
+            #endif
         }
         await refresh()
     }
@@ -457,9 +466,10 @@ final class AppModel {
 
     /// `project` goes from one to the next, never nil between, so the window keeps the workspace.
     func open(_ id: String) async {
+        // The project shown, opened again, leaves a close under way to go on.
+        guard project?.id != id || project?.closed == true else { return }
         openGeneration += 1
         let generation = openGeneration
-        guard project?.id != id || project?.closed == true else { return }
         opening = id
         defer { if opening == id { opening = nil } }
         guard await leave(generation) else { return }
@@ -490,6 +500,13 @@ final class AppModel {
         newEntry = nil
         addingFiles = false
         exporting = nil
+    }
+
+    /// As the app quits: the project saved, its place kept and its session closed, but still the one shown, for the window's
+    /// restoration. False, staying, when the save fails.
+    func leave() async -> Bool {
+        openGeneration += 1
+        return await leave(openGeneration)
     }
 
     private func leave(_ generation: Int) async -> Bool {

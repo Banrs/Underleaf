@@ -19,10 +19,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private var displayOptionsWatch: NotificationCenter.ObservationToken?
 
-    /// A project session's document, whose edits it saves and previews, or the view's own.
-    private(set) var document = SourceDocument(text: "")
+    /// A project session's document, whose edits it saves and previews, or the view's own (`load`).
+    var document = SourceDocument(text: "")
     /// The storage's UTF-16 units in place: `string` bridges the whole text on every call.
-    var text: NSString { textStorage?.mutableString ?? "" }
+    var source: NSString { textStorage?.mutableString ?? "" }
+    /// The file's own, kept with it while another shows (`SourceEditor.open`); the editor hands it to AppKit.
+    var undo = UndoManager()
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
     enum FileDrop { case open(() -> Void), insert(String) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
@@ -30,20 +32,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var quickHelp: (Int) -> Void = { _ in }
     private(set) var loading = false
 
-    /// `source` is the session's document holding `text`.
-    func load(_ text: String, source: SourceDocument? = nil) {
-        // First: colours and line numbers read the storage against it.
-        document = source ?? SourceDocument(text: text)
-        show(text)
-    }
-
-    /// The disk's text, from the session's `document_reload`: shown without an edit.
-    func reload(_ text: String) {
-        document.reload(text)
-        show(text)
-    }
-
-    private func show(_ text: String) {
+    func show(_ text: String) {
         loading = true
         // Else typing coalesced into the last file's undo would go on in this one's.
         breakUndoCoalescing()
@@ -56,8 +45,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         lastMath = nil
         dismissedMath = nil
         _ = document.endSnippet()
+        endFieldTyping()
         completions.close()
-        markPartner(nil)
+        mark(nil)
         updateGutterWidth()
         staleColours = 0
     }
@@ -85,16 +75,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
     }
 
-    /// The core's edits, and the selections after them. False for none.
-    @discardableResult
-    func apply(_ change: Change?, named name: String) -> Bool {
-        apply(change?.edits ?? [], named: name, selecting: change?.selections.map(\.range))
-    }
-
     /// One undo step; the selections follow the edits unless `selecting` is given. False for none.
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
         guard !edits.isEmpty else { return false }
+        endFieldTyping()
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
@@ -143,7 +128,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         style.minimumLineHeight = (natural * 1.1).rounded()
         rowShift = (style.minimumLineHeight - natural) / 2
         defaultParagraphStyle = style
-        textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+        textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
         gutter.font = EditorGutter.font(forText: fontSize)
         issues.fontChanged(size: fontSize, text: font)
@@ -158,19 +143,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     // MARK: what is drawn under and over the text
 
     var gutter = EditorGutter()
-    /// The fragments TextKit last laid out in the viewport, by offset (+Viewport).
+    /// The fragments TextKit last laid out in the viewport, by offset (+Layout).
     var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
     /// Each time TextKit lays out the viewport.
     var laidOut: () -> Void = {}
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
     private(set) lazy var issues = IssueOverlay(in: self)
-    var issueClicked: (Int) -> Void = { _ in }
     var syntaxTheme = SyntaxTheme.system {
         didSet { if syntaxTheme != oldValue { fragmentColours.removeAllObjects(); colour(from: 0) } }
     }
     /// From where the text is to be coloured again at the viewport's next layout.
     var staleColours: Int?
-    /// The runs each fragment was last coloured with: a pass redraws only the fragments whose runs changed (+Colours).
+    /// The runs each fragment was last coloured with: a pass redraws only the fragments whose runs changed (+Layout).
     let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
     /// The bracket partner filled in place of the find indicator, with Reduce Motion (+Colours).
     var partnerMark: NSRange?
@@ -195,8 +179,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
-        if !typing { completions.close() }
-        if partnerMark != nil { markPartner(nil) }
+        if !typing {
+            completions.close()
+            endFieldTyping()
+        }
+        if partnerMark != nil { mark(nil) }
         previewMath()
         // A snippet ends once the selection leaves its fields.
         document.select(selectedRange(), mirroring: mirroring)
@@ -204,30 +191,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     var caret: Int { selectedRange().location }
-    var selection: NSRange { selectedRange() }
+    var selection: NSRange {
+        get { selectedRange() }
+        set { setSelectedRange(newValue) }
+    }
     var selections: [NSRange] { selectedRanges.map(\.rangeValue) }
-    var length: Int { text.length }
+    var length: Int { source.length }
     func word(at offset: Int) -> NSRange { selectionRange(forProposedRange: .caret(offset), granularity: .selectByWord) }
 
     /// Whether the text has the window's keyboard, told as it takes and gives it up.
     var keyboardChanged: (Bool) -> Void = { _ in }
-
-    override func becomeFirstResponder() -> Bool {
-        defer { Task { self.previewMath() } }
-        guard super.becomeFirstResponder() else { return false }
-        keyboardChanged(true)
-        return true
-    }
-
-    override func resignFirstResponder() -> Bool {
-        defer {
-            mathPopover.close()
-            completions.close()
-        }
-        guard super.resignFirstResponder() else { return false }
-        keyboardChanged(false)
-        return true
-    }
 
     private var keyWatches: [NotificationCenter.ObservationToken] = []
 
@@ -241,34 +214,22 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         ]
     }
 
-    private func keyChanged() {
-        if !hasKeyboard { completions.close() }
-        previewMath()
-    }
-
-    private var hasKeyboard: Bool { window?.isKeyWindow == true && window?.firstResponder === self }
+    var hasKeyboard: Bool { window?.isKeyWindow == true && window?.firstResponder === self }
 
     // MARK: the maths preview
 
-    private lazy var mathPopover = MathPopover()
+    private(set) lazy var mathPreview = MathPopover()
     /// Until the next edit.
-    private var lastMath: (caret: Int, value: MathPreview?)?
-    private var dismissedMath: Int?
-
-    private func math(at caret: Int) -> MathPreview? {
-        if let lastMath, lastMath.caret == caret { return lastMath.value }
-        let value = document.mathAt(caret: caret)
-        lastMath = (caret, value)
-        return value
-    }
+    var lastMath: (caret: Int, value: MathPreview?)?
+    var dismissedMath: Int?
 
     func previewMath() {
         // Escape's dismissal lasts while the caret is in that maths.
         let maths = loading ? nil : math(at: caret)
         if maths?.start != dismissedMath { dismissedMath = nil }
         guard hasKeyboard, let maths, dismissedMath == nil, enclosingScrollView != nil, let rect = popoverRect(at: caret),
-              shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else { return mathPopover.close() }
-        mathPopover.show(maths, size: fontSize, at: rect, of: self, edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
+              shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else { return mathPreview.close() }
+        mathPreview.show(maths, size: fontSize, at: rect, of: self, edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
     }
 
     /// A point wide: NSPopover takes an empty rect for the whole view.
@@ -317,15 +278,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var autoPair = true, autoComplete = true
     /// Told as marked (IME) text comes and goes: the session's autosave waits for it to be committed.
     var composing: (Bool) -> Void = { _ in }
-    private var toldComposing = false
+    var toldComposing = false
     /// A key's edit is going in: the selection it moves keeps the completion list.
     private var typing = false
-
-    private func markedTextChanged() {
-        guard hasMarkedText() != toldComposing else { return }
-        toldComposing.toggle()
-        composing(toldComposing)
-    }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
@@ -360,16 +315,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         finish(stroke)
     }
 
-    private func finish(_ stroke: Keystroke) {
-        if let selection = stroke.selection { setSelectedRange(selection.range) }
-        if let partner = stroke.partner { showPartner(of: partner) }
-        switch stroke.completions {
-        case .keep: break
-        case .offer: completions.offer()
-        case .close: completions.close()
-        }
-    }
-
     override func deleteBackward(_ sender: Any?) {
         guard isEditable else { return super.deleteBackward(sender) }
         let wasTyping = typing, completing = completions.offered != nil
@@ -395,20 +340,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func insertTab(_ sender: Any?) { isEditable ? tab(1) : super.insertTab(sender) }
     override func insertBacktab(_ sender: Any?) { isEditable ? tab(-1) : super.insertBacktab(sender) }
 
-    /// A snippet's next field, or the lines indented.
-    private func tab(_ step: Int) {
-        let answer = document.tab(selectedRanges.map(\.rangeValue), step: step)
-        if let field = answer.field { return setSelectedRange(field.range) }
-        apply(answer.edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
-    }
-
-    /// Shift Right and Shift Left: the lines, even from within a snippet's field, which Tab would leave for the next.
-    func shiftLines(_ step: Int) {
-        guard isEditable else { return }
-        _ = document.endSnippet()
-        tab(step)
-    }
-
     override func toggleContinuousSpellChecking(_ sender: Any?) {
         super.toggleContinuousSpellChecking(sender)
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
@@ -422,16 +353,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// Never goes on to the window, whose Escape would leave full screen.
     override func cancelOperation(_ sender: Any?) {
-        if completions.offered != nil {
-            completions.close()
-        } else if document.endSnippet() {
-            // Escape leaves the snippet's fields.
-        } else if mathPopover.isWanted, let maths = math(at: caret) {
-            dismissedMath = maths.start
-            mathPopover.close()
-        } else {
-            completions.complete(explicit: true)
-        }
+        endFieldTyping()
+        cancel()
     }
 
     /// Escape is `cancelOperation`: the text view's own goes straight to `complete(_:)`. While the list shows, the arrows
@@ -452,19 +375,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The core's mirror edits are going in: they move the fields without ending the snippet.
     private var mirroring = false
     private var mirrorEdits: [TextEdit] = []
-
-    /// One undo step with the caret at the insertion's, then its snippet's first field selected. False for none.
-    @discardableResult
-    func insert(_ insertion: Insertion?, named name: String) -> Bool {
-        guard let insertion else { return false }
-        apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
-        if let first = document.startSnippet(insertion.fields, at: insertion.edit.start) { setSelectedRange(first) }
-        return true
-    }
+    /// What's typed in a field and its other places is one undo step: the first key's event group stays open, where AppKit
+    /// would close it as the event ends, until a key mirrors nothing, the selection moves, Escape or Undo.
+    private var fieldTyping: (undo: UndoManager, watch: any NSObjectProtocol)?
 
     override func didChangeText() {
         super.didChangeText()
-        guard !mirroring, !mirrorEdits.isEmpty else { return }
+        guard !mirroring else { return }
+        guard !mirrorEdits.isEmpty else { return endFieldTyping() }
+        if fieldTyping == nil, let undo = undoManager, undo.groupsByEvent, !undo.isUndoing, !undo.isRedoing {
+            undo.groupsByEvent = false
+            let watch = NotificationCenter.default.addObserver(forName: .NSUndoManagerWillUndoChange, object: undo, queue: nil) {
+                [weak self] _ in MainActor.assumeIsolated { self?.endFieldTyping() }
+            }
+            fieldTyping = (undo, watch)
+        }
         let edits = mirrorEdits, selection = selectedRange()
         mirrorEdits = []
         mirroring = true
@@ -474,6 +399,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         mirroring = false
         setSelectedRange(selection)
+    }
+
+    private func endFieldTyping() {
+        guard let (undo, watch) = fieldTyping else { return }
+        fieldTyping = nil
+        NotificationCenter.default.removeObserver(watch)
+        // Undo closes it itself.
+        if undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = true
+        // The next key starts its own Typing.
+        breakUndoCoalescing()
     }
 
     // MARK: the mouse
@@ -501,7 +437,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
         let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
         if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {
-            if row.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true { issueClicked(row.line) }
+            if row.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true { issues.clicked(row.line) }
             return
         }
         // ⌘-click, as Xcode's: asked before the release, so a name nothing defines leaves the click to the text view.
@@ -534,7 +470,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func selectLines(with event: NSEvent) {
         func line(at event: NSEvent) -> NSRange {
             let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
-            return text.lineRange(for: .caret(characterIndexForInsertion(at: point)))
+            return source.lineRange(for: .caret(characterIndexForInsertion(at: point)))
         }
         let first = line(at: event)
         let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
@@ -551,7 +487,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             if next.type != .periodic { current = next }
         } while current.type != .leftMouseUp
         let number = document.line(at: first.location)
-        if selectedRange() == first, issues.issue(on: number) != nil { issueClicked(number) }
+        if selectedRange() == first, issues.issue(on: number) != nil { issues.clicked(number) }
     }
 
     // MARK: file drops open, or insert a figure
@@ -602,56 +538,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func rotor(_ rotor: NSAccessibilityCustomRotor,
                resultFor search: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
-        var items = rotor.type == .heading ? headings() : Set(issues.lines.keys).union(issues.live.keys).sorted().compactMap { line in
-            issues.issue(on: line).map { issue, live in
-                let place = live ? String(localized: "Live Preview error on line \(line)")
-                    : issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
-                return (line, String(localized: "\(place): \(issue.message)"))
-            }
-        }
-        if !search.filterString.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(search.filterString) } }
-        let current = search.currentItem.map { document.line(at: min($0.targetRange.location, text.length)) }
-        guard let found = search.searchDirection == .next ? items.first(where: { $0.line > current ?? 0 })
-                                                          : items.last(where: { $0.line < current ?? .max })
-        else { return nil }
+        let current = search.currentItem.map { document.line(at: min($0.targetRange.location, length)) }
+        guard let found = rotorItem(issues: rotor.type != .heading, from: current, next: search.searchDirection == .next,
+                                    filter: search.filterString) else { return nil }
         let result = NSAccessibilityCustomRotor.ItemResult(targetElement: self)
-        // The outline and the issues are a moment behind the text: within what there is of it.
-        result.targetRange = text.lineRange(for: .caret(min(document.lineStart(found.line), text.length)))
+        result.targetRange = found.range
         result.customLabel = found.title
         return result
-    }
-
-    // MARK: offsets
-
-    func offset(_ location: any NSTextLocation) -> Int {
-        guard let storage = textContentStorage else { return 0 }
-        return storage.offset(from: storage.documentRange.location, to: location)
-    }
-
-    func textRange(_ range: NSRange) -> NSTextRange? {
-        guard let storage = textContentStorage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
-              let end = storage.location(start, offsetBy: range.length) else { return nil }
-        return NSTextRange(location: start, end: end)
-    }
-}
-
-/// Xcode's Quick Help: the name in the editor's font, what it is beneath, and a way to where it is defined.
-private struct QuickHelpView: View {
-    let help: QuickHelp
-    let font: NSFont
-    let jump: (Place) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(help.title).font(Font(font))
-            if !help.detail.isEmpty { Text(help.detail) }
-            if let place = help.place {
-                Button("Jump to Definition") { jump(place) }.buttonStyle(.link)
-            }
-        }
-        .textSelection(.enabled)
-        .frame(maxWidth: 420, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .padding()
     }
 }

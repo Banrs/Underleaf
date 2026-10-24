@@ -55,13 +55,15 @@ jobs:
         id: texpresso
         with:
           path: ${{ env.TEXPRESSO }}
-          key: texpresso-${{ steps.brew.outputs.versions }}-${{ steps.tinytex.outputs.tag }}-${{ hashFiles('tools/texpresso/*') }}
+          key: texpresso-${{ steps.brew.outputs.versions }}-${{ steps.tinytex.outputs.tag }}-${{ hashFiles('tools/texpresso/**') }}
       - if: steps.texpresso.outputs.cache-hit != 'true'
         run: |
           tools/texpresso/build.sh "$RUNNER_TEMP/texpresso-source"
           NO_LINK=1 tools/texpresso/install.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: tex-check
       # Not import.rs's ignored test, which leaves a file in the user's Trash.

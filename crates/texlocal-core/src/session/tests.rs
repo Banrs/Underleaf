@@ -10,7 +10,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use super::actor::newline;
 use super::build::Fut;
 use super::watch::Change;
 use super::{Document, Engine, Msg, Preview, Sessions};
@@ -208,7 +207,7 @@ impl Preview for Fake {
 struct Rig {
     _data: tempfile::TempDir,
     root: PathBuf,
-    sessions: Sessions,
+    sessions: Arc<Sessions>,
     fake: Arc<Fake>,
     seen: Arc<Mutex<Vec<Value>>>,
     session: u64,
@@ -233,7 +232,7 @@ impl Rig {
             ..Fake::default()
         });
         let (engine, preview) = (Arc::clone(&fake), Arc::clone(&fake));
-        let sessions = Sessions::with_engine(service, engine, preview, watch);
+        let sessions = Arc::new(Sessions::with_engine(service, engine, preview, watch));
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         sessions.set_listener(Some(Box::new(move |event| {
@@ -241,7 +240,7 @@ impl Rig {
         })));
         let session = 1;
         let args = json!({ "id": "P", "session": session, "autoCompile": auto_compile });
-        sessions.call("session_open", &args).await.unwrap();
+        sessions.call("session_open", args).await.unwrap();
         Self {
             _data: data,
             root,
@@ -256,7 +255,7 @@ impl Rig {
     async fn call(&self, name: &str, mut args: Value) -> Result<Value, CoreError> {
         args["session"] = self.session.into();
         let command = format!("session_{name}");
-        self.sessions.call(&command, &args).await
+        self.sessions.call(&command, args).await
     }
 
     async fn ok(&self, name: &str, args: Value) -> Value {
@@ -273,7 +272,8 @@ impl Rig {
         self.state().await;
         self.marks += 1;
         let mark = json!({ "type": "mark", "n": self.marks });
-        self.sessions.hub.queue.send(mark.clone()).unwrap();
+        let queued = crate::events::Queued::Event(mark.clone());
+        self.sessions.hub.queue.send(queued).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let mut seen = lock(&self.seen);
@@ -337,9 +337,9 @@ async fn wait(ms: u64) {
 async fn the_autosave_writes_700_ms_after_the_last_edit() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " world");
+    doc.edit(5, 0, " world", None, false);
     wait(600).await;
-    doc.edit(11, 0, "!");
+    doc.edit(11, 0, "!", None, false);
     wait(600).await;
     assert_eq!(rig.disk("main.tex"), "Hello");
     // The open's alone: Not Saved is for an error or Cancel, so edits and saves change
@@ -363,7 +363,7 @@ async fn an_autosave_builds_when_auto_compile_is_on() {
     assert_eq!(rig.fake.called("compile"), 1);
     rig.fake.finish_build(built(true, Vec::new()));
     let doc = rig.open("main.tex").await;
-    doc.edit(0, 5, "Bye");
+    doc.edit(0, 5, "Bye", None, false);
     wait(800).await;
     rig.state().await;
     assert_eq!(rig.disk("main.tex"), "Bye");
@@ -391,10 +391,10 @@ async fn ime_composition_holds_the_autosave_until_it_ends() {
     let doc = rig.open("main.tex").await;
     let composing = |on| rig.ok("composing", json!({ "path": "main.tex", "composing": on }));
     composing(true).await;
-    doc.edit(5, 0, "ka");
+    doc.edit(5, 0, "ka", None, false);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "Hello");
-    doc.edit(5, 2, "か");
+    doc.edit(5, 2, "か", None, false);
     composing(false).await;
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "Helloか");
@@ -434,10 +434,10 @@ async fn requests_during_a_build_queue_one_more_and_stop_drops_it() {
 async fn a_build_saves_first_and_the_preview_is_out_of_date_after_edits_made_during_it() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, "1");
+    doc.edit(5, 0, "1", None, false);
     rig.ok("compile", json!({})).await;
     assert_eq!(rig.disk("main.tex"), "Hello1");
-    doc.edit(6, 0, "2");
+    doc.edit(6, 0, "2", None, false);
     rig.state().await;
     rig.fake.finish_build(built(true, Vec::new()));
     let finished = rig.of_type("build_finished").await;
@@ -447,7 +447,7 @@ async fn a_build_saves_first_and_the_preview_is_out_of_date_after_edits_made_dur
     rig.fake.finish_build(built(true, Vec::new()));
     rig.state().await;
     assert_eq!(rig.state().await["build"]["outdated"], false);
-    doc.edit(0, 0, "x");
+    doc.edit(0, 0, "x", None, false);
     let builds = rig.of_type("build").await;
     assert_eq!(builds.last().unwrap()["outdated"], true);
 }
@@ -472,7 +472,7 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     rig.ok("choose_issue", json!({ "index": 2 })).await;
     assert_eq!(rig.ok("issue", json!({ "next": true })).await["index"], 0);
     assert_eq!(rig.ok("issue", json!({ "next": false })).await["index"], 2);
-    doc.edit(0, 0, "x");
+    doc.edit(0, 0, "x", None, false);
     let cleared = rig.of_type("issues").await;
     let none = json!({ "type": "issues", "session": rig.session, "path": "main.tex", "lines": [] });
     assert_eq!(cleared, [none]);
@@ -512,7 +512,7 @@ async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
     assert_eq!(rig.heading("main.tex", 3).await, json!(1));
     assert_eq!(rig.heading("main.tex", 9).await, json!(2));
     let doc = rig.open("main.tex").await;
-    doc.edit(15, 4, "article");
+    doc.edit(15, 4, "article", None, false);
     assert!(!chapters().await);
 }
 
@@ -531,7 +531,7 @@ async fn an_analysis_holds_up_no_other_command_and_the_last_asked_for_is_kept() 
     let held = lock(&outline);
     let analyze = |path| {
         let args = json!({ "session": rig.session, "path": path });
-        rig.sessions.send("session_analyze", &args)
+        rig.sessions.call("session_analyze", args.clone())
     };
     let (earlier, later) = (analyze("main.tex"), analyze("ch.tex"));
     assert_eq!(rig.state().await["build"]["compiling"], false);
@@ -549,7 +549,7 @@ async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() 
     rig.fake
         .finish_build(built(true, vec![issue(1, "Undefined")]));
     assert_eq!(rig.of_type("issues").await.len(), 1);
-    doc.edit(0, 0, "\n");
+    doc.edit(0, 0, "\n", None, false);
     rig.ok("close_document", json!({ "path": "main.tex" }))
         .await;
     rig.events().await;
@@ -616,7 +616,7 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
         let chosen = rig.ok("choose_issue", json!({ "index": index })).await;
         assert_eq!(chosen["issue"]["file"], file);
     }
-    doc.edit(24, 0, "x");
+    doc.edit(24, 0, "x", None, false);
     assert_eq!(rig.of_type("issues").await[0]["lines"], json!([]));
     wait(850).await;
     let events = until_sent(&mut rig, "issues").await;
@@ -664,10 +664,25 @@ async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_o
 }
 
 #[tokio::test(start_paused = true)]
+async fn keys_typed_before_a_reload_reaches_the_editor_refuse_it_and_ask_about_the_change() {
+    let mut rig = Rig::new(false).await;
+    let doc = rig.open("main.tex").await;
+    rig.write_elsewhere("main.tex", "From elsewhere");
+    wait(300).await;
+    assert_eq!(rig.of_type("document_reload").await.len(), 1);
+    doc.edit(5, 0, "!", None, false);
+    assert!(!doc.reload("From elsewhere"));
+    assert_eq!(doc.snapshot().0, "Hello!");
+    assert_eq!(rig.of_type("conflict").await[0]["kind"], "changed");
+    wait(800).await;
+    assert_eq!(rig.disk("main.tex"), "From elsewhere");
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_sessions_own_save_is_not_another_apps_change() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, "!");
+    doc.edit(5, 0, "!", None, false);
     wait(800).await;
     rig.changed("main.tex", true);
     rig.changed(".texlocal-tmp", true);
@@ -679,7 +694,7 @@ async fn the_sessions_own_save_is_not_another_apps_change() {
 
 async fn in_conflict(rig: &Rig) -> Document {
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " mine");
+    doc.edit(5, 0, " mine", None, false);
     rig.write_elsewhere("main.tex", "theirs");
     wait(300).await;
     doc
@@ -722,7 +737,7 @@ async fn cancel_leaves_the_edits_unsaved_until_a_save_is_asked_for() {
     let state = rig.state().await;
     assert_eq!(state["documents"][0]["held"], true);
     rig.events().await;
-    doc.edit(0, 0, "x");
+    doc.edit(0, 0, "x", None, false);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "theirs");
     assert!(rig.of_type("conflict").await.is_empty());
@@ -738,7 +753,7 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
     fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
     rig.open("ch.tex").await;
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " mine");
+    doc.edit(5, 0, " mine", None, false);
     for path in ["ch.tex", "main.tex"] {
         fs::remove_file(rig.root.join(path)).unwrap();
         rig.changed(path, true);
@@ -756,6 +771,32 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
     assert!(!rig.root.join("main.tex").exists());
     rig.resolve("save").await;
     assert_eq!(rig.disk("main.tex"), "Hello mine");
+}
+
+/// A folder that can't be read for now, as another app's lock leaves it, is no deletion.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn a_file_that_cant_be_read_for_now_shows_not_saved_and_isnt_taken_as_gone() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut rig = Rig::new(false).await;
+    fs::create_dir(rig.root.join("ch")).unwrap();
+    fs::write(rig.root.join("ch/a.tex"), "chapter").unwrap();
+    let doc = rig.open("ch/a.tex").await;
+    doc.edit(7, 0, " mine", None, false);
+    fs::write(rig.root.join("ch/a.tex"), "theirs").unwrap();
+    let folder = rig.root.join("ch");
+    let locked = |mode| fs::set_permissions(&folder, fs::Permissions::from_mode(mode));
+    locked(0o000).unwrap();
+    rig.changed("ch/a.tex", false);
+    wait(300).await;
+    let events = rig.events().await;
+    locked(0o755).unwrap();
+    assert!(
+        !events.iter().any(|e| e["type"] == "conflict"),
+        "{events:?}"
+    );
+    let shown = events.iter().rfind(|e| e["type"] == "document");
+    assert!(shown.unwrap()["error"].is_string(), "{events:?}");
 }
 
 #[tokio::test(start_paused = true)]
@@ -808,28 +849,20 @@ async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_
     assert_eq!(rig.fake.called("compile"), builds + 1);
 }
 
-#[test]
-fn a_file_ends_its_lines_as_its_first_line_break_does() {
-    assert_eq!(newline("a\r\nb\nc"), "\r\n");
-    assert_eq!(newline("a\rb"), "\r");
-    assert_eq!(newline("a\nb\r\n"), "\n");
-    assert_eq!(newline("a"), "\n");
-}
-
 #[tokio::test(start_paused = true)]
 async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
     let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("main.tex"), "a\r\nb\r\n").unwrap();
     let doc = rig.open("main.tex").await;
     assert_eq!(doc.snapshot().0, "a\nb\n");
-    doc.edit(4, 0, "c\r\nd\re");
+    doc.edit(4, 0, "c\r\nd\re", None, false);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "a\r\nb\r\nc\r\nd\r\ne");
     // Another app changing only the line ends changes no text, and the next save keeps its.
     rig.write_elsewhere("main.tex", "a\nb\nc\nd\ne");
     wait(300).await;
     assert!(rig.of_type("document_reload").await.is_empty());
-    doc.edit(10, 0, "!");
+    doc.edit(10, 0, "!", None, false);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "a\nb\nc\nd\ne!");
 }
@@ -851,7 +884,7 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
     assert_eq!(closed[0]["reason"], "gone");
     fs::write(rig.root.join("main.tex"), "Hello").unwrap();
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " mine");
+    doc.edit(5, 0, " mine", None, false);
     fs::write(rig.root.join("main.tex"), latin).unwrap();
     rig.changed("main.tex", false);
     wait(300).await;
@@ -864,6 +897,23 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
 
 // MARK: - Files
 
+/// So a host selects the entry in a tree that has it, with no tree of its own to read.
+#[tokio::test(start_paused = true)]
+async fn a_new_or_renamed_entry_is_answered_after_the_tree_that_lists_it() {
+    let rig = Rig::new(false).await;
+    let listed = |path: &str| {
+        let seen = lock(&rig.seen);
+        let last = seen.iter().rfind(|e| e["type"] == "tree");
+        last.is_some_and(|tree| tree.to_string().contains(path))
+    };
+    let made = rig.ok("create_entry", json!({ "folder": "ch", "name": "a.tex" }));
+    assert_eq!(made.await["path"], "ch/a.tex");
+    assert!(listed("ch/a.tex"));
+    let renamed = rig.ok("rename", json!({ "from": "ch/a.tex", "name": "b.tex" }));
+    assert_eq!(renamed.await["to"], "ch/b.tex");
+    assert!(listed("ch/b.tex"));
+}
+
 /// Its edits are saved first; a rename only in case moves it rather than closing it.
 #[tokio::test(start_paused = true)]
 async fn a_rename_moves_the_open_document_and_its_saves() {
@@ -871,7 +921,7 @@ async fn a_rename_moves_the_open_document_and_its_saves() {
     fs::create_dir(rig.root.join("chapters")).unwrap();
     fs::write(rig.root.join("chapters/Ch.tex"), "chapter").unwrap();
     let doc = rig.open("chapters/Ch.tex").await;
-    doc.edit(0, 0, "A ");
+    doc.edit(0, 0, "A ", None, false);
     let to_lower = json!({ "from": "chapters/Ch.tex", "to": "chapters/ch.tex" });
     assert_eq!(rig.ok("rename", to_lower).await["to"], "chapters/ch.tex");
     rig.ok("rename", json!({ "from": "chapters", "to": "Chapters" }))
@@ -883,7 +933,7 @@ async fn a_rename_moves_the_open_document_and_its_saves() {
     assert_eq!(moved, ["chapters/ch.tex", "Chapters/ch.tex"]);
     let found = rig.sessions.document(rig.session, "Chapters/ch.tex");
     assert!(found.is_some());
-    doc.edit(0, 0, "B");
+    doc.edit(0, 0, "B", None, false);
     wait(800).await;
     assert_eq!(rig.disk("Chapters/ch.tex"), "BA chapter");
 }
@@ -911,7 +961,7 @@ async fn a_file_tex_names_in_another_case_is_spelt_as_the_disk_spells_it() {
     let issues = rig.of_type("issues").await;
     assert_eq!(issues[0]["path"], "chapters/intro.tex");
     let doc = rig.sessions.document(rig.session, "chapters/intro.tex");
-    doc.unwrap().edit(0, 0, "% ");
+    doc.unwrap().edit(0, 0, "% ", None, false);
     wait(800).await;
     assert_eq!(rig.disk("chapters/intro.tex"), "% \\section{Intro}\n");
     assert_eq!(names_in(&rig.root.join("chapters")), ["intro.tex"]);
@@ -926,11 +976,11 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
     }
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
-    doc.edit(0, 0, "x");
+    doc.edit(0, 0, "x", None, false);
     let ready = rig.ok("prepare_delete", json!({ "path": "old.tex" })).await;
     assert_eq!(ready["ready"], true);
     assert_eq!(rig.disk("old.tex"), "xold");
-    doc.edit(0, 0, "y");
+    doc.edit(0, 0, "y", None, false);
     fs::remove_file(rig.root.join("old.tex")).unwrap();
     wait(800).await;
     assert!(!rig.root.join("old.tex").exists());
@@ -953,9 +1003,11 @@ async fn typed_during_a_save(rig: &mut Rig, doc: &Document, typed: &str, command
     });
     held.recv().unwrap();
     let args = json!({ "session": rig.session, "path": "old.tex" });
-    let answer = rig.sessions.send(&format!("session_{command}"), &args);
+    let answer = rig
+        .sessions
+        .call(&format!("session_{command}"), args.clone());
     wait(100).await;
-    doc.edit(0, 0, typed);
+    doc.edit(0, 0, typed, None, false);
     release.send(()).unwrap();
     holder.join().unwrap().unwrap();
     let answer = answer.await.unwrap();
@@ -969,12 +1021,12 @@ async fn text_typed_during_a_save_is_saved_before_a_build_or_a_trash_goes_on() {
     let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
-    doc.edit(0, 0, "a");
+    doc.edit(0, 0, "a", None, false);
     typed_during_a_save(&mut rig, &doc, "b", "compile").await;
     assert_eq!(rig.fake.called("compile"), 1);
     assert_eq!(rig.disk("old.tex"), "baold");
     rig.fake.finish_build(built(true, Vec::new()));
-    doc.edit(0, 0, "c");
+    doc.edit(0, 0, "c", None, false);
     let ready = typed_during_a_save(&mut rig, &doc, "d", "prepare_delete").await;
     assert_eq!(ready["ready"], true);
     assert_eq!(rig.disk("old.tex"), "dcbaold");
@@ -995,10 +1047,10 @@ async fn live_preview_is_remembered_as_asked_and_not_as_its_session_closes() {
     live(&rig).await;
     rig.ok("close", json!({})).await;
     let args = json!({ "id": "P", "session": 2 });
-    let opened = rig.sessions.call("session_open", &args).await.unwrap();
+    let opened = rig.sessions.call("session_open", args).await.unwrap();
     assert_eq!(opened["ui"]["livePreview"], true);
     let args = json!({ "session": 2 });
-    rig.sessions.call("session_live_stop", &args).await.unwrap();
+    rig.sessions.call("session_live_stop", args).await.unwrap();
     let ui = rig.sessions.service.project("P").unwrap().ui;
     assert!(!crate::settings::read_ui(&ui).live_preview);
 }
@@ -1009,15 +1061,15 @@ async fn keys_go_to_texpresso_as_made_and_a_refused_one_sends_the_whole_text() {
     let doc = rig.open("main.tex").await;
     live(&rig).await;
     assert_eq!(lock(&rig.fake.starts)[0], ["main.tex"]);
-    doc.edit(5, 0, "!");
+    doc.edit(5, 0, "!", None, false);
     rig.state().await;
     assert_eq!(lock(&rig.fake.edits).len(), 1);
     *lock(&rig.fake.refusal) = Some(CoreError::unfit("unfit"));
-    doc.edit(6, 0, "?");
+    doc.edit(6, 0, "?", None, false);
     rig.state().await;
     let updates = lock(&rig.fake.updates).clone();
     assert_eq!(updates, [("main.tex".to_string(), "Hello!?".to_string())]);
-    doc.edit(7, 0, ".");
+    doc.edit(7, 0, ".", None, false);
     rig.state().await;
     assert_eq!(lock(&rig.fake.edits).len(), 2);
 }
@@ -1119,7 +1171,7 @@ async fn automatic_builds_wait_while_live_preview_runs() {
     rig.fake.finish_build(built(true, Vec::new()));
     let doc = rig.open("main.tex").await;
     live(&rig).await;
-    doc.edit(0, 0, "x");
+    doc.edit(0, 0, "x", None, false);
     wait(800).await;
     rig.state().await;
     assert_eq!(rig.disk("main.tex"), "xHello");
@@ -1267,7 +1319,7 @@ async fn live_errors_go_on_their_lines_once_texpresso_has_every_edit_and_follow_
     assert_eq!(issue_lines(shown.clone()), [[2]]);
     assert_eq!(shown[0]["lines"][0]["compact"], "Undefined: \\foo");
     // Its log is of the text before the edit until TeXpresso says it has read it.
-    doc.edit(0, 0, "\n");
+    doc.edit(0, 0, "\n", None, false);
     rig.fake.tell(run_done());
     wait(1100).await;
     assert_eq!(issue_lines(rig.of_type("live_issues").await), [[3]]);
@@ -1289,7 +1341,7 @@ async fn a_live_error_shows_in_a_document_opened_after_and_goes_with_its_line_or
     let doc = rig.open("main.tex").await;
     assert_eq!(issue_lines(rig.of_type("live_issues").await), [[2, 3]]);
     // Line 2's break and backslash: its error goes, and line 3's moves up.
-    doc.edit(5, 2, "");
+    doc.edit(5, 2, "", None, false);
     assert_eq!(issue_lines(rig.of_type("live_issues").await), [[2]]);
     rig.ok("live_stop", json!({})).await;
     assert_eq!(issue_lines(rig.of_type("live_issues").await), [[0; 0]]);
@@ -1300,7 +1352,7 @@ async fn closing_saves_and_stops_the_preview() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
     live(&rig).await;
-    doc.edit(0, 0, "x");
+    doc.edit(0, 0, "x", None, false);
     let closed = rig.ok("close", json!({})).await;
     assert_eq!(closed["saved"], true);
     assert_eq!(rig.disk("main.tex"), "xHello");
@@ -1355,7 +1407,7 @@ async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     let build = events.iter().find(|e| e["type"] == "build");
     assert_eq!(build.expect("the build is told")["session"], rig.session);
     let again = json!({ "id": "P", "session": rig.session });
-    let taken = rig.sessions.call("session_open", &again).await.unwrap_err();
+    let taken = rig.sessions.call("session_open", again).await.unwrap_err();
     assert_eq!(taken.status, 409);
     assert_eq!(rig.state().await["build"]["compiling"], true);
 }
@@ -1385,7 +1437,7 @@ async fn automatic_builds_wait_for_tex_to_be_found() {
 async fn a_write_elsewhere_just_before_the_autosave_is_asked_about_not_written_over() {
     let mut rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " mine");
+    doc.edit(5, 0, " mine", None, false);
     wait(550).await;
     rig.write_elsewhere("main.tex", "theirs");
     wait(200).await;
@@ -1404,12 +1456,27 @@ async fn cleans_asked_for_together_are_all_answered() {
     rig.ok("compile", json!({})).await;
     let clean = || {
         let args = json!({ "session": rig.session });
-        rig.sessions.send("session_clean", &args)
+        rig.sessions.call("session_clean", args.clone())
     };
     let (first, second) = (clean(), clean());
     first.await.unwrap();
     second.await.unwrap();
     assert_eq!(rig.fake.called("clean"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_build_asked_for_during_a_clean_starts_once_it_is_over() {
+    let mut rig = Rig::new(false).await;
+    let cleaned = rig
+        .sessions
+        .call("session_clean", json!({ "session": rig.session }));
+    rig.ok("compile", json!({})).await;
+    cleaned.await.unwrap();
+    let events = rig.events().await;
+    let at = |test: &dyn Fn(&Value) -> bool| events.iter().position(test);
+    let started = at(&|e| e["type"] == "build" && e["compiling"] == true);
+    let cleaned = at(&|e| e["type"] == "build_cleaned");
+    assert!(cleaned.unwrap() < started.unwrap(), "{events:?}");
 }
 
 /// Until the document's symbols pass `test`, perhaps a scan or two later.
@@ -1447,7 +1514,7 @@ async fn the_symbol_scan_and_a_search_read_an_open_document_as_the_editor_has_it
     // Marked text holds the autosave, so the label never reaches the disk.
     let composing = json!({ "path": "main.tex", "composing": true });
     rig.ok("composing", composing).await;
-    doc.edit(5, 0, " \\label{typed}");
+    doc.edit(5, 0, " \\label{typed}", None, false);
     fs::write(rig.root.join("b.tex"), "").unwrap();
     rig.changed("b.tex", true);
     let typed = |symbols: &Symbols| matches!(&symbols.labels[..], [l] if l.name == "typed");
@@ -1463,7 +1530,7 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     let rig = Rig::new(false).await;
     fs::write(rig.root.join("a.tex"), "").unwrap();
     let doc = rig.open("a.tex").await;
-    doc.edit(0, 0, "\\label{typed} \\ref{typed}");
+    doc.edit(0, 0, "\\label{typed} \\ref{typed}", None, false);
     let renamed = json!({ "from": "a.tex", "to": "b.tex" });
     rig.ok("rename", renamed).await;
     // Other files are as the last scan found them, which may be the old name's.
@@ -1482,7 +1549,7 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     fs::write(rig.root.join("ch.tex"), "a cat\nand a cat\r\n").unwrap();
     fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " cat");
+    doc.edit(5, 0, " cat", None, false);
     let replace = || rig.call("replace", json!({ "query": "Cat", "replacement": "dog" }));
     let refused = replace().await.unwrap_err();
     assert!(refused.status == 400 && refused.message.contains("latin.tex"));
@@ -1493,8 +1560,18 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
         "written": [{ "file": "ch.tex", "count": 2 }],
     });
-    assert_eq!(replace().await.unwrap(), answer);
+    let mut answered = replace().await.unwrap();
+    let snapshot = answered
+        .as_object_mut()
+        .unwrap()
+        .remove("snapshot")
+        .unwrap();
+    assert_eq!(answered, answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
+    // As a host whose editor was typed in since puts back the rest, not to leave it half replaced.
+    let restore = json!({ "id": snapshot, "paths": ["ch.tex"] });
+    rig.ok("history_restore", restore).await;
+    assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
 }
 
 /// A label's definition and each reference to it, the open document's as the editor has it, but
@@ -1508,7 +1585,7 @@ async fn usages_are_where_the_name_at_an_offset_is_defined_and_used_as_a_search_
     )
     .unwrap();
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " \\label{fig:a}");
+    doc.edit(5, 0, " \\label{fig:a}", None, false);
     let usages = rig
         .ok("usages", json!({ "path": "main.tex", "offset": 15 }))
         .await;
@@ -1535,7 +1612,7 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     let bib = "@book{knuth,\n  title = {The {TeX}book},\n}\n@misc{lamport, crossref = {knuth}}\n";
     fs::write(rig.root.join("refs.bib"), bib).unwrap();
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, "\\cite{x, knuth}");
+    doc.edit(5, 0, "\\cite{x, knuth}", None, false);
     let rename = |from: &str, to: &str| {
         let args = json!({ "kind": "citation", "from": from, "to": to });
         rig.call("rename_symbol", args)
@@ -1548,7 +1625,8 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     for (from, to, status) in refusals {
         assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
     }
-    let renamed = rename("knuth", "knuth84").await.unwrap();
+    let mut renamed = rename("knuth", "knuth84").await.unwrap();
+    renamed.as_object_mut().unwrap().remove("snapshot");
     let edit = json!({ "start": 14, "length": 5, "text": "knuth84" });
     let answer = json!({
         "edits": { "path": "main.tex", "version": 1, "edits": [edit] },
@@ -1609,7 +1687,7 @@ async fn two_trashes_under_way_each_keep_their_file_from_being_saved_again() {
     rig.ok("prepare_delete", json!({ "path": "b.tex" })).await;
     fs::remove_file(rig.root.join("a.tex")).unwrap();
     rig.ok("deleted", json!({ "path": "a.tex" })).await;
-    b.edit(0, 0, "x");
+    b.edit(0, 0, "x", None, false);
     wait(800).await;
     assert_eq!(rig.disk("b.tex"), "b.tex");
 }
@@ -1631,10 +1709,10 @@ async fn an_automatic_build_whose_saves_are_held_shows_nothing() {
 async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " mine");
+    doc.edit(5, 0, " mine", None, false);
     let args = json!({ "session": rig.session });
-    let panicked = rig.sessions.send("session_panic", &args);
-    let behind = rig.sessions.send("session_state", &args);
+    let panicked = rig.sessions.call("session_panic", args.clone());
+    let behind = rig.sessions.call("session_state", args.clone());
     assert_eq!(panicked.await.unwrap_err().status, 500);
     assert_eq!(behind.await.unwrap_err().status, 500);
     assert_eq!(rig.disk("main.tex"), "Hello mine");
@@ -1670,7 +1748,7 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
     let draft = rig.ok("history_save", json!({ "name": " Draft " })).await;
     assert_eq!(draft["name"], "Draft");
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " world");
+    doc.edit(5, 0, " world", None, false);
     fs::write(rig.root.join("new.tex"), "new").unwrap();
     fs::remove_file(rig.root.join("ch.tex")).unwrap();
     let compare = |path: &str| {
@@ -1701,7 +1779,7 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
     fs::remove_file(rig.root.join("gone.tex")).unwrap();
     fs::write(rig.root.join("new.tex"), "new").unwrap();
     let doc = rig.open("main.tex").await;
-    doc.edit(5, 0, " world");
+    doc.edit(5, 0, " world", None, false);
 
     let restore = |paths: Option<[&str; 1]>| {
         let args = json!({ "id": draft["id"], "paths": paths });
@@ -1832,7 +1910,7 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
     let doc = rig.open("main.tex").await;
     let text = "\\newcommand{\\R}{\\mathbb{R}}\n\\section{Intro}\\label{sec:a}\n\
         See \\ref{sec:a}, \\cite{knuth}, \\R and \\toprule.";
-    doc.edit(0, 5, text);
+    doc.edit(0, 5, text, None, false);
     assert!(until(&doc, |symbols| symbols.by_file.contains_key("refs.bib")).await);
     let help = async |name: &str| {
         let offset = text.rfind(name).unwrap() + 1;

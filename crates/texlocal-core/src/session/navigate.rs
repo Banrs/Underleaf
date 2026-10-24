@@ -11,15 +11,14 @@ use serde_json::{Value, json};
 
 use super::Reply;
 use super::actor::Actor;
-use crate::analyze::{self, Facts};
-use crate::paths;
-use crate::projects::file_kind;
-use crate::service::{arg, out};
+use crate::analyze;
+use crate::paths::{self, RelPath};
+use crate::service::out;
 use crate::settings;
 use crate::syntax::SymbolKind;
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::closing_brace;
-use crate::{CoreError, lf, lock, lossy_string};
+use crate::{lf, lock, lossy_string};
 
 /// Back's places, and Forward's, kept at most.
 const KEPT: usize = 50;
@@ -32,7 +31,7 @@ const RUN: i64 = 4;
 /// A line, from 1, of a project's file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Place {
-    path: String,
+    path: RelPath,
     line: u32,
 }
 
@@ -46,8 +45,8 @@ pub(crate) struct Trail {
 impl Trail {
     pub fn moved(&mut self, from: &str, to: &str) {
         for place in self.back.iter_mut().chain(&mut self.forward) {
-            if let Some(rest) = paths::after_entry(&place.path, from) {
-                place.path = format!("{to}{rest}");
+            if let Some(rest) = paths::after_entry(&place.path.0, from) {
+                place.path.0 = format!("{to}{rest}");
             }
         }
     }
@@ -62,14 +61,8 @@ fn push(places: &mut Vec<Place>, place: Place) {
     }
 }
 
-fn place(args: &Value, key: &str) -> Result<Place, CoreError> {
-    let place: Place = arg(args, key)?;
-    let path = paths::rel_key(&place.path)?;
-    Ok(Place { path, ..place })
-}
-
 fn exists(root: &Path, place: &Place) -> bool {
-    paths::safe_path(root, &place.path).is_ok_and(|path| path.is_file())
+    paths::safe_path(root, &place.path.0).is_ok_and(|path| path.is_file())
 }
 
 /// One of Open Quickly's items.
@@ -83,16 +76,15 @@ struct Item {
 }
 
 impl Actor {
-    pub fn navigate(&mut self, args: &Value) -> Result<Value, CoreError> {
-        push(&mut self.trail.back, place(args, "from")?);
+    pub fn navigate(&mut self, from: Place) -> Value {
+        push(&mut self.trail.back, from);
         self.trail.forward.clear();
-        Ok(self.trail_state())
+        self.trail_state()
     }
 
     /// Back, or Forward: the latest place whose file is there still and that isn't the caret's,
     /// those passed over dropped, with the caret's place kept for the other way.
-    pub fn step(&mut self, args: &Value, back: bool) -> Result<Value, CoreError> {
-        let at = place(args, "at")?;
+    pub fn step(&mut self, at: Place, back: bool) -> Value {
         let (root, trail) = (&self.project.root, &mut self.trail);
         let (from, other) = if back {
             (&mut trail.back, &mut trail.forward)
@@ -106,7 +98,7 @@ impl Actor {
         }
         let mut answer = self.trail_state();
         answer["to"] = json!(to);
-        Ok(answer)
+        answer
     }
 
     fn trail_state(&self) -> Value {
@@ -195,13 +187,13 @@ impl Actor {
         let settings = settings::read_settings(&self.project.settings);
         let aux = settings.output(&self.project.build, "aux");
         tokio::task::spawn_blocking(move || {
+            let own = doc.facts();
             let found = doc.with(|source| {
-                let own = Facts::read(&source.text(), file_kind(&source.path));
                 let (kind, name, _) = source.symbol_at(&own, offset)?;
                 let defined = source.defined(&own, kind, &name).into_iter().next();
-                Some((kind, name, defined, own))
+                Some((kind, name, defined))
             });
-            let Some((kind, name, defined, own)) = found else {
+            let Some((kind, name, defined)) = found else {
                 return reply.send(Ok(Value::Null));
             };
             // The open document as edited, else the disk's.
@@ -245,7 +237,7 @@ impl Actor {
                 _ => None,
             };
             let place = defined.map(|(path, at)| Place {
-                path,
+                path: RelPath(path),
                 line: at.line,
             });
             let help =

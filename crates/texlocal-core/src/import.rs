@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -16,8 +16,8 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::analyze::Facts;
-use crate::paths::{self, after_entry, fold_case, normalize_segments, rel_key};
-use crate::projects::{self, ProjectInfo, Trash};
+use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
+use crate::projects::{self, ProjectInfo, Trash, is_litter, walk};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
@@ -53,6 +53,10 @@ static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
 });
 
+/// Past a document's: a zip that unpacks to more is a mistake, or made to fill the disk.
+const MAX_UNZIPPED: u64 = 1 << 30;
+const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
+
 /// Packages that build only with XeLaTeX or LuaLaTeX, which a new project's engine follows.
 const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
     (
@@ -68,46 +72,6 @@ const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
     ("lualatex", &["luacode", "luatexja", "luaotfload"]),
 ];
 
-/// `name` in the project folder `dir` ("" is the project's own).
-fn in_folder(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
-}
-
-/// The files under a path, each by its path named from the path's own name `rel`. A drop leaves
-/// links inside a folder behind, as it imports what was dropped; a duplicate follows `links` to
-/// files, as the tree and an export do.
-fn collect(
-    abs: &Path,
-    rel: String,
-    meta: &fs::Metadata,
-    links: bool,
-    files: &mut Vec<(String, PathBuf)>,
-) -> Result<(), CoreError> {
-    if meta.is_file() {
-        files.push((rel, abs.to_path_buf()));
-    } else if meta.is_dir() {
-        for entry in fs::read_dir(abs).map_err(CoreError::at(abs))? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !projects::is_litter(&name) {
-                let path = entry.path();
-                // An entry's own metadata doesn't follow a link; a folder's could cycle.
-                let meta = if links && path.is_file() {
-                    fs::metadata(&path)?
-                } else {
-                    entry.metadata()?
-                };
-                collect(&path, in_folder(&rel, &name), &meta, links, files)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// A bad path fails the drop before anything lands. Without `conflict`, a drop onto existing
 /// entries writes nothing and reports them, for the host to ask about; with Replace, `trash`
 /// discards them.
@@ -122,9 +86,19 @@ pub fn import_files(
     let mut files = Vec::new();
     for abs in paths {
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
-        // A dropped link is followed: dropping it names what it points at.
+        // A dropped link is followed: dropping it names what it points at. A link inside a
+        // dropped folder is left behind, as what was dropped is imported.
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
-        collect(abs, name.into_owned(), &meta, false, &mut files)?;
+        if meta.is_file() {
+            files.push((name.into_owned(), abs.clone()));
+        } else if meta.is_dir() {
+            walk(abs, &|rel| !rel.split('/').any(is_litter), &mut |entry| {
+                if !entry.dir && !entry.link {
+                    files.push((in_folder(&name, &entry.rel), entry.path.clone()));
+                }
+                Ok(true)
+            })?;
+        }
     }
     let root = service.project(id)?.root;
     let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
@@ -415,13 +389,25 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     })
 }
 
-/// A new project's files, each written at its path in `root` from where it comes.
+/// A new project's files, each written at its path in `root` from where it comes. A zip's are
+/// taken at the sizes it gives them, which may come to `MAX_UNZIPPED` at most.
 fn write_files(
     root: &Path,
     files: &[(String, Source)],
     mut zip: Option<&mut ZipArchive<File>>,
 ) -> Result<(), CoreError> {
     validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
+    if let Some(zip) = zip.as_deref_mut() {
+        let mut unzipped = 0;
+        for (_, source) in files {
+            if let Source::Zip(i) = source {
+                unzipped += zip.by_index_raw(*i)?.size();
+            }
+        }
+        if unzipped > MAX_UNZIPPED {
+            return Err(CoreError::bad_request(TOO_LARGE));
+        }
+    }
     for (path, source) in files {
         let abs = root.join(rel_key(path)?);
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
@@ -433,7 +419,11 @@ fn write_files(
             }
             Source::Zip(i) => {
                 let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
-                io::copy(&mut entry, &mut dest)?;
+                // A byte past its size, so a sound entry is read to its end, where its checksum is.
+                let size = entry.size();
+                if io::copy(&mut Read::take(&mut entry, size + 1), &mut dest)? > size {
+                    return Err(CoreError::bad_request(TOO_LARGE));
+                }
             }
         }
         dest.flush()?;
@@ -454,13 +444,13 @@ pub(crate) fn duplicate_project(
         ));
     }
     let root = service.project(id)?.root;
-    let mut found = Vec::new();
-    let meta = fs::metadata(&root)?;
-    collect(&root, String::new(), &meta, true, &mut found)?;
-    let files: Vec<_> = (found.into_iter())
-        .filter(|(path, _)| !left_out(path))
-        .map(|(path, abs)| (path, Source::File(abs)))
-        .collect();
+    let mut files = Vec::new();
+    walk(&root, &|rel| !left_out(rel), &mut |entry| {
+        if !entry.dir {
+            files.push((entry.rel.clone(), Source::File(entry.path.clone())));
+        }
+        Ok(true)
+    })?;
     projects::new_project(&service.data_dir, name, |copy| {
         write_files(copy, &files, None)?;
         // Copied apart, as the generic writes refuse it; a folder put in the library by hand may
@@ -818,6 +808,21 @@ mod tests {
         bytes[at.unwrap()] = b'X';
         fs::write(&src, bytes).unwrap();
         assert!(import_project(&service, &src).is_err());
+        assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_zip_that_unpacks_past_a_gigabyte_makes_no_project() {
+        let (dir, service) = library();
+        let src = dir.path().join("large.zip");
+        zip_of(&src, &[("main.tex", "x")]);
+        // Its central directory's uncompressed size, which a reader goes by, made 2 GB.
+        let mut bytes = fs::read(&src).unwrap();
+        let header = bytes.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        bytes[header + 24..header + 28].copy_from_slice(&(2u32 << 30).to_le_bytes());
+        fs::write(&src, bytes).unwrap();
+        let err = import_project(&service, &src).unwrap_err();
+        assert_eq!((err.status, err.message.as_str()), (400, TOO_LARGE));
         assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
     }
 

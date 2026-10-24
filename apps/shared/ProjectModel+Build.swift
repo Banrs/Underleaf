@@ -22,6 +22,13 @@ extension ProjectModel {
             if Task.isCancelled { return true }
             guard let document, !closed, !live else { return false }
             buildPDF = url
+            #if os(iOS)
+            // Builds are remade from the sources, so the iPad's backup leaves them out.
+            var build = url.deletingLastPathComponent()
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? build.setResourceValues(values)
+            #endif
             shown = .build(url)
             pdf.show(document)
             return true

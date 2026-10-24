@@ -27,6 +27,12 @@ static class Program
 
     static int Main(string[] args)
     {
+        // It ends every TeXLocal and deletes the installed app's settings and theme: a runner's to lose, no one else's.
+        if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
+        {
+            Console.Error.WriteLine("Capture runs only on GitHub's runners.");
+            return 2;
+        }
         for (var i = 0; i + 1 < args.Length; i += 2)
         {
             var value = args[i + 1];

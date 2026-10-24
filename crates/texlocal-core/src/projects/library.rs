@@ -14,7 +14,7 @@ use serde_json::json;
 use super::files::occupied;
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
-use super::tree::{entries, file_kind};
+use super::tree::{file_kind, listed, walk};
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{read_settings, write_settings};
@@ -72,20 +72,15 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
 /// file. The app's saves rename into place and so move the folder's date; another app's in-place
 /// save moves only the file's.
 fn newest(root: &Path) -> u64 {
-    fn walk(root: &Path, dir: &Path, newest: &mut u64) {
-        for entry in entries(root, dir).into_iter().flatten() {
-            if (entry.dir || dir == root)
-                && let Ok(meta) = fs::metadata(&entry.path)
-            {
-                *newest = (*newest).max(mtime_ms(&meta));
-            }
-            if entry.dir {
-                walk(root, &entry.path, newest);
-            }
-        }
-    }
     let mut newest = fs::metadata(root).map_or(0, |meta| mtime_ms(&meta));
-    walk(root, root, &mut newest);
+    let _ = walk(root, &listed, &mut |entry| {
+        if (entry.dir || !entry.rel.contains('/'))
+            && let Ok(meta) = fs::metadata(&entry.path)
+        {
+            newest = newest.max(mtime_ms(&meta));
+        }
+        Ok(true)
+    });
     newest
 }
 

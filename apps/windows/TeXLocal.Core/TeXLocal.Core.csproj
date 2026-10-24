@@ -5,14 +5,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <RustSource Include="$(RepoRoot)crates\**\*.rs;$(RepoRoot)crates\**\Cargo.toml" />
     <None Include="$(RepoRoot)target\release\texlocal_ffi.dll" Link="texlocal_ffi.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
-  <Target Name="Cargo" BeforeTargets="BeforeBuild" Condition="'$(SkipCargo)' != 'true'"
-          Inputs="@(RustSource);$(RepoRoot)Cargo.toml;$(RepoRoot)Cargo.lock"
-          Outputs="$(RepoRoot)target\release\texlocal_ffi.dll">
+  <!-- Every build, as cargo knows what the DLL depends on: a list kept here missed the core's catalog.json and kept a
+       stale DLL. -->
+  <Target Name="Cargo" BeforeTargets="BeforeBuild" Condition="'$(SkipCargo)' != 'true'">
     <Exec Command="cargo rustc -p texlocal-ffi --lib --release --crate-type cdylib" WorkingDirectory="$(RepoRoot)" />
-    <Touch Files="$(RepoRoot)target\release\texlocal_ffi.dll" />
   </Target>
 </Project>

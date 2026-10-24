@@ -35,6 +35,7 @@ public sealed partial class PdfView : UserControl
     (int Number, Point At)? source;
     int loads;
     bool rendering, again, dark;
+    readonly Debounce marked;
 
     public event Action? ViewMoved;
     /// A page from 1 and a point on it in TeX points from its top left: a double-click, or Go to source position.
@@ -43,6 +44,10 @@ public sealed partial class PdfView : UserControl
     public PdfView()
     {
         InitializeComponent();
+        marked = new(2000, () =>
+        {
+            foreach (var page in pages) page.Marks.Children.Clear();
+        });
         Scroller.ViewChanged += (_, e) =>
         {
             ViewMoved?.Invoke();
@@ -75,7 +80,6 @@ public sealed partial class PdfView : UserControl
     }
 
     public new bool Focus(FocusState state) => Scroller.Focus(state);
-    public bool Compiling { set => Progress.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
 
     /// With no PDF, says why Compile is off, as Home's tip does.
     public bool TexMissing
@@ -158,20 +162,23 @@ public sealed partial class PdfView : UserControl
     }
 
     /// Draws for the view as it is now, one pass at a time: a call during a pass runs another after it.
-    async void Render()
+    void Render()
     {
         again = true;
         if (rendering) return;
         rendering = true;
-        try
+        App.Run("Can't show the PDF", async () =>
         {
-            while (again)
+            try
             {
-                again = false;
-                if (document is { } doc) await Draw(doc, pages, tops, Scroller.VerticalOffset / Zoom, Zoom);
+                while (again)
+                {
+                    again = false;
+                    if (document is { } doc) await Draw(doc, pages, tops, Scroller.VerticalOffset / Zoom, Zoom);
+                }
             }
-        }
-        finally { rendering = false; }
+            finally { rendering = false; }
+        });
     }
 
     /// Shows a PDF from a copy, which leaves the file free for the next build. It keeps the place, the
@@ -252,6 +259,7 @@ public sealed partial class PdfView : UserControl
         View(zoom, Math.Max(centre * zoom - Scroller.ViewportWidth / 2, 0));
     }
 
+    public void ZoomToActualSize() => ZoomTo(1);
     public void ZoomIn() => ZoomTo(Zoom * 1.25);
     public void ZoomOut() => ZoomTo(Zoom * 0.8);
     public void FitWidth() => Refit(Fit.Width);
@@ -297,7 +305,8 @@ public sealed partial class PdfView : UserControl
     }
 
     /// Scrolls a SyncTeX point a third of the way down the view, and across only when its box is out
-    /// of view, then shows the box for 2 s. With no box from the core it only scrolls (core gap 10).
+    /// of view, then shows the box for 2 s, a later one's 2 s from its own. With no box from the core it only scrolls
+    /// (core gap 10).
     public void Reveal(ForwardSync at)
     {
         if (at.Page < 1 || at.Page > pages.Length) return;
@@ -313,15 +322,12 @@ public sealed partial class PdfView : UserControl
         Canvas.SetLeft(box, x);
         Canvas.SetTop(box, y - height);
         page.Marks.Children.Add(box);
-        var shown = DispatcherQueue.CreateTimer();
-        (shown.Interval, shown.IsRepeating) = (TimeSpan.FromSeconds(2), false);
-        shown.Tick += (_, _) => page.Marks.Children.Remove(box);
-        shown.Start();
+        marked.Restart();
     }
 
     /// Windows' print dialog for the build's pages, on white, each fitted to the sheet and drawn at the printer's
     /// resolution up to 600 dpi: XAML holds every sheet until the job is spooled, and PNG keeps them small until then.
-    public async void Print()
+    public void Print() => App.Run("Can't print", async () =>
     {
         if (document is not { } doc) return;
         var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(App.Window.AppWindow.Id);
@@ -333,28 +339,23 @@ public sealed partial class PdfView : UserControl
             paper = e.PrintTaskOptions.GetPageDescription(0).PageSize;
             printing.SetPreviewPageCount((int)doc.PageCount, PreviewPageCountType.Final);
         };
-        printing.GetPreviewPage += async (_, e) =>
-            printing.SetPreviewPage(e.PageNumber, await Sheet(doc, e.PageNumber - 1, paper, 96 * (XamlRoot?.RasterizationScale ?? 1)));
-        printing.AddPages += async (_, e) =>
+        printing.GetPreviewPage += (_, e) => App.Run("Can't print", async () =>
+            printing.SetPreviewPage(e.PageNumber, await Sheet(doc, e.PageNumber - 1, paper, 96 * (XamlRoot?.RasterizationScale ?? 1))));
+        printing.AddPages += (_, e) => App.Run("Can't print", async () =>
         {
             var sheet = e.PrintTaskOptions.GetPageDescription(0);
             for (var i = 0; i < doc.PageCount; i++) printing.AddPage(await Sheet(doc, i, sheet.PageSize, Math.Min(sheet.DpiX, 600)));
             printing.AddPagesComplete();
-        };
+        });
         var title = System.IO.Path.GetFileNameWithoutExtension(FilePath);
-        // The interop throws when Windows has no printing for the window, which unhandled would end the app.
-        PrintManager? manager = null;
-        try
-        {
-            manager = PrintManagerInterop.GetForWindow(window);
-            manager.PrintTaskRequested += Requested;
-            await PrintManagerInterop.ShowPrintUIForWindowAsync(window);
-        }
-        catch (Exception ex) { await App.Alert("Can't print", ex.Message); }
-        finally { manager?.PrintTaskRequested -= Requested; }
+        // The interop throws when Windows has no printing for the window.
+        var manager = PrintManagerInterop.GetForWindow(window);
+        manager.PrintTaskRequested += Requested;
+        try { await PrintManagerInterop.ShowPrintUIForWindowAsync(window); }
+        finally { manager.PrintTaskRequested -= Requested; }
 
         void Requested(PrintManager sender, PrintTaskRequestedEventArgs e) => e.Request.CreatePrintTask(title, r => r.SetSource(source));
-    }
+    });
 
     /// A page fitted to a sheet of paper in DIPs, drawn at a resolution in dpi.
     static async Task<Image> Sheet(PdfDocument doc, int index, Size paper, double dpi)

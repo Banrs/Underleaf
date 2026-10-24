@@ -4,12 +4,11 @@ import Foundation
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        guard let made = await alerting("Couldn’t Create “\(name)”", {
-            try await core.call("create_entry", ["id": id, "path": folder.isEmpty ? name : "\(folder)/\(name)", "dir": directory],
+        // Answered after the tree that lists it, for the sidebar's rename that follows.
+        guard let session, let made = await alerting("Couldn’t Create “\(name)”", {
+            try await core.call("session_create_entry", ["session": session, "folder": folder, "name": name, "dir": directory],
                                 as: PathEvent.self).path
         }), !closed else { return nil }
-        // For the sidebar's rename that follows, whether or not the open below is overtaken.
-        await tree.reload()
         if !directory { await open(made, focus: false) }
         return made
     }
@@ -41,11 +40,10 @@ extension ProjectModel {
         if moved { openPath = now }
         let mainChanged = result.mainFile != settings?.mainFile
         settings?.mainFile = result.mainFile
-        await tree.reload()
         showUIState(result.ui)
         if moved, let now, openPath == now, !closed {
             if isText(now) != wasText {
-                if wasText { _ = await closeDocument(now) }
+                if wasText { await closeDocument(now) }
                 if openPath == now { clearOpenFile() }
                 await open(now, focus: false, showsSource: false)
             } else {

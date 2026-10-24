@@ -1,13 +1,19 @@
-import SwiftUI
+#if os(macOS)
+import AppKit
+#else
 import UIKit
+#endif
+import SwiftUI
 
 /// The build's issues and Live Preview's on the lines laid out: a band over each paragraph with one, a box at the end of
-/// its first line (`IssueBox`) that a tap opens in the build panel, and the undefined command underlined.
+/// its first line (`IssueBox`), the words the box doesn't show for a pointer resting on it, and the undefined command
+/// underlined.
 final class IssueOverlay {
     struct Row {
         let line: Int
         let band: CGRect
         var message: (view: IssueMessageView, rect: CGRect, cut: Bool)?
+        var tip: String?
         var tokens: [CGRect] = []
     }
 
@@ -20,6 +26,8 @@ final class IssueOverlay {
     /// its log rather than the build panel's list.
     var live: [Int: IssuesEvent.Line] = [:] { didSet { if live != oldValue { changed() } } }
     var isEmpty: Bool { lines.isEmpty && live.isEmpty }
+    /// A box, or a line with an issue chosen in the gutter: the project opens the issue in the build panel.
+    var clicked: (Int) -> Void = { _ in }
 
     /// A line's one issue: the build's, which is of the text shown (an edit clears it) and listed, over Live Preview's,
     /// which takes its place at the first edit.
@@ -35,11 +43,14 @@ final class IssueOverlay {
 
     private(set) var rows: [Row] = []
     private var labels: [Int: IssueLabel] = [:]
-    private var font = UIFont.systemFont(ofSize: UIFont.systemFontSize - 1)
+    private var font = PlatformFont.systemFont(ofSize: PlatformFont.systemFontSize - 1)
     /// A character's width of the text's font: the least room between a line's text and its box.
     private var gap: CGFloat = 0
+    #if os(macOS)
+    private var tips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
+    #endif
 
-    func fontChanged(size: CGFloat, text: UIFont) {
+    func fontChanged(size: CGFloat, text: PlatformFont) {
         font = .systemFont(ofSize: size)
         gap = ("0" as NSString).size(withAttributes: [.font: text]).width
         labels.removeAll()
@@ -49,6 +60,9 @@ final class IssueOverlay {
         guard !isEmpty || !rows.isEmpty else { return }
         // Each line keeps its box's view.
         var views = Dictionary(rows.compactMap { row in row.message.map { (row.line, $0.view) } }) { $1 }
+        #if os(macOS)
+        rows.forEach { view.setNeedsDisplay($0.band) }
+        #endif
         rows.removeAll()
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
             guard let reported = issue(on: number)?.issue else { return }
@@ -56,6 +70,9 @@ final class IssueOverlay {
             let placed = row(number, reported, on: fragment.lines(extra: extra), of: fragment, in: former)
             if placed?.message?.view !== former { former?.removeFromSuperview() }
             guard let placed else { return }
+            #if os(macOS)
+            view.setNeedsDisplay(placed.band)
+            #endif
             rows.append(placed)
         }
         for (offset, fragment) in view.fragments {
@@ -64,7 +81,12 @@ final class IssueOverlay {
             if issue(on: number + 1) != nil, fragment.extraLine != nil { place(number + 1, on: fragment, extra: true) }
         }
         views.values.forEach { $0.removeFromSuperview() }
+        #if os(macOS)
+        updateTips()
+        #else
+        for row in rows { row.message?.view.toolTip = row.tip }
         view.redrawLineAndGutter()
+        #endif
     }
 
     private func row(_ number: Int, _ reported: IssuesEvent.Line, on lines: ArraySlice<NSTextLineFragment>,
@@ -87,19 +109,23 @@ final class IssueOverlay {
         if width <= room {
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
             let rect = CGRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
+            #if os(macOS)
+            let fill = Color(nsColor: view.backgroundColor)
+            #else
+            let fill = Color(uiColor: .editorBackground)
+            #endif
             let box = IssueBox(isError: reported.error, issues: issues, text: fitted?.text,
-                               cutAtTail: fitted != nil && fitted?.width == nil, font: font, fill: Color(uiColor: .editorBackground),
+                               cutAtTail: fitted != nil && fitted?.width == nil, font: font, fill: fill,
                                baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
             let message = former ?? IssueMessageView(box)
-            if message.box != box { message.box = box }
+            if message.rootView != box { message.rootView = box }
             if message.frame != rect { message.frame = rect }
-            message.line = number
-            // The whole of what's cut, for a pointer resting on it; a tap shows it in the build panel.
-            message.toolTip = fitted?.cut != false || issues > 1 ? said.joined(separator: "\n") : nil
             if message.superview !== view { view.addSubview(message) }
             issue.message = (message, rect, fitted?.cut ?? true)
         }
-        // TextKit 2 draws no underline given as a rendering attribute: it is drawn under the text, in Xcode's red.
+        if issue.message?.cut != false || issues > 1 { issue.tip = said.joined(separator: "\n") }
+        // TextKit 2 draws no underline given as a rendering attribute: it is drawn under the text, in Xcode's red
+        // (`anIssuesMessageIsAtItsLinesEnd`).
         if !reported.tokens.isEmpty, let textFont = view.font {
             let thickness = max(1, view.onPixels(CTFontGetUnderlineThickness(textFont as CTFont)))
             for token in reported.tokens {
@@ -117,47 +143,40 @@ final class IssueOverlay {
         return issue
     }
 
+    #if os(macOS)
+    private func updateTips() {
+        let wanted = rows.compactMap { row in row.tip.flatMap { tip in row.message.map { ($0.rect, tip) } } }
+        guard !wanted.elementsEqual(tips, by: { $0.0 == $1.rect && $1.text.isEqual(to: $0.1) }) else { return }
+        for tip in tips { view.removeToolTip(tip.tag) }
+        // The string is the tag's owner, which AppKit asks for its description and doesn't keep.
+        tips = wanted.map { rect, tip in
+            let text = tip as NSString
+            return (view.addToolTip(rect, owner: text, userData: nil), rect, text)
+        }
+    }
+
+    func message(at point: NSPoint) -> Row? {
+        view.visibleRect.contains(point) ? rows.first(where: { $0.message?.rect.contains(point) == true }) : nil
+    }
+    #endif
+
     /// The caret's line has the current line's fill, of the same shape, in place of its band.
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {
-                UIColor.tertiarySystemFill.setFill()
+                PlatformColor.tertiarySystemFill.setFill()
+                #if os(macOS)
+                NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
+                #else
                 UIBezierPath(roundedRect: issue.band, cornerRadius: 4).fill()
+                #endif
             }
-            UIColor.systemRed.setFill()
+            PlatformColor.systemRed.setFill()
+            #if os(macOS)
+            issue.tokens.forEach { $0.fill() }
+            #else
             issue.tokens.forEach { UIRectFill($0) }
+            #endif
         }
-    }
-}
-
-/// The box is a view above the text, which TextKit's selection would cover in the underlay. A tap on it, or near it within
-/// a touch's 44 pt, opens the issue; a swipe from it scrolls (`touchesShouldCancel`). VoiceOver has the issues from the
-/// text view's rotor.
-final class IssueMessageView: UIControl {
-    private let hosting: UIHostingController<IssueBox>
-    var line = 0
-
-    init(_ box: IssueBox) {
-        hosting = UIHostingController(rootView: box)
-        super.init(frame: .zero)
-        hosting.sizingOptions = []
-        hosting.safeAreaRegions = []
-        hosting.view.backgroundColor = .clear
-        hosting.view.isUserInteractionEnabled = false
-        hosting.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        addSubview(hosting.view)
-        isAccessibilityElement = false
-        addAction(UIAction { [unowned self] _ in (superview as? SourceTextView)?.issueClicked(line) }, for: .touchUpInside)
-    }
-
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
-
-    var box: IssueBox {
-        get { hosting.rootView }
-        set { hosting.rootView = newValue }
-    }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(dx: min(0, (bounds.width - 44) / 2), dy: min(0, (bounds.height - 44) / 2)).contains(point)
     }
 }

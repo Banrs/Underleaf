@@ -31,26 +31,30 @@ the system control that already looks right, never by dropping a guideline-corre
 
 ## Architecture
 
-```
-apps/windows/
-  Directory.Build.props   net10.0, nullable, TreatWarningsAsErrors
-  TeXLocal.Core/          class library without WinUI (namespace TeXLocal.Bridge): Native.cs (the imports),
-                          Core.cs, Source.cs (a SafeHandle over TlSource), Models.cs (the JSON's records);
-                          builds the DLL
-  TeXLocal/               the WinUI 3 app: App, MainWindow, Prefs.cs (typed preferences);
-                          Pages/ Home, Workspace (.xaml.cs the session and its jumps; .Sidebar.cs files, outline,
-                          search, words; .Insert.cs the Insert menu and symbol palette), Settings;
-                          Controls/ Card, Shortcut, Sizer, RenameFlyout, PdfView, SourceView (+ .Find.cs),
-                          PagePreview, HistoryDialog; Themes/Generic.xaml (the custom controls' styles)
-  TeXLocal.Tests/         xUnit against TeXLocal.Core only: the bridge and smoke behaviour
-```
+`TeXLocal.Core` is a class library without WinUI (namespace `TeXLocal.Bridge`): the imports, the
+bridge and the JSON's records, and it builds the DLL. `TeXLocal` is the app: `App`, `MainWindow`
+and `Prefs`, the Home, Workspace and Settings pages, and the controls WinUI lacks. `TeXLocal.Tests`
+runs xUnit against `TeXLocal.Core` alone.
+
+- **The workspace** binds a `WorkspaceModel` (`x:Bind`, one way): the page sets what the bars,
+  menus and status show, never the controls. Commands found in more than one place (Bold, Save, Go
+  to line, Zoom in…) are `XamlUICommand`s in the page's resources, each named, drawn and run once;
+  their keys stay on the menu items (`Shortcut`), as a command's keys are copied onto every
+  control that uses it. The trees draw the core's records (`TreeNode`, `OutlineNode`, `SearchFile`
+  and `SearchHit`) through templates.
+- **One of each**: `App.Run`, every handler's awaited work, alerting what it throws; `App.Show`,
+  queueing dialogs, as WinUI shows one at a time; `App.Ask` for a question; `App.Prompt` for a
+  name or a number (New, Rename, Rename symbol, Save version, Go to line and page, a new project),
+  the core's refusal under its box; `App.Glyph`, Segoe Fluent Icons' glyph for each kind the core
+  names; `Debounce`, work done once a burst of calls pauses.
 
 - **One bridge.** `Core` wraps `tl_open`, `tl_call_async`, `tl_set_listener`, `tl_session_source`
   and `tl_close`. `CallAsync(cmd, args)` completes a `TaskCompletionSource` from the `done`
   callback (continuations run asynchronously, so an `await` on the UI thread resumes there) and
   throws `CoreException(Status, Message)` for an error envelope. Strings cross as UTF-8 `byte*`;
-  answers are parsed straight from the core's UTF-8 and freed with `tl_free` in a `finally`; a null
-  `args` passes a real NULL. Callbacks are `[UnmanagedCallersOnly]` statics that parse the JSON
+  answers are parsed straight from the core's UTF-8, the source's synchronous ones freed with `tl_free`
+  in a `finally` and `tl_call_async`'s envelopes by the core once `done` returns; a null `args`
+  passes a real NULL. Callbacks are `[UnmanagedCallersOnly]` statics that parse the JSON
   into an element owning its data before returning.
 - **Events.** The listener hands each parsed event to the `post` delegate given to `Core.Open`
   (`DispatcherQueue.TryEnqueue`); pages subscribe to `Core.Event`, and the workspace reads its
@@ -64,9 +68,10 @@ apps/windows/
   `HKCU\Software\Classes\Local Settings\Software\TeXLocal`). With `TEXLOCAL_DATA` set a run
   keeps its own, "TeXLocal Dev", so a dev build never moves the installed app's window.
 - **The DLL.** `TeXLocal.Core.csproj` runs `cargo rustc -p texlocal-ffi --lib --release
-  --crate-type cdylib` at the repository root (incremental on `crates/**/*.rs`, `Cargo.lock` and
-  `Cargo.toml`; skipped with `-p:SkipCargo=true`) and copies `target/release/texlocal_ffi.dll` to
-  the app's and the tests' output. The core is always the release build.
+  --crate-type cdylib` at the repository root on every build, Cargo's own checks deciding what to
+  rebuild, as the catalogue (`catalog.json`) and other inputs aren't `.rs` files (skipped with
+  `-p:SkipCargo=true`), and copies `target/release/texlocal_ffi.dll` to the app's and the tests'
+  output. The core is always the release build.
 
 ## Control choices
 
@@ -80,13 +85,13 @@ apps/windows/
 | Settings cards | `Card`, a `ContentControl` styled in Generic.xaml | No Community Toolkit |
 | Home | Templates an `ItemsControl` of subtle buttons with `PagePreview`; Recent a `ListView`, an opened folder's path under its name as in Word's | A `GridView` of templates would select |
 | Accelerators | `Shortcut.Keys`/`Scope` attached properties | OEM keys have no XAML name |
-| Dialogs | `ContentDialog` through `App.Show` | Each dialog setting its own root, theme and style |
+| Dialogs | `ContentDialog` through `App.Show`, one at a time; names and numbers in `App.Prompt`'s, as File Explorer's New and Notepad's Go to | Each dialog setting its own root, theme and style; renaming in place needs a flyout of its own |
 | Version history | A wide `ContentDialog`, as Word's Version History: versions and their changed files beside the file's comparison; Restore all's confirmation takes its place and gives it back on Cancel | A page would leave the workspace, closing its session; only one `ContentDialog` shows at a time |
 | Recycle Bin | `Microsoft.VisualBasic.FileIO.FileSystem` with `SendToRecycleBin` | `DeleteAsync` deletes outright unpackaged |
 | Source editor | `RichEditBox` (it passed the editor gate) | Monaco needs WebView2; AvalonEdit is WPF |
 | Maths, palette | `SvgImageSource` for RaTeX's SVG; the palette a grouped `GridView` in a `Flyout` | A font's glyphs miss TeX's spacing |
 | Completion | A `ListView` in a `Popup`, never focused | A `Flyout` takes the keyboard |
-| Find | Notepad's find bar over `RichEditTextRange.FindText` | No find in `RichEditBox` |
+| Find | Notepad's find bar over the source's `find`, folded as project search folds | RichEdit's `FindText` folds case its own way |
 | Navigation | VS Code's Go back and Go forward (Alt+Left, the window's, which goes back a page where there's no place; Alt+Right; the mouse's buttons) over every jump (`WorkspacePage.Jump`); Visual Studio's Go to all (Ctrl+T), an `AutoSuggestBox` in a `Flyout` at the top centre | The title bar's back button stays the page's, as in Settings; a `ContentDialog` dims and blocks the window |
 | Quick info | VS Code's hover, a `Flyout` under the name after 500 ms at rest that goes as the pointer leaves, or at the caret (Ctrl+Shift+I) | A `ToolTip` holds no link; a `TeachingTip` points a tail at a word |
 | Layer corners | A rounded clip on each layer's composition visual | `CornerRadius` rounds only the border |
@@ -109,7 +114,7 @@ later WindowsAppSDK.
 ## Core gaps
 
 Logic the app needs that belongs in a crate, not C#. The numbers are those the app's comments
-cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
+cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 22, 24, 26, 29, 32, 33) leave holes.
 
 6. **PDF in the core**: PDFium (`pdfium-render` 0.9.4, `pdfium-win-x64` chromium/7881) giving page
    text with UTF-16 character boxes (search, selection, `synctex_match`, word-precise inverse),
@@ -134,11 +139,7 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 20. **The caret's heading**: `text_styles` also returns the caret line's heading command.
 23. **Editable files**: `TreeNode.editable`, and `session_open_document` returns the kind; the
     host's kind list and `.tex` test go.
-24. **Paths after a change**: `create_entry {dir, name}` and `session_rename {from, name}` answer
-    the new path after the `tree` event; `Join`/`ParentOf`/`RefreshTree` and the tree dedupe go.
 25. **Unsaved in the document event**: the `document` event carries `unsaved`.
-26. **Find in the core**: a source `find {query, matchCase, wholeWord}` answering every match as a
-    UTF-16 range with `session_search`'s folding, so Ctrl+F and Ctrl+Shift+F agree.
 27. **Maths size**: both hosts keep the 1.21 ratio; a `math_preview {caret, size, color}` would
     take it.
 28. **Compositing**: Windows still pre-composites its secondary ink (`Over`).
@@ -153,7 +154,7 @@ cite, so landed gaps (1–5, 8, 15, 18, 19, 21, 29, 32, 33) leave holes.
 
 | Area | Mac | Windows | Why |
 |---|---|---|---|
-| App | Open Recent, Dock menu, opens files from Finder | Open with and the command line; no jump list | UI |
+| App | Open Recent, Dock menu, opens files from Finder | File › Open's recent projects, newest changed first; Open with and the command line; no jump list, which an unpackaged app sets through COM | UI |
 | Workspace | Inspector with the engine | Build menu: Engine and toggles | Design |
 | Sidebar | Drag to move, undoable trash; outline follows the scroll | Drop from Explorer, drag to the editor, Recycle Bin, no undo; the outline follows the scroll | UI |
 | Editor | Spelling over `code_ranges`, Writing Tools | Spell check off | UI; Platform |

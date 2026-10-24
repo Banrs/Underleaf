@@ -12,7 +12,7 @@ struct HomeView: View {
     @State private var slowImports: [URL] = []
 
     var body: some View {
-        Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
+        Group { if let problem = app.libraryProblem { LibraryUnavailable(problem: problem) } else { list } }
         .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.open(urls) } }
         .navigationTitle("Projects")
         .toolbar {
@@ -38,16 +38,6 @@ struct HomeView: View {
         }
     }
 
-    private func unavailable(_ problem: AppAlert) -> some View {
-        ContentUnavailableView {
-            Label(problem.title, systemImage: "externaldrive.badge.exclamationmark")
-        } description: {
-            Text(problem.message)
-        } actions: {
-            Button("Try Again") { Task { await app.retryLibrary() } }
-        }
-    }
-
     private var list: some View {
         List(selection: $selection) {
             // No section header: the list pins its first one with a rule the window's width.
@@ -70,7 +60,7 @@ struct HomeView: View {
                     ProjectRow(project: project, working: project.id == app.opening && (project.id == slowOpening || copied),
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
-                if app.projectsLoaded, shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
+                if app.projectsLoaded, shown.isEmpty { NoProjects(query: query).frame(maxWidth: .infinity).selectionDisabled() }
             } header: { Text("All Projects") }
             .listSectionSeparator(.hidden)
         }
@@ -119,21 +109,6 @@ struct HomeView: View {
         }
     }
 
-    /// In the section, not over the list, so the templates stay in view.
-    @ViewBuilder private var empty: some View {
-        if !query.isEmpty {
-            ContentUnavailableView.search(text: query)
-        } else {
-            ContentUnavailableView {
-                Label("No Projects Yet", systemImage: "text.document")
-            } description: {
-                Text("Choose a template above, or open or drop a folder, .tex file or .zip.")
-            } actions: {
-                Button("Open…") { app.openingProject = true }
-            }
-        }
-    }
-
     private func commitRename(_ project: ProjectInfo) {
         guard let name = rename.end(project.id, from: project.name) else { return }
         Task { await app.rename(project, to: name) }
@@ -176,35 +151,6 @@ private struct ProjectRow: View {
     }
 }
 
-private struct ProjectLabel<Name: View>: View {
-    let detail: Text
-    var symbol = "text.document"
-    var dimmed = false
-    let progress: String?
-    @ViewBuilder let name: Name
-
-    var body: some View {
-        HStack {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    name.foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .primary)
-                    detail.font(.subheadline).foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .secondary)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-            } icon: {
-                // Grey, as the detail: the hierarchical style would tint it the accent.
-                Image(systemName: symbol)
-                    .font(.title2)
-                    .foregroundStyle(dimmed ? Color(nsColor: .tertiaryLabelColor) : .secondary)
-            }
-            if let progress {
-                Spacer()
-                ProgressView().controlSize(.small).accessibilityLabel(progress)
-            }
-        }
-    }
-}
-
 /// An image button (HIG, Buttons): no border at rest, 10 pt to the clickable edge, a fill under the pointer that deepens
 /// while pressed.
 private struct TemplateButtonStyle: ButtonStyle {
@@ -224,30 +170,8 @@ private struct TemplateButtonStyle: ButtonStyle {
     }
 }
 
-/// A drawing of the template's first page with its name under it.
-private struct TemplateCard: View {
-    let template: ProjectTemplate
-    /// A US Letter page, 120 pt wide, its corner drawn to look like paper.
-    private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
+extension TemplateCard {
     static let width = page.width + 2 * TemplateButtonStyle.edge
-    private static let corner: CGFloat = 6
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let paper = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-        VStack(spacing: 8) {
-            PagePreview(template: template)
-                .frame(width: Self.page.width, height: Self.page.height)
-                // White paper in either appearance, dimmed a little in dark mode.
-                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1), in: paper)
-                .overlay { paper.strokeBorder(.separator) }
-                .environment(\.colorScheme, .light)
-                // The card reads as its name ("Blank", not "Add, Blank").
-                .accessibilityHidden(true)
-            Text(template.title)
-        }
-        .accessibilityElement(children: .combine)
-    }
 }
 
 struct NewProjectSheet: View {
@@ -262,30 +186,10 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: draft.template)
         } fields: {
-            // 27.2: at a grouped form's trailing edge a space typed last shows only once a letter follows, so the text leads
-            // in a field as wide as the name.
-            LabeledContent("Name") {
-                NameWidth {
-                    TextField("Name", text: $draft.name, prompt: Text("Required"))
-                        .labelsHidden()
-                        .multilineTextAlignment(.leading)
-                        .focused($nameFocused)
-                }
-            }
+            TextField("Name", text: $draft.name, prompt: Text("Required"))
+                .focused($nameFocused)
             Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)
-    }
-}
-
-/// Claiming no ideal, so a long name scrolls in its row and never moves under its label.
-private struct NameWidth: Layout {
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let text = subviews[0].sizeThatFits(.unspecified).width
-        return subviews[0].sizeThatFits(ProposedViewSize(width: min(text, proposal.width ?? 0), height: proposal.height))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

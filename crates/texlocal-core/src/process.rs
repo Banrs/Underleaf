@@ -3,7 +3,7 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -20,8 +20,9 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 /// kill the tree from any thread while another awaits the tool.
 #[derive(Clone)]
 pub(crate) struct Tree {
+    /// None once the tool is to be reaped, after which its pid may be another's.
     #[cfg(unix)]
-    group: i32,
+    group: std::sync::Arc<std::sync::Mutex<Option<i32>>>,
     #[cfg(windows)]
     job: std::sync::Arc<std::os::windows::io::OwnedHandle>,
 }
@@ -32,6 +33,7 @@ impl Tree {
         {
             let child = command.process_group(0).spawn()?;
             let group = child.id().expect("a child just spawned has its pid") as i32;
+            let group = std::sync::Arc::new(std::sync::Mutex::new(Some(group)));
             Ok((child, Self { group }))
         }
         #[cfg(windows)]
@@ -51,16 +53,55 @@ impl Tree {
     }
 
     pub(crate) fn kill(&self) {
-        // SAFETY: plain system calls, on the group the tool leads or the job's open handle.
+        // SAFETY: plain system calls, on the group the tool leads, held so it isn't reaped
+        // meanwhile, or the job's open handle.
         #[cfg(unix)]
-        unsafe {
-            libc::killpg(self.group, libc::SIGKILL);
+        if let Some(group) = *crate::lock(&self.group) {
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
+            }
         }
         #[cfg(windows)]
         unsafe {
             use std::os::windows::io::AsRawHandle;
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job.as_raw_handle(), 1);
         }
+    }
+
+    /// The tool's exit, once what it started is killed too. On Unix the tree goes before the
+    /// tool is reaped: until then the tool's pid, which names the group, is no other process's.
+    pub(crate) async fn ended(&self, child: &mut Child) -> io::Result<ExitStatus> {
+        #[cfg(unix)]
+        {
+            let pid = child.id().expect("not reaped yet") as libc::id_t;
+            let _ = tokio::task::spawn_blocking(move || exited(pid)).await;
+            if let Some(group) = crate::lock(&self.group).take() {
+                // SAFETY: a plain system call on the group, its leader a zombie still.
+                unsafe {
+                    libc::killpg(group, libc::SIGKILL);
+                }
+            }
+            child.wait().await
+        }
+        #[cfg(windows)]
+        {
+            let status = child.wait().await;
+            self.kill();
+            status
+        }
+    }
+}
+
+/// Once the process `pid` has ended, which it leaves to be reaped.
+#[cfg(unix)]
+fn exited(pid: libc::id_t) {
+    // SAFETY: an info of the size waitid writes, for a child of this process.
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let flags = libc::WEXITED | libc::WNOWAIT;
+        while libc::waitid(libc::P_PID, pid, &raw mut info, flags) == -1
+            && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
+        {}
     }
 }
 
@@ -210,6 +251,22 @@ mod tests {
         tree.kill();
         let ended = tokio::time::timeout(PROBE_TIMEOUT, child.wait());
         assert!(!ended.await.unwrap().unwrap().success());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_a_tool_leaves_running_ends_with_it() {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30 & exit 0"])
+            .stdout(Stdio::piped());
+        let (mut child, tree) = Tree::spawn(&mut command).unwrap();
+        let mut out = child.stdout.take().unwrap();
+        assert!(tree.ended(&mut child).await.unwrap().success());
+        // The sleep holds the pipe until it is killed.
+        let mut rest = Vec::new();
+        let closed = tokio::time::timeout(PROBE_TIMEOUT, out.read_to_end(&mut rest));
+        assert!(closed.await.is_ok());
     }
 
     #[tokio::test]

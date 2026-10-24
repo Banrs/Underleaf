@@ -103,7 +103,8 @@ impl Actor {
             self.builds.waiting_for_tex = true;
             return Ok(());
         }
-        if self.builds.compiling {
+        // A clean deletes the folder the build writes in.
+        if self.builds.compiling || self.builds.cleaning.is_some() {
             self.builds.queued = Some(self.builds.queued.unwrap_or(true) && auto);
             return Ok(());
         }
@@ -124,8 +125,8 @@ impl Actor {
     }
 
     pub fn stop_compile(&mut self) {
+        self.builds.queued = None;
         if self.builds.compiling {
-            self.builds.queued = None;
             self.engine.stop_compile(&self.project.root);
         }
     }
@@ -242,9 +243,10 @@ impl Actor {
             self.publish_checks();
             self.publish_build();
             self.emit("build_cleaned", json!({}));
-            if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
-            }
+        }
+        let queued = self.builds.queued.take();
+        if let Some(auto) = queued.or((result.is_ok() && self.auto_compile).then_some(true)) {
+            self.later.push_back(Later::Compile(auto));
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(result.clone().map(|()| Value::Null));

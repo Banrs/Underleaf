@@ -14,7 +14,7 @@ struct AppCommands: Commands {
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
                     Button(recent.name, systemImage: "text.document") { Task { await app.open(recent.id) } }
-                    // macOS 27 hides a menu item's image unless the label style shows it.
+                    // A menu item's image shows only where the label style shows it.
                     .labelStyle(.titleAndIcon)
                 }
                 Divider()
@@ -106,10 +106,8 @@ struct AppCommands: Commands {
         }
         // No help book: the default item would only say so.
         CommandGroup(replacing: .help) {
-            #if os(macOS)
             items(.quickHelp)
             Divider()
-            #endif
             Link("Visit TeXLocal on GitHub", destination: Links.repository)
             Link("Report Issue", destination: Links.issues)
         }
@@ -125,7 +123,7 @@ private struct CommandItem: View {
         let project = app.commandProject
         Button { app.perform(command, on: project) } label: {
             let title = app.title(command, on: project)
-            // macOS 27 shows a menu item's image only with this style.
+            // A menu item's image shows only with this style.
             if let symbol = command.style?.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
         .labelStyle(.titleAndIcon)
@@ -151,7 +149,10 @@ private struct BuildOptionItems: View {
 
     var body: some View {
         let project = app.commandProject
+        // iPadOS lets an app start no programs.
+        #if os(macOS)
         option("Shell Escape", project, \.shellEscape, SettingsChange.shellEscape)
+        #endif
         option("Stop on First Error", project, \.stopOnFirstError, SettingsChange.stopOnFirstError)
     }
 

@@ -4,7 +4,6 @@ struct FilesList: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
     @State private var selection: String?
-    @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
     @FocusState private var listFocused: Bool
 
@@ -12,19 +11,10 @@ struct FilesList: View {
         // The File Outline's header is the files' bottom bar, as high as the pane's bottom safe area.
         GeometryReader { geometry in
             // Two lists: one diffed from the tree to grouped hits and back keeps stale rows.
-            Group { if project.search.isSearching { results } else { files } }
+            Group { if project.search.isSearching { SearchResults(project: project) } else { files } }
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
-        // Each search reads every file: it waits for typing to pause.
-        .task(id: project.search.query) {
-            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !Task.isCancelled else { return }
-            await project.search.run(in: project.session)
-            // VoiceOver hears the count, as it does the PDF's find count.
-            guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
-            let count = project.search.hitCount
-            project.notices.announce(count == 0 ? String(localized: "Not found") : matches(count), queued: true)
-        }
+        .searching(project)
         .onChange(of: app.newEntry, initial: true) { _, entry in
             // A project left for another still shows while the next loads, whose list takes the entry.
             guard let entry, !project.closed else { return }
@@ -62,7 +52,7 @@ struct FilesList: View {
                     }
                 }
             }
-            // None for no row: SwiftUI's asks AppKit for row -1's view, which raises (27.2).
+            // None for no row: SwiftUI's would ask AppKit for row -1's view, which raises.
             .contextMenu(forSelectionType: String.self) { paths in
                 if let path = paths.first, let node = project.tree.node(at: path) {
                     if node.isDirectory {
@@ -137,87 +127,6 @@ struct FilesList: View {
                     moveToTrash: { Task { await project.deleteEntry(node.path) } })
     }
 
-    private var results: some View {
-        List(selection: $hit) {
-            ForEach(project.search.groups ?? []) { group in
-                Section {
-                    ForEach(group.hits) { hit in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
-                                .lineLimit(2)
-                            Spacer(minLength: 4)
-                            Text("\(hit.line)")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .accessibilityLabel("Line \(hit.line)")
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                } header: {
-                    HStack {
-                        Text(group.file).truncationMode(.middle)
-                        Spacer()
-                        Text(group.hits.count, format: .number).monospacedDigit()
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(group.file), \(matches(group.hits.count))")
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .accessibilityLabel("Search Results")
-        // A new query can reuse a hit's ID: the first click on the new hit opens it.
-        .onChange(of: project.search.query, initial: true) { hit = nil }
-        .onChange(of: hit) { _, id in open(id, focus: false) }
-        .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
-        // Usages aren't the query's matches, which Replace All would replace.
-        .safeAreaBar(edge: .top, spacing: 0) {
-            if let usages = project.search.usages {
-                Text(String(localized: "Usages of \(usages.name)"))
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityAddTraits(.isHeader)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 9)
-            } else {
-                replaceBar
-            }
-        }
-        .overlay {
-            if let failure = project.search.failure {
-                ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass",
-                                       description: Text(failure))
-            } else if project.search.groups?.isEmpty == true {
-                ContentUnavailableView.search(text: project.search.searched)
-            }
-        }
-    }
-
-    /// Under the search field, as Xcode's Find navigator in Replace mode, at the inset and spacing the field's accessory has
-    /// (measured, 27.2).
-    private var replaceBar: some View {
-        HStack {
-            SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
-            Button("Replace All") { Task { await project.replaceAll() } }
-                .disabled(project.search.hitCount == 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 9)
-    }
-
-    private func open(_ id: SearchHit.ID?, focus: Bool) {
-        if let found = project.search.groups?.lazy.flatMap(\.hits).first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line, column: found.column, length: found.length, focus: focus, jump: true) }
-        }
-    }
-
-    private func matches(_ count: Int) -> String {
-        String(AttributedString(localized: "^[\(count) match](inflect: true)").characters)
-    }
-
     private func row(_ node: TreeNode) -> some View {
         let isMain = node.main == true
         return Label {
@@ -267,47 +176,6 @@ struct FilesList: View {
     }
 }
 
-private struct TreeRows<Node: Identifiable, Row: View>: View {
-    let nodes: [Node]
-    let children: (Node) -> [Node]?
-    let isExpanded: (Node) -> Binding<Bool>
-    var insert: (([URL]) -> Void)?
-    @ViewBuilder let row: (Node) -> Row
-
-    var body: some View {
-        let rows = ForEach(nodes) { node in
-            if let kids = children(node) {
-                DisclosureGroup(isExpanded: isExpanded(node)) {
-                    TreeRows(nodes: kids, children: children, isExpanded: isExpanded, row: row)
-                } label: {
-                    row(node)
-                }
-            } else {
-                row(node)
-            }
-        }
-        if let insert {
-            rows.dropDestination(for: URL.self) { urls, _ in
-                let files = urls.filter(\.isFileURL)
-                if !files.isEmpty { insert(files) }
-            }
-        } else {
-            rows
-        }
-    }
-}
-
-/// Not a `Binding` of the set: two changes in one click would each start from the set as it was. Option takes the
-/// `subtree`'s keys with it (HIG, Outline views).
-private func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String>>, of project: ProjectModel, key: String,
-                        inverted: Bool = false, subtree: @autoclosure @escaping () -> [String]) -> Binding<Bool> {
-    Binding(get: { project[keyPath: set].contains(key) != inverted },
-            set: { on in
-                let keys = NSEvent.modifierFlags.contains(.option) ? [key] + subtree() : [key]
-                if on != inverted { project[keyPath: set].formUnion(keys) } else { project[keyPath: set].subtract(keys) }
-            })
-}
-
 extension View {
     func fileDrop(accepts: @escaping (URL) -> Bool = { _ in true }, moves: @escaping (URL) -> Bool = { _ in false },
                   action: @escaping ([URL]) -> Void) -> some View {
@@ -355,7 +223,7 @@ struct OutlineList: View {
                 TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
-                    HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).equatable().tag(node.id)
+                    HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).tag(node.id)
                         // A double-click's second click is the list's primary action, into the source.
                         .simultaneousGesture(TapGesture().onEnded {
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
@@ -387,50 +255,42 @@ struct OutlineList: View {
     }
 }
 
-/// The system's collapsible sidebar section with no rows, at the files' foot; its whole row folds and unfolds, level with
-/// the status bar.
+/// A sidebar section's header at the files' foot, level with the status bar: its whole row folds and unfolds the outline,
+/// and its chevron shows under the pointer, as a sidebar section's does.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
-
-    /// A sidebar section header's row (measured, 27.2).
-    private static let row: CGFloat = 19
-    /// Centred in the status bar's height, as folded, and kept there open.
-    private static let top = (BarMetrics.height - row) / 2
-    static let openHeight = top + row
+    @State private var hovering = false
 
     var body: some View {
-        let expanded = Binding(get: { app.outlineOpen(of: app.project) }, set: { app.outlineCollapsed = !$0 })
-        List {
-            Section(isExpanded: expanded) {
-            } header: {
-                Button { expanded.wrappedValue.toggle() } label: {
-                    Text("File Outline")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                // It covers the system's disclosure.
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
+        let open = app.outlineOpen(of: app.project)
+        Button { app.outlineCollapsed = open } label: {
+            HStack {
+                Text("File Outline")
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .opacity(hovering ? 1 : 0)
+                    .accessibilityHidden(true)
             }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 18)
+            .frame(maxHeight: .infinity)
+            .contentShape(.rect)
         }
-        .listStyle(.sidebar)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .disabled(app.project?.isLaTeX != true)
-        .scrollContentBackground(.hidden)
-        .scrollDisabled(true)
-        .frame(height: sidebarListRoom + Self.row + sidebarListRoom, alignment: .top)
-        // AppKit animates the bar's height with the split; the header keeps its size and place.
-        .offset(y: Self.top - sidebarListRoom)
-        .frame(height: Self.openHeight, alignment: .top)
-        .clipped()
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
     }
 }
 
-/// The room a sidebar list leaves over its first row, inside its table (27.2), which `contentMargins` doesn't reach.
+/// The room a sidebar list leaves over its first row, inside its table (measured), which `contentMargins` doesn't reach: the
+/// header above stands for it.
 private let sidebarListRoom: CGFloat = 10
 
-/// Equatable: as a plain view, a heading that takes the place of a leaf and has subheadings opens closed (27.2).
-private struct HeadingRow: View, Equatable {
+private struct HeadingRow: View {
     let item: OutlineItem
     /// While the status bar counts the document's.
     let words: Int?

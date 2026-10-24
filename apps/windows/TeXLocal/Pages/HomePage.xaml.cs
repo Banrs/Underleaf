@@ -20,7 +20,6 @@ public sealed record ProjectTemplate(string Id, string Title)
 
 public sealed partial class HomePage : Page
 {
-    readonly RenameFlyout rename = new();
     ProjectTemplate[] templates = [];
     ProjectInfo[] projects = [];
     ProjectInfo? target;
@@ -57,7 +56,7 @@ public sealed partial class HomePage : Page
 
     /// Lists the projects again, keeping keyboard focus on its row (or moving it to project `id`); a later call's answer
     /// wins over an earlier one's. The templates come with the first list, once the library has opened.
-    async void Reload(string? id = null)
+    void Reload(string? id = null) => App.Run(null, async () =>
     {
         focus = id ?? focus;
         var generation = ++loads;
@@ -81,7 +80,7 @@ public sealed partial class HomePage : Page
         newProject = false;
         Templates.UpdateLayout();
         (FocusManager.FindFirstFocusableElement(Templates) as Control)?.Focus(FocusState.Keyboard);
-    }
+    });
 
     /// The gallery's first template focused, once listed: File › New project in a project.
     public void ShowTemplates() => newProject = true;
@@ -129,7 +128,7 @@ public sealed partial class HomePage : Page
     }
 
     /// Folders, .tex and .zip files from File Explorer, opened as from the Open menu.
-    async void OnDrop(object sender, DragEventArgs e) => await App.Window.Open(await App.Dropped(e));
+    void OnDrop(object sender, DragEventArgs e) => App.Run("Can't open this", async () => App.Window.Open(await App.Dropped(e)));
 
     void OnItemClick(object sender, ItemClickEventArgs e) => App.Window.OpenProject(((ProjectInfo)e.ClickedItem).Id);
 
@@ -141,37 +140,15 @@ public sealed partial class HomePage : Page
         if (templates.FirstOrDefault(t => t.Id == "article") is { } article) New(article);
     }
 
-    /// New project, as File Explorer's New folder: a free name, selected for typing over; a refusal under the box.
-    async void New(ProjectTemplate template)
+    /// New project, as File Explorer's New folder: a free name, selected for typing over.
+    void New(ProjectTemplate template) => App.Run("Can't create a project", async () =>
     {
         if (App.Core is null) return;
-        var box = new TextBox { Header = "Name", Width = 360 };
-        try { box.Text = (await Core.CallAsync("free_project_name")).GetProperty("name").GetString() ?? ""; }
-        catch (CoreException) { }
-        var dialog = new ContentDialog
-        {
-            Title = $"New {template.Title.ToLowerInvariant()} project",
-            Content = box,
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-        };
         string? id = null;
-        dialog.Opened += (_, _) => box.SelectAll();
-        box.TextChanged += (_, _) => box.Description = null;
-        dialog.PrimaryButtonClick += async (_, args) =>
-        {
-            var deferral = args.GetDeferral();
-            try { id = (await Core.CallAsync<ProjectInfo>("create_project", new { name = box.Text.Trim(), template = template.Id, engine = Prefs.Engine is "" ? null : Prefs.Engine })).Id; }
-            catch (CoreException ex)
-            {
-                args.Cancel = true;
-                box.Description = ex.Message;
-            }
-            finally { deferral.Complete(); }
-        };
-        if (await App.Show(dialog) == ContentDialogResult.Primary && id is not null) App.Window.OpenProject(id);
-    }
+        if (await App.Prompt($"New {template.Title.ToLowerInvariant()} project", "Name", (await Core.CallAsync("free_project_name")).GetProperty("name").GetString() ?? "",
+            "Create", async name => id = (await Core.CallAsync<ProjectInfo>("create_project", new { name, template = template.Id, engine = Prefs.Engine is "" ? null : Prefs.Engine })).Id))
+            App.Window.OpenProject(id!);
+    });
 
     /// An opened folder is the author's: it is never renamed or recycled from here.
     void OnMenuOpening(object sender, object e)
@@ -195,38 +172,28 @@ public sealed partial class HomePage : Page
     void OnRenameItem(object sender, RoutedEventArgs e) => Rename(target!);
 
     /// A copy beside it, named as File Explorer names one, its row focused.
-    async void OnDuplicateItem(object sender, RoutedEventArgs e)
-    {
-        try { Reload((await Core.CallAsync<ProjectInfo>("duplicate_project", new { id = target!.Id, name = $"{target.Name} - Copy" })).Id); }
-        catch (CoreException ex) { await App.Alert("Can't duplicate this project", ex.Message); }
-    }
+    void OnDuplicateItem(object sender, RoutedEventArgs e) => App.Run("Can't duplicate this project", async () =>
+        Reload((await Core.CallAsync<ProjectInfo>("duplicate_project", new { id = target!.Id, name = $"{target.Name} - Copy" })).Id));
 
     void OnRevealItem(object sender, RoutedEventArgs e) => App.Reveal(target!.Path);
 
     void OnDeleteItem(object sender, RoutedEventArgs e) => Delete(target!);
 
-    async void OnExportItem(object sender, RoutedEventArgs e) => await App.ExportZip(target!.Id, target.Name);
+    void OnExportItem(object sender, RoutedEventArgs e) => App.Run("Can't export", () => App.ExportZip(target!.Id, target.Name));
 
-    /// Renames in place, at the row's name, as File Explorer does.
+    /// An opened folder is the author's, and keeps its name.
     void Rename(ProjectInfo p)
     {
-        if (!p.Opened && (List.ContainerFromItem(p) as ListViewItem)?.ContentTemplateRoot is FrameworkElement row && row.FindName("NameText") is FrameworkElement name)
-            rename.Show(name, p.Name, async to => Reload((await Core.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name = to })).Id));
+        if (!p.Opened) App.Run("Can't rename this project", () => App.Prompt("Rename", "Name", p.Name, "Rename", async to =>
+            Reload((await Core.CallAsync<ProjectInfo>("rename_project", new { id = p.Id, name = to })).Id)));
     }
 
     /// An opened folder is the author's, so it only leaves the list, without asking, as from Word's Recent.
-    async void Delete(ProjectInfo p)
+    void Delete(ProjectInfo p) => App.Run(p.Opened ? "Can't remove this folder from the list" : "Can't delete this project", async () =>
     {
-        if (!p.Opened && await App.Show(new ContentDialog
-        {
-            Title = $"Delete “{p.Name}”?",
-            Content = "The project folder moves to the Recycle Bin.",
-            PrimaryButtonText = "Move to Recycle Bin",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-        }) != ContentDialogResult.Primary) return;
+        if (!p.Opened && await App.Ask($"Delete “{p.Name}”?", "The project folder moves to the Recycle Bin.", "Move to Recycle Bin")
+            != ContentDialogResult.Primary) return;
         try { await (p.Opened ? Core.CallAsync("forget_folder", new { id = p.Id }) : App.Recycle(p.Path)); }
-        catch (Exception ex) { await App.Alert(p.Opened ? "Can't remove this folder from the list" : "Can't delete this project", ex.Message); }
-        Reload();
-    }
+        finally { Reload(); }
+    });
 }

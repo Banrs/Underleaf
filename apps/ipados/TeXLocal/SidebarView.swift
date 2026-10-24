@@ -7,8 +7,7 @@ struct SidebarView: View {
     /// Back to the source, where the split has collapsed to one column.
     let showSource: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var renaming: TreeNode?
-    @State private var newName = ""
+    @State private var rename = InPlaceRename<String>()
 
     var body: some View {
         @Bindable var search = project.search
@@ -17,11 +16,7 @@ struct SidebarView: View {
         }
         .navigationTitle(project.name)
         .searchable(text: $search.query, placement: .sidebar, prompt: "Find in Project")
-        .task(id: project.search.query) {
-            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !Task.isCancelled else { return }
-            await project.search.run(in: project.session)
-        }
+        .searching(project)
         .toolbar {
             if sizeClass == .compact {
                 ToolbarItem(placement: .topBarLeading) { CloseProjectButton() }
@@ -30,11 +25,6 @@ struct SidebarView: View {
                 Menu("Add", systemImage: "plus") { addItems(in: "") }
             }
         }
-        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { node in
-            TextField("Name", text: $newName).autocorrectionDisabled().textInputAutocapitalization(.never)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") { rename(node) }
-        }
         .onChange(of: app.newEntry, initial: true) { _, entry in
             guard let entry, !project.closed else { return }
             app.newEntry = nil
@@ -42,18 +32,29 @@ struct SidebarView: View {
         }
     }
 
+    /// The open file is the list's selection, which a hardware keyboard's arrows move (HIG, Keyboards and Split views); a
+    /// folder, which the rows' paths as tags make one too, opens nothing.
     private var files: some View {
-        List {
+        List(selection: Binding(get: { project.openPath }, set: { path in
+            guard let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false else { return }
+            showSource()
+            Task { await project.open(path) }
+        })) {
             Section("Files") {
-                TreeRows(nodes: project.tree.nodes, project: project) { node in
+                TreeRows(nodes: project.tree.nodes, children: \.children, isExpanded: { node in
+                    disclosure(\.expandedFolders, of: project, key: node.path)
+                }) { node in
                     row(node)
                         .contextMenu { actions(node) }
                         .swipeActions { swipe(node) }
+                        .renameAction { rename.begin(node.path, name: node.name) }
                 }
             }
             if project.isLaTeX {
                 Section("Outline", isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
-                    OutlineRows(nodes: project.outlineTree, project: project, showSource: showSource)
+                    TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
+                        disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true)
+                    }) { heading($0.item) }
                 }
             }
         }
@@ -78,12 +79,12 @@ struct SidebarView: View {
     }
 
     private func row(_ node: TreeNode) -> some View {
-        Button {
-            guard !node.isDirectory else { return }
-            showSource()
-            Task { await project.open(node.path) }
-        } label: {
-            Label {
+        Label {
+            if rename.id == node.path {
+                RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: {}) { commitRename(node) } cancel: {
+                    rename.cancel()
+                }
+            } else {
                 HStack {
                     Text(node.name).truncationMode(.middle)
                     if node.main == true {
@@ -91,13 +92,23 @@ struct SidebarView: View {
                         Image(systemName: "star.fill").foregroundStyle(.yellow).imageScale(.small).accessibilityHidden(true)
                     }
                 }
-            } icon: { Image(systemName: node.symbol) }
-        }
-        .foregroundStyle(.primary)
-        .listRowBackground(node.path == project.openPath ? Color.accentColor.opacity(0.18) : nil)
+            }
+        } icon: { Image(systemName: node.symbol) }
         .accessibilityLabel(node.main == true ? "\(node.name), Main File" : node.name)
-        .accessibilityAddTraits(node.path == project.openPath ? .isSelected : [])
         .draggable(project.url(node.path) ?? URL(filePath: "/"))
+    }
+
+    /// The current heading is marked, and a tap goes to it.
+    private func heading(_ item: OutlineItem) -> some View {
+        Button {
+            showSource()
+            project.reveal(item)
+        } label: {
+            Text(item.title).lineLimit(1).foregroundStyle(item.untitled ? .secondary : .primary)
+        }
+        .listRowBackground(item.id == project.currentHeading ? Color.accentColor.opacity(0.12) : nil)
+        .accessibilityValue(item.level)
+        .accessibilityAddTraits(item.id == project.currentHeading ? .isSelected : [])
     }
 
     @ViewBuilder private func addItems(in folder: String) -> some View {
@@ -115,18 +126,13 @@ struct SidebarView: View {
                 .disabled(node.main == true)
             Divider()
         }
-        Button("Rename", systemImage: "pencil") { beginRename(node) }
+        RenameButton()
         Button("Delete", systemImage: "trash", role: .destructive) { Task { await project.deleteEntry(node.path) } }
     }
 
     @ViewBuilder private func swipe(_ node: TreeNode) -> some View {
         Button("Delete", systemImage: "trash", role: .destructive) { Task { await project.deleteEntry(node.path) } }
-        Button("Rename", systemImage: "pencil") { beginRename(node) }
-    }
-
-    private func beginRename(_ node: TreeNode) {
-        newName = node.name
-        renaming = node
+        RenameButton()
     }
 
     private func create(in folder: String, directory: Bool) {
@@ -134,128 +140,13 @@ struct SidebarView: View {
         Task {
             guard let path = await project.createEntry(in: folder, directory: directory), let node = project.tree.node(at: path) else { return }
             project.expandedFolders.formUnion(sequence(first: path.parentFolder) { $0.parentFolder }.prefix { !$0.isEmpty })
-            beginRename(node)
+            rename.begin(path, name: node.name)
         }
     }
 
-    private func rename(_ node: TreeNode) {
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, name != node.name else { return }
-        guard !name.contains("/") else {
-            app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
-            return
-        }
+    private func commitRename(_ node: TreeNode) {
+        guard let name = rename.end(node.path, from: node.name) else { return }
         let folder = node.path.parentFolder
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
-    }
-}
-
-/// Folders as disclosure groups whose open state is the project's, kept with its settings.
-private struct TreeRows<Row: View>: View {
-    let nodes: [TreeNode]
-    let project: ProjectModel
-    @ViewBuilder let row: (TreeNode) -> Row
-
-    var body: some View {
-        ForEach(nodes) { node in
-            if let children = node.children {
-                DisclosureGroup(isExpanded: Binding(get: { project.expandedFolders.contains(node.path) }, set: { open in
-                    if open { project.expandedFolders.insert(node.path) } else { project.expandedFolders.remove(node.path) }
-                })) {
-                    TreeRows(nodes: children, project: project, row: row)
-                } label: {
-                    row(node)
-                }
-            } else {
-                row(node)
-            }
-        }
-    }
-}
-
-/// The open file's headings; the current one is marked, and a tap goes to it.
-private struct OutlineRows: View {
-    let nodes: [OutlineNode]
-    let project: ProjectModel
-    let showSource: () -> Void
-
-    var body: some View {
-        ForEach(nodes) { node in
-            if let children = node.children, !children.isEmpty {
-                DisclosureGroup(isExpanded: Binding(get: { !project.foldedHeadings.contains(node.foldKey) }, set: { open in
-                    if open { project.foldedHeadings.remove(node.foldKey) } else { project.foldedHeadings.insert(node.foldKey) }
-                })) {
-                    OutlineRows(nodes: children, project: project, showSource: showSource)
-                } label: {
-                    heading(node.item)
-                }
-            } else {
-                heading(node.item)
-            }
-        }
-    }
-
-    private func heading(_ item: OutlineItem) -> some View {
-        Button {
-            showSource()
-            project.reveal(item)
-        } label: {
-            Text(item.title).lineLimit(1).foregroundStyle(item.untitled ? .secondary : .primary)
-        }
-        .listRowBackground(item.id == project.currentHeading ? Color.accentColor.opacity(0.12) : nil)
-        .accessibilityValue(item.level)
-        .accessibilityAddTraits(item.id == project.currentHeading ? .isSelected : [])
-    }
-}
-
-private struct SearchResults: View {
-    let project: ProjectModel
-    let showSource: () -> Void
-
-    var body: some View {
-        @Bindable var search = project.search
-        List {
-            Section {
-                HStack {
-                    TextField("Replace With", text: $search.replacement)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    Button("Replace All") { Task { await project.replaceAll() } }
-                        .disabled(project.search.hitCount == 0)
-                }
-            }
-            ForEach(project.search.groups ?? []) { group in
-                Section {
-                    ForEach(group.hits) { hit in
-                        Button {
-                            showSource()
-                            Task { await project.open(hit.file, line: hit.line, column: hit.column, length: hit.length) }
-                        } label: {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)").lineLimit(2)
-                                Spacer(minLength: 4)
-                                Text("\(hit.line)").font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
-                                    .accessibilityLabel("Line \(hit.line)")
-                            }
-                        }
-                        .foregroundStyle(.primary)
-                    }
-                } header: {
-                    HStack {
-                        Text(group.file).truncationMode(.middle)
-                        Spacer()
-                        Text(group.hits.count, format: .number).monospacedDigit()
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .overlay {
-            if let failure = project.search.failure {
-                ContentUnavailableView("Couldn’t Search", systemImage: "exclamationmark.magnifyingglass", description: Text(failure))
-            } else if project.search.groups?.isEmpty == true {
-                ContentUnavailableView.search(text: project.search.searched)
-            }
-        }
     }
 }

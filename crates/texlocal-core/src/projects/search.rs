@@ -2,8 +2,6 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
-use std::io::Read;
 use std::ops::Range;
 use std::path::Path;
 
@@ -11,11 +9,11 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::files::{Planned, write_all};
-use super::skip_unreadable;
+use super::read_capped;
 use super::tree::{file_kind, visit_files};
 use crate::analyze::Place;
 use crate::error::CoreError;
-use crate::{lf, lossy_string};
+use crate::{lf, lossy_string, newline};
 
 /// The largest file but a .tex or .bib that a search reads; a data set or log that size isn't
 /// where anyone looks.
@@ -54,31 +52,35 @@ pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
 
 // Keep one folded character per original character so snippet offsets agree.
 // ASCII, most of a TeX file, folds without Unicode's tables.
-fn lower_into(s: &str, out: &mut String) {
+fn fold_into(s: &str, match_case: bool, out: &mut String) {
     out.clear();
-    out.extend(s.chars().map(|c| {
-        if c.is_ascii() {
-            c.to_ascii_lowercase()
-        } else {
-            c.to_lowercase().next().unwrap_or(c)
-        }
+    out.extend(s.chars().map(|c| match c {
+        _ if match_case => c,
+        c if c.is_ascii() => c.to_ascii_lowercase(),
+        c => c.to_lowercase().next().unwrap_or(c),
     }));
 }
 
-/// What a search or a replace looks for, in any case.
+/// What a search or a replace looks for.
 pub struct Query {
     /// Folded as each line is.
     text: String,
     chars: usize,
+    match_case: bool,
+    whole_word: bool,
 }
 
 impl Query {
-    pub fn new(text: &str) -> Self {
+    /// In any case unless `match_case`; with `whole_word`, only where no letter, digit or `_` is
+    /// on either side, as editors take a word.
+    pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
         let mut folded = String::new();
-        lower_into(text, &mut folded);
+        fold_into(text, match_case, &mut folded);
         Self {
             chars: folded.chars().count(),
             text: folded,
+            match_case,
+            whole_word,
         }
     }
 
@@ -89,12 +91,21 @@ impl Query {
         if self.text.is_empty() {
             return found;
         }
-        lower_into(line, folded);
+        fold_into(line, self.match_case, folded);
+        let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         let (mut from, mut chars) = (0, 0);
         while let Some(at) = folded[from..].find(&self.text) {
-            chars += folded[from..from + at].chars().count();
+            let (start, end) = (from + at, from + at + self.text.len());
+            chars += folded[from..start].chars().count();
+            if self.whole_word
+                && (word(folded[..start].chars().next_back()) || word(folded[end..].chars().next()))
+            {
+                let next = folded[start..].chars().next().map_or(1, char::len_utf8);
+                (from, chars) = (start + next, chars + 1);
+                continue;
+            }
             found.push(chars..chars + self.chars);
-            (from, chars) = (from + at + self.text.len(), chars + self.chars);
+            (from, chars) = (end, chars + self.chars);
         }
         found
     }
@@ -123,23 +134,14 @@ fn utf16(chars: &[char]) -> u32 {
     chars.iter().map(|c| c.len_utf16() as u32).sum()
 }
 
-/// A file's bytes, or None if it can't be read or is too large to be where anyone looks; a
+/// What search reads of a file: one too large to be where anyone looks is passed over, but a
 /// .tex or .bib file is read at any size, as the symbols are, since a shared bibliography can
 /// be larger and a rename must reach its keys.
-fn read_capped(abs: &Path, rel: &str) -> Result<Option<Vec<u8>>, CoreError> {
-    let Some(file) = skip_unreadable(File::open(abs))? else {
-        return Ok(None);
-    };
-    let cap = match file_kind(rel) {
+fn cap(rel: &str) -> u64 {
+    match file_kind(rel) {
         "tex" | "bib" => u64::MAX,
         _ => SEARCH_FILE_MAX,
-    };
-    let mut bytes = Vec::new();
-    let Some(len) = skip_unreadable(file.take(cap.saturating_add(1)).read_to_end(&mut bytes))?
-    else {
-        return Ok(None);
-    };
-    Ok((len as u64 <= cap).then_some(bytes))
+    }
 }
 
 /// The first of `found`'s places on each line, which it gives in order, of each text file
@@ -160,7 +162,7 @@ pub fn search_project(
         }
         let text = match open.get(rel) {
             Some(text) => Cow::Borrowed(text.as_str()),
-            None => match read_capped(abs, rel)? {
+            None => match read_capped(abs, cap(rel))? {
                 Some(bytes) => Cow::Owned(lf(lossy_string(bytes))),
                 None => return Ok(true),
             },
@@ -221,7 +223,7 @@ pub(crate) fn replace_in_files(
 ) -> Result<Vec<Value>, CoreError> {
     // The file replaced, how many, and the file as it was.
     let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize, String)>, CoreError> {
-        let Some(bytes) = read_capped(abs, rel)? else {
+        let Some(bytes) = read_capped(abs, cap(rel))? else {
             return Ok(None);
         };
         let (file, utf8) = match String::from_utf8(bytes) {
@@ -260,8 +262,10 @@ pub(crate) fn replace_in_files(
 
 /// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
 /// and column count as they do with line feeds alone, so each line keeps its own ending, which
-/// in a file edited on more than one system needn't be the first's.
+/// in a file edited on more than one system needn't be the first's. A break in `to` is written
+/// as the file's own, as a save writes one.
 fn replaced(file: &str, places: &[Place], to: &str) -> String {
+    let to = &to.replace('\n', newline(file));
     // The byte the first `units` UTF-16 units of `s` end at.
     let byte = |s: &str, units: u32| {
         let mut seen = 0;
@@ -308,14 +312,32 @@ mod tests {
         fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
         let bib = fs::File::options().write(true).open(root.join("big.bib"));
         bib.unwrap().set_len(SEARCH_FILE_MAX + 1).unwrap();
-        let needle = |_: &str, text: &str| Query::new("needle").places(text);
+        let needle = |_: &str, text: &str| Query::new("needle", false, false).places(text);
         let hits = search_project(&root, &HashMap::new(), &is_text, &needle, 10).unwrap();
         let mut files: Vec<&str> = hits.iter().map(|hit| hit.file.as_str()).collect();
         files.sort_unstable();
         assert_eq!(files, ["big.bib", "notes.tex"]);
         big.set_len(SEARCH_FILE_MAX).unwrap();
-        let at_the_cap = read_capped(&root.join("big.csv"), "big.csv").unwrap();
+        let at_the_cap = read_capped(&root.join("big.csv"), cap("big.csv")).unwrap();
         assert!(at_the_cap.is_some());
+    }
+
+    #[test]
+    fn a_file_ends_its_lines_as_its_first_line_break_does() {
+        assert_eq!(newline("a\r\nb\nc"), "\r\n");
+        assert_eq!(newline("a\rb"), "\r");
+        assert_eq!(newline("a\nb\r\n"), "\n");
+        assert_eq!(newline("a"), "\n");
+    }
+
+    #[test]
+    fn a_line_break_in_a_replacement_is_written_as_the_files_own() {
+        let place = Place {
+            line: 2,
+            column: 0,
+            length: 1,
+        };
+        assert_eq!(replaced("a\r\nb\r\n", &[place], "x\ny"), "a\r\nx\r\ny\r\n");
     }
 
     /// Another app's write while the replace reads the project is kept, not written over.
@@ -328,7 +350,7 @@ mod tests {
             if other_app.replace(false) {
                 fs::write(root.join("a.tex"), "cat, their cat").unwrap();
             }
-            Query::new("cat").places(text)
+            Query::new("cat", false, false).places(text)
         };
         let written = replace_in_files(&root, &|rel| rel == "a.tex", &found, "dog").unwrap();
         assert_eq!(written, [json!({ "file": "a.tex", "count": 2 })]);
@@ -347,7 +369,7 @@ mod tests {
         let mut perms = fs::metadata(&b).unwrap().permissions();
         perms.set_readonly(true);
         fs::set_permissions(&b, perms.clone()).unwrap();
-        let found = |_: &str, text: &str| Query::new("cat").places(text);
+        let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
         let replaced = replace_in_files(&root, &|rel| rel != "main.tex", &found, "dog");
         assert_eq!(replaced.unwrap_err().status, 403);
         assert_eq!(fs::read_to_string(root.join("a.tex")).unwrap(), "cat");
@@ -361,7 +383,7 @@ mod tests {
     fn the_matcher_finds_every_match_on_a_line() {
         let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";
         let places = |query: &str| -> Vec<(u32, u32)> {
-            let found = Query::new(query).places(text);
+            let found = Query::new(query, false, false).places(text);
             let at = |place: &Place| {
                 assert_eq!(place.length as usize, query.len());
                 (place.line, place.column)
@@ -370,6 +392,8 @@ mod tests {
         };
         let every = [(1, 3), (1, 7), (1, 11), (2, 0), (2, 4), (2, 8)];
         assert_eq!(places("cat"), every);
+        let exact = |query| Query::new(query, true, true).places(text).len();
+        assert_eq!((exact("cat"), exact("Cat"), exact("CAT")), (2, 1, 0));
         assert_eq!(places("aa"), [(3, 0), (3, 2)]);
     }
 }

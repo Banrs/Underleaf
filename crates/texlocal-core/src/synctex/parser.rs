@@ -4,8 +4,12 @@
 //! Postamble a finished run writes (Live Preview's while TeX hasn't reached the end) is used
 //! as far as it goes, where the program answers nothing.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
+
+use crate::stamp::Kept;
 
 /// What is nowhere near, as synctex's `INT_MAX`.
 const FAR: i64 = i32::MAX as i64;
@@ -102,8 +106,8 @@ struct Input {
 pub(super) struct SyncTex {
     nodes: Vec<Node>,
     sheets: Vec<Sheet>,
-    /// The newest first, as synctex lists them.
-    inputs: Vec<Input>,
+    /// By tag, which TeX numbers them by in the order it opens them: the newest last.
+    inputs: BTreeMap<i32, Input>,
     /// Nodes by `(tag + line) % LISTS`, the oldest first.
     friends: Vec<Vec<u32>>,
     magnification: i32,
@@ -113,11 +117,21 @@ pub(super) struct SyncTex {
 }
 
 impl SyncTex {
-    /// `name.synctex` beside `name.pdf`, else `name.synctex.gz`, in the program's order.
-    pub fn beside(pdf: &Path) -> std::io::Result<Self> {
+    /// `name.synctex` beside `name.pdf`, else `name.synctex.gz`, in the program's order; parsed
+    /// again only once it changes, as a thesis's takes a while.
+    pub fn beside(pdf: &Path) -> std::io::Result<Arc<Self>> {
+        static PARSED: Kept<SyncTex> = Kept::new();
         let plain = pdf.with_extension("synctex");
-        let bytes =
-            std::fs::read(&plain).or_else(|_| std::fs::read(plain.with_extension("synctex.gz")))?;
+        let file = if plain.is_file() {
+            plain
+        } else {
+            plain.with_extension("synctex.gz")
+        };
+        PARSED.get(&file, Self::read)
+    }
+
+    fn read(file: &Path) -> std::io::Result<Self> {
+        let bytes = std::fs::read(file)?;
         let bytes = if bytes.starts_with(&[0x1f, 0x8b]) {
             let mut unzipped = Vec::new();
             flate2::read::MultiGzDecoder::new(&bytes[..]).read_to_end(&mut unzipped)?;
@@ -132,9 +146,8 @@ impl SyncTex {
 
     /// Each input's tag and name as TeX opened it, the newest first.
     pub fn inputs(&self) -> impl Iterator<Item = (i32, &str)> {
-        self.inputs
-            .iter()
-            .map(|input| (input.tag, input.name.as_str()))
+        let inputs = self.inputs.values().rev();
+        inputs.map(|input| (input.tag, input.name.as_str()))
     }
 
     fn node(&self, id: u32) -> &Node {
@@ -252,9 +265,9 @@ impl SyncTex {
     fn parse(bytes: &[u8]) -> Option<Self> {
         let mut lines = bytes.split(|&c| c == b'\n').peekable();
         lines.find(|line| line.starts_with(b"SyncTeX Version:"))?;
-        let mut inputs = Vec::new();
+        let mut inputs = BTreeMap::new();
         while let Some(input) = lines.peek().and_then(|line| Input::parse(line)) {
-            inputs.insert(0, input);
+            inputs.insert(input.tag, input);
             lines.next();
         }
         lines.find(|line| line.starts_with(b"Output:"))?;
@@ -418,7 +431,7 @@ impl Reader {
     fn outside(&mut self, line: &[u8]) -> bool {
         (self.parent, self.child) = (None, None);
         if let Some(input) = Input::parse(line) {
-            self.s.inputs.insert(0, input);
+            self.s.inputs.insert(input.tag, input);
         } else if let Some(page) = line.strip_prefix(b"{").and_then(|page| number(page, 0)) {
             let node = self.add(Node::new(Kind::Sheet));
             self.s.sheets.push(Sheet {
@@ -500,7 +513,7 @@ impl Reader {
     fn register_line(&mut self, id: u32) {
         let node = self.s.node(id);
         let (tag, line) = (node.tag, node.line);
-        if let Some(input) = self.s.inputs.iter_mut().find(|input| input.tag == tag) {
+        if let Some(input) = self.s.inputs.get_mut(&tag) {
             input.last_line = input.last_line.max(line);
         }
     }
@@ -900,12 +913,7 @@ impl SyncTex {
     /// The boxes that show `line` of the input `tag`, else the nearest line that shows, in the
     /// program's order (synctex's `synctex_iterator_new_display`, no page hint).
     pub fn forward(&self, tag: i32, line: i32) -> Vec<Shown> {
-        let Some(last) = self
-            .inputs
-            .iter()
-            .find(|input| input.tag == tag)
-            .map(|input| input.last_line)
-        else {
+        let Some(last) = self.inputs.get(&tag).map(|input| input.last_line) else {
             return Vec::new();
         };
         let (mut line, mut step) = (line.min(last), 1);
@@ -1105,7 +1113,7 @@ impl SyncTex {
             (Some(_), None) => {}
         }
         let node = self.node(left.node?);
-        let input = self.inputs.iter().find(|input| input.tag == node.tag)?;
+        let input = self.inputs.get(&node.tag)?;
         Some((&input.name, node.line))
     }
 
@@ -1411,5 +1419,56 @@ impl SyncTex {
             }
         }
         (left, right)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    /// fixtures/main.tex built by pdflatex with `-synctex=1`, and TeX Live's synctex program's
+    /// answers for it (answers.txt): every line of each input forward, and points across its
+    /// pages back.
+    #[test]
+    fn answers_as_tex_lives_synctex_program() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/synctex/fixtures");
+        let sync = super::SyncTex::read(&fixtures.join("main.synctex.gz")).unwrap();
+        let answers = std::fs::read_to_string(fixtures.join("answers.txt")).unwrap();
+        let numbers = |text: &str| -> Vec<f32> {
+            text.split_whitespace()
+                .map(|n| n.parse().unwrap())
+                .collect()
+        };
+        for answer in answers.lines().filter(|line| !line.starts_with('#')) {
+            let (query, theirs) = answer.split_once(" | ").unwrap_or((answer, ""));
+            let query: Vec<&str> = query.split_whitespace().collect();
+            match query[..] {
+                ["view", file, line] => {
+                    let input = format!("/./{file}");
+                    let tag = sync.inputs().find(|(_, name)| name.ends_with(&input));
+                    let ours = tag.map_or_else(Vec::new, |(tag, _)| {
+                        sync.forward(tag, line.parse().unwrap())
+                    });
+                    let theirs: Vec<Vec<f32>> = theirs.split(" | ").map(numbers).collect();
+                    let theirs = theirs.iter().filter(|shown| !shown.is_empty());
+                    assert_eq!(ours.len(), theirs.clone().count(), "{answer}");
+                    for (ours, theirs) in ours.iter().zip(theirs) {
+                        let ours = [ours.page as f32, ours.h, ours.v, ours.width, ours.height];
+                        let near = ours.iter().zip(theirs).all(|(a, b)| (a - b).abs() < 1e-3);
+                        assert!(near, "{answer}: {ours:?}");
+                    }
+                }
+                ["edit", page, x, y] => {
+                    let ours = sync.inverse(
+                        page.parse().unwrap(),
+                        x.parse().unwrap(),
+                        y.parse().unwrap(),
+                    );
+                    let ours = ours.map(|(name, line)| format!("{name} {line}"));
+                    assert_eq!(ours.as_deref().unwrap_or(""), theirs, "{answer}");
+                }
+                _ => panic!("{answer}"),
+            }
+        }
     }
 }

@@ -36,7 +36,10 @@ log only on a failure.
 
 `tools/texpresso/underleaf-pdf.patch` (MIT, like TeXpresso) acts when `TEXPRESSO_PDF_OUTPUT` is
 set: TeXpresso then opens no window and quits when its input closes, as the app's pipe does when
-the app quits or crashes.
+the app quits or crashes. Its loop (`src/frontend/live.c`) and the Type 1 fonts' copies
+(`src/dvi/type1_cff.c`) are whole files in `tools/texpresso/src`, which `build.sh` copies over the
+checkout and the iPad's engine shares; the patch holds the rest. It says `["live", 1]` first, the
+protocol's version.
 
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as far
   as those, and each page that changed is written at once with MuPDF's PDF writer as a one-page
@@ -50,14 +53,18 @@ the app quits or crashes.
 - A client may number its edits (`["mark", n]`): pages and documents then carry the last number
   they show, and `["synced", n]` says when the pages in view show it, or the run's end. The core
   numbers each change with its count of edits, and puts TeX's log's errors on their lines only
-  from a run that has its last number.
+  from a run that has its last number. A run's end is also `["done", pages, run]`, whether or not
+  it wrote a document.
+- `["caret", path, offset]` says where the caret is, so that TeX keeps a checkpoint just before
+  it and the first key typed there is as quick as the ones after it.
 - Finishing passes, which bring references and contents up to date, run in a second TeX that
   takes the first one's place when done and is dropped by a keystroke. TeXpresso's own idle reruns
   stay off.
 - A change that takes TeX back to the main file's start launches a new worker. A second change
   before it has answered (10 ms) kills it as stuck, and upstream then kept the dead worker, which
   left the run stopped, with an empty log, until a restart: the rollback now drops a dead worker
-  too, and the next step launches another.
+  too, and the next step launches another. A step itself doesn't wait for the worker (upstream's
+  10 ms, 0 here): the loop waits on the worker and the client together.
 - With or without the variable, a run that TeX stops (an emergency stop, a source without
   `\end{document}`, 100 errors) ends `texpresso-xetex` with exit status 1 where upstream's calls
   `abort()`, which left a macOS crash report for each one while typing. TeXpresso sees the run end
@@ -95,6 +102,15 @@ carried over, as an XCFramework whose Live Preview speaks the same protocol over
 also runs Compile's programs. The app hands its functions to the core with `tl_set_engine`
 (`docs/core-api.md`, TeX inside the app); the engine runs one Live Preview at a time, so a
 project's start ends another's.
+
+Its patch, `eclipse-ios.patch`, carries the engine's side; the loop and the Type 1 fonts are the
+Mac's files from `tools/texpresso/src`. A finishing pass runs in place, as the engine is one TeX
+in the app's memory. Where a program would abort (no memory for an engine, a failed invariant) the
+session or run ends with status 134, and the app goes on; a MuPDF error the loop doesn't expect
+ends the session with status 1. Stop or the time limit ends a Compile run in about a quarter of a
+second, even while TeX reads no file, and a key gives way within half a second when TeX computes
+without reading. Without guard pages the engines count calls rather than catching a stack
+overflow, up to 6000 deep.
 
 ## Boundaries
 

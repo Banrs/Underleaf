@@ -32,7 +32,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var pdf: PDFController { project.pdf }
     weak var workspace: WorkspaceController?
     private lazy var format = FormatPopover(app: app, project: project)
-    private var customized: NSKeyValueObservation?
     private var closed = false
 
     init(app: AppModel, project: ProjectModel) {
@@ -41,20 +40,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // Compile's word is the one label, and the workspace knows its width.
+        // Compile's word is the one label.
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = app.savesLayout
-        // A turn later, once AppKit has done with its items.
-        customized = toolbar.observe(\.itemIdentifiers) { [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.workspace?.toolbarItemsChanged() }
-        }
         watch()
     }
 
     func close() {
         closed = true
-        customized = nil
         format.popover.close()
     }
 
@@ -81,12 +75,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile, .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
     }
 
-    /// The default tools, spaces aside, whose widths the workspace reckons Compile's room from.
-    var holdsDefaultItems: Bool {
-        let tools = { (ids: [NSToolbarItem.Identifier]) in ids.filter { $0 != .space && $0 != .flexibleSpace } }
-        return tools(toolbar.itemIdentifiers) == tools(toolbarDefaultItemIdentifiers(toolbar))
-    }
-
     /// To the window's split, not the nested ones, which would answer first, and out of the overflow menu (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
@@ -109,7 +97,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Whatever has the keyboard, as the menu's: it validates them too.
             item.target = nil
         case .format:
-            // Notes' words, from its strings (27.2).
+            // Notes' words, from its strings.
             item = button(id, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
             let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
             form.submenu = menu(Group { [app, project] in
@@ -212,7 +200,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.toolTip = help
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
         item.menu = menu(items)
-        // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
+        // No chevrons, as Notes' tools: with them, each menu draws its own capsule.
         item.showsIndicator = false
         return item
     }
@@ -309,7 +297,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func back() { app.perform(.projectClose, on: project) }
 
-    /// A toolbar button's action comes from its item (27.2).
+    /// A toolbar button's action comes from its item.
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func style(_ item: NSToolbarItem) { if let command = Self.styles[item.itemIdentifier] { app.perform(command, on: project) } }
     @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
@@ -331,7 +319,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
 }
 
-/// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (27.2).
+/// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (`theToolbarsControlsKeepTheirStateAndWidth`).
 private final class ShareItem: NSSharingServicePickerToolbarItem {
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }
@@ -348,7 +336,8 @@ private final class ZoomControl: NSSegmentedControl {
 
     override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
-    /// Inside the toolbar's own update the control's size lags each font change by one (27.2).
+    /// Inside the toolbar's own update the control's size lags each font change by one
+    /// (`theToolbarsControlsKeepTheirStateAndWidth`).
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
@@ -363,8 +352,8 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Stop in Compile's width. It fills the item's glass, which doesn't pass clicks to an undersized view, and changes form
-/// as AppKit's search item does (27.2).
+/// Stop in Compile's width, as its word and as its symbol, so the tools beside it stay put. It fills the item's glass,
+/// which passes no clicks to an undersized view, and changes form as AppKit's search item does.
 private struct CompileButton: View {
     let compiling, compact, enabled: Bool
     let action: () -> Void
@@ -381,7 +370,7 @@ private struct CompileButton: View {
             // Faint in a window that isn't the active one, as AppKit's own items.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
             .animation(reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
-            // AppKit's glass for a title and for a symbol (27.2).
+            // The padding and height of AppKit's glass around an item's title, and its circle around a symbol.
             .padding(.horizontal, compact ? 0 : 12)
             .frame(minWidth: 36, minHeight: 36)
             .contentShape(.capsule)
@@ -391,7 +380,7 @@ private struct CompileButton: View {
         .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
     }
 
-    /// At the size AppKit draws an item's symbol (27.2).
+    /// At the size AppKit draws an item's symbol.
     @ViewBuilder private var idle: some View {
         if compact {
             Image(systemName: "play.fill").font(.system(size: 17))

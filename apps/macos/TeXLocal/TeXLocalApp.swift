@@ -53,16 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
-            let saved = await app.project?.save() ?? true
-            if saved {
-                await app.project?.savePlace()
-                // Compiles run in their own process groups; nothing else stops them.
+            let left = await app.leave()
+            if left {
+                // Compiles run in their own process groups, which nothing else stops.
                 try? await Core.shared.call("kill_all", [:])
             } else if mainWindow.window?.isVisible != true {
                 // The window its alert shows in comes back if closing it began the quit.
                 mainWindow.showWindow(nil)
             }
-            sender.reply(toApplicationShouldTerminate: saved)
+            sender.reply(toApplicationShouldTerminate: left)
         }
         return .terminateLater
     }

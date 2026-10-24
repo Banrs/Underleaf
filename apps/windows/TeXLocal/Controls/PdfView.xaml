@@ -57,7 +57,5 @@
                 </StackPanel.Resources>
             </StackPanel>
         </ScrollViewer>
-
-        <ProgressBar x:Name="Progress" VerticalAlignment="Top" AutomationProperties.Name="Compiling" IsIndeterminate="True" Visibility="Collapsed" />
     </Grid>
 </UserControl>

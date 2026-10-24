@@ -191,7 +191,7 @@ impl SourceDocument {
         })
     }
 
-    pub fn mirror_snippet(&mut self) -> Vec<TextEdit> {
+    pub(super) fn mirror_snippet(&mut self) -> Vec<TextEdit> {
         let snippet = self.typing.snippet.as_mut();
         let edits = snippet.map_or(vec![], |snippet| snippet.mirror(&self.text.units));
         // A brace or a line break, as one typed at a name's end, would break the other places too.

@@ -1,27 +1,30 @@
 import PDFKit
+import QuickLook
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// The sidebar's files and outline beside the source and its PDF. As the window narrows the sidebar folds over the
-/// panes, then the source and PDF take turns in one pane (HIG, Layout, Split views): what each shows stays as it was.
+/// The sidebar's files and outline over the source and its PDF, which keep their width; in a narrow window the source
+/// and PDF take turns in one pane (HIG, Layout, Split views): what each shows stays as it was.
 struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    /// iPadOS's own choice at first, which floats the sidebar over the panes where they need the width; View ▸ Sidebar
-    /// sets it.
-    @State private var columns = NavigationSplitViewVisibility.automatic
     /// Where the split collapses to one column (a narrow window): the source and PDF, which the sidebar's back button
     /// leaves and a file or heading chosen there returns to.
     @State private var compactColumn = NavigationSplitViewColumn.detail
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
+        NavigationSplitView(columnVisibility: sidebar, preferredCompactColumn: $compactColumn) {
             SidebarView(project: project) { compactColumn = .detail }
         } detail: {
             DetailView(project: project)
         }
-        .onChange(of: app.sidebarShown) { _, shown in columns = shown ? .all : .detailOnly }
+        .navigationSplitViewStyle(.prominentDetail)
         .modifier(WorkspaceModals(project: project))
+    }
+
+    /// View ▸ Sidebar's, both ways: a tap on the panes that puts the sidebar away is the menu's Show Sidebar again, and
+    /// Find Usages brings it back.
+    private var sidebar: Binding<NavigationSplitViewVisibility> {
+        Binding(get: { app.sidebarShown ? .all : .detailOnly }, set: { app.sidebarShown = $0 != .detailOnly })
     }
 }
 
@@ -60,13 +63,18 @@ private struct DetailView: View {
         .navigationTitle(project.openPath?.fileName ?? project.name)
         .navigationSubtitle(BuildStatus(project: project, app: app).text)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarRole(.editor)
+        // The open file at the head of the title's menu, to share or drag, as the Mac's title has it; on a view of its own,
+        // as there's no file to give while none is open.
+        .background { if let url = project.openURL { Color.clear.navigationDocument(url) } }
         .toolbar { WorkspaceToolbar(project: project, sideBySide: sideBySide, pane: $pane) }
         .toolbarTitleMenu { TitleMenu(project: project) }
         .inspector(isPresented: $app.inspectorVisible) {
             InspectorView(project: project)
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
         }
+        // On the column's root, outside the inspector's container: inside it, a first launch's bar now and then lays out
+        // without it, the title centred and the tools in its overflow menu.
+        .toolbarRole(.editor)
         .sheet(isPresented: Binding(get: { project.panel.shown && !panelBelow }, set: { project.panel.shown = $0 })) {
             BuildPanel(project: project)
                 .presentationDetents([.medium, .large])
@@ -89,21 +97,8 @@ private struct DetailView: View {
 
     /// A PDF command shows the PDF; from it, Go to Source shows the source.
     private func perform(_ action: PDFAction) {
-        let pdf = project.pdf
         if !sideBySide { pane = action.isInverse ? .source : .pdf }
-        guard project.hasPDF else { return }
-        switch action {
-        case .zoomIn: pdf.zoom(in: true)
-        case .zoomOut: pdf.zoom(in: false)
-        case .actualSize: pdf.setScale(1)
-        case .fitWidth: pdf.fitWidth()
-        case .fitPage: pdf.fitPage()
-        case .goToPage(let page): pdf.go(toPage: page)
-        case .find: pdf.view.findInteraction.presentFindNavigator(showingReplace: false)
-        case let .reveal(loc, source): pdf.reveal(loc, from: source)
-        case .inverseFromView:
-            if case let (page, point)? = pdf.sourcePoint() { Task { await project.inverseSync(page: page, x: point.x, y: point.y) } }
-        }
+        project.perform(action) { project.pdf.view.findInteraction.presentFindNavigator(showingReplace: false) }
     }
 }
 
@@ -157,12 +152,15 @@ private struct TitleMenu: View {
         Divider()
         Button("Export as PDF…", systemImage: "square.and.arrow.up") { app.perform(.pdfSave, on: project) }
             .disabled(!app.isEnabled(.pdfSave, on: project))
+        // Where another app opens it, as the Mac's Open PDF in its default app.
+        if let url = project.buildPDF { ShareLink("Share PDF…", item: url) }
         Button("Export Project as ZIP…", systemImage: "doc.zipper") { app.perform(.projectExport, on: project) }
         Button("Print…", systemImage: "printer") { app.perform(.filePrint, on: project) }
             .disabled(!app.isEnabled(.filePrint, on: project))
     }
 }
 
+/// The editing tools in one group in the middle, as Pages' and Freeform's; the view's toggles and Compile at the end.
 private struct WorkspaceToolbar: ToolbarContent {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -200,8 +198,8 @@ private struct WorkspaceToolbar: ToolbarContent {
                 }))
             }
             Toggle("Inspector", systemImage: "info.circle", isOn: Bindable(app).inspectorVisible)
-            CompileButton(project: project, wide: sideBySide)
         }
+        ToolbarItem(placement: .primaryAction) { CompileButton(project: project, wide: sideBySide) }
     }
 }
 
@@ -264,9 +262,11 @@ private struct SourcePane: View {
 
     var body: some View {
         ZStack {
+            // Under the bar, as Notes' note is, for the bar's edge effect to frost what scrolls beneath it.
             EditorView(editor: project.editor, shown: project.editsText)
-            if let path = project.openPath, !project.editsText, let url = project.url(path) {
-                FilePreview(url: url, kind: project.openKind, version: project.previewVersion)
+                .ignoresSafeArea(.container, edges: .top)
+            if !project.editsText, let url = project.openURL {
+                FilePreview(url: url, version: project.previewVersion)
             } else if project.openPath == nil, project.initialLoadComplete {
                 ContentUnavailableView("No File Open", systemImage: "text.document", description: Text("Choose a file in the sidebar."))
             }
@@ -274,39 +274,39 @@ private struct SourcePane: View {
     }
 }
 
-/// An image or PDF in the project, shown as Quick Look would.
-private struct FilePreview: View {
+/// What isn't text, as Quick Look shows it, as on the Mac.
+private struct FilePreview: UIViewControllerRepresentable {
     let url: URL
-    let kind: FileKind?
     let version: Int
 
-    var body: some View {
-        Group {
-            if kind == .image, let image = UIImage(contentsOfFile: url.path(percentEncoded: false)) {
-                Image(uiImage: image).resizable().scaledToFit().padding()
-            } else if kind == .pdf {
-                PDFFileView(url: url)
-            } else {
-                ContentUnavailableView("No Preview", systemImage: "doc", description: Text(url.lastPathComponent))
-            }
+    func makeCoordinator() -> Shown { Shown(url: url, version: version) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        let shown = context.coordinator
+        if shown.url != url {
+            shown.url = url
+            controller.reloadData()
+        } else if shown.version != version {
+            controller.refreshCurrentPreviewItem()
         }
-        .id(version)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemBackground))
-    }
-}
-
-private struct PDFFileView: UIViewRepresentable {
-    let url: URL
-
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.document = PDFDocument(url: url)
-        return view
+        shown.version = version
     }
 
-    func updateUIView(_ view: PDFView, context: Context) {}
+    final class Shown: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+        var version: Int
+
+        init(url: URL, version: Int) { (self.url, self.version) = (url, version) }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
+    }
 }
 
 private struct PDFPane: View {
@@ -316,11 +316,12 @@ private struct PDFPane: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let dark = paper.isDark(in: colorScheme)
+        let dark = paper.isDark(onDark: colorScheme == .dark)
         ZStack {
             // Inverted with its hues turned back, as the Mac's pages and Smart Invert, by SwiftUI as UIKit has no layer
             // filters; round the pages, the view's own colour is outside it.
             PDFRepresentable(project: project, darkPaper: dark)
+                .ignoresSafeArea(.container, edges: .top)
                 .contrast(dark ? -1 : 1)
                 .hueRotation(.degrees(dark ? 180 : 0))
                 .background(Color(uiColor: project.pdf.view.surround))
@@ -346,8 +347,8 @@ private struct PDFPane: View {
     }
 }
 
-/// Two panes and the line between them, which a finger drags from a 44 pt band: it stops at the even split, with the
-/// alignment haptic, as the Mac's divider does. One pane alone takes the width, the other kept at none.
+/// Two panes and the line between them, which a finger drags sideways from a 44 pt band: it stops at the even split, with
+/// the alignment haptic, as the Mac's divider does. One pane alone takes the width, the other kept at none.
 private struct SplitPanes<Leading: View, Trailing: View>: View {
     enum Shown { case leading, trailing, both }
 
@@ -374,30 +375,71 @@ private struct SplitPanes<Leading: View, Trailing: View>: View {
                 trailing.frame(maxWidth: .infinity).hidden(share == 1)
             }
             .overlay(alignment: .leading) {
-                if shown == .both { divider(at: total * share, total: total, limit: limit) }
+                if shown == .both {
+                    Color.clear
+                        .frame(width: 44)
+                        .offset(x: total * share - 22)
+                        .accessibilityRepresentation {
+                            Slider(value: $fraction, in: limit...(1 - limit)) { Text("Source and PDF Divider") }
+                        }
+                }
             }
-            .sensoryFeedback(.alignment, trigger: snapped) { _, now in now }
-        }
-    }
-
-    private func divider(at x: CGFloat, total: CGFloat, limit: Double) -> some View {
-        Color.clear
-            .frame(width: 44)
-            .contentShape(.rect)
-            .hoverEffect(.highlight)
-            .offset(x: x - 22)
-            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { drag in
+            .gesture(DividerPan(x: shown == .both ? total * share : nil) { moved in
+                guard let moved else { start = nil; return }
                 let from = start ?? fraction
                 start = from
-                var next = min(max(from + drag.translation.width / total, limit), 1 - limit)
+                var next = min(max(from + moved / total, limit), 1 - limit)
                 let even = abs(next - 0.5) * total < 12
                 if even { next = 0.5 }
                 snapped = even
                 fraction = next
-            }.onEnded { _ in start = nil })
-            .accessibilityRepresentation {
-                Slider(value: $fraction, in: limit...(1 - limit)) { Text("Source and PDF Divider") }
-            }
+            })
+            .sensoryFeedback(.alignment, trigger: snapped) { _, now in now }
+        }
+    }
+}
+
+/// A pan across the divider's band that begins only sideways, so taps, scrolls and selections there stay the panes'.
+private struct DividerPan: UIGestureRecognizerRepresentable {
+    let x: CGFloat?
+    /// The distance dragged, then nil at the end.
+    let moved: (CGFloat?) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Band { Band(converter: converter) }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) { context.coordinator.x = x }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        switch recognizer.state {
+        case .changed: moved(context.converter.localTranslation?.x ?? 0)
+        case .ended, .cancelled: moved(nil)
+        default: break
+        }
+    }
+
+    final class Band: NSObject, UIGestureRecognizerDelegate {
+        let converter: CoordinateSpaceConverter
+        var x: CGFloat?
+
+        init(converter: CoordinateSpaceConverter) { self.converter = converter }
+
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let x, let velocity = converter.localVelocity else { return false }
+            let start = converter.localLocation.x - (converter.localTranslation?.x ?? 0)
+            return abs(start - x) <= 22 && abs(velocity.x) > abs(velocity.y)
+        }
+
+        // A pane's scrolling waits for the band, which decides as soon as the finger moves; nothing that waits for a
+        // still finger, such as selection's long press, does.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            (other.view as? UIScrollView)?.panGestureRecognizer === other
+        }
     }
 }
 
@@ -417,18 +459,7 @@ private struct WorkspaceModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            .fileImporter(isPresented: Binding(get: { app.addingFiles && !project.closed }, set: { app.addingFiles = $0 }),
-                          allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
-                switch result {
-                case .success(let urls): Task { await project.importFiles(urls) }
-                case .failure(let error): app.alert = AppAlert("Couldn’t Add the Files", error)
-                }
-            }
-            .fileExporter(isPresented: Binding(get: { app.exporting != nil }, set: { if !$0 { app.exporting = nil } }),
-                          item: app.exporting, contentTypes: app.exporting.map { [$0.type] } ?? [],
-                          defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
-                if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
-            }
+            .modifier(ProjectDialogs(project: project))
             .alert(promptTitle, isPresented: Binding(get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }),
                    presenting: app.prompt) { prompt in
                 TextField(promptField(prompt), text: $promptText)
@@ -439,13 +470,6 @@ private struct WorkspaceModals: ViewModifier {
             .onChange(of: app.prompt) { _, prompt in
                 if case .rename(let symbol)? = prompt { promptText = symbol.name } else { promptText = "" }
             }
-            .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
-                Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
-                Button("Cancel", role: .cancel) {}
-            } message: { clash in
-                Text(clash.message)
-            }
             .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "", item: $project.diskConflict) { path in
                 Button("Save Anyway") { project.answer(path, "save") }
                 Button("Revert", role: .destructive) { project.answer(path, "revert") }
@@ -454,15 +478,6 @@ private struct WorkspaceModals: ViewModifier {
                 }
             } message: { path in
                 Text("Another app changed “\(path)” while it has unsaved changes here.")
-            }
-            .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "", item: $project.missingFile) { path in
-                Button("Save Again") { project.answer(path, "save") }
-                Button("Discard Changes", role: .destructive) { project.answer(path, "close") }
-                Button("Cancel", role: .cancel) {
-                    project.answer(path, "cancel", holding: String(localized: "Another app moved or deleted “\(path.fileName)”."))
-                }
-            } message: { path in
-                Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
             }
     }
 

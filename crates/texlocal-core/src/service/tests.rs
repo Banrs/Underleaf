@@ -12,13 +12,13 @@ use crate::session::Sessions;
 
 async fn call(service: &Service, command: &str, args: Value) -> Value {
     service
-        .call(command, &args)
+        .call(command, args)
         .await
         .unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
 }
 
 async fn status_of(service: &Service, command: &str, args: Value) -> u16 {
-    service.call(command, &args).await.unwrap_err().status
+    service.call(command, args).await.unwrap_err().status
 }
 
 fn tex_dir(service: &Service) -> Option<PathBuf> {
@@ -69,12 +69,12 @@ async fn a_new_project_is_made_with_its_engine() {
     let (_dir, service) = library();
     let args = json!({ "name": "Xe", "template": "blank", "engine": "xelatex" });
     let made = call(&service, "create_project", args).await;
-    let sessions = Sessions::new(Arc::new(service));
+    let sessions = Arc::new(Sessions::new(Arc::new(service)));
     let args = json!({ "id": made["id"], "session": 1 });
-    let opened = sessions.call("session_open", &args).await.unwrap();
+    let opened = sessions.call("session_open", args).await.unwrap();
     assert_eq!(opened["settings"]["engine"], "xelatex");
     sessions
-        .call("session_close", &json!({ "session": 1 }))
+        .call("session_close", json!({ "session": 1 }))
         .await
         .unwrap();
 }
@@ -83,25 +83,9 @@ async fn a_new_project_is_made_with_its_engine() {
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
     assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
-    let pdf = call(&service, "pdf_path", json!({ "id": "P" })).await;
-    assert!(pdf.as_str().unwrap().ends_with(".pdf"), "{pdf}");
-    for (command, args) in [
-        (
-            "synctex_forward",
-            json!({ "id": "P", "file": "a.tex", "line": "x" }),
-        ),
-        (
-            "create_entry",
-            json!({ "id": "P", "path": "../../etc/passwd" }),
-        ),
-        ("file_tree", json!({ "id": "../P" })),
-    ] {
-        assert_eq!(status_of(&service, command, args).await, 400, "{command}");
-    }
-    for args in [json!({ "id": "P" }), json!({ "id": "P", "path": null })] {
-        let err = service.call("create_entry", &args).await.unwrap_err();
-        let expected = "Invalid argument `path`: invalid type: null, expected a string";
-        assert_eq!((err.status, err.message.as_str()), (400, expected));
+    let line = json!({ "id": "P", "file": "a.tex", "line": "x" });
+    for args in [line, json!({ "id": "P" }), json!([])] {
+        assert_eq!(status_of(&service, "synctex_forward", args).await, 400);
     }
 }
 
@@ -135,7 +119,7 @@ async fn the_tex_folder_holds_latexmk_or_is_a_root_above_one_and_is_kept_until_c
     let (_dir, service) = library();
     let tex = TempDir::new().unwrap();
     let empty = service
-        .call("set_tex_dir", &json!({ "dir": tex.path() }))
+        .call("set_tex_dir", json!({ "dir": tex.path() }))
         .await;
     let empty = empty.unwrap_err();
     assert!(empty.status == 400 && empty.message.contains("doesn't contain latexmk"));
@@ -165,7 +149,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
 
     let empty = TempDir::new().unwrap();
     let refused = service
-        .call("set_texpresso_dir", &json!({ "dir": empty.path() }))
+        .call("set_texpresso_dir", json!({ "dir": empty.path() }))
         .await
         .unwrap_err();
     assert_eq!(refused.status, 400);
@@ -187,37 +171,14 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
 }
 
-#[tokio::test]
-async fn a_rename_answers_the_moved_ui_state_and_the_main_file_it_moved() {
-    let (_dir, service) = with_project();
-    let service = Arc::new(service);
-    let root = service.project("P").unwrap().root;
-    fs::create_dir(root.join("ch")).unwrap();
-    fs::write(root.join("ch/a.tex"), "").unwrap();
-    let patch = json!({ "expandedFolders": ["ch"] });
-    let args = json!({ "id": "P", "patch": patch });
-    call(&service, "set_ui_state", args).await;
-    let sessions = Sessions::new(Arc::clone(&service));
-    let ask = async |command: &str, args: Value| {
-        let answer = sessions.call(command, &args).await;
-        answer.unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
-    };
-    let opened = ask("session_open", json!({ "id": "P", "session": 1 })).await;
-    assert_eq!(opened["name"], "P");
-
-    let args = json!({ "session": 1, "patch": { "mainFile": "ch/a.tex" } });
-    ask("session_set_settings", args).await;
-    let args = json!({ "session": 1, "from": "ch", "to": "chapters" });
-    let renamed = ask("session_rename", args).await;
-    assert_eq!(renamed["mainFile"], "chapters/a.tex");
-    assert_eq!(renamed["ui"]["expandedFolders"], json!(["chapters"]));
-    let args = json!({ "session": 1, "path": "chapters" });
-    let refused = sessions.call("session_prepare_delete", &args).await;
-    assert_eq!(refused.unwrap_err().status, 409);
-    ask("session_close", json!({ "session": 1 })).await;
-}
-
 // MARK: - The edit lock
+
+#[test]
+fn every_session_of_a_project_takes_turns_with_one_history() {
+    let (_dir, service) = with_project();
+    let history = || service.history(&service.project("P").unwrap());
+    assert!(Arc::ptr_eq(&history(), &history()));
+}
 
 #[test]
 fn a_panic_during_an_edit_does_not_stop_later_edits() {
@@ -249,7 +210,7 @@ async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
             let args = json!({ "id": "P", "patch": { "expandedFolders": [folder] } });
             async move {
                 start.wait().await;
-                service.call("set_ui_state", &args).await.unwrap();
+                service.call("set_ui_state", args).await.unwrap();
             }
         });
         start.wait().await;

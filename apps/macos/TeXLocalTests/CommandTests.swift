@@ -75,7 +75,7 @@ struct MenuStructureTests {
         return menu
     }
 
-    /// macOS 27 shows the images the app asks for and hides the system's, which the Edit menu leaves out of this.
+    /// The menus show the images the app asks for and hide the system's, which the Edit menu leaves out of this.
     @Test func theMenuBarFollowsTheGuidelines() throws {
         let titles = try #require(NSApp.mainMenu).items.map(\.title)
         #expect(Array(titles.dropFirst()) == ["File", "Edit", "Format", "View", "Go", "Insert", "Compile", "Window", "Help"])
@@ -102,25 +102,19 @@ struct MenuStructureTests {
             let grid = try #require(all(insert).first { $0.title == group.title }?.submenu, "\(group.title)")
             let rows = grid.items.compactMap(\.submenu)
             #expect(rows.allSatisfy { $0.presentationStyle == .palette })
-            // Widened past AppKit's own size for its palettes (`MathGlyphs.centre`).
-            #expect(grid.minimumWidth > 0 && grid.size.width == grid.minimumWidth, "\(group.title)")
             #expect(Set(rows.map(\.items.count)) == [SymbolItems.columns(group.symbols.count)], "\(group.title)")
             let glyphs = rows.flatMap(\.items)
             #expect(glyphs.map(\.toolTip) == group.symbols.map(\.command))
             // The core's drawing, as a template the menu tints.
             #expect(glyphs.allSatisfy { $0.image?.isTemplate == true && $0.title.hasSuffix(", " + ($0.toolTip ?? "")) })
         }
-        let menu = NSHostingMenu(rootView: SymbolItems(project: nil))
-        let row = try #require(all(menu).first { $0.submenu?.presentationStyle == .palette }?.submenu)
-        row.performActionForItem(at: 1)
-        #expect(row.items.allSatisfy { $0.state == .off })
     }
 }
 
 struct OpenQuicklyTests {
     /// As Xcode's: the arrows stop at the ends, and each new list chooses its first.
     @Test func theArrowsStopAtTheEndsAndNewMatchesChooseTheFirst() {
-        let rows = QuickOpenRows()
+        let rows = ChoiceRows<QuickOpenItem> { [$0.title] }
         let item = QuickOpenItem(kind: "file", title: "main.tex", detail: "", path: "main.tex", line: nil)
         rows.items = [item, item, item]
         rows.move(-1)

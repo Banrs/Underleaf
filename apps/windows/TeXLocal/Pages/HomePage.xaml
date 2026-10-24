@@ -55,11 +55,7 @@
         <Grid>
             <StackPanel MaxWidth="1064" Padding="36,0,36,36">
                 <Grid Margin="0,24,0,0" ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <TextBlock AutomationProperties.HeadingLevel="Level1" Style="{StaticResource TitleTextBlockStyle}" Text="Home" />
                     <AutoSuggestBox
                         x:Name="Search"
@@ -69,15 +65,10 @@
                         AutomationProperties.Name="Search projects"
                         PlaceholderText="Search projects"
                         TextChanged="OnSearch">
-                        <AutoSuggestBox.QueryIcon>
-                            <FontIcon FontSize="12" Glyph="&#xE721;" />
-                        </AutoSuggestBox.QueryIcon>
+                        <AutoSuggestBox.QueryIcon><FontIcon FontSize="12" Glyph="&#xE721;" /></AutoSuggestBox.QueryIcon>
                     </AutoSuggestBox>
                     <DropDownButton Grid.Column="2" VerticalAlignment="Center" AutomationProperties.Name="Open">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon FontSize="16" Glyph="&#xE8E5;" />
-                            <TextBlock Text="Open" />
-                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon FontSize="16" Glyph="&#xE8E5;" /><TextBlock Text="Open" /></StackPanel>
                         <DropDownButton.Flyout>
                             <MenuFlyout Placement="BottomEdgeAlignedRight">
                                 <MenuFlyoutItem controls:Shortcut.Keys="Ctrl+O" Click="{x:Bind app:App.Window.OpenFolder}" Text="Folder…">
@@ -92,16 +83,8 @@
                 </Grid>
 
                 <!-- Collapsed while closed, so a closed bar leaves no gap. -->
-                <InfoBar
-                    x:Name="LibraryError"
-                    Title="Can't open the projects folder"
-                    Margin="0,16,0,0"
-                    IsClosable="False"
-                    Severity="Error"
-                    Visibility="{x:Bind LibraryError.IsOpen, Mode=OneWay}">
-                    <InfoBar.ActionButton>
-                        <Button Click="OnRetry" Content="Try again" />
-                    </InfoBar.ActionButton>
+                <InfoBar x:Name="LibraryError" Title="Can't open the projects folder" Margin="0,16,0,0" IsClosable="False" Severity="Error" Visibility="{x:Bind LibraryError.IsOpen, Mode=OneWay}">
+                    <InfoBar.ActionButton><Button Click="OnRetry" Content="Try again" /></InfoBar.ActionButton>
                 </InfoBar>
                 <controls:TexBar x:Name="TexMissing" Margin="0,16,0,0" Visibility="{x:Bind TexMissing.IsOpen, Mode=OneWay}" />
 
@@ -109,23 +92,13 @@
                 <!-- Word's template gallery: each a page drawn as its first page lies, its name under it. -->
                 <ItemsControl x:Name="Templates" Margin="-8,0" IsTabStop="False">
                     <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="4" />
-                        </ItemsPanelTemplate>
+                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="4" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="local:ProjectTemplate">
-                            <Button
-                                Padding="8"
-                                AutomationProperties.Name="{x:Bind Spoken}"
-                                Click="OnTemplate"
-                                Style="{StaticResource SubtleButtonStyle}"
-                                ToolTipService.ToolTip="{x:Bind Tip}">
+                            <Button Padding="8" AutomationProperties.Name="{x:Bind Spoken}" Click="OnTemplate" Style="{StaticResource SubtleButtonStyle}" ToolTipService.ToolTip="{x:Bind Tip}">
                                 <Grid RowSpacing="8">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="156" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="156" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <!-- White paper in either theme, as the PDF's. -->
                                     <Border
                                         Width="{x:Bind Width}"
@@ -147,11 +120,7 @@
                 <TextBlock Style="{StaticResource GroupHeaderStyle}" Text="Recent" />
                 <!-- Details view's column headings, over the rows' columns. -->
                 <Grid x:Name="Columns" Padding="12,0,48,8" ColumnSpacing="16">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="160" />
-                        <ColumnDefinition Width="176" />
-                    </Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="160" /><ColumnDefinition Width="176" /></Grid.ColumnDefinitions>
                     <TextBlock Margin="48,0,0,0" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Name" />
                     <TextBlock Grid.Column="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Main file" />
                     <TextBlock Grid.Column="2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource CaptionTextBlockStyle}" Text="Date modified" />
@@ -184,13 +153,7 @@
                                 <FontIcon FontSize="24" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Glyph="&#xE8B7;" />
                                 <!-- Word's Recent: an opened folder's path under its name. -->
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock
-                                        x:Name="NameText"
-                                        Style="{x:Bind local:HomePage.NameStyle(Missing)}"
-                                        Text="{x:Bind Name}"
-                                        TextTrimming="CharacterEllipsis"
-                                        TextWrapping="NoWrap"
-                                        ToolTipService.ToolTip="{x:Bind Name}" />
+                                    <TextBlock Style="{x:Bind local:HomePage.NameStyle(Missing)}" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTipService.ToolTip="{x:Bind Name}" />
                                     <TextBlock
                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                         Style="{StaticResource CaptionTextBlockStyle}"
@@ -231,12 +194,7 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <TextBlock
-                    x:Name="Empty"
-                    Margin="12,16"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Style="{StaticResource BodyTextBlockStyle}"
-                    Visibility="Collapsed" />
+                <TextBlock x:Name="Empty" Margin="12,16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Style="{StaticResource BodyTextBlockStyle}" Visibility="Collapsed" />
             </StackPanel>
         </Grid>
     </ScrollViewer>

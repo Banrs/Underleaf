@@ -85,24 +85,6 @@ extension SourceTextView {
     /// A swipe that starts on the gutter or an issue's box scrolls, as one on the text does.
     override func touchesShouldCancel(in view: UIView) -> Bool { view is GutterControl || view is IssueMessageView || super.touchesShouldCancel(in: view) }
 
-    var currentLine: (number: Int, rect: CGRect)? {
-        let selection = selectedRange, length = length
-        guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }
-        let end = offset(entry.fragment.rangeInElement.endLocation)
-        guard selection.location < end || end == length else { return nil }
-        let lines = entry.fragment.lines(extra: selection.location == length)
-        return (document.line(at: selection.location), band(lines, of: entry.fragment))
-    }
-
-    /// The current line's or an issue's band over these lines, on the display's pixels.
-    func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> CGRect {
-        let frame = fragment.layoutFragmentFrame
-        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
-        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
-        return CGRect(x: EditorGutter.bandStart, y: top, width: bounds.width - EditorGutter.bandStart - EditorGutter.trailingMargin,
-                      height: bottom - top)
-    }
-
     func onPixels(_ y: CGFloat) -> CGFloat {
         let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
         return (y * scale).rounded() / scale
@@ -113,33 +95,13 @@ extension SourceTextView {
     func drawUnderText(in rect: CGRect) {
         let current = selectedRange.length == 0 ? currentLine : nil
         if let current, current.rect.intersects(rect) {
-            UIColor.secondarySystemFill.setFill()
+            UIColor.currentLine.setFill()
             UIBezierPath(roundedRect: current.rect, cornerRadius: 4).fill()
         }
         issues.draw(in: rect, currentLine: current?.number)
         drawMark(in: rect)
         drawMisspelt(in: rect)
         drawNumbers(in: rect, current: current?.number)
-    }
-
-    private func drawNumbers(in rect: CGRect, current: Int?) {
-        guard showsLineNumbers, let context = UIGraphicsGetCurrentContext() else { return }
-        context.saveGState()
-        defer { context.restoreGState() }
-        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        for (offset, fragment) in fragments {
-            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textContainerOrigin.y)
-            guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
-            let lineNumber = document.line(at: offset)
-            func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
-                context.setFillColor((lineNumber == current ? UIColor.label : EditorGutter.numberColor).resolvedColor(with: traitCollection).cgColor)
-                let number = gutter.number(lineNumber)
-                context.textPosition = CGPoint(x: gutter.numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
-                CTLineDraw(number.line, context)
-            }
-            draw(lineNumber, on: line)
-            if let extra = fragment.extraLine { draw(lineNumber + 1, on: extra) }
-        }
     }
 
     /// The line under `y`, or from the selection to it; a line with an issue opens it in the build panel.
@@ -149,6 +111,6 @@ extension SourceTextView {
         if !isFirstResponder { _ = becomeFirstResponder() }
         selectedRange = extending ? NSUnionRange(selectedRange, line) : line
         let number = document.line(at: line.location)
-        if selectedRange == line, issues.issue(on: number) != nil { issueClicked(number) }
+        if selectedRange == line, issues.issue(on: number) != nil { issues.clicked(number) }
     }
 }

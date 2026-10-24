@@ -30,7 +30,9 @@ enum EditorPrefs {
 #if os(macOS)
 typealias PlatformFont = NSFont
 typealias PlatformImage = NSImage
+typealias PlatformColor = NSColor
 #else
 typealias PlatformFont = UIFont
 typealias PlatformImage = UIImage
+typealias PlatformColor = UIColor
 #endif

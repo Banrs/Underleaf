@@ -5,13 +5,12 @@ import UniformTypeIdentifiers
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var query = ""
-    @State private var renaming: ProjectInfo?
-    @State private var newName = ""
+    @State private var rename = InPlaceRename<ProjectInfo.ID>()
 
     var body: some View {
         @Bindable var app = app
         NavigationStack {
-            Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
+            Group { if let problem = app.libraryProblem { LibraryUnavailable(problem: problem) } else { list } }
                 .navigationTitle("Projects")
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
@@ -26,25 +25,7 @@ struct HomeView: View {
             if case .success(let urls) = $0 { Task { await app.open(urls) } }
         }
         .sheet(item: $app.newProjectDraft) { NewProjectSheet(draft: $0) }
-        .alert("Rename Project", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { project in
-            TextField("Name", text: $newName)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                let name = newName.trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty, name != project.name { Task { await app.rename(project, to: name) } }
-            }
-        }
         .refreshable { await app.refresh() }
-    }
-
-    private func unavailable(_ problem: AppAlert) -> some View {
-        ContentUnavailableView {
-            Label(problem.title, systemImage: "externaldrive.badge.exclamationmark")
-        } description: {
-            Text(problem.message)
-        } actions: {
-            Button("Try Again") { Task { await app.retryLibrary() } }
-        }
     }
 
     private var list: some View {
@@ -54,9 +35,12 @@ struct HomeView: View {
                     ScrollView(.horizontal) {
                         HStack(alignment: .top, spacing: 12) {
                             ForEach(ProjectTemplate.allCases) { template in
-                                Button { app.newProject(template) } label: { TemplateCard(template: template) }
-                                    .buttonStyle(.plain)
-                                    .hoverEffect(.highlight)
+                                Button { app.newProject(template) } label: {
+                                    TemplateCard(template: template).padding(6).contentShape(.rect)
+                                }
+                                .buttonStyle(.plain)
+                                .hoverEffect(.highlight)
+                                .accessibilityHint("Starts a project from this template")
                             }
                         }
                         .padding(.vertical, 8)
@@ -67,48 +51,68 @@ struct HomeView: View {
             }
             Section("All Projects") {
                 ForEach(app.importing, id: \.self) { url in
-                    ProjectRow(name: url.lastPathComponent, detail: Text("Opening…"), working: true)
+                    row(Text(url.lastPathComponent), detail: Text("Opening…"), progress: "Opening")
                 }
                 ForEach(shown) { project in
-                    Button { Task { await app.open(project.id) } } label: {
-                        ProjectRow(name: project.name, detail: detail(project), symbol: project.opened ? "folder" : "text.document",
-                                   dimmed: project.missing, working: project.id == app.opening)
+                    Group {
+                        // Not in the button while it's edited, where a tap in the name would open the project.
+                        if rename.id == project.id {
+                            row(RenameField(text: $rename.name, ended: {}) { commitRename(project) } cancel: { rename.cancel() },
+                                project: project)
+                        } else {
+                            Button { Task { await app.open(project.id) } } label: { row(Text(project.name), project: project) }
+                                .foregroundStyle(.primary)
+                        }
                     }
-                    .foregroundStyle(.primary)
                     .contextMenu { actions(project) }
-                    .swipeActions { actions(project) }
+                    .swipeActions { swipe(project) }
+                    .renameAction { rename.begin(project.id, name: project.name) }
                 }
-                if app.projectsLoaded, shown.isEmpty { empty }
+                if app.projectsLoaded, shown.isEmpty { NoProjects(query: query) }
             }
         }
         .listStyle(.insetGrouped)
     }
 
-    /// The same few for a long press and a swipe; an opened folder isn't the library's to rename or delete.
+    /// A long press's, the destructive one last as the sidebar's; an opened folder isn't the library's to rename or delete.
     @ViewBuilder private func actions(_ project: ProjectInfo) -> some View {
+        if !project.opened {
+            Button("Duplicate", systemImage: "plus.square.on.square") { Task { await app.duplicate(project) } }
+            RenameButton()
+        }
+        remove(project)
+    }
+
+    /// A swipe's, the full swipe's first.
+    @ViewBuilder private func swipe(_ project: ProjectInfo) -> some View {
+        remove(project)
+        if !project.opened { RenameButton() }
+    }
+
+    @ViewBuilder private func remove(_ project: ProjectInfo) -> some View {
         if project.opened {
             Button("Remove from List", systemImage: "minus.circle", role: .destructive) { Task { await app.forget(project) } }
         } else {
             Button("Delete", systemImage: "trash", role: .destructive) { Task { await app.delete(project) } }
-            Button("Rename", systemImage: "pencil") {
-                newName = project.name
-                renaming = project
-            }
         }
     }
 
-    @ViewBuilder private var empty: some View {
-        if !query.isEmpty {
-            ContentUnavailableView.search(text: query)
-        } else {
-            ContentUnavailableView {
-                Label("No Projects Yet", systemImage: "text.document")
-            } description: {
-                Text("Choose a template above, or open a folder, .tex file or .zip from Files.")
-            } actions: {
-                Button("Open…") { app.openingProject = true }
-            }
-        }
+    private func row(_ name: some View, project: ProjectInfo) -> some View {
+        row(name, detail: detail(project), symbol: project.opened ? "folder" : "text.document", dimmed: project.missing,
+            progress: project.id == app.opening ? "Opening" : nil)
+    }
+
+    private func commitRename(_ project: ProjectInfo) {
+        guard let name = rename.end(project.id, from: project.name) else { return }
+        Task { await app.rename(project, to: name) }
+    }
+
+    /// A touch's 44 pt, the whole row.
+    private func row(_ name: some View, detail: Text, symbol: String = "text.document", dimmed: Bool = false,
+                     progress: String?) -> some View {
+        ProjectLabel(detail: detail, symbol: symbol, dimmed: dimmed, progress: progress) { name.font(.headline) }
+            .frame(minHeight: 44)
+            .contentShape(.rect)
     }
 
     private func detail(_ project: ProjectInfo) -> Text {
@@ -118,58 +122,6 @@ struct HomeView: View {
 
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
-    }
-}
-
-private struct ProjectRow: View {
-    let name: String
-    let detail: Text
-    var symbol = "text.document"
-    var dimmed = false
-    var working = false
-
-    var body: some View {
-        HStack {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name).font(.headline).foregroundStyle(dimmed ? .tertiary : .primary)
-                    detail.font(.subheadline).foregroundStyle(dimmed ? .tertiary : .secondary).lineLimit(1).truncationMode(.middle)
-                }
-            } icon: {
-                Image(systemName: symbol).font(.title2).foregroundStyle(dimmed ? .tertiary : .secondary)
-            }
-            if working {
-                Spacer()
-                ProgressView().accessibilityLabel("Opening")
-            }
-        }
-        .frame(minHeight: 44)
-        .contentShape(.rect)
-    }
-}
-
-/// A drawing of the template's first page with its name under it, as the Mac's card.
-private struct TemplateCard: View {
-    let template: ProjectTemplate
-    private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let paper = RoundedRectangle(cornerRadius: 6, style: .continuous)
-        VStack(spacing: 8) {
-            PagePreview(template: template)
-                .frame(width: Self.page.width, height: Self.page.height)
-                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1), in: paper)
-                .overlay { paper.strokeBorder(.separator) }
-                .environment(\.colorScheme, .light)
-                .accessibilityHidden(true)
-            Text(template.title).font(.subheadline)
-        }
-        .padding(6)
-        .contentShape(.rect)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Starts a project from this template")
     }
 }
 

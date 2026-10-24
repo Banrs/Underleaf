@@ -19,6 +19,71 @@ extension PDFController {
     var keptPage: Int? { restorePage ?? (page > 0 ? page : nil) }
     var keptZoom: Zoom { restoreZoom ?? zoom }
 
+    @objc func pageChanged() {
+        guard let document = view.document, let page = view.currentPage else { return }
+        if let number = document.number(of: page) { self.page = number }
+        pageCount = document.pageCount
+    }
+
+    var visiblePages: ClosedRange<Int>? {
+        guard let document = view.document, view.hasShownArea else { return nil }
+        let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
+        return shown.min().flatMap { first in shown.max().map { first...$0 } }
+    }
+
+    @objc func visiblePagesChanged() {
+        guard let pages = visiblePages, pages != toldPages else { return }
+        toldPages = pages
+        onVisiblePages(pages)
+    }
+
+    func apply(_ zoom: Zoom) {
+        switch zoom {
+        case .fitWidth: fitWidth()
+        case .fitPage: fitPage()
+        case .scale(let scale): setScale(CGFloat(scale))
+        }
+    }
+
+    func go(toPage number: Int) {
+        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
+    }
+
+    func fitWidth() {
+        zoom = .fitWidth
+        view.autoScales = true
+    }
+
+    /// The zoom before the page: where a page lands depends on the scale.
+    func restoreIfReady() {
+        guard view.document != nil, view.hasShownArea else { return }
+        if let zoom = restoreZoom.take() { apply(zoom) }
+        if let number = restorePage.take() { go(toPage: number) }
+    }
+
+    /// SyncTeX resolves only points on a glyph box, and the page centre is usually whitespace: the probe walks down to a
+    /// line of text.
+    func sourcePoint() -> (page: Int, point: CGPoint)? {
+        guard let document = view.document else { return nil }
+        #if os(macOS)
+        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
+        #else
+        let probe = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + view.shownHeight * 0.2)
+        #endif
+        guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
+        let bounds = page.bounds(for: view.displayBox)
+        var point = view.convert(probe, to: page)
+        while point.y > bounds.minY {
+            if let line = page.selectionForLine(at: point), let text = line.string, !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                let box = line.bounds(for: page)
+                point = CGPoint(x: box.midX, y: box.minY)
+                break
+            }
+            point.y -= 6
+        }
+        return (number, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
+    }
+
     /// As a project's ui state keeps it (docs/core-api.md): "fitWidth", "fitPage" or a scale.
     nonisolated enum Zoom: Decodable, Hashable {
         case fitWidth, fitPage, scale(Double)
@@ -154,8 +219,8 @@ enum SyncTeXGeometry {
 }
 
 extension PDFPage {
-    /// The page's text and the clicked letter's index in it, for the core to find in the source. 27.2: `characterIndex` is
-    /// wrong for pdfTeX's T1 fonts, so each letter's selection is measured instead.
+    /// The page's text and the clicked letter's index in it, for the core to find in the source. `characterIndex` is a letter
+    /// behind for each line above, so each letter's selection is measured instead (`aClickSendsThePagesTextAndTheLetter`).
     func click(at point: CGPoint) -> PageClick? {
         // PDFKit's word lookup crashes on a page whose document has gone.
         guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }

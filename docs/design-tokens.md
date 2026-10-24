@@ -34,7 +34,10 @@ Sources:
 
 - **Ground**: the text background without the wallpaper's tint, shared by the status bar, the
   build panel and the PDF pane's bars.
-- **Selection** is the system's; the **current line** is `secondarySystemFill`.
+- **Selection** is the system's; the **current line** is Xcode 27's, #E8F2FF in light and #23252B in
+  dark (`DVTSourceTextCurrentLineHighlightColor` in Xcode's `Default (Light)` and `Default (Dark)`
+  `.xccolortheme` files, DVTUserInterfaceKit's FontAndColorThemes), on the Mac and the iPad, and
+  the core's `fill` for its contrast.
 - **Gutter**: no fill, no rule, dim numbers; the current line's number brightens.
 - **Font**: the platform's monospace (SF Mono, Cascadia Mono) unless chosen in Settings. The Mac
   follows Xcode 27's measures: lines 1.1 times the font's, to whole points (18 at 13 pt), numbers a

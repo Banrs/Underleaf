@@ -61,10 +61,7 @@ impl Editor {
     }
 
     fn replace(&mut self, e: &TextEdit, after: Option<TextRange>) {
-        let delta = units(&e.text) as i64 - e.length as i64;
-        self.doc.edit(e.start, e.length, &e.text);
-        self.doc
-            .follow(range(e.start, e.length), delta, None, self.mirroring);
+        let mirrors = (self.doc).apply_edit(e.start, e.length, &e.text, None, self.mirroring);
         let moved = map_selections(std::slice::from_ref(e), &self.selections);
         self.select_all(after.map_or(moved, |after| vec![after]));
         if self.mirroring {
@@ -72,7 +69,7 @@ impl Editor {
         }
         let selection = self.selection();
         self.mirroring = true;
-        for e in &self.doc.mirror_snippet() {
+        for e in &mirrors {
             self.replace(e, None);
         }
         self.mirroring = false;

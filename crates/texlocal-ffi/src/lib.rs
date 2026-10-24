@@ -16,23 +16,7 @@ use texlocal_core::syntax::{self, SourceDocument, TextRange};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
-    host: Arc<Host>,
-}
-
-struct Host {
-    runtime: tokio::runtime::Handle,
-    service: Arc<Service>,
-    sessions: Sessions,
-}
-
-impl Host {
-    fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        if command.starts_with("session_") {
-            self.runtime.block_on(self.sessions.call(command, args))
-        } else {
-            self.runtime.block_on(self.service.call(command, args))
-        }
-    }
+    sessions: Arc<Sessions>,
 }
 
 /// `body`'s result, or none if it panicked: no panic may unwind into the
@@ -85,14 +69,8 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
-        let service = Arc::new(Service::new(dir));
-        let sessions = Sessions::new(Arc::clone(&service));
-        let host = Arc::new(Host {
-            runtime: runtime.handle().clone(),
-            service,
-            sessions,
-        });
-        Some(Box::new(TlHandle { runtime, host }))
+        let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir))));
+        Some(Box::new(TlHandle { runtime, sessions }))
     })
     .flatten()
     .map_or(std::ptr::null_mut(), Box::into_raw)
@@ -111,7 +89,7 @@ pub unsafe extern "C" fn tl_call(
         let handle =
             unsafe { handle.as_ref() }.ok_or_else(|| CoreError::bad_request("No handle"))?;
         let (command, args) = unsafe { command_args(command, args_json) }?;
-        handle.host.call(command, &args)
+        handle.runtime.block_on(handle.sessions.call(command, args))
     });
     c_json(envelope(answer.unwrap_or_else(|| Err(panicked()))).to_string()).into_raw()
 }
@@ -144,8 +122,8 @@ fn envelope(result: Result<Value, CoreError>) -> Value {
     }
 }
 
-/// A host's `done` for one call, called once: with the answer, or, should the
-/// command panic before it answers, with that error as this is dropped.
+/// A host's `done` for one call, called once: with the answer, or, dropped unanswered, with
+/// the command's panic or the close that came first.
 struct Done(Option<Callback>);
 
 impl Done {
@@ -159,7 +137,12 @@ impl Done {
 impl Drop for Done {
     fn drop(&mut self) {
         if let Some(done) = self.0.take() {
-            done.send(&envelope(Err(panicked())));
+            let unanswered = if std::thread::panicking() {
+                panicked()
+            } else {
+                CoreError::internal("TeXLocal closed before it answered.")
+            };
+            done.send(&envelope(Err(unanswered)));
         }
     }
 }
@@ -183,17 +166,15 @@ pub unsafe extern "C" fn tl_call_async(
         Ok(parsed) => parsed,
         Err(err) => return done.send(Err(err)),
     };
-    if command.starts_with("session_") && command != "session_open" {
-        let Some(answer) = caught(|| handle.host.sessions.send(command, &args)) else {
-            return done.send(Err(panicked()));
-        };
-        handle.runtime.spawn(async move { done.send(answer.await) });
-    } else {
-        let (host, command) = (Arc::clone(&handle.host), command.to_owned());
-        handle
-            .runtime
-            .spawn_blocking(move || done.send(host.call(&command, &args)));
-    }
+    let Some(answer) = caught(|| handle.sessions.call(command, args)) else {
+        return done.send(Err(panicked()));
+    };
+    // `done` is called on the blocking pool, where it may call the core again, and which a
+    // close waits for once the sessions have answered.
+    let runtime = handle.runtime.handle().clone();
+    handle
+        .runtime
+        .spawn_blocking(move || done.send(runtime.block_on(answer)));
 }
 
 /// # Safety
@@ -213,7 +194,7 @@ pub unsafe extern "C" fn tl_set_listener(
         let callback = Callback { call, ctx };
         Box::new(move |event: &Value| callback.send(event)) as Listener
     });
-    caught(|| handle.host.sessions.set_listener(listener));
+    caught(|| handle.sessions.set_listener(listener));
 }
 
 /// # Safety
@@ -230,17 +211,14 @@ pub unsafe extern "C" fn tl_free(text: *mut c_char) {
 /// closed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
-    if handle.is_null() {
-        return;
+    if !handle.is_null() {
+        let handle = unsafe { Box::from_raw(handle) };
+        caught(move || {
+            handle.runtime.block_on(handle.sessions.close_all());
+            handle.sessions.set_listener(None);
+            drop(handle);
+        });
     }
-    let handle = unsafe { Box::from_raw(handle) };
-    caught(move || {
-        let host = &handle.host;
-        host.runtime.block_on(host.sessions.close_all());
-        host.sessions.set_listener(None);
-        host.service.kill_all();
-        drop(handle);
-    });
 }
 
 /// A file's text as the editor has it (`syntax::SourceDocument`):
@@ -291,7 +269,7 @@ pub unsafe extern "C" fn tl_session_source(
     let (Some(handle), Some(path)) = (unsafe { handle.as_ref() }, unsafe { str_arg(path) }) else {
         return std::ptr::null_mut();
     };
-    caught(|| handle.host.sessions.document(session, path))
+    caught(|| handle.sessions.document(session, path))
         .flatten()
         .map_or(std::ptr::null_mut(), |document| {
             document.reset_typing();
@@ -323,20 +301,14 @@ pub unsafe extern "C" fn tl_source_edit(
 ) -> *mut c_char {
     let text = unsafe { text_arg(text, len) };
     let changing = unsafe { changing.as_ref() }.copied();
-    let followed = |source: &mut TlSource| {
-        match source {
-            TlSource::Own(doc) => doc.edit(start, length, &text),
-            TlSource::Session(document) => document.edit(start, length, &text),
-        }
-        let delta = text.encode_utf16().count() as i64 - length as i64;
-        source.with(|doc| {
-            doc.follow(TextRange { start, length }, delta, changing, mirroring);
-            let mirror = (!mirroring).then(|| doc.mirror_snippet());
-            let mirror = mirror.filter(|edits| !edits.is_empty());
-            mirror.map(|edits| c_json(json!(edits).to_string()).into_raw())
-        })
+    let edit = |source: &mut TlSource| {
+        let mirrors = match source {
+            TlSource::Own(doc) => doc.apply_edit(start, length, &text, changing, mirroring),
+            TlSource::Session(document) => document.edit(start, length, &text, changing, mirroring),
+        };
+        (!mirrors.is_empty()).then(|| c_json(json!(mirrors).to_string()).into_raw())
     };
-    unsafe { on_source(source, followed) }.unwrap_or(std::ptr::null_mut())
+    unsafe { on_source(source, edit) }.unwrap_or(std::ptr::null_mut())
 }
 
 /// # Safety
@@ -378,10 +350,17 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 /// # Safety
 /// As `tl_source_edit`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_reload(source: *mut TlSource, text: *const u8, len: usize) {
+pub unsafe extern "C" fn tl_source_reload(
+    source: *mut TlSource,
+    text: *const u8,
+    len: usize,
+) -> bool {
     let text = unsafe { text_arg(text, len) };
     let reload = |source: &mut TlSource| match source {
-        TlSource::Own(doc) => **doc = SourceDocument::new(&text),
+        TlSource::Own(doc) => {
+            **doc = SourceDocument::new(&text);
+            true
+        }
         TlSource::Session(document) => document.reload(&text),
     };
     unsafe { on_source(source, reload) }

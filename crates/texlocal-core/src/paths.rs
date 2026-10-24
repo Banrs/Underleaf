@@ -4,6 +4,8 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::CoreError;
 use crate::projects::{self, is_opened};
 use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE};
@@ -135,6 +137,15 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(root.join(rel))
 }
 
+/// `name` in the project folder `dir` ("" is the project's own).
+pub(crate) fn in_folder(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", dir.trim_end_matches('/'), name)
+    }
+}
+
 pub(crate) fn fold_case(path: &str) -> String {
     path.to_lowercase()
 }
@@ -177,6 +188,19 @@ pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
 
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
     Ok(safe_segments(rel)?.join("/"))
+}
+
+/// A project path as a command names it, spelt as the core keys it (`rel_key`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub(crate) struct RelPath(pub String);
+
+impl TryFrom<String> for RelPath {
+    type Error = CoreError;
+
+    fn try_from(path: String) -> Result<Self, CoreError> {
+        rel_key(&path).map(Self)
+    }
 }
 
 /// A project path for a command line: no segment a tool could read as an option.

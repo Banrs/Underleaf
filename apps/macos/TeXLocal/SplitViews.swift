@@ -31,10 +31,6 @@ extension NSView {
         return false
     }
 
-    func descendants(named name: String) -> [NSView] {
-        subviews.flatMap { ($0.className == name ? [$0] : []) + $0.descendants(named: name) }
-    }
-
     func descendants<View: NSView>(of type: View.Type) -> [View] {
         [self as? View].compactMap(\.self) + subviews.flatMap { $0.descendants(of: type) }
     }

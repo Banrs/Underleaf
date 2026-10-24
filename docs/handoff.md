@@ -13,6 +13,17 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - Install TinyTeX from Settings, and its alert when offline. The PDF pane's button, its
   progress and a build once it is done are checked on the QA copy with TeX hidden by
   `sandbox-exec` and `HOME` pointed at a scratch folder; tlmgr adds a package there unelevated.
+- Open from launch, the inspector's form has small grey headers 10 pt in, as on main; opened
+  later it has its large title 20 pt in (`Mount`). Built when the workspace appears, it is still
+  small.
+- The File Outline's row scrolled to by the caret or the keys sits up to 10 pt under its header
+  (`OutlineList`'s -10 pt top padding and clip, since 16 October).
+- Open, the File Outline's header is the status bar's 36 pt, 8.5 pt taller than before, which
+  leaves 31 pt from its title to the first row where the Files section has 26.
+- A symbol chosen from a Math palette stays tinted the next time it opens, and the palette sits
+  7.5 pt right of centre: AppKit's own, as the observers that cleared and centred them went.
+- `qa click` refuses everywhere while macOS 27.2 keeps Notification Centre's clear full-screen
+  window over the others; Accessibility actions and keys still work.
 
 This round's, built and tested by CI but not yet seen:
 - Typing: `$` pairs and steps over its closer, `$|$` and `$` make a display; Return after
@@ -44,24 +55,13 @@ This round's, built by CI but not yet seen:
 - With no TeX: Install TinyTeX from Home's bar and from Settings into `%APPDATA%\TinyTeX`, its
   ring, a build after it, and Install adding a package to it.
 
-## 27.2 workarounds
+## Workarounds
 
-Rechecked on the 27.2 RC (26B118, Xcode 27.2) in throwaway tests, each workaround turned off; none
-can go. Their bugs still show in the test host: `HeadingRow`'s Equatable (the heading opens
-closed), `redrawFragments` (a theme change draws no fragment), the width following a live resize
-(scrolled down, the container keeps its width until the resize ends), the top paragraph put back,
-`scroll`'s two passes and `prepareContent` (their tests fail), Jump to Selection (AppKit's lands
-30 pt off after a far jump), `MathGlyphs.centre` (palettes 13 pt in on the left, 5 on the right),
-`NameWidth` (a trailing space hangs past the edge), `characterIndex` (wrong after a ligature, T1 or
-OT1), replaced pages' memory (255 MB over 15 image pages, none for new documents), zoom limits,
-the Share item, the drawn underline, PDFKit's fade (a 0.25 s `CATransition`), the frame guard,
-PDFKit's one drawer (two draws take twice one) and `Mount` (a hidden hosting view still
-re-evaluates). Not settled on the RC, needing the screen: `pdfItem.isCollapsed = false` at the
-first layout (the view trees match), `MathGlyphs.unmark`, the palette's text-only rows, and a new
-document's flash (`PDFController.show`). The measures hold: the inspector opens at 270, a sidebar
-header row is 19 pt under 10, and Compile's word goes 2 pt before AppKit would take Zoom; AppKit
-now keeps Compile down to 533 pt and Back to 481, under the 542 minimum. Each comment says what it
-works around.
+No “27.2” label is left. Each workaround kept names the test that fails without it, or says why
+none can: `redrawFragments` (an offscreen window's display pass clears the mark) and
+`pdfItem.isCollapsed = false` at the first layout (the view trees match) show only on screen.
+`NameWidth` and `HeadingRow`'s `Equatable` went, as no test could hold their bugs: New Project's
+trailing space and a heading that replaces a leaf opening closed want a look on screen.
 
 ## iPad
 
@@ -72,18 +72,19 @@ works around.
 - A folder opened from Files: its security-scoped access and bookmark are checked only in the
   simulator, which isn't sandboxed as a device is; so are a .zip or folder handed over by Files,
   the Dock or another app (`onOpenURL`).
-- Built, never seen on screen: dark paper (SwiftUI's `contrast(-1)` and `hueRotation(180°)` over
-  the PDF view, which leaves its background clear for the pane's; the find yellow is chosen to come
-  through the inversion), a forward sync selecting the source's word, and the save as the window
-  stops being active (closing from the app switcher, putting the app away).
+- Dark paper inverts the bar's edge effect over the pages with them: a 50% grey band in dark mode,
+  where the source's is black. A light trait on the PDF view or its host leaves the band grey and
+  turns the bar's title dark.
+- Built, never seen on screen: a forward sync selecting the source's word, and the save as the
+  window stops being active (closing from the app switcher, putting the app away).
+- With `toolbarRole(.editor)` inside the inspector, about one first launch in four after an install
+  laid the bar out without it (title centred, tools in the overflow menu); outside, 14 of 14 held.
 - Packages beyond the bundled tree (`tools/texpresso-ios/tree.py`) can't be added, so the build
   panel has no Install. It needs the engine to read its `ls-R` files again (TeXpresso's
   `texlive_provider.c` lists them once per process), downloads from CTAN into the container
   (`texlive.tlpdb`'s files, dependencies and checksums; the archives are `.tar.xz`), a second
   `ls-R` (`TEXPRESSO_LSR` takes several) and the new fonts' maps in a `pdftex.map` found first. No
   LuaLaTeX, biber, glossaries or bib2gls.
-- Stop and the time limit reach a build at its next file access, so a TeX loop that reads and
-  writes nothing runs on.
 - A file dragged from the sidebar into the source is known at once only if its drag item sets
   `localObject` to the file's URL, which SwiftUI's `draggable` can't.
 - Main's round of fixes and navigation came in with the merge, but the iPad lacks their UI: Quick
