@@ -218,8 +218,7 @@ Service commands (`tl_call_async`):
 | `forget_folder` | `id` | null | Takes an opened folder off the list, stopping its build and preview, and removes its settings and build output; the folder stays as it is. A library project's id is 400. |
 | `status` | | `{available, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |
 
-Syntax commands (`tl_syntax_call`), JSON in, JSON out; `math_svg` and `glyph_svg` are as
-`texlocal.h` describes them:
+Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
@@ -227,6 +226,7 @@ Syntax commands (`tl_syntax_call`), JSON in, JSON out; `math_svg` and `glyph_svg
 | `themes` | | `[{id, title}]` | |
 | `theme_colors` | `theme`, `dark`, `increaseContrast?`, `background`, `fill`, `system?` | `[[r, g, b, a]]`, one per highlight kind | `system` maps the System theme's colour names to the host's values; each colour is made `legible`. |
 | `menus` | | `{templates, symbolGroups}` | The Insert and Math menus' catalogue. |
+| `math_svg` | `tex`, `display`, `size` (points) | `{svg, width, height}` in points, or `{"error": why}` | The SVG is `<path>` and `<rect>` alone, in black, for the host to tint. |
 | `heading_styles` | | as `session_analyze`'s `headingStyles` | The levels without a project: every level, as the standard classes set and number them. |
 | `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
 
@@ -297,17 +297,17 @@ editor's thread.
   arguments that aren't an object of the command's. An argument a command needs is required:
   one left out is no call, never the start of the text. A range is `{start, length}`.
 
-  | Command | Arguments (optional in brackets) | Answers |
+  | Command | Arguments | Answers |
   |---|---|---|
-  | `type` | `selection`, `text`, [`autoPair` true] | the key's edit, selection, bracket partner and completion step; `autoPair` pairs brackets and, where they open maths, dollars, a second typed in an empty pair making it a display's |
-  | `delete_backward` | `selection`, [`autoPair` true] | as `type` |
+  | `type` | `selection`, `text`, `autoPair` | the key's edit, selection, bracket partner and completion step; `autoPair` pairs brackets and, where they open maths, dollars, a second typed in an empty pair making it a display's |
+  | `delete_backward` | `selection`, `autoPair` | as `type` |
   | `insert_newline` | `selection` | as `type`; after a `\begin` (not a verbatim one's) and its arguments, a line a step in and the `\end` unless it has one; in a list, the next `\item`, or an empty one taken away |
   | `partner` | `at` | the matching bracket's offset, or null |
-  | `completions` | `caret`, [`explicit` false] | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`, and in `\usepackage`, `\RequirePackage`, `\documentclass` or `\bibliographystyle`'s, in a session's source, the installed TeX's packages, classes or bibliography styles (from TeX Live's or TinyTeX's ls-R, read again once it changes, as an install does; none from MiKTeX); the project's own commands and environments come first, but for an `\end`'s, where the innermost environment open there is first; a citation from a .bib entry has a `detail` (“Knuth · 1984 · The TeXbook”: its authors' last names, year and title, as far as it has them), to show beside its key, and a label one of what it labels (the title of the `\caption` or heading it follows or is in, else its line where that is plain text); an item with none to say has no `detail`. A citation is offered whose key holds what was typed, or whose `detail` has a word starting with it, in any case: keys starting with it first, then keys holding it, then details |
+  | `completions` | `caret`, `explicit` | the offered completions; in a file's argument (`\input`, `\includegraphics`, `\bibliography`) the project's files, of `kind` `file`, and in `\usepackage`, `\RequirePackage`, `\documentclass` or `\bibliographystyle`'s, in a session's source, the installed TeX's packages, classes or bibliography styles (from TeX Live's or TinyTeX's ls-R, read again once it changes, as an install does; none from MiKTeX); the project's own commands and environments come first, but for an `\end`'s, where the innermost environment open there is first; a citation from a .bib entry has a `detail` (“Knuth · 1984 · The TeXbook”: its authors' last names, year and title, as far as it has them), to show beside its key, and a label one of what it labels (the title of the `\caption` or heading it follows or is in, else its line where that is plain text); an item with none to say has no `detail`. A citation is offered whose key holds what was typed, or whose `detail` has a word starting with it, in any case: keys starting with it first, then keys holding it, then details |
   | `definition` | `at` | `{kind, name, places: [{file, line, column, length}]}`, or null where no name is or nothing defines it. `kind` `label`, `citation`, `environment` or `command`: the key a `\ref` or `\cite` kin (one of a list) or a .bib entry's `crossref` names at `at` or a `\label`, `\bibitem` or .bib entry defines there, a `\begin` or `\end`'s environment, or a command's name, with every place the project defines it (`\label`, `\bibitem` or a .bib entry, `\newenvironment`, `\newcommand` and its kin, `\DeclareMathOperator` or `\def`), its files in the order of their paths, this document as it is now and the others as last scanned. `kind` `file`: the file an `\input`, `\include`, `\subfile`, `\import`, `\subimport` or `\includegraphics` names, found as TeX finds it, at its start (line 1, column 0, length 0). `line` counts from 1; `column` (from 0) and `length` are UTF-16 units of the line. A host goes to the first place. |
   | `start_snippet` | `fields`, `at` | the first field's range |
   | `end_snippet` | | whether one with a field to go to was open, which it ends; an environment's name, typed in its `\begin` and `\end` together, leaves Escape to the host |
-  | `tab` | `selections`, [`step` 1] | the next field, or the indent |
+  | `tab` | `selections`, `step` | the next field, or the indent |
   | `move_lines` | `selections`, `up` | the edit, or null |
   | `duplicate_lines` | `selections` | the change: each selection's whole lines copied, the selection on the copy below |
   | `delete_lines` | `selections` | the change: each selection's whole lines gone, the caret on the line after (the last line takes the break before it) |

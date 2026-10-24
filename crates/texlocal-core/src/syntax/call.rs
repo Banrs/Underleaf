@@ -17,7 +17,7 @@ use crate::service::parse;
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
 enum Command {
-    Completions { caret: u32, #[serde(default)] explicit: bool },
+    Completions { caret: u32, explicit: bool },
     ToggleComment { selections: Vec<TextRange> },
     SetHeading { caret: u32, command: String },
     InsertBlock { id: String, selection: TextRange },
@@ -26,14 +26,14 @@ enum Command {
     TextStyles { selection: TextRange },
     CodeRanges { selection: TextRange, #[serde(rename = "for")] checker: Checker },
     Words { #[serde(flatten)] range: TextRange },
-    Type { selection: TextRange, text: String, auto_pair: Option<bool> },
-    DeleteBackward { selection: TextRange, auto_pair: Option<bool> },
+    Type { selection: TextRange, text: String, auto_pair: bool },
+    DeleteBackward { selection: TextRange, auto_pair: bool },
     InsertNewline { selection: TextRange },
     Partner { at: u32 },
     Definition { at: u32 },
     StartSnippet { fields: Vec<SnippetField>, at: u32 },
     EndSnippet,
-    Tab { selections: Vec<TextRange>, step: Option<i64> },
+    Tab { selections: Vec<TextRange>, step: i64 },
     MoveLines { selections: Vec<TextRange>, up: bool },
     DuplicateLines { selections: Vec<TextRange> },
     DeleteLines { selections: Vec<TextRange> },
@@ -50,10 +50,7 @@ enum Command {
 enum Free {
     DropText { path: String, kind: Option<String>, into: Option<String> },
     Themes,
-    MathSvg { #[serde(default)] tex: String, #[serde(default)] display: bool, size: Option<f64>,
-        color: Option<Rgba> },
-    GlyphSvg { #[serde(default)] command: String, size: Option<f64>, side: Option<f64>,
-        color: Option<Rgba> },
+    MathSvg { tex: String, display: bool, size: f64 },
     Menus,
     HeadingStyles,
     ThemeColors { theme: String, #[serde(flatten)] appearance: Appearance },
@@ -89,17 +86,17 @@ impl SourceDocument {
                 selection,
                 text,
                 auto_pair,
-            } => json(self.type_text(selection, &text, auto_pair.unwrap_or(true))),
+            } => json(self.type_text(selection, &text, auto_pair)),
             Command::DeleteBackward {
                 selection,
                 auto_pair,
-            } => json(self.delete_backward(selection, auto_pair.unwrap_or(true))),
+            } => json(self.delete_backward(selection, auto_pair)),
             Command::InsertNewline { selection } => json(self.insert_newline(selection)),
             Command::Partner { at } => json(self.partner(at)),
             Command::Definition { at } => json(self.definition(at)),
             Command::StartSnippet { fields, at } => json(self.start_snippet(&fields, at)),
             Command::EndSnippet => json(self.end_snippet()),
-            Command::Tab { selections, step } => json(self.tab(&selections, step.unwrap_or(1))),
+            Command::Tab { selections, step } => json(self.tab(&selections, step)),
             Command::MoveLines { selections, up } => json(self.move_lines(&selections, up)),
             Command::DuplicateLines { selections } => json(self.duplicate_lines(&selections)),
             Command::DeleteLines { selections } => json(self.delete_lines(&selections)),
@@ -144,8 +141,6 @@ fn dropped(path: &str, kind: &str, into: &str) -> Value {
     }
 }
 
-const BLACK: Rgba = [0.0, 0.0, 0.0, 1.0];
-
 /// Whether `\includegraphics` reads `path` as written, in pdfTeX, XeTeX and LuaTeX
 /// alike: `%`, `#` and `\` mean something else to TeX there, and its braces must
 /// pair. The rest (spaces, `_`, `&`, `$`, `^`, `~`) it takes as they are.
@@ -167,28 +162,7 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
             into.as_deref().unwrap_or("tex"),
         )),
         Free::Themes => json(theme::THEMES.map(|t| json!({ "id": t.id, "title": t.title }))),
-        Free::MathSvg {
-            tex,
-            display,
-            size,
-            color,
-        } => rendered(render::math_svg(
-            &tex,
-            display,
-            size.unwrap_or(13.0),
-            color.unwrap_or(BLACK),
-        )),
-        Free::GlyphSvg {
-            command,
-            size,
-            side,
-            color,
-        } => rendered(render::glyph_svg(
-            &command,
-            size.unwrap_or(19.0),
-            side.unwrap_or(24.0),
-            color.unwrap_or(BLACK),
-        )),
+        Free::MathSvg { tex, display, size } => rendered(render::math_svg(&tex, display, size)),
         Free::Menus => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
@@ -222,16 +196,17 @@ mod tests {
     fn commands_answer_by_name() {
         #[rustfmt::skip]
         let cases = [
-            ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{"}"#,
+            ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": true}"#,
                 Some(r#"{"edit":{"start":0,"length":0,"text":"{}"},"selection":{"start":1,"length":0},"partner":null,"completions":"offer"}"#)),
             ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#,
                 Some(r#"{"edit":null,"selection":null,"partner":null,"completions":"offer"}"#)),
-            ("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#,
+            ("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#, None),
+            ("tab", r#"{"selections": [{"start": 0, "length": 0}], "step": 1}"#,
                 Some(r#"{"field":null,"edits":[{"start":0,"length":0,"text":"  "}]}"#)),
             ("map_selections", r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#,
                 Some(r#"[{"start":2,"length":1}]"#)),
             ("partner", r#"{"at": 0}"#, Some("null")),
-            ("completions", r#"{"caret": 0}"#, Some("null")),
+            ("completions", r#"{"caret": 0, "explicit": false}"#, Some("null")),
             ("partner", "{}", None),
             ("partner", "[]", None),
             ("math_at", r#"{"selection": 1}"#, None),
@@ -309,14 +284,15 @@ mod tests {
         assert!(menus["templates"]["math"].is_array());
         let levels = call("heading_styles", "{}").unwrap();
         assert!(levels.starts_with(r#"[{"title":"Normal Text","command":"""#));
-        let maths = call("math_svg", r#"{"tex": "x^2", "size": 10}"#);
+        let maths = call(
+            "math_svg",
+            r#"{"tex": "x^2", "display": false, "size": 10}"#,
+        );
         let maths: serde_json::Value = serde_json::from_str(&maths.unwrap()).unwrap();
         for key in ["svg", "width", "height"] {
             assert!(maths.get(key).is_some(), "{key}");
         }
-        let error = call("math_svg", r#"{"tex": "x^"}"#).unwrap();
+        let error = call("math_svg", r#"{"tex": "x^", "display": false, "size": 10}"#).unwrap();
         assert!(error.starts_with(r#"{"error":"#), "{error}");
-        let glyph = call("glyph_svg", r#"{"command": "\\alpha"}"#).unwrap();
-        assert!(glyph.contains(r#""width":24.0,"height":24.0"#), "{glyph}");
     }
 }

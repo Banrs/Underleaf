@@ -940,8 +940,6 @@ dependencies = [
  "flate2",
  "libc",
  "notify",
- "ratex-font",
- "ratex-katex-fonts",
  "ratex-layout",
  "ratex-lexer",
  "ratex-parser",
@@ -954,7 +952,6 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
- "ttf-parser",
  "zip",
 ]
 

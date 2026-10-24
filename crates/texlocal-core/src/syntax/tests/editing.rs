@@ -130,7 +130,7 @@ fn the_maths_previewed_draws_with_the_project_definitions_it_uses() {
     let preamble = "\\newcommand{\\R}{\\mathbb{R}} \\def\\RR{\\R^2} \\newcommand{\\broken}{\\frac{1}}\n\
         \\newcommand{\\norm}[2][2]{\\|#2\\|_{#1}} \\DeclareMathOperator*{\\argmax}{arg\\,max}";
     let commands = Facts::read(preamble, "tex").commands;
-    let drawn = |tex: &str| render::math_svg(tex, false, 10.0, [0.0, 0.0, 0.0, 1.0]);
+    let drawn = |tex: &str| render::math_svg(tex, false, 10.0);
     let previewed = |source: &str| {
         let (mut doc, at) = marked(source);
         let symbols = Symbols {

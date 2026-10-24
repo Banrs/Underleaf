@@ -35,7 +35,7 @@ struct SymbolItems: View {
                                 Label {
                                     Text(verbatim: MathGlyphs.spokenName(symbol.glyph, symbol.command))
                                 } icon: {
-                                    MathGlyphs.icon(symbol.command)
+                                    MathGlyphs.icon(symbol.glyph, symbol.command)
                                 }
                             }
                             .help(symbol.command)

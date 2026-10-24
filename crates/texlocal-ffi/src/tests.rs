@@ -145,8 +145,7 @@ fn a_session_documents_source_is_the_sessions_document() {
     // The handle outlives the test, as the app's does, and may tell its listener after it.
     let handle = open(dir.path(), collect, context(Box::leak(Box::new(sink))));
     let session = open_main(handle);
-    let typed =
-        |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text });
+    let typed = |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text, "autoPair": true });
     unsafe {
         let source = session_source(handle, session, "main.tex");
         let text = text_of(source);

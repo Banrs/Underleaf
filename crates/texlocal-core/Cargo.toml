@@ -22,19 +22,16 @@ tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync
 zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # The editors' maths as SVG (syntax/render.rs).
-ratex-font = "=0.1.14"
-ratex-katex-fonts = "=0.1.14"
 ratex-layout = "=0.1.14"
 ratex-lexer = "=0.1.14"
 ratex-parser = "=0.1.14"
-# Glyphs as outlines from the KaTeX fonts compiled in; text those fonts
-# haven't (CJK, Cyrillic) comes from its system-font fallback (render.rs).
+# Glyphs as outlines from the KaTeX fonts it compiles in (ratex-katex-fonts);
+# text those fonts haven't (CJK, Cyrillic) comes from the system's fonts.
 ratex-svg = { version = "=0.1.14", features = ["embed-fonts"] }
 ratex-types = "=0.1.14"
 # ratex-katex-fonts embeds its fonts only in release builds unless this is
 # on: debug and test builds would read them from the registry at run time.
 rust-embed = { version = "8.11", features = ["debug-embed"] }
-ttf-parser = "0.25"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
