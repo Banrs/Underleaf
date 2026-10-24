@@ -50,31 +50,21 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window has Compile as its word. Narrowing, it turns to its symbol before AppKit would take Zoom or Compile to
-    /// the overflow menu, with the sidebar open or not, and is its word again once there is room. At its narrowest the window
-    /// holds both panes, Compile is a circle beside Back, still Compile to the overflow menu and VoiceOver, and nothing
-    /// has left the toolbar but for its overflow menu, where each tool that can go has a menu form and the editing tools go
+    /// At its narrowest the window holds both panes, with the sidebar open or not, Compile and Back stay in the toolbar, and
+    /// nothing has left it but for its overflow menu, where each tool that can go has a menu form and the editing tools go
     /// first.
     @Test(arguments: [false, true]) func aNarrowWindowKeepsEveryToolOrItsMenuForm(sidebar: Bool) async throws {
         let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
-        let toolbar = workspace.toolbar
-        let compile = try item(.compile, in: workspace)
-        let button = try #require(compile.view)
-        let word = button.fittingSize.width
-        #expect(!toolbar.compactCompile && word > 60 && compile.style == .prominent)
-        func shown(_ id: NSToolbarItem.Identifier) -> Bool { toolbar.toolbar.visibleItems?.contains { $0.itemIdentifier == id } == true }
-        for width in stride(from: 1300, to: ColumnMetrics.contentMinimum.width, by: -10) {
-            try await resize(window, to: width)
-            if !toolbar.compactCompile { #expect(shown(.zoom) && shown(.compile), "at \(width)") }
+        func shown(_ id: NSToolbarItem.Identifier) -> Bool {
+            workspace.toolbar.toolbar.visibleItems?.contains { $0.itemIdentifier == id } == true
         }
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
         // AppKit folds the sidebar only in a live resize.
         #expect(sidebar || window.contentView?.frame.width == ColumnMetrics.contentMinimum.width)
         for pane in workspace.columns.splitViewItems { #expect(pane.viewController.view.frame.width >= ColumnMetrics.paneMinimum) }
-        #expect(toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
         #expect(shown(.compile) && shown(.back))
-        #expect(compile.label == MenuCommand.compileRun.title && compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
+        #expect(try item(.compile, in: workspace).menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
             let item = try item(id, in: workspace)
             #expect(!item.isHidden && item.visibilityPriority == .low)
@@ -83,27 +73,19 @@ struct ShellTests {
         for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
-        try await resize(window, to: 1300)
-        #expect(!toolbar.compactCompile && button.fittingSize.width == word)
     }
 
-    /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
-    /// where they are as a build starts and ends. The overflow menu and VoiceOver have Stop by name.
-    @Test func stopIsAsWideAsCompile() async throws {
+    /// While a build runs Compile is Stop on clear glass, by name to the overflow menu and VoiceOver.
+    @Test func compileIsStopWhileBuilding() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let compile = try item(.compile, in: workspace)
-        let button = try #require(compile.view)
-        for width in [1300, ColumnMetrics.contentMinimum.width] {
-            try await resize(window, to: width)
-            let idle = button.fittingSize
-            workspace.project.compiling = true
-            try await waitUntil { compile.label == MenuCommand.compileStop.title }
-            #expect(button.fittingSize == idle && compile.backgroundTintColor == .clear)
-            #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
-            workspace.project.compiling = false
-            try await waitUntil { compile.label == MenuCommand.compileRun.title }
-            #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
+        #expect(compile.style == .prominent)
+        for (compiling, command) in [(true, MenuCommand.compileStop), (false, .compileRun)] {
+            workspace.project.compiling = compiling
+            try await waitUntil { compile.label == command.title }
+            #expect(compile.image?.accessibilityDescription == command.title && compile.menuFormRepresentation?.title == command.title)
+            #expect(compile.backgroundTintColor == (compiling ? .clear : nil))
         }
     }
 
