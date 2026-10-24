@@ -3,13 +3,12 @@ import SwiftUI
 
 @Observable
 final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
-    static let maxQuery = 256
     static let maxMatches = 5000
     static let debounce: Duration = .milliseconds(200)
     /// Past Live Preview's gap between keys, so the search runs again as the typing pauses.
     private static let rerunDelay: Duration = .milliseconds(350)
 
-    static func normalize(_ query: String) -> String { String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery)) }
+    private static func normalize(_ query: String) -> String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
         if query.isEmpty { return "" }
