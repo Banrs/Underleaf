@@ -24,8 +24,8 @@ Decided: change only when asked. A quirk's workaround names the test that fails 
   Home. **Narrow windows** stop where Compile's symbol has room (`ColumnMetrics`), folding sidebar
   and inspector, unsaved as hidden; the title and the overflow menu are AppKit's.
 - **Toolbar**: AppKit's spacing, separators tracking the source|PDF divider; narrowing sends the
-  editing tools and Zoom to the overflow menu first. Compile is the one prominent item, a word, its
-  symbol before Zoom or Compile would go, Stop with a spinner while building. Aa opens Notes' text
+  editing tools and Zoom to the overflow menu first. Compile is the one prominent item, the play
+  symbol in its tinted circle (HIG, Toolbars), the stop symbol on clear glass while building. Aa opens Notes' text
   styles (`FormatPopover`) beside Math and Insert, whose palettes are AppKit's. Zoom is a pill.
 - **Source**: one TextKit 2 `SourceTextView` at Xcode's metrics and current line; the maths preview
   is 1.21 times the text; the completion list is Liquid Glass at a system menu's measures.
@@ -33,7 +33,7 @@ Decided: change only when asked. A quirk's workaround names the test that fails 
   core's message, its `compact` form or the symbol; a click opens the build panel on it. Live
   Preview's look the same (dim reads as disabled), give way to a build's and open its log.
 - **Status bar**: one 36 pt bar across source and PDF, as Xcode's editor bar, over each pane's hard
-  scroll edge. After a failed save it says Not Saved and saves on a click. Live pages from another
+  scroll edge. It shows the build's spinner beside Compiling…. After a failed save it says Not Saved and saves on a click. Live pages from another
   engine than the project's show Live Preview On naming it, dimmed; its help says breaks may differ.
 - **Build panel** below the columns, resized and dragged shut from the status bar's line; its foot
   bar as Xcode's console: Issues, Build Log, Live Preview Log, Warnings or Copy Log, a filter.

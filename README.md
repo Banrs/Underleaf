@@ -42,19 +42,23 @@ document as you write, without running TeX, for references and citations that po
 defined twice, missing input files, and environments, braces or maths left open. What it finds is
 listed and marked on its line with the build's issues, even before you first compile.
 
-Clicking in the PDF takes you to that place in the source, and you can go the other way too
-(SyncTeX), to the exact word, and you can search the PDF too.
+Double-clicking in the PDF takes you to that place in the source, and you can go the other way
+(SyncTeX), to the exact word. You can also search the PDF.
 
 Live Preview, still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
 brings it new citations and references. It stays on for a project until you turn it off.
 
 There's also a file tree, a word count, an outline of the current file that counts each section's
-words, search and replace across the project, optionally matching case or whole words, and export to ZIP, or to a ZIP ready for arXiv with
-the compiled bibliography and the 00README.json arXiv reads. Deleted files go to the Trash. You can list every place a label, citation, command or file is used, rename a label or
-citation everywhere, and see what a citation, reference or command is without leaving the text. You
-can also open a file, section or label by typing a few letters of its name, and go back to where
-you jumped from.
+words, and search and replace across the project, optionally matching case or whole words. You can
+export the project to a ZIP, or to a ZIP ready for arXiv. That one holds the 00README.json arXiv
+reads and the index and glossary files arXiv can't make itself, and it is refused for a LuaLaTeX
+project or one with shell escape on, which arXiv compiles without. Deleted files go to the Trash.
+
+You can list every place a label, citation, command or file is used, rename a label or citation
+everywhere, and see what a citation, reference or command is without leaving the text. You can
+also open a file, section or label by typing a few letters of its name, and go back to where you
+jumped from.
 
 Each project keeps a history on your computer that you can compare files with and restore from.
 A version is kept as you save, at most every ten minutes, and before a change across files such as
@@ -107,8 +111,10 @@ explains how it works.
 
 ## Projects
 
-Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. A project's own settings, like its main file and TeX engine, are
-kept in a `.texlocal.json` file next to your sources.
+Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. The settings
+of a project there, like its main file and TeX engine, are kept in a `.texlocal.json` file next to
+your sources. A folder you opened keeps its settings outside it, as the first section says, unless
+it already has a `.texlocal.json`.
 
 ## Security
 

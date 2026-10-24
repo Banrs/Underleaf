@@ -9,16 +9,16 @@ With Underleaf's patch TeXpresso has no window: it writes each page in view as i
 Mac app draws it in the PDF pane, and the whole document follows when typing pauses. Errors show
 on their lines once typing pauses, and in the Live Preview Log, which follows TeX's at most five
 times a second. When Live Preview stops, the last build's PDF returns. A restart the session makes
-itself (after a rename, a new main file, a file gone, or TeXpresso ending after 10 s) stays
-`starting` and keeps the live document until the new run's first replaces it. Compile still uses latexmk and the project's engine; automatic
-builds pause meanwhile without changing the setting.
+itself (after a rename, a new main file or a file gone) stays `starting` and keeps the live
+document until the new run's first replaces it. Compile still uses latexmk and the project's
+engine; automatic builds pause meanwhile without changing the setting.
 
 ## Install
 
 TeXpresso and its sibling `texpresso-xetex` need TeX Live (`kpsewhich` on the TeX path) and
-TeXpresso's [build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md) but
-SDL, from Homebrew, with `pkg-config`. They link Homebrew's `mupdf`, `icu4c`, `harfbuzz` and
-`graphite2`, which must stay installed. The patch is verified against upstream commit
+TeXpresso's [build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md), from
+Homebrew with `pkg-config`, except SDL, which this build has no use for. They link Homebrew's
+`mupdf`, `icu4c`, `harfbuzz` and `graphite2`, which must stay installed. The patch is verified against upstream commit
 `e8df7709077b2f86f6e16e6c86ceefb86de06f8d`.
 
 ```sh

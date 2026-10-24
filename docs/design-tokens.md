@@ -1,7 +1,7 @@
 # Design tokens
 
-Each app uses its platform's own controls, colours and metrics. What they share is the editor's
-appearance, defined once in the core (`crates/texlocal-core/src/syntax/theme.rs`).
+The Mac app's controls, colours and metrics are AppKit's and SwiftUI's. The editor's appearance is
+what the core's themes give it (`crates/texlocal-core/src/syntax/theme.rs`).
 
 ## Syntax themes
 
@@ -18,9 +18,8 @@ hold, are plain; nothing is bold or italic.
 | comment | `#4C886B` / `#6272A4` | `#808080` / `#667299` | secondary label |
 | invalid (stray brace, what maths can't hold; foreground only) | `#FF0000` / `#FF79C6` | `#C00000` / `#F2F218` | red |
 
-Values are Light / Dark. System names a colour each app resolves in its own appearance
-(`systemPink`, `systemTeal`, `systemPurple`, `secondaryLabelColor`, `systemRed`); the theme carries
-Apple's published values for an app without them. `theme_colors` raises each colour to 4.5:1
+Values are Light / Dark. System names a colour the app resolves in its own appearance
+(`systemPink`, `systemTeal`, `systemPurple`, `secondaryLabelColor`, `systemRed`). `theme_colors` raises each colour to 4.5:1
 against the editor's ground and its current line's fill (7:1 under Increase Contrast).
 
 Sources:
