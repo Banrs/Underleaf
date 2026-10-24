@@ -43,11 +43,11 @@ struct HomeView: View {
             // No section header: the list pins its first one with a rule the window's width.
             VStack(alignment: .leading, spacing: 8) {
                 Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
-                templates
+                // The pages under the header and level with the projects' icons; the hover shapes reach past them.
+                templates.padding(.horizontal, -TemplateButtonStyle.edge)
             }
             .selectionDisabled()
             .listRowSeparator(.hidden)
-            // The buttons bring their own 10 pt edge.
             .listRowInsets(EdgeInsets())
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")

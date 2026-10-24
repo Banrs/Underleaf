@@ -274,7 +274,9 @@ struct OutlineHeader: View {
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
+            // Level with the Files section's header above (measured), the chevron where AppKit puts a section's.
+            .padding(.leading, 14)
+            .padding(.trailing, 18)
             .frame(maxHeight: .infinity)
             .contentShape(.rect)
         }
