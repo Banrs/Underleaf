@@ -146,9 +146,10 @@ fn open_folder(
             "“{name}” holds TeXLocal’s projects. Choose the folder that holds the document."
         )));
     }
-    let mut files = 0;
-    visit_files(root, &mut |_, _| {
+    let (mut files, mut tex) = (0, false);
+    visit_files(root, &mut |_, rel| {
         files += 1;
+        tex |= file_kind(rel) == "tex";
         Ok(files <= MAX_FILES)
     })?;
     if files > MAX_FILES {
@@ -166,6 +167,7 @@ fn open_folder(
     });
     let (store, made) = match same {
         Some((id, _)) => (store(data_dir, &id), None),
+        None if !tex => return Err(import::no_tex(&name.to_string())),
         None => {
             let stores = data_dir.join(STORE);
             fs::create_dir_all(&stores)?;
@@ -355,6 +357,16 @@ mod tests {
         for folder in [dir.path(), &service.data_dir] {
             fails_with(open_path(&service, folder), "holds TeXLocal’s projects");
         }
+        // Nor is a folder without a .tex, or a file that's neither a .tex nor a .zip.
+        let photos = write(
+            &dir.path().join("Photos"),
+            &[("a.png", ""), ("sub/b.txt", "")],
+        );
+        fails_with(open_path(&service, &photos), "“Photos” has no LaTeX file");
+        fails_with(
+            open_path(&service, &photos.join("a.png")),
+            "isn’t a project",
+        );
         let big = dir.path().join("Big");
         fs::create_dir(&big).unwrap();
         for n in 0..=MAX_FILES {

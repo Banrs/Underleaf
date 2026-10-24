@@ -264,7 +264,7 @@ impl Opened {
     }
 }
 
-/// A .zip's files, or any other file alone.
+/// A .zip's files, or a .tex alone.
 fn open(src: &Path) -> Result<Opened, CoreError> {
     let stem = src
         .file_stem()
@@ -286,12 +286,24 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         return Opened::of_zip(stem, zip);
     }
     let path = file_name(src);
+    if projects::file_kind(&path) != "tex" {
+        return Err(CoreError::bad_request(format!(
+            "“{path}” isn’t a project: TeXLocal opens a folder, a .tex file or a .zip of a project."
+        )));
+    }
     Ok(Opened {
         base: stem,
         zip: None,
-        main: (projects::file_kind(&path) == "tex").then(|| path.clone()),
+        main: Some(path.clone()),
         files: vec![(path, Source::File(src.to_path_buf()))],
     })
+}
+
+/// A folder or .zip a person opens holds a document: anything else would become a project.
+pub(crate) fn no_tex(name: &str) -> CoreError {
+    CoreError::bad_request(format!(
+        "“{name}” has no LaTeX file (.tex). Open the folder that holds the document, or start one with New Project."
+    ))
 }
 
 fn file_name(path: &Path) -> String {
@@ -364,8 +376,8 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
     Ok(settings)
 }
 
-/// A .zip's files, or a file alone, made a new project, with the settings they name; a project
-/// without a .tex gets the blank template's main file.
+/// A .zip's files, or a .tex alone, made a new project, with the settings they name; one
+/// whose .tex files can't be its main file gets the blank template's.
 pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     let Opened {
         base,
@@ -375,6 +387,12 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     } = open(src)?;
     // What an export leaves out stays behind: the project makes its own settings.
     files.retain(|(path, _)| !left_out(path));
+    if !files
+        .iter()
+        .any(|(path, _)| projects::file_kind(path) == "tex")
+    {
+        return Err(no_tex(&file_name(src)));
+    }
 
     projects::new_project(&service.data_dir, &base, |root| {
         write_files(root, &files, zip.as_mut())?;
@@ -736,13 +754,24 @@ mod tests {
             ("paper.tex", "paper.tex", &["paper.tex"][..]),
             // One whose name latexmk would read as an option comes but isn't the main file.
             ("-draft.tex", "main.tex", &["-draft.tex", "main.tex"]),
-            // Any other file comes with the blank template's main file.
-            ("refs.bib", "main.tex", &["main.tex", "refs.bib"]),
         ] {
             let info = import_project(&service, &src.join(file)).unwrap();
             assert_eq!(info.main_file, main, "{file}");
             assert_eq!(files_in(&service.data_dir.join(&info.id)), files, "{file}");
         }
+        // Any other file, or a zip without a .tex, is no project.
+        use crate::projects::{list_projects, testing::fails_with};
+        fails_with(
+            import_project(&service, &src.join("refs.bib")),
+            "isn’t a project",
+        );
+        let photos = dir.path().join("Photos.zip");
+        zip_of(&photos, &[("a.png", "png"), ("notes.txt", "x")]);
+        fails_with(
+            import_project(&service, &photos),
+            "“Photos.zip” has no LaTeX file",
+        );
+        assert_eq!(list_projects(&service.data_dir).unwrap().len(), 2);
     }
 
     #[test]

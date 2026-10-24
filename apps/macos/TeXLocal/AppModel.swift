@@ -286,7 +286,7 @@ final class AppModel {
         for url in urls { await open(url, alone: urls.count == 1) }
     }
 
-    /// A folder, or a .tex file's, opens where it is; a .zip or another file is copied into the library.
+    /// A folder, or a .tex file's, opens where it is; a .zip is copied into the library. The core refuses what holds no .tex.
     func open(_ url: URL, alone: Bool = true) async {
         // A second Return while it copies would make a second project.
         guard !importing.contains(url) else { return }
