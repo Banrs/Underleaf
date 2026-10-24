@@ -189,6 +189,11 @@ build folder and `.git`.
 
 An error is `{"error": message, "status": code}`; the message is for the person to read.
 
+- A command the core doesn't know is 404 “Unknown command”. Arguments that aren't a JSON object
+  are 400, and so are ones missing a key or with one of the wrong type: “Invalid arguments: ”
+  and serde's words, which name the key. Keys a command doesn't take are ignored.
+- An async call still unanswered when `tl_close` ends its session answers 500 “TeXLocal closed
+  before it answered.”; one whose command panicked, 500 “The command panicked”.
 - File-system failures keep their kind: 404 not there, 403 not allowed, 409 already there,
   else 500. The message is the OS's words without its “(os error N)”, and names the file
   (“path”: …) where a person chose it.
