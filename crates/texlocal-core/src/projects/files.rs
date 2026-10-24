@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::Serialize;
 use serde_json::json;
@@ -185,14 +186,21 @@ pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
 /// Delete to the Trash, so a mis-click is recoverable; a trash failure is reported and never
 /// becomes a permanent delete.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    use trash::macos::{DeleteMethod, TrashContextExtMacos};
-    // The system's file manager moves it, as the Mac app does; the crate's Finder-over-Apple-Events
-    // default needs the Automation permission.
-    let mut context = trash::TrashContext::default();
-    context.set_delete_method(DeleteMethod::NsFileManager);
-    context
-        .delete(path)
-        .map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
+    // macOS's own tool moves it as FileManager's trashItem does, as the Mac app does, where
+    // asking Finder would need the Automation permission. The path is absolute, so it can't be
+    // read as an option; `-s` makes a failed move an error.
+    let trashed = Command::new("/usr/bin/trash")
+        .arg("-s")
+        .arg(path)
+        .output()?;
+    if trashed.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&trashed.stderr);
+    Err(CoreError::internal(format!(
+        "Could not move the item to Trash: {}",
+        said.trim()
+    )))
 }
 
 /// Discard, by `trash`, an entry an incoming file of its name replaces. The main file may go,

@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use ropey::Rope;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -162,25 +161,29 @@ impl Output {
     }
 }
 
-/// The char `units` UTF-16 units into `text`, unless that is inside a character.
-fn char_at(text: &Rope, units: usize) -> Option<usize> {
-    let at = text.try_utf16_cu_to_char(units).ok()?;
-    (text.char_to_utf16_cu(at) == units).then_some(at)
-}
-
-fn byte_offset(text: &Rope, units: usize) -> Option<usize> {
-    Some(text.char_to_byte(char_at(text, units)?))
+/// The byte `units` UTF-16 units into `text`, unless that is inside a character.
+fn byte_offset(text: &str, units: usize) -> Option<usize> {
+    let mut counted = 0;
+    for (at, char) in text.char_indices() {
+        if counted >= units {
+            return (counted == units).then_some(at);
+        }
+        counted += char.len_utf16();
+    }
+    (counted == units).then_some(text.len())
 }
 
 /// Replaces `remove` UTF-16 units at `start` with `inserted`; the byte offset and length
 /// it replaced, as TeXpresso counts them.
-fn splice(text: &mut Rope, start: usize, remove: usize, inserted: &str) -> Option<(usize, usize)> {
-    let from = char_at(text, start)?;
-    let to = char_at(text, start.checked_add(remove)?)?;
-    let offset = text.char_to_byte(from);
-    let removed = text.char_to_byte(to) - offset;
-    text.remove(from..to);
-    text.insert(from, inserted);
+fn splice(
+    text: &mut String,
+    start: usize,
+    remove: usize,
+    inserted: &str,
+) -> Option<(usize, usize)> {
+    let offset = byte_offset(text, start)?;
+    let removed = byte_offset(&text[offset..], remove)?;
+    text.replace_range(offset..offset + removed, inserted);
     Some((offset, removed))
 }
 
@@ -205,7 +208,7 @@ struct Session {
     root: PathBuf,
     pdf: PathBuf,
     state: Mutex<State>,
-    files: Mutex<HashMap<String, Rope>>,
+    files: Mutex<HashMap<String, String>>,
     sink: Sink,
 }
 
@@ -292,9 +295,7 @@ impl Manager {
     }
     /// A file's text as the owner's preview typesets it: the editor's, saved or not.
     pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
-        lock(&self.owned(owner).ok()?.files)
-            .get(rel)
-            .map(String::from)
+        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
     }
     pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
         let pdf = self.owned(owner)?.pdf.clone();
@@ -330,7 +331,7 @@ impl Manager {
         owner: u64,
         root: PathBuf,
         pdf: PathBuf,
-        buffers: HashMap<String, Rope>,
+        buffers: HashMap<String, String>,
         sink: Sink,
         tree: Tree,
     ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
@@ -362,12 +363,16 @@ impl Manager {
 /// The editor's files as TeXpresso is first told them and as the session keeps them, then the
 /// pages in view and the caret. TeXpresso's idle reruns stay off: each restarts TeX from nothing
 /// after a pause in typing and shows no page until it is over.
-fn opening(root: &Path, files: &[FileBuffer], pane: &Pane) -> (HashMap<String, Rope>, Vec<Value>) {
+fn opening(
+    root: &Path,
+    files: &[FileBuffer],
+    pane: &Pane,
+) -> (HashMap<String, String>, Vec<Value>) {
     let mut buffers = HashMap::new();
     let mut opening = Vec::new();
     for file in files {
         opening.push(json!(["open", root.join(&file.path), file.text]));
-        buffers.insert(file.path.clone(), Rope::from_str(&file.text));
+        buffers.insert(file.path.clone(), file.text.clone());
     }
     let view = pane
         .view
@@ -475,13 +480,13 @@ impl Preview for Manager {
         }
         let mut files = lock(&session.files);
         let path = session.root.join(rel);
-        let message = match files.get(rel).map(|old| delta(&String::from(old), text)) {
+        let message = match files.get(rel).map(|old| delta(old, text)) {
             Some((_, 0, "")) => return Ok(()),
             Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
             None => json!(["open", path, text]),
         };
         session.send(&[message]);
-        files.insert(rel.to_owned(), Rope::from_str(text));
+        files.insert(rel.to_owned(), text.to_owned());
         Ok(())
     }
     fn edit(
@@ -647,7 +652,7 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
         let count = chunk.len();
         if protocol {
             let mut rest = chunk;
-            while let Some(end) = memchr::memchr(b'\n', rest) {
+            while let Some(end) = rest.iter().position(|&byte| byte == b'\n') {
                 keep(&mut pending, &rest[..end]);
                 if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
                     apply_message(&session, &message);
@@ -781,16 +786,15 @@ mod tests {
             ("a😀b", 0, 5, "", None),
         ];
         for (before, start, remove, inserted, changed) in cases {
-            let mut text = Rope::from_str(before);
+            let mut text = before.to_owned();
             assert_eq!(splice(&mut text, start, remove, inserted), changed);
             let mut after = before.to_owned();
             if let Some((from, removed)) = changed {
                 after.replace_range(from..from + removed, inserted);
             }
-            assert_eq!(String::from(&text), after);
+            assert_eq!(text, after);
         }
-        assert_eq!(byte_offset(&Rope::from_str("a😀b"), 2), None);
-        let long = Rope::from_str(&long);
+        assert_eq!(byte_offset("a😀b", 2), None);
         assert_eq!(byte_offset(&long, 6 * 800 + 4), Some(9 * 800 + 7));
     }
 

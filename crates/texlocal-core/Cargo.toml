@@ -7,18 +7,15 @@ license.workspace = true
 
 [dependencies]
 libc = "0.2"
-memchr = "2"
 notify = "8"
-ropey = "1.6"
-trash = "5"
-which = "8"
 regex = "1.12.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Checks TinyTeX's download against the sum GitHub gives it.
+# Checks TinyTeX's download against the sum GitHub gives it, and names the
+# history's snapshot objects.
 sha2 = "0.11"
 tempfile = "3"
-tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 # zip's `deflate` feature also brings zopfli, used only past level 9, and the
 # export writes level 6. Without it flate2 has no backend: this line chooses
 # one, for zip and for reading TeX's compressed SyncTeX (synctex/parser.rs).
@@ -40,7 +37,7 @@ rust-embed = { version = "8.11", features = ["debug-embed"] }
 ttf-parser = "0.25"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full", "test-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true
