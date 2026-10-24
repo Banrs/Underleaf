@@ -22,13 +22,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::analyze::{self, Heading};
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
 use crate::logparse::LogItem;
 use crate::paths::RelPath;
 use crate::projects::Symbols;
-use crate::service::{Service, out, parse};
+use crate::service::{Service, parse};
 use crate::syntax::TextEdit;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
@@ -128,13 +127,6 @@ struct Opening {
     auto_compile: bool,
 }
 
-#[derive(Deserialize)]
-struct OutlineAt {
-    session: u64,
-    path: RelPath,
-    line: usize,
-}
-
 /// One a panic drops says the session stopped, where the host would otherwise be told
 /// there is no such session.
 pub(crate) struct Reply(Option<oneshot::Sender<Result<Value, CoreError>>>);
@@ -168,14 +160,6 @@ fn gone() -> CoreError {
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     docs: Arc<Mutex<HashMap<String, Document>>>,
-    outline: Arc<Mutex<Outline>>,
-}
-
-/// `outline_current` reads it without waiting for the session's task.
-#[derive(Default)]
-pub(crate) struct Outline {
-    seq: u64,
-    headings: Vec<Heading>,
 }
 
 pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>;
@@ -229,7 +213,6 @@ impl Sessions {
         let (name, sessions) = (command.to_owned(), Arc::clone(self));
         match command.strip_prefix("session_") {
             Some("open") => Box::pin(async move { sessions.open(parse(&name, args)?) }),
-            Some("outline_current") => Box::pin(std::future::ready(self.outline_current(args))),
             Some(command) => Box::pin(self.send(command, args)),
             None => Box::pin(async move { sessions.service.call(&name, args).await }),
         }
@@ -254,7 +237,6 @@ impl Sessions {
         let open = Open {
             tx: tx.clone(),
             docs: Arc::clone(&actor.shared),
-            outline: Arc::clone(&actor.outline),
         };
         match lock(&self.open).entry(session) {
             Entry::Occupied(_) => return Err(taken()),
@@ -273,18 +255,6 @@ impl Sessions {
             }
         });
         Ok(opened)
-    }
-
-    /// The heading a line is under, from the outline kept: on no queue, for the UI thread.
-    fn outline_current(&self, args: Value) -> Result<Value, CoreError> {
-        let OutlineAt {
-            session,
-            path,
-            line,
-        } = parse("outline_current", args)?;
-        let outline = Arc::clone(&lock(&self.open).get(&session).ok_or_else(gone)?.outline);
-        let current = analyze::current_heading(&lock(&outline).headings, &path.0, line);
-        out(current)
     }
 
     fn send(

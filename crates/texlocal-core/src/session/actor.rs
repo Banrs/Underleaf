@@ -20,7 +20,7 @@ use super::build::Builds;
 use super::live::Live;
 use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
-use super::{Command, Document, Engine, Msg, Outline, Preview, Reply, Sessions};
+use super::{Command, Document, Engine, Msg, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
 use crate::events::Queued;
 use crate::logparse::{Fix, LogItem};
@@ -158,8 +158,6 @@ pub(crate) struct Actor {
     pub auto_compile: bool,
     pub builds: Builds,
     tex: signal::Receiver<bool>,
-    pub outline: Arc<Mutex<Outline>>,
-    analyses: u64,
     pub timers: BTreeMap<Timer, Instant>,
     fs_pending: Vec<Change>,
     pub tree: TreeIndex,
@@ -225,8 +223,6 @@ impl Actor {
             auto_compile,
             builds,
             tex: sessions.service.tex_found.subscribe(),
-            outline: Arc::default(),
-            analyses: 0,
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
             tree: TreeIndex::of(&tree),
@@ -989,12 +985,9 @@ impl Actor {
 
     // MARK: - Analysis
 
-    /// Worked out beside the session, which goes on with its other commands. An analysis
-    /// asked for earlier keeps no outline over it.
-    fn analyze(&mut self, path: String, reply: Reply) {
-        self.analyses += 1;
-        let (seq, project) = (self.analyses, self.project.clone());
-        let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
+    /// Worked out beside the session, which goes on with its other commands.
+    fn analyze(&self, path: String, reply: Reply) {
+        let (project, docs) = (self.project.clone(), Arc::clone(&self.shared));
         let facts = Arc::clone(&self.facts);
         tokio::task::spawn_blocking(move || {
             let root = &project.root;
@@ -1007,13 +1000,7 @@ impl Actor {
                 }
             });
             let analysis = analyze::analyze_project(root, &facts, &main, &path, class.as_ref());
-            let answer = out(&analysis);
-            let mut kept = lock(&outline);
-            if seq > kept.seq {
-                (kept.seq, kept.headings) = (seq, analysis.outline);
-            }
-            drop(kept);
-            reply.send(answer);
+            reply.send(out(&analysis));
         });
     }
 

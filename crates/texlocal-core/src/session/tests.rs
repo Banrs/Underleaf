@@ -316,11 +316,6 @@ impl Rig {
         let args = json!({ "path": "main.tex", "answer": answer });
         self.ok("resolve", args).await;
     }
-
-    async fn heading(&self, path: &str, line: usize) -> Value {
-        self.ok("outline_current", json!({ "path": path, "line": line }))
-            .await
-    }
 }
 
 fn mistaken(event: &Value) -> bool {
@@ -498,7 +493,7 @@ async fn an_undefined_commands_issue_says_where_its_line_has_it() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
+async fn the_analysis_answers_heading_styles_from_the_document_as_edited() {
     let rig = Rig::new(false).await;
     let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
     fs::write(rig.root.join("main.tex"), text).unwrap();
@@ -508,37 +503,9 @@ async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
         levels.iter().any(|l| l["command"] == "chapter")
     };
     assert!(chapters().await);
-    assert_eq!(rig.heading("main.tex", 1).await, Value::Null);
-    assert_eq!(rig.heading("main.tex", 3).await, json!(1));
-    assert_eq!(rig.heading("main.tex", 9).await, json!(2));
     let doc = rig.open("main.tex").await;
     doc.edit(15, 4, "article", None, false);
     assert!(!chapters().await);
-}
-
-/// Analyses are worked out beside the session: one under way holds up no other command,
-/// and an earlier one that finishes later leaves the later one's outline.
-#[tokio::test]
-#[expect(
-    clippy::await_holding_lock,
-    reason = "the analyses wait for the outline as long ones would"
-)]
-async fn an_analysis_holds_up_no_other_command_and_the_last_asked_for_is_kept() {
-    let rig = Rig::new(false).await;
-    fs::write(rig.root.join("main.tex"), "\\section{A}\n\\section{B}\n").unwrap();
-    fs::write(rig.root.join("ch.tex"), "\\section{C}\n").unwrap();
-    let outline = Arc::clone(&lock(&rig.sessions.open)[&rig.session].outline);
-    let held = lock(&outline);
-    let analyze = |path| {
-        let args = json!({ "session": rig.session, "path": path });
-        rig.sessions.call("session_analyze", args.clone())
-    };
-    let (earlier, later) = (analyze("main.tex"), analyze("ch.tex"));
-    assert_eq!(rig.state().await["build"]["compiling"], false);
-    drop(held);
-    later.await.unwrap();
-    earlier.await.unwrap();
-    assert_eq!(rig.heading("ch.tex", 5).await, json!(0));
 }
 
 #[tokio::test(start_paused = true)]

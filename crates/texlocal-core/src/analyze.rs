@@ -634,18 +634,7 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     nest(outline, &mut 0, None, &mut HashMap::new())
 }
 
-/// The heading a line of a file is under: the file's last at or above the line, matched by name as the analysis matches files (case folded, as on the Mac).
-pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
-    let file = paths::fold_case(file);
-    outline.iter().rposition(|h| {
-        h.line <= line
-            && h.file
-                .as_deref()
-                .is_some_and(|f| paths::fold_case(f) == file)
-    })
-}
-
-/// A session's `analyze` answer; the outline itself is kept for `outline_current`.
+/// A session's `analyze` answer; the outline itself is kept for quick open.
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Analysis {
@@ -1221,12 +1210,6 @@ mod tests {
         let untitled = serde_json::to_value(&tree[4]).unwrap();
         assert_eq!(untitled["title"], "Untitled Chapter");
         assert_eq!(untitled["untitled"], true);
-        assert_eq!(current_heading(&outline, "a.tex", 9), Some(3));
-        assert_eq!(current_heading(&outline, "a.tex", 100), Some(4));
-        assert_eq!(current_heading(&outline, "b.tex", 1), None);
-        assert_eq!(current_heading(&outline, "c.tex", 5), None);
-        // Both platforms' volumes fold case, so another spelling is the same file.
-        assert_eq!(current_heading(&outline, "A.TEX", 9), Some(3));
     }
 
     fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
