@@ -120,14 +120,14 @@ new main file's PDF), `set_ui_state {id, patch}`, `export_zip {id, dest, forArxi
 click (`text`, `at`) is then found in the text Live Preview typeset, the editor's. The core reads the SyncTeX file TeX writes beside the PDF and searches it as TeX Live's `synctex`
 program does, which it never runs.
 
-`export_zip`'s `forArxiv: true` makes the ZIP arXiv takes: the main file's `.bbl` from the build
-folder goes beside the main file with its stem, and `00README.json` at the root names the
+`export_zip`'s `forArxiv: true` makes the ZIP arXiv takes: `00README.json` at the root names the
 compiler and the main file as the top-level source (`{"spec_version": 1, "process": {"compiler":
-"pdflatex"}, "sources": [{"filename": "main.tex", "usage": "toplevel"}]}`), each in place of a
-project file of that path. It is 409 with a sentence saying what to do while shell escape is on
-(arXiv compiles without it), and when the document the main file reads names a bibliography
-(`\bibliography` or `\addbibresource`) but the build folder has no `.bbl` for the main file, or
-one older than a `.bib` it names in the project.
+"pdflatex"}, "sources": [{"filename": "main.tex", "usage": "toplevel"}]}`), and the main file's
+`.ind`, `.gls`, `.acr`, `.nls` and `.glstex` from the build folder, those there, go at the root
+with its stem, as arXiv compiles from the root and runs neither makeindex nor the glossary tools;
+each is in place of a project file of that path. No `.bbl` goes in: arXiv runs BibTeX or Biber on
+the `.bib` itself. It is 409 with a sentence saying what to do while shell escape is on or the
+engine is LuaLaTeX, as arXiv compiles with neither.
 
 The ui state is what a host keeps of a project's interface: `{expandedFolders, foldedHeadings,
 file, line, page, zoom, panel, livePreview}`. `file` is the project path shown, `line` the caret's

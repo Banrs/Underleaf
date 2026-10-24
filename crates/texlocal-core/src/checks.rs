@@ -231,12 +231,6 @@ fn twice<'a>(defined: impl IntoIterator<Item = (&'a str, &'a Named)>, noun: &str
     twice
 }
 
-/// What `found` finds of the file a bibliography's name is: BibTeX appends .bib to a name;
-/// biblatex takes it as written.
-pub(crate) fn bib_file<T>(name: &str, found: impl Fn(&str) -> Option<T>) -> Option<T> {
-    found(&format!("{name}.bib")).or_else(|| found(name))
-}
-
 fn warning(file: &str, line: u32, message: String) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
@@ -279,8 +273,13 @@ pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     }
 
     let named = reached().flat_map(|(_, facts)| &facts.bibliographies);
+    // BibTeX appends .bib to a name; biblatex takes it as written.
     let bibliographies: Vec<Option<String>> = named
-        .map(|name| bib_file(name, |rel| symbols.spelt(rel)))
+        .map(|name| {
+            symbols
+                .spelt(&format!("{name}.bib"))
+                .or_else(|| symbols.spelt(name))
+        })
         .collect();
     let mut seen = HashSet::new();
     let bibs = bibliographies
