@@ -376,7 +376,6 @@ final class ProjectFlowTests {
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
         #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)
-        #expect(drop(files.temporaryDirectory.appending(path: "figure.png")) == nil)
         await app.close()
     }
 
@@ -483,9 +482,9 @@ final class ProjectFlowTests {
         await project.search.run(in: project.session)
         #expect(project.search.groups?.first?.hits.first?.column == 2)
         project.search.query = "needles"
-        #expect(project.search.searched == "needle")
+        #expect(project.search.searched.query == "needle")
         await project.search.run(in: project.session)
-        #expect(project.search.groups?.isEmpty == true && project.search.searched == "needles")
+        #expect(project.search.groups?.isEmpty == true && project.search.searched.query == "needles")
         project.search.query = " "
         await project.search.run(in: project.session)
         #expect(project.search.groups == nil && project.search.hitCount == 0)
@@ -514,6 +513,33 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A figure dropped from outside or pasted is copied beside the file shown, named as a copy is where the name is
+    /// taken, and inserted; graphicx's formats only.
+    @Test func aFigureFromOutsideOrPastedIsCopiedInAndInserted() async throws {
+        let (project, folder) = try await opened()
+        let text = project.editor.textView
+        let pixel = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1, bitsPerSample: 8, samplesPerPixel: 4,
+                                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        let png = try #require(pixel?.representation(using: .png, properties: [:]))
+        let outside = files.temporaryDirectory.appending(path: "plot-\(UUID().uuidString).png")
+        try png.write(to: outside)
+        defer { try? files.removeItem(at: outside) }
+        let board = NSPasteboard(name: .init("TeXLocalTests-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setData(png, forType: .png)
+        var inserted: [String?] = []
+        for drop in [text.fileDrop(outside), text.fileDrop(outside), text.pasted(board)] {
+            guard case .copy(let copy)? = drop else { Issue.record("Not copied in"); continue }
+            inserted.append(await copy())
+        }
+        let stem = outside.deletingPathExtension().lastPathComponent
+        #expect(inserted == ["\\includegraphics{\(stem).png}", "\\includegraphics{\(stem) 2.png}", "\\includegraphics{Pasted Graphic.png}"])
+        #expect(exists(folder.appending(path: "Pasted Graphic.png")))
+        #expect(text.fileDrop(outside.deletingPathExtension().appendingPathExtension("svg")) == nil)
+        await app.close()
+    }
+
     /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
     @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
         let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])
@@ -522,6 +548,12 @@ final class ProjectFlowTests {
         project.search.query = "needle"
         await project.search.run(in: project.session)
         project.search.replacement = "pin"
+        // Return steps through the hits, round from the last to the first.
+        let hits = project.search.groups?.flatMap(\.hits).map(\.id)
+        project.search.step(-1)
+        #expect(project.search.chosen == hits?.last)
+        project.search.step(1)
+        #expect(project.search.chosen == hits?.first)
         await project.replaceAll()
         #expect(text.string == "a pin" && text.undoManager?.undoActionName == "Replace")
         #expect(try String(contentsOf: folder.appending(path: "b.tex"), encoding: .utf8) == "pin b")

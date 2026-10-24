@@ -10,15 +10,11 @@ use crate::stamp::Stamp;
 /// Makes temporary entries with a new entry's `mode` less the umask (0666 for a file, 0777 for a
 /// folder); tempfile's 0600 and 0700 would leave them unreadable to the accounts a project is
 /// shared with.
-#[cfg_attr(not(unix), allow(unused_variables))]
 pub(crate) fn temp_builder(mode: u32) -> tempfile::Builder<'static, 'static> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(fs::Permissions::from_mode(mode));
-    }
+    use std::os::unix::fs::PermissionsExt;
+    builder.permissions(fs::Permissions::from_mode(mode));
     builder
 }
 
@@ -28,7 +24,6 @@ pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
 }
 
 /// The extended attributes of `from` (Finder tags, quarantine) copied onto `to`, since the rename gives the file a new inode. Failure copies none and doesn't fail the save.
-#[cfg(target_os = "macos")]
 fn copy_xattrs(from: &Path, to: &File) {
     use std::os::fd::AsRawFd;
     if let Ok(from) = File::open(from) {
@@ -45,26 +40,17 @@ fn copy_xattrs(from: &Path, to: &File) {
     }
 }
 
-/// Moves a finished temporary file into place with std's rename; tempfile's reaches no path past 260 characters on Windows.
-/// There an indexer, antivirus or sync client holding the target refuses the
-/// rename for a moment, so it is tried again for about 100 ms.
+/// Moves a finished temporary file into place.
 pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
-    let mut tries = 0;
-    while let Err(error) = fs::rename(&temp, path) {
-        tries += 1;
-        if !cfg!(windows) || tries > 3 || error.kind() != io::ErrorKind::PermissionDenied {
-            return Err(error);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(33));
-    }
+    fs::rename(&temp, path)?;
     let _ = temp.keep();
     Ok(())
 }
 
-/// Replace `path`'s contents with `bytes`, or create it. A symlink is written through and permissions and xattrs kept; a read-only file is refused. The stamp is the temporary file's, taken once it is closed (Windows dates the last write then).
+/// Replace `path`'s contents with `bytes`, or create it. A symlink is written through and permissions and xattrs kept; a read-only file is refused. The stamp is the temporary file's, taken once it is closed.
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let target = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => dunce::canonicalize(path)?,
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)?,
         _ => path.to_path_buf(),
     };
     let permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
@@ -75,7 +61,6 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     // Before the contents, so a private file's text is never readable under a new file's mode.
     if let Some(permissions) = permissions {
         file.set_permissions(permissions)?;
-        #[cfg(target_os = "macos")]
         copy_xattrs(&target, &file);
     }
     file.write_all(bytes)?;
@@ -105,7 +90,6 @@ mod tests {
         assert_ne!(written, Stamp::of(&fs::metadata(&file).unwrap()));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_save_keeps_the_extended_attributes_of_the_file_it_replaces() {
         let dir = tempfile::tempdir().unwrap();
@@ -138,19 +122,15 @@ mod tests {
         perms.set_readonly(false);
         fs::set_permissions(&file, perms).unwrap();
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
-            let result = write(&file, b"new");
-            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
-            assert!(result.is_err());
-            assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
-            assert_eq!(names_in(dir.path()), ["locked.tex"]);
-        }
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let result = write(&file, b"new");
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
+        assert_eq!(names_in(dir.path()), ["locked.tex"]);
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_save_writes_through_a_symlink_keeps_a_mode_and_gives_a_new_file_the_usual_one() {
         use std::os::unix::fs::PermissionsExt;

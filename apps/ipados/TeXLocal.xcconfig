@@ -1,3 +1,0 @@
-// The in-process TeX that tools/texpresso-ios/build.sh builds: where it has, this links it and bundles its
-// tree; without it the app builds as CI's does, with TeX unavailable.
-#include? "../../tools/texpresso-ios/build/Engine.xcconfig"

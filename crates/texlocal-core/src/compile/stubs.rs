@@ -148,12 +148,14 @@ async fn outputs_a_run_did_not_write_are_not_reported_as_its_own() {
 async fn a_timed_out_automatic_build_is_killed_and_reported_failed_with_the_output_it_wrote() {
     let (_dir, service, root) = setup("echo 'Running pdflatex'\ntouch printed\nsleep 20\n");
     let started = Instant::now();
-    // Once the stub has printed, tokio's clock jumps straight to the build's time limit.
+    // Once the stub has printed, tokio's clock jumps to the build's time limit: moved, as it
+    // doesn't move itself while the build's exit is awaited on a blocking thread.
     let (project, path) = (Project::in_folder(&root), stubs(&service));
     let auto = service.compile.compile(&project, &path, true);
     let (result, ()) = tokio::join!(auto, async {
         appears(&root.join("printed"), "latexmk did not print").await;
         tokio::time::pause();
+        tokio::time::advance(super::COMPILE_TIMEOUT).await;
     });
     let result = result.unwrap();
 
@@ -212,11 +214,12 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     ];
     for (settings, given, not_given) in cases {
         write_settings(&root.join(".texlocal.json"), &settings).unwrap();
+        let trusted = settings["shellEscape"] == true;
+        crate::settings::grant(&Project::in_folder(&root), trusted).unwrap();
         compile(&service, &root).await;
         let args = fs::read_to_string(root.join("build/args")).unwrap();
         let passed: Vec<_> = args.split_whitespace().collect();
         let engine = passed.iter().position(|&arg| arg == "-pdf").unwrap();
-        let trusted = settings["shellEscape"] == true;
         let mut first = vec![if trusted { "-shell-escape" } else { "-norc" }];
         let rc = super::user_latexmkrc(|key| std::env::var_os(key));
         if let Some(rc) = rc.as_deref().filter(|_| !trusted) {

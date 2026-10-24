@@ -1,6 +1,6 @@
 //! Installing the TeX Live package that holds a file LaTeX didn't find, with TeX Live's
 //! tlmgr, as an administrator through the system's own dialog where only one may change
-//! TeX Live (MacTeX's tree, or one installed on Windows for all users).
+//! TeX Live (MacTeX's tree).
 
 use std::path::Path;
 use std::process::Stdio;
@@ -29,16 +29,9 @@ const NOT_WRITABLE: &str = "don't have permission to change the installation";
 
 /// The names come as arguments, never as script, and `quoted form` makes each one word to the
 /// shell. The dialog names the app and the package where it would name osascript.
-#[cfg(not(windows))]
 const AS_ADMINISTRATOR: &str = r#"on run {tlmgr, package}
 do shell script quoted form of tlmgr & " install " & quoted form of package with prompt "TeXLocal wants to install the TeX package “" & package & "”." with administrator privileges
 end run"#;
-/// The names come in the environment, never as script. The elevated tlmgr's output can't be
-/// read, only its exit code; 1223 is Windows' ERROR_CANCELLED.
-#[cfg(windows)]
-const AS_ADMINISTRATOR: &str = "try { $p = Start-Process -FilePath $env:TEXLOCAL_TLMGR \
-    -ArgumentList install, $env:TEXLOCAL_PACKAGE -Verb RunAs -WindowStyle Hidden -Wait \
-    -PassThru -ErrorAction Stop } catch { exit 1223 }; exit $p.ExitCode";
 
 /// Installs the package that holds `file` (“foo.sty”), and answers its name.
 pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String, CoreError> {
@@ -60,13 +53,8 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
         installed = run(as_administrator(&tlmgr, &package, path_env)?).await?;
-        // AppleScript's error -128, or Windows' ERROR_CANCELLED.
-        let cancelled = if cfg!(windows) {
-            installed.0 == 1223
-        } else {
-            installed.1.contains("(-128)")
-        };
-        if cancelled {
+        // AppleScript's error -128.
+        if installed.1.contains("(-128)") {
             let message = format!("Installing “{package}” was cancelled.");
             return Err(CoreError::new(403, message));
         }
@@ -94,28 +82,12 @@ fn holder(found: &str, slashed: &str) -> Option<String> {
         .map(|(_, package)| package.to_owned())
 }
 
-#[cfg(not(windows))]
 fn as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Result<Command, CoreError> {
     let mut command = process::command("osascript", None, path_env)?;
     command
         .args(["-e", AS_ADMINISTRATOR])
         .arg(tlmgr)
         .arg(package);
-    Ok(command)
-}
-
-#[cfg(windows)]
-fn as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Result<Command, CoreError> {
-    let mut command = process::command("powershell", None, path_env)?;
-    command
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            AS_ADMINISTRATOR,
-        ])
-        .env("TEXLOCAL_TLMGR", tlmgr)
-        .env("TEXLOCAL_PACKAGE", package);
     Ok(command)
 }
 
@@ -164,5 +136,5 @@ fn no_tlmgr(path_env: &str) -> CoreError {
     )
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

@@ -12,9 +12,9 @@ struct CoreTests {
         let core = Core.shared, info = try await newProject()
         defer { try? FileManager.default.removeItem(at: info.folder) }
         let error = await #expect(throws: CoreError.self) {
-            _ = try await core.call("create_entry", ["id": info.id, "path": "../../x"], as: FileText.self)
+            _ = try await core.call("file_tree", ["id": "../x"], as: FileText.self)
         }
-        #expect(error?.message == "Path escapes project")
+        #expect(error?.message == "Bad project id")
         let fault = await #expect(throws: CoreError.self) {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }

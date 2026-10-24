@@ -478,6 +478,42 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
+    /// A fold leaves its lines out of the layout, so the numbers skip them. An edit above it moves it and one into it opens
+    /// it; an arrow key steps over it from its edges, and the selection put inside it opens it.
+    @Test func aFoldHidesItsLinesUntilAnEditOrTheSelectionReachesIn() throws {
+        let window = inWindow()
+        open("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nlast", caret: 0)
+        func shown() throws -> [Int] {
+            try layOut()
+            return text.fragments.map { text.document.line(at: $0.offset) }
+        }
+        #expect(try shown() == [1, 2, 3, 4, 5])
+        editor.perform(.fold)
+        #expect(try shown() == [1, 4, 5])
+        type("x")
+        #expect(try shown() == [1, 4, 5] && text.folded == [NSRange(location: 17, length: 16)])
+        let end = text.document.lineStart(2) - 1, after = text.document.lineStart(4)
+        text.setSelectedRange(.caret(end))
+        text.doCommand(by: #selector(NSResponder.moveRight(_:)))
+        #expect(text.selectedRange() == .caret(after))
+        text.doCommand(by: #selector(NSResponder.moveLeft(_:)))
+        #expect(text.selectedRange() == .caret(end) && text.folded.count == 1)
+        text.setSelectedRange(.caret(text.document.lineStart(3)))
+        #expect(text.folded.isEmpty && (try shown()) == [1, 2, 3, 4, 5])
+        // The chevron between the numbers and the text folds its line; an edit inside the fold opens it.
+        let glyph = text.firstRect(forCharacterRange: .caret(0), actualRange: nil)
+        let y = text.convert(window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY)), from: nil).y
+        #expect(text.foldClick(at: NSPoint(x: (text.gutter.numbersEnd + text.textContainerOrigin.x) / 2, y: y)))
+        #expect(try shown() == [1, 4, 5])
+        // Kept while another file shows, as its text is.
+        let kept = text.string
+        editor.open(path: "other.tex", text: "other", focus: false)
+        editor.open(path: "main.tex", text: kept, focus: false)
+        #expect(try shown() == [1, 4, 5])
+        text.textStorage?.replaceCharacters(in: .caret(text.document.lineStart(3)), with: "y")
+        #expect(text.folded.isEmpty)
+    }
+
     /// An issue's message is whole where there is room for it and cut at its tail, by the box, where there isn't, down to
     /// ten of its characters. An undefined command's is set in fewer words before it is cut, so that the name is kept.
     @Test func anIssuesMessageFitsItsRoom() {

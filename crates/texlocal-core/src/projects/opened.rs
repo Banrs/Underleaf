@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
 use super::tree::{file_kind, visit_files};
 use crate::error::CoreError;
-use crate::paths::Project;
+use crate::paths::{Project, identity};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::{BUILD_DIR, SETTINGS_FILE, atomic, import, lock};
@@ -20,9 +21,6 @@ use crate::{BUILD_DIR, SETTINGS_FILE, atomic, import, lock};
 const STORE: &str = ".opened";
 const FOLDER: &str = "folder.json";
 const SIDECAR: &str = "project.json";
-/// A whole repository or home folder, not a document's: the tree and the scans would walk it all
-/// on each change.
-const MAX_FILES: usize = 20_000;
 
 /// Where an opened folder is, and which folder it is wherever it moves on its volume.
 #[derive(Serialize, Deserialize)]
@@ -62,11 +60,13 @@ pub(super) fn folders(data_dir: &Path) -> Vec<(String, Folder)> {
     stores.flatten().filter_map(folder).collect()
 }
 
-/// Its own `.texlocal.json` holds its settings while it has one.
+/// Its own `.texlocal.json` holds its settings while it has one, but not a link, whose file
+/// elsewhere a settings write would change.
 fn project(root: &Path, store: &Path) -> Project {
     let (own, sidecar) = (root.join(SETTINGS_FILE), store.join(SIDECAR));
+    let own_file = fs::symlink_metadata(&own).is_ok_and(|meta| meta.is_file());
     Project {
-        settings: if own.is_file() { own } else { sidecar.clone() },
+        settings: if own_file { own } else { sidecar.clone() },
         ui: sidecar,
         build: store.join(BUILD_DIR),
         history: store.join("history"),
@@ -113,7 +113,7 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
         let file = meta.is_file().then_some(inside);
         return Ok(Opening { project, file });
     }
-    let real = dunce::canonicalize(path)?;
+    let real = std::fs::canonicalize(path)?;
     let name = real.file_name().unwrap_or_default().to_string_lossy();
     let (project, file) = if meta.is_dir() {
         (open_folder(service, &real, None)?, None)
@@ -140,15 +140,16 @@ fn open_folder(
 ) -> Result<ProjectInfo, CoreError> {
     let data_dir = &service.data_dir;
     let name = root.file_name().unwrap_or(root.as_os_str()).display();
-    let library = dunce::canonicalize(data_dir)?;
+    let library = std::fs::canonicalize(data_dir)?;
     if library.starts_with(root) || root.starts_with(&library) {
         return Err(CoreError::bad_request(format!(
             "“{name}” holds TeXLocal’s projects. Choose the folder that holds the document."
         )));
     }
-    let mut files = 0;
-    visit_files(root, &mut |_, _| {
+    let (mut files, mut tex) = (0, false);
+    visit_files(root, &mut |_, rel| {
         files += 1;
+        tex |= file_kind(rel) == "tex";
         Ok(files <= MAX_FILES)
     })?;
     if files > MAX_FILES {
@@ -166,6 +167,7 @@ fn open_folder(
     });
     let (store, made) = match same {
         Some((id, _)) => (store(data_dir, &id), None),
+        None if !tex => return Err(import::no_tex(&name.to_string())),
         None => {
             let stores = data_dir.join(STORE);
             fs::create_dir_all(&stores)?;
@@ -215,21 +217,6 @@ pub fn forget_folder(
     Ok(fs::remove_dir_all(store)?)
 }
 
-#[cfg(unix)]
-fn identity(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = fs::metadata(path).ok()?;
-    Some((meta.dev(), meta.ino()))
-}
-
-/// The volume's serial number and the folder's index on it, which `std` keeps unstable.
-#[cfg(windows)]
-fn identity(path: &Path) -> Option<(u64, u64)> {
-    let handle = winapi_util::Handle::from_path_any(path).ok()?;
-    let info = winapi_util::file::information(&handle).ok()?;
-    Some((info.volume_serial_number(), info.file_index()))
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -244,7 +231,7 @@ mod tests {
             fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
             fs::write(dir.join(path), text).unwrap();
         }
-        dunce::canonicalize(dir).unwrap()
+        std::fs::canonicalize(dir).unwrap()
     }
 
     #[tokio::test]
@@ -364,6 +351,16 @@ mod tests {
         for folder in [dir.path(), &service.data_dir] {
             fails_with(open_path(&service, folder), "holds TeXLocal’s projects");
         }
+        // Nor is a folder without a .tex, or a file that's neither a .tex nor a .zip.
+        let photos = write(
+            &dir.path().join("Photos"),
+            &[("a.png", ""), ("sub/b.txt", "")],
+        );
+        fails_with(open_path(&service, &photos), "“Photos” has no LaTeX file");
+        fails_with(
+            open_path(&service, &photos.join("a.png")),
+            "isn’t a project",
+        );
         let big = dir.path().join("Big");
         fs::create_dir(&big).unwrap();
         for n in 0..=MAX_FILES {

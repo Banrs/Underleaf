@@ -10,7 +10,6 @@ use super::edit::{Style, map_selections};
 use super::theme::{self, Appearance, Rgba};
 use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
-use crate::projects::Query;
 use crate::service::parse;
 
 /// A source's commands (docs/core-api.md): a table, one a line.
@@ -27,7 +26,6 @@ enum Command {
     TextStyles { selection: TextRange },
     CodeRanges { selection: TextRange, #[serde(rename = "for")] checker: Checker },
     Words { #[serde(flatten)] range: TextRange },
-    Find { query: String, #[serde(default)] match_case: bool, #[serde(default)] whole_word: bool },
     Type { selection: TextRange, text: String, auto_pair: Option<bool> },
     DeleteBackward { selection: TextRange, auto_pair: Option<bool> },
     InsertNewline { selection: TextRange },
@@ -42,6 +40,7 @@ enum Command {
     ToggleStyle { selections: Vec<TextRange>, style: Style },
     Wrap { selections: Vec<TextRange>, template: String },
     MapSelections { edits: Vec<TextEdit>, selections: Vec<TextRange> },
+    Folds,
 }
 
 /// The commands that need no document.
@@ -86,11 +85,6 @@ impl SourceDocument {
                 json(self.code_ranges(selection, checker))
             }
             Command::Words { range } => json(json!({ "words": self.words(range) })),
-            Command::Find {
-                query,
-                match_case,
-                whole_word,
-            } => json(self.find(&Query::new(&query, match_case, whole_word))),
             Command::Type {
                 selection,
                 text,
@@ -119,6 +113,7 @@ impl SourceDocument {
             Command::MapSelections { edits, selections } => {
                 json(map_selections(&edits, &selections))
             }
+            Command::Folds => json(self.folds()),
         }
     }
 }
@@ -130,12 +125,19 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     }
 }
 
-/// What a file dropped on the editor does: an image or PDF on a LaTeX file is `\includegraphics` at the caret;
-/// any other file opens.
+/// What a file dropped on the editor does: an image or PDF graphicx reads, on a LaTeX file, is
+/// `\includegraphics` at the caret; any other file opens.
 fn dropped(path: &str, kind: &str, into: &str) -> Value {
+    // pdfTeX, XeTeX and LuaTeX alike: not GIF, SVG, WebP or BMP.
+    let graphic = || {
+        let ext = path.rsplit_once('.').map_or("", |(_, ext)| ext);
+        ["png", "jpg", "jpeg", "pdf"]
+            .iter()
+            .any(|known| ext.eq_ignore_ascii_case(known))
+    };
     match kind {
         "" => Value::Null,
-        "image" | "pdf" if into == "tex" && tex_reads(path) => {
+        "image" | "pdf" if into == "tex" && graphic() && tex_reads(path) => {
             json!({ "insert": format!("\\includegraphics{{{path}}}") })
         }
         _ => json!({ "open": true }),
@@ -247,16 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn find_answers_every_match_in_utf16_units() {
-        let mut doc = SourceDocument::new("😀 Cat\ncat cats");
-        let found = r#"[{"start":3,"length":3},{"start":7,"length":3},{"start":11,"length":3}]"#;
-        assert_eq!(
-            doc.call("find", r#"{"query": "cat"}"#).as_deref(),
-            Some(found)
-        );
-    }
-
-    #[test]
     fn a_dropped_file_is_inserted_or_opened() {
         let drop = |args: &str| call("drop_text", args);
         let image = r#"{"path": "figs/plot.png", "kind": "image"}"#;
@@ -270,6 +262,11 @@ mod tests {
         assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
         let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
         assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
+        // Of images, those graphicx reads, in any case.
+        let jpeg = r#"{"path": "Shot.JPG", "kind": "image"}"#;
+        assert!(drop(jpeg).unwrap().contains("includegraphics{Shot.JPG}"));
+        let svg = r#"{"path": "logo.svg", "kind": "image"}"#;
+        assert_eq!(drop(svg).as_deref(), Some(r#"{"open":true}"#));
         let taken = r#"{"path": "figs/a b_c&{d}~$^.png", "kind": "image"}"#;
         assert!(
             drop(taken)

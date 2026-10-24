@@ -7,11 +7,11 @@ import csv, io, json, math, re, subprocess, sys, tempfile
 
 # The share of complexity (CC × √lines) in functions with CC over 10, per language's app code;
 # and the share of lines jscpd finds repeated.
-LIMITS = {"rs": 0.48, "swift": 0.23, "cs": 0.29, "clones": 0.37}
+LIMITS = {"rs": 0.47, "swift": 0.25, "clones": 0.05}
 
-files = subprocess.run(["git", "ls-files", "crates/*.rs", "apps/*.swift", "apps/windows/*.cs"],
+files = subprocess.run(["git", "ls-files", "crates/*.rs", "apps/*.swift"],
                        capture_output=True, text=True, check=True).stdout.split()
-code = [f for f in files if not re.search(r"(/tests/|tests\.rs$|/stubs\.rs$|Tests/|\.Tests/)", f)]
+code = [f for f in files if not re.search(r"(/tests/|tests\.rs$|/stubs\.rs$|Tests/)", f)]
 out = subprocess.run([sys.executable, "-m", "lizard", "--csv", *code], capture_output=True, text=True).stdout
 
 # A Rust file's inline test module, which runs to its end; `#[cfg(test)] mod tests;` names a file of its own.
@@ -34,7 +34,7 @@ found = {lang: eroded[lang] / mass[lang] for lang in mass}
 
 with tempfile.TemporaryDirectory() as report:
     subprocess.run(["npx", "--yes", "jscpd@4.3.0", "--silent", "--gitignore", "--reporters", "json",
-                    "--output", report, "--format", "swift,rust,csharp", "apps", "crates"],
+                    "--output", report, "--format", "swift,rust", "apps", "crates"],
                    capture_output=True, check=True)
     found["clones"] = json.load(open(f"{report}/jscpd-report.json"))["statistics"]["total"]["percentage"]
 

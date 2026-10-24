@@ -43,11 +43,11 @@ struct HomeView: View {
             // No section header: the list pins its first one with a rule the window's width.
             VStack(alignment: .leading, spacing: 8) {
                 Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
-                templates
+                // The pages under the header and level with the projects' icons; the hover shapes reach past them.
+                templates.padding(.horizontal, -TemplateButtonStyle.edge)
             }
             .selectionDisabled()
             .listRowSeparator(.hidden)
-            // The buttons bring their own 10 pt edge.
             .listRowInsets(EdgeInsets())
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")
@@ -89,6 +89,8 @@ struct HomeView: View {
         }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in shown.first { $0.id == id }.map(actions) }
+        // The latest, as Xcode's welcome window selects it, so Return opens it again.
+        .onChange(of: app.projectsLoaded, initial: true) { if selection == nil { selection = app.projects.first?.id } }
     }
 
     private func actions(_ project: ProjectInfo) -> ItemActions {

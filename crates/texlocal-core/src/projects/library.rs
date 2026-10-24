@@ -38,7 +38,7 @@ pub struct ProjectInfo {
 
 impl ProjectInfo {
     fn read(data_dir: &Path, id: &str) -> io::Result<Self> {
-        let root = dunce::canonicalize(data_dir.join(id))?;
+        let root = std::fs::canonicalize(data_dir.join(id))?;
         Ok(Self::of(id.to_owned(), &Project::in_folder(&root)))
     }
 
@@ -213,7 +213,7 @@ pub fn rename_project(
 fn real_path(path: &Path) -> PathBuf {
     let (mut head, mut tail) = (path, Vec::new());
     loop {
-        if let Ok(real) = dunce::canonicalize(head) {
+        if let Ok(real) = std::fs::canonicalize(head) {
             return tail.iter().rev().fold(real, |real, name| real.join(name));
         }
         let (Some(parent), Some(name)) = (head.parent(), head.file_name()) else {
@@ -224,9 +224,8 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
-/// The project `path` is in: a library project's folder, else the innermost opened folder. Both
-/// sides are resolved by `dunce`, which spells a Windows path as the list keeps it, without
-/// `\\?\`.
+/// The project `path` is in: a library project's folder, else the innermost opened folder, both
+/// sides resolved.
 pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
     if !path.is_absolute() {
         return Ok(None);
@@ -241,7 +240,7 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
             })
             .collect()
     };
-    if let Ok(rest) = real.strip_prefix(dunce::canonicalize(data_dir)?) {
+    if let Ok(rest) = real.strip_prefix(std::fs::canonicalize(data_dir)?) {
         let segments = segments(rest);
         let Some([id, inside @ ..]) = segments.as_deref() else {
             return Ok(None);
@@ -317,13 +316,10 @@ mod tests {
         }
 
         assert_eq!(names_in(data), ["Thesis"]);
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(data.join("gone"), data.join("linked")).unwrap();
-            let made = create_project(data, "linked", "blank", None).unwrap();
-            assert_eq!(made.id, "linked 2");
-            assert!(!data.join("gone").exists());
-        }
+        std::os::unix::fs::symlink(data.join("gone"), data.join("linked")).unwrap();
+        let made = create_project(data, "linked", "blank", None).unwrap();
+        assert_eq!(made.id, "linked 2");
+        assert!(!data.join("gone").exists());
     }
 
     #[test]
@@ -337,8 +333,6 @@ mod tests {
         assert_eq!(mtime, since.as_millis() as u64);
     }
 
-    // Windows opens a folder only for its backup semantics, so its date is set here alone.
-    #[cfg(unix)]
     #[test]
     fn projects_of_one_date_are_listed_by_name() {
         let dir = tempfile::tempdir().unwrap();

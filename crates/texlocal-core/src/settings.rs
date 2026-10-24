@@ -1,8 +1,10 @@
 //! A project's settings and ui state, each in the file its `Project` names (`.texlocal.json`
-//! in a library project), and the app's own beside the projects.
+//! in a library project), and the app's own beside the projects. Shell escape isn't a setting a
+//! project's files can give: it is granted in the ui state's file, which only the app writes,
+//! to the folder it was granted for.
 
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
@@ -11,14 +13,13 @@ use serde_json::{Map, Value};
 
 use crate::atomic;
 use crate::error::CoreError;
-use crate::paths::safe_rel_file;
+use crate::paths::{Project, identity, safe_rel_file};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub main_file: String,
     pub engine: Engine,
-    pub shell_escape: bool,
     pub stop_on_first_error: bool,
 }
 
@@ -27,7 +28,6 @@ impl Default for Settings {
         Self {
             main_file: "main.tex".into(),
             engine: Engine::default(),
-            shell_escape: false,
             stop_on_first_error: false,
         }
     }
@@ -54,16 +54,6 @@ pub enum Engine {
 }
 
 impl Engine {
-    pub(crate) const ALL: [Self; 3] = [Self::Pdflatex, Self::Xelatex, Self::Lualatex];
-
-    pub(crate) fn title(self) -> &'static str {
-        match self {
-            Self::Pdflatex => "pdfLaTeX",
-            Self::Xelatex => "XeLaTeX",
-            Self::Lualatex => "LuaLaTeX",
-        }
-    }
-
     pub(crate) fn flag(self) -> &'static str {
         match self {
             Self::Pdflatex => "-pdf",
@@ -81,10 +71,18 @@ struct ProjectFile {
     #[serde(flatten)]
     settings: Settings,
     ui: UiState,
+    /// The volume and file number of the folder shell escape was granted for: a copy of the
+    /// folder, or of this file in another, isn't trusted.
+    #[serde(rename = "shellEscapeFor", skip_serializing_if = "Option::is_none")]
+    shell_escape_for: Option<(u64, u64)>,
     /// A newer build's, or another tool's: a write keeps them, as a synced folder shares the file.
     #[serde(flatten)]
     rest: Map<String, Value>,
 }
+
+/// Far more than settings take: a file that size, as a folder opened may hold, isn't theirs,
+/// and Home reads each project's.
+const MAX_FILE: u64 = 1 << 20;
 
 /// A JSON file as `T`: the default if there is no file, an error (409) if it
 /// can't be read, so a file the user is mid-way through editing is never
@@ -96,10 +94,16 @@ fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, CoreError> {
             "“{name}” can't be read ({why}), so it was left as it is. Correct it, or delete it to start again."
         ))
     };
-    let bytes = match fs::read(path) {
+    let mut bytes = Vec::new();
+    match fs::File::open(path) {
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(T::default()),
-        read => read.map_err(|err| unreadable(CoreError::from(err).message))?,
+        opened => opened
+            .and_then(|file| file.take(MAX_FILE + 1).read_to_end(&mut bytes))
+            .map_err(|err| unreadable(CoreError::from(err).message))?,
     };
+    if bytes.len() as u64 > MAX_FILE {
+        return Err(unreadable("it's over 1 MB".into()));
+    }
     serde_json::from_slice(&bytes).map_err(|err| unreadable(err.to_string()))
 }
 
@@ -123,15 +127,41 @@ pub fn read_settings(file: &Path) -> Settings {
     read_project(file).settings
 }
 
+/// The settings a project's files may hold; `shellEscape` in `patch` is left to `grant`.
 pub fn write_settings(file: &Path, patch: &Value) -> Result<Settings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
         let mut settings = merged(&file.settings, patch, "settings")?;
         // latexmk would read a main file starting with "-" as an option.
         settings.main_file = safe_rel_file(&settings.main_file)?;
         file.settings = settings;
+        // An older build's grant, which a file shared with the folder could give.
+        file.rest.remove("shellEscape");
         Ok(())
     })?;
     Ok(file.settings)
+}
+
+/// Whether the user let the project's documents run programs (`-shell-escape`), which also
+/// reads its own latexmkrc.
+pub fn granted(project: &Project) -> bool {
+    let granted = read_project(&project.ui).shell_escape_for;
+    granted.is_some_and(|folder| identity(&project.root) == Some(folder))
+}
+
+pub fn grant(project: &Project, on: bool) -> Result<(), CoreError> {
+    update(&project.ui, |file: &mut ProjectFile| {
+        file.shell_escape_for = on.then(|| identity(&project.root)).flatten();
+        Ok(())
+    })
+    .map(drop)
+}
+
+/// The settings as a host shows them, with whether shell escape is granted.
+pub fn shown(project: &Project) -> Value {
+    let settings = read_settings(&project.settings);
+    let mut shown = serde_json::to_value(settings).expect("settings as JSON");
+    shown["shellEscape"] = granted(project).into();
+    shown
 }
 
 /// `value` with the keys of `patch` in place of its own: 400 if the patch isn't an object or
@@ -270,19 +300,17 @@ mod tests {
         let (_dir, root) = project();
         let file = root.join(SETTINGS_FILE);
         fs::write(&file, r#"{ "engine": "xelatex" }"#).unwrap();
-        let written = write_settings(&file, &json!({ "shellEscape": true, "unknown": 1 })).unwrap();
+        let written =
+            write_settings(&file, &json!({ "stopOnFirstError": true, "unknown": 1 })).unwrap();
         let expected = json!({
-            "mainFile": "main.tex", "engine": "xelatex", "shellEscape": true, "stopOnFirstError": false
+            "mainFile": "main.tex", "engine": "xelatex", "stopOnFirstError": true
         });
         assert_eq!(json!(written), expected);
         assert_eq!(json!(read_settings(&file)), expected);
 
         let before = fs::read(&file).unwrap();
         for (bad, why) in [
-            (
-                json!({ "engine": "word", "shellEscape": false }),
-                "unknown variant",
-            ),
+            (json!({ "engine": "word" }), "unknown variant"),
             (
                 json!({ "mainFile": "-interaction.tex" }),
                 "Path segments cannot start",
@@ -298,6 +326,31 @@ mod tests {
         let settings = write_settings(&file, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
         let pdf = settings.output(&root.join(BUILD_DIR), "pdf").unwrap();
         assert_eq!(pdf, root.join(BUILD_DIR).join("paper.pdf"));
+    }
+
+    #[test]
+    fn shell_escape_is_the_apps_grant_to_one_folder_and_no_file_in_it_gives_it() {
+        let (dir, root) = project();
+        let project = Project::in_folder(&root);
+        fs::write(&project.settings, r#"{ "shellEscape": true }"#).unwrap();
+        assert!(!granted(&project));
+        grant(&project, true).unwrap();
+        assert_eq!(shown(&project)["shellEscape"], true);
+        write_settings(&project.settings, &json!({ "engine": "lualatex" })).unwrap();
+        let file: Value = serde_json::from_slice(&fs::read(&project.settings).unwrap()).unwrap();
+        assert_eq!(file.get("shellEscape"), None);
+
+        // A folder moved keeps it; a copy of its file, as a duplicate or download has, doesn't.
+        let moved = dir.path().join("Moved");
+        fs::rename(&root, &moved).unwrap();
+        assert!(granted(&Project::in_folder(&moved)));
+        fs::create_dir(&root).unwrap();
+        fs::copy(moved.join(SETTINGS_FILE), &project.settings).unwrap();
+        assert!(!granted(&project));
+
+        let moved = Project::in_folder(&moved);
+        grant(&moved, false).unwrap();
+        assert!(!granted(&moved));
     }
 
     #[test]
@@ -361,5 +414,13 @@ mod tests {
         assert_eq!(fs::read_to_string(&app_file).unwrap(), broken);
         assert_eq!(read_settings(&file).main_file, "main.tex");
         assert_eq!(AppSettings::read(root).tex_dir, None);
+
+        // Nor is one too large to be settings read whole.
+        fs::File::create(&file)
+            .unwrap()
+            .set_len(MAX_FILE + 1)
+            .unwrap();
+        let err = write_settings(&file, &json!({})).unwrap_err();
+        assert!(err.message.contains("over 1 MB"), "{}", err.message);
     }
 }

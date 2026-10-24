@@ -6,10 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-dunce = "1"
+libc = "0.2"
 memchr = "2"
 notify = "8"
 ropey = "1.6"
+trash = "5"
 which = "8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1.12.1"
@@ -38,22 +39,6 @@ ratex-types = "=0.1.14"
 # on: debug and test builds would read them from the registry at run time.
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 ttf-parser = "0.25"
-
-# iPadOS has no trash crate: its Recently Deleted takes what NSFileManager trashes.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
-trash = "5"
-
-[target.'cfg(target_os = "ios")'.dependencies]
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-same-file = "1"
-# An opened folder's identity (volume serial and file index), which `std` keeps unstable.
-winapi-util = "0.1"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

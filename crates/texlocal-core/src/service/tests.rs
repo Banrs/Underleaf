@@ -26,24 +26,6 @@ fn tex_dir(service: &Service) -> Option<PathBuf> {
 }
 
 #[tokio::test]
-async fn the_catalogue_lists_templates_and_engines_a_project_can_be_made_with() {
-    let (_dir, service) = library();
-    let catalogue = call(&service, "catalogue", json!({})).await;
-    let beamer = json!({ "id": "beamer", "title": "Presentation" });
-    assert_eq!(catalogue["templates"][3], beamer);
-    let engines = catalogue["engines"].as_array().unwrap();
-    for (n, engine) in engines.iter().enumerate() {
-        let args = json!({ "name": format!("P{n}"), "engine": engine["id"] });
-        call(&service, "create_project", args).await;
-    }
-    let defaults: Vec<_> = engines.iter().filter(|e| e["default"] == true).collect();
-    assert_eq!(
-        defaults,
-        [&json!({ "id": "pdflatex", "title": "pdfLaTeX", "default": true })]
-    );
-}
-
-#[tokio::test]
 async fn a_free_project_name_is_the_next_untitled() {
     let (_dir, service) = library();
     let name = call(&service, "free_project_name", json!({})).await;
@@ -89,24 +71,14 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     }
 }
 
-/// A stand-in program `name` in `dir` that prints `line`: a shell script, or
-/// a batch file on Windows. Its path.
+/// A stand-in program `name` in `dir` that prints `line`: a shell script. Its path.
 fn fake_program(dir: &Path, name: &str, line: &str) -> PathBuf {
     fs::create_dir_all(dir).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let exe = dir.join(name);
-        fs::write(&exe, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
-        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
-        exe
-    }
-    #[cfg(windows)]
-    {
-        let exe = dir.join(format!("{name}.bat"));
-        fs::write(&exe, format!("@echo {line}\r\n")).unwrap();
-        exe
-    }
+    use std::os::unix::fs::PermissionsExt;
+    let exe = dir.join(name);
+    fs::write(&exe, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+    fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    exe
 }
 
 fn fake_tex(dir: &Path) -> String {
@@ -162,7 +134,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     assert_eq!(status["texpressoDir"], chosen.as_ref());
     assert_eq!(status["texDir"], bin);
     if std::env::var_os("TEXLOCAL_TEXPRESSO").is_none() {
-        let exe = dunce::canonicalize(&exe).unwrap();
+        let exe = std::fs::canonicalize(&exe).unwrap();
         assert_eq!(status["texpresso"], exe.to_string_lossy().as_ref());
     }
 

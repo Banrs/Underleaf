@@ -22,6 +22,8 @@ struct SearchField: NSViewRepresentable {
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
+    /// In the magnifier's menu, as Mail's.
+    var options: [(title: String, isOn: Binding<Bool>)] = []
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
@@ -29,6 +31,8 @@ struct SearchField: NSViewRepresentable {
         init(_ field: SearchField) { self.field = field }
 
         @objc func changed(_ sender: NSSearchField) { if field.text != sender.stringValue { field.text = sender.stringValue } }
+
+        @objc func toggle(_ item: NSMenuItem) { field.options[item.tag].isOn.wrappedValue.toggle() }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             // The input method's Return and Escape first.
@@ -75,6 +79,15 @@ struct SearchField: NSViewRepresentable {
         // Not during input-method composition, whose marked text it would discard.
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
+        }
+        // The cell copies the template, so its ticks are set afresh.
+        if !options.isEmpty, let cell = view.cell as? NSSearchFieldCell {
+            let menu = NSMenu()
+            for (tag, option) in options.enumerated() {
+                let item = menu.addItem(withTitle: option.title, action: #selector(Coordinator.toggle(_:)), keyEquivalent: "")
+                (item.target, item.tag, item.state) = (context.coordinator, tag, option.isOn.wrappedValue ? .on : .off)
+            }
+            cell.searchMenuTemplate = menu
         }
     }
 }

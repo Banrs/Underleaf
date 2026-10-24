@@ -2,8 +2,7 @@
 //! latexmk build and PDF continue to use saved project files.
 //!
 //! A build with Underleaf's patch (tools/texpresso) writes the pages the client says it
-//! shows as one-page PDFs when retypeset, and the whole document when a run ends. Where TeX
-//! runs inside the app (`inprocess`), the engine it links speaks the same over pipes.
+//! shows as one-page PDFs when retypeset, and the whole document when a run ends.
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,11 +28,7 @@ const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 /// How long TeXpresso may leave what it was sent unread before the session is given up:
 /// it reads nothing while it makes its TeX formats, five seconds and more the first time.
 const UNREAD: Duration = Duration::from_secs(60);
-const MISSING: &str = if cfg!(windows) {
-    "TeXpresso wasn't found. Choose the folder it's in, in Settings."
-} else {
-    "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin."
-};
+const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
@@ -192,8 +187,8 @@ fn splice(text: &mut Rope, start: usize, remove: usize, inserted: &str) -> Optio
 /// A running session's way to TeXpresso: dropping it closes TeXpresso's input, which ends it.
 struct Link {
     lines: mpsc::UnboundedSender<Vec<u8>>,
-    /// The program's and its engine's processes; none for the engine inside the app.
-    tree: Option<Tree>,
+    /// The program's and its engine's processes.
+    tree: Tree,
 }
 
 #[derive(Default)]
@@ -222,9 +217,7 @@ impl Session {
         let mut state = lock(&self.state);
         if let Some(link) = state.link.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
-            if let Some(tree) = link.tree {
-                tree.kill();
-            }
+            link.tree.kill();
             remove_pdf_folder(&self.pdf);
             state.error.clone_from(&error);
             if let Ok(mut files) = self.files.try_lock() {
@@ -319,16 +312,15 @@ impl Manager {
     /// stopped.
     fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
         fs::create_dir_all(&project.build)?;
-        let build = dunce::canonicalize(&project.build)?;
+        let build = std::fs::canonicalize(&project.build)?;
         if let Some(previous) = lock(&self.sessions).get(&owner) {
             previous.stop(None);
         }
         // The session's own folder, for its owner alone; the session removes it as it stops.
         let mut folder = tempfile::Builder::new();
         folder.prefix("texlocal-texpresso-");
-        #[cfg(unix)]
         folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
-        let pdf = dunce::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
+        let pdf = std::fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         Ok((build, pdf))
     }
 
@@ -340,7 +332,7 @@ impl Manager {
         pdf: PathBuf,
         buffers: HashMap<String, Rope>,
         sink: Sink,
-        tree: Option<Tree>,
+        tree: Tree,
     ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
         let (lines, queued) = mpsc::unbounded_channel();
         let session = Arc::new(Session {
@@ -408,7 +400,6 @@ fn command(
     // A Mac app runs with signals ignored or blocked that a child inherits across exec.
     // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends.
     // SAFETY: only async-signal-safe calls, between fork and exec.
-    #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
             for signal in 1..32 {
@@ -433,7 +424,7 @@ impl Preview for Manager {
         pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
-        let root = dunce::canonicalize(&project.root)?;
+        let root = std::fs::canonicalize(&project.root)?;
         let main = settings::read_settings(&project.settings).main_file;
         let main = paths::safe_path(&root, &main)?;
         if !main.is_file() {
@@ -446,27 +437,6 @@ impl Preview for Manager {
                 ..Status::default()
             })
         };
-        #[cfg(unix)]
-        if crate::inprocess::IN_PROCESS {
-            let engine = match crate::inprocess::engine() {
-                Ok(engine) => engine,
-                Err(err) => return failed(err.message),
-            };
-            let (build, pdf) = self.prepare(owner, project)?;
-            // The engine runs one session at a time.
-            for (_, other) in lock(&self.sessions).iter().filter(|(o, _)| **o != owner) {
-                let why = "Live Preview stopped here as another project’s started: this device runs one at a time.";
-                other.stop(Some(why.into()));
-            }
-            let (session, queued) = self.open(owner, root, pdf.clone(), buffers, sink, None);
-            let args = ["texpresso", "-json", "-I"].map(std::ffi::OsString::from);
-            let args = args.into_iter();
-            let args = args.chain([build.into(), main.into()]).collect();
-            let weak = Arc::downgrade(&session);
-            tokio::spawn(live_in_app(engine, args, pdf, queued, weak));
-            session.send(&opening);
-            return Ok(session.status());
-        }
         let Some(executable) = discover(path_env) else {
             return failed(MISSING.into());
         };
@@ -481,7 +451,7 @@ impl Preview for Manager {
                 ));
             }
         };
-        let (session, queued) = self.open(owner, root, pdf, buffers, sink, Some(tree.clone()));
+        let (session, queued) = self.open(owner, root, pdf, buffers, sink, tree.clone());
         let (stdin, stdout, stderr) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let weak = Arc::downgrade(&session);
@@ -580,7 +550,7 @@ impl Preview for Manager {
         })
     }
     fn stop(&self, root: &Path) -> Result<(), CoreError> {
-        let root = dunce::canonicalize(root)?;
+        let root = std::fs::canonicalize(root)?;
         for session in lock(&self.sessions).values().filter(|s| s.root == root) {
             session.stop(None);
         }
@@ -593,7 +563,7 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
         return program_at(Path::new(&override_path));
     }
-    find_tool("texpresso", path_env).and_then(|p| dunce::canonicalize(p).ok())
+    find_tool("texpresso", path_env).and_then(|p| std::fs::canonicalize(p).ok())
 }
 
 fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) -> usize {
@@ -634,58 +604,6 @@ async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<
     stop.1 = (exit.await).map(|status| {
         format!("TeXpresso exited ({status}). Check its log and start TeXpresso again.")
     });
-}
-
-/// Live Preview by the engine inside the app, which runs one session at a time: a start
-/// waits until the last session has ended.
-#[cfg(unix)]
-async fn live_in_app(
-    engine: &'static crate::inprocess::Engine,
-    args: Vec<std::ffi::OsString>,
-    pdf: PathBuf,
-    queued: mpsc::UnboundedReceiver<Vec<u8>>,
-    session: Weak<Session>,
-) {
-    use tokio::net::unix::pipe;
-    static ONE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-    let Ok(one) = ONE.acquire().await else {
-        return;
-    };
-    let Some(running) = session.upgrade().filter(|session| session.running()) else {
-        return;
-    };
-    let Some((live, [commands, messages, log])) = engine.live_start(&args, &pdf) else {
-        return running.stop(Some("TeXpresso couldn’t start.".into()));
-    };
-    let pipes = (|| {
-        Ok::<_, std::io::Error>((
-            pipe::Sender::from_owned_fd(commands)?,
-            pipe::Receiver::from_owned_fd(messages)?,
-            pipe::Receiver::from_owned_fd(log)?,
-        ))
-    })();
-    match pipes {
-        Ok((commands, messages, log)) => {
-            tokio::spawn(write_lines(commands, queued, session.clone()));
-            tokio::spawn(read_output(messages, Arc::clone(&running), true));
-            tokio::spawn(read_output(log, running, false));
-        }
-        // The pipes are closed, which ends the session.
-        Err(err) => running.stop(Some(format!("TeXpresso couldn’t start: {err}."))),
-    }
-    let exit = async move {
-        let wait = tokio::task::spawn_blocking(move || {
-            let status = engine.wait(live);
-            drop(one);
-            status
-        });
-        match wait.await {
-            Ok(0) => None,
-            Ok(status) => Some(format!("exit status {status}")),
-            Err(err) => Some(err.to_string()),
-        }
-    };
-    stop_on_exit(exit, session).await;
 }
 
 /// The session's one writer to TeXpresso's stdin: a TeXpresso that has stopped reading
@@ -894,7 +812,6 @@ mod tests {
         assert_eq!((status.output.as_str(), status.log.as_str()), ("ready", ""));
     }
 
-    #[cfg(unix)]
     mod stub {
         use super::*;
 
@@ -1021,14 +938,15 @@ done
             };
             let pdf = PathBuf::from(path);
             assert!(
-                pdf.ends_with("live.pdf") && !pdf.starts_with(dunce::canonicalize(&root).unwrap())
+                pdf.ends_with("live.pdf")
+                    && !pdf.starts_with(std::fs::canonicalize(&root).unwrap())
             );
             let folder = pdf.parent().unwrap().to_owned();
             let mode = fs::metadata(&folder).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700);
             assert_eq!(fs::read(&normal).unwrap(), b"normal build");
             until(|| !commands(&tmp).is_empty()).await;
-            let main = dunce::canonicalize(root.join("main.tex")).unwrap();
+            let main = std::fs::canonicalize(root.join("main.tex")).unwrap();
             assert_eq!(commands(&tmp)[0], json!(["open", main, "abc"]));
             let changes = || -> Vec<Value> {
                 let sent = commands(&tmp).into_iter();
@@ -1120,7 +1038,7 @@ done
                 caret: Some(("main.tex".into(), 4)),
             };
             start(&manager, &root, &path_env, Some("aé😀b"), &pane);
-            let path = dunce::canonicalize(root.join("main.tex")).unwrap();
+            let path = std::fs::canonicalize(root.join("main.tex")).unwrap();
             manager.edit(OWNER, "main.tex", 4, 0, "X").unwrap();
             manager.view(OWNER, 5, 4).unwrap();
             manager.caret(OWNER, "main.tex", 2).unwrap();

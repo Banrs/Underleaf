@@ -5,7 +5,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::analyze::{Facts, Input, Named, Place};
+use crate::analyze::{Facts, INPUT_DEPTH, Input, Named, Place};
 use crate::logparse::{LogItem, Severity};
 use crate::syntax::scan::{self, Group};
 use crate::syntax::{SymbolKind, Symbols, Text};
@@ -162,8 +162,11 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn read(&mut self, file: &str, within: &str) {
+    fn read(&mut self, file: &str, within: &str, depth: usize) {
         let symbols = self.symbols;
+        if depth == INPUT_DEPTH {
+            return;
+        }
         let Some((file, facts)) = symbols.by_file.get_key_value(file) else {
             return;
         };
@@ -183,7 +186,7 @@ impl<'a> Walk<'a> {
                 self.slip(file, slip);
             }
             match input.resolve(file, within, |rel| symbols.spelt(rel)) {
-                Some((input, within)) => self.read(&input, &within),
+                Some((input, within)) => self.read(&input, &within, depth + 1),
                 None => self.missing.push((file, input)),
             }
         }
@@ -247,7 +250,7 @@ pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
         slips: Vec::new(),
         missing: Vec::new(),
     };
-    walk.read(main, "");
+    walk.read(main, "", 0);
     let reached = || walk.files.iter().copied();
     let undefined = |kind, noun: &str, defined: &HashSet<&str>| -> Vec<LogItem> {
         let uses =

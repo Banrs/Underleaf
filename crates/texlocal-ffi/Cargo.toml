@@ -1,14 +1,12 @@
 [package]
 name = "texlocal-ffi"
-description = "C ABI over texlocal-core's commands, sessions and editor logic, for the Mac and Windows apps"
+description = "C ABI over texlocal-core's commands, sessions and editor logic, for the Mac app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
 name = "texlocal_ffi"
-# The Windows app builds its DLL itself (`cargo rustc --crate-type cdylib`),
-# so the Mac's builds link no dylib they never use.
 crate-type = ["staticlib"]
 
 [dependencies]

@@ -58,7 +58,7 @@ impl Project {
         if !root.is_dir() {
             return Err(CoreError::not_found(format!("No such project: {id}")));
         }
-        Ok(Self::in_folder(&dunce::canonicalize(root)?))
+        Ok(Self::in_folder(&std::fs::canonicalize(root)?))
     }
 
     /// Its folder's name, as Home and a window's title show it.
@@ -80,38 +80,25 @@ impl Project {
     }
 }
 
+/// The volume and file number of what `path` names, which stay as it moves on its volume.
+pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
 /// `.texlocal.json` at the root is written only through write_settings; its
-/// case aliases too, as macOS and Windows volumes ignore case.
+/// case aliases too, as macOS volumes ignore case.
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
         return Err(CoreError::bad_request("Missing path"));
     }
     let segments = normalize_segments(rel, "Path escapes project")?;
-    #[cfg(windows)]
-    if segments.iter().any(|s| win32_alias(s)) {
-        return Err(CoreError::bad_request("Invalid name"));
-    }
     match segments[..] {
         [] => Err(CoreError::bad_request("Path escapes project")),
-        [name] if name.eq_ignore_ascii_case(SETTINGS_FILE) => {
-            Err(CoreError::bad_request("Reserved file"))
-        }
+        [name] if fold_case(name) == SETTINGS_FILE => Err(CoreError::bad_request("Reserved file")),
         _ => Ok(segments),
     }
-}
-
-/// Win32 drops a name's trailing dots and spaces, reads `:` as a data stream
-/// and a device's name as the device, so such a segment reaches a file the
-/// rules above never saw.
-#[cfg(windows)]
-fn win32_alias(segment: &str) -> bool {
-    let stem = segment.split('.').next().unwrap_or_default().trim_end();
-    let device = match stem.to_ascii_uppercase().as_bytes() {
-        b"CON" | b"PRN" | b"AUX" | b"NUL" => true,
-        [b'C', b'O', b'M', digit] | [b'L', b'P', b'T', digit] => digit.is_ascii_digit(),
-        _ => false,
-    };
-    device || segment.ends_with(['.', ' ']) || segment.contains(':')
 }
 
 /// Whether a project path is in the top-level `build` folder, in any case, which holds compile
@@ -119,7 +106,7 @@ fn win32_alias(segment: &str) -> bool {
 pub(crate) fn in_build_dir(rel: &str) -> bool {
     rel.split('/')
         .next()
-        .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
+        .is_some_and(|top| fold_case(top) == BUILD_DIR)
 }
 
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
@@ -146,8 +133,10 @@ pub(crate) fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
+/// As a macOS volume compares names, in any case as Unicode folds it: `ſ` is an `s`, and the
+/// Kelvin sign a `k`, which lowercasing alone keeps.
 pub(crate) fn fold_case(path: &str) -> String {
-    path.to_lowercase()
+    path.to_uppercase().to_lowercase()
 }
 
 /// What follows the entry `entry` in `path`, names compared as the volume
@@ -171,19 +160,10 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
     after_entry(path, entry).is_some()
 }
 
-#[cfg(unix)]
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
         (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
-}
-
-/// Windows' file identity is had only by opening the file, which follows a
-/// link, so a link is only ever itself.
-#[cfg(windows)]
-pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    let link = |path| fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
-    !link(a) && !link(b) && same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
@@ -215,18 +195,12 @@ pub fn safe_rel_file(rel: &str) -> Result<String, CoreError> {
 }
 
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
-    let refused = |c: char| {
-        std::path::is_separator(c) || (cfg!(windows) && (c.is_control() || "<>:\"|?*".contains(c)))
-    };
-    let mut clean: String = name
+    let clean: String = name
         .trim()
         .chars()
-        .filter(|&c| !refused(c))
+        .filter(|&c| !std::path::is_separator(c))
         .take(80)
         .collect();
-    if cfg!(windows) {
-        clean.truncate(clean.trim_end_matches(['.', ' ']).len());
-    }
     if clean.is_empty() || clean.starts_with('.') {
         return Err(CoreError::bad_request("Invalid name"));
     }
@@ -238,7 +212,7 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
 /// was built in before a move ("<old>/./<file>"). None for anything but the
 /// author's sources.
 pub fn source_rel(root: &Path, input: &str) -> Option<String> {
-    let canonical = dunce::canonicalize(root).ok()?;
+    let canonical = std::fs::canonicalize(root).ok()?;
     let input_path = Path::new(input);
     let rel = if input_path.is_absolute() {
         let inside = [root, &canonical]
@@ -276,28 +250,13 @@ mod tests {
             fails_with(safe_path(&root, path), "Path escapes project");
         }
         fails_with(safe_path(&root, ""), "Missing path");
-        fails_with(safe_path(&root, ".TexLocal.Json"), "Reserved file");
+        // As the volume opens them: in any case, and `ſ` as `s`.
+        for alias in [".TexLocal.Json", ".texlocal.j\u{17f}on"] {
+            fails_with(safe_path(&root, alias), "Reserved file");
+        }
         assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
         fails_with(safe_write_path(&root, "Build/x.tex"), "compiled PDF");
         assert!(safe_path(&root, "build/main.pdf").is_ok());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn names_win32_would_alias_are_refused() {
-        let (_dir, service) = with_project();
-        let root = service.project("P").unwrap().root;
-        for path in [
-            ".texlocal.json.",
-            "build./x.tex",
-            "a/b ",
-            "ab:c",
-            "nul.tex",
-            "Com1",
-        ] {
-            fails_with(safe_path(&root, path), "Invalid name");
-        }
-        assert!(safe_path(&root, "console.tex").is_ok());
     }
 
     #[test]
@@ -308,15 +267,12 @@ mod tests {
         create_free(&root, "ch/intro.tex", false).unwrap();
         fs::create_dir(root.join("build")).unwrap();
         fs::write(root.join("build/generated.tex"), "").unwrap();
-        #[cfg(unix)]
-        {
-            let linked = service.data_dir.with_file_name("linked");
-            std::os::unix::fs::symlink(&service.data_dir, &linked).unwrap();
-            let real = dunce::canonicalize(&root).unwrap();
-            let input = format!("{}/./ch/intro.tex", real.display());
-            let rel = source_rel(&linked.join("P"), &input);
-            assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
-        }
+        let linked = service.data_dir.with_file_name("linked");
+        std::os::unix::fs::symlink(&service.data_dir, &linked).unwrap();
+        let real = std::fs::canonicalize(&root).unwrap();
+        let input = format!("{}/./ch/intro.tex", real.display());
+        let rel = source_rel(&linked.join("P"), &input);
+        assert_eq!(rel.as_deref(), Some("ch/intro.tex"));
         let under = |path: &str| format!("{}{path}", root.display());
         // A folder it was built in before a move, absolute as the system spells it.
         let old = std::env::temp_dir().join("old").join("Paper");

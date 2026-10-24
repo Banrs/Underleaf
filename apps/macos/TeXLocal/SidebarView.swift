@@ -5,6 +5,8 @@ struct FilesList: View {
     let project: ProjectModel
     @State private var selection: String?
     @State private var rename = InPlaceRename<String>()
+    /// A file just made, whose name once given goes on to its text, as Xcode's New File does.
+    @State private var created: String?
     @FocusState private var listFocused: Bool
 
     var body: some View {
@@ -117,6 +119,7 @@ struct FilesList: View {
             guard let path = await project.createEntry(in: folder, directory: entry.directory) else { return }
             showRow(path)
             selection = path
+            created = entry.directory ? nil : path
             rename.begin(path, name: path.fileName)
         }
     }
@@ -132,7 +135,7 @@ struct FilesList: View {
         return Label {
             HStack {
                 if rename.id == node.path {
-                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: { listFocused = true }) {
+                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: { renameEnded(node) }) {
                         commitRename(node)
                     } cancel: {
                         rename.cancel()
@@ -158,6 +161,11 @@ struct FilesList: View {
             Task { await project.dropFiles(urls, into: folder) }
         }
         .draggable(file: project.url(node.path))
+    }
+
+    private func renameEnded(_ node: TreeNode) {
+        if created == node.path { project.editor.focus() } else { listFocused = true }
+        created = nil
     }
 
     private func commitRename(_ node: TreeNode) {
@@ -274,7 +282,9 @@ struct OutlineHeader: View {
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
+            // Level with the Files section's header above (measured), the chevron where AppKit puts a section's.
+            .padding(.leading, 14)
+            .padding(.trailing, 18)
             .frame(maxHeight: .infinity)
             .contentShape(.rect)
         }

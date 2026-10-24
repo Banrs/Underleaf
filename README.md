@@ -2,13 +2,12 @@
 
 # Underleaf
 
-TeXLocal is a LaTeX editor for macOS, iPadOS and Windows that works offline. This repository, Underleaf,
-is its source. It does much of what Overleaf does, but on your own computer: you don't need an
-account or a connection, and each project is an ordinary folder on your disk.
+TeXLocal is a LaTeX editor for the Mac that works offline. This repository, Underleaf, is its
+source. It does much of what Overleaf does, but on your own computer: you don't need an account or
+a connection, and each project is an ordinary folder on your disk.
 
-The Mac app is the most complete. The iPad app is new and carries its own TeX, since iPadOS lets an
-app start no other programs. The Windows app works, but it hasn't caught up yet and has no Live
-Preview. There is no Linux version.
+There were also iPad and Windows apps. They are parked while the Mac app is finished, and the
+`archived-multi-platform` branch holds them as they were.
 
 ## What it does
 
@@ -23,8 +22,11 @@ projects folder.
 The editor completes LaTeX commands, environments and the packages your TeX installation has,
 `\cite{}` keys from your `.bib` files by key, author or title, and `\ref{}` labels, each shown with
 the caption or heading it labels. It closes brackets, dollar signs and environments as you type and
-shows the maths under the cursor in a small preview. Its colours can follow Overleaf, TeXstudio or
-the system.
+shows the maths under the cursor in a small preview. An environment, a section or a run of comments
+folds away from the gutter's arrows or the Edit menu, as code folds in Xcode. Its colours can follow
+Overleaf, TeXstudio or the system. Drop a PNG, JPEG or PDF on the source, from the project or from
+Finder, or paste a screenshot, and it goes in with `\includegraphics`, copied beside the file you're
+editing if it came from outside.
 
 Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
 needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
@@ -41,17 +43,15 @@ defined twice, missing input files, and environments, braces or maths left open.
 listed and marked on its line with the build's issues, even before you first compile.
 
 Clicking in the PDF takes you to that place in the source, and you can go the other way too
-(SyncTeX). The Mac and iPad apps find the exact word and can also search the PDF. Windows finds
-the line.
+(SyncTeX), to the exact word, and you can search the PDF too.
 
-Live Preview, on the Mac and iPad and still experimental, updates the PDF as you type, before you
+Live Preview, still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
 brings it new citations and references. It stays on for a project until you turn it off.
 
 There's also a file tree, a word count, an outline of the current file that counts each section's
-words, search and replace across the project, and export to ZIP, or to a ZIP ready for arXiv with
-the compiled bibliography and the 00README.json arXiv reads. Deleted files go to the Trash or the
-Recycle Bin. You can list every place a label, citation, command or file is used, rename a label or
+words, search and replace across the project, optionally matching case or whole words, and export to ZIP, or to a ZIP ready for arXiv with
+the compiled bibliography and the 00README.json arXiv reads. Deleted files go to the Trash. You can list every place a label, citation, command or file is used, rename a label or
 citation everywhere, and see what a citation, reference or command is without leaving the text. You
 can also open a file, section or label by typing a few letters of its name, and go back to where
 you jumped from.
@@ -67,31 +67,19 @@ You need a TeX distribution that includes latexmk and pdflatex. If TeXLocal find
 it offers to install [TinyTeX](https://yihui.org/tinytex/), a small TeX Live of about 260 MB that
 goes in your user folder without asking for a password, and adds the packages a document needs
 when you click Install beside the error. For the full distribution instead, install
-[MacTeX](https://tug.org/mactex/) on macOS, or run `brew install --cask mactex-no-gui`. On
-Windows, install [TeX Live](https://tug.org/texlive/windows.html); MiKTeX's installer doesn't come
-with the Perl that latexmk needs.
+[MacTeX](https://tug.org/mactex/), or run `brew install --cask mactex-no-gui`.
 
 TeXLocal looks for TeX on your `PATH` and in the places installers usually put it:
-`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`, `C:\texlive\<year>`, MiKTeX's
-folders and TinyTeX's. If yours is somewhere else, choose its folder in Settings (on the Mac,
-under Compiling).
+`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>` and TinyTeX's. If yours is somewhere
+else, choose its folder in Settings › Compiling.
 
 On macOS 27, MacTeX 2026's biber fails with an error from `lipo`. Running
 `sudo tlmgr update biber` fixes it.
 
-The iPad app needs no TeX of its own. It has pdfLaTeX, XeLaTeX, BibTeX and makeindex built in,
-with LaTeX's usual packages, TikZ, biblatex, fontspec and the fonts they use. It has no LuaLaTeX
-or biber, so biblatex has to use `backend=bibtex`, and it can't add packages beyond those yet.
-Shell escape isn't possible there.
-
 ## Installing
 
-There are no downloads yet, so you have to build TeXLocal yourself. All the apps need
-[Rust](https://rustup.rs).
-
-### macOS
-
-Install Xcode 27, then run:
+There are no downloads yet, so you have to build TeXLocal yourself. Install Xcode 27 and
+[Rust](https://rustup.rs), then run:
 
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
@@ -103,37 +91,7 @@ The script builds the app, copies it to `/Applications/TeXLocal.app` and opens i
 pull and run it again; it quits TeXLocal first. If you'd rather work in Xcode, open
 `apps/macos/TeXLocal.xcodeproj` and press Run.
 
-### Windows
-
-Install the [.NET 10 SDK](https://dotnet.microsoft.com/download), then in PowerShell:
-
-```powershell
-git clone https://github.com/Banrs/Underleaf.git
-cd Underleaf
-apps\windows\install.ps1
-```
-
-This puts TeXLocal in `%LOCALAPPDATA%\Programs\TeXLocal` and adds it to the Start menu. To update,
-quit TeXLocal, pull and run the script again.
-
-### iPad
-
-Install Xcode 27 and Rust's iPad targets (`rustup target add aarch64-apple-ios
-aarch64-apple-ios-sim`). Then build TeX for the app, which takes a long time the first time, and
-copy the packages it carries from a TeX Live on your Mac:
-
-```sh
-tools/texpresso-ios/build.sh
-python3 tools/texpresso-ios/tree.py /usr/local/texlive/2026 tools/texpresso-ios/build/texmf
-```
-
-[tools/texpresso-ios/README.md](tools/texpresso-ios/README.md) lists what these need. Then turn on
-Developer Mode on the iPad (Settings › Privacy & Security), open `apps/ipados/TeXLocal.xcodeproj` in
-Xcode, choose your iPad and press Run. Xcode asks for an Apple account to sign the app. A free one
-works, but the app it signs stops opening after seven days, until you run it from Xcode again.
-Without the two commands above the app still builds, but it can't compile.
-
-### Live Preview on the Mac
+### Live Preview
 
 Live Preview needs TeXpresso built with Underleaf's patch. Install
 [TeXpresso's build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md) with
@@ -149,15 +107,15 @@ explains how it works.
 
 ## Projects
 
-Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. On the
-iPad they're in the app's own folder, which Files shows as On My iPad › TeXLocal, and a folder you
-open from Files stays where it is. A project's own settings, like its main file and TeX engine, are
+Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. A project's own settings, like its main file and TeX engine, are
 kept in a `.texlocal.json` file next to your sources.
 
 ## Security
 
 Shell escape (`-shell-escape`) lets a document run programs on your computer, so it's off unless
-you turn it on for a project. Only do that for documents you trust.
+you turn it on for a project. Only do that for documents you trust. A project can't turn it on for
+itself: TeXLocal keeps your choice for that folder, not in the project's files, so a folder you
+download, clone or copy starts with it off.
 
 A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read a project's own
 `latexmkrc` only when that project has shell escape on. Your personal one (`~/.latexmkrc` or
@@ -165,12 +123,9 @@ A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read 
 
 ## How it's built
 
-Most of the work is done by a Rust library in `crates/texlocal-core`, which all the apps share.
-The Mac app (`apps/macos`) is written with SwiftUI and AppKit, and the iPad app (`apps/ipados`)
-with SwiftUI and UIKit, sharing much of the Mac's code through `apps/shared`. The Windows app
-(`apps/windows`) is written with WinUI 3. [docs/core-api.md](docs/core-api.md) describes how the
-apps talk to the core, and [docs/windows.md](docs/windows.md) covers the Windows app's design and
-what it still lacks.
+Most of the work is done by a Rust library in `crates/texlocal-core`, which keeps no user
+interface, so other apps can be built on it again. The Mac app (`apps/macos`) is written with
+SwiftUI and AppKit. [docs/core-api.md](docs/core-api.md) describes how the app talks to the core.
 
 Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues). [AGENTS.md](AGENTS.md) holds
 the instructions for coding agents that work on the project.
@@ -178,7 +133,5 @@ the instructions for coding agents that work on the project.
 ## Licence
 
 MIT; see [LICENSE](LICENSE). Maths previews are drawn with
-[RaTeX](https://crates.io/crates/ratex-layout), and on the Mac and Windows your documents are
-compiled by your own TeX distribution. The iPad app built with its TeX also contains
-[TeXpresso](https://github.com/let-def/texpresso), MuPDF (AGPL-3.0), and pdfTeX and xdvipdfmx
-(GPL-2.0 or later), so that app is distributed under the AGPL's terms.
+[RaTeX](https://crates.io/crates/ratex-layout), and your documents are compiled by your own TeX
+distribution.

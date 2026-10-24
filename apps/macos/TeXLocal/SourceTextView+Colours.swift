@@ -2,7 +2,7 @@ import AppKit
 
 /// The fragments coloured anew, and the bracket partner's mark.
 extension SourceTextView {
-    /// New rendering attributes don't redraw the fragments' own views, nor does the text view's display, as on the iPad.
+    /// New rendering attributes don't redraw the fragments' own views, nor does the text view's display.
     /// No test sees it: an offscreen window's own display pass clears what is marked, and `cacheDisplay` draws all anew.
     func redrawFragments(in rects: [CGRect]) {
         guard !rects.isEmpty else { return }

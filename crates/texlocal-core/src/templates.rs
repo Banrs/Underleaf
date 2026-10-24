@@ -130,13 +130,9 @@ const BEAMER_MAIN: &str = r#"\documentclass{beamer}
 \end{document}
 "#;
 
-/// Each template's id and the title Home shows it by.
-pub(crate) const TEMPLATES: [(&str, &str); 4] = [
-    ("blank", "Blank"),
-    ("article", "Article"),
-    ("report", "Report"),
-    ("beamer", "Presentation"),
-];
+/// Each template's id, as Home lists them.
+#[cfg(test)]
+pub(crate) const TEMPLATES: [&str; 4] = ["blank", "article", "report", "beamer"];
 
 pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
     match template {
@@ -155,7 +151,7 @@ mod tests {
     fn every_template_is_plain_file_names_led_by_main_tex() {
         // create_project writes these straight into the new folder, without
         // the path checks user input goes through.
-        for (name, _) in TEMPLATES {
+        for name in TEMPLATES {
             let template = files(name);
             assert_eq!(template[0].0, "main.tex", "{name}");
             for (file, _) in template {

@@ -1,7 +1,6 @@
 //! Installing TinyTeX, a small TeX Live the user owns, where TinyTeX's own installers put it:
 //! no password is asked for, and R's tinytex and TeX's other tools find it there too.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -15,11 +14,7 @@ use crate::tex::{find_tool, join_path};
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
 /// TinyTeX-1 has pdfLaTeX, XeTeX (Live Preview's), latexmk and the templates' packages but
 /// beamer; TinyTeX-0 has no LaTeX, and the bundle without a number is three times the size.
-const BUNDLE: (&str, &str) = if cfg!(windows) {
-    ("TinyTeX-1-windows-", ".exe")
-} else {
-    ("TinyTeX-1-darwin-", ".tar.xz")
-};
+const BUNDLE: (&str, &str) = ("TinyTeX-1-darwin-", ".tar.xz");
 /// The Presentation template's class, and programs builds run that Install can't add, as it
 /// adds only the package of a file LaTeX didn't find.
 const PACKAGES: [&str; 2] = ["beamer", "makeindex"];
@@ -27,26 +22,13 @@ const PACKAGES: [&str; 2] = ["beamer", "makeindex"];
 /// next install removes it.
 const UNFINISHED: &str = ".texlocal-tinytex-";
 
-/// Where TinyTeX's installers put it: in ProgramData where Windows' roaming AppData's path has
-/// a space or a letter past ASCII, which TeX Live's tools stumble on.
+/// Where TinyTeX's installer puts it.
 pub(crate) fn root() -> Option<PathBuf> {
-    let var = |name| std::env::var_os(name).map(PathBuf::from);
-    if cfg!(windows) {
-        let appdata = var("APPDATA")?;
-        let plain = (appdata.to_str()).is_some_and(|p| p.bytes().all(|b| b.is_ascii_graphic()));
-        Some(if plain { appdata } else { var("ProgramData")? }.join("TinyTeX"))
-    } else {
-        Some(var("HOME")?.join("Library").join("TinyTeX"))
-    }
+    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/TinyTeX"))
 }
 
 pub(crate) fn bin(root: &Path) -> PathBuf {
-    let platform = if cfg!(windows) {
-        "windows"
-    } else {
-        "universal-darwin"
-    };
-    root.join("bin").join(platform)
+    root.join("bin/universal-darwin")
 }
 
 pub(crate) async fn install(path_env: &str) -> Result<(), CoreError> {
@@ -95,11 +77,7 @@ async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
     let (url, digest) = bundle(&release).ok_or_else(|| {
         CoreError::internal("TinyTeX's latest release has no bundle for this computer.")
     })?;
-    let archive = temp.join(if cfg!(windows) {
-        "TinyTeX.exe"
-    } else {
-        "TinyTeX.tar.xz"
-    });
+    let archive = temp.join("TinyTeX.tar.xz");
     fetch(url, &archive, path_env).await?;
     let sum = Sha256::digest(std::fs::read(&archive)?);
     if sum.iter().map(|b| format!("{b:02x}")).collect::<String>() != digest {
@@ -107,18 +85,8 @@ async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
             "TinyTeX's download wasn't what GitHub says it is. Try again.",
         ));
     }
-    let command = if cfg!(windows) {
-        // A 7-Zip archive that unpacks itself, which Windows' tar can't read.
-        let mut into = OsString::from("-o");
-        into.push(temp);
-        let mut command = process::tool(&archive, path_env);
-        command.arg("-y").arg(into);
-        command
-    } else {
-        let mut command = process::command("tar", None, path_env)?;
-        command.arg("-xf").arg(&archive).arg("-C").arg(temp);
-        command
-    };
+    let mut command = process::command("tar", None, path_env)?;
+    command.arg("-xf").arg(&archive).arg("-C").arg(temp);
     match run(command).await? {
         (0, _) => Ok(temp.join("TinyTeX")),
         (_, out) => Err(CoreError::internal(format!(
@@ -149,7 +117,7 @@ fn bundle(release: &Release) -> Option<(&str, &str)> {
     Some((&asset.browser_download_url, digest))
 }
 
-/// `url` saved at `to` by the system's curl, which macOS and Windows have.
+/// `url` saved at `to` by the system's curl.
 async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
     let mut command = process::command("curl", None, path_env)?;
     // A stalled download fails after a minute, not at the ten minutes `run` allows.
@@ -217,11 +185,7 @@ mod tests {
             });
             serde_json::from_value(serde_json::json!({ "assets": assets })).unwrap()
         };
-        let mine = if cfg!(windows) {
-            "https://x/TinyTeX-1-windows-v1.exe"
-        } else {
-            "https://x/TinyTeX-1-darwin-v1.tar.xz"
-        };
+        let mine = "https://x/TinyTeX-1-darwin-v1.tar.xz";
         assert_eq!(bundle(&release(Some("ab12"))), Some((mine, "ab12")));
         // Without a sum to check it by, none is taken.
         assert_eq!(bundle(&release(None)), None);
@@ -260,7 +224,7 @@ mod tests {
 
         let (_dir, service) = crate::projects::testing::library();
         let builds = crate::templates::TEMPLATES
-            .map(|(template, _)| (template, None))
+            .map(|template| (template, None))
             .into_iter()
             .chain([("article", Some("xelatex"))]);
         for (n, (template, engine)) in builds.enumerate() {

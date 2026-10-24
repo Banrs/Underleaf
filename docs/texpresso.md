@@ -38,7 +38,7 @@ log only on a failure.
 set: TeXpresso then opens no window and quits when its input closes, as the app's pipe does when
 the app quits or crashes. Its loop (`src/frontend/live.c`) and the Type 1 fonts' copies
 (`src/dvi/type1_cff.c`) are whole files in `tools/texpresso/src`, which `build.sh` copies over the
-checkout and the iPad's engine shares; the patch holds the rest. It says `["live", 1]` first, the
+checkout; the patch holds the rest. It says `["live", 1]` first, the
 protocol's version.
 
 - The client says which pages are in view (`["view", first, last]`). A change is typeset as far
@@ -93,24 +93,6 @@ Stub-engine tests in `src/session/tests.rs` cover the session in `cargo test --w
 
 CI has no TeX, so `.github/workflows/tex-check.yml` runs this nightly on macOS, with TinyTeX and
 the engine built from `tools/texpresso`, beside the core's other tests that need TeX Live.
-
-## iPad
-
-iPadOS starts no processes, so the iPad app links TeXpresso's in-process engine instead:
-`tools/texpresso-ios` builds it, from TeXpresso's `eclipse` branch with this patch's behaviour
-carried over, as an XCFramework whose Live Preview speaks the same protocol over pipes and which
-also runs Compile's programs. The app hands its functions to the core with `tl_set_engine`
-(`docs/core-api.md`, TeX inside the app); the engine runs one Live Preview at a time, so a
-project's start ends another's.
-
-Its patch, `eclipse-ios.patch`, carries the engine's side; the loop and the Type 1 fonts are the
-Mac's files from `tools/texpresso/src`. A finishing pass runs in place, as the engine is one TeX
-in the app's memory. Where a program would abort (no memory for an engine, a failed invariant) the
-session or run ends with status 134, and the app goes on; a MuPDF error the loop doesn't expect
-ends the session with status 1. Stop or the time limit ends a Compile run in about a quarter of a
-second, even while TeX reads no file, and a key gives way within half a second when TeX computes
-without reading. Without guard pages the engines count calls rather than catching a stack
-overflow, up to 6000 deep.
 
 ## Boundaries
 

@@ -67,7 +67,6 @@ pub(crate) enum Msg {
 pub(crate) enum Command {
     Close,
     SetOptions { auto_compile: Option<bool> },
-    Rescan,
     OpenDocument { path: RelPath },
     CloseDocument { path: RelPath },
     Composing { path: RelPath, composing: bool },
@@ -77,14 +76,15 @@ pub(crate) enum Command {
     StopCompile,
     Clean,
     Analyze { path: RelPath },
-    Search { query: String },
+    Search { query: String, #[serde(default)] match_case: bool, #[serde(default)] whole_word: bool },
     Usages { path: RelPath, offset: u32 },
     QuickHelp { path: RelPath, offset: u32 },
     QuickOpen { query: String },
     Navigate { from: Place },
     Back { at: Place },
     Forward { at: Place },
-    Replace { query: String, replacement: String },
+    Replace { query: String, replacement: String, #[serde(default)] match_case: bool,
+        #[serde(default)] whole_word: bool },
     RenameSymbol { kind: String, from: String, to: String },
     Fix { id: String },
     HistoryList,
@@ -193,10 +193,7 @@ impl Sessions {
     pub fn new(service: Arc<Service>) -> Self {
         let engine = Arc::new(Arc::clone(&service));
         let preview = Arc::clone(&service.texpresso);
-        // iOS's watcher (kqueue) holds a descriptor for every file and folder, which a project's
-        // build and history take past the app's limit and the in-process TeX's needs: there the
-        // app asks for `session_rescan` as it comes back to the front instead.
-        Self::with_engine(service, engine, preview, !cfg!(target_os = "ios"))
+        Self::with_engine(service, engine, preview, true)
     }
 
     pub(crate) fn with_engine(

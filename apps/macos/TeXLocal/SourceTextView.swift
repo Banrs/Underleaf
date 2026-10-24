@@ -11,6 +11,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         view.textStorage?.delegate = view
+        (view.textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = view
         view.installColouring()
         view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
             of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.needsDisplay = true }
@@ -26,7 +27,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The file's own, kept with it while another shows (`SourceEditor.open`); the editor hands it to AppKit.
     var undo = UndoManager()
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
-    enum FileDrop { case open(() -> Void), insert(String) }
+    /// A project's file opens or goes in as its text; one from outside is copied into the project first.
+    enum FileDrop { case open(() -> Void), insert(String), copy(() async -> String?) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
     var openDefinition: (Definition.Place) -> Void = { _ in }
     var quickHelp: (Int) -> Void = { _ in }
@@ -40,6 +42,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issues.place()
         inputContext?.discardMarkedText()
         unmarkText()
+        folded = []
+        foldCache = nil
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
         lastMath = nil
@@ -65,9 +69,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
+        let old = NSRange(location: edited.location, length: edited.length - delta)
         // A snippet field's other places take what's typed once the change is done (`didChangeText`).
-        mirrorEdits = document.edit(NSRange(location: edited.location, length: edited.length - delta),
-                                    with: textStorage.mutableString.substring(with: edited), changing: changing, mirroring: mirroring)
+        mirrorEdits = document.edit(old, with: textStorage.mutableString.substring(with: edited), changing: changing, mirroring: mirroring)
+        foldsEdited(old, delta: delta)
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         changing = nil
@@ -159,6 +164,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The bracket partner filled in place of the find indicator, with Reduce Motion (+Colours).
     var partnerMark: NSRange?
     var partnerDrawn: NSRect?
+    /// The folds' hidden lines, whole paragraphs, in order (+Folding).
+    var folded: [NSRange] = []
+    var foldCache: [Int: SourceDocument.Fold]?
+    var foldMarks: [(rect: CGRect, range: NSRange)] = []
+    var gutterHovered = false
+    var stepping = false
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -167,6 +178,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         issues.draw(in: rect, currentLine: current?.number)
         drawPartner(in: rect)
         drawNumbers(in: rect, current: current?.number)
+        drawFolds(in: rect)
     }
 
     override func viewDidChangeBackingProperties() {
@@ -177,8 +189,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     // MARK: the selection
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        let old = selectedRange()
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
+        if let over = selectionMoved(from: old) {
+            super.setSelectedRanges([NSValue(range: over)], affinity: affinity, stillSelecting: stillSelecting)
+        }
         if !typing {
             completions.close()
             endFieldTyping()
@@ -361,13 +377,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// move through it and Return or Tab accepts.
     override func doCommand(by selector: Selector) {
         if selector == #selector(cancelOperation(_:)) { return cancelOperation(nil) }
-        guard completions.offered != nil else { return super.doCommand(by: selector) }
+        guard completions.offered != nil else { return keyCommand(selector) }
         switch selector {
         case #selector(moveUp(_:)): completions.move(-1)
         case #selector(moveDown(_:)): completions.move(1)
         case #selector(insertNewline(_:)), #selector(insertTab(_:)): completions.accept()
-        default: super.doCommand(by: selector)
+        default: keyCommand(selector)
         }
+    }
+
+    /// A key's own command: a caret it moves steps over a fold (+Folding).
+    private func keyCommand(_ selector: Selector) {
+        stepping = NSStringFromSelector(selector).hasPrefix("move")
+        defer { stepping = false }
+        super.doCommand(by: selector)
     }
 
     // MARK: snippet fields
@@ -416,6 +439,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     /// The text view sets its cursor on every move, over the list's own cursor rect.
     private func setsCursor(with event: NSEvent) -> Bool {
+        gutterHover(inGutter(event))
         if updateDividerCursor(with: event) { return true }
         guard inGutter(event) || issue(at: event) != nil || completions.contains(event.locationInWindow) else { return false }
         NSCursor.arrow.set()
@@ -433,7 +457,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func mouseEntered(with event: NSEvent) { if !setsCursor(with: event) { super.mouseEntered(with: event) } }
     override func cursorUpdate(with event: NSEvent) { if !setsCursor(with: event) { super.cursorUpdate(with: event) } }
 
+    override func mouseExited(with event: NSEvent) {
+        gutterHover(false)
+        super.mouseExited(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        if event.type == .leftMouseDown, foldClick(at: convert(event.locationInWindow, from: nil)) { return }
         if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
         let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
         if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {
@@ -490,19 +520,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if selectedRange() == first, issues.issue(on: number) != nil { issues.clicked(number) }
     }
 
-    // MARK: file drops open, or insert a figure
+    // MARK: file drops and pastes open, or insert a figure
 
-    private func files(_ info: any NSDraggingInfo) -> [URL] {
-        info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    private func files(_ board: NSPasteboard) -> [URL] {
+        board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     }
 
     /// The text view's own for what isn't a file; none for files the project can't take.
     private func dragOperation(_ info: any NSDraggingInfo, textViews own: () -> NSDragOperation) -> NSDragOperation {
-        let files = files(info)
+        let files = files(info.draggingPasteboard)
         guard !files.isEmpty else { return own() }
         guard let drop = files.lazy.compactMap(fileDrop).first else { return [] }
         // The insertion point shows where a figure goes, and it scrolls near the edges (HIG, Drag and drop).
-        if case .insert = drop {
+        if case .open = drop {} else {
             guard isEditable else { return [] }
             _ = own()
         }
@@ -513,19 +543,70 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation { dragOperation(info) { super.draggingUpdated(info) } }
 
     override func performDragOperation(_ info: any NSDraggingInfo) -> Bool {
-        let files = files(info)
+        let files = files(info.draggingPasteboard)
         guard !files.isEmpty else { return super.performDragOperation(info) }
-        switch files.lazy.compactMap(fileDrop).first {
-        case nil: return false
-        case .open(let open)?: open()
-        case .insert(let text)?:
-            guard isEditable else { return false }
-            let at = characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))
-            apply([TextEdit(.caret(at), text)], named: String(localized: "Insert Figure"),
-                  selecting: [NSRange(location: at, length: (text as NSString).length)])
-            window?.makeFirstResponder(self)
+        guard let drop = files.lazy.compactMap(fileDrop).first else { return false }
+        if case .open(let open) = drop {
+            open()
+            return true
         }
+        guard isEditable else { return false }
+        setSelectedRange(.caret(characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))))
+        window?.makeFirstResponder(self)
+        insertFigure(drop)
         return true
+    }
+
+    override func paste(_ sender: Any?) {
+        if isEditable, let drop = pasted(NSPasteboard.general) { return insertFigure(drop) }
+        super.paste(sender)
+    }
+
+    /// A copied file as a dropped one, but one that would open, whose name pastes; a copied image without text, as a
+    /// screenshot is, as a PNG file from outside.
+    func pasted(_ board: NSPasteboard) -> FileDrop? {
+        let figure = files(board).lazy.compactMap(fileDrop).first { if case .open = $0 { false } else { true } }
+        return figure ?? pastedImage(board)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, NSPasteboard.general.availableType(from: [.png, .tiff]) != nil { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    private func pastedImage(_ board: NSPasteboard) -> FileDrop? {
+        guard board.string(forType: .string) == nil,
+              let png = board.data(forType: .png)
+                ?? board.data(forType: .tiff).flatMap(NSBitmapImageRep.init(data:))?.representation(using: .png, properties: [:])
+        else { return nil }
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let file = folder.appending(path: String(localized: "Pasted Graphic") + ".png")
+        let gone = { try? FileManager.default.removeItem(at: folder) }
+        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+              (try? png.write(to: file)) != nil, case .copy(let copy) = fileDrop(file) else {
+            gone()
+            return nil
+        }
+        return .copy {
+            defer { gone() }
+            return await copy()
+        }
+    }
+
+    /// At the selection; a copy's once made, unless another file is shown by then.
+    private func insertFigure(_ drop: FileDrop) {
+        let insert = { [self] (text: String) in
+            let at = selection
+            apply([TextEdit(at, text)], named: String(localized: "Insert Figure"),
+                  selecting: [NSRange(location: at.location, length: (text as NSString).length)])
+        }
+        switch drop {
+        case .open: break
+        case .insert(let text): insert(text)
+        case .copy(let copy):
+            let shown = document
+            Task { if let text = await copy(), document === shown, isEditable { insert(text) } }
+        }
     }
 
     // MARK: VoiceOver's rotors

@@ -1,11 +1,12 @@
 //! LaTeX editing logic for the editors, as ranges and edits for the editor to apply. A `SourceDocument` mirrors the
-//! editor's text and answers in UTF-16 offsets, which NSString and WinUI count in. Its commands are its methods,
+//! editor's text and answers in UTF-16 offsets, which NSString counts in. Its commands are its methods,
 //! each in the file of its kind.
 
 mod call;
 pub(crate) mod catalog;
 mod complete;
 mod edit;
+mod folds;
 pub(crate) mod headings;
 mod highlight;
 mod preview;
@@ -211,15 +212,6 @@ impl SourceDocument {
 
     pub fn text(&self) -> String {
         crate::utf16_lossy(&self.text.units)
-    }
-
-    /// Every match, as a project's search finds them.
-    fn find(&self, query: &crate::projects::Query) -> Vec<TextRange> {
-        let places = query.places(&self.text()).into_iter();
-        let lines = &self.text.lines;
-        places
-            .map(|place| range(lines[place.line as usize - 1] + place.column, place.length))
-            .collect()
     }
 
     pub fn line_at(&self, offset: u32) -> u32 {

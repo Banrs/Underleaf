@@ -13,12 +13,12 @@ use crate::compile::CompileManager;
 use crate::import::Conflict;
 use crate::paths::Project;
 use crate::projects::{self, History};
-use crate::settings::{self, AppSettings, Engine};
+use crate::settings::{self, AppSettings};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
 use crate::wordmatch::PdfPage;
-use crate::{CoreError, import, inprocess, lock, templates, tinytex, zipexport};
+use crate::{CoreError, import, lock, tinytex, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
@@ -48,14 +48,12 @@ enum Command {
     Status,
     SetTexpressoDir { dir: Option<PathBuf> },
     SetTexDir { dir: Option<PathBuf> },
-    Catalogue,
     ListProjects,
     CreateProject { name: String, template: Option<String>, engine: Option<String> },
     DuplicateProject { id: String, name: String },
     FreeProjectName,
     RenameProject { id: String, name: String },
     FileTree { id: String },
-    CreateEntry { id: String, path: String, #[serde(default)] dir: bool },
     SynctexForward { id: String, file: String, line: u32, #[serde(flatten)] live: Live },
     SynctexInverse { id: String, page: f64, x: f64, y: f64, text: Option<String>, at: Option<usize>,
         #[serde(flatten)] live: Live },
@@ -133,11 +131,6 @@ impl Service {
     }
 
     async fn status(&self) -> TexStatus {
-        if inprocess::IN_PROCESS {
-            let found = inprocess::status();
-            self.tex_found.send_replace(found.available);
-            return found;
-        }
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
@@ -180,14 +173,6 @@ impl Service {
                 AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
                 out(self.status().await)
             }
-            Command::Catalogue => Ok(json!({
-                "templates": templates::TEMPLATES.map(|(id, title)| json!({ "id": id, "title": title })),
-                "engines": Engine::ALL.map(|engine| json!({
-                    "id": engine,
-                    "title": engine.title(),
-                    "default": engine == Engine::default(),
-                })),
-            })),
             Command::ListProjects => projects::list_projects(&self.data_dir).and_then(out),
             // The project made is answered, so its `id` is the name it got.
             Command::CreateProject {
@@ -211,9 +196,6 @@ impl Service {
                 })
                 .and_then(out),
             Command::FileTree { id } => projects::file_tree(&self.project(&id)?).and_then(out),
-            Command::CreateEntry { id, path, dir } => self.with_project(&id, |project| {
-                Ok(json!({ "path": projects::create_free(&project.root, &path, dir)? }))
-            }),
             Command::SynctexForward {
                 id,
                 file,
@@ -271,7 +253,6 @@ impl Service {
                 self.kill_all();
                 Ok(Value::Null)
             }
-            Command::InstallTex if inprocess::IN_PROCESS => Err(inprocess::no_installs()),
             Command::InstallTex => {
                 tinytex::install(&self.tool_paths().0).await?;
                 out(self.status().await)

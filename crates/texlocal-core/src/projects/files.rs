@@ -64,6 +64,14 @@ pub(crate) struct Planned<D> {
     pub done: D,
 }
 
+/// Whether what `abs` names is in the project at `root`, resolved: a link there to a file
+/// elsewhere, as a cloned repository may hold, isn't, and a write across the project leaves it be.
+pub(crate) fn inside(root: &Path, abs: &Path) -> bool {
+    fs::canonicalize(abs)
+        .ok()
+        .is_none_or(|real| real.starts_with(root))
+}
+
 /// What `plan` makes of each item, written in turn, all or none: a plan or write that fails is the
 /// error, and the files written before it are put back as they were, or removed if they weren't.
 pub(crate) fn write_all<T, D>(
@@ -125,7 +133,7 @@ fn is_under(path: &str, dir: &str) -> bool {
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a case-insensitive
-/// volume, the default on macOS and Windows, a case-only rename's destination already "exists"
+/// volume, the default on macOS, a case-only rename's destination already "exists"
 /// because it is `src` itself.
 pub(super) fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
@@ -174,27 +182,17 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
 
 pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
 
-/// Delete to the platform's trash, so a mis-click is recoverable; a trash failure is reported
-/// and never becomes a permanent delete.
+/// Delete to the Trash, so a mis-click is recoverable; a trash failure is reported and never
+/// becomes a permanent delete.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
     // The system's file manager moves it, as the Mac app does; the crate's Finder-over-Apple-Events
     // default needs the Automation permission.
-    #[cfg(target_os = "macos")]
-    let trashed = {
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        let mut context = trash::TrashContext::default();
-        context.set_delete_method(DeleteMethod::NsFileManager);
-        context.delete(path)
-    };
-    #[cfg(target_os = "ios")]
-    let trashed = {
-        use objc2_foundation::{NSFileManager, NSString, NSURL};
-        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-        NSFileManager::defaultManager().trashItemAtURL_resultingItemURL_error(&url, None)
-    };
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    let trashed = trash::delete(path);
-    trashed.map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
+    let mut context = trash::TrashContext::default();
+    context.set_delete_method(DeleteMethod::NsFileManager);
+    context
+        .delete(path)
+        .map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
 }
 
 /// Discard, by `trash`, an entry an incoming file of its name replaces. The main file may go,
@@ -233,7 +231,6 @@ mod tests {
     use crate::projects::testing::project;
     use crate::settings::{read_ui, write_ui};
 
-    #[cfg(unix)]
     #[test]
     fn a_write_refused_says_so_in_a_sentence_naming_the_file_and_folder() {
         use std::os::unix::fs::PermissionsExt;

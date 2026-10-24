@@ -152,7 +152,10 @@ final class WorkspaceController: ThinSplitViewController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = 222
         sidebarItem.isCollapsed = !app.sidebarVisible
-        sidebarSearch = accessory(hostingView(SearchField(text: Bindable(project.search).query, prompt: "Search Project", handle: searchField)))
+        let search = Bindable(project.search)
+        sidebarSearch = accessory(hostingView(SearchField(
+            text: search.query, prompt: "Search Project", handle: searchField, step: project.search.step,
+            options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords)])))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }
@@ -162,7 +165,9 @@ final class WorkspaceController: ThinSplitViewController {
         let sideColumns = CGFloat([app.sidebarVisible, app.inspectorVisible].filter(\.self).count) * inspectorItem.minimumThickness
         let panes = max(size.width - sideColumns, 2 * ColumnMetrics.paneMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.paneMinimum)
-        panelHeight = max(ColumnMetrics.panelMinimum, (size.height * 0.25).rounded())
+        // As Xcode keeps its debug area's: the height it was last shown at, in every project.
+        let kept = UserDefaults.standard.double(forKey: DefaultsKey.buildPanelHeight)
+        panelHeight = max(ColumnMetrics.panelMinimum, kept > 0 ? kept : (size.height * 0.25).rounded())
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.paneMinimum
@@ -362,7 +367,7 @@ final class WorkspaceController: ThinSplitViewController {
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let split = area.splitView, panel = panelItem.viewController.view
-        if !shown { panelHeight = panel.frame.height }
+        if !shown { keepPanelHeight() }
         guard animates else {
             setCollapsed(panelItem, !shown)
             if shown { split.setPosition(split.bounds.height - split.dividerThickness - panelHeight, ofDividerAt: 0) }
@@ -376,6 +381,11 @@ final class WorkspaceController: ThinSplitViewController {
         setCollapsed(panelItem, !shown)
     }
 
+    private func keepPanelHeight() {
+        panelHeight = panelItem.viewController.view.frame.height
+        UserDefaults.standard.set(Double(panelHeight), forKey: DefaultsKey.buildPanelHeight)
+    }
+
     private var animates: Bool { view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     private func focus(_ field: FieldHandle, in accessory: NSSplitViewItemAccessoryViewController) {
@@ -385,6 +395,7 @@ final class WorkspaceController: ThinSplitViewController {
 
     /// A split animation still running finishes after its window has gone and would save its frames over the next window's.
     func close() {
+        if !panelItem.isCollapsed { keepPanelHeight() }
         for split in splitViews { split.autosaveName = nil }
         watches.forEach { $0.cancel() }
         app.performPDF = nil

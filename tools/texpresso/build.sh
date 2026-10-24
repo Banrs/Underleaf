@@ -21,7 +21,7 @@ if ! git apply --reverse --check "$HERE/underleaf-pdf.patch" 2>/dev/null; then
   git clean --quiet --force -d src
   git apply "$HERE/underleaf-pdf.patch"
 fi
-# Live Preview's loop and the Type 1 fonts, whole files so the iPad's engine can share them.
+# Live Preview's loop and the Type 1 fonts, whole files.
 cp -R "$HERE/src/." src/
 make -j4 all "$@"
 echo "Built $DEST/build/texpresso. Run $HERE/install.sh $DEST/build to install it."

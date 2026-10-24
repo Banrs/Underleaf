@@ -1,12 +1,11 @@
-//! Building a project with latexmk, or where TeX runs inside the app with the passes latexmk
-//! would make (`passes`): Stop and quit, an automatic build's timeout, and the stale-output
-//! guard. A session runs one build at a time.
+//! Building a project with latexmk: Stop and quit, an automatic build's timeout, and the
+//! stale-output guard. A session runs one build at a time.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -18,7 +17,7 @@ use crate::logparse::{
 };
 use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
-use crate::settings::read_settings;
+use crate::settings::{granted, read_settings};
 use crate::stamp::Stamp;
 
 /// An automatic build's alone: one asked for runs until it ends or is stopped, but a document
@@ -32,8 +31,7 @@ const STAMPED: [&str; 4] = ["log", "pdf", "blg", "aux"];
 /// latexmk's rules for glossaries, acronyms, bib2gls and nomencl, which it lacks and Overleaf
 /// adds: they run TeX's own programs on the build folder's files, and a rule the user's or the
 /// project's latexmkrc made for the same files wins. bib2gls may write beside the project, and
-/// its log names the .bib files a rebuild watches. One line with only single quotes, as
-/// Windows' latexmk wrapper passes it on.
+/// its log names the .bib files a rebuild watches.
 const GLOSSARY_RULES: &str = "\
     sub tl_rule { my ($from, $to) = @_; \
         add_cus_dep($from, $to, 0, 'tl_'.$to) unless grep { /^$from $to / } @cus_dep_list } \
@@ -72,8 +70,6 @@ struct Running {
     /// latexmk's record, until a good run ends. After a fatal TeX error it
     /// holds the truncated .aux's state, which fails every later run.
     record: Option<PathBuf>,
-    /// Set to end a build that runs inside the app.
-    cancel: Arc<AtomicI32>,
 }
 
 #[derive(Default)]
@@ -130,7 +126,7 @@ impl CompileRun {
 /// Named after -norc turns off the automatic ones; a relative home would be the project's.
 fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
     let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
-    let home = dir("HOME").or_else(|| dir("USERPROFILE").filter(|_| cfg!(windows)))?;
+    let home = dir("HOME")?;
     let config = dir("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
     [
         config.join("latexmk").join("latexmkrc"),
@@ -178,7 +174,7 @@ impl CompileManager {
     ) -> Result<CompileResult, CoreError> {
         let request_started = Instant::now();
         let root = &project.root;
-        let settings = read_settings(&project.settings);
+        let (settings, trusted) = (read_settings(&project.settings), granted(project));
         let main_rel = safe_rel_file(&settings.main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
@@ -196,14 +192,10 @@ impl CompileManager {
             pdf,
             request_started,
         };
-        #[cfg(unix)]
-        if crate::inprocess::IN_PROCESS {
-            return self.compile_in_process(project, &settings, run).await;
-        }
         let command = process::command("latexmk", Some(root), path_env).map(|mut command| {
             // A project's own latexmkrc runs Perl on every build, so only a trusted project's
             // is read.
-            if settings.shell_escape {
+            if trusted {
                 command.arg("-shell-escape");
             } else {
                 command.arg("-norc");
@@ -300,7 +292,6 @@ impl CompileManager {
 
 impl Running {
     fn halt(&self) {
-        self.cancel.store(1, Ordering::Release);
         if let Some(tree) = &self.tree {
             tree.kill();
         }
@@ -394,9 +385,7 @@ fn read_tail(mut file: std::fs::File, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-#[cfg(unix)]
-mod passes;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) mod stubs;
 
 #[cfg(test)]
@@ -474,11 +463,6 @@ mod tests {
         assert_eq!(user_latexmkrc(env(home)), rc(&config));
         // A relative home would be the project's own folder.
         assert_eq!(user_latexmkrc(env(Path::new("."))), None);
-        // Without HOME, Windows' latexmk looks in the user's profile.
-        let profile = OsString::from(home);
-        let windows = move |key: &str| (key == "USERPROFILE").then(|| profile.clone());
-        let found = user_latexmkrc(windows);
-        assert_eq!(found, rc(&config).filter(|_| cfg!(windows)));
     }
 
     /// TeX Live on the PATH: `cargo test -p texlocal-core thesis -- --ignored`.

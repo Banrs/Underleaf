@@ -234,6 +234,11 @@ impl Opened {
     /// A zip's visible files; the contents of its one top folder if it has one, as a zipped
     /// project folder unpacks.
     fn of_zip(base: String, mut zip: ZipArchive<File>) -> Result<Self, CoreError> {
+        if zip.len() > projects::MAX_FILES {
+            return Err(CoreError::bad_request(format!(
+                "“{base}” has more than 20,000 files, more than a document has."
+            )));
+        }
         let mut files = Vec::new();
         for i in 0..zip.len() {
             let entry = zip.by_index_raw(i)?;
@@ -264,7 +269,7 @@ impl Opened {
     }
 }
 
-/// A .zip's files, or any other file alone.
+/// A .zip's files, or a .tex alone.
 fn open(src: &Path) -> Result<Opened, CoreError> {
     let stem = src
         .file_stem()
@@ -286,12 +291,24 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         return Opened::of_zip(stem, zip);
     }
     let path = file_name(src);
+    if projects::file_kind(&path) != "tex" {
+        return Err(CoreError::bad_request(format!(
+            "“{path}” isn’t a project: TeXLocal opens a folder, a .tex file or a .zip of a project."
+        )));
+    }
     Ok(Opened {
         base: stem,
         zip: None,
-        main: (projects::file_kind(&path) == "tex").then(|| path.clone()),
+        main: Some(path.clone()),
         files: vec![(path, Source::File(src.to_path_buf()))],
     })
+}
+
+/// A folder or .zip a person opens holds a document: anything else would become a project.
+pub(crate) fn no_tex(name: &str) -> CoreError {
+    CoreError::bad_request(format!(
+        "“{name}” has no LaTeX file (.tex). Open the folder that holds the document, or start one with New Project."
+    ))
 }
 
 fn file_name(path: &Path) -> String {
@@ -364,8 +381,8 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
     Ok(settings)
 }
 
-/// A .zip's files, or a file alone, made a new project, with the settings they name; a project
-/// without a .tex gets the blank template's main file.
+/// A .zip's files, or a .tex alone, made a new project, with the settings they name; one
+/// whose .tex files can't be its main file gets the blank template's.
 pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     let Opened {
         base,
@@ -375,6 +392,12 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     } = open(src)?;
     // What an export leaves out stays behind: the project makes its own settings.
     files.retain(|(path, _)| !left_out(path));
+    if !files
+        .iter()
+        .any(|(path, _)| projects::file_kind(path) == "tex")
+    {
+        return Err(no_tex(&file_name(src)));
+    }
 
     projects::new_project(&service.data_dir, &base, |root| {
         write_files(root, &files, zip.as_mut())?;
@@ -638,7 +661,6 @@ mod tests {
         assert!(!file.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
         let (_dir, service) = with_project();
@@ -737,13 +759,24 @@ mod tests {
             ("paper.tex", "paper.tex", &["paper.tex"][..]),
             // One whose name latexmk would read as an option comes but isn't the main file.
             ("-draft.tex", "main.tex", &["-draft.tex", "main.tex"]),
-            // Any other file comes with the blank template's main file.
-            ("refs.bib", "main.tex", &["main.tex", "refs.bib"]),
         ] {
             let info = import_project(&service, &src.join(file)).unwrap();
             assert_eq!(info.main_file, main, "{file}");
             assert_eq!(files_in(&service.data_dir.join(&info.id)), files, "{file}");
         }
+        // Any other file, or a zip without a .tex, is no project.
+        use crate::projects::{list_projects, testing::fails_with};
+        fails_with(
+            import_project(&service, &src.join("refs.bib")),
+            "isn’t a project",
+        );
+        let photos = dir.path().join("Photos.zip");
+        zip_of(&photos, &[("a.png", "png"), ("notes.txt", "x")]);
+        fails_with(
+            import_project(&service, &photos),
+            "“Photos.zip” has no LaTeX file",
+        );
+        assert_eq!(list_projects(&service.data_dir).unwrap().len(), 2);
     }
 
     #[test]
@@ -808,6 +841,24 @@ mod tests {
         bytes[at.unwrap()] = b'X';
         fs::write(&src, bytes).unwrap();
         assert!(import_project(&service, &src).is_err());
+        assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_zip_of_more_files_than_a_document_has_makes_no_project() {
+        let (dir, service) = library();
+        let src = dir.path().join("many.zip");
+        let names: Vec<_> = (0..=projects::MAX_FILES)
+            .map(|n| format!("{n}.tex"))
+            .collect();
+        let files: Vec<_> = names.iter().map(|name| (name.as_str(), "")).collect();
+        zip_of(&src, &files);
+        let err = import_project(&service, &src).unwrap_err();
+        assert!(
+            err.message.contains("more than 20,000 files"),
+            "{}",
+            err.message
+        );
         assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
     }
 
@@ -882,24 +933,21 @@ mod tests {
         assert!(!root.join("figs/.git").exists() && !root.join("figs/.DS_Store").exists());
 
         // A dropped link names what it points at; links inside a folder are left.
-        #[cfg(unix)]
-        {
-            let plot = dir.path().join("elsewhere/plot.png");
-            write_all(
-                dir.path(),
-                &[
-                    ("elsewhere/plot.png", "p"),
-                    ("linked-drop/pics/real.png", "r"),
-                ],
-            );
-            let drop = dir.path().join("linked-drop");
-            std::os::unix::fs::symlink(&plot, drop.join("plot-link.png")).unwrap();
-            std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
-            let paths = [drop.join("plot-link.png"), drop.join("pics")];
-            import_files(&service, "P", "", &paths, None, remove).unwrap();
-            assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
-            assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
-        }
+        let plot = dir.path().join("elsewhere/plot.png");
+        write_all(
+            dir.path(),
+            &[
+                ("elsewhere/plot.png", "p"),
+                ("linked-drop/pics/real.png", "r"),
+            ],
+        );
+        let drop = dir.path().join("linked-drop");
+        std::os::unix::fs::symlink(&plot, drop.join("plot-link.png")).unwrap();
+        std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
+        let paths = [drop.join("plot-link.png"), drop.join("pics")];
+        import_files(&service, "P", "", &paths, None, remove).unwrap();
+        assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
+        assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
     }
 
     #[test]
@@ -941,14 +989,11 @@ mod tests {
         assert_eq!(refused.status, 409);
 
         // A link to a file, as to a shared .bib, is copied as what it points at.
-        #[cfg(unix)]
-        {
-            let shared = dir.path().join("shared.bib");
-            fs::write(&shared, "@book{k,}").unwrap();
-            std::os::unix::fs::symlink(&shared, root.join("refs.bib")).unwrap();
-            let linked = duplicate_project(&service, "P", "Linked").unwrap().id;
-            let bib = fs::read(service.data_dir.join(linked).join("refs.bib"));
-            assert_eq!(bib.unwrap(), b"@book{k,}");
-        }
+        let shared = dir.path().join("shared.bib");
+        fs::write(&shared, "@book{k,}").unwrap();
+        std::os::unix::fs::symlink(&shared, root.join("refs.bib")).unwrap();
+        let linked = duplicate_project(&service, "P", "Linked").unwrap().id;
+        let bib = fs::read(service.data_dir.join(linked).join("refs.bib"));
+        assert_eq!(bib.unwrap(), b"@book{k,}");
     }
 }

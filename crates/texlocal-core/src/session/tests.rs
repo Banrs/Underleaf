@@ -222,7 +222,7 @@ impl Rig {
     async fn watching(auto_compile: bool, watch: bool) -> Self {
         let data = tempfile::tempdir().unwrap();
         crate::projects::create_project(data.path(), "P", "blank", None).unwrap();
-        let root = dunce::canonicalize(data.path().join("P")).unwrap();
+        let root = std::fs::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
         // As if `status` had found TeX, which automatic builds wait for.
@@ -774,7 +774,6 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
 }
 
 /// A folder that can't be read for now, as another app's lock leaves it, is no deletion.
-#[cfg(unix)]
 #[tokio::test(start_paused = true)]
 async fn a_file_that_cant_be_read_for_now_shows_not_saved_and_isnt_taken_as_gone() {
     use std::os::unix::fs::PermissionsExt;
@@ -865,6 +864,17 @@ async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
     doc.edit(10, 0, "!", None, false);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "a\nb\nc\nd\ne!");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_too_large_to_edit_doesnt_open() {
+    let rig = Rig::new(false).await;
+    let data = fs::File::create(rig.root.join("data.txt")).unwrap();
+    data.set_len(super::actor::MAX_EDITED + 1).unwrap();
+    let refused = rig
+        .call("open_document", json!({ "path": "data.txt" }))
+        .await;
+    assert!(refused.unwrap_err().message.contains("too large to edit"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -1385,21 +1395,6 @@ async fn the_folders_watcher_tells_another_apps_changes() {
     rig.sessions.close_all().await;
 }
 
-/// Where nothing watches (iOS), a rescan finds what another app did.
-#[tokio::test(start_paused = true)]
-async fn a_rescan_tells_another_apps_changes_unwatched() {
-    let mut rig = Rig::new(false).await;
-    rig.open("main.tex").await;
-    fs::write(rig.root.join("main.tex"), "theirs").unwrap();
-    fs::write(rig.root.join("new.tex"), "").unwrap();
-    rig.ok("rescan", json!({})).await;
-    wait(300).await;
-    let events = rig.events().await;
-    let reload = events.iter().find(|e| e["type"] == "document_reload");
-    assert_eq!(reload.expect("reloaded")["text"], "theirs");
-    assert!(events.iter().any(|e| e["type"] == "tree"));
-}
-
 #[tokio::test]
 async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     let mut rig = Rig::new(true).await;
@@ -1522,6 +1517,8 @@ async fn the_symbol_scan_and_a_search_read_an_open_document_as_the_editor_has_it
     let found = rig.ok("search", json!({ "query": "typed" })).await;
     assert_eq!(found[0]["hits"][0]["file"], "main.tex");
     assert_eq!(found[0]["hits"][0]["column"], 13);
+    let exact = json!({ "query": "Typed", "matchCase": true, "wholeWord": true });
+    assert_eq!(rig.ok("search", exact).await, json!([]));
     assert_eq!(rig.disk("main.tex"), "Hello");
 }
 
