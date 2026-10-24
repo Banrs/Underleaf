@@ -507,6 +507,24 @@ async fn the_outline_has_heading_styles_from_the_document_as_edited() {
     outline_until(&mut rig, |outline| !chapters(outline)).await;
 }
 
+/// The shown document's, by when it was shown rather than opened: one a failed save kept open
+/// has its outline again when it shows again.
+#[tokio::test(start_paused = true)]
+async fn the_outline_is_the_document_shown_again() {
+    let mut rig = Rig::new(false).await;
+    rig.write_elsewhere("main.tex", "\\section{Main}\n");
+    fs::write(rig.root.join("loose.tex"), "\\section{Loose}\n").unwrap();
+    rig.changed("loose.tex", true);
+    for (shown, title) in [
+        ("main.tex", "Main"),
+        ("loose.tex", "Loose"),
+        ("main.tex", "Main"),
+    ] {
+        rig.open(shown).await;
+        outline_until(&mut rig, |outline| outline["tree"][0]["title"] == title).await;
+    }
+}
+
 /// The first `outline` event that passes `test`, which a scan sends perhaps a scan or two later.
 async fn outline_until(rig: &mut Rig, test: impl Fn(&Value) -> bool) -> Value {
     loop {

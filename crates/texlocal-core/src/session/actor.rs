@@ -148,6 +148,9 @@ pub(crate) struct Actor {
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub docs: BTreeMap<String, Doc>,
     next_doc: u64,
+    /// The id of the document the editor last showed: one a failed save kept open shows again
+    /// after one opened since.
+    shown: u64,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
     /// The `outline` event last sent.
@@ -217,6 +220,7 @@ impl Actor {
             shared: Arc::default(),
             docs: BTreeMap::new(),
             next_doc: 1,
+            shown: 0,
             symbols: Arc::default(),
             symbols_seq: 0,
             outline: Value::Null,
@@ -515,7 +519,12 @@ impl Actor {
     fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
         let path =
             &analyze::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
-        if self.docs.contains_key(path) {
+        if let Some(doc) = self.docs.get(path) {
+            let id = doc.doc.id();
+            if id != self.shown {
+                self.shown = id;
+                self.after(Timer::Symbols);
+            }
             return Ok(());
         }
         let abs = paths::safe_path(&self.project.root, path)?;
@@ -530,6 +539,7 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
+        self.shown = id;
         let symbols = Arc::clone(&self.symbols);
         let document = Document::new(id, path, &text, self.tx.clone(), symbols);
         let doc = Doc {
@@ -957,9 +967,8 @@ impl Actor {
             self.tree.main.clone(),
             self.edits,
         );
-        // The editor's, the document opened last, as the one before closes once it shows.
-        let newest = self.docs.values().max_by_key(|doc| doc.doc.id());
-        let shown = newest.map(|doc| doc.path.clone());
+        let shown = self.docs.values().find(|doc| doc.doc.id() == self.shown);
+        let shown = shown.map(|doc| doc.path.clone());
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
