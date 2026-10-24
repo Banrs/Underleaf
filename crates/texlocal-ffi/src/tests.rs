@@ -166,6 +166,10 @@ fn a_session_documents_source_is_the_sessions_document() {
         let key = source_call(source, "type", typed(1, ")")).unwrap();
         assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
         tl_source_free(source);
+
+        let own = tl_source_new(ptr::null(), 0);
+        assert_eq!(source_call(own, "version", json!({})), Some(Value::Null));
+        tl_source_free(own);
     }
 }
 

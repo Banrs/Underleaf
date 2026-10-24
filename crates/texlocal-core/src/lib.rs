@@ -1,6 +1,6 @@
 // TeXLocal's core: projects, compilation, the path rules that keep both
 // inside the data directory, project sessions, and the editors' LaTeX logic
-// (`syntax`). Deliberately GUI-free, so it tests on any host.
+// (`syntax`). Deliberately GUI-free.
 //
 // Path convention: every project-relative path this crate RETURNS or STORES
 // uses forward slashes — the hosts and SyncTeX both expect '/'.

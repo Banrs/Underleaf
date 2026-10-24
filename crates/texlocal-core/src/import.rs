@@ -1,7 +1,6 @@
 //! Bringing files into the library: a Finder drop onto a project, and a .zip, a file whose folder
 //! doesn't open where it is (`open_path`) or a library project's files made a new project. They
-//! read host-chosen absolute paths and block on the disk; hosts call them off their UI thread, as
-//! they do every `tl_call`.
+//! read host-chosen absolute paths and block on the disk.
 
 use std::collections::HashSet;
 use std::fs::{self, File};

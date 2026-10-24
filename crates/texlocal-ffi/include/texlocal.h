@@ -89,9 +89,9 @@ uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint3
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
 /* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
- * or "version" for a session's document, with a JSON object of arguments. The
- * result's JSON, or NULL for an unknown command or arguments; free it with
- * tl_free. */
+ * or "version" (null for a source of the host's own), with a JSON object of
+ * arguments. The result's JSON, or NULL for an unknown command or arguments;
+ * free it with tl_free. */
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command that needs no source, on any thread, answering as tl_source_call:

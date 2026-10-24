@@ -376,6 +376,7 @@ pub unsafe extern "C" fn tl_source_call(
             TlSource::Session(document) if command == "version" => {
                 Some(document.version().to_string())
             }
+            TlSource::Own(_) if command == "version" => Some("null".to_owned()),
             _ => source.with(|doc| doc.call(command, args)),
         }
     };
