@@ -40,6 +40,10 @@ This round's, built and tested by CI but not yet seen:
   focus; ⌥-click Quick Help, with ⌥-drag still selecting a column; Export for arXiv; Home's
   Duplicate; the outline's word counts and "12 of 3,456 words" for a selection.
 - The first launch after updating may show Home rather than the last project.
+- A fold's chevron on hover over a line that isn't folded (folded lines' chevrons and ellipsis
+  marks are seen); a PNG dropped from Finder or a screenshot pasted, copied in and inserted.
+- Shell escape a project had on is off after updating, as the grant is no longer read from
+  `.texlocal.json`: the build that needs it offers Turn On Shell Escape again.
 
 ## Workarounds
 
@@ -64,4 +68,10 @@ it is then: the C ABI dropped `tl_set_engine` and the in-process engine the iPad
 - Checks: environments a project declares verbatim (`\lstnewenvironment`, `\newminted`,
   `\DefineVerbatimEnvironment`) are checked as LaTeX; their declarations usually sit in another
   file than their bodies, which each file's own check can't see.
-- Not this round: folding and several cursors.
+- Not this round: several cursors.
+- From the October review, not done: New File and New Folder can't be undone (Finder's can); ⌘+
+  and ⌘− zoom the PDF with the source focused, where Xcode sizes the editor's text; a reopened
+  project keeps the caret's line but not its column, the scroll or the PDF's place within the
+  page; a rebuild clears a selection in the PDF; Open Recent doesn't tell two folders of one name
+  apart; a rename can replace a file another app made in the instant between the check and the
+  move (`renamex_np` with `RENAME_EXCL` would refuse, but needs care for a change of case alone).
