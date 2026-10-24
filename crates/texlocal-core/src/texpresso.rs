@@ -706,7 +706,7 @@ fn apply_message(session: &Session, message: &Value) {
                 changed,
             }
         }
-        "done" => match message[2].as_str() {
+        "done" => match message[1].as_str() {
             Some(run) => LiveEvent::Done(run.to_owned()),
             None => return,
         },
@@ -831,7 +831,7 @@ here=${0%/bin/texpresso}
 echo $! > "$here/engine.pid"
 pages=${TEXPRESSO_PDF_OUTPUT%/*}
 n=0
-printf '["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]],0]\n' "$TEXPRESSO_PDF_OUTPUT"
+printf '["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]]]\n' "$TEXPRESSO_PDF_OUTPUT"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$here/commands"
   case "$line" in
@@ -840,10 +840,10 @@ while IFS= read -r line; do
     *TEX_ERROR*) printf '["append","log",0,"! Undefined control sequence."]\n';;
     '["mark",'*) printf '["synced",%s\n' "${line#*,}";;
     '["change",'*) n=$((n + 1))
-      printf '["page",1,"%s/page-1-%s.pdf",0]\n' "$pages" "$n";;
+      printf '["page",1,"%s/page-1-%s.pdf"]\n' "$pages" "$n";;
     *rerun-once*)
-      printf '["pdf","%s",4,"complete",[[1,1],[3,3]],0]\n' "$TEXPRESSO_PDF_OUTPUT"
-      printf '["done",4,"complete"]\n';;
+      printf '["pdf","%s",4,"complete",[[1,1],[3,3]]]\n' "$TEXPRESSO_PDF_OUTPUT"
+      printf '["done","complete"]\n';;
   esac
 done
 "#;
@@ -1107,7 +1107,7 @@ done
                 let path = path.to_string_lossy().into_owned();
                 assert_eq!(page, LiveEvent::Page { page: 1, path });
             }
-            apply_message(&session, &json!(["page", 0, "/etc/passwd", 0]));
+            apply_message(&session, &json!(["page", 0, "/etc/passwd"]));
             session.send(&[json!(["rerun-once"])]);
             let whole = LiveEvent::Document {
                 path,

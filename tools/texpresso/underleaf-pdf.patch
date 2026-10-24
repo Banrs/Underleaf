@@ -125,7 +125,7 @@ index c922019..5e24e65 100644
  BUILD=../../build
  DIR=$(BUILD)/frontend
 diff --git a/src/frontend/driver.c b/src/frontend/driver.c
-index 9337b08..c3aba31 100644
+index 9337b08..365be66 100644
 --- a/src/frontend/driver.c
 +++ b/src/frontend/driver.c
 @@ -27,6 +27,7 @@
@@ -165,7 +165,7 @@ index 9337b08..c3aba31 100644
 +    perror("finding executable path");
 +    return 1;
 +  }
-+  return txp_live_main(argc, argv, exe_path, pdf_output, STDIN_FILENO);
++  return txp_live_main(argc, argv, exe_path, pdf_output);
 +}
 +
  int main(int argc, const char **argv)
@@ -178,7 +178,7 @@ index 9337b08..c3aba31 100644
    setvbuf(stderr, NULL, _IONBF, 0);
  
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..97e0224 100644
+index 6face98..64eb83e 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
 @@ -320,6 +320,43 @@ bool editor_parse(fz_context *ctx,
@@ -258,44 +258,30 @@ index 6face98..97e0224 100644
    int count = buf ? buf->len : 0;
  
    if (line_output && buf)
-@@ -554,6 +601,80 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+@@ -554,6 +601,58 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
    }
  }
  
-+/* One message for the editor's own PDF view: `sexp` or `json` up to the path, then the path,
-+   then what follows it. */
-+static void live_message(const char *sexp, const char *json, const char *path,
-+                         const char *sexp_rest, const char *json_rest)
++/* The messages for an editor's own PDF view, in JSON, as live.c speaks. */
++void editor_live(int version)
 +{
-+  bool s = protocol == EDITOR_SEXP;
-+  fputs(s ? sexp : json, stdout);
-+  if (path)
-+  {
-+    putc_unlocked('"', stdout);
-+    if (s) output_sexp_string(stdout, path, strlen(path));
-+    else output_json_string(stdout, path, strlen(path));
-+    putc_unlocked('"', stdout);
-+  }
-+  fputs(s ? sexp_rest : json_rest, stdout);
++  printf("[\"live\", %d]\n", version);
 +  fflush(stdout);
 +}
 +
-+void editor_live(int version)
++static void json_path(const char *path)
 +{
-+  char sexp[64], json[64];
-+  snprintf(sexp, sizeof sexp, "(live %d)\n", version);
-+  snprintf(json, sizeof json, "[\"live\", %d]\n", version);
-+  live_message(sexp, json, NULL, "", "");
++  putc_unlocked('"', stdout);
++  output_json_string(stdout, path, strlen(path));
++  putc_unlocked('"', stdout);
 +}
 +
-+void editor_page(int page, const char *path, int mark)
++void editor_page(int page, const char *path)
 +{
-+  char sexp[64], json[64], sexp_rest[64], json_rest[64];
-+  snprintf(sexp, sizeof sexp, "(page %d ", page);
-+  snprintf(json, sizeof json, "[\"page\", %d, ", page);
-+  snprintf(sexp_rest, sizeof sexp_rest, " %d)\n", mark);
-+  snprintf(json_rest, sizeof json_rest, ", %d]\n", mark);
-+  live_message(sexp, json, path, sexp_rest, json_rest);
++  printf("[\"page\", %d, ", page);
++  json_path(path);
++  fputs("]\n", stdout);
++  fflush(stdout);
 +}
 +
 +static const char *run_name(enum EDITOR_RUN run)
@@ -305,41 +291,33 @@ index 6face98..97e0224 100644
 +
 +/* The whole document written to `path`; `changed` holds `ranges` pairs of first and last
 +   page that differ from the document written before. */
-+void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges, int mark)
++void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges)
 +{
-+  bool s = protocol == EDITOR_SEXP;
-+  fputs(s ? "(pdf " : "[\"pdf\", ", stdout);
-+  putc_unlocked('"', stdout);
-+  if (s) output_sexp_string(stdout, path, strlen(path));
-+  else output_json_string(stdout, path, strlen(path));
-+  fprintf(stdout, s ? "\" %d %s (" : "\", %d, \"%s\", [", pages, run_name(run));
++  fputs("[\"pdf\", ", stdout);
++  json_path(path);
++  printf(", %d, \"%s\", [", pages, run_name(run));
 +  for (int i = 0; i < ranges; i++)
-+    fprintf(stdout, s ? "%s(%d %d)" : "%s[%d, %d]", i ? (s ? " " : ", ") : "",
-+            changed[2 * i], changed[2 * i + 1]);
-+  fprintf(stdout, s ? ") %d)\n" : "], %d]\n", mark);
++    printf("%s[%d, %d]", i ? ", " : "", changed[2 * i], changed[2 * i + 1]);
++  fputs("]]\n", stdout);
 +  fflush(stdout);
 +}
 +
-+void editor_done(int pages, enum EDITOR_RUN run)
++void editor_done(enum EDITOR_RUN run)
 +{
-+  char sexp[64], json[64];
-+  snprintf(sexp, sizeof sexp, "(done %d %s)\n", pages, run_name(run));
-+  snprintf(json, sizeof json, "[\"done\", %d, \"%s\"]\n", pages, run_name(run));
-+  live_message(sexp, json, NULL, "", "");
++  printf("[\"done\", \"%s\"]\n", run_name(run));
++  fflush(stdout);
 +}
 +
 +void editor_synced(int mark)
 +{
-+  char sexp[64], json[64];
-+  snprintf(sexp, sizeof sexp, "(synced %d)\n", mark);
-+  snprintf(json, sizeof json, "[\"synced\", %d]\n", mark);
-+  live_message(sexp, json, NULL, "", "");
++  printf("[\"synced\", %d]\n", mark);
++  fflush(stdout);
 +}
 +
  void editor_flush(void)
  {
    switch (protocol)
-@@ -607,7 +728,7 @@ void editor_reset_sync(void)
+@@ -607,7 +706,7 @@ void editor_reset_sync(void)
  
  void editor_notify_file_opened(int index, const char *path, int len)
  {
@@ -348,7 +326,7 @@ index 6face98..97e0224 100644
      return;
    switch (protocol)
    {
-@@ -631,6 +752,9 @@ void editor_notify_lookup(const char *path,
+@@ -631,6 +730,9 @@ void editor_notify_lookup(const char *path,
                            bool read,
                            enum EDITOR_LOOKUP_STATUS status)
  {
@@ -359,7 +337,7 @@ index 6face98..97e0224 100644
    const char *status_msg;
  
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..02f09c4 100644
+index 05fdd1c..286ff2e 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
 @@ -37,6 +37,9 @@ enum EDITOR_COMMAND
@@ -397,12 +375,12 @@ index 05fdd1c..02f09c4 100644
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
  void editor_flush(void);
 +/* For an editor showing the document in its own PDF view (TEXPRESSO_PDF_OUTPUT). `mark` is
-+   the last one the editor sent (["mark", n]) that the pages reflect. */
++   the last one the editor sent (["mark", n]) that the pages in view reflect. */
 +enum EDITOR_RUN { RUN_PARTIAL, RUN_COMPLETE, RUN_STOPPED };
 +void editor_live(int version);
-+void editor_page(int page, const char *path, int mark);
-+void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges, int mark);
-+void editor_done(int pages, enum EDITOR_RUN run);
++void editor_page(int page, const char *path);
++void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges);
++void editor_done(enum EDITOR_RUN run);
 +void editor_synced(int mark);
 +/* While muted nothing is sent: a finishing pass runs beside the document being shown. */
 +void editor_mute(bool muted);
