@@ -418,11 +418,12 @@ final class ProjectModel {
 
     func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
 
-    /// As the disk spells it; asked as a drag moves, so at once.
+    /// The path in the project of a URL inside its folder, both resolved so /private/var and /var compare alike; asked as a drag moves.
     func projectPath(_ url: URL) -> String? {
-        guard let located = try? core.now("locate", ["path": url.path(percentEncoded: false)], as: Located?.self),
-              located.id == id, !located.path.isEmpty else { return nil }
-        return located.path
+        guard let folder = root?.resolvingSymlinksInPath().pathComponents else { return nil }
+        let inside = url.resolvingSymlinksInPath().pathComponents
+        guard inside.count > folder.count, inside.starts(with: folder) else { return nil }
+        return inside.dropFirst(folder.count).joined(separator: "/")
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {

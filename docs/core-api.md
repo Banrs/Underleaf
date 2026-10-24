@@ -11,8 +11,7 @@ C ABI (`crates/texlocal-ffi/include/texlocal.h`; the app links the static librar
 | Function | Use |
 |---|---|
 | `tl_open(data_dir, listener, ctx)` | One handle per app, for its lifetime; `kill_all` stops builds and previews as it quits. `listener(ctx, event_json)` gets the events, below; NULL for a NULL `data_dir` or `listener`. |
-| `tl_call(h, command, args_json)` | Blocking, JSON in, `{"ok": value}` or `{"error": message, "status": code}` out, never NULL; free with `tl_free`. Never on the UI thread. |
-| `tl_call_async(h, command, args_json, done, ctx)` | The same on a core thread; `done(ctx, envelope_json)` gets the envelope there, and may call the core itself. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
+| `tl_call_async(h, command, args_json, done, ctx)` | JSON in; on a core thread, `done(ctx, envelope_json)` gets `{"ok": value}` or `{"error": message, "status": code}`, and may call the core itself. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
@@ -32,13 +31,11 @@ the call.
   `session_open` reaches the host. A host routes events by the number it chose before the
   call, and keeps what they say. The answer describes the session as it opened: a `tree` event
   that came before it is the newer tree.
-- `tl_call` may be called from any thread, several at once. `session_*` commands are quick
-  (they never wait for a build or TeXpresso), but go through the session's queue: keep them off
-  the UI thread or use `tl_call_async`. `session_analyze`, `session_search`, `session_usages`,
+- `tl_call_async` may be called from any thread, several at once. `session_*` commands are
+  quick (they never wait for a build or TeXpresso) but go through the session's queue.
+  `session_analyze`, `session_search`, `session_usages`,
   `session_quick_open` and `session_quick_help` are taken in their turn but worked out beside
   the session, which goes on with the commands after them; so is an Install fix's `session_fix`.
-  `locate`, which reads only the path's folders and the list of opened folders, may be called
-  with `tl_call` on the UI thread, for a drag that asks it as it moves.
 - `tl_call_async` queues a session's commands (every `session_*` but `session_open`) for it
   before it returns, so the session takes them in the order they were sent, though their
   answers may come back on different threads in another order. Send a session's commands
@@ -208,16 +205,15 @@ An error is `{"error": message, "status": code}`; the message is for the person 
 
 ## Commands that fill small gaps
 
-Service commands (`tl_call`):
+Service commands (`tl_call_async`):
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
 | `create_project` | `name`, `template?` (article), `engine?` | the project, as `list_projects` lists it | A name taken is numbered past (“Paper 2”); `id`/`name` say which. A name the path rules refuse is 400. With `engine`, the project is made with it; an unknown engine is 400, and nothing is made. |
 | `duplicate_project` | `id`, `name` | the new project, as `list_projects` lists it | A copy of a library project's folder with its settings, leaving out what an export does (the build folder and the history among it) and, as it does, copying a link to a file as that file, named `name` or numbered past it as `create_project` is. Built beside and renamed into place, as a new or imported project is, so the list never shows half a copy. The host suggests the name in its system's words, the Mac's “Paper copy”. An opened folder is 409 with a sentence. |
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
-| `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
+| `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight. |
-| `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
 | `open_path` | `path` | `{project, file}` | What File › Open, Finder and a drop on the Dock open, in one call. `project` as `list_projects` lists it, `file` the project path to show or null. A path in a project is that project (a folder inside an opened folder opens as one of its own). A folder opens where it is; a .tex opens its folder where it is, at the .tex, its main file guessed from it if the folder is new to the list. A .tex whose folder is refused (it holds the library, or has more than 20,000 files: both 400 for a folder) comes alone into a new library project, as a .zip's files do. 400 for a folder new to the list or a .zip that holds no .tex, and for any other file: nothing else becomes a project. 404 if not there. |
 | `forget_folder` | `id` | null | Takes an opened folder off the list, stopping its build and preview, and removes its settings and build output; the folder stays as it is. A library project's id is 400. |
 | `status` | | `{available, latexmkVersion, texDir, found, texpresso, texpressoDir}` | `latexmkVersion`: the number latexmk's version line names (“4.86”), or null. `set_tex_dir` and `set_texpresso_dir` answer the same. |

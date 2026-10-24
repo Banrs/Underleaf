@@ -27,16 +27,12 @@ typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
  * quits. */
 TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable listener, void *_Nullable ctx);
 
-/* Blocking; call off the UI thread. Returns {"ok": value} or {"error": message,
- * "status": code}. Free with tl_free. */
-char *tl_call(const TlHandle *handle, const char *command, const char *_Nullable args_json);
-
 void tl_free(char *_Nullable text);
 
-/* tl_call without blocking: done gets the envelope tl_call would return; a NULL
- * done runs the command for its effect alone. A session's commands (every
- * session_* but session_open) are queued before this returns, so it takes them
- * in the order sent. */
+/* A command, answered on a core thread: done gets {"ok": value} or {"error":
+ * message, "status": code}; a NULL done runs the command for its effect alone.
+ * A session's commands (every session_* but session_open) are queued before
+ * this returns, so it takes them in the order sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
                    TlCallback _Nullable done, void *_Nullable ctx);
 

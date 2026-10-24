@@ -55,7 +55,7 @@ impl ProjectInfo {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Located {
     pub id: String,
     pub path: String,

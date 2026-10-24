@@ -43,10 +43,14 @@ unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Opti
     unsafe { take_json(tl_source_call(source, c(command).as_ptr(), args.as_ptr())) }
 }
 
+/// The answer, waited for. The sink is leaked: `done` may still be returning from its send.
 fn call_raw(handle: *const TlHandle, command: &str, args: Option<&str>) -> Value {
     let args = args.map(c);
     let args = args.as_ref().map_or(ptr::null(), |a| a.as_ptr());
-    unsafe { take_json(tl_call(handle, c(command).as_ptr(), args)).unwrap() }
+    let (sink, answer) = mpsc::channel();
+    let ctx = context(Box::leak(Box::new(sink)));
+    unsafe { tl_call_async(handle, c(command).as_ptr(), args, Some(collect), ctx) };
+    until(&answer, |_| true)
 }
 
 fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {

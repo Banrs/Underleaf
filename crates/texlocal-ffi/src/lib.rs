@@ -76,23 +76,6 @@ pub unsafe extern "C" fn tl_open(
     .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
-/// # Safety
-/// `handle` came from `tl_open`; the strings are null or NUL-terminated.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_call(
-    handle: *const TlHandle,
-    command: *const c_char,
-    args_json: *const c_char,
-) -> *mut c_char {
-    let answer = caught(|| {
-        let handle =
-            unsafe { handle.as_ref() }.ok_or_else(|| CoreError::bad_request("No handle"))?;
-        let (command, args) = unsafe { command_args(command, args_json) }?;
-        handle.runtime.block_on(handle.sessions.call(command, args))
-    });
-    c_json(envelope(answer.unwrap_or_else(|| Err(panicked()))).to_string()).into_raw()
-}
-
 fn panicked() -> CoreError {
     CoreError::internal("The command panicked")
 }
@@ -142,8 +125,8 @@ impl Drop for Done {
 }
 
 /// # Safety
-/// As `tl_call`; `done`, if not null, may be called from any thread with
-/// `ctx`.
+/// `handle` came from `tl_open`; the strings are null or NUL-terminated; `done`, if not null,
+/// may be called from any thread with `ctx`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_call_async(
     handle: *const TlHandle,

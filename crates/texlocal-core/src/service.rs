@@ -58,7 +58,6 @@ enum Command {
     SynctexInverse { id: String, page: f64, x: f64, y: f64, text: Option<String>, at: Option<usize>,
         #[serde(flatten)] live: Live },
     SynctexMatch { id: String, file: String, line: u32, column: usize, pages: Vec<PdfPage> },
-    Locate { path: PathBuf },
     PdfPath { id: String },
     ExportZip { id: String, dest: PathBuf, #[serde(default)] for_arxiv: bool },
     KillAll,
@@ -230,7 +229,6 @@ impl Service {
                 pages,
             } => synctex::match_forward(&self.project(&id)?.root, &file, line, column, &pages)
                 .and_then(out),
-            Command::Locate { path } => projects::locate(&self.data_dir, &path).and_then(out),
             Command::PdfPath { id } => {
                 let project = self.project(&id)?;
                 let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");

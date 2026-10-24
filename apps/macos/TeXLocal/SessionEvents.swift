@@ -53,7 +53,6 @@ nonisolated struct SessionOpened: Decodable, Sendable {
     let ui: UIState
 }
 
-nonisolated struct Located: Decodable, Sendable { let id, path: String }
 /// The project's interface as it was left (docs/core-api.md).
 nonisolated struct UIState: Decodable, Sendable {
     let expandedFolders, foldedHeadings: [String]

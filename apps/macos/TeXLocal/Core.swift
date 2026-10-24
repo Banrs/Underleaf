@@ -133,14 +133,6 @@ final class Core {
         }
     }
 
-    /// Blocking, for an answer the interface needs at once (a drag over the window asks where a file is); only for quick commands.
-    func now<T: Decodable>(_ command: String, _ args: [String: any Sendable], as: T.Type) throws -> T {
-        let (handle, json) = try prepared(command, args)
-        let out = command.withCString { c in json.withCString { j in tl_call(handle, c, j) } }
-        defer { tl_free(out) }
-        return try Self.decoded(command, Data(bytes: out, count: strlen(out)))
-    }
-
     /// The session's open document at `path`, for the editor; nil if it isn't open.
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
