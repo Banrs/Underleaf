@@ -12,12 +12,12 @@ use std::sync::{Arc, LazyLock, Mutex};
 use regex::Regex;
 use serde::Serialize;
 
-use crate::checks::{Slip, Structure};
+use crate::checks::{Slip, Structure, Walk};
 use crate::projects::file_kind;
 use crate::stamp::Stamp;
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::{Group, Scanner, Visit};
-use crate::syntax::{SymbolKind, Text, headings, prose, scan};
+use crate::syntax::{SymbolKind, Symbols, Text, headings, prose, scan};
 use crate::{lock, paths};
 
 // What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
@@ -146,12 +146,12 @@ pub struct Defined {
 
 /// A file read in place after the first `before` headings of the file that names it.
 pub struct Input {
-    before: usize,
+    pub(crate) before: usize,
     pub(crate) name: String,
     folder: Folder,
     pub(crate) place: Place,
     /// The prose words after it, up to the next heading or input.
-    words: usize,
+    pub(crate) words: usize,
 }
 
 /// Where an input's name is looked for, as the import package has it.
@@ -568,10 +568,6 @@ impl Files {
         Ok(facts)
     }
 
-    pub fn at(&self, root: &Path, rel: &str) -> Option<Arc<Facts>> {
-        self.facts(&paths::safe_path(root, rel).ok()?, rel).ok()
-    }
-
     /// Those of other files go, as a scan of the project finds them gone.
     pub fn keep<'a>(&self, rels: impl Iterator<Item = &'a String>) {
         let kept: HashSet<String> = rels.map(|rel| paths::fold_case(rel)).collect();
@@ -634,8 +630,8 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     nest(outline, &mut 0, None, &mut HashMap::new())
 }
 
-/// A session's `analyze` answer; the outline itself is kept for quick open.
-#[derive(Debug, Default, Serialize)]
+/// A session's `outline` event; the outline itself and the files read are kept for quick open.
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Analysis {
     #[serde(skip)]
@@ -648,33 +644,29 @@ pub struct Analysis {
     pub heading_styles: Vec<headings::Level>,
 }
 
-/// The document LaTeX reads from the main file through the files it inputs (each once, so a loop ends). `open` is the editor's file, alone when the main file doesn't reach it.
-pub fn analyze_project(
-    root: &Path,
-    files: &Files,
-    main: &str,
-    open: &str,
-    class: Option<&headings::DocumentClass>,
-) -> Analysis {
-    let mut analysis = Analysis::default();
-    if let Ok(open) = paths::rel_key(open) {
-        let mut seen = HashSet::new();
-        walk(root, files, (main, "", 0), &mut seen, &mut analysis);
-        if !seen.contains(&paths::fold_case(&open)) {
-            analysis = Analysis::default();
-            walk(
-                root,
-                files,
-                (&open, "", 0),
-                &mut HashSet::new(),
-                &mut analysis,
-            );
-        }
+/// The document LaTeX reads from the main file through the files it inputs, each once, as the
+/// symbol scan last read them; `shown`, the editor's file, alone when the main file doesn't reach
+/// it. Its heading levels are those of the main file's class.
+pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {
+    let mut walk = Walk::from(symbols, main.unwrap_or_default());
+    if let Some(shown) = shown
+        && !walk.files.iter().any(|(file, _)| *file == shown)
+    {
+        walk = Walk::from(symbols, shown);
     }
-    let chapters = analysis.outline.iter().any(|h| h.command == "chapter");
-    analysis.tree = outline_tree(&analysis.outline);
-    analysis.heading_styles = headings::heading_styles(class, chapters);
-    analysis
+    let class = main.and_then(|main| symbols.by_file.get(main)?.class.as_ref());
+    let chapters = walk.outline.iter().any(|h| h.command == "chapter");
+    Analysis {
+        tree: outline_tree(&walk.outline),
+        words: walk.words,
+        heading_styles: headings::heading_styles(class, chapters),
+        files: walk
+            .files
+            .iter()
+            .map(|(file, _)| (*file).to_owned())
+            .collect(),
+        outline: walk.outline,
+    }
 }
 
 /// The project file `rel` names, spelt as the disk spells it. TeX names a file as the author
@@ -700,63 +692,6 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
 /// TeX Live's `max_in_open`: TeX reads inputs no deeper, and a walk that did could run out of
 /// stack on a chain made to.
 pub(crate) const INPUT_DEPTH: usize = 15;
-
-/// `within` is the folder an \import gave the file, where its own inputs are looked for first;
-/// `depth` the inputs it is in.
-fn walk(
-    root: &Path,
-    files: &Files,
-    (file, within, depth): (&str, &str, usize),
-    seen: &mut HashSet<String>,
-    into: &mut Analysis,
-) {
-    if depth == INPUT_DEPTH {
-        return;
-    }
-    let Some(file) = paths::rel_key(file)
-        .ok()
-        .and_then(|file| disk_spelling(root, &file))
-    else {
-        return;
-    };
-    if !seen.insert(paths::fold_case(&file)) {
-        return;
-    }
-    let Some(facts) = files.at(root, &file) else {
-        return;
-    };
-    into.files.push(file.clone());
-    let placed = |heading: &Heading| Heading {
-        file: Some(file.clone()),
-        ..heading.clone()
-    };
-    let found = |rel: &str| {
-        let path = paths::safe_path(root, rel);
-        path.is_ok_and(|path| path.is_file())
-            .then(|| rel.to_owned())
-    };
-    // Words before a file's first heading, or after an input, are the last heading's read.
-    fn credit(outline: &mut [Heading], words: usize) {
-        if let Some(last) = outline.last_mut() {
-            last.words += words;
-        }
-    }
-    let headed: usize = facts.headings.iter().map(|h| h.words).sum();
-    let after_inputs: usize = facts.inputs.iter().map(|input| input.words).sum();
-    credit(&mut into.outline, facts.words - headed - after_inputs);
-    let mut at = 0;
-    for input in &facts.inputs {
-        let before = &facts.headings[at..input.before];
-        into.outline.extend(before.iter().map(placed));
-        at = input.before;
-        if let Some((input, within)) = input.resolve(&file, within, found) {
-            walk(root, files, (&input, &within, depth + 1), seen, into);
-        }
-        credit(&mut into.outline, input.words);
-    }
-    into.outline.extend(facts.headings[at..].iter().map(placed));
-    into.words += facts.words;
-}
 
 /// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named
 /// braced or not, with the arguments it takes in braces: as many as its first option counts, but
@@ -922,6 +857,7 @@ fn plain_title(title: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projects::testing::symbols_of;
 
     type Outline<'a> = &'a [(usize, &'a str, usize)];
 
@@ -1212,19 +1148,9 @@ mod tests {
         assert_eq!(untitled["untitled"], true);
     }
 
-    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        for (rel, text) in files {
-            let path = dir.path().join(rel);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, text).unwrap();
-        }
-        dir
-    }
-
     #[test]
     fn a_project_reads_its_inputs_in_place() {
-        let dir = project(&[
+        let symbols = symbols_of(&[
             (
                 "main.tex",
                 "\\section{Intro}\nHello world\n\\input{chapters/a}\n% \\input{loose}\n\\include{b}\\input{main}\n\\section{End}",
@@ -1239,8 +1165,7 @@ mod tests {
                 .map(|h| (h.title.as_str(), h.file.as_deref(), h.line))
                 .collect()
         }
-        let analyzed =
-            |open| analyze_project(dir.path(), &Files::default(), "main.tex", open, None);
+        let analyzed = |shown| analyze_project(&symbols, Some("main.tex"), Some(shown));
         let whole = analyzed("chapters/a.tex");
         assert_eq!(
             headings(&whole),
@@ -1260,14 +1185,14 @@ mod tests {
     /// Through the files it inputs; the words before the first heading are none's.
     #[test]
     fn a_heading_counts_its_words_and_its_childrens_up_to_the_next_of_its_level() {
-        let dir = project(&[
+        let symbols = symbols_of(&[
             (
                 "main.tex",
                 "Before any\n\\section{Intro}\nHello world\n\\subsection{Detail}\nthree more words\n\\input{ch}\nafter it $x + y$\n\\section{End}\nlast",
             ),
             ("ch.tex", "chapter \\emph{text} here"),
         ]);
-        let analysis = analyze_project(dir.path(), &Files::default(), "main.tex", "main.tex", None);
+        let analysis = analyze_project(&symbols, Some("main.tex"), None);
         let words = |nodes: &[OutlineNode]| nodes.iter().map(|n| n.words).collect::<Vec<_>>();
         assert_eq!(words(&analysis.tree), [12, 2]);
         assert_eq!(words(&analysis.tree[0].children), [9]);
@@ -1283,8 +1208,7 @@ mod tests {
             .iter()
             .map(|(name, text)| (name.as_str(), text.as_str()))
             .collect();
-        let dir = project(&files);
-        let read = analyze_project(dir.path(), &Files::default(), "0.tex", "0.tex", None).files;
+        let read = analyze_project(&symbols_of(&files), Some("0.tex"), None).files;
         assert_eq!(read.len(), INPUT_DEPTH);
     }
 
@@ -1327,12 +1251,15 @@ mod tests {
             ("chapters/two.tex", "\\section{Two}"),
             ("chapters/deep/three.tex", "\\section{Three}"),
         ];
-        let cases: [(&[_], &str, &[&str]); 7] = [
+        let ended = [(
+            "main.tex",
+            "\\section{Main}\n\\end{document}\n\\section{After}",
+        )];
+        let cases: [(&[_], &str, &[&str]); 6] = [
             (&one, "chapters/one.tex", &["Main", "One"]),
-            (&one, "./chapters/one.tex", &["Main", "One"]),
-            (&one, "chapters/../chapters/one.tex", &["Main", "One"]),
             (&unbraced, "main.tex", &["Main", "Chapter", "End"]),
             (&named_tex, "main.tex", &["Part"]),
+            (&ended, "main.tex", &["Main"]),
             (&literal, "main.tex", &["Main", "Real"]),
             (
                 &imported,
@@ -1340,12 +1267,11 @@ mod tests {
                 &["Main", "One", "Inner", "Three", "Two"],
             ),
         ];
-        for (files, open, titles) in cases {
-            let dir = project(files);
-            let found =
-                analyze_project(dir.path(), &Files::default(), "main.tex", open, None).outline;
+        for (files, shown, titles) in cases {
+            let symbols = symbols_of(files);
+            let found = analyze_project(&symbols, Some("main.tex"), Some(shown)).outline;
             let found: Vec<_> = found.iter().map(|h| h.title.as_str()).collect();
-            assert_eq!(found, titles, "{files:?} with {open} open");
+            assert_eq!(found, titles, "{files:?} with {shown} shown");
         }
     }
 }

@@ -493,19 +493,29 @@ async fn an_undefined_commands_issue_says_where_its_line_has_it() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_analysis_answers_heading_styles_from_the_document_as_edited() {
-    let rig = Rig::new(false).await;
+async fn the_outline_has_heading_styles_from_the_document_as_edited() {
+    let mut rig = Rig::new(false).await;
     let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
-    fs::write(rig.root.join("main.tex"), text).unwrap();
-    let chapters = async || {
-        let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-        let levels = analysis["headingStyles"].as_array().unwrap();
+    rig.write_elsewhere("main.tex", text);
+    let chapters = |outline: &Value| {
+        let levels = outline["headingStyles"].as_array().unwrap();
         levels.iter().any(|l| l["command"] == "chapter")
     };
-    assert!(chapters().await);
+    outline_until(&mut rig, chapters).await;
     let doc = rig.open("main.tex").await;
     doc.edit(15, 4, "article", None, false);
-    assert!(!chapters().await);
+    outline_until(&mut rig, |outline| !chapters(outline)).await;
+}
+
+/// The first `outline` event that passes `test`, which a scan sends perhaps a scan or two later.
+async fn outline_until(rig: &mut Rig, test: impl Fn(&Value) -> bool) -> Value {
+    loop {
+        let events = until_sent(rig, "outline").await;
+        let outlines = events.into_iter().filter(|e| e["type"] == "outline");
+        if let Some(found) = outlines.filter(&test).last() {
+            return found;
+        }
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -924,8 +934,9 @@ async fn a_file_tex_names_in_another_case_is_spelt_as_the_disk_spells_it() {
         return; // A volume that compares case, where TeX wouldn't find the file either.
     }
     fs::write(rig.root.join("main.tex"), "\\input{Chapters/Intro}\n").unwrap();
-    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    assert_eq!(analysis["tree"][0]["file"], "chapters/intro.tex");
+    rig.changed("chapters", true);
+    let outline = outline_until(&mut rig, |outline| outline["tree"][0].is_object()).await;
+    assert_eq!(outline["tree"][0]["file"], "chapters/intro.tex");
     rig.ok("compile", json!({})).await;
     let mut error = issue(1, "Undefined");
     error.file = Some("Chapters/Intro.tex".into());
@@ -1838,14 +1849,14 @@ async fn back_follows_a_rename_and_skips_a_file_gone() {
 /// word's start before one inside a word, though its title is longer.
 #[tokio::test(start_paused = true)]
 async fn open_quickly_lists_files_headings_and_labels_best_first() {
-    let rig = Rig::new(false).await;
+    let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("main.tex"), "\\input{ch}\n").unwrap();
     let ch = "\\section{Introduction}\\label{sec:intro}\n";
     fs::write(rig.root.join("ch.tex"), ch).unwrap();
     fs::create_dir(rig.root.join("chapters")).unwrap();
     fs::write(rig.root.join("chapters/intro.tex"), "").unwrap();
     rig.changed("chapters", true);
-    wait(300).await;
+    outline_until(&mut rig, |outline| outline["tree"][0].is_object()).await;
     let listed = rig.ok("quick_open", json!({ "query": "" })).await;
     let listed = listed.as_array().unwrap().iter();
     let paths: Vec<&str> = listed.map(|item| item["path"].as_str().unwrap()).collect();

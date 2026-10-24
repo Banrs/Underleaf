@@ -46,8 +46,6 @@ extension ProjectModel {
                 if wasText { await closeDocument(now) }
                 if openPath == now { clearOpenFile() }
                 await open(now, focus: false, showsSource: false)
-            } else {
-                analyze()
             }
         }
         if mainChanged, !closed { mainFileChanged() }
@@ -95,10 +93,7 @@ extension ProjectModel {
         return true
     }
 
-    func clearOpenFile() {
-        openPath = nil
-        analyze()
-    }
+    func clearOpenFile() { openPath = nil }
 
     func dropFiles(_ urls: [URL], into dir: String) async {
         var outside: [URL] = []

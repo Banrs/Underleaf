@@ -289,7 +289,7 @@ final class ProjectFlowTests {
     @Test func theOutlineReadsTheInputs() async throws {
         let project = try await opened("\\section{Intro}\nOne two\n\\include{chapters/a}",
                                        with: ["chapters/a.tex": "\\section{A}\nthree"]).project
-        #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
+        try await waitUntil { project.outline.map(\.file) == ["main.tex", "chapters/a.tex"] }
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")

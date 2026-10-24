@@ -4,7 +4,7 @@
 use std::cmp::Reverse;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -106,10 +106,10 @@ impl Actor {
         json!({ "back": any(&self.trail.back), "forward": any(&self.trail.forward) })
     }
 
-    /// Worked out beside the session, as a search is: the outline reads the files the main file
-    /// reaches.
+    /// Worked out beside the session, as a search is, from the last symbol scan: headings and
+    /// labels of the files the main file reaches.
     pub fn quick_open(&self, query: String, reply: Reply) {
-        let (root, facts) = (self.project.root.clone(), Arc::clone(&self.facts));
+        let symbols = Arc::clone(&self.symbols.read().unwrap_or_else(PoisonError::into_inner));
         let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
         tokio::task::spawn_blocking(move || {
             let mut items: Vec<Item> = files
@@ -131,7 +131,7 @@ impl Actor {
                 return reply.send(out(items));
             }
             if let Some(main) = main {
-                let analysis = analyze::analyze_project(&root, &facts, &main, &main, None);
+                let analysis = analyze::analyze_project(&symbols, Some(&main), None);
                 items.extend(analysis.outline.into_iter().map(|heading| {
                     let path = heading.file.unwrap_or_default();
                     Item {
@@ -143,7 +143,7 @@ impl Actor {
                     }
                 }));
                 for file in analysis.files {
-                    let Some(facts) = facts.at(&root, &file) else {
+                    let Some(facts) = symbols.by_file.get(&file) else {
                         continue;
                     };
                     items.extend(facts.labels.iter().map(|label| Item {

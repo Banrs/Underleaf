@@ -47,12 +47,12 @@ pub(crate) enum Msg {
     Command(Command, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
-    /// A symbol scan's, numbered, with what the project's checks found and the session's count
-    /// of edits as the scan began.
+    /// A symbol scan's, numbered, with what the project's checks found, the outline and the
+    /// session's count of edits as the scan began.
     Symbols {
         seq: u64,
         edits: u64,
-        result: Result<(Symbols, Vec<LogItem>), CoreError>,
+        result: Result<Box<(Symbols, Vec<LogItem>, Value)>, CoreError>,
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
@@ -74,7 +74,6 @@ pub(crate) enum Command {
     Compile { #[serde(default)] auto: bool },
     StopCompile,
     Clean,
-    Analyze { path: RelPath },
     Search { query: String, #[serde(default)] match_case: bool, #[serde(default)] whole_word: bool },
     Usages { path: RelPath, offset: u32 },
     QuickHelp { path: RelPath, offset: u32 },
