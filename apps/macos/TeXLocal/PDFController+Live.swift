@@ -4,7 +4,7 @@ import PDFKit
 extension PDFController {
     /// A page drawn over PDFKit's waits this long for its whole document, which comes 300 ms after the last key.
     private static let liveSettleDelay: Duration = .seconds(1)
-    /// PDFKit fades a page it is given in over about 240 ms (27.2); the layers over its pages go after that.
+    /// PDFKit fades a page it is given in over about 240 ms (measured); the layers over its pages go after that.
     private static let liveClearDelay: Duration = .milliseconds(400)
 
     func showLive(_ read: LiveRead) {
@@ -113,7 +113,7 @@ extension PDFController {
         find.pagesReplaced(gone)
     }
 
-    /// Once PDFKit has drawn its own pages' tiles and faded them in beneath (27.2).
+    /// Once PDFKit has drawn its own pages' tiles and faded them in beneath.
     func clearLiveLater() {
         restart(&liveClearing, after: Self.liveClearDelay) { [weak self] in
             if let self, liveWaiting.isEmpty { view.removeLive() }

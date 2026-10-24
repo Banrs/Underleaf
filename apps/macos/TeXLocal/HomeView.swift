@@ -186,30 +186,10 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await app.create(name: trimmed, template: draft.template)
         } fields: {
-            // 27.2: at a grouped form's trailing edge a space typed last shows only once a letter follows, so the text leads
-            // in a field as wide as the name.
-            LabeledContent("Name") {
-                NameWidth {
-                    TextField("Name", text: $draft.name, prompt: Text("Required"))
-                        .labelsHidden()
-                        .multilineTextAlignment(.leading)
-                        .focused($nameFocused)
-                }
-            }
+            TextField("Name", text: $draft.name, prompt: Text("Required"))
+                .focused($nameFocused)
             Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)
-    }
-}
-
-/// Claiming no ideal, so a long name scrolls in its row and never moves under its label.
-private struct NameWidth: Layout {
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let text = subviews[0].sizeThatFits(.unspecified).width
-        return subviews[0].sizeThatFits(ProposedViewSize(width: min(text, proposal.width ?? 0), height: proposal.height))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

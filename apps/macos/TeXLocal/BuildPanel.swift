@@ -8,8 +8,8 @@ struct BuildPanel: View {
         .background(.textSurface)
         // The bar's own line is the edge, where SwiftUI draws none (an AppKit scroll view).
         .scrollEdgeEffectHidden(true, for: .bottom)
-        // 27.2: not a split item's accessory, which AppKit shows only once the pane has its height. In a safe-area bar a
-        // search field is a toolbar's filled capsule.
+        // Not a split item's accessory, which AppKit shows only once the pane has its height. In a safe-area bar a search
+        // field is a toolbar's filled capsule.
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -59,7 +59,7 @@ struct BuildPanelBar: View {
         .background(.textSurface)
     }
 
-    /// Small, a search field is an outlined box, and SwiftUI's change of size drops its symbol (27.2).
+    /// Regular: small, a search field is an outlined box.
     private func filter(_ text: Binding<String>) -> some View {
         SearchField(text: text, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
             .controlSize(.regular)

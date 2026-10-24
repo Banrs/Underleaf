@@ -45,6 +45,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         lastMath = nil
         dismissedMath = nil
         _ = document.endSnippet()
+        endFieldTyping()
         completions.close()
         mark(nil)
         updateGutterWidth()
@@ -78,6 +79,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
         guard !edits.isEmpty else { return false }
+        endFieldTyping()
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
@@ -177,7 +179,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
-        if !typing { completions.close() }
+        if !typing {
+            completions.close()
+            endFieldTyping()
+        }
         if partnerMark != nil { mark(nil) }
         previewMath()
         // A snippet ends once the selection leaves its fields.
@@ -347,7 +352,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func complete(_ sender: Any?) { completions.complete(explicit: true) }
 
     /// Never goes on to the window, whose Escape would leave full screen.
-    override func cancelOperation(_ sender: Any?) { cancel() }
+    override func cancelOperation(_ sender: Any?) {
+        endFieldTyping()
+        cancel()
+    }
 
     /// Escape is `cancelOperation`: the text view's own goes straight to `complete(_:)`. While the list shows, the arrows
     /// move through it and Return or Tab accepts.
@@ -367,10 +375,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     /// The core's mirror edits are going in: they move the fields without ending the snippet.
     private var mirroring = false
     private var mirrorEdits: [TextEdit] = []
+    /// What's typed in a field and its other places is one undo step: the first key's event group stays open, where AppKit
+    /// would close it as the event ends, until a key mirrors nothing, the selection moves, Escape or Undo.
+    private var fieldTyping: (undo: UndoManager, watch: any NSObjectProtocol)?
 
     override func didChangeText() {
         super.didChangeText()
-        guard !mirroring, !mirrorEdits.isEmpty else { return }
+        guard !mirroring else { return }
+        guard !mirrorEdits.isEmpty else { return endFieldTyping() }
+        if fieldTyping == nil, let undo = undoManager, undo.groupsByEvent, !undo.isUndoing, !undo.isRedoing {
+            undo.groupsByEvent = false
+            let watch = NotificationCenter.default.addObserver(forName: .NSUndoManagerWillUndoChange, object: undo, queue: nil) {
+                [weak self] _ in MainActor.assumeIsolated { self?.endFieldTyping() }
+            }
+            fieldTyping = (undo, watch)
+        }
         let edits = mirrorEdits, selection = selectedRange()
         mirrorEdits = []
         mirroring = true
@@ -380,6 +399,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         mirroring = false
         setSelectedRange(selection)
+    }
+
+    private func endFieldTyping() {
+        guard let (undo, watch) = fieldTyping else { return }
+        fieldTyping = nil
+        NotificationCenter.default.removeObserver(watch)
+        // Undo closes it itself.
+        if undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = true
+        // The next key starts its own Typing.
+        breakUndoCoalescing()
     }
 
     // MARK: the mouse

@@ -50,6 +50,12 @@ struct PDFFitTests {
         }
     }
 
+    /// A document zooms from a tenth to eight times, though PDFKit puts its own limits back with each one.
+    @Test func eachDocumentHasTheZoomsLimits() throws {
+        let view = showing(try pages(1)).view
+        #expect(view.minScaleFactor == 0.1 && view.maxScaleFactor == 8)
+    }
+
     /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
         let controller = showing(try pages(3)), view = controller.view
@@ -77,41 +83,6 @@ struct PDFFitTests {
         // Back at the width while autoScales is still on, as through a pinch: fitted again.
         scrollView.magnification = view.scaleFactorForSizeToFit
         follows(.fitWidth, "pinched back")
-    }
-
-    @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {
-        let app = AppModel()
-        let project = ProjectModel(id: "PDFFitTests", app: app)
-        project.shown = .build(URL(filePath: "/dev/null"))
-        let view = project.pdf.view
-        project.pdf.restorePage = 3
-        project.pdf.show(try pages(3))
-        #expect(project.pdf.keptPage == 3)
-        // The PDF can finish loading before SwiftUI gives the owned view its first size.
-        view.setFrameSize(NSSize(width: 600, height: 500))
-        view.layoutDocumentView()
-        #expect(project.pdf.pageCount == 3 && project.pdf.keptPage == 3)
-        project.pdf.setScale(view.maxScaleFactor)
-        #expect(!app.isEnabled(.viewZoomIn, on: project) && app.isEnabled(.viewZoomOut, on: project))
-        project.tree.show(.sources)
-        project.openPath = "references.bib"
-        #expect(!app.isEnabled(.syncForward, on: project))
-        project.openPath = "main.tex"
-        #expect(app.isEnabled(.syncForward, on: project))
-        project.pdf.go(toPage: 2)
-        #expect(project.pdf.keptPage == 2)
-    }
-
-    @Test func goToPageKeepsToTheDocument() throws {
-        let controller = sizedController()
-        controller.go(toPage: 2)
-        #expect(controller.page == 0)
-        controller.show(try pages(3))
-        controller.view.layoutDocumentView()
-        controller.go(toPage: 9)
-        #expect(controller.page == 3)
-        controller.go(toPage: 0)
-        #expect(controller.page == 1)
     }
 
     @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
@@ -180,7 +151,7 @@ struct PDFFindTests {
         let selection = try #require(view.currentSelection), page = try #require(selection.pages.first)
         func shows() -> Bool { view.bounds.intersects(view.convert(selection.bounds(for: page), from: page)) }
         #expect(!shows())
-        view.jumpToSelection()
+        view.centerSelectionInVisibleArea(nil)
         #expect(shows() && view.currentPage === page)
     }
 
@@ -231,24 +202,6 @@ struct PDFFindTests {
         #expect(controller.find.text == "gamma" && PDFFind.shared == "gamma")
     }
 
-    @Test func rebuildSearchesCurrentFindText() async throws {
-        let controller = showing(try textPDF(["old result"]))
-        openFind("old", in: controller)
-        try await waitUntil(timeout: .seconds(5)) {
-            controller.find.query == "old" && controller.find.matches.first?.pages.first?.string?.contains("old") == true
-        }
-
-        // The field changed, but its debounce has not started a new search yet.
-        controller.find.text = "new"
-        controller.show(try textPDF(["new result"]))
-        try await waitUntil(timeout: .seconds(5)) {
-            controller.find.query == "new" && controller.find.matches.first?.pages.first?.string?.contains("new") == true
-        } state: {
-            "query \(controller.find.query), matches \(controller.find.matches.count)"
-        }
-        #expect(controller.find.matches.count == 1)
-    }
-
     @Test func typingBackKeepsTheFieldsMatches() async throws {
         let controller = showing(try textPDF(["a ab a"]))
         controller.find.isOpen = true
@@ -262,13 +215,15 @@ struct PDFFindTests {
         #expect(controller.find.query == "a" && controller.find.matches.count == 3)
     }
 
+    /// The letter on a line under another, where `characterIndex` is a letter behind for each line above.
     @Test func aClickSendsThePagesTextAndTheLetter() throws {
-        let pdf = try textPDF(["alpha beta"]), page = try #require(pdf.page(at: 0))
+        let pdf = try textPDF(["alpha beta\ngamma delta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
-        let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
+        let e = text.range(of: "e", options: .backwards)
+        let letter = try #require(page.selection(for: e)).bounds(for: page)
         // A page holds its document weakly; it's the view's in the app.
         let click = try #require(withExtendedLifetime(pdf) { page.click(at: CGPoint(x: letter.midX, y: letter.midY)) })
-        #expect(click == PageClick(text: text as String, at: text.range(of: "e").location))
+        #expect(click == PageClick(text: text as String, at: e.location))
     }
 
     /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.

@@ -316,7 +316,7 @@ private struct PDFPane: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let dark = paper.isDark(in: colorScheme)
+        let dark = paper.isDark(onDark: colorScheme == .dark)
         ZStack {
             // Inverted with its hues turned back, as the Mac's pages and Smart Invert, by SwiftUI as UIKit has no layer
             // filters; round the pages, the view's own colour is outside it.

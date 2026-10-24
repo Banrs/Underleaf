@@ -13,7 +13,11 @@ extension NSColor {
         return ["dark": name == .darkAqua || name == .accessibilityHighContrastDarkAqua,
                 "increaseContrast": name != .aqua && name != .darkAqua,
                 "background": NSColor.textBackgroundColor.rgba(in: appearance),
-                "fill": NSColor.secondarySystemFill.rgba(in: appearance)]
+                "fill": NSColor.currentLine.rgba(in: appearance)]
+    }
+
+    static let currentLine = NSColor(name: nil) {
+        srgb($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? SourceTextView.currentLineRGBA.dark : SourceTextView.currentLineRGBA.light)
     }
 
     /// Raised by the core to the HIG's 4.5:1 on the editor's background and current line, 7:1 with Increase Contrast, or `ratio`.

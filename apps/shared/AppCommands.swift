@@ -14,7 +14,7 @@ struct AppCommands: Commands {
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
                     Button(recent.name, systemImage: "text.document") { Task { await app.open(recent.id) } }
-                    // macOS 27 hides a menu item's image unless the label style shows it.
+                    // A menu item's image shows only where the label style shows it.
                     .labelStyle(.titleAndIcon)
                 }
                 Divider()
@@ -123,7 +123,7 @@ private struct CommandItem: View {
         let project = app.commandProject
         Button { app.perform(command, on: project) } label: {
             let title = app.title(command, on: project)
-            // macOS 27 shows a menu item's image only with this style.
+            // A menu item's image shows only with this style.
             if let symbol = command.style?.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
         .labelStyle(.titleAndIcon)

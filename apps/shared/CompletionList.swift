@@ -5,17 +5,18 @@ import UIKit
 #endif
 import SwiftUI
 
-/// The core's completions under the caret, a view over the editor: 27.2's glass in a borderless panel that isn't key
+/// The core's completions under the caret, a view over the editor: Liquid Glass in a borderless panel that isn't key
 /// draws flat, and AppKit's own completion list is still its square box; UIKit has none. Typing stays in the document.
 final class CompletionList {
     private unowned let editor: SourceTextView
     /// Nil while the list is closed.
     private(set) var offered: Completions?
 
-    private let rows = CompletionRows()
+    private let look = CompletionLook()
+    private let rows: ChoiceRows<Completion>
     #if os(macOS)
     private lazy var surface: Surface = {
-        let surface = Surface(rootView: CompletionRowsView(rows: rows) { [unowned self] in accept($0) })
+        let surface = Surface(rootView: CompletionRowsView(rows: rows, look: look) { [unowned self] in accept($0) })
         surface.sizingOptions = []
         surface.safeAreaRegions = []
         surface.wantsLayer = true
@@ -33,7 +34,7 @@ final class CompletionList {
     #else
     /// A tap chooses a row and leaves the keyboard in the document: no view of SwiftUI's takes it.
     private lazy var hosting: UIHostingController<CompletionRowsView> = {
-        let hosting = UIHostingController(rootView: CompletionRowsView(rows: rows) { [unowned self] in accept($0) })
+        let hosting = UIHostingController(rootView: CompletionRowsView(rows: rows, look: look) { [unowned self] in accept($0) })
         hosting.sizingOptions = []
         hosting.safeAreaRegions = []
         hosting.view.backgroundColor = .clear
@@ -46,7 +47,10 @@ final class CompletionList {
     private var surface: UIView { hosting.view }
     #endif
 
-    init(for editor: SourceTextView) { self.editor = editor }
+    init(for editor: SourceTextView) {
+        self.editor = editor
+        rows = ChoiceRows { [look] in [$0.label, $0.detail, look.kind.name] }
+    }
 
     /// With Settings' completion off, only a list already showing follows the typing.
     func offer() { if editor.autoComplete || offered != nil { complete(explicit: false) } }
@@ -96,34 +100,22 @@ final class CompletionList {
         guard reload else { return place(under: start, in: shown) }
         let count = rows.items.count
         let font = editor.font ?? .monospacedSystemFont(ofSize: PlatformFont.systemFontSize, weight: .regular)
-        (rows.items, rows.kind, rows.font) = (offered.items, offered.kind, font)
-        rows.typed = editor.caret - offered.start
+        (rows.items, look.kind, look.font) = (offered.items, offered.kind, font)
+        look.typed = editor.caret - offered.start
         #if os(macOS)
-        rows.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        look.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         #else
-        rows.boldFont = font.fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? font
+        look.boldFont = font.fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? font
         #endif
-        rows.height = max(CompletionRowsView.leastRowHeight, (font.ascender - font.descender + font.leading).rounded(.up) + 8)
-        rows.selection = 0
+        look.height = max(CompletionRowsView.leastRowHeight, (font.ascender - font.descender + font.leading).rounded(.up) + 8)
         rows.reveal()
         let opening = surface.superview == nil
         fit()
         if surface.superview !== host { host.addSubview(surface) }
         place(under: start, in: shown)
         // Typing that changes the count is spoken too, after the typed character.
-        if opening || rows.items.count != count { announce(interrupting: opening) }
+        if opening || rows.items.count != count { rows.announce(interrupting: opening) }
         editor.previewMath()
-    }
-
-    /// VoiceOver's focus stays in the document: the row chosen is spoken as the list opens and as the arrows move.
-    private func announce(interrupting: Bool = true) {
-        guard rows.items.indices.contains(rows.selection) else { return }
-        let item = rows.items[rows.selection]
-        let position = String(localized: "\(rows.selection + 1) of \(rows.items.count)")
-        let words = [item.label, item.detail, rows.kind.name, position].compactMap { $0 }
-        var announcement = AttributedString(words.formatted(.list(type: .and, width: .narrow)))
-        announcement.accessibilitySpeechAnnouncementPriority = interrupting ? .high : .low
-        AccessibilityNotification.Announcement(announcement).post()
     }
 
     private static let textStart = CompletionRowsView.margin + CompletionRowsView.textInset
@@ -139,15 +131,15 @@ final class CompletionList {
         // Details are a column beside the labels', as a menu's key equivalents beside its titles. Only the longest is measured,
         // not a bibliography's thousands: a row truncates a wider one.
         let details = rows.items.compactMap(\.detail).max { $0.utf16.count < $1.utf16.count }
-            .map { ($0 as NSString).size(withAttributes: [.font: rows.detailFont]).width + CompletionRowsView.detailSpacing } ?? 0
+            .map { ($0 as NSString).size(withAttributes: [.font: look.detailFont]).width + CompletionRowsView.detailSpacing } ?? 0
         size = CGSize(width: (widest + details + 2 * Self.textStart).rounded(.up),
-                      height: CGFloat(min(labels.count, 8)) * rows.height + 2 * CompletionRowsView.margin)
+                      height: CGFloat(min(labels.count, 8)) * look.height + 2 * CompletionRowsView.margin)
     }
 
     /// With the typed part in bold, as the row shows it.
     private func width(of label: String) -> CGFloat {
-        let text = NSMutableAttributedString(string: label, attributes: [.font: rows.font])
-        text.addAttribute(.font, value: rows.boldFont, range: NSRange(location: 0, length: min(rows.typed, text.length)))
+        let text = NSMutableAttributedString(string: label, attributes: [.font: look.font])
+        text.addAttribute(.font, value: look.boldFont, range: NSRange(location: 0, length: min(look.typed, text.length)))
         return text.size().width
     }
 
@@ -164,8 +156,8 @@ final class CompletionList {
         let room = isAbove ? over : under
         let margins = 2 * CompletionRowsView.margin
         if room < frame.height {
-            let shown = max(1, ((room - margins) / rows.height).rounded(.down))
-            frame.size.height = shown * rows.height + margins
+            let shown = max(1, ((room - margins) / look.height).rounded(.down))
+            frame.size.height = shown * look.height + margins
         }
         frame.origin.y = isAbove ? start.minY - frame.height : start.maxY
         // The text's start is between pixels, and the glass's edge would blur.
@@ -189,15 +181,41 @@ final class CompletionList {
     func contains(_ point: NSPoint) -> Bool { surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil)) }
     #endif
 
+    func move(_ step: Int) { rows.move(step) }
+}
+
+/// A list chosen from with the arrows while the keyboard stays in the document or a field: the completion list's and Open
+/// Quickly's. VoiceOver's focus stays there too, so the row chosen is spoken as the list opens and as the arrows move.
+@Observable final class ChoiceRows<Item> {
+    /// Each new list chooses its first.
+    var items: [Item] = [] { didSet { selection = 0 } }
+    var selection = 0
+    /// Bumped to scroll the chosen row into view.
+    private(set) var revealed = 0
+    /// What VoiceOver says of a row, before its place in the list.
+    @ObservationIgnored private let spoken: (Item) -> [String?]
+
+    init(spoken: @escaping (Item) -> [String?]) { self.spoken = spoken }
+
+    func reveal() { revealed += 1 }
+
+    /// The arrows stop at the ends.
     func move(_ step: Int) {
-        rows.selection = max(0, min(rows.items.count - 1, rows.selection + step))
-        rows.reveal()
+        selection = max(0, min(items.count - 1, selection + step))
+        reveal()
         announce()
+    }
+
+    func announce(interrupting: Bool = true) {
+        guard items.indices.contains(selection) else { return }
+        let words = spoken(items[selection]).compactMap(\.self) + [String(localized: "\(selection + 1) of \(items.count)")]
+        var announcement = AttributedString(words.formatted(.list(type: .and, width: .narrow)))
+        announcement.accessibilitySpeechAnnouncementPriority = interrupting ? .high : .low
+        AccessibilityNotification.Announcement(announcement).post()
     }
 }
 
-@Observable final class CompletionRows {
-    var items: [Completion] = []
+@Observable final class CompletionLook {
     /// The UTF-16 units typed, which are bold.
     var typed = 0
     var kind = CompletionKind.command
@@ -205,17 +223,13 @@ final class CompletionList {
     var boldFont = PlatformFont.monospacedSystemFont(ofSize: PlatformFont.systemFontSize, weight: .bold)
     var detailFont: PlatformFont { .systemFont(ofSize: font.pointSize) }
     var height: CGFloat = 24
-    var selection = 0
-    /// Bumped to scroll the chosen row into view.
-    private(set) var revealed = 0
-
-    func reveal() { revealed += 1 }
 }
 
-/// An NSMenu's measures on 27.2: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.
+/// An NSMenu's measures: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.
 /// On the iPad a UIMenu's: rows a touch's 44 pt, in its larger corners.
 struct CompletionRowsView: View {
-    let rows: CompletionRows
+    let rows: ChoiceRows<Completion>
+    let look: CompletionLook
     let clicked: (Int) -> Void
 
     #if os(macOS)
@@ -240,7 +254,7 @@ struct CompletionRowsView: View {
                             Text(label(row)).layoutPriority(1)
                             if let detail {
                                 Text(detail)
-                                    .font(Font(rows.detailFont))
+                                    .font(Font(look.detailFont))
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .trailing)
                             }
@@ -250,7 +264,7 @@ struct CompletionRowsView: View {
                         .foregroundStyle(chosen ? Self.chosenText : Self.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Self.textInset)
-                        .frame(height: rows.height)
+                        .frame(height: look.height)
                         .background(chosen ? Self.accent : .clear, in: .rect(cornerRadius: Self.rowCorner))
                         .padding(.horizontal, Self.margin)
                         .contentShape(.rect)
@@ -275,9 +289,9 @@ struct CompletionRowsView: View {
     private func label(_ row: Int) -> AttributedString {
         let text = rows.items[row].label
         var label = AttributedString(text)
-        label.font = Font(rows.font as CTFont)
-        let typed = NSRange(location: 0, length: min(rows.typed, (text as NSString).length))
-        if let range = Range(typed, in: label) { label[range].font = Font(rows.boldFont as CTFont) }
+        label.font = Font(look.font as CTFont)
+        let typed = NSRange(location: 0, length: min(look.typed, (text as NSString).length))
+        if let range = Range(typed, in: label) { label[range].font = Font(look.boldFont as CTFont) }
         return label
     }
 }

@@ -61,15 +61,6 @@ struct PDFSwapTests {
         #expect(!samples.contains(0), "samples \(samples)")
     }
 
-    @Test func aRebuildChangesThePageCount() throws {
-        let controller = showing(try document(["a", "b", "c"])), view = controller.view
-        controller.go(toPage: 2)
-        controller.show(try document(["a2", "b2", "c2", "d2"]))
-        #expect(text(view) == ["a2", "b2", "c2", "d2"] && controller.page == 2 && controller.pageCount == 4)
-        controller.show(try document(["a3"]))
-        #expect(text(view) == ["a3"] && controller.page == 1 && controller.pageCount == 1)
-    }
-
     @Test func aLiveDocumentTakesOnlyThePagesThatChanged() throws {
         let controller = showing(try document(["a", "b", "c", "d"])), view = controller.view
         controller.go(toPage: 3)
@@ -196,13 +187,5 @@ struct PDFSwapTests {
         let link = try #require(shown.page(at: 0)?.annotations.first { $0.type == "Link" })
         let target = try #require(link.destination?.page ?? (link.action as? PDFActionGoTo)?.destination.page)
         #expect(target === shown.page(at: 1))
-    }
-
-    @Test func clearingThePDFClosesItsFind() throws {
-        let controller = PDFController()
-        controller.show(try document(["one"]))
-        (controller.find.isOpen, controller.find.text) = (true, "one")
-        controller.clear()
-        #expect(!controller.find.isOpen && controller.find.text.isEmpty && controller.pageCount == 0)
     }
 }

@@ -32,10 +32,12 @@ Decided: change only when asked. Each macOS 27.2 workaround says why in its comm
 
 - **AppKit** for the window and splits; **SwiftUI** for panes, bars, sheets, popovers, Settings
   and Home.
-- **Narrow windows** stop at 542 pt (`ColumnMetrics`); sidebar and inspector fold, and aren't
-  saved as hidden; the title and the overflow menu are AppKit's.
-- **Toolbar**: its separators track the source|PDF divider. Compile is the one prominent item, a
-  word (its symbol only without room), Stop with a spinner while building. Aa opens Notes'
+- **Narrow windows** stop where Compile's symbol still has room (`ColumnMetrics`); sidebar and
+  inspector fold, and aren't saved as hidden; the title and the overflow menu are AppKit's.
+- **Toolbar**: AppKit's spacing; its separators track the source|PDF divider, and a narrowing
+  window sends the editing tools and Zoom to the overflow menu first (`visibilityPriority`). Compile
+  is the one prominent item, a word (its symbol only without room, before Zoom or Compile would go
+  to the overflow menu), Stop with a spinner while building. Aa opens Notes'
   popover of text styles (`FormatPopover`), with Math and Insert menus beside it. The PDF's zoom
   is a pill (`zoomItem`).
 - **Source**: one TextKit 2 `SourceTextView` at Xcode's metrics. The completion list

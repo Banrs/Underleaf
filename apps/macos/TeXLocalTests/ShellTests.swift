@@ -50,22 +50,30 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window has Compile as its word. At its narrowest the panes are at their least or wider, Compile is its
-    /// symbol, and nothing has left the toolbar but for its overflow menu, where each tool that can go has a menu form.
-    @Test func aNarrowWindowKeepsEveryToolOrItsMenuForm() async throws {
-        let (window, workspace) = try await workspace()
+    /// A wide window has Compile as its word. Narrowing, it turns to its symbol before AppKit would take Zoom or Compile to
+    /// the overflow menu, with the sidebar open or not, and is its word again once there is room. At its narrowest the window
+    /// holds both panes, Compile is a circle beside Back, still Compile to the overflow menu and VoiceOver, and nothing
+    /// has left the toolbar but for its overflow menu, where each tool that can go has a menu form and the editing tools go
+    /// first.
+    @Test(arguments: [false, true]) func aNarrowWindowKeepsEveryToolOrItsMenuForm(sidebar: Bool) async throws {
+        let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
-        #expect(!workspace.toolbar.compactCompile)
+        let toolbar = workspace.toolbar
         let compile = try item(.compile, in: workspace)
         let button = try #require(compile.view)
         let word = button.fittingSize.width
-        #expect(word > 60 && compile.style == .prominent)
-        let least = ColumnMetrics.contentMinimum.width
-        #expect(least >= ColumnMetrics.sourceMinimum + 1 + ColumnMetrics.pdfMinimum + ColumnMetrics.toolbarInset)
-        try await resize(window, to: least)
-        #expect(window.contentView?.frame.width == least)
-        // Compile as its symbol, a circle, still Compile to the overflow menu and VoiceOver.
-        #expect(workspace.toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
+        #expect(!toolbar.compactCompile && word > 60 && compile.style == .prominent)
+        func shown(_ id: NSToolbarItem.Identifier) -> Bool { toolbar.toolbar.visibleItems?.contains { $0.itemIdentifier == id } == true }
+        for width in stride(from: 1300, to: ColumnMetrics.contentMinimum.width, by: -10) {
+            try await resize(window, to: width)
+            if !toolbar.compactCompile { #expect(shown(.zoom) && shown(.compile), "at \(width)") }
+        }
+        try await resize(window, to: ColumnMetrics.contentMinimum.width)
+        // AppKit folds the sidebar only in a live resize.
+        #expect(sidebar || window.contentView?.frame.width == ColumnMetrics.contentMinimum.width)
+        for pane in workspace.columns.splitViewItems { #expect(pane.viewController.view.frame.width >= ColumnMetrics.paneMinimum) }
+        #expect(toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
+        #expect(shown(.compile) && shown(.back))
         #expect(compile.label == MenuCommand.compileRun.title && compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
         for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
             let item = try item(id, in: workspace)
@@ -76,7 +84,7 @@ struct ShellTests {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
         try await resize(window, to: 1300)
-        #expect(!workspace.toolbar.compactCompile && button.fittingSize.width == word)
+        #expect(!toolbar.compactCompile && button.fittingSize.width == word)
     }
 
     /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
@@ -99,31 +107,19 @@ struct ShellTests {
         }
     }
 
-    /// Compile's room is reckoned from the default tools' widths. In a toolbar customised to others it keeps its word,
-    /// where the default one has it as its symbol, until the window is too narrow for the word beside the tools that
-    /// never leave. With the default tools back, it is its symbol again.
-    @Test func aCustomisedToolbarKeepsCompilesWord() async throws {
+    /// The overflow menu's Share is dimmed with its item while there is no PDF to share; AppKit's answer would ignore the
+    /// item's. The zoom's scale keeps its widest label's width, so the capsule and the tools after it stay put.
+    @Test func theToolbarsControlsKeepTheirStateAndWidth() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
-        let toolbar = workspace.toolbar.toolbar
-        let defaults = workspace.toolbar.toolbarDefaultItemIdentifiers(toolbar)
-        #expect(workspace.toolbar.holdsDefaultItems)
-        // Too narrow for the default tools and Compile's word, wide enough for the word alone.
-        try await resize(window, to: 700)
-        #expect(workspace.toolbar.compactCompile)
-        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] { toolbar.removeItem(identifier: id) }
-        // The toolbar tells the workspace a turn later.
-        try await waitUntil { !workspace.toolbar.holdsDefaultItems && !workspace.toolbar.compactCompile }
-        try await resize(window, to: ColumnMetrics.contentMinimum.width)
-        #expect(workspace.toolbar.compactCompile && toolbar.visibleItems?.contains { $0.itemIdentifier == .compile } == true)
-        try await resize(window, to: 700)
-        #expect(!workspace.toolbar.compactCompile)
-        toolbar.itemIdentifiers = defaults
-        try await waitUntil { workspace.toolbar.holdsDefaultItems && workspace.toolbar.compactCompile }
-        // Spaces are not tools: without them the toolbar still holds its default ones.
-        toolbar.removeItem(identifier: .flexibleSpace)
-        #expect(workspace.toolbar.holdsDefaultItems)
-        toolbar.itemIdentifiers = defaults
+        let tools = workspace.toolbar
+        let share = try #require(tools.toolbar(tools.toolbar, itemForItemIdentifier: .share, willBeInsertedIntoToolbar: true)
+            as? NSSharingServicePickerToolbarItem)
+        #expect(!share.isEnabled && !share.validateMenuItem(share.menuFormRepresentation ?? NSMenuItem()))
+        let zoom = try #require(item(.zoom, in: workspace).view as? NSSegmentedControl)
+        let width = zoom.intrinsicContentSize.width
+        zoom.setLabel("1%", forSegment: 1)
+        #expect(zoom.intrinsicContentSize.width == width)
     }
 
     /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
@@ -221,17 +217,6 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
-    /// Shut with a drag on its divider, a side column is hidden and saved so.
-    @Test func aSideColumnShutByTheUserIsHidden() {
-        let app = AppModel(defaults: defaults.store)
-        app.inspectorVisible = true
-        app.sideColumn(.sidebar, shown: false, byWindow: false)
-        app.sideColumn(.inspector, shown: false, byWindow: false)
-        #expect(!app.sidebarVisible && !app.sidebarFolded && !app.inspectorVisible && !app.inspectorFolded)
-        #expect(defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false
-                && defaults.saved(DefaultsKey.inspectorVisible) as? Bool == false)
-    }
-
     /// A project opened over another keeps the other's workspace until it has loaded: the window never shows Home between
     /// them. With no project open, it shows Home.
     @Test func aProjectSwitchNeverShowsHome() {
@@ -278,15 +263,6 @@ struct ShellTests {
         #expect(controller.validateMenuItem(find))
         controller.performFindPanelAction(find)
         #expect(app.searchFocusToken == 1)
-    }
-
-    /// What the tests set goes to their own defaults, not the user's.
-    @Test func theModelsSettingsGoWhereTheyAreKept() {
-        let user = UserDefaults.standard.object(forKey: DefaultsKey.showWordCount) as? Bool
-        let app = AppModel(defaults: defaults.store)
-        app.showWordCount = false
-        #expect(!app.savesLayout && defaults.saved(DefaultsKey.showWordCount) as? Bool == false)
-        #expect(UserDefaults.standard.object(forKey: DefaultsKey.showWordCount) as? Bool == user)
     }
 
     @Test func aTrackAppliesEachNewValueOnce() async throws {

@@ -25,7 +25,8 @@ final class PDFController: NSObject {
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
-    /// PDFKit keeps every replaced page's objects for its document's life (27.2): past this footprint the next is shown whole.
+    /// PDFKit keeps every replaced page's objects for its document's life: past this footprint the next is shown whole
+    /// (`aDocumentIsShownWholeOnceTheAppHasGrown`).
     @ObservationIgnored var wholeAt = UInt64.max
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
@@ -114,7 +115,7 @@ final class PDFController: NSObject {
     }
 
     /// The file given (the build's during Live Preview, as the document showing is TeXpresso's), or the document showing.
-    /// The operation keeps the document (27.2).
+    /// The operation keeps the document.
     func print(title: String, file: URL?) {
         Task {
             let document = if let file { await Self.loadDocument(file) } else { view.document }
@@ -126,7 +127,8 @@ final class PDFController: NSObject {
         }
     }
 
-    /// Into the document showing: a new one shows only PDFKit's background until its pages draw (27.2).
+    /// Into the document showing: a new one shows only PDFKit's background until its pages draw
+    /// (`aRebuildNeverShowsAnEmptyPane`).
     func show(_ document: PDFDocument) {
         shownVersion += 1
         revealing?.cancel()
@@ -149,14 +151,17 @@ final class PDFController: NSObject {
             wholeAt = Self.footprint + 512 << 20
         }
         watchScrollView()
-        // A document resets the limits (27.2). Setting them turns fitting off, so before the fit below.
+        // A document resets the limits (`eachDocumentHasTheZoomsLimits`). Setting them turns fitting off, so before the fit
+        // below.
         view.minScaleFactor = Self.minScale
         view.maxScaleFactor = Self.maxScale
         view.pageScrollView?.setAccessibilityLabel("PDF")
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreIfReady()
-        if let place { go(to: place) }
+        // A first document's first page meets the toolbar's edge: PDFKit's own start leaves it under the bar.
+        let start = document.page(at: 0).map { (index: 0, point: CGPoint(x: 0, y: $0.bounds(for: view.displayBox).maxY)) }
+        if let place = place ?? (restorePage == nil ? start : nil) { go(to: place) }
         pageChanged()
         find.rerun()
     }

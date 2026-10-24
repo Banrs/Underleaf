@@ -63,7 +63,6 @@ nonisolated struct UIState: Decodable, Sendable {
     let panel, livePreview: Bool
 }
 nonisolated struct Saved: Decodable, Sendable { let saved: Bool }
-nonisolated struct Closed: Decodable, Sendable { let closed: Bool }
 nonisolated struct Ready: Decodable, Sendable { let ready: Bool }
 nonisolated struct ChosenIssue: Decodable, Sendable { let index: Int, issue: LogItem }
 

@@ -36,11 +36,13 @@ final class ProjectModel {
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
-    private var documents: [String: DocumentState] = [:]
-    /// Why a document held after Cancel in an alert isn't saved.
-    private var heldReasons: [String: String] = [:]
-    @ObservationIgnored private var lineIssues: [String: [Int: IssuesEvent.Line]] = [:]
-    @ObservationIgnored private var liveIssues: [String: [Int: IssuesEvent.Line]] = [:]
+    private var documents: [String: OpenDocument] = [:]
+    private struct OpenDocument {
+        var state: DocumentState?
+        /// Why a document held after Cancel in an alert isn't saved.
+        var heldReason: String?
+        var lineIssues: [Int: IssuesEvent.Line] = [:], liveIssues: [Int: IssuesEvent.Line] = [:]
+    }
     @ObservationIgnored private var composingPath: String?
     /// A `tree` event came before the session's open answered with an older tree.
     @ObservationIgnored private var treeChanged = false
@@ -141,9 +143,9 @@ final class ProjectModel {
 
     /// The status bar's Not Saved: after a failed save, or Cancel in an alert about the file on disk.
     var saveFailure: String? {
-        for (path, state) in documents.sorted(by: { $0.key < $1.key }) {
-            if let error = state.error { return error }
-            if state.held { return heldReasons[path] ?? String(localized: "“\(path.fileName)” wasn’t saved.") }
+        for (path, document) in documents.sorted(by: { $0.key < $1.key }) {
+            if let error = document.state?.error { return error }
+            if document.state?.held == true { return document.heldReason ?? String(localized: "“\(path.fileName)” wasn’t saved.") }
         }
         return nil
     }
@@ -287,21 +289,18 @@ final class ProjectModel {
         case .reload(let reloaded): reload(reloaded)
         case .closed(let gone):
             // One this model closed has the next file shown already.
-            (documents[gone.path], heldReasons[gone.path], lineIssues[gone.path], liveIssues[gone.path]) = (nil, nil, nil, nil)
+            documents[gone.path] = nil
             if openPath == gone.path, gone.reason != "closed" { clearOpenFile() }
         case .renamed(let renamed):
             // The editor follows the rename's own answer (`performRename`).
             documents[renamed.to] = documents.removeValue(forKey: renamed.from)
-            heldReasons[renamed.to] = heldReasons.removeValue(forKey: renamed.from)
-            lineIssues[renamed.to] = lineIssues.removeValue(forKey: renamed.from)
-            liveIssues[renamed.to] = liveIssues.removeValue(forKey: renamed.from)
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .issues(let marked):
-            lineIssues[marked.path] = marked.byLine
+            documents[marked.path, default: OpenDocument()].lineIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.lines = marked.byLine }
         case .liveIssues(let marked):
-            liveIssues[marked.path] = marked.byLine
+            documents[marked.path, default: OpenDocument()].liveIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
         // After the build events before it, so the list numbers its rows as the session did then.
         case .checks(let found): inOrder { self.checks = found.items }
@@ -331,9 +330,9 @@ final class ProjectModel {
     }
 
     private func documentChanged(_ state: DocumentState) {
-        let before = documents[state.path]
-        documents[state.path] = state
-        if !state.held { heldReasons[state.path] = nil }
+        let before = documents[state.path]?.state
+        documents[state.path, default: OpenDocument()].state = state
+        if !state.held { documents[state.path]?.heldReason = nil }
         // A failed autosave is told once in an alert, as NSDocument's are; Not Saved stays until a save succeeds.
         if let error = state.error, before?.error == nil {
             let title = notSavedTitle(state.path)
@@ -355,8 +354,8 @@ final class ProjectModel {
 
     // MARK: - Editing
 
-    /// After the opens asked for before it. One superseded meanwhile stops, unless it has already closed the file shown:
-    /// the editor never shows a file without its document. A `jump` is one the person makes away from the caret, whose place
+    /// After the opens asked for before it. One superseded meanwhile stops: the editor never shows a file without its
+    /// document. A `jump` is one the person makes away from the caret, whose place
     /// Go Back returns to. It shows the source, as a PDF command shows the PDF, but for the project's own first file and a
     /// file its rename reopens.
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
@@ -382,15 +381,16 @@ final class ProjectModel {
                     if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
                     return
                 }
-                // Nothing awaited between the close and the switch.
-                var shows = latest()
-                if shows, let was = openPath, editsText { shows = await closeDocument(was) && !closed }
-                guard shows else {
+                guard latest() else {
                     // The session keeps no document the editor doesn't show.
-                    if text, path != openPath, !closed { core.send("session_close_document", ["session": session, "path": path]) }
+                    if text { core.send("session_close_document", ["session": session, "path": path]) }
                     return
                 }
+                // Shown before the old one closes, so keys typed meanwhile go into the new one. One whose save fails stays
+                // open in the session, Not Saved.
+                let was = editsText ? openPath : nil
                 show(path, focus: focus)
+                if let was { await closeDocument(was) }
             }
             if let line, editsText, latest() { editor.reveal(line: line, column: column, length: length, atTop: atTop, focus: focus) }
         }.value
@@ -403,16 +403,14 @@ final class ProjectModel {
         guard editsText else { return }
         guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
-        editor.textView.issues.lines = lineIssues[path] ?? [:]
-        editor.textView.issues.live = liveIssues[path] ?? [:]
+        editor.textView.issues.lines = documents[path]?.lineIssues ?? [:]
+        editor.textView.issues.live = documents[path]?.liveIssues ?? [:]
     }
 
-    /// Saved first; false, staying open, if that failed or asks about the disk.
-    func closeDocument(_ path: String) async -> Bool {
-        guard let session else { return true }
-        return await alerting(notSavedTitle(path)) {
-            try await core.call("session_close_document", ["session": session, "path": path], as: Closed.self).closed
-        } ?? false
+    /// Saved first; it stays open, Not Saved, if that failed or asks about the disk.
+    func closeDocument(_ path: String) async {
+        guard let session else { return }
+        await alerting(notSavedTitle(path)) { try await core.call("session_close_document", ["session": session, "path": path]) }
     }
 
     private func composing(_ composing: Bool) {
@@ -449,7 +447,6 @@ final class ProjectModel {
         }
     }
 
-    /// The session keeps the outline, which `heading(at:)` asks about.
     func analyze() {
         analysis?.cancel()
         guard isLaTeX, let path = openPath, let session else {
@@ -476,10 +473,10 @@ final class ProjectModel {
         if current != currentHeading { currentHeading = current }
     }
 
-    /// At once: the core answers from the outline it keeps, outside the session's queue.
+    /// The last at or before `line` in the file shown, whose name the disk may spell in another case.
     private func heading(at line: Int) -> Int? {
-        guard let session, let openPath, !outline.isEmpty else { return nil }
-        return try? core.now("session_outline_current", ["session": session, "path": openPath, "line": line], as: Int?.self)
+        guard let openPath else { return nil }
+        return outline.last { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }?.id
     }
 
     /// The matches the search shows, which the field may be ahead of.
@@ -614,7 +611,7 @@ final class ProjectModel {
     func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
-        if let reason { heldReasons[path] = reason }
+        if let reason { documents[path, default: OpenDocument()].heldReason = reason }
         if answer == "close", openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {

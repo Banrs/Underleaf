@@ -9,8 +9,21 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     /// PDFKit's scroll view isn't in its interface: its document view leads to it.
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
 
+    /// Settings' paper, white, dark, or the window's appearance's.
+    private var paperWatch: (any NSObjectProtocol)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        matchPaper()
+    }
+
+    private func matchPaper() {
+        let paper = PDFPaper(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.pdfPaper) ?? "") ?? .white
+        darkPaper = paper.isDark(onDark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
+
     /// Inverted with its hues turned back, as Smart Invert: Core Image over PDFKit's drawing, so a change redraws nothing.
-    var darkPaper = false {
+    private(set) var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
             for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] { overlay.dark = darkPaper }
@@ -45,7 +58,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     // MARK: - Live preview
 
-    /// A page given to PDFKit fades in over a quarter of a second (27.2); a layer's contents change in one frame.
+    /// A page given to PDFKit fades in over a quarter of a second; a layer's contents change in one frame.
     private let liveCanvas: NSView = {
         let canvas = FilterView()
         canvas.autoresizingMask = [.width, .height]
@@ -58,7 +71,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
     var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
 
-    /// At PDFKit's scale from its pixel-rounded frame's corner (27.2), so its page takes the layer's place unseen. Only the
+    /// At PDFKit's scale from its pixel-rounded frame's corner, so its page takes the layer's place unseen. Only the
     /// part in view: the whole is half a gigabyte for A4 at 800%.
     func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
         guard let documentView, let window, let overlay = shownOverlay(of: shown) else { return false }
@@ -75,12 +88,21 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             .translatedBy(x: -box.minX, y: -box.minY)
         let whole = CGRect(x: 0, y: 0, width: onScreen.width.rounded(), height: onScreen.height.rounded())
         let part = visible.applying(toPixels).integral.intersection(whole)
-        // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours (27.2).
+        // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours.
         guard part.width >= 1, part.height >= 1,
               let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
                                                    .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
               surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
-        Self.drawLive(page, to: surface, box: page.bounds(for: .cropBox), scale: scaleFactor * pixel, from: part.origin)
+        let context = CGContext(data: surface.baseAddress, width: surface.width, height: surface.height, bitsPerComponent: 8,
+                                bytesPerRow: surface.bytesPerRow, space: Self.liveSpace,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        if let context {
+            let paper = page.bounds(for: .cropBox)
+            context.translateBy(x: -part.minX, y: -part.minY)
+            context.scaleBy(x: scaleFactor * pixel, y: scaleFactor * pixel)
+            context.translateBy(x: -paper.minX, y: -paper.minY)
+            Self.drawPaper(paper, to: context) { page.draw(with: .cropBox, to: context) }
+        }
         surface.unlock(options: [], seed: nil)
         if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
         let layer = liveLayers[index] ?? {
@@ -96,28 +118,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return true
     }
 
-    private nonisolated static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-
-    /// In two halves at once by Core Graphics, as PDFKit draws a page for one caller at a time (27.2).
-    private nonisolated static func drawLive(_ page: PDFPage, to surface: IOSurface, box: CGRect, scale: CGFloat, from corner: CGPoint) {
-        nonisolated(unsafe) let page = page
-        nonisolated(unsafe) let ref = page.rotation == 0 && box.origin == .zero && page.bounds(for: .mediaBox) == box ? page.pageRef : nil
-        let (width, height, halves) = (surface.width, surface.height, ref == nil ? 1 : 2)
-        DispatchQueue.concurrentPerform(iterations: halves) { half in
-            let rows = (height * half / halves)..<(height * (half + 1) / halves)
-            guard let context = CGContext(data: surface.baseAddress + rows.lowerBound * surface.bytesPerRow, width: width,
-                                          height: rows.count, bitsPerComponent: 8, bytesPerRow: surface.bytesPerRow, space: liveSpace,
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-            else { return }
-            // A context counts from its own bottom row, the picture's rows from its top.
-            context.translateBy(x: -corner.x, y: CGFloat(rows.upperBound - height) - corner.y)
-            context.scaleBy(x: scale, y: scale)
-            context.translateBy(x: -box.minX, y: -box.minY)
-            drawPaper(box, to: context) {
-                if let ref { context.drawPDFPage(ref) } else { page.draw(with: .cropBox, to: context) }
-            }
-        }
-    }
+    private static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
     func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
 
@@ -137,6 +138,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override init(frame: NSRect) {
         super.init(frame: frame)
         pageOverlayViewProvider = self
+        paperWatch = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated { self?.matchPaper() }
+        }
+        matchPaper()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -189,12 +194,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override func mouseMoved(with event: NSEvent) { if !updateDividerCursor(with: event) { super.mouseMoved(with: event) } }
     override func cursorUpdate(with event: NSEvent) { if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) } }
 
-    /// 27.2: SwiftUI reassigns unchanged frames, and PDFView's `setFrame:` refits the width, undoing a pinch.
-    override var frame: NSRect {
-        get { super.frame }
-        set { if newValue != super.frame { super.frame = newValue } }
-    }
-
     /// At the document's start, the first page's top stays at the toolbar's edge as the width or Fit Page changes.
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize != frame.size else { return }
@@ -233,7 +232,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if abs(up.x - down.x) <= 4, abs(up.y - down.y) <= 4 { goToSource(at: convert(down, from: nil)) }
     }
 
-    func jumpToSelection() {
+    /// ⌃L, on the responder chain while the pages have the keyboard, as the text view's is.
+    override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let selection = currentSelection, let page = selection.pages.first else { return }
         let box = selection.bounds(for: page)
         go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shownHeight / 2 / scaleFactor)))

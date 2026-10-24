@@ -23,7 +23,7 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
     static let width: CGFloat = 600, fieldHeight: CGFloat = 48, rowHeight: CGFloat = 38, shownRows = 10
 
     private let project: ProjectModel
-    private let rows = QuickOpenRows()
+    private let rows = ChoiceRows<QuickOpenItem> { [$0.title, $0.detail] }
     private let field = NSTextField()
     private var searching: Task<Void, Never>?
 
@@ -107,18 +107,10 @@ nonisolated struct QuickOpenItem: Decodable {
     let line: Int?
 }
 
-@Observable final class QuickOpenRows {
-    /// The first is chosen as they come.
-    var items: [QuickOpenItem] = [] { didSet { selection = 0 } }
-    var selection = 0
-
-    func move(_ step: Int) { selection = max(0, min(items.count - 1, selection + step)) }
-}
-
 /// The completion list's look at the field's size: rows 5 pt in, the chosen one in the accent with white text.
 private struct QuickOpenView: View {
     let field: NSTextField
-    let rows: QuickOpenRows
+    let rows: ChoiceRows<QuickOpenItem>
     let tree: FileTree
     let open: (Int) -> Void
 
@@ -138,7 +130,7 @@ private struct QuickOpenView: View {
                     }
                     .scrollIndicators(.never)
                     .padding(.vertical, CompletionRowsView.margin)
-                    .onChange(of: rows.selection) { scroller.scrollTo(rows.selection) }
+                    .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
                 }
             }
         }

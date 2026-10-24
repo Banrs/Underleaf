@@ -34,5 +34,5 @@ enum PDFPaper: String, CaseIterable, Identifiable {
         }
     }
 
-    func isDark(in scheme: ColorScheme) -> Bool { self == .dark || (self == .auto && scheme == .dark) }
+    func isDark(onDark appearance: Bool) -> Bool { self == .dark || (self == .auto && appearance) }
 }
