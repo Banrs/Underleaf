@@ -108,7 +108,8 @@ struct LogTextView: UIViewRepresentable {
         let view = UITextView(usingTextLayoutManager: true)
         view.isEditable = false
         view.isFindInteractionEnabled = true
-        view.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
+        // Subheadline's 15 pt at the default text size, scaled as the text size changes.
+        view.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .monospacedSystemFont(ofSize: 15, weight: .regular))
         view.adjustsFontForContentSizeCategory = true
         view.alwaysBounceVertical = true
         return view
