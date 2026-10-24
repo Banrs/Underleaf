@@ -505,6 +505,11 @@ struct SourceEditorTests {
         let y = text.convert(window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY)), from: nil).y
         #expect(text.foldClick(at: NSPoint(x: (text.gutter.numbersEnd + text.textContainerOrigin.x) / 2, y: y)))
         #expect(try shown() == [1, 4, 5])
+        // Kept while another file shows, as its text is.
+        let kept = text.string
+        editor.open(path: "other.tex", text: "other", focus: false)
+        editor.open(path: "main.tex", text: kept, focus: false)
+        #expect(try shown() == [1, 4, 5])
         text.textStorage?.replaceCharacters(in: .caret(text.document.lineStart(3)), with: "y")
         #expect(text.folded.isEmpty)
     }

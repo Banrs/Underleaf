@@ -11,7 +11,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     var path: String?
     /// Their state and scroll come back only if their text is unchanged since, as Xcode's do.
-    var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
+    var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?, folded: [NSRange])] = [:]
 
     /// Hidden, it is out of the key view loop; shown, it takes the focus a file's open asked for.
     var shown = false {

@@ -4,12 +4,19 @@ import SwiftUI
 extension SourceEditor {
     /// `source` is the session's document of `path`, which holds `text`.
     func open(path: String, text: String, source: SourceDocument? = nil, focus: Bool) {
-        if let current = self.path { kept[current] = (textView.source as String, textView.undo, textView.selection, textView.shownTop) }
+        if let current = self.path {
+            kept[current] = (textView.source as String, textView.undo, textView.selection, textView.shownTop, textView.folded)
+        }
         // By UTF-16, as the undo stack counts: Swift's `==` holds across Unicode normal forms.
         let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
         textView.load(text, source: source)
         textView.undo = prior?.undo ?? UndoManager()
+        // Before the selection, which would open a fold it lands in.
+        if let folded = prior?.folded, !folded.isEmpty {
+            textView.folded = folded
+            textView.relayOutFolds()
+        }
         textView.selection = prior?.selection ?? .caret(0)
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
