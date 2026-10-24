@@ -1,5 +1,4 @@
-/* TeXLocal core, for the native apps: macOS links the static library,
- * Windows loads the DLL. Calls are JSON in, JSON out; docs/core-api.md is the
+/* TeXLocal core, which the Mac app links as a static library. Calls are JSON in, JSON out; docs/core-api.md is the
  * contract, with every command and event. */
 #ifndef TEXLOCAL_H
 #define TEXLOCAL_H
@@ -117,25 +116,6 @@ char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 void tl_source_free(TlSource *_Nullable source);
 
 #pragma clang assume_nonnull end
-
-/* The TeX an app that can start no processes links (iPadOS: TeXpresso's engines,
- * tools/texpresso-ios), given once, before tl_open; without it, a build or Live
- * Preview there reports TeX as unavailable. Elsewhere it is unused. The fields
- * are txp_live_start, txp_session_wait and txp_run, typed as texpresso.h types
- * them (the session an incomplete struct, nothing marked for nullability), so
- * Swift takes those functions as they are. The struct is copied. */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnullability-completeness"
-typedef struct tl_engine {
-    struct tl_engine_session *(*live_start)(int argc, const char *const *argv, const char *pdf_output,
-                                            int *commands, int *messages, int *log);
-    int (*session_wait)(struct tl_engine_session *session);
-    int (*run)(const char *engine, int argc, const char *const *argv, const char *cwd, int output,
-               const char *const *env, const volatile int *cancel);
-} tl_engine;
-#pragma clang diagnostic pop
-
-void tl_set_engine(const tl_engine *_Nonnull engine);
 
 #ifdef __cplusplus
 }

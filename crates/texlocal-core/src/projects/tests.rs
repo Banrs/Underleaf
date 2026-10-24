@@ -281,7 +281,6 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
 /// only, inside or out (a shared .bib), as one to a folder may loop; an entry unreadable read
 /// as empty; and, with the tree's rule, no dotfiles and no top-level build folder in any case,
 /// though a build deeper in is the author's.
-#[cfg(unix)]
 #[test]
 fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read() {
     use std::os::unix::fs::{PermissionsExt, symlink};

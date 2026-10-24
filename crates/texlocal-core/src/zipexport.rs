@@ -25,14 +25,14 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
     let parent = dest.parent().expect("a file is in a folder");
     let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
     // Resolved as the walk resolves the project, so a destination spelled through a link is recognised.
-    let archive_dir = dunce::canonicalize(parent).map_err(CoreError::at(dest))?;
+    let archive_dir = std::fs::canonicalize(parent).map_err(CoreError::at(dest))?;
     let archive = |entry: &Entry| {
         let names = [dest.file_name(), temp_path.file_name()];
         names.contains(&Some(OsStr::new(&entry.name)))
             && entry
                 .path
                 .parent()
-                .and_then(|dir| dunce::canonicalize(dir).ok())
+                .and_then(|dir| std::fs::canonicalize(dir).ok())
                 == Some(archive_dir.clone())
     };
     let replaced = |rel: &str| added.iter().any(|(path, _)| path.eq_ignore_ascii_case(rel));
@@ -185,13 +185,10 @@ mod tests {
         assert_eq!(zip_names(&inside), kept);
         // Spelt through a link into the project, as when a Save panel hands back /private/var
         // for a data folder under /var: a lexical comparison would archive the half-written ZIP.
-        #[cfg(unix)]
-        {
-            let alias = root.with_file_name("alias");
-            std::os::unix::fs::symlink(&root, &alias).unwrap();
-            export_zip(&root, &alias.join("project.zip"), &[]).unwrap();
-            assert_eq!(zip_names(&inside), kept);
-        }
+        let alias = root.with_file_name("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        export_zip(&root, &alias.join("project.zip"), &[]).unwrap();
+        assert_eq!(zip_names(&inside), kept);
 
         let service = Service::new(dir.path().join("again"));
         let copy = service

@@ -23,14 +23,7 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
 
 /// TeX Live's year folders' programs, newest first.
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let root = if cfg!(windows) {
-        let mut root = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
-        root.push(r"\texlive");
-        PathBuf::from(root)
-    } else {
-        PathBuf::from("/usr/local/texlive")
-    };
-    let mut years: Vec<_> = children(root)
+    let mut years: Vec<_> = children("/usr/local/texlive")
         .filter(|year| {
             year.file_name()
                 .and_then(|name| name.to_str())
@@ -55,22 +48,11 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
 }
 
 /// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
-/// link and Homebrew's folders, or MiKTeX's for one user and for all; then TinyTeX's.
+/// link and Homebrew's folders, then TinyTeX's.
 fn usual_tex_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = if cfg!(windows) {
-        let under = |var, dir| Some(PathBuf::from(std::env::var_os(var)?).join(dir));
-        [
-            under("LOCALAPPDATA", r"Programs\MiKTeX\miktex\bin\x64"),
-            under("ProgramFiles", r"MiKTeX\miktex\bin\x64"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
-    } else {
-        ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
-            .map(PathBuf::from)
-            .into()
-    };
+    let mut dirs: Vec<PathBuf> = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
+        .map(PathBuf::from)
+        .into();
     dirs.extend(tinytex::root().map(|root| tinytex::bin(&root)));
     dirs
 }

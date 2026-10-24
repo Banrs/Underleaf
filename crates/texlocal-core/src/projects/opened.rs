@@ -113,7 +113,7 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
         let file = meta.is_file().then_some(inside);
         return Ok(Opening { project, file });
     }
-    let real = dunce::canonicalize(path)?;
+    let real = std::fs::canonicalize(path)?;
     let name = real.file_name().unwrap_or_default().to_string_lossy();
     let (project, file) = if meta.is_dir() {
         (open_folder(service, &real, None)?, None)
@@ -140,7 +140,7 @@ fn open_folder(
 ) -> Result<ProjectInfo, CoreError> {
     let data_dir = &service.data_dir;
     let name = root.file_name().unwrap_or(root.as_os_str()).display();
-    let library = dunce::canonicalize(data_dir)?;
+    let library = std::fs::canonicalize(data_dir)?;
     if library.starts_with(root) || root.starts_with(&library) {
         return Err(CoreError::bad_request(format!(
             "“{name}” holds TeXLocal’s projects. Choose the folder that holds the document."
@@ -215,19 +215,10 @@ pub fn forget_folder(
     Ok(fs::remove_dir_all(store)?)
 }
 
-#[cfg(unix)]
 fn identity(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     let meta = fs::metadata(path).ok()?;
     Some((meta.dev(), meta.ino()))
-}
-
-/// The volume's serial number and the folder's index on it, which `std` keeps unstable.
-#[cfg(windows)]
-fn identity(path: &Path) -> Option<(u64, u64)> {
-    let handle = winapi_util::Handle::from_path_any(path).ok()?;
-    let info = winapi_util::file::information(&handle).ok()?;
-    Some((info.volume_serial_number(), info.file_index()))
 }
 
 #[cfg(test)]
@@ -244,7 +235,7 @@ mod tests {
             fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
             fs::write(dir.join(path), text).unwrap();
         }
-        dunce::canonicalize(dir).unwrap()
+        std::fs::canonicalize(dir).unwrap()
     }
 
     #[tokio::test]

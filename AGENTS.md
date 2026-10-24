@@ -2,18 +2,17 @@
 
 Rules for agents. The repository is Underleaf; the app is TeXLocal, as are its names on disk
 (`~/TeXLocal`, `.texlocal.json`, `TEXLOCAL_DATA`), so existing projects keep working. The core's
-contract is `docs/core-api.md`, what is open `docs/handoff.md`; `docs/windows.md`,
-`docs/texpresso.md` and `docs/design-tokens.md` are the Windows app, Live Preview and the themes.
+contract is `docs/core-api.md`, what is open `docs/handoff.md`; `docs/texpresso.md` and
+`docs/design-tokens.md` are Live Preview and the themes. The iPad and Windows apps are parked at the
+`archive/windows-ipad` tag: the repository is the Mac's alone until they come back.
 
 ## Shape
 
 - **The Rust core** (`crates/texlocal-core`) owns all but UI and OS integration: projects, builds,
-  SyncTeX, logs, export and project sessions; logic the hosts share goes there. **`syntax`**,
-  I/O-free, owns editor logic and maths (RaTeX); **`texlocal-ffi`** is the C ABI.
-- **The apps** (`apps/macos`, `apps/ipados`, `apps/windows`) are UI only, with the same features,
-  each in its system's design: the Mac the HIG, the iPad iPadOS's, Windows WinUI 3 and Fluent.
-  **`apps/shared`** is the Swift both Apple apps compile; each has its platform's classes under one
-  name (`SourceEditor`, `PDFController`, `MathGlyphs`, `LogTextView`).
+  SyncTeX, logs, export and project sessions; logic that isn't UI goes there, so another app can be
+  built on it again. **`syntax`**, I/O-free, owns editor logic and maths (RaTeX); **`texlocal-ffi`**
+  is the C ABI.
+- **The app** (`apps/macos`) is UI only, in the HIG's design.
 - **Security**: `-shell-escape`, and with it a project's `latexmkrc`, only where a project turns it
   on; `.texlocal.json` can't be written through the generic file commands.
 
@@ -56,25 +55,6 @@ Decided: change only when asked. A quirk's workaround names the test that fails 
 - **The core**: a session is numbered before it opens (`Core.observe`) and its events reach its
   `ProjectModel` on the main actor in order; open folders and folds are project settings.
 
-## The iPad app
-
-Native APIs, as Apple's iPad apps use them; custom only where iPadOS has nothing.
-
-- **By width**, never device or orientation: the sidebar floats over the panes, which keep their
-  width; below 640 pt source and PDF take turns, and a collapsed split opens on the source.
-- **Toolbar** as Pages': title and menu leading, editing tools grouped in the middle, the PDF and
-  Inspector toggles and Compile at the end; `toolbarRole(.editor)` outside the inspector, inside
-  which a first launch's bar may lose it. The panes scroll under the bar's edge effect.
-- **No bottom bar**, as a window's bottom edge can be off screen: the status is the title's
-  subtitle and menu; the build panel has its controls along its top, a sheet where compact.
-- **Touch**: 44 pt targets, every gesture also a button or menu item, the keyboard's room left to
-  the source. Names are edited where they show (`RenameField`), not in the title, which capitalises.
-- **Source**: a TextKit 2 `UITextView` on the Mac's logic; every edit goes through the view's undo,
-  which skips the core's, keys as one Typing; spelling the view's, kept to prose; LaTeX keys on the
-  shortcuts bar; the maths preview glass in the window, as a popover animates at each caret step.
-- **The menu bar** is the Mac's (`AppCommands`); Settings opens the app's page in Settings, App
-  Settings the in-app sheet. The library is the app's Documents (On My iPad › TeXLocal).
-
 ## Writing code
 
 Agents' code erodes with each change (`docs/agent-code.md`), so delete before adding: reuse what
@@ -98,13 +78,9 @@ rule once, deterministically, at the lowest level that holds it.
 - Rust: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test`.
 - Mac: `xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test
   TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, else the test host shares the app's defaults.
-  Agents use `zsh tools/qa/typecheck.sh` (the iPad's too) and `tools/qa/xctest.sh`, which takes
-  turns; on screen only the QA copy (`tools/qa/README.md`), never the installed app or `~/TeXLocal`.
-- iPad: `xcodebuild -project apps/ipados/TeXLocal.xcodeproj -scheme TeXLocal -destination
-  'generic/platform=iOS Simulator' build`; XcodeGen makes it from `project.yml`, both committed.
-- Windows: `dotnet test apps/windows/TeXLocal.Tests -c Debug`; `TeXLocal.exe --smoke` exits 0 once
-  a new project's session is open. Dev builds run with a scratch `TEXLOCAL_DATA`.
+  Agents use `zsh tools/qa/typecheck.sh` and `tools/qa/xctest.sh`, which takes turns; on screen
+  only the QA copy (`tools/qa/README.md`), never the installed app or `~/TeXLocal`.
 - Tests needing TeX and the patched engine (`docs/texpresso.md`) run in `tex-check.yml`: nightly,
   from Run workflow, or on a push to `claude/tex-check/<name>`.
-- Install: `zsh tools/install-mac.sh`, or with TeXLocal quit `apps/windows/install.ps1`. The
-  version is the same in `Cargo.toml`, `project.yml`, both `.xcodeproj`s and `TeXLocal.csproj`.
+- Install: `zsh tools/install-mac.sh`. The version is the same in `Cargo.toml` and the
+  `.xcodeproj`.

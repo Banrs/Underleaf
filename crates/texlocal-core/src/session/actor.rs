@@ -405,10 +405,6 @@ impl Actor {
             Command::SetOptions { auto_compile } => {
                 out(auto_compile.map(|auto| self.auto_compile = auto))
             }
-            Command::Rescan => out(self.handle(Msg::Fs(vec![Change {
-                path: self.project.root.clone(),
-                structural: true,
-            }]))),
             Command::OpenDocument { path } => self.open_document(&path.0).and_then(out),
             Command::CloseDocument { path } => self.close_document(&path.0),
             Command::Composing { path, composing } => out(self.composing(&path.0, composing)),

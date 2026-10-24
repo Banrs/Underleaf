@@ -1,7 +1,7 @@
 name: CI
 
-# One workflow: the Rust core on macOS and Windows, the Mac, iPad and
-# Windows apps, each only when a path it builds from changed, and tools/metrics.py on every change.
+# One workflow: the Rust core and the Mac app, each only when a path it builds from changed, and
+# tools/metrics.py on every change.
 # `ci-ok` is the one check to require.
 on:
   pull_request:
@@ -22,8 +22,6 @@ jobs:
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       mac: ${{ steps.paths.outputs.mac }}
-      ipad: ${{ steps.paths.outputs.ipad }}
-      windows: ${{ steps.paths.outputs.windows }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,21 +39,14 @@ jobs:
           has() { [ "$files" = ALL ] || grep -Eq "$1" <<< "$files"; }
           shared='^(crates/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'
           has "$shared" && echo rust=true >> "$GITHUB_OUTPUT"
-          apple='^(apps/shared/|tools/build-core\.sh$)'
-          has "$shared|$apple|^apps/macos/" && echo mac=true >> "$GITHUB_OUTPUT"
-          has "$shared|$apple|^apps/ipados/" && echo ipad=true >> "$GITHUB_OUTPUT"
-          has "$shared|^apps/windows/|^\.github/actions/windows-app/" && echo windows=true >> "$GITHUB_OUTPUT"
+          has "$shared|^apps/macos/|^tools/build-core\.sh$" && echo mac=true >> "$GITHUB_OUTPUT"
           exit 0
 
   rust:
-    name: Rust (${{ matrix.os }})
+    name: Rust
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -66,8 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - if: runner.os == 'macOS'
-        run: cargo fmt --all --check
+      - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
@@ -119,48 +109,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  ipad:
-    name: iPad app
-    needs: changes
-    if: needs.changes.outputs.ipad == 'true'
-    runs-on: xcode-27
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
-        with:
-          toolchain: stable
-          targets: aarch64-apple-ios-sim
-      - name: Select the newest Xcode
-        run: |
-          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
-          xcodebuild -version
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: ipad-app-27.0
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build
-        working-directory: apps/ipados
-        run: >-
-          xcodebuild build -scheme TeXLocal -destination 'generic/platform=iOS Simulator'
-          -derivedDataPath "$RUNNER_TEMP/dd"
-
-  windows:
-    name: Windows app
-    needs: changes
-    if: needs.changes.outputs.windows == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - name: No WebView2, no raw icon glyphs
-        shell: bash
-        run: |
-          # An if, since bash -e ignores a failing `! grep` before the last line.
-          if grep -rIlE 'WebView2|CoreWebView' apps/windows --exclude-dir=obj --exclude-dir=bin --include='*.cs' --include='*.xaml' --include='*.csproj' --include='*.props'; then exit 1; fi
-          if LC_ALL=C.UTF-8 grep -rIlP '[\x{E000}-\x{F8FF}]' apps/windows --include='*.cs' --include='*.xaml'; then exit 1; fi
-      - uses: ./.github/actions/windows-app
-
   metrics:
     name: Erosion and clones
     runs-on: ubuntu-latest
@@ -173,7 +121,7 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" tools/metrics.py
 
   ci-ok:
-    needs: [changes, rust, mac, ipad, windows, metrics]
+    needs: [changes, rust, mac, metrics]
     if: always()
     runs-on: ubuntu-latest
     steps:

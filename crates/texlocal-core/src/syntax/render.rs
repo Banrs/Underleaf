@@ -266,11 +266,8 @@ mod tests {
     fn what_cant_be_drawn_is_an_error() {
         assert!(math_svg(r"x^", false, 10.0, BLACK).is_err());
         assert!(math_svg(r"\frac{1}", false, 10.0, BLACK).is_err());
-        // A colour emoji has no outline to draw where the system's emoji font is bitmaps
-        // alone, as macOS's is; Windows' has outlines.
-        if cfg!(target_os = "macos") {
-            assert!(math_svg(r"\text{😀}", false, 10.0, BLACK).is_err());
-        }
+        // A colour emoji has no outline to draw: macOS's emoji font is bitmaps alone.
+        assert!(math_svg(r"\text{😀}", false, 10.0, BLACK).is_err());
         assert!(math_svg(r"\def\a{\a}\a", false, 10.0, BLACK).is_err());
         assert!(math_svg("x", false, f64::NAN, BLACK).is_err());
         assert!(math_svg(r"\text{café} \alpha", false, 10.0, BLACK).is_ok());

@@ -638,7 +638,6 @@ mod tests {
         assert!(!file.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
         let (_dir, service) = with_project();
@@ -882,24 +881,21 @@ mod tests {
         assert!(!root.join("figs/.git").exists() && !root.join("figs/.DS_Store").exists());
 
         // A dropped link names what it points at; links inside a folder are left.
-        #[cfg(unix)]
-        {
-            let plot = dir.path().join("elsewhere/plot.png");
-            write_all(
-                dir.path(),
-                &[
-                    ("elsewhere/plot.png", "p"),
-                    ("linked-drop/pics/real.png", "r"),
-                ],
-            );
-            let drop = dir.path().join("linked-drop");
-            std::os::unix::fs::symlink(&plot, drop.join("plot-link.png")).unwrap();
-            std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
-            let paths = [drop.join("plot-link.png"), drop.join("pics")];
-            import_files(&service, "P", "", &paths, None, remove).unwrap();
-            assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
-            assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
-        }
+        let plot = dir.path().join("elsewhere/plot.png");
+        write_all(
+            dir.path(),
+            &[
+                ("elsewhere/plot.png", "p"),
+                ("linked-drop/pics/real.png", "r"),
+            ],
+        );
+        let drop = dir.path().join("linked-drop");
+        std::os::unix::fs::symlink(&plot, drop.join("plot-link.png")).unwrap();
+        std::os::unix::fs::symlink(&plot, drop.join("pics/inner.png")).unwrap();
+        let paths = [drop.join("plot-link.png"), drop.join("pics")];
+        import_files(&service, "P", "", &paths, None, remove).unwrap();
+        assert!(root.join("pics/real.png").is_file() && !root.join("pics/inner.png").exists());
+        assert_eq!(fs::read(root.join("plot-link.png")).unwrap(), b"p");
     }
 
     #[test]
@@ -941,14 +937,11 @@ mod tests {
         assert_eq!(refused.status, 409);
 
         // A link to a file, as to a shared .bib, is copied as what it points at.
-        #[cfg(unix)]
-        {
-            let shared = dir.path().join("shared.bib");
-            fs::write(&shared, "@book{k,}").unwrap();
-            std::os::unix::fs::symlink(&shared, root.join("refs.bib")).unwrap();
-            let linked = duplicate_project(&service, "P", "Linked").unwrap().id;
-            let bib = fs::read(service.data_dir.join(linked).join("refs.bib"));
-            assert_eq!(bib.unwrap(), b"@book{k,}");
-        }
+        let shared = dir.path().join("shared.bib");
+        fs::write(&shared, "@book{k,}").unwrap();
+        std::os::unix::fs::symlink(&shared, root.join("refs.bib")).unwrap();
+        let linked = duplicate_project(&service, "P", "Linked").unwrap().id;
+        let bib = fs::read(service.data_dir.join(linked).join("refs.bib"));
+        assert_eq!(bib.unwrap(), b"@book{k,}");
     }
 }

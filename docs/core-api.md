@@ -1,13 +1,12 @@
 # The core's API for hosts
 
-The contract the hosts (the Mac and Windows apps) are written against. The core answers
+The contract the host (the Mac app) is written against. The core answers
 stateless commands (`Service`) and keeps **project sessions** (`texlocal_core::session`): each
 open project's documents, saves, builds and preview.
 
 ## Calling the core
 
-C ABI (`crates/texlocal-ffi/include/texlocal.h`; macOS links the static library by path,
-Windows loads `texlocal_ffi.dll`):
+C ABI (`crates/texlocal-ffi/include/texlocal.h`; the app links the static library by path):
 
 | Function | Use |
 |---|---|
@@ -18,7 +17,6 @@ Windows loads `texlocal_ffi.dll`):
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
 | `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
-| `tl_set_engine(&engine)` | The iPad's TeX: a `tl_engine` of `txp_live_start`, `txp_session_wait` and `txp_run`, copied, set once before `tl_open` (see TeX inside the app). Unused elsewhere. |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
 the call.
@@ -77,7 +75,6 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings`: `{mainFile, engine, shellEscape, stopOnFirstError}`; `ui`: the ui state (below). All a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves quietly, stops build and preview, stops watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
-| `session_rescan` | | null | The folder read again, as when its watcher loses count: the tree, and each open document against the disk. iOS has no watcher (one descriptor a file there), so the iPad sends it as the app comes back to the front. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
 | `session_close_document` | `path` | `{closed}` | Saves first, asking about conflicts; `closed: false` if that failed. |
 | `session_composing` | `path`, `composing` | null | Marked (IME) text: the autosave waits until it ends. |
@@ -213,29 +210,6 @@ An error is `{"error": message, "status": code}`; the message is for the person 
   sends a `document` event with an `error` for each open document (what was typed is saved as
   far as it can be) and is gone: later commands for its number answer 404 “No such session”.
 
-## TeX inside the app
-
-iPadOS starts no processes, so there the core runs TeX through the engine the app links
-(TeXpresso's, `tools/texpresso-ios`) and registers with `tl_set_engine`. Before `tl_open` the app
-sets TEXMFCNF, TEXMFROOT, TEXMFDIST, TEXMFVAR, TEXPRESSO_LSR, TEXPRESSO_CACHE (writable, its
-own) and ICU_DATA in its environment, as `tools/texpresso-ios/README.md` says.
-
-- **`status`**: `available` when an engine is registered and TEXMFDIST holds LaTeX
-  (`tex/latex/base/latex.ltx`); `found` and `texpresso` are then TEXMFDIST, the rest null.
-  `install_tex` and `install_package` are 501: nothing can be added to the tree.
-- **Compile** makes the passes latexmk would: the engine (pdfLaTeX, or XeLaTeX with `-no-pdf`
-  and xdvipdfmx at the end) with the flags latexmk's gets, from the project's folder into the
-  build folder; BibTeX when the `.aux` names a bibliography and makeindex when there's a `.idx`,
-  each again only when its input changed, with the project's folder on BIBINPUTS, BSTINPUTS and
-  INDEXSTYLE; TeX again while its `.aux` changes or its log asks, five passes at most. The Build
-  Log has each program's command line and terminal output after TeX's log. A format is made for
-  each engine on the first build, into `$TEXPRESSO_CACHE/formats`; an app whose engine changes
-  clears that folder. LuaLaTeX is a 400; glossaries, bib2gls and biber aren't run, so their
-  warnings stay in the log; shell escape and latexmkrc files don't apply. Stop and the time limit
-  end a program at its next file access.
-- **Live Preview** runs one session at a time: a start stops another project's (its `live`
-  event says why) and begins once that has ended.
-
 ## Commands that fill small gaps
 
 Service commands (`tl_call`):
@@ -247,7 +221,7 @@ Service commands (`tl_call`):
 | `duplicate_project` | `id`, `name` | the new project, as `list_projects` lists it | A copy of a library project's folder with its settings, leaving out what an export does (the build folder and the history among it) and, as it does, copying a link to a file as that file, named `name` or numbered past it as `create_project` is. Built beside and renamed into place, as a new or imported project is, so the list never shows half a copy. The host suggests the name in its system's words: the Mac “Paper copy”, Windows “Paper - Copy”. An opened folder is 409 with a sentence. |
 | `free_project_name` | | `{name}` | The first free name of the series “Untitled”, “Untitled 2”, … (in any case, where the volume ignores case), creating nothing: for the New Project field to offer. |
 | `create_entry` | `id`, `path`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, at `path`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. |
-| `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`; on Windows `%APPDATA%\TinyTeX`, or `%ProgramData%\TinyTeX` where that path has a space or a letter past ASCII), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
+| `install_tex` | | as `status` | Installs TinyTeX where its own installers do (`~/Library/TinyTeX`), which discovery searches after the other usual places: no password is asked for. The latest release's TinyTeX-1 from GitHub, checked against GitHub's SHA-256, with beamer, synctex and makeindex added. Built beside it and renamed into place, so a failure or quit leaves nothing there. 409 if the folder is there already (it is left alone); 503 offline; 504 for a download that stalls a minute or a step past ten; else 500 with curl's, tar's or tlmgr's words. It takes a minute or more: ask with `tl_call_async`. |
 | `kill_all` | | null | Stops every build and live preview at once, on no session's queue: for a host's quit while calls are in flight, when `tl_close` can't be used. |
 | `locate` | `path` | `{id, path}` or null | The project an absolute path is in (a library project's, else the innermost opened folder's) and the path in it, spelt as the disk spells it; null outside every project. |
 | `open_path` | `path` | `{project, file}` | What File › Open, Finder and a drop on the Dock open, in one call. `project` as `list_projects` lists it, `file` the project path to show or null. A path in a project is that project (a folder inside an opened folder opens as one of its own). A folder opens where it is; a .tex opens its folder where it is, at the .tex, its main file guessed from it if the folder is new to the list. A .tex whose folder is refused (it holds the library, or has more than 20,000 files: both 400 for a folder) comes alone into a new library project, as a .zip's files or any other file do. 404 if not there. |
@@ -305,7 +279,7 @@ A host knows no fix by name. The fixes:
 
 | `title` | `id` | When | Does |
 |---|---|---|---|
-| Install | `install:foo.sty` | A package or class file LaTeX didn't find (“foo.sty”). | Installs the TeX Live package with that file, through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX; on Windows, one installed for all users), the system's own dialog asks first. 400 for a name with a path or a leading dash; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. |
+| Install | `install:foo.sty` | A package or class file LaTeX didn't find (“foo.sty”). | Installs the TeX Live package with that file, through the tlmgr on the PATH builds use: the package whose file has that very name, at the shortest path of several. Where only an administrator may change TeX Live (MacTeX), the system's own dialog asks first. 400 for a name with a path or a leading dash; 404 when no package has it; 409 for a TeX Live older than its repository; 501 without tlmgr (with MiKTeX, the message points to its on-the-fly installs); 503 offline; 504 after ten minutes; else 500 with tlmgr's words. |
 | Add `\usepackage{name}` | `package:name` | An undefined command or environment that a package the catalogue knows defines. | `\usepackage{name}` on a line of its own in the main file, after the line its last `\usepackage`'s argument ends on, else `\documentclass`'s; nothing when the main file has neither or loads the package already (`\usepackage` or `\RequirePackage`, not in a comment). 409 as for `session_replace`. |
 | Use XeLaTeX | `engine:xelatex` | A Unicode character pdfLaTeX's fonts lack, or a package that needs XeTeX or LuaTeX (fontspec, unicode-math, polyglossia). | The engine, as `session_set_settings` sets it. |
 | Turn On Shell Escape | `shellEscape` | A build that needed shell escape, except where TeX runs in the app, whose message says it isn't available; `confirm` says it lets the document run programs, for documents the user trusts. | Shell escape, as `session_set_settings` sets it. |
@@ -378,7 +352,7 @@ editor's thread.
   automatic build. Nothing is saved while a conflict is open or after Cancel (`held`) until a
   save is asked for (which asks again), while a reload is pending, or under a path being deleted.
 - **Own writes**: each save keeps the file's stamp; a watcher change whose stat still gives it
-  is the session's own. Volumes with whole-second dates (and, rarely, Windows' coarse clock)
+  is the session's own. Volumes with whole-second dates
   can't tell; then the text is compared.
 - **Watcher**: changes are taken together for 250 ms. The tree is read again when a listed
   folder gained, lost or renamed an entry (a save renaming over a listed file doesn't count;

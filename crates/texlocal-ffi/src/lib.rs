@@ -1,4 +1,4 @@
-//! The C ABI the Mac app links and the Windows app loads; `include/texlocal.h` is its
+//! The C ABI the Mac app links; `include/texlocal.h` is its
 //! contract.
 
 use std::borrow::Cow;
@@ -50,13 +50,6 @@ fn c_json(text: String) -> CString {
 /// `ptr` is null or a NUL-terminated string valid for the call.
 unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
     (!ptr.is_null()).then(|| unsafe { CStr::from_ptr(ptr) }.to_str().ok())?
-}
-
-/// # Safety
-/// `engine` points to a `tl_engine` whose functions are the in-process engine's.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_set_engine(engine: *const texlocal_core::inprocess::Engine) {
-    texlocal_core::inprocess::set_engine(unsafe { *engine });
 }
 
 /// # Safety

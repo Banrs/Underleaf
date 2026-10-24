@@ -30,8 +30,7 @@ pub struct TreeNode {
 
 pub(crate) struct Entry {
     pub path: PathBuf,
-    /// Its path from the walk's root, in forward slashes on Windows too, where no name holds a
-    /// backslash.
+    /// Its path from the walk's root.
     pub rel: String,
     pub name: String,
     pub dir: bool,
@@ -64,12 +63,11 @@ fn entries(root: &Path, dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<E
             continue;
         };
         let path = entry.path();
-        let rel = path.strip_prefix(root).unwrap().to_string_lossy();
-        let rel = if cfg!(windows) {
-            rel.replace('\\', "/")
-        } else {
-            rel.into_owned()
-        };
+        let rel = path
+            .strip_prefix(root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };

@@ -1,6 +1,6 @@
 //! The SyncTeX file TeX writes beside its PDF, read and searched as TeX Live's synctex program
-//! does (synctex_parser.c, version 1.21), so the answers are the program's without running it,
-//! which iPadOS can't. A PDF form's content shows on no page here, and content without the
+//! does (synctex_parser.c, version 1.21), so the answers are the program's without running it.
+//! A PDF form's content shows on no page here, and content without the
 //! Postamble a finished run writes (Live Preview's while TeX hasn't reached the end) is used
 //! as far as it goes, where the program answers nothing.
 

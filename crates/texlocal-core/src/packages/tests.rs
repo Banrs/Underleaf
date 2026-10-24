@@ -77,7 +77,6 @@ async fn the_package_with_the_file_itself_is_installed_and_tlmgrs_failures_are_n
     assert_eq!(installed(&dir, "x.sty").await, Err(501));
 }
 
-#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn a_tree_only_an_administrator_may_change_is_installed_through_the_systems_dialog() {
     let refused = "You don't have permission to change the installation in any way,\nexit 2";

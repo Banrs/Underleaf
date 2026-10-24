@@ -2,10 +2,8 @@
  * MIT License
  *
  * TeXpresso without a window, for an editor that shows the pages in its own PDF
- * view: the TEXPRESSO_PDF_OUTPUT mode of Underleaf's patches to TeXpresso. The
- * same file goes into both: the Mac's program (driver.c) and the iPad's
- * in-process engine, which an app that can't start processes runs on a thread of
- * its own (embed.c). It needs no SDL; each engine_tex.c gives it its engine.
+ * view: the TEXPRESSO_PDF_OUTPUT mode of Underleaf's patches to TeXpresso, run by
+ * the program's driver.c. It needs no SDL; engine_tex.c gives it its engine.
  *
  * The editor says which pages it shows (["view", first, last]). A change is
  * typeset as far as the last of them, and each page in view whose content

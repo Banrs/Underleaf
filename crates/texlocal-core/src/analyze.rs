@@ -634,7 +634,7 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     nest(outline, &mut 0, None, &mut HashMap::new())
 }
 
-/// The heading a line of a file is under: the file's last at or above the line, matched by name as the analysis matches files (case folded, as on Mac and Windows).
+/// The heading a line of a file is under: the file's last at or above the line, matched by name as the analysis matches files (case folded, as on the Mac).
 pub fn current_heading(outline: &[Heading], file: &str, line: usize) -> Option<usize> {
     let file = paths::fold_case(file);
     outline.iter().rposition(|h| {

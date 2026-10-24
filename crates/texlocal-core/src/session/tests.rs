@@ -222,7 +222,7 @@ impl Rig {
     async fn watching(auto_compile: bool, watch: bool) -> Self {
         let data = tempfile::tempdir().unwrap();
         crate::projects::create_project(data.path(), "P", "blank", None).unwrap();
-        let root = dunce::canonicalize(data.path().join("P")).unwrap();
+        let root = std::fs::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
         // As if `status` had found TeX, which automatic builds wait for.
@@ -774,7 +774,6 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
 }
 
 /// A folder that can't be read for now, as another app's lock leaves it, is no deletion.
-#[cfg(unix)]
 #[tokio::test(start_paused = true)]
 async fn a_file_that_cant_be_read_for_now_shows_not_saved_and_isnt_taken_as_gone() {
     use std::os::unix::fs::PermissionsExt;
@@ -1383,21 +1382,6 @@ async fn the_folders_watcher_tells_another_apps_changes() {
     assert_eq!(reload.expect("reloaded")["text"], "theirs");
     assert!(until_event(&rig.seen, |e| e["type"] == "tree").is_some());
     rig.sessions.close_all().await;
-}
-
-/// Where nothing watches (iOS), a rescan finds what another app did.
-#[tokio::test(start_paused = true)]
-async fn a_rescan_tells_another_apps_changes_unwatched() {
-    let mut rig = Rig::new(false).await;
-    rig.open("main.tex").await;
-    fs::write(rig.root.join("main.tex"), "theirs").unwrap();
-    fs::write(rig.root.join("new.tex"), "").unwrap();
-    rig.ok("rescan", json!({})).await;
-    wait(300).await;
-    let events = rig.events().await;
-    let reload = events.iter().find(|e| e["type"] == "document_reload");
-    assert_eq!(reload.expect("reloaded")["text"], "theirs");
-    assert!(events.iter().any(|e| e["type"] == "tree"));
 }
 
 #[tokio::test]

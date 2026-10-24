@@ -255,10 +255,7 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
 /// What a message means and the fix it offers; `command` is the one it names undefined.
 fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Option<Fix>) {
     if short == SHELL_ESCAPE {
-        return (
-            None,
-            (!crate::inprocess::IN_PROCESS).then_some(Fix::ShellEscape),
-        );
+        return (None, Some(Fix::ShellEscape));
     }
     let Some((found, offer, explain)) = EXPLAINED
         .iter()
@@ -269,10 +266,7 @@ fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Optio
     let named = || found.get(1).map(|name| name.as_str().to_owned());
     let fix = match offer {
         Offer::Nothing => None,
-        // TeX inside the app (iPadOS) takes no installs.
-        Offer::Install => named()
-            .filter(|_| !crate::inprocess::IN_PROCESS)
-            .map(Fix::Install),
+        Offer::Install => named().map(Fix::Install),
         Offer::Package => (command.map(str::to_owned).or_else(named))
             .and_then(|name| CATALOG.packages.get(&name).cloned())
             .map(Fix::AddPackage),
@@ -630,12 +624,7 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     items
 }
 
-pub(crate) const SHELL_ESCAPE: &str = if crate::inprocess::IN_PROCESS {
-    // TeX inside the app (iPadOS) can start no program, whatever the project says.
-    "A package here runs programs as it builds, which needs Shell Escape, and Shell Escape isn't available on this device."
-} else {
-    "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project."
-};
+pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
 
 /// A failed build's error that asks for shell escape (minted's "invoke LaTeX with the
 /// -shell-escape flag") says where to allow it; without one, a program TeX refused
