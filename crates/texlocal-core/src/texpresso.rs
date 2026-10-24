@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use ropey::Rope;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -30,6 +29,9 @@ const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
+const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh (docs/texpresso.md).";
+/// The patch's protocol, which its first message names.
+const LIVE_VERSION: u64 = 2;
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
 #[derive(Debug)]
@@ -62,12 +64,12 @@ pub enum LiveEvent {
     },
     /// The whole document, complete on disk, its SyncTeX beside it. `run`: how the run ended
     /// (`complete`, `stopped`, or `partial` while still typeset). `changed`: first/last page
-    /// ranges that differ from before. Both None from a build that doesn't say.
+    /// ranges that differ from before.
     Document {
         path: String,
         pages: u32,
-        run: Option<String>,
-        changed: Option<Vec<[u32; 2]>>,
+        run: String,
+        changed: Vec<[u32; 2]>,
     },
     Done(String),
     /// TeXpresso has read every change sent before the mark of this number.
@@ -79,9 +81,8 @@ pub enum LiveEvent {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of `project` for the session `owner`, in place of any the owner had. A
-    /// patched build writes the document for the `pane` instead of opening a window; upstream
-    /// opens its window all the same.
+    /// A preview of `project` for the session `owner`, in place of any the owner had, written
+    /// for the `pane` by a TeXpresso with Underleaf's patch.
     fn start(
         &self,
         owner: u64,
@@ -162,25 +163,29 @@ impl Output {
     }
 }
 
-/// The char `units` UTF-16 units into `text`, unless that is inside a character.
-fn char_at(text: &Rope, units: usize) -> Option<usize> {
-    let at = text.try_utf16_cu_to_char(units).ok()?;
-    (text.char_to_utf16_cu(at) == units).then_some(at)
-}
-
-fn byte_offset(text: &Rope, units: usize) -> Option<usize> {
-    Some(text.char_to_byte(char_at(text, units)?))
+/// The byte `units` UTF-16 units into `text`, unless that is inside a character.
+fn byte_offset(text: &str, units: usize) -> Option<usize> {
+    let mut counted = 0;
+    for (at, char) in text.char_indices() {
+        if counted >= units {
+            return (counted == units).then_some(at);
+        }
+        counted += char.len_utf16();
+    }
+    (counted == units).then_some(text.len())
 }
 
 /// Replaces `remove` UTF-16 units at `start` with `inserted`; the byte offset and length
 /// it replaced, as TeXpresso counts them.
-fn splice(text: &mut Rope, start: usize, remove: usize, inserted: &str) -> Option<(usize, usize)> {
-    let from = char_at(text, start)?;
-    let to = char_at(text, start.checked_add(remove)?)?;
-    let offset = text.char_to_byte(from);
-    let removed = text.char_to_byte(to) - offset;
-    text.remove(from..to);
-    text.insert(from, inserted);
+fn splice(
+    text: &mut String,
+    start: usize,
+    remove: usize,
+    inserted: &str,
+) -> Option<(usize, usize)> {
+    let offset = byte_offset(text, start)?;
+    let removed = byte_offset(&text[offset..], remove)?;
+    text.replace_range(offset..offset + removed, inserted);
     Some((offset, removed))
 }
 
@@ -196,6 +201,8 @@ struct State {
     link: Option<Link>,
     output: Output,
     log: Output,
+    /// The patch's handshake has come.
+    live: bool,
     protocol_seen: bool,
     stderr: Output,
     error: Option<String>,
@@ -205,7 +212,7 @@ struct Session {
     root: PathBuf,
     pdf: PathBuf,
     state: Mutex<State>,
-    files: Mutex<HashMap<String, Rope>>,
+    files: Mutex<HashMap<String, String>>,
     sink: Sink,
 }
 
@@ -292,9 +299,7 @@ impl Manager {
     }
     /// A file's text as the owner's preview typesets it: the editor's, saved or not.
     pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
-        lock(&self.owned(owner).ok()?.files)
-            .get(rel)
-            .map(String::from)
+        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
     }
     pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
         let pdf = self.owned(owner)?.pdf.clone();
@@ -330,7 +335,7 @@ impl Manager {
         owner: u64,
         root: PathBuf,
         pdf: PathBuf,
-        buffers: HashMap<String, Rope>,
+        buffers: HashMap<String, String>,
         sink: Sink,
         tree: Tree,
     ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
@@ -362,12 +367,16 @@ impl Manager {
 /// The editor's files as TeXpresso is first told them and as the session keeps them, then the
 /// pages in view and the caret. TeXpresso's idle reruns stay off: each restarts TeX from nothing
 /// after a pause in typing and shows no page until it is over.
-fn opening(root: &Path, files: &[FileBuffer], pane: &Pane) -> (HashMap<String, Rope>, Vec<Value>) {
+fn opening(
+    root: &Path,
+    files: &[FileBuffer],
+    pane: &Pane,
+) -> (HashMap<String, String>, Vec<Value>) {
     let mut buffers = HashMap::new();
     let mut opening = Vec::new();
     for file in files {
         opening.push(json!(["open", root.join(&file.path), file.text]));
-        buffers.insert(file.path.clone(), Rope::from_str(&file.text));
+        buffers.insert(file.path.clone(), file.text.clone());
     }
     let view = pane
         .view
@@ -475,13 +484,13 @@ impl Preview for Manager {
         }
         let mut files = lock(&session.files);
         let path = session.root.join(rel);
-        let message = match files.get(rel).map(|old| delta(&String::from(old), text)) {
+        let message = match files.get(rel).map(|old| delta(old, text)) {
             Some((_, 0, "")) => return Ok(()),
             Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
             None => json!(["open", path, text]),
         };
         session.send(&[message]);
-        files.insert(rel.to_owned(), Rope::from_str(text));
+        files.insert(rel.to_owned(), text.to_owned());
         Ok(())
     }
     fn edit(
@@ -647,7 +656,7 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
         let count = chunk.len();
         if protocol {
             let mut rest = chunk;
-            while let Some(end) = memchr::memchr(b'\n', rest) {
+            while let Some(end) = rest.iter().position(|&byte| byte == b'\n') {
                 keep(&mut pending, &rest[..end]);
                 if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
                     apply_message(&session, &message);
@@ -669,15 +678,19 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
 fn apply_message(session: &Session, message: &Value) {
     let verb = message[0].as_str().unwrap_or_default();
     let number = |index: usize| message[index].as_u64().map(|n| n as u32);
-    let event = match verb {
-        "reset-sync" => {
-            let files = lock(&session.files);
-            let messages: Vec<_> = (files.iter())
-                .map(|(rel, text)| json!(["open", session.root.join(rel), String::from(text)]))
-                .collect();
-            session.send(&messages);
+    let live = {
+        let mut state = lock(&session.state);
+        if !state.live && verb == "live" && message[1] == LIVE_VERSION {
+            (state.live, state.protocol_seen) = (true, true);
             return;
         }
+        state.live
+    };
+    // Upstream's first message under -json is TeX's output or log.
+    if !live {
+        return session.stop(Some(UNPATCHED.into()));
+    }
+    let event = match verb {
         "page" => {
             let folder = session.pdf.parent();
             let path = (message[2].as_str()).filter(|path| Path::new(path).parent() == folder);
@@ -690,18 +703,18 @@ fn apply_message(session: &Session, message: &Value) {
             }
         }
         "pdf" => {
-            let changed = message[4].as_array().map(|ranges| {
-                let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
-                ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect()
-            });
+            let (Some(run), Some(ranges)) = (message[3].as_str(), message[4].as_array()) else {
+                return;
+            };
+            let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
             LiveEvent::Document {
                 path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
-                run: message[3].as_str().map(str::to_owned),
-                changed,
+                run: run.to_owned(),
+                changed: ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect(),
             }
         }
-        "done" => match message[2].as_str() {
+        "done" => match message[1].as_str() {
             Some(run) => LiveEvent::Done(run.to_owned()),
             None => return,
         },
@@ -781,16 +794,15 @@ mod tests {
             ("a😀b", 0, 5, "", None),
         ];
         for (before, start, remove, inserted, changed) in cases {
-            let mut text = Rope::from_str(before);
+            let mut text = before.to_owned();
             assert_eq!(splice(&mut text, start, remove, inserted), changed);
             let mut after = before.to_owned();
             if let Some((from, removed)) = changed {
                 after.replace_range(from..from + removed, inserted);
             }
-            assert_eq!(String::from(&text), after);
+            assert_eq!(text, after);
         }
-        assert_eq!(byte_offset(&Rope::from_str("a😀b"), 2), None);
-        let long = Rope::from_str(&long);
+        assert_eq!(byte_offset("a😀b", 2), None);
         assert_eq!(byte_offset(&long, 6 * 800 + 4), Some(9 * 800 + 7));
     }
 
@@ -805,7 +817,7 @@ mod tests {
         });
         let long = format!(r#"["append","out",3,"{}"]"#, "x".repeat(MAX_MESSAGE));
         let text = format!(
-            "[\"append\",\"out\",0,\"rea\"]\n{long}\n[\"append\",\"out\",3,\"dy\"]\n[\"append\",\"log\",0,\"cut"
+            "[\"live\",2]\n[\"append\",\"out\",0,\"rea\"]\n{long}\n[\"append\",\"out\",3,\"dy\"]\n[\"append\",\"log\",0,\"cut"
         );
         read_output(text.as_bytes(), Arc::clone(&session), true).await;
         let status = session.status();
@@ -815,7 +827,7 @@ mod tests {
     mod stub {
         use super::*;
 
-        const OWNER: u64 = 1;
+        pub(super) const OWNER: u64 = 1;
         const SOON: Duration = Duration::from_secs(3);
 
         /// TeXpresso as a build with Underleaf's patch speaks, beside an engine it starts. It
@@ -827,7 +839,7 @@ here=${0%/bin/texpresso}
 echo $! > "$here/engine.pid"
 pages=${TEXPRESSO_PDF_OUTPUT%/*}
 n=0
-printf '["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]],0]\n' "$TEXPRESSO_PDF_OUTPUT"
+printf '["live",2]\n["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]]]\n' "$TEXPRESSO_PDF_OUTPUT"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$here/commands"
   case "$line" in
@@ -836,10 +848,10 @@ while IFS= read -r line; do
     *TEX_ERROR*) printf '["append","log",0,"! Undefined control sequence."]\n';;
     '["mark",'*) printf '["synced",%s\n' "${line#*,}";;
     '["change",'*) n=$((n + 1))
-      printf '["page",1,"%s/page-1-%s.pdf",0]\n' "$pages" "$n";;
+      printf '["page",1,"%s/page-1-%s.pdf"]\n' "$pages" "$n";;
     *rerun-once*)
-      printf '["pdf","%s",4,"complete",[[1,1],[3,3]],0]\n' "$TEXPRESSO_PDF_OUTPUT"
-      printf '["done",4,"complete"]\n';;
+      printf '["pdf","%s",4,"complete",[[1,1],[3,3]]]\n' "$TEXPRESSO_PDF_OUTPUT"
+      printf '["done","complete"]\n';;
   esac
 done
 "#;
@@ -898,7 +910,7 @@ done
         }
 
         /// A start for `OWNER`, with `main.tex` open in the editor at `text` if given.
-        fn start(
+        pub(super) fn start(
             manager: &Manager,
             root: &Path,
             path_env: &str,
@@ -1007,12 +1019,26 @@ done
             until(|| unsafe { libc::kill(engine, 0) == -1 }).await;
         }
 
+        /// Upstream's first message under -json is TeX's output.
+        #[tokio::test]
+        async fn a_texpresso_without_the_patch_fails_saying_how_to_build_it() {
+            let (tmp, root, path_env) = setup();
+            let upstream =
+                "#!/bin/sh\nprintf '[\"append\",\"out\",0,\"x\"]\\n'\nexec /bin/sleep 300\n";
+            fs::write(tmp.path().join("bin/texpresso"), upstream).unwrap();
+            let manager = Manager::default();
+            let (_, mut events) = start(&manager, &root, &path_env, None, &Pane::default());
+            let ended = next(&mut events, |e| matches!(e, LiveEvent::Ended(_))).await;
+            assert_eq!(ended, LiveEvent::Ended(Some(UNPATCHED.into())));
+        }
+
         #[tokio::test]
         async fn the_log_follows_backtracking_and_has_the_programs_own_output_once_it_fails() {
             let (_tmp, root, path_env) = setup();
             let manager = Manager::default();
             begin(&manager, &root, &path_env);
             let session = manager.owned(OWNER).unwrap();
+            until(|| lock(&session.state).live).await;
             // Backtracking drops TeX's log, and the process's historical stderr is
             // not put in its place.
             let diagnostic = "Undefined control sequence";
@@ -1090,10 +1116,7 @@ done
             else {
                 panic!("{first:?}")
             };
-            assert_eq!(
-                (run.as_deref(), changed),
-                (Some("partial"), Some(vec![[0, 2]]))
-            );
+            assert_eq!((run.as_str(), changed), ("partial", vec![[0, 2]]));
             assert!(manager.live_pdf(OWNER).is_err(), "no SyncTeX yet");
             let folder = PathBuf::from(&path).parent().unwrap().to_owned();
             for n in 1..=2 {
@@ -1103,13 +1126,13 @@ done
                 let path = path.to_string_lossy().into_owned();
                 assert_eq!(page, LiveEvent::Page { page: 1, path });
             }
-            apply_message(&session, &json!(["page", 0, "/etc/passwd", 0]));
+            apply_message(&session, &json!(["page", 0, "/etc/passwd"]));
             session.send(&[json!(["rerun-once"])]);
             let whole = LiveEvent::Document {
                 path,
                 pages: 4,
-                run: Some("complete".into()),
-                changed: Some(vec![[1, 1], [3, 3]]),
+                run: "complete".into(),
+                changed: vec![[1, 1], [3, 3]],
             };
             assert_eq!(next(&mut events, shown).await, whole);
             let done = next(&mut events, shown).await;
@@ -1119,5 +1142,63 @@ done
             manager.stop(&root).unwrap();
             assert_eq!(next(&mut events, shown).await, LiveEvent::Ended(None));
         }
+    }
+
+    /// With TeX and the patched TeXpresso: `TEXLOCAL_TEXPRESSO=… cargo test -p texlocal-core
+    /// finishing_pass -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs TeX and the patched TeXpresso"]
+    async fn a_finishing_pass_that_stops_on_an_error_leaves_the_pages_shown_and_typing_goes_on() {
+        // The pass, which reads the label, stops on its second page with 100 errors.
+        let main = r"\documentclass{article}
+\begin{document}
+Section~\ref{a}.
+\newpage
+\makeatletter\@ifundefined{r@a}{}{\loop\undefined\iftrue\repeat}\makeatother
+\section{A}\label{a}
+\end{document}
+";
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("main.tex"), main).unwrap();
+        let manager = Manager::default();
+        let path = std::env::var("PATH").unwrap();
+        let (_, mut events) =
+            stub::start(&manager, tmp.path(), &path, Some(main), &Pane::default());
+        // What shows until the next page or end of a run.
+        let mut until_shown = async || {
+            let mut shown = Vec::new();
+            let read = async {
+                while let Some(event) = events.recv().await {
+                    let last = matches!(event, LiveEvent::Done(_) | LiveEvent::Page { .. });
+                    if event != LiveEvent::Log {
+                        shown.push(event);
+                    }
+                    if last {
+                        break;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(60), read)
+                .await
+                .expect("an event");
+            shown
+        };
+        let first = until_shown().await;
+        assert_eq!(first.last(), Some(&LiveEvent::Done("complete".into())));
+        // The first run's whole document, then the end of the pass, with no page of the pass's.
+        let pass = until_shown().await;
+        assert_eq!(
+            pass.last(),
+            Some(&LiveEvent::Done("complete".into())),
+            "{pass:?}"
+        );
+        let at = main.find("Section").unwrap();
+        manager.edit(stub::OWNER, "main.tex", at, 0, "X").unwrap();
+        let typed = until_shown().await;
+        assert!(
+            matches!(typed.last(), Some(LiveEvent::Page { page: 0, .. })),
+            "{typed:?}"
+        );
+        manager.stop(tmp.path()).unwrap();
     }
 }

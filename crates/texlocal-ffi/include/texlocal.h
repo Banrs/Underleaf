@@ -16,35 +16,25 @@ extern "C" {
 
 typedef struct TlHandle TlHandle;
 
-/* The service over the library folder data_dir, a UTF-8 path; NULL for a NULL
- * data_dir, or on failure. */
-TlHandle *_Nullable tl_open(const char *_Nullable data_dir);
-
-/* Blocking; call off the UI thread. Returns {"ok": value} or {"error": message,
- * "status": code}. Free with tl_free. */
-char *tl_call(const TlHandle *handle, const char *command, const char *_Nullable args_json);
-
-void tl_free(char *_Nullable text);
-
 /* Called with the pointer it was given and a JSON text valid only during the
  * call, on a core thread: hop to the UI thread before touching the UI. */
 typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
 
-/* tl_call without blocking: done gets the envelope tl_call would return; a NULL
- * done runs the command for its effect alone. A session's commands (every
- * session_* but session_open) are queued before this returns, so it takes them
- * in the order sent. */
+/* The service over the library folder data_dir, a UTF-8 path, telling listener
+ * the sessions' events, one JSON object at a time, in order, on one core
+ * thread. NULL for a NULL data_dir or listener, or on failure. The handle
+ * lives as long as the app: kill_all stops builds and live previews as it
+ * quits. */
+TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable listener, void *_Nullable ctx);
+
+void tl_free(char *_Nullable text);
+
+/* A command, answered on a core thread: done gets {"ok": value} or {"error":
+ * message, "status": code}; a NULL done runs the command for its effect alone.
+ * A session's commands (every session_* but session_open) are queued before
+ * this returns, so it takes them in the order sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
                    TlCallback _Nullable done, void *_Nullable ctx);
-
-/* The sessions' events, one JSON object at a time, in order, on one core
- * thread. NULL removes the listener, returning once no call to the previous
- * one is running. */
-void tl_set_listener(const TlHandle *handle, TlCallback _Nullable listener, void *_Nullable ctx);
-
-/* Closes the sessions, saving what they can, and stops compiles and live
- * previews. No call may be in flight; no listener call follows. */
-void tl_close(TlHandle *_Nullable handle);
 
 /* The source editor's view of a file's text. Calls on one TlSource must not
  * overlap, queries included. Offsets and lengths count UTF-16 units; lines
@@ -99,18 +89,14 @@ uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint3
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
 /* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
- * or "version" for a session's document, with a JSON object of arguments. The
- * result's JSON, or NULL for an unknown command or arguments; free it with
- * tl_free. */
+ * or "version" (null for a source of the host's own), with a JSON object of
+ * arguments. The result's JSON, or NULL for an unknown command or arguments;
+ * free it with tl_free. */
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command that needs no source, on any thread, answering as tl_source_call:
  * "themes", "theme_colors", "legible", "menus", "heading_styles", "drop_text"
- * (docs/core-api.md), and maths as SVG: "math_svg" {"tex", "display", "size"
- * (points, default 13), "color" ([r, g, b, a], 0-1, default black)} and
- * "glyph_svg" {"command", "size" (19), "side" (24), "color"} answer {"svg",
- * "width", "height"} in points, the SVG only <path> and <rect>, or
- * {"error": why}. */
+ * and "math_svg" (docs/core-api.md). */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 
 void tl_source_free(TlSource *_Nullable source);

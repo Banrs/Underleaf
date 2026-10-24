@@ -231,7 +231,7 @@ final class ProjectFlowTests {
         try """
         #!/bin/sh
         cp '\(pdf.path)' "$TEXPRESSO_PDF_OUTPUT"
-        printf '["pdf","%s",1]\\n' "$TEXPRESSO_PDF_OUTPUT"
+        printf '["live",2]\\n["pdf","%s",1,"complete",[[0,0]]]\\n' "$TEXPRESSO_PDF_OUTPUT"
         exec cat > /dev/null
         """.write(to: script, atomically: true, encoding: .utf8)
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
@@ -289,7 +289,7 @@ final class ProjectFlowTests {
     @Test func theOutlineReadsTheInputs() async throws {
         let project = try await opened("\\section{Intro}\nOne two\n\\include{chapters/a}",
                                        with: ["chapters/a.tex": "\\section{A}\nthree"]).project
-        #expect(project.initialLoadComplete && project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
+        try await waitUntil { project.outline.map(\.file) == ["main.tex", "chapters/a.tex"] }
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingCommand == "section")
@@ -540,6 +540,25 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A selection made while a figure is copied in isn't replaced: the figure goes where it was asked for, or after an
+    /// edit meanwhile, at the caret.
+    @Test func aFigureCopiedInReplacesNoSelectionMadeMeanwhile() async throws {
+        let text = try await opened("abc def").project.editor.textView
+        text.selection = .caret(0)
+        await text.insertFigure(.copy {
+            text.selection = NSRange(location: 4, length: 3)
+            return "F"
+        })
+        text.selection = .caret(0)
+        await text.insertFigure(.copy {
+            text.apply([TextEdit(.caret(text.length), "!")], named: "Typing")
+            text.selection = NSRange(location: 2, length: 3)
+            return "G"
+        })
+        #expect(text.string == "FaGbc def!")
+        await app.close()
+    }
+
     /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
     @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
         let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])
@@ -601,5 +620,14 @@ final class ProjectFlowTests {
         await project.dropFiles([outside], into: "parts")
         #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
         await app.close()
+    }
+}
+
+struct FileTreeTests {
+    @Test func aFolderListsAsFinderDoes() {
+        let node = { (name: String, type: TreeNode.Entry) in TreeNode(type: type, name: name, path: name, children: type == .dir ? [] : nil) }
+        let tree = FileTree(id: "P")
+        tree.show(["ch10.tex", "ch2.tex", "B.tex", "c.tex"].map { node($0, .file) } + [node("figs", .dir), node("Appendix", .dir)])
+        #expect(tree.nodes.map(\.name) == ["Appendix", "figs", "B.tex", "c.tex", "ch2.tex", "ch10.tex"])
     }
 }

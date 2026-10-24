@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 @Observable
@@ -39,9 +40,20 @@ final class FileTree {
     }
 
     private func take(_ files: [TreeNode]) {
+        let files = Self.ordered(files)
         guard files != nodes, !closed else { return }
         nodes = files
         onChange()
+    }
+
+    /// As Finder lists a folder (`localizedStandardCompare`): folders first, then names in the user's language, numbers by value.
+    private static func ordered(_ nodes: [TreeNode]) -> [TreeNode] {
+        nodes.map { node in
+            var node = node
+            node.children = node.children.map(ordered)
+            return node
+        }
+        .sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     func close() { closed = true }

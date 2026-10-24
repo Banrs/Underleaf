@@ -35,9 +35,7 @@ final class Core {
     private init() { Task { for await (session, event) in Self.events.stream { observers[session]?(event) } } }
 
     private static func open() -> OpaquePointer? {
-        guard let handle = libraryFolder.withUnsafeFileSystemRepresentation({ tl_open($0) }) else { return nil }
-        listen(handle)
-        return handle
+        libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0, listener, nil) }
     }
 
     func reopen() { if handle == nil { handle = Self.open() } }
@@ -135,14 +133,6 @@ final class Core {
         }
     }
 
-    /// Blocking, for an answer the interface needs at once (a drag over the window asks where a file is); only for quick commands.
-    func now<T: Decodable>(_ command: String, _ args: [String: any Sendable], as: T.Type) throws -> T {
-        let (handle, json) = try prepared(command, args)
-        let out = command.withCString { c in json.withCString { j in tl_call(handle, c, j) } }
-        defer { tl_free(out) }
-        return try Self.decoded(command, Data(bytes: out, count: strlen(out)))
-    }
-
     /// The session's open document at `path`, for the editor; nil if it isn't open.
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
@@ -152,16 +142,14 @@ final class Core {
 
     /// The text, valid only during the call, is decoded on the core's thread, and Live Preview's PDF read there, so its
     /// page reaches the main actor ready to draw. Nonisolated for the C callback, as `start`'s.
-    private nonisolated static func listen(_ handle: OpaquePointer) {
-        tl_set_listener(handle, { _, json in
-            let event = Data(bytes: json, count: strlen(json))
-            do {
-                let read = try JSONDecoder().decode(EventRead.self, from: event)
-                if let said = read.event { Core.events.continuation.yield((read.session, said)) }
-            } catch {
-                Core.log.error("An event the app can't read: \(String(describing: error), privacy: .public)")
-            }
-        }, nil)
+    private nonisolated static let listener: TlCallback = { _, json in
+        let event = Data(bytes: json, count: strlen(json))
+        do {
+            let read = try JSONDecoder().decode(EventRead.self, from: event)
+            if let said = read.event { Core.events.continuation.yield((read.session, said)) }
+        } catch {
+            Core.log.error("An event the app can't read: \(String(describing: error), privacy: .public)")
+        }
     }
 
     private var observers: [UInt64: (SessionEvent) -> Void] = [:]

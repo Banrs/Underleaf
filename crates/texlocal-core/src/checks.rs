@@ -5,7 +5,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::analyze::{Facts, INPUT_DEPTH, Input, Named, Place};
+use crate::analyze::{Facts, Heading, INPUT_DEPTH, Input, Named, Place};
 use crate::logparse::{LogItem, Severity};
 use crate::syntax::scan::{self, Group};
 use crate::syntax::{SymbolKind, Symbols, Text};
@@ -149,19 +149,37 @@ fn read<'a>(facts: &'a Facts, names: &'a [Named]) -> impl Iterator<Item = &'a Na
         .filter(|n| facts.end.is_none_or(|end| n.place < end))
 }
 
-/// The files the main file reaches, as TeX reads them.
-struct Walk<'a> {
+/// The files a file reaches, as TeX reads them.
+pub(crate) struct Walk<'a> {
     symbols: &'a Symbols,
     /// Each once, in the order TeX first reads it.
-    files: Vec<(&'a str, &'a Facts)>,
+    pub files: Vec<(&'a str, &'a Facts)>,
     /// In the order TeX reads them, through the inputs.
     labels: Vec<(&'a str, &'a Named)>,
     /// So too, less each environment one file leaves open that a later one ends.
     slips: Vec<(&'a str, &'a Slip)>,
     missing: Vec<(&'a str, &'a Input)>,
+    /// The headings so too, each with its file and its words up to the next heading read.
+    pub outline: Vec<Heading>,
+    pub words: usize,
 }
 
 impl<'a> Walk<'a> {
+    /// From `file`, which may be the project's main file.
+    pub fn from(symbols: &'a Symbols, file: &str) -> Self {
+        let mut walk = Self {
+            symbols,
+            files: Vec::new(),
+            labels: Vec::new(),
+            slips: Vec::new(),
+            missing: Vec::new(),
+            outline: Vec::new(),
+            words: 0,
+        };
+        walk.read(file, "", 0);
+        walk
+    }
+
     fn read(&mut self, file: &str, within: &str, depth: usize) {
         let symbols = self.symbols;
         if depth == INPUT_DEPTH {
@@ -177,6 +195,20 @@ impl<'a> Walk<'a> {
         self.files.push((file, facts));
         let mut labels = read(facts, &facts.labels).peekable();
         let mut slips = facts.slips.iter().peekable();
+        let headings = &facts.headings;
+        let read_headings = headings
+            .iter()
+            .take_while(|h| facts.end.is_none_or(|end| h.line as u32 <= end.line))
+            .count();
+        let placed = |heading: &Heading| Heading {
+            file: Some(file.to_owned()),
+            ..heading.clone()
+        };
+        // Words before a file's first heading, or after an input, are the last heading's read.
+        let headed: usize = headings.iter().map(|h| h.words).sum();
+        let after_inputs: usize = facts.inputs.iter().map(|input| input.words).sum();
+        self.credit(facts.words - headed - after_inputs);
+        let mut at = 0;
         let inputs = facts.inputs.iter();
         for input in inputs.filter(|i| facts.end.is_none_or(|end| i.place < end)) {
             while let Some(label) = labels.next_if(|label| label.place < input.place) {
@@ -185,13 +217,26 @@ impl<'a> Walk<'a> {
             while let Some(slip) = slips.next_if(|slip| slip.place < input.place) {
                 self.slip(file, slip);
             }
+            let before = input.before.min(read_headings);
+            self.outline.extend(headings[at..before].iter().map(placed));
+            at = before;
             match input.resolve(file, within, |rel| symbols.spelt(rel)) {
                 Some((input, within)) => self.read(&input, &within, depth + 1),
                 None => self.missing.push((file, input)),
             }
+            self.credit(input.words);
         }
+        self.outline
+            .extend(headings[at..read_headings].iter().map(placed));
+        self.words += facts.words;
         self.labels.extend(labels.map(|label| (file, label)));
         slips.for_each(|slip| self.slip(file, slip));
+    }
+
+    fn credit(&mut self, words: usize) {
+        if let Some(last) = self.outline.last_mut() {
+            last.words += words;
+        }
     }
 
     fn slip(&mut self, file: &'a str, slip: &'a Slip) {
@@ -231,26 +276,13 @@ fn twice<'a>(defined: impl IntoIterator<Item = (&'a str, &'a Named)>, noun: &str
     twice
 }
 
-/// What `found` finds of the file a bibliography's name is: BibTeX appends .bib to a name;
-/// biblatex takes it as written.
-pub(crate) fn bib_file<T>(name: &str, found: impl Fn(&str) -> Option<T>) -> Option<T> {
-    found(&format!("{name}.bib")).or_else(|| found(name))
-}
-
 fn warning(file: &str, line: u32, message: String) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
 /// What the files `main` reaches get wrong, as a build's issues, by file and then line.
 pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
-    let mut walk = Walk {
-        symbols,
-        files: Vec::new(),
-        labels: Vec::new(),
-        slips: Vec::new(),
-        missing: Vec::new(),
-    };
-    walk.read(main, "", 0);
+    let walk = Walk::from(symbols, main);
     let reached = || walk.files.iter().copied();
     let undefined = |kind, noun: &str, defined: &HashSet<&str>| -> Vec<LogItem> {
         let uses =
@@ -279,8 +311,13 @@ pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     }
 
     let named = reached().flat_map(|(_, facts)| &facts.bibliographies);
+    // BibTeX appends .bib to a name; biblatex takes it as written.
     let bibliographies: Vec<Option<String>> = named
-        .map(|name| bib_file(name, |rel| symbols.spelt(rel)))
+        .map(|name| {
+            symbols
+                .spelt(&format!("{name}.bib"))
+                .or_else(|| symbols.spelt(name))
+        })
         .collect();
     let mut seen = HashSet::new();
     let bibs = bibliographies
@@ -341,7 +378,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::projects::file_kind;
+    use crate::projects::testing::symbols_of;
     use crate::syntax::Installed;
 
     type Item = (String, u32, String, bool);
@@ -350,20 +387,13 @@ mod tests {
     /// What `check` finds in a project of `files` whose main file is main.tex, with TeX's own
     /// `inputs`: each item's file, line, message and whether it is an error.
     fn checked(files: Files, inputs: &[&str]) -> Vec<Item> {
-        let read = |&(rel, text): &(&str, &str)| {
-            let kind = file_kind(rel);
-            matches!(kind, "tex" | "bib")
-                .then(|| (rel.to_owned(), Arc::new(Facts::read(text, kind))))
-        };
         let inputs = inputs.iter().map(|&input| input.into()).collect();
         let symbols = Symbols {
-            by_file: files.iter().filter_map(read).collect(),
-            files: files.iter().map(|(rel, _)| (*rel).to_owned()).collect(),
             installed: Arc::new(Installed {
                 inputs,
                 ..Installed::default()
             }),
-            ..Symbols::default()
+            ..symbols_of(files)
         };
         let item = |i: LogItem| {
             let error = i.kind == Severity::Error;

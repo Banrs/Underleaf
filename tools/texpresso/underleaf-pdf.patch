@@ -115,73 +115,38 @@ index 333408e..23db8db 100644
  
  int ttstub_shell_escape(const unsigned short *cmd, size_t len)
 diff --git a/src/frontend/Makefile b/src/frontend/Makefile
-index c922019..5e24e65 100644
+index c922019..10af953 100644
 --- a/src/frontend/Makefile
 +++ b/src/frontend/Makefile
 @@ -1,4 +1,4 @@
 -OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
-+OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o renderer.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o live.o
++OBJECTS=sprotocol.o state.o fs.o incdvi.o myabort.o engine_tex.o engine_pdf.o engine_dvi.o synctex.o prot_parser.o sexp_parser.o json_parser.o editor.o
  
  BUILD=../../build
  DIR=$(BUILD)/frontend
-diff --git a/src/frontend/driver.c b/src/frontend/driver.c
-index 9337b08..c3aba31 100644
---- a/src/frontend/driver.c
-+++ b/src/frontend/driver.c
-@@ -27,6 +27,7 @@
- #include <mupdf/fitz.h>
- #include "logo.h"
- #include "driver.h"
-+#include "live.h"
+@@ -9,8 +9,9 @@ TARGETS=texpresso texpresso-dev texpresso-debug-proxy texpresso.so
+ all: $(TARGETS)
  
- #ifdef __APPLE__
- #include <sys/syslimits.h>
-@@ -127,8 +128,40 @@ static void usage(void)
-           " -stream   Skip filesystem lookups; files are pushed via editor commands\n");
- }
+ texpresso: $(BUILD)/texpresso
+-$(BUILD)/texpresso: $(DIR)/driver.o $(DIR)/main.o $(DIR)/logo.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
+-	$(LDCC) -o $@ $^ $(LIBS)
++# Underleaf's: live.c alone, with no window and so no SDL.
++$(BUILD)/texpresso: $(DIR)/live.o $(DIR_OBJECTS) $(DIR)/libmydvi.a $(BUILD)/common/libcommon.a
++	$(LDCC) -o $@ $^ $(filter-out -lSDL2,$(LIBS))
  
-+/* Writing pages for an editor's own PDF view (live.c), stderr holds a keystroke's
-+   diagnostics until the loop waits, so the editor reading them wakes once, not forty
-+   times. What was said before a crash is what explains it: the buffer is written as it
-+   is, as fflush isn't safe in a signal handler (Darwin's FILE). */
-+static char diagnostics[1 << 15];
-+
-+static void crashed(int sig)
-+{
-+  (void)sig;
-+  write(STDERR_FILENO, diagnostics, stderr->_p - (unsigned char *)diagnostics);
-+}
-+
-+static int live(int argc, const char **argv, const char *pdf_output)
-+{
-+  setvbuf(stderr, diagnostics, _IOFBF, sizeof diagnostics);
-+  struct sigaction crash = {.sa_handler = crashed, .sa_flags = SA_RESETHAND};
-+  sigaction(SIGABRT, &crash, NULL);
-+  sigaction(SIGSEGV, &crash, NULL);
-+  sigaction(SIGBUS, &crash, NULL);
-+  char exe_path[PATH_MAX];
-+  if (!get_executable_path(exe_path) && !realpath(argv[0], exe_path))
-+  {
-+    perror("finding executable path");
-+    return 1;
-+  }
-+  return txp_live_main(argc, argv, exe_path, pdf_output, STDIN_FILENO);
-+}
-+
- int main(int argc, const char **argv)
- {
-+  const char *pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
-+  if (pdf_output && *pdf_output)
-+    return live(argc, argv, pdf_output);
-+
-   // Unbuffered stderr so debug/[fatal] lines hit disk before a crash.
-   setvbuf(stderr, NULL, _IONBF, 0);
- 
+ texpresso-dev: $(BUILD)/texpresso-dev
+ $(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..97e0224 100644
+index 6face98..3222f0e 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
-@@ -320,6 +320,43 @@ bool editor_parse(fz_context *ctx,
+@@ -1,5 +1,4 @@
+ #include "editor.h"
+-#include "driver.h"
+ #include "vstack.h"
+ 
+ static enum editor_protocol protocol = EDITOR_SEXP;
+@@ -320,6 +319,43 @@ bool editor_parse(fz_context *ctx,
        goto arity;
      *out = (struct editor_command){.tag = EDIT_RERUN_ONCE, .rerun_once = {}};
    }
@@ -225,7 +190,7 @@ index 6face98..97e0224 100644
    else
    {
      fprintf(stderr, "[command] unknown verb: %s\n", verb);
-@@ -338,6 +375,13 @@ arguments:
+@@ -338,6 +374,13 @@ arguments:
  
  // Sending output
  
@@ -239,7 +204,7 @@ index 6face98..97e0224 100644
  static void output_json_string(FILE *f, const char *ptr, int len)
  {
    for (const char *lim = ptr + len; ptr < lim; ptr++)
-@@ -469,7 +513,7 @@ static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
+@@ -469,7 +512,7 @@ static const char *editor_info_buffer(enum EDITOR_INFO_BUFFER name)
  
  void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
  {
@@ -248,7 +213,7 @@ index 6face98..97e0224 100644
      return;
    const char *data = (const char *)buf->data;
    if (line_output)
-@@ -531,6 +575,9 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
+@@ -531,6 +574,9 @@ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos)
  
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
  {
@@ -258,44 +223,30 @@ index 6face98..97e0224 100644
    int count = buf ? buf->len : 0;
  
    if (line_output && buf)
-@@ -554,6 +601,80 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+@@ -554,6 +600,58 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
    }
  }
  
-+/* One message for the editor's own PDF view: `sexp` or `json` up to the path, then the path,
-+   then what follows it. */
-+static void live_message(const char *sexp, const char *json, const char *path,
-+                         const char *sexp_rest, const char *json_rest)
++/* The messages for an editor's own PDF view, in JSON, as live.c speaks. */
++void editor_live(int version)
 +{
-+  bool s = protocol == EDITOR_SEXP;
-+  fputs(s ? sexp : json, stdout);
-+  if (path)
-+  {
-+    putc_unlocked('"', stdout);
-+    if (s) output_sexp_string(stdout, path, strlen(path));
-+    else output_json_string(stdout, path, strlen(path));
-+    putc_unlocked('"', stdout);
-+  }
-+  fputs(s ? sexp_rest : json_rest, stdout);
++  printf("[\"live\", %d]\n", version);
 +  fflush(stdout);
 +}
 +
-+void editor_live(int version)
++static void json_path(const char *path)
 +{
-+  char sexp[64], json[64];
-+  snprintf(sexp, sizeof sexp, "(live %d)\n", version);
-+  snprintf(json, sizeof json, "[\"live\", %d]\n", version);
-+  live_message(sexp, json, NULL, "", "");
++  putc_unlocked('"', stdout);
++  output_json_string(stdout, path, strlen(path));
++  putc_unlocked('"', stdout);
 +}
 +
-+void editor_page(int page, const char *path, int mark)
++void editor_page(int page, const char *path)
 +{
-+  char sexp[64], json[64], sexp_rest[64], json_rest[64];
-+  snprintf(sexp, sizeof sexp, "(page %d ", page);
-+  snprintf(json, sizeof json, "[\"page\", %d, ", page);
-+  snprintf(sexp_rest, sizeof sexp_rest, " %d)\n", mark);
-+  snprintf(json_rest, sizeof json_rest, ", %d]\n", mark);
-+  live_message(sexp, json, path, sexp_rest, json_rest);
++  printf("[\"page\", %d, ", page);
++  json_path(path);
++  fputs("]\n", stdout);
++  fflush(stdout);
 +}
 +
 +static const char *run_name(enum EDITOR_RUN run)
@@ -305,41 +256,33 @@ index 6face98..97e0224 100644
 +
 +/* The whole document written to `path`; `changed` holds `ranges` pairs of first and last
 +   page that differ from the document written before. */
-+void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges, int mark)
++void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges)
 +{
-+  bool s = protocol == EDITOR_SEXP;
-+  fputs(s ? "(pdf " : "[\"pdf\", ", stdout);
-+  putc_unlocked('"', stdout);
-+  if (s) output_sexp_string(stdout, path, strlen(path));
-+  else output_json_string(stdout, path, strlen(path));
-+  fprintf(stdout, s ? "\" %d %s (" : "\", %d, \"%s\", [", pages, run_name(run));
++  fputs("[\"pdf\", ", stdout);
++  json_path(path);
++  printf(", %d, \"%s\", [", pages, run_name(run));
 +  for (int i = 0; i < ranges; i++)
-+    fprintf(stdout, s ? "%s(%d %d)" : "%s[%d, %d]", i ? (s ? " " : ", ") : "",
-+            changed[2 * i], changed[2 * i + 1]);
-+  fprintf(stdout, s ? ") %d)\n" : "], %d]\n", mark);
++    printf("%s[%d, %d]", i ? ", " : "", changed[2 * i], changed[2 * i + 1]);
++  fputs("]]\n", stdout);
 +  fflush(stdout);
 +}
 +
-+void editor_done(int pages, enum EDITOR_RUN run)
++void editor_done(enum EDITOR_RUN run)
 +{
-+  char sexp[64], json[64];
-+  snprintf(sexp, sizeof sexp, "(done %d %s)\n", pages, run_name(run));
-+  snprintf(json, sizeof json, "[\"done\", %d, \"%s\"]\n", pages, run_name(run));
-+  live_message(sexp, json, NULL, "", "");
++  printf("[\"done\", \"%s\"]\n", run_name(run));
++  fflush(stdout);
 +}
 +
 +void editor_synced(int mark)
 +{
-+  char sexp[64], json[64];
-+  snprintf(sexp, sizeof sexp, "(synced %d)\n", mark);
-+  snprintf(json, sizeof json, "[\"synced\", %d]\n", mark);
-+  live_message(sexp, json, NULL, "", "");
++  printf("[\"synced\", %d]\n", mark);
++  fflush(stdout);
 +}
 +
  void editor_flush(void)
  {
    switch (protocol)
-@@ -607,7 +728,7 @@ void editor_reset_sync(void)
+@@ -607,7 +705,7 @@ void editor_reset_sync(void)
  
  void editor_notify_file_opened(int index, const char *path, int len)
  {
@@ -348,7 +291,7 @@ index 6face98..97e0224 100644
      return;
    switch (protocol)
    {
-@@ -631,6 +752,9 @@ void editor_notify_lookup(const char *path,
+@@ -631,6 +729,9 @@ void editor_notify_lookup(const char *path,
                            bool read,
                            enum EDITOR_LOOKUP_STATUS status)
  {
@@ -359,10 +302,28 @@ index 6face98..97e0224 100644
    const char *status_msg;
  
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..02f09c4 100644
+index 05fdd1c..4332087 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
-@@ -37,6 +37,9 @@ enum EDITOR_COMMAND
+@@ -1,9 +1,16 @@
+ #ifndef EDITOR_H_
+ #define EDITOR_H_
+ 
+-#include "driver.h"
++#include <stdbool.h>
++#include <mupdf/fitz/buffer.h>
+ #include "vstack.h"
+ 
++enum editor_protocol
++{
++  EDITOR_SEXP,
++  EDITOR_JSON,
++};
++
+ void editor_set_protocol(enum editor_protocol protocol);
+ void editor_set_line_output(bool line);
+ 
+@@ -37,6 +44,9 @@ enum EDITOR_COMMAND
    EDIT_RESUME,
    EDIT_RERUN,
    EDIT_RERUN_ONCE,
@@ -372,7 +333,7 @@ index 05fdd1c..02f09c4 100644
  };
  
  struct editor_change
-@@ -136,6 +139,19 @@ struct editor_command
+@@ -136,6 +146,19 @@ struct editor_command
  
      struct {
      } rerun_once;
@@ -392,17 +353,17 @@ index 05fdd1c..02f09c4 100644
    };
  };
  
-@@ -155,6 +171,16 @@ enum EDITOR_INFO_BUFFER
+@@ -155,6 +178,16 @@ enum EDITOR_INFO_BUFFER
  void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos);
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
  void editor_flush(void);
 +/* For an editor showing the document in its own PDF view (TEXPRESSO_PDF_OUTPUT). `mark` is
-+   the last one the editor sent (["mark", n]) that the pages reflect. */
++   the last one the editor sent (["mark", n]) that the pages in view reflect. */
 +enum EDITOR_RUN { RUN_PARTIAL, RUN_COMPLETE, RUN_STOPPED };
 +void editor_live(int version);
-+void editor_page(int page, const char *path, int mark);
-+void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges, int mark);
-+void editor_done(int pages, enum EDITOR_RUN run);
++void editor_page(int page, const char *path);
++void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges);
++void editor_done(enum EDITOR_RUN run);
 +void editor_synced(int mark);
 +/* While muted nothing is sent: a finishing pass runs beside the document being shown. */
 +void editor_mute(bool muted);
@@ -437,7 +398,7 @@ index 13e945d..ac1b6ba 100644
                                    const char *dvi_path,
                                    dvi_reshooks hooks);
 diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
-index 5866b1b..6f4e573 100644
+index 5866b1b..205bb6c 100644
 --- a/src/frontend/engine_tex.c
 +++ b/src/frontend/engine_tex.c
 @@ -38,6 +38,7 @@
@@ -448,7 +409,7 @@ index 5866b1b..6f4e573 100644
  
  typedef struct
  {
-@@ -102,8 +103,24 @@ struct tex_engine
+@@ -102,8 +103,25 @@ struct tex_engine
  
    bool aux_dirty;
    bool finishing;
@@ -458,6 +419,7 @@ index 5866b1b..6f4e573 100644
 +  char *root;              // the document's folder
 +  struct tex_engine *pass; // a finishing pass under way (txp_tex_rerun)
 +  struct tex_engine *next; // and once it is over, the engine to go on with
++  bool pass_failed;        // the last stopped on an error: another would too, until a change
 +  struct {
 +    fileentry_t *entry;
 +    int position;
@@ -473,7 +435,7 @@ index 5866b1b..6f4e573 100644
  // Backtrackable process state & VFS representation
  
  static process_t *get_process(struct tex_engine *t)
-@@ -207,6 +224,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
+@@ -207,6 +225,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
    {
      self->deferred.active = false;
      log_rollback(ctx, self->log, self->restart);
@@ -483,7 +445,7 @@ index 5866b1b..6f4e573 100644
      self->process_count = 1;
      process_t *p = get_process(self);
      p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
-@@ -305,6 +325,25 @@ static void decimate_processes(struct tex_engine *self)
+@@ -305,6 +326,25 @@ static void decimate_processes(struct tex_engine *self)
      }
    }
  
@@ -509,7 +471,7 @@ index 5866b1b..6f4e573 100644
    int i = 0;
    for (int j = 0; j < self->process_count; j++)
    {
-@@ -332,16 +371,33 @@ static void decimate_processes(struct tex_engine *self)
+@@ -332,16 +372,33 @@ static void decimate_processes(struct tex_engine *self)
  
  // Engine class implementation
  
@@ -543,7 +505,7 @@ index 5866b1b..6f4e573 100644
    fz_free(ctx, self);
  }
  
-@@ -474,7 +530,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
+@@ -474,7 +531,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
  static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
  {
    // Fences are pending: don't snapshot now
@@ -552,7 +514,7 @@ index 5866b1b..6f4e573 100644
      return 0;
  
    int process = self->process_count - 1;
-@@ -550,6 +606,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -550,6 +607,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
            if (!fs_path)
            {
              e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -560,7 +522,7 @@ index 5866b1b..6f4e573 100644
              if (e->promised && !self->deferred.active)
              {
                // File was promised and is missing: notify the editor and wait
-@@ -581,6 +638,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -581,6 +639,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
  
        if (!e)
          e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -569,7 +531,7 @@ index 5866b1b..6f4e573 100644
  
        log_filecell(ctx, self->log, cell);
        log_fileentry(ctx, self->log, e);
-@@ -742,6 +801,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -742,6 +802,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
        if (fork)
        {
          a.tag = A_FORK;
@@ -578,7 +540,7 @@ index 5866b1b..6f4e573 100644
          self->fence_pos -= 1;
        }
        else if (need_snapshot(ctx, self, q->time))
-@@ -754,6 +815,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -754,6 +816,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
          a.tag = A_READ;
          a.read.size = n;
        }
@@ -587,7 +549,7 @@ index 5866b1b..6f4e573 100644
        if (0)
        {
          if (fork)
-@@ -986,7 +1049,9 @@ static void revert_trace(trace_entry_t *te)
+@@ -986,7 +1050,9 @@ static void revert_trace(trace_entry_t *te)
  static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
  {
    self->deferred.active = false;
@@ -598,7 +560,7 @@ index 5866b1b..6f4e573 100644
  
    fprintf(
      stderr,
-@@ -1018,7 +1083,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
+@@ -1018,7 +1084,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
              p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
    }
  
@@ -610,7 +572,7 @@ index 5866b1b..6f4e573 100644
      pop_process(ctx, self);
  
    int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
-@@ -1066,6 +1134,7 @@ static bool possible_fence(trace_entry_t *te)
+@@ -1066,6 +1135,7 @@ static bool possible_fence(trace_entry_t *te)
  static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
  {
    self->fence_pos = -1;
@@ -618,7 +580,7 @@ index 5866b1b..6f4e573 100644
  
    if (trace <= 0)
      return trace;
-@@ -1074,6 +1143,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
+@@ -1074,6 +1144,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
      mabort();
  
    self->fence_pos = 0;
@@ -628,7 +590,7 @@ index 5866b1b..6f4e573 100644
  
    offset = (offset - 64) & ~(64 - 1);
    if (offset < self->trace[trace].seen)
-@@ -1143,9 +1215,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
+@@ -1143,9 +1216,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
    return dl;
  }
  
@@ -642,7 +604,7 @@ index 5866b1b..6f4e573 100644
    if (restart_if_needed)
      prepare_process(ctx, self);
  
-@@ -1169,7 +1245,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
+@@ -1169,7 +1246,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
      int fd = get_process(self)->fd;
      if (fd == -1)
        return 0;
@@ -651,16 +613,17 @@ index 5866b1b..6f4e573 100644
        return 0;
      if (!read_query(self, self->c, &q))
      {
-@@ -1368,6 +1444,8 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
+@@ -1368,6 +1445,9 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
  
  static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
  {
 +  // The pass would show the document as it was.
 +  drop_pass(ctx, self);
++  self->pass_failed = false;
    int trace_len = self->rollback.trace_len;
    // if (changed > 0) changed--;
  
-@@ -1584,6 +1662,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
+@@ -1584,6 +1664,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
  static txp_engine_status engine_get_status(txp_engine *_self)
  {
    SELF;
@@ -669,7 +632,7 @@ index 5866b1b..6f4e573 100644
    if (self->process_count == 0)
      return DOC_TERMINATED;
    return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
-@@ -1609,6 +1689,243 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
+@@ -1609,6 +1691,253 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
    return filesystem_lookup_or_create(ctx, self->fs, path);
  }
  
@@ -749,6 +712,8 @@ index 5866b1b..6f4e573 100644
 +bool txp_tex_aux_changed(txp_engine *_self)
 +{
 +  SELF;
++  if (self->pass_failed)
++    return false;
 +  fileentry_t *e;
 +  for (int index = 0; (e = filesystem_scan(self->fs, &index));)
 +  {
@@ -875,6 +840,14 @@ index 5866b1b..6f4e573 100644
 +  editor_mute(false);
 +  if (engine_get_status((txp_engine *)pass) == DOC_RUNNING)
 +    return stepped;
++  // Stopped on an error, it shows no document in place of one that reached its end.
++  if (txp_tex_outcome((txp_engine *)pass) != RUN_COMPLETE)
++  {
++    fprintf(stderr, "[live] finishing pass stopped on an error, dropped\n");
++    drop_pass(ctx, self);
++    self->pass_failed = true;
++    return false;
++  }
 +  // Over, it takes this engine's place, with its fonts.
 +  incdvi_take_resources(pass->dvi, self->dvi);
 +  resend_output(pass);
@@ -959,23 +932,6 @@ index 852f744..e26e1e9 100644
 +void incdvi_take_resources(incdvi_t *d, incdvi_t *from);
 +
  #endif /*!INCDVI_H*/
-diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..dcaa3ad 100644
---- a/src/frontend/main.c
-+++ b/src/frontend/main.c
-@@ -1134,6 +1134,12 @@ static void interpret_command(struct persistent_state *ps,
-       fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
-       schedule_event(SCAN_EVENT);
-       break;
-+
-+    // Live Preview's (live.c): a window shows every page itself.
-+    case EDIT_VIEW:
-+    case EDIT_MARK:
-+    case EDIT_CARET:
-+      break;
-   }
- }
- 
 diff --git a/src/frontend/state.h b/src/frontend/state.h
 index 4854531..db8d100 100644
 --- a/src/frontend/state.h

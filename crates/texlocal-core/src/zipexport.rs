@@ -1,50 +1,35 @@
-//! Project ZIP export, built in a sibling temporary file and moved into place on success, so a failure leaves no partial ZIP.
+//! Project ZIP export, written where the host asks: the Mac app exports into a fresh folder of its own outside the project.
 //! What goes in is what an import takes back: all but what `left_out` names.
 
-use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::SETTINGS_FILE;
-use crate::analyze::{Files, analyze_project};
-use crate::atomic::{create_temp, persist};
-use crate::checks::bib_file;
 use crate::error::CoreError;
-use crate::paths::{Project, fold_case, in_build_dir, safe_path, safe_rel_file};
-use crate::projects::{Entry, is_litter, walk};
-use crate::settings::{granted, read_settings};
+use crate::paths::{Project, fold_case, in_build_dir, safe_rel_file};
+use crate::projects::{is_litter, walk};
+use crate::settings::{Engine, granted, read_settings};
 
 /// `added`: files of the export's own, each at its path in the archive in place of the project's.
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
-    let parent = dest.parent().expect("a file is in a folder");
-    let (file, temp_path) = create_temp(parent).map_err(CoreError::at(dest))?;
-    // Resolved as the walk resolves the project, so a destination spelled through a link is recognised.
-    let archive_dir = std::fs::canonicalize(parent).map_err(CoreError::at(dest))?;
-    let archive = |entry: &Entry| {
-        let names = [dest.file_name(), temp_path.file_name()];
-        names.contains(&Some(OsStr::new(&entry.name)))
-            && entry
-                .path
-                .parent()
-                .and_then(|dir| std::fs::canonicalize(dir).ok())
-                == Some(archive_dir.clone())
-    };
+    let file = File::create(dest).map_err(CoreError::at(dest))?;
     let replaced = |rel: &str| added.iter().any(|(path, _)| path.eq_ignore_ascii_case(rel));
     let mut writer = ZipWriter::new(file);
     walk(
         root,
         &|rel| !left_out(rel) && !replaced(rel),
+        true,
         &mut |entry| {
             if entry.dir {
                 let modified = fs::metadata(&entry.path).and_then(|meta| meta.modified());
                 writer.add_directory(format!("{}/", entry.rel), options(modified))?;
-            } else if !archive(entry) {
+            } else {
                 // One gone since it was listed is left out.
                 match add_file(&mut writer, &entry.rel, &entry.path) {
                     Err(err) if err.status == 404 => {}
@@ -59,7 +44,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
         writer.write_all(bytes)?;
     }
     writer.finish()?.sync_all()?;
-    persist(temp_path, dest).map_err(CoreError::at(dest))
+    Ok(())
 }
 
 fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), CoreError> {
@@ -73,15 +58,20 @@ fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), 
     io::copy(&mut file, writer)?;
     Ok(())
 }
-/// What arXiv takes beside the project's files: the main file's .bbl from the build folder,
-/// beside the main file with its stem, and a 00README.json naming the compiler and the main file
-/// as the top-level source. Refused while shell escape is on, as arXiv compiles without it, and
-/// while the bibliography isn't compiled or is older than a .bib it names.
+/// What arXiv takes beside the project's files: a 00README.json naming the compiler and the main
+/// file as the top-level source, and what the build made of the main file that arXiv doesn't
+/// make itself. Refused while shell escape is on or the engine is LuaLaTeX, as arXiv compiles
+/// without either.
 pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     let settings = read_settings(&project.settings);
     if granted(project) {
         return Err(CoreError::conflict(
             "arXiv compiles without shell escape. Turn Shell Escape off for this project, check that it still compiles, then export again.",
+        ));
+    }
+    if settings.engine == Engine::Lualatex {
+        return Err(CoreError::conflict(
+            "arXiv doesn't compile with LuaLaTeX. Choose pdfLaTeX or XeLaTeX for this project, check that it still compiles, then export again.",
         ));
     }
     let main = safe_rel_file(&settings.main_file)?;
@@ -92,26 +82,20 @@ pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, Cor
     });
     let readme = serde_json::to_vec_pretty(&readme).expect("JSON from JSON");
     let mut added = vec![("00README.json".to_owned(), readme)];
-    let root = &project.root;
-    let files = Files::default();
-    let read = analyze_project(root, &files, &main, &main, None).files;
-    let facts = read.iter().filter_map(|file| files.at(root, file));
-    let named: Vec<String> = facts.flat_map(|f| f.bibliographies.clone()).collect();
-    if named.is_empty() {
-        return Ok(added);
+    // arXiv runs BibTeX or Biber itself, but not makeindex or the glossary tools. TeX reads
+    // `\jobname`'s files from the folder it runs in, and arXiv, as latexmk here, runs it from
+    // the root whatever folder the main file is in.
+    let stem = Path::new(&main)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    for ext in ["ind", "gls", "acr", "nls", "glstex"] {
+        match fs::read(settings.output(&project.build, ext)?) {
+            Ok(bytes) => added.push((format!("{stem}.{ext}"), bytes)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
     }
-    // One outside the project is left alone.
-    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
-    let mut bibs = (named.iter())
-        .filter_map(|name| bib_file(name, |rel| modified(&safe_path(root, rel).ok()?)));
-    let bbl = settings.output(&project.build, "bbl")?;
-    if modified(&bbl).is_none_or(|compiled| bibs.any(|bib| bib > compiled)) {
-        return Err(CoreError::conflict(
-            "arXiv needs the bibliography as it was last compiled. Compile the project, then export again.",
-        ));
-    }
-    let beside_main = Path::new(&main).with_extension("bbl");
-    added.push((beside_main.to_string_lossy().into_owned(), fs::read(bbl)?));
     Ok(added)
 }
 
@@ -125,12 +109,22 @@ pub(crate) fn left_out(rel: &str) -> bool {
 /// A deflated entry dated as `modified`. ZIP stores local time, as unzipping
 /// tools show it; undated, every entry would say 1 January 1980.
 fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {
+    fn local(modified: SystemTime) -> Option<zip::DateTime> {
+        let secs = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
+        let secs = libc::time_t::try_from(secs).ok()?;
+        // SAFETY: both pointers are to live locals; the call fills `tm`, or returns null, checked.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
+            return None;
+        }
+        let field = |value: libc::c_int| u8::try_from(value).ok();
+        let year = u16::try_from(tm.tm_year + 1900).ok()?;
+        let (month, day) = (field(tm.tm_mon + 1)?, field(tm.tm_mday)?);
+        let (hour, minute, second) = (field(tm.tm_hour)?, field(tm.tm_min)?, field(tm.tm_sec)?);
+        zip::DateTime::from_date_and_time(year, month, day, hour, minute, second).ok()
+    }
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    let Ok(modified) = modified else {
-        return options;
-    };
-    let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();
-    let date = zip::DateTime::try_from(local).ok();
+    let date = modified.ok().and_then(local);
     date.map_or(options, |date| options.last_modified_time(date))
 }
 
@@ -179,16 +173,6 @@ mod tests {
             "sub/.texlocal.json",
         ];
         assert_eq!(zip_names(&dest), kept);
-        let inside = root.join("project.zip");
-        fs::write(&inside, "old incomplete archive").unwrap();
-        export_zip(&root, &inside, &[]).unwrap();
-        assert_eq!(zip_names(&inside), kept);
-        // Spelt through a link into the project, as when a Save panel hands back /private/var
-        // for a data folder under /var: a lexical comparison would archive the half-written ZIP.
-        let alias = root.with_file_name("alias");
-        std::os::unix::fs::symlink(&root, &alias).unwrap();
-        export_zip(&root, &alias.join("project.zip"), &[]).unwrap();
-        assert_eq!(zip_names(&inside), kept);
 
         let service = Service::new(dir.path().join("again"));
         let copy = service
@@ -212,9 +196,17 @@ mod tests {
         let mut archive = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
         let dated = archive.by_name("main.tex").unwrap().last_modified();
         let modified = fs::metadata(root.join("main.tex")).unwrap().modified();
-        let local = chrono::DateTime::<chrono::Local>::from(modified.unwrap());
-        let minute = local.format("%Y-%m-%d %H:%M").to_string();
-        assert_eq!(dated.unwrap().to_string()[..16], minute);
+        let secs = modified
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let date = std::process::Command::new("/bin/date")
+            .args(["-r", &secs.to_string(), "+%Y-%m-%d %H:%M"])
+            .output()
+            .unwrap();
+        let minute = String::from_utf8(date.stdout).unwrap();
+        assert_eq!(dated.unwrap().to_string()[..16], *minute.trim_end());
     }
 
     #[test]
@@ -232,67 +224,54 @@ mod tests {
     }
 
     #[test]
-    fn an_arxiv_export_brings_the_bbl_beside_the_main_file_and_a_readme_naming_it() {
+    fn an_arxiv_export_names_the_compiler_and_brings_the_index_to_the_root() {
         let (dir, root) = project();
         fs::create_dir_all(root.join("tex")).unwrap();
         fs::create_dir_all(root.join("build")).unwrap();
         for (path, text) in [
-            ("tex/paper.tex", "\\documentclass{article}\n\\input{back}"),
-            // Named in a file the main file reads.
-            ("back.tex", "\\bibliography{refs}"),
+            (
+                "tex/paper.tex",
+                "\\documentclass{article}\n\\bibliography{refs}",
+            ),
             ("refs.bib", "@book{k, title = {T}}"),
             ("build/paper.bbl", "\\begin{thebibliography}{1}"),
+            ("build/paper.ind", "\\begin{theindex}"),
         ] {
             fs::write(root.join(path), text).unwrap();
         }
-        let settings = json!({ "mainFile": "tex/paper.tex", "engine": "lualatex" });
-        write_settings(&root.join(SETTINGS_FILE), &settings).unwrap();
-
-        let dest = dir.path().join("arxiv.zip");
-        let added = for_arxiv(&Project::in_folder(&root)).unwrap();
-        export_zip(&root, &dest, &added).unwrap();
-        let bbl = read_entry(&dest, "tex/paper.bbl");
-        assert_eq!(bbl, "\\begin{thebibliography}{1}");
-        let readme: serde_json::Value =
-            serde_json::from_str(&read_entry(&dest, "00README.json")).unwrap();
-        assert_eq!(
-            readme,
-            json!({
-                "spec_version": 1,
-                "process": { "compiler": "lualatex" },
-                "sources": [{ "filename": "tex/paper.tex", "usage": "toplevel" }],
-            })
-        );
-    }
-
-    #[test]
-    fn an_arxiv_export_is_refused_with_shell_escape_or_a_bibliography_not_compiled_since() {
-        let (_dir, root) = project();
-        fs::write(root.join("main.tex"), "\\addbibresource{refs.bib}").unwrap();
-        fs::write(root.join("refs.bib"), "@book{k, title = {T}}").unwrap();
         let project = Project::in_folder(&root);
+        let dest = dir.path().join("arxiv.zip");
+        for engine in ["pdflatex", "xelatex"] {
+            let settings = json!({ "mainFile": "tex/paper.tex", "engine": engine });
+            write_settings(&project.settings, &settings).unwrap();
+            let added = for_arxiv(&project).unwrap();
+            export_zip(&root, &dest, &added).unwrap();
+            let readme: serde_json::Value =
+                serde_json::from_str(&read_entry(&dest, "00README.json")).unwrap();
+            assert_eq!(
+                readme,
+                json!({
+                    "spec_version": 1,
+                    "process": { "compiler": engine },
+                    "sources": [{ "filename": "tex/paper.tex", "usage": "toplevel" }],
+                })
+            );
+        }
+        assert_eq!(read_entry(&dest, "paper.ind"), "\\begin{theindex}");
+        let names = zip_names(&dest);
+        assert!(
+            !names.iter().any(|name| name.ends_with(".bbl")),
+            "{names:?}"
+        );
+
         let refused = |text: &str| {
             let err = for_arxiv(&project).unwrap_err();
             assert_eq!(err.status, 409);
             assert!(err.message.contains(text), "{}", err.message);
         };
-        refused("Compile the project");
-
-        fs::create_dir_all(&project.build).unwrap();
-        let bbl = project.build.join("main.bbl");
-        fs::write(&bbl, "").unwrap();
-        let hour_ago = SystemTime::now() - std::time::Duration::from_secs(3600);
-        File::options()
-            .write(true)
-            .open(&bbl)
-            .unwrap()
-            .set_modified(hour_ago)
-            .unwrap();
-        refused("Compile the project");
-
-        let bib = File::options().write(true).open(root.join("refs.bib"));
-        bib.unwrap().set_modified(hour_ago).unwrap();
-        assert!(for_arxiv(&project).is_ok());
+        let settings = json!({ "mainFile": "tex/paper.tex", "engine": "lualatex" });
+        write_settings(&project.settings, &settings).unwrap();
+        refused("LuaLaTeX");
         crate::settings::grant(&project, true).unwrap();
         refused("shell escape");
     }

@@ -55,7 +55,7 @@ impl ProjectInfo {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Located {
     pub id: String,
     pub path: String,
@@ -73,7 +73,7 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
 /// save moves only the file's.
 fn newest(root: &Path) -> u64 {
     let mut newest = fs::metadata(root).map_or(0, |meta| mtime_ms(&meta));
-    let _ = walk(root, &listed, &mut |entry| {
+    let _ = walk(root, &listed, false, &mut |entry| {
         if (entry.dir || !entry.rel.contains('/'))
             && let Ok(meta) = fs::metadata(&entry.path)
         {

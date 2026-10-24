@@ -266,12 +266,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }()
 
     /// Under the name at `offset`.
-    func showQuickHelp(_ help: QuickHelp, at offset: Int, jump: @escaping (Place) -> Void) {
+    func showQuickHelp(_ help: QuickHelp, at offset: Int) {
         guard let rect = popoverRect(at: offset) else { return }
         let bold = NSFontManager.shared.convert(font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular), toHaveTrait: .boldFontMask)
-        let content = NSHostingController(rootView: QuickHelpView(help: help, font: bold) { [helpPopover] place in
-            helpPopover.close()
-            jump(place)
+        let content = NSHostingController(rootView: QuickHelpView(help: help, font: bold) { [weak self] place in
+            self?.helpPopover.close()
+            self?.openDefinition(place)
         })
         content.sizingOptions = .preferredContentSize
         helpPopover.contentViewController = content
@@ -294,7 +294,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var autoPair = true, autoComplete = true
     /// Told as marked (IME) text comes and goes: the session's autosave waits for it to be committed.
     var composing: (Bool) -> Void = { _ in }
-    var toldComposing = false
+    private var toldComposing = false
     /// A key's edit is going in: the selection it moves keeps the completion list.
     private var typing = false
 
@@ -359,6 +359,51 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func toggleContinuousSpellChecking(_ sender: Any?) {
         super.toggleContinuousSpellChecking(sender)
         EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
+    }
+
+    func markedTextChanged() {
+        guard hasMarkedText() != toldComposing else { return }
+        toldComposing.toggle()
+        composing(toldComposing)
+    }
+
+    func finish(_ stroke: Keystroke) {
+        if let selection = stroke.selection { self.selection = selection.range }
+        if let partner = stroke.partner { showPartner(of: partner) }
+        switch stroke.completions {
+        case .keep: break
+        case .offer: completions.offer()
+        case .close: completions.close()
+        }
+    }
+
+    /// A snippet's next field, or the lines indented.
+    func tab(_ step: Int) {
+        let answer = document.tab(selections, step: step)
+        if let field = answer.field { return selection = field.range }
+        apply(answer.edits, named: step > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
+    }
+
+    /// Shift Right and Shift Left: the lines, even from within a snippet's field, which Tab would leave for the next.
+    func shiftLines(_ step: Int) {
+        guard isEditable else { return }
+        _ = document.endSnippet()
+        tab(step)
+    }
+
+    /// Escape: the completion list closes, the snippet's fields are left, the maths preview is dismissed, or else the
+    /// completions are offered.
+    func cancel() {
+        if completions.offered != nil {
+            completions.close()
+        } else if document.endSnippet() {
+            // Escape leaves the snippet's fields.
+        } else if mathPreview.isWanted, let maths = math(at: caret) {
+            dismissedMath = maths.start
+            mathPreview.close()
+        } else {
+            completions.complete(explicit: true)
+        }
     }
 
     // MARK: completion
@@ -553,13 +598,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard isEditable else { return false }
         setSelectedRange(.caret(characterIndexForInsertion(at: convert(info.draggingLocation, from: nil))))
         window?.makeFirstResponder(self)
-        insertFigure(drop)
+        Task.immediate { await insertFigure(drop) }
         return true
     }
 
     override func paste(_ sender: Any?) {
-        if isEditable, let drop = pasted(NSPasteboard.general) { return insertFigure(drop) }
-        super.paste(sender)
+        guard isEditable, let drop = pasted(NSPasteboard.general) else { return super.paste(sender) }
+        Task.immediate { await insertFigure(drop) }
     }
 
     /// A copied file as a dropped one, but one that would open, whose name pastes; a copied image without text, as a
@@ -593,20 +638,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
     }
 
-    /// At the selection; a copy's once made, unless another file is shown by then.
-    private func insertFigure(_ drop: FileDrop) {
-        let insert = { [self] (text: String) in
-            let at = selection
-            apply([TextEdit(at, text)], named: String(localized: "Insert Figure"),
-                  selecting: [NSRange(location: at.location, length: (text as NSString).length)])
+    /// At the selection; a copy's once made, unless another file is shown by then. A selection made meanwhile isn't
+    /// replaced: an edit meanwhile puts it at the caret.
+    func insertFigure(_ drop: FileDrop) async {
+        let shown = document, at = selection, version = document.version
+        let text: String? = switch drop {
+        case .open: nil
+        case .insert(let text): text
+        case .copy(let copy): await copy()
         }
-        switch drop {
-        case .open: break
-        case .insert(let text): insert(text)
-        case .copy(let copy):
-            let shown = document
-            Task { if let text = await copy(), document === shown, isEditable { insert(text) } }
-        }
+        guard let text, document === shown, isEditable else { return }
+        let target = document.version == version ? at : .caret(caret)
+        apply([TextEdit(target, text)], named: String(localized: "Insert Figure"),
+              selecting: [NSRange(location: target.location, length: (text as NSString).length)])
     }
 
     // MARK: VoiceOver's rotors
@@ -626,5 +670,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         result.targetRange = found.range
         result.customLabel = found.title
         return result
+    }
+
+    /// The outline's headings, or the issues with what they say: the first after `line`, or the last before it.
+    private func rotorItem(issues listed: Bool, from line: Int?, next: Bool, filter: String = "") -> (range: NSRange, title: String)? {
+        var items = !listed ? headings() : Set(issues.lines.keys).union(issues.live.keys).sorted().compactMap { line in
+            issues.issue(on: line).map { issue, live in
+                let place = live ? String(localized: "Live Preview error on line \(line)")
+                    : issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
+                return (line, String(localized: "\(place): \(issue.message)"))
+            }
+        }
+        if !filter.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(filter) } }
+        guard let found = next ? items.first(where: { $0.line > line ?? 0 }) : items.last(where: { $0.line < line ?? .max })
+        else { return nil }
+        // The outline and the issues are a moment behind the text: within what there is of it.
+        return (source.lineRange(for: .caret(min(document.lineStart(found.line), length))), found.title)
     }
 }

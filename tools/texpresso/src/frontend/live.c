@@ -2,39 +2,42 @@
  * MIT License
  *
  * TeXpresso without a window, for an editor that shows the pages in its own PDF
- * view: the TEXPRESSO_PDF_OUTPUT mode of Underleaf's patches to TeXpresso, run by
- * the program's driver.c. It needs no SDL; engine_tex.c gives it its engine.
+ * view: Underleaf's patches build the texpresso program from this file alone, with
+ * no SDL and none of upstream's window (driver.c, main.c, renderer.c);
+ * engine_tex.c gives it its engine. Run with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf
+ * and [-I dir]... main.tex, it reads JSON commands from stdin until it closes and
+ * writes JSON messages to stdout (editor.c), diagnostics to stderr.
  *
  * The editor says which pages it shows (["view", first, last]). A change is
  * typeset as far as the last of them, and each page in view whose content
  * differs from what the editor was last given is written at once as a one-page
- * PDF of its own (["page", index, path, mark]). The rest of the document follows
+ * PDF of its own (["page", index, path]). The rest of the document follows
  * once typing pauses, in slices that a change interrupts. The whole document,
  * with its SyncTeX, is written when a run has reached the end and differs from
- * the one written before (["pdf", path, pages, run, changed, mark]).
+ * the one written before (["pdf", path, pages, run, changed]). Every message is
+ * JSON, its first ["live", 2], the version of these shapes.
  *
  * References and contents come from finishing passes once the document has been
  * left alone for a moment, and only when a file TeX reads back (.aux, .toc) was
  * written other than as read. A pass is TeX again from the start, reading what
- * the last run wrote (txp_tex_rerun): in-process its pages replace the ones shown
- * as they come, and a change resumes its checkpoints as it would any run's; on
- * the Mac it is a second TeX that takes the first one's place once over, and that
- * a change drops.
+ * the last run wrote (txp_tex_rerun): a second TeX that takes the first one's
+ * place once over, and that a change drops.
  */
 
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <mach-o/dyld.h>
 #include <mupdf/fitz.h>
 #include "base64.h"
 #include "editor.h"
 #include "engine.h"
-#include "live.h"
 #include "mydvi.h"
 #include "prot_parser.h"
 #include "providers.h"
@@ -60,7 +63,6 @@ typedef struct
   txp_engine *eng;
   const char *doc_path; // the document's folder
   const char *pdf_output;
-  int in_fd;
   bool paused;
 
   /* What the editor has asked for. */
@@ -107,7 +109,7 @@ static int live_env(const char *name, int value)
 
 static bool poll_input(live_state *l)
 {
-  struct pollfd fd = {l->in_fd, POLLRDNORM, 0};
+  struct pollfd fd = {STDIN_FILENO, POLLRDNORM, 0};
   return poll(&fd, 1, 0) == 1 && (fd.revents & (POLLRDNORM | POLLHUP)) != 0;
 }
 
@@ -329,7 +331,7 @@ static bool read_commands(live_state *l, prot_parser *parser, vstack *stack)
 {
   char buffer[4096];
   int n = -1;
-  while (poll_input(l) && (n = read(l->in_fd, buffer, sizeof buffer)) != 0)
+  while (poll_input(l) && (n = read(STDIN_FILENO, buffer, sizeof buffer)) != 0)
   {
     if (n == -1)
     {
@@ -422,7 +424,7 @@ static bool live_write_page(live_state *l, int index)
   live_retire(l, page, index, serial);
   page->shown = page->now;
   // Complete on disk before the editor hears of it.
-  editor_page(index, path, l->wish.mark);
+  editor_page(index, path);
   return true;
 }
 
@@ -549,7 +551,7 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
   l->whole_complete = run == RUN_COMPLETE;
   if (run == RUN_COMPLETE)
     l->had_complete = true;
-  editor_pdf(l->pdf_output, pages, run, changed, ranges, l->wish.mark);
+  editor_pdf(l->pdf_output, pages, run, changed, ranges);
   fz_free(ctx, changed);
   return LIVE_WRITTEN;
 }
@@ -609,12 +611,11 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
   live_tail_ms = live_env("TEXPRESSO_LIVE_TAIL_MS", live_tail_ms);
   live_whole_ms = live_env("TEXPRESSO_LIVE_WHOLE_MS", live_whole_ms);
   live_rerun_ms = live_env("TEXPRESSO_LIVE_RERUN_MS", live_rerun_ms);
-  editor_live(1);
+  editor_live(2);
 
   /* The editor's opening commands before the first run: a file it says it will
-   * supply, or its own copy of one, must be there before TeX looks for it, which
-   * in-process is a few ms in. */
-  struct pollfd opening = {l->in_fd, POLLRDNORM, 0};
+   * supply, or its own copy of one, must be there before TeX looks for it. */
+  struct pollfd opening = {STDIN_FILENO, POLLRDNORM, 0};
   poll(&opening, 1, 100);
   if (read_commands(l, parser, stack))
     return;
@@ -678,7 +679,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       l->aux = l->run == RUN_COMPLETE && txp_tex_aux_changed(l->eng);
       if (!l->aux)
         l->wish.rerun = false;
-      editor_done(count, l->run);
+      editor_done(l->run);
     }
     if (l->wish.mark != l->synced && (!stepping || count > l->wish.last))
     {
@@ -741,7 +742,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     // Nothing to do until a command comes, the worker has more, or one of the
     // pauses is over.
     fflush(stderr);
-    struct pollfd fds[2] = {{l->in_fd, POLLRDNORM, 0},
+    struct pollfd fds[2] = {{STDIN_FILENO, POLLRDNORM, 0},
                             {stepping && wanted ? txp_tex_worker_fd(l->eng) : -1, POLLRDNORM, 0}};
     int timeout = wake < 0 ? -1 : fz_maxi((int)(wake - live_ms() + 0.999), 0);
     if (poll(fds, 2, timeout) == -1 && errno != EINTR)
@@ -760,26 +761,53 @@ static void live_mupdf_message(void *kind, const char *message)
 
 static void usage(void)
 {
-  fprintf(stderr, "Usage: texpresso [-json] [-lines] [-texlive] [-I dir]... main.tex\n"
+  fprintf(stderr, "Usage: texpresso [-json] [-texlive] [-I dir]... main.tex\n"
                   "with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf\n");
 }
 
-int txp_live_main(int argc, const char *const *argv, const char *exe_path,
-                  const char *pdf_output, int in_fd)
+/* The program beside which its TeX is, as a real file. */
+static bool executable_path(const char *argv0, char path[PATH_MAX])
 {
-  enum editor_protocol protocol = EDITOR_SEXP;
-  bool line_output = false;
+  char exe_path[PATH_MAX];
+  uint32_t size = PATH_MAX;
+  return (_NSGetExecutablePath(exe_path, &size) == 0 && realpath(exe_path, path)) ||
+         realpath(argv0, path);
+}
+
+/* stderr holds a keystroke's diagnostics until the loop waits, so the editor
+   reading them wakes once, not forty times. What was said before a crash is what
+   explains it: the buffer is written as it is, as fflush isn't safe in a signal
+   handler (Darwin's FILE). */
+static char diagnostics[1 << 15];
+
+static void crashed(int sig)
+{
+  (void)sig;
+  write(STDERR_FILENO, diagnostics, stderr->_p - (unsigned char *)diagnostics);
+}
+
+int main(int argc, const char **argv)
+{
+  setvbuf(stderr, diagnostics, _IOFBF, sizeof diagnostics);
+  struct sigaction crash = {.sa_handler = crashed, .sa_flags = SA_RESETHAND};
+  sigaction(SIGABRT, &crash, NULL);
+  sigaction(SIGSEGV, &crash, NULL);
+  sigaction(SIGBUS, &crash, NULL);
+  const char *pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
+  char exe_path[PATH_MAX];
+  if (!executable_path(argv[0], exe_path))
+  {
+    perror("finding executable path");
+    return 1;
+  }
+
   const char *doc_arg = NULL;
   char inputs[8192] = "";
   for (int i = 1; i < argc; i++)
   {
     const char *arg = argv[i];
-    if (!strcmp(arg, "-json"))
-      protocol = EDITOR_JSON;
-    else if (!strcmp(arg, "-lines"))
-      line_output = true;
-    else if (!strcmp(arg, "-texlive") || !strcmp(arg, "-tectonic"))
-      ; // TeX Live is what the engine reads either way
+    if (!strcmp(arg, "-json") || !strcmp(arg, "-texlive"))
+      ; // what it speaks and reads either way
     else if (!strcmp(arg, "-I") && i + 1 < argc)
     {
       size_t n = strlen(inputs);
@@ -808,8 +836,7 @@ int txp_live_main(int argc, const char *const *argv, const char *exe_path,
   char *doc_name = strrchr(doc_path, '/');
   *doc_name++ = 0;
 
-  editor_set_protocol(protocol);
-  editor_set_line_output(line_output);
+  editor_set_protocol(EDITOR_JSON);
 
   if (!texlive_available())
   {
@@ -822,16 +849,14 @@ int txp_live_main(int argc, const char *const *argv, const char *exe_path,
   fz_set_warning_callback(ctx, live_mupdf_message, "warning");
   fz_set_error_callback(ctx, live_mupdf_message, "error");
   fz_register_document_handlers(ctx);
-  live_state l = {.ctx = ctx, .doc_path = doc_path, .pdf_output = pdf_output,
-                  .in_fd = in_fd};
+  live_state l = {.ctx = ctx, .doc_path = doc_path, .pdf_output = pdf_output};
   l.eng = txp_tex_live_engine(ctx, exe_path, doc_path, doc_name, inputs);
 
   vstack *stack = vstack_new(ctx);
   prot_parser parser;
-  prot_initialize(&parser, protocol == EDITOR_JSON);
+  prot_initialize(&parser, true);
   dvi_page_fonts(ctx, true);
   int status = 0;
-  // MuPDF ends the process on an error nothing catches, which in-process is the app's.
   fz_try(ctx)
   {
     live_loop(&l, &parser, stack);

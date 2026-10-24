@@ -3,7 +3,7 @@ import Foundation
 /// A session's event (docs/core-api.md), decoded on the core's event thread (`Core`).
 nonisolated enum SessionEvent: Sendable {
     case document(DocumentState)
-    case saved
+    case outline(Analysis)
     case reload(ReloadEvent)
     case closed(ClosedEvent)
     case renamed(RenamedEvent)
@@ -25,7 +25,7 @@ nonisolated enum SessionEvent: Sendable {
         func fields<T: Decodable>(_: T.Type = T.self) throws -> T { try T(from: decoder) }
         switch type {
         case "document": self = .document(try fields())
-        case "saved": self = .saved
+        case "outline": self = .outline(try fields())
         case "document_reload": self = .reload(try fields())
         case "document_closed": self = .closed(try fields())
         case "document_renamed": self = .renamed(try fields())
@@ -53,7 +53,6 @@ nonisolated struct SessionOpened: Decodable, Sendable {
     let ui: UIState
 }
 
-nonisolated struct Located: Decodable, Sendable { let id, path: String }
 /// The project's interface as it was left (docs/core-api.md).
 nonisolated struct UIState: Decodable, Sendable {
     let expandedFolders, foldedHeadings: [String]

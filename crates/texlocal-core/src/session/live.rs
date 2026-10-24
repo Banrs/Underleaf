@@ -460,7 +460,7 @@ impl Actor {
             } => {
                 if pages > 0 {
                     self.live.document_seen = true;
-                    let complete = !matches!(run.as_deref(), Some("stopped" | "partial"));
+                    let complete = !matches!(run.as_str(), "stopped" | "partial");
                     let document = json!({
                         "path": path,
                         "pages": pages,
@@ -469,9 +469,7 @@ impl Actor {
                     });
                     self.emit("live_document", document);
                 }
-                if let Some(run) = run {
-                    self.run_ended(&run);
-                }
+                self.run_ended(&run);
             }
             LiveEvent::Done(run) => self.run_ended(&run),
             LiveEvent::Synced(mark) => self.live.mark_read = mark,

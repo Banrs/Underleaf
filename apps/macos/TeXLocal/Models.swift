@@ -33,7 +33,7 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     let name, path: String
     /// A file's, from its name; a folder has none.
     var kind: FileKind?
-    let children: [TreeNode]?
+    var children: [TreeNode]?
     /// The core's mark, as latexmk finds the main file.
     var main: Bool?
 
@@ -167,7 +167,7 @@ nonisolated struct ForwardLoc: Decodable {
 
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
-/// A line, from 1, of a project's file: where Back and Forward go, and where Quick Help's name is defined.
+/// A line, from 1, of a project's file: where Back and Forward go.
 nonisolated struct Place: Decodable {
     let path: String
     let line: Int
@@ -182,7 +182,7 @@ nonisolated struct Trail: Decodable {
 /// `session_quick_help`'s, for the popover.
 nonisolated struct QuickHelp: Decodable {
     let title, detail: String
-    let place: Place?
+    let place: Definition.Place?
 }
 
 /// Where a forward search began, for `synctex_match`; the column in UTF-16.
@@ -218,22 +218,11 @@ nonisolated struct Snapshot: Decodable, Identifiable {
     }
 
     let id: String
-    let time: Date
+    private let time: Double
     let name, reason: String?
     let changed: [Change]
 
-    private enum Keys: CodingKey { case id, time, name, reason, changed }
-
-    /// `time` is ISO 8601, which `Core`'s plain decoder doesn't read.
-    init(from decoder: any Decoder) throws {
-        let fields = try decoder.container(keyedBy: Keys.self)
-        id = try fields.decode(String.self, forKey: .id)
-        time = try Date(fields.decode(String.self, forKey: .time), strategy: .iso8601)
-        name = try fields.decodeIfPresent(String.self, forKey: .name)
-        reason = try fields.decodeIfPresent(String.self, forKey: .reason)
-        changed = try fields.decode([Change].self, forKey: .changed)
-    }
-
+    var date: Date { Date(timeIntervalSince1970: time / 1000) }
     var title: String { name ?? reason ?? String(localized: "Automatic") }
 }
 

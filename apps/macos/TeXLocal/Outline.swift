@@ -1,4 +1,4 @@
-/// A heading with what nests under it (`session_analyze`'s `tree`); `foldKey` names its fold in the project's saved state.
+/// A heading with what nests under it (the session's `outline`'s `tree`); `foldKey` names its fold in the project's saved state.
 nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     let item: OutlineItem
     let children: [OutlineNode]?

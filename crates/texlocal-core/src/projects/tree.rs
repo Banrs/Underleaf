@@ -1,9 +1,9 @@
 //! What a project shows of its folder: the entries the walks agree on, the file tree the sidebar
 //! lists, and what kind of file each is.
 
-use std::cmp::Reverse;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::ErrorKind::{NotFound, PermissionDenied};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -47,15 +47,19 @@ pub(crate) fn listed(rel: &str) -> bool {
 
 /// A folder's entries whose path `keep` takes, by name. Links are followed to files only, as
 /// folder links can cycle; an entry gone or unreadable by the time it's read is left out, but
-/// the root must be read.
-fn entries(root: &Path, dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<Entry>, CoreError> {
-    let read = if dir == root {
-        fs::read_dir(dir)?
-    } else {
-        match skip_unreadable(fs::read_dir(dir))? {
-            Some(read) => read,
-            None => return Ok(Vec::new()),
+/// the root must be read, and for a `whole` walk, which a copy needs, every folder.
+fn entries(
+    root: &Path,
+    dir: &Path,
+    keep: &dyn Fn(&str) -> bool,
+    whole: bool,
+) -> Result<Vec<Entry>, CoreError> {
+    let read = match fs::read_dir(dir) {
+        Err(err) if dir == root => return Err(err.into()),
+        Err(err) if err.kind() == NotFound || !whole && err.kind() == PermissionDenied => {
+            return Ok(Vec::new());
         }
+        read => read.map_err(CoreError::at(dir))?,
     };
     let mut out = Vec::new();
     for entry in read {
@@ -93,22 +97,24 @@ fn entries(root: &Path, dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<E
 pub(crate) fn walk(
     root: &Path,
     keep: &dyn Fn(&str) -> bool,
+    whole: bool,
     visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
     fn walk_in(
         root: &Path,
         dir: &Path,
         keep: &dyn Fn(&str) -> bool,
+        whole: bool,
         visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in entries(root, dir, keep)? {
-            if !visit(&entry)? || entry.dir && !walk_in(root, &entry.path, keep, visit)? {
+        for entry in entries(root, dir, keep, whole)? {
+            if !visit(&entry)? || entry.dir && !walk_in(root, &entry.path, keep, whole, visit)? {
                 return Ok(false);
             }
         }
         Ok(true)
     }
-    walk_in(root, root, keep, visit).map(drop)
+    walk_in(root, root, keep, whole, visit).map(drop)
 }
 
 /// Each file the tree lists, with its path from the root, until `visit` answers false.
@@ -116,7 +122,7 @@ pub(super) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
-    walk(root, &listed, &mut |entry| {
+    walk(root, &listed, false, &mut |entry| {
         if entry.dir {
             return Ok(true);
         }
@@ -124,11 +130,12 @@ pub(super) fn visit_files(
     })
 }
 
-/// The main file is marked however the settings spell it, as latexmk finds it.
+/// The main file is marked however the settings spell it, as latexmk finds it. The host orders
+/// each folder's entries, as its system lists files.
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     fn nodes(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut found = Vec::new();
-        for entry in entries(root, dir, &listed)? {
+        for entry in entries(root, dir, &listed, false)? {
             let children = if entry.dir {
                 Some(nodes(root, &entry.path, main)?)
             } else {
@@ -143,13 +150,6 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
                 children,
             });
         }
-        found.sort_by_cached_key(|n| {
-            (
-                n.children.is_none(),
-                n.name.to_lowercase(),
-                Reverse(n.name.clone()),
-            )
-        });
         Ok(found)
     }
     let main = read_settings(&project.settings).main_file;
@@ -222,22 +222,22 @@ mod tests {
     }
 
     #[test]
-    fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
+    fn the_file_tree_nests_folders_and_marks_the_main_file_leaving_hidden_files_out() {
         let (_dir, root) = project();
-        for file in ["c.tex", "B.tex", "Zeta/z.png", "beta/y.tex", ".hidden.tex"] {
+        for file in ["c.tex", "Zeta/z.png", ".hidden.tex"] {
             create_free(&root, file, false).unwrap();
         }
         let tree = file_tree(&Project::in_folder(&root)).unwrap();
-        let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, ["beta", "Zeta", "B.tex", "c.tex", "main.tex"]);
-        let json = serde_json::to_value(&tree[1]).unwrap();
+        let named = |name: &str| tree.iter().find(|n| n.name == name).unwrap();
+        assert_eq!(tree.len(), 3);
+        let json = serde_json::to_value(named("Zeta")).unwrap();
         let child =
             json!({ "type": "file", "name": "z.png", "path": "Zeta/z.png", "kind": "image" });
         assert_eq!(
             json,
             json!({ "type": "dir", "name": "Zeta", "path": "Zeta", "children": [child] })
         );
-        let main = serde_json::to_value(&tree[4]).unwrap();
+        let main = serde_json::to_value(named("main.tex")).unwrap();
         assert_eq!(main["main"], true);
     }
 }

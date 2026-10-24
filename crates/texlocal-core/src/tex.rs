@@ -1,6 +1,8 @@
 //! Finding TeX: the PATH a GUI app's thin environment lacks, the programs on
 //! it, whether latexmk runs, and the packages it has.
 
+use std::ffi::OsStr;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
@@ -70,16 +72,22 @@ pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
 
 /// A PATH's absolute folders: an empty or relative entry would be looked up
 /// from the project, where a latexmk of its own could stand.
-fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {
+fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
 pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
-    which::which_in(program, Some(path_env), Path::new("/")).ok()
+    absolute_dirs(OsStr::new(path_env))
+        .map(|dir| dir.join(program))
+        .find(|path| executable(path))
 }
 
 pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
-    path.is_absolute().then(|| which::which(path).ok())?
+    (path.is_absolute() && executable(path)).then(|| path.to_path_buf())
+}
+
+fn executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
 }
 
 /// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a

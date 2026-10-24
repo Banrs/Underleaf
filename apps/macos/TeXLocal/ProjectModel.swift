@@ -92,7 +92,8 @@ final class ProjectModel {
     private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
     let core = Core.shared
-    @ObservationIgnored private var analysis: Task<Void, Never>?
+    /// The session's last `outline`.
+    @ObservationIgnored private var analysis: Analysis?
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
     @ObservationIgnored var syncTask: Task<Void, Never>?
@@ -116,10 +117,7 @@ final class ProjectModel {
             if let session { core.send("session_live_log", ["session": session, "shown": shown]) }
             if !shown { texpresso.logClosed() }
         }
-        tree.onChange = { [weak self] in
-            self?.openKindChanged()
-            self?.analyze()
-        }
+        tree.onChange = { [weak self] in self?.openKindChanged() }
         pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
     }
 
@@ -132,6 +130,7 @@ final class ProjectModel {
     var editsText: Bool { openKind?.isText == true }
 
     private func openKindChanged() {
+        defer { showOutline() }
         guard let openPath else { return openKind = nil }
         if let kind = tree.node(at: openPath)?.kind, kind != openKind { openKind = kind }
     }
@@ -195,7 +194,6 @@ final class ProjectModel {
             if !treeChanged { tree.show(opened.tree) }
             let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
-            await analysis?.value
         } catch {
             core.forget(session)
             // The core may have opened it and failed only in its answer.
@@ -282,7 +280,9 @@ final class ProjectModel {
         guard !closed else { return }
         switch event {
         case .document(let state): documentChanged(state)
-        case .saved: analyze()
+        case .outline(let analysis):
+            self.analysis = analysis
+            showOutline()
         case .reload(let reloaded): reload(reloaded)
         case .closed(let gone):
             // One this model closed has the next file shown already.
@@ -316,7 +316,6 @@ final class ProjectModel {
             }
         case .filesChanged(let changed):
             if let openPath, !editsText, changed.paths.contains(openPath) { previewVersion += 1 }
-            if changed.paths.contains(where: { tree.node(at: $0)?.kind == .tex }) { analyze() }
         case .live(let state): liveChanged(state)
         case .livePDF(let read): showLive(read)
         }
@@ -341,7 +340,6 @@ final class ProjectModel {
     private func reload(_ event: ReloadEvent) {
         if editor.path == event.path {
             editor.reload(text: event.text)
-            analyze()
         } else if let session, let source = SourceDocument(session: session, path: event.path) {
             source.reload(event.text)
         }
@@ -396,7 +394,6 @@ final class ProjectModel {
     /// The session's text now, whatever reloads came while it opened.
     private func show(_ path: String, focus: Bool) {
         openPath = path
-        analyze()
         guard editsText else { return }
         guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
@@ -418,11 +415,12 @@ final class ProjectModel {
 
     func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
 
-    /// As the disk spells it; asked as a drag moves, so at once.
+    /// The path in the project of a URL inside its folder, both resolved so /private/var and /var compare alike; asked as a drag moves.
     func projectPath(_ url: URL) -> String? {
-        guard let located = try? core.now("locate", ["path": url.path(percentEncoded: false)], as: Located?.self),
-              located.id == id, !located.path.isEmpty else { return nil }
-        return located.path
+        guard let folder = root?.resolvingSymlinksInPath().pathComponents else { return nil }
+        let inside = url.resolvingSymlinksInPath().pathComponents
+        guard inside.count > folder.count, inside.starts(with: folder) else { return nil }
+        return inside.dropFirst(folder.count).joined(separator: "/")
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
@@ -466,19 +464,14 @@ final class ProjectModel {
         }
     }
 
-    func analyze() {
-        analysis?.cancel()
-        guard isLaTeX, let path = openPath, let session else {
+    /// While a LaTeX file shows; none for another.
+    private func showOutline() {
+        if isLaTeX, let analysis {
+            (outline, outlineTree, headingStyles, words) = (analysis.outline, analysis.tree, analysis.headingStyles, analysis.words)
+        } else {
             (outline, outlineTree, words) = ([], [], nil)
-            findHeadings()
-            return
         }
-        analysis = Task {
-            guard let doc = try? await core.call("session_analyze", ["session": session, "path": path], as: Analysis.self),
-                  !Task.isCancelled else { return }
-            (outline, outlineTree, headingStyles, words) = (doc.outline, doc.tree, doc.headingStyles, doc.words)
-            findHeadings()
-        }
+        findHeadings()
     }
 
     /// A scroll makes the top line's heading current only as it passes one; a caret's move wins over a scroll in its turn.
@@ -529,8 +522,7 @@ final class ProjectModel {
         app?.sidebarShown = true
     }
 
-    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or on the Mac a beep where the core knows
-    /// nothing of it.
+    /// Xcode's Quick Help: a popover at `offset` saying what the name there is, or a beep where the core knows nothing of it.
     func quickHelp(at offset: Int) async {
         guard let session, let path = editor.path else { return }
         guard let answer = await alerting("Couldn’t Show Quick Help", {
@@ -540,9 +532,7 @@ final class ProjectModel {
             NSSound.beep()
             return
         }
-        editor.textView.showQuickHelp(help, at: offset) { [weak self] place in
-            Task { await self?.open(place.path, line: place.line, jump: true) }
-        }
+        editor.textView.showQuickHelp(help, at: offset)
     }
 
     /// Where the caret is, for the places Go Back and Go Forward keep.
@@ -653,7 +643,6 @@ final class ProjectModel {
         trashed = []
         removeExport()
         notices.cancel()
-        analysis?.cancel()
         tree.close()
         syncTask?.cancel()
         pdfLoad?.cancel()
@@ -696,7 +685,6 @@ final class ProjectModel {
 
     /// The session restarts its build and Live Preview; the PDF is the new main file's.
     func mainFileChanged() {
-        analyze()
         Task { if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) } }
     }
 

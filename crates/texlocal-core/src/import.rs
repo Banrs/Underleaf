@@ -1,7 +1,6 @@
 //! Bringing files into the library: a Finder drop onto a project, and a .zip, a file whose folder
 //! doesn't open where it is (`open_path`) or a library project's files made a new project. They
-//! read host-chosen absolute paths and block on the disk; hosts call them off their UI thread, as
-//! they do every `tl_call`.
+//! read host-chosen absolute paths and block on the disk.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -92,12 +91,17 @@ pub fn import_files(
         if meta.is_file() {
             files.push((name.into_owned(), abs.clone()));
         } else if meta.is_dir() {
-            walk(abs, &|rel| !rel.split('/').any(is_litter), &mut |entry| {
-                if !entry.dir && !entry.link {
-                    files.push((in_folder(&name, &entry.rel), entry.path.clone()));
-                }
-                Ok(true)
-            })?;
+            walk(
+                abs,
+                &|rel| !rel.split('/').any(is_litter),
+                true,
+                &mut |entry| {
+                    if !entry.dir && !entry.link {
+                        files.push((in_folder(&name, &entry.rel), entry.path.clone()));
+                    }
+                    Ok(true)
+                },
+            )?;
         }
     }
     let root = service.project(id)?.root;
@@ -468,7 +472,7 @@ pub(crate) fn duplicate_project(
     }
     let root = service.project(id)?.root;
     let mut files = Vec::new();
-    walk(&root, &|rel| !left_out(rel), &mut |entry| {
+    walk(&root, &|rel| !left_out(rel), true, &mut |entry| {
         if !entry.dir {
             files.push((entry.rel.clone(), Source::File(entry.path.clone())));
         }

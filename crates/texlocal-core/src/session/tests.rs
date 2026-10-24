@@ -232,12 +232,12 @@ impl Rig {
             ..Fake::default()
         });
         let (engine, preview) = (Arc::clone(&fake), Arc::clone(&fake));
-        let sessions = Arc::new(Sessions::with_engine(service, engine, preview, watch));
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
-        sessions.set_listener(Some(Box::new(move |event| {
-            lock(&sink).push(event.clone());
-        })));
+        let listen = Box::new(move |event: &Value| lock(&sink).push(event.clone()));
+        let sessions = Arc::new(Sessions::with_engine(
+            service, engine, preview, watch, listen,
+        ));
         let session = 1;
         let args = json!({ "id": "P", "session": session, "autoCompile": auto_compile });
         sessions.call("session_open", args).await.unwrap();
@@ -315,11 +315,6 @@ impl Rig {
     async fn resolve(&self, answer: &str) {
         let args = json!({ "path": "main.tex", "answer": answer });
         self.ok("resolve", args).await;
-    }
-
-    async fn heading(&self, path: &str, line: usize) -> Value {
-        self.ok("outline_current", json!({ "path": path, "line": line }))
-            .await
     }
 }
 
@@ -498,47 +493,29 @@ async fn an_undefined_commands_issue_says_where_its_line_has_it() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_analysis_is_kept_for_the_heading_a_line_is_under() {
-    let rig = Rig::new(false).await;
+async fn the_outline_has_heading_styles_from_the_document_as_edited() {
+    let mut rig = Rig::new(false).await;
     let text = "\\documentclass{book}\n\\chapter{A}\n\\section{B}\n\\section{}\n";
-    fs::write(rig.root.join("main.tex"), text).unwrap();
-    let chapters = async || {
-        let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-        let levels = analysis["headingStyles"].as_array().unwrap();
+    rig.write_elsewhere("main.tex", text);
+    let chapters = |outline: &Value| {
+        let levels = outline["headingStyles"].as_array().unwrap();
         levels.iter().any(|l| l["command"] == "chapter")
     };
-    assert!(chapters().await);
-    assert_eq!(rig.heading("main.tex", 1).await, Value::Null);
-    assert_eq!(rig.heading("main.tex", 3).await, json!(1));
-    assert_eq!(rig.heading("main.tex", 9).await, json!(2));
+    outline_until(&mut rig, chapters).await;
     let doc = rig.open("main.tex").await;
     doc.edit(15, 4, "article", None, false);
-    assert!(!chapters().await);
+    outline_until(&mut rig, |outline| !chapters(outline)).await;
 }
 
-/// Analyses are worked out beside the session: one under way holds up no other command,
-/// and an earlier one that finishes later leaves the later one's outline.
-#[tokio::test]
-#[expect(
-    clippy::await_holding_lock,
-    reason = "the analyses wait for the outline as long ones would"
-)]
-async fn an_analysis_holds_up_no_other_command_and_the_last_asked_for_is_kept() {
-    let rig = Rig::new(false).await;
-    fs::write(rig.root.join("main.tex"), "\\section{A}\n\\section{B}\n").unwrap();
-    fs::write(rig.root.join("ch.tex"), "\\section{C}\n").unwrap();
-    let outline = Arc::clone(&lock(&rig.sessions.open)[&rig.session].outline);
-    let held = lock(&outline);
-    let analyze = |path| {
-        let args = json!({ "session": rig.session, "path": path });
-        rig.sessions.call("session_analyze", args.clone())
-    };
-    let (earlier, later) = (analyze("main.tex"), analyze("ch.tex"));
-    assert_eq!(rig.state().await["build"]["compiling"], false);
-    drop(held);
-    later.await.unwrap();
-    earlier.await.unwrap();
-    assert_eq!(rig.heading("ch.tex", 5).await, json!(0));
+/// The first `outline` event that passes `test`, which a scan sends perhaps a scan or two later.
+async fn outline_until(rig: &mut Rig, test: impl Fn(&Value) -> bool) -> Value {
+    loop {
+        let events = until_sent(rig, "outline").await;
+        let outlines = events.into_iter().filter(|e| e["type"] == "outline");
+        if let Some(found) = outlines.filter(&test).last() {
+            return found;
+        }
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -957,8 +934,9 @@ async fn a_file_tex_names_in_another_case_is_spelt_as_the_disk_spells_it() {
         return; // A volume that compares case, where TeX wouldn't find the file either.
     }
     fs::write(rig.root.join("main.tex"), "\\input{Chapters/Intro}\n").unwrap();
-    let analysis = rig.ok("analyze", json!({ "path": "main.tex" })).await;
-    assert_eq!(analysis["tree"][0]["file"], "chapters/intro.tex");
+    rig.changed("chapters", true);
+    let outline = outline_until(&mut rig, |outline| outline["tree"][0].is_object()).await;
+    assert_eq!(outline["tree"][0]["file"], "chapters/intro.tex");
     rig.ok("compile", json!({})).await;
     let mut error = issue(1, "Undefined");
     error.file = Some("Chapters/Intro.tex".into());
@@ -1142,8 +1120,8 @@ async fn documents_and_pages_go_to_the_host_as_they_come_and_none_of_a_start_bef
     rig.fake.tell(LiveEvent::Document {
         path: "/tmp/live.pdf".into(),
         pages: 4,
-        run: Some("partial".into()),
-        changed: Some(vec![[1, 1]]),
+        run: "partial".into(),
+        changed: vec![[1, 1]],
     });
     rig.fake.tell(page("/tmp/page.pdf"));
     let events = rig.events().await;
@@ -1392,7 +1370,6 @@ async fn the_folders_watcher_tells_another_apps_changes() {
     let reload = until_event(&rig.seen, |e| e["type"] == "document_reload");
     assert_eq!(reload.expect("reloaded")["text"], "theirs");
     assert!(until_event(&rig.seen, |e| e["type"] == "tree").is_some());
-    rig.sessions.close_all().await;
 }
 
 #[tokio::test]
@@ -1872,14 +1849,14 @@ async fn back_follows_a_rename_and_skips_a_file_gone() {
 /// word's start before one inside a word, though its title is longer.
 #[tokio::test(start_paused = true)]
 async fn open_quickly_lists_files_headings_and_labels_best_first() {
-    let rig = Rig::new(false).await;
+    let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("main.tex"), "\\input{ch}\n").unwrap();
     let ch = "\\section{Introduction}\\label{sec:intro}\n";
     fs::write(rig.root.join("ch.tex"), ch).unwrap();
     fs::create_dir(rig.root.join("chapters")).unwrap();
     fs::write(rig.root.join("chapters/intro.tex"), "").unwrap();
     rig.changed("chapters", true);
-    wait(300).await;
+    outline_until(&mut rig, |outline| outline["tree"][0].is_object()).await;
     let listed = rig.ok("quick_open", json!({ "query": "" })).await;
     let listed = listed.as_array().unwrap().iter();
     let paths: Vec<&str> = listed.map(|item| item["path"].as_str().unwrap()).collect();
@@ -1917,10 +1894,19 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
     fn help_of(title: &str, detail: &str, place: Value) -> Value {
         json!({ "title": title, "detail": detail, "place": place })
     }
+    fn at(file: &str, line: u32, column: u32, length: u32) -> Value {
+        json!({ "file": file, "line": line, "column": column, "length": length })
+    }
     let entry = "Donald E. Knuth, Leslie Lamport\nThe TeXbook\n1984\nAddison-Wesley";
-    let cited = help_of("knuth", entry, at("refs.bib", 1));
+    let cited = help_of("knuth", entry, at("refs.bib", 1, 6, 5));
     assert_eq!(help("knuth").await, cited);
-    let label = |number| help_of("sec:a", &format!("{number}\nIntro"), at("main.tex", 2));
+    let label = |number| {
+        help_of(
+            "sec:a",
+            &format!("{number}\nIntro"),
+            at("main.tex", 2, 22, 5),
+        )
+    };
     assert_eq!(help("sec:a").await, label("Compile to number it"));
     fs::create_dir(rig.root.join("build")).unwrap();
     let aux = "\\relax\n\\newlabel{sec:a@cref}{{[section][1][]1}{[1][3][]3}}\n\
@@ -1932,7 +1918,11 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
     fs::write(rig.root.join("build/ch.aux"), included).unwrap();
     fs::write(rig.root.join("build/main.aux"), "\\@input{ch.aux}\n").unwrap();
     assert_eq!(help("sec:a").await, label("2 on page 5"));
-    let defined = help_of("\\R", "\\newcommand{\\R}{\\mathbb{R}}", at("main.tex", 1));
+    let defined = help_of(
+        "\\R",
+        "\\newcommand{\\R}{\\mathbb{R}}",
+        at("main.tex", 1, 12, 2),
+    );
     assert_eq!(help("\\R ").await, defined);
     let known = help_of("\\toprule", "From the booktabs package", Value::Null);
     assert_eq!(help("\\toprule").await, known);

@@ -7,20 +7,20 @@ struct MathView: View {
     var image: NSImage?
 
     /// Longer maths is shown smaller: wider than this.
-    var widest: CGFloat = 560
+    private static let widest: CGFloat = 560
 
     var body: some View {
         let line = (em * 1.2).rounded(.up)
         Group {
             if let image {
-                let scale = min(1, widest / max(image.size.width, 1))
-                Image(drawn: image)
+                let scale = min(1, Self.widest / max(image.size.width, 1))
+                Image(nsImage: image)
                     .renderingMode(.template)
                     .resizable()
                     .foregroundStyle(.primary)
                     .frame(width: (image.size.width * scale).rounded(.up), height: (image.size.height * scale).rounded(.up))
             } else {
-                Text(verbatim: tex).font(.system(size: em)).foregroundStyle(.red).lineLimit(1).frame(maxWidth: widest)
+                Text(verbatim: tex).font(.system(size: em)).foregroundStyle(.red).lineLimit(1).frame(maxWidth: Self.widest)
             }
         }
         .frame(minWidth: line, minHeight: line)
@@ -30,11 +30,5 @@ struct MathView: View {
         .focusable(false)
         .allowsHitTesting(false)
         .padding()
-    }
-}
-
-extension Image {
-    init(drawn image: NSImage) {
-        self.init(nsImage: image)
     }
 }

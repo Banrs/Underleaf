@@ -2,10 +2,10 @@
 # install.sh <build folder> [destination]
 #
 # Installs a TeXpresso built by build.sh where Underleaf finds it automatically: the
-# programs and the libraries the build linked from outside Homebrew go in <destination>
-# (default ~/Library/Application Support/TeXLocal/TeXpresso), pointed at each other
-# relatively, and /opt/homebrew/bin/texpresso links to its launcher (not with NO_LINK=1, for
-# an installation to try beside the one in use). Libraries from /opt/homebrew stay where they are.
+# programs go in <destination> (default ~/Library/Application Support/TeXLocal/TeXpresso),
+# linked to the libraries of the system and of Homebrew where Homebrew keeps them across
+# upgrades, and /opt/homebrew/bin/texpresso links to its launcher (not with NO_LINK=1, for
+# an installation to try beside the one in use).
 #
 # The installation is prepared in a temporary folder beside the destination, checked by
 # running its launcher, and only then swapped in: a failure or an interruption leaves
@@ -34,48 +34,22 @@ cleanup() {
   rm -rf "$STAGE" ${OLD:+"$OLD"}
 }
 trap cleanup EXIT
-shopt -s nullglob # lib/ stays empty when every library comes from Homebrew
 chmod 755 "$STAGE"
-mkdir -p "$STAGE/bin" "$STAGE/libexec" "$STAGE/lib"
+mkdir -p "$STAGE/bin" "$STAGE/libexec"
 cp "$BUILD/texpresso" "$BUILD/texpresso-xetex" "$STAGE/libexec/"
+chmod u+w "$STAGE"/libexec/*
 
 deps() { otool -L "$1" | tail -n +2 | sed 's/ (compat.*//; s/^[[:space:]]*//'; }
-# A link into Homebrew's Cellar (the build's own deps/opt links) is used from Homebrew.
-brewed() { case "$(realpath "$1")" in /opt/homebrew/Cellar/*) echo "$(realpath "$1" | sed -E 's|Cellar/([^/]+)/[^/]+/|opt/\1/|')" ;; *) return 1 ;; esac; }
-external() { case "$1" in /usr/lib/* | /System/* | /opt/homebrew/* | @*) return 1 ;; esac; ! brewed "$1" >/dev/null; }
-
-# Copy every library outside the system and Homebrew, following what each one links:
-# by absolute path, or beside itself (@loader_path), as ICU does.
-copy() { # copy <library> <real path>
-  [ -e "$STAGE/lib/$1" ] && return
-  cp -L "$2" "$STAGE/lib/$1"
-  todo+=("$2")
-}
-todo=("$BUILD/texpresso" "$BUILD/texpresso-xetex")
-while [ ${#todo[@]} -gt 0 ]; do
-  file=$(realpath "${todo[0]}"); todo=("${todo[@]:1}")
+for file in "$STAGE"/libexec/*; do
+  args=()
   while read -r dep; do
     case "$dep" in
-      @loader_path/*) [ "${file#"$BUILD"}" = "$file" ] && copy "$(basename "$dep")" "$(dirname "$file")/${dep#@loader_path/}" ;;
-      *) external "$dep" && copy "$(basename "$dep")" "$(realpath "$dep")" ;;
+      /usr/lib/* | /System/* | /opt/homebrew/*) ;;
+      # A link into Homebrew's Cellar (the build's own deps/opt links) is used from Homebrew.
+      *) real=$(realpath "$dep" 2>/dev/null) && [ "${real#/opt/homebrew/Cellar/}" != "$real" ] ||
+           fail "$(basename "$file") links $dep, from neither the system nor Homebrew"
+         args+=(-change "$dep" "$(echo "$real" | sed -E 's|Cellar/([^/]+)/[^/]+/|opt/\1/|')") ;;
     esac
-  done < <(deps "$file")
-  # sdl2-compat opens SDL3 from its run paths when it starts.
-  case "$file" in */libSDL2-2.0*.dylib)
-    for rpath in $(otool -l "$file" | awk '/LC_RPATH/ { getline; getline; print $2 }'); do
-      sdl3=${rpath/@loader_path/$(dirname "$file")}/libSDL3.dylib
-      [ -e "$sdl3" ] && copy libSDL3.dylib "$(realpath "$sdl3")"
-    done ;;
-  esac
-done
-chmod u+w "$STAGE"/lib/* "$STAGE"/libexec/*
-
-for file in "$STAGE"/libexec/* "$STAGE"/lib/*; do
-  args=()
-  case "$file" in */libexec/*) to=@executable_path/../lib ;; *) to=@loader_path; args=(-id "@rpath/$(basename "$file")") ;; esac
-  while read -r dep; do
-    if external "$dep"; then args+=(-change "$dep" "$to/$(basename "$dep")")
-    elif [ "${dep#/opt/homebrew/}" = "$dep" ] && brew=$(brewed "$dep" 2>/dev/null); then args+=(-change "$dep" "$brew"); fi
   done < <(deps "$file")
   for rpath in $(otool -l "$file" | awk '/LC_RPATH/ { getline; getline; print $2 }'); do
     args+=(-delete_rpath "$rpath")

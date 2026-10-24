@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use texlocal_core::CoreError;
-use texlocal_core::events::Listener;
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
 use texlocal_core::syntax::{self, SourceDocument, TextRange};
@@ -53,38 +52,28 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
 }
 
 /// # Safety
-/// `data_dir` is null or a NUL-terminated string.
+/// `data_dir` is null or a NUL-terminated string; `listener`, if not null, may be called on a
+/// core thread with `ctx` for as long as the handle lives.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
-    let Some(dir) = unsafe { str_arg(data_dir) }.map(PathBuf::from) else {
+pub unsafe extern "C" fn tl_open(
+    data_dir: *const c_char,
+    listener: Option<extern "C" fn(*mut c_void, *const c_char)>,
+    ctx: *mut c_void,
+) -> *mut TlHandle {
+    let (Some(dir), Some(call)) = (unsafe { str_arg(data_dir) }.map(PathBuf::from), listener)
+    else {
         return std::ptr::null_mut();
     };
+    let callback = Callback { call, ctx };
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
-        let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir))));
+        let listen = Box::new(move |event: &Value| callback.send(event));
+        let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen));
         Some(Box::new(TlHandle { runtime, sessions }))
     })
     .flatten()
     .map_or(std::ptr::null_mut(), Box::into_raw)
-}
-
-/// # Safety
-/// `handle` came from `tl_open` and is not closed; the strings are null or
-/// NUL-terminated.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_call(
-    handle: *const TlHandle,
-    command: *const c_char,
-    args_json: *const c_char,
-) -> *mut c_char {
-    let answer = caught(|| {
-        let handle =
-            unsafe { handle.as_ref() }.ok_or_else(|| CoreError::bad_request("No handle"))?;
-        let (command, args) = unsafe { command_args(command, args_json) }?;
-        handle.runtime.block_on(handle.sessions.call(command, args))
-    });
-    c_json(envelope(answer.unwrap_or_else(|| Err(panicked()))).to_string()).into_raw()
 }
 
 fn panicked() -> CoreError {
@@ -115,8 +104,8 @@ fn envelope(result: Result<Value, CoreError>) -> Value {
     }
 }
 
-/// A host's `done` for one call, called once: with the answer, or, dropped unanswered, with
-/// the command's panic or the close that came first.
+/// A host's `done` for one call, called once: with the answer, or with the panic of a command
+/// that dropped it unanswered. A session that closes with commands queued answers them itself.
 struct Done(Option<Callback>);
 
 impl Done {
@@ -130,19 +119,14 @@ impl Done {
 impl Drop for Done {
     fn drop(&mut self) {
         if let Some(done) = self.0.take() {
-            let unanswered = if std::thread::panicking() {
-                panicked()
-            } else {
-                CoreError::internal("TeXLocal closed before it answered.")
-            };
-            done.send(&envelope(Err(unanswered)));
+            done.send(&envelope(Err(panicked())));
         }
     }
 }
 
 /// # Safety
-/// As `tl_call`; `done`, if not null, may be called from any thread with
-/// `ctx`, until the handle is closed.
+/// `handle` came from `tl_open`; the strings are null or NUL-terminated; `done`, if not null,
+/// may be called from any thread with `ctx`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_call_async(
     handle: *const TlHandle,
@@ -162,32 +146,11 @@ pub unsafe extern "C" fn tl_call_async(
     let Some(answer) = caught(|| handle.sessions.call(command, args)) else {
         return done.send(Err(panicked()));
     };
-    // `done` is called on the blocking pool, where it may call the core again, and which a
-    // close waits for once the sessions have answered.
+    // `done` is called on the blocking pool, where it may call the core again.
     let runtime = handle.runtime.handle().clone();
     handle
         .runtime
         .spawn_blocking(move || done.send(runtime.block_on(answer)));
-}
-
-/// # Safety
-/// `handle` came from `tl_open` and is not closed; `listener`, if not null,
-/// may be called from that thread with `ctx` until it is replaced or the
-/// handle closed.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_set_listener(
-    handle: *const TlHandle,
-    listener: Option<extern "C" fn(*mut c_void, *const c_char)>,
-    ctx: *mut c_void,
-) {
-    let Some(handle) = (unsafe { handle.as_ref() }) else {
-        return;
-    };
-    let listener = listener.map(|call| {
-        let callback = Callback { call, ctx };
-        Box::new(move |event: &Value| callback.send(event)) as Listener
-    });
-    caught(|| handle.sessions.set_listener(listener));
 }
 
 /// # Safety
@@ -196,21 +159,6 @@ pub unsafe extern "C" fn tl_set_listener(
 pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     if !text.is_null() {
         drop(unsafe { CString::from_raw(text) });
-    }
-}
-
-/// # Safety
-/// `handle` is null or came from `tl_open`, with no call on it in flight, and is
-/// closed once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
-    if !handle.is_null() {
-        let handle = unsafe { Box::from_raw(handle) };
-        caught(move || {
-            handle.runtime.block_on(handle.sessions.close_all());
-            handle.sessions.set_listener(None);
-            drop(handle);
-        });
     }
 }
 
@@ -252,7 +200,7 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
 }
 
 /// # Safety
-/// `handle` came from `tl_open` and is not closed; `path` is null or NUL-terminated.
+/// `handle` came from `tl_open`; `path` is null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_session_source(
     handle: *const TlHandle,
@@ -428,6 +376,7 @@ pub unsafe extern "C" fn tl_source_call(
             TlSource::Session(document) if command == "version" => {
                 Some(document.version().to_string())
             }
+            TlSource::Own(_) if command == "version" => Some("null".to_owned()),
             _ => source.with(|doc| doc.call(command, args)),
         }
     };

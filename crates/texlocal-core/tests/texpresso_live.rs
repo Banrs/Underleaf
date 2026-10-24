@@ -21,7 +21,6 @@ fn live_preview_follows_unsaved_edits() {
     let scratch = tempfile::tempdir().unwrap();
     // SAFETY: before this test starts a thread; it is its binary's only test.
     unsafe {
-        std::env::set_var("SDL_VIDEODRIVER", "dummy");
         for (key, dir) in [
             ("XDG_CACHE_HOME", "cache"),
             ("TEXMFVAR", "texmf-var"),
@@ -173,12 +172,10 @@ async fn run(library: &Path) {
         .unwrap();
     let id = project["id"].as_str().unwrap().to_owned();
     let root = service.project(&id).unwrap().root;
-    let sessions = Arc::new(Sessions::new(Arc::clone(&service)));
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);
-    sessions.set_listener(Some(Box::new(move |event| {
-        sink.lock().unwrap().push(event.clone());
-    })));
+    let listen = Box::new(move |event: &Value| sink.lock().unwrap().push(event.clone()));
+    let sessions = Arc::new(Sessions::new(Arc::clone(&service), listen));
     let client = Client { sessions, events };
     let main = "\\documentclass{article}\n\\begin{document}\n\\typeout{UL_MAIN_INITIAL}\nHello café. $x^2+y^2=z^2$\n\\input{section.tex}\n\\end{document}\n";
     let section = "\\typeout{UL_SECTION_INITIAL}\nIncluded text.\n";
@@ -365,8 +362,7 @@ async fn run(library: &Path) {
     main_doc.edit(two, 8, "", None, false);
     client.event(&mut from, a, "live", halted(false)).await;
 
-    // TeXpresso never ended on its own, and no failure was reported.
-    assert!(client.since(0, "live_restarted").is_empty());
+    // No failure was reported.
     let failed = client.since(0, "live");
     let failed = failed.iter().find(|e| !e["failure"].is_null());
     assert!(failed.is_none(), "{failed:?}");

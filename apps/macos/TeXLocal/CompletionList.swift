@@ -78,7 +78,7 @@ final class CompletionList {
         (rows.items, look.kind, look.font) = (offered.items, offered.kind, font)
         look.typed = editor.caret - offered.start
         look.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-        look.height = max(CompletionRowsView.leastRowHeight, (font.ascender - font.descender + font.leading).rounded(.up) + 8)
+        look.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         rows.reveal()
         let opening = surface.superview == nil
         fit()
@@ -192,7 +192,6 @@ struct CompletionRowsView: View {
     let clicked: (Int) -> Void
 
     static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20, corner: CGFloat = 13, rowCorner: CGFloat = 8
-    static let leastRowHeight: CGFloat = 0
     private static let text = Color(nsColor: .labelColor), chosenText = Color(nsColor: .alternateSelectedControlTextColor)
     private static let accent = Color(nsColor: .controlAccentColor)
 

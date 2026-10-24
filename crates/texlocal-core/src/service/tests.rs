@@ -51,7 +51,7 @@ async fn a_new_project_is_made_with_its_engine() {
     let (_dir, service) = library();
     let args = json!({ "name": "Xe", "template": "blank", "engine": "xelatex" });
     let made = call(&service, "create_project", args).await;
-    let sessions = Arc::new(Sessions::new(Arc::new(service)));
+    let sessions = Arc::new(Sessions::new(Arc::new(service), Box::new(|_| {})));
     let args = json!({ "id": made["id"], "session": 1 });
     let opened = sessions.call("session_open", args).await.unwrap();
     assert_eq!(opened["settings"]["engine"], "xelatex");

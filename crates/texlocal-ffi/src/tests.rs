@@ -43,19 +43,26 @@ unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Opti
     unsafe { take_json(tl_source_call(source, c(command).as_ptr(), args.as_ptr())) }
 }
 
+/// The answer, waited for. The sink is leaked: `done` may still be returning from its send.
 fn call_raw(handle: *const TlHandle, command: &str, args: Option<&str>) -> Value {
     let args = args.map(c);
     let args = args.as_ref().map_or(ptr::null(), |a| a.as_ptr());
-    unsafe { take_json(tl_call(handle, c(command).as_ptr(), args)).unwrap() }
+    let (sink, answer) = mpsc::channel();
+    let ctx = context(Box::leak(Box::new(sink)));
+    unsafe { tl_call_async(handle, c(command).as_ptr(), args, Some(collect), ctx) };
+    until(&answer, |_| true)
 }
 
 fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {
     call_raw(handle, command, Some(&args.to_string()))
 }
 
-/// The service over `data`, holding a blank project "P".
-fn open(data: &Path) -> *mut TlHandle {
-    let handle = unsafe { tl_open(c(data.to_str().unwrap()).as_ptr()) };
+extern "C" fn ignore(_ctx: *mut c_void, _json: *const c_char) {}
+
+/// The service over `data`, telling `listener` its events, holding a blank project "P".
+fn open(data: &Path, listener: Done, ctx: *mut c_void) -> *mut TlHandle {
+    let data = c(data.to_str().unwrap());
+    let handle = unsafe { tl_open(data.as_ptr(), Some(listener), ctx) };
     assert!(!handle.is_null());
     let blank = json!({ "name": "P", "template": "blank" });
     assert_eq!(call(handle, "create_project", blank)["ok"]["id"], "P");
@@ -79,10 +86,13 @@ unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *
 #[test]
 fn commands_and_bad_input_answer_through_the_c_abi() {
     assert_eq!(call_raw(ptr::null(), "list_projects", None)["status"], 400);
-    assert!(unsafe { tl_open(ptr::null()) }.is_null());
-
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
+    let path = c(dir.path().to_str().unwrap());
+    let null = ptr::null_mut();
+    assert!(unsafe { tl_open(ptr::null(), Some(ignore), null) }.is_null());
+    assert!(unsafe { tl_open(path.as_ptr(), None, null) }.is_null());
+
+    let handle = open(dir.path(), ignore, null);
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
     assert_eq!(
         call_raw(handle, "list_projects", Some("{not json"))["status"],
@@ -91,8 +101,6 @@ fn commands_and_bad_input_answer_through_the_c_abi() {
     assert_eq!(call_raw(handle, "nope", None)["status"], 404);
     unsafe {
         tl_free(ptr::null_mut());
-        tl_close(handle);
-        tl_close(ptr::null_mut());
     }
 }
 
@@ -133,12 +141,11 @@ fn syntax_commands_round_trip_through_the_c_abi() {
 #[test]
 fn a_session_documents_source_is_the_sessions_document() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
     let (sink, events) = mpsc::channel();
-    unsafe { tl_set_listener(handle, Some(collect), context(&sink)) };
+    // The handle outlives the test, as the app's does, and may tell its listener after it.
+    let handle = open(dir.path(), collect, context(Box::leak(Box::new(sink))));
     let session = open_main(handle);
-    let typed =
-        |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text });
+    let typed = |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text, "autoPair": true });
     unsafe {
         let source = session_source(handle, session, "main.tex");
         let text = text_of(source);
@@ -159,7 +166,10 @@ fn a_session_documents_source_is_the_sessions_document() {
         let key = source_call(source, "type", typed(1, ")")).unwrap();
         assert_eq!(key["selection"], Value::Null, "the closer was forgotten");
         tl_source_free(source);
-        tl_close(handle);
+
+        let own = tl_source_new(ptr::null(), 0);
+        assert_eq!(source_call(own, "version", json!({})), Some(Value::Null));
+        tl_source_free(own);
     }
 }
 
@@ -191,24 +201,25 @@ fn call_async(handle: *const TlHandle, command: &str, args: Value, done: Done, c
 #[test]
 fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
+    let handle = open(dir.path(), ignore, ptr::null_mut());
     let (sink, answers) = mpsc::channel();
+    // The handle outlives the test, as the app's does, and may call `done` after it.
+    let sink = Box::leak(Box::new(sink));
     let seven = json!({ "id": "P", "session": 7 });
-    call_async(handle, "session_open", seven, collect, context(&sink));
+    call_async(handle, "session_open", seven, collect, context(sink));
     assert_eq!(until(&answers, |_| true)["ok"]["name"], "P");
     let main = json!({ "session": 7, "path": "main.tex" });
     let commands = ["session_open_document", "session_close_document"];
     for round in 0..50 {
         let open = round % 2 == 0;
         for command in commands.iter().cycle().skip(usize::from(open)).take(4) {
-            call_async(handle, command, main.clone(), collect, context(&sink));
+            call_async(handle, command, main.clone(), collect, context(sink));
         }
         call(handle, "session_save", json!({ "session": 7 }));
         let source = unsafe { session_source(handle, 7, "main.tex") };
         assert_eq!(!source.is_null(), open, "round {round}");
         unsafe { tl_source_free(source) };
     }
-    unsafe { tl_close(handle) };
 }
 
 /// As a host's continuation may, resumed on the thread that answered.
@@ -219,11 +230,10 @@ fn a_session_commands_done_may_call_the_core() {
         let _ = sink.send(call(*handle, "list_projects", json!({})));
     }
     let dir = tempfile::tempdir().unwrap();
-    let handle = open(dir.path());
+    let handle = open(dir.path(), ignore, ptr::null_mut());
     open_main(handle);
     let (sink, answers) = mpsc::channel();
-    let (within, save) = ((handle, sink), json!({ "session": 1 }));
-    call_async(handle, "session_save", save, call_within, context(&within));
+    let (within, save) = (Box::leak(Box::new((handle, sink))), json!({ "session": 1 }));
+    call_async(handle, "session_save", save, call_within, context(within));
     assert_eq!(until(&answers, |_| true)["ok"][0]["id"], "P");
-    unsafe { tl_close(handle) };
 }

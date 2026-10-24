@@ -27,5 +27,5 @@ The evidence behind AGENTS.md's "Writing code"; most of it is 2025–2026 prepri
 - Context files such as AGENTS.md add over 20% to an agent's cost for no gain unless they hold
   only minimal requirements ([arXiv 2602.11988](https://arxiv.org/abs/2602.11988)).
 
-Rules lower the start, not the slope: every change deletes as well as adds, its diff is read for
-leftovers, and CI's `tools/metrics.py` fails a change that raises erosion or clones.
+Rules lower the start, not the slope: every change deletes as well as adds, and its diff is read for
+leftovers.

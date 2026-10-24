@@ -20,7 +20,7 @@ use super::build::Builds;
 use super::live::Live;
 use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
-use super::{Command, Document, Engine, Msg, Outline, Preview, Reply, Sessions};
+use super::{Command, Document, Engine, Msg, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
 use crate::events::Queued;
 use crate::logparse::{Fix, LogItem};
@@ -148,8 +148,10 @@ pub(crate) struct Actor {
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub docs: BTreeMap<String, Doc>,
     next_doc: u64,
-    symbols: Arc<RwLock<Arc<Symbols>>>,
+    pub symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
+    /// The `outline` event last sent.
+    outline: Value,
     pub facts: Arc<analyze::Files>,
     pub edits: u64,
     /// Kept for the session's life: a document closed since isn't marked with a build's
@@ -158,8 +160,6 @@ pub(crate) struct Actor {
     pub auto_compile: bool,
     pub builds: Builds,
     tex: signal::Receiver<bool>,
-    pub outline: Arc<Mutex<Outline>>,
-    analyses: u64,
     pub timers: BTreeMap<Timer, Instant>,
     fs_pending: Vec<Change>,
     pub tree: TreeIndex,
@@ -219,14 +219,13 @@ impl Actor {
             next_doc: 1,
             symbols: Arc::default(),
             symbols_seq: 0,
+            outline: Value::Null,
             facts: Arc::default(),
             edits: 0,
             last_edits: HashMap::new(),
             auto_compile,
             builds,
             tex: sessions.service.tex_found.subscribe(),
-            outline: Arc::default(),
-            analyses: 0,
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
             tree: TreeIndex::of(&tree),
@@ -388,7 +387,6 @@ impl Actor {
         let answer = match command {
             Command::Clean => return self.clean(reply),
             Command::Fix { id } => return self.fix(&id, reply),
-            Command::Analyze { path } => return self.analyze(path.0, reply),
             Command::Search {
                 query,
                 match_case,
@@ -554,6 +552,8 @@ impl Actor {
         };
         self.docs.insert(path.to_owned(), doc);
         lock(&self.shared).insert(path.to_owned(), document);
+        // Its outline, or the main file's if it reaches it.
+        self.after(Timer::Symbols);
         self.publish_doc(path);
         self.mark_issues();
         self.live_issues_opened(path);
@@ -957,17 +957,25 @@ impl Actor {
             self.tree.main.clone(),
             self.edits,
         );
+        // The editor's, the document opened last, as the one before closes once it shows.
+        let newest = self.docs.values().max_by_key(|doc| doc.doc.id());
+        let shown = newest.map(|doc| doc.path.clone());
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
-            let result = symbols.map(|symbols| {
+            let result = symbols.and_then(|symbols| {
                 let symbols = Symbols {
                     files,
                     installed,
                     ..symbols
                 };
-                let checks = main.map_or_else(Vec::new, |main| checks::check(&symbols, &main));
-                (symbols, checks)
+                let checks = main
+                    .as_deref()
+                    .map_or_else(Vec::new, |main| checks::check(&symbols, main));
+                let analysis =
+                    analyze::analyze_project(&symbols, main.as_deref(), shown.as_deref());
+                let outline = out(&analysis)?;
+                Ok(Box::new((symbols, checks, outline)))
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
         });
@@ -977,49 +985,24 @@ impl Actor {
         &mut self,
         seq: u64,
         edits: u64,
-        result: Result<(Symbols, Vec<LogItem>), CoreError>,
+        result: Result<Box<(Symbols, Vec<LogItem>, Value)>, CoreError>,
     ) {
-        if let Ok((symbols, checks)) = result
+        if let Ok(scanned) = result
             && seq == self.symbols_seq
         {
+            let (symbols, checks, outline) = *scanned;
             *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
             self.checks_done(checks, edits);
-        }
-    }
-
-    // MARK: - Analysis
-
-    /// Worked out beside the session, which goes on with its other commands. An analysis
-    /// asked for earlier keeps no outline over it.
-    fn analyze(&mut self, path: String, reply: Reply) {
-        self.analyses += 1;
-        let (seq, project) = (self.analyses, self.project.clone());
-        let (docs, outline) = (Arc::clone(&self.shared), Arc::clone(&self.outline));
-        let facts = Arc::clone(&self.facts);
-        tokio::task::spawn_blocking(move || {
-            let root = &project.root;
-            let main = settings::read_settings(&project.settings).main_file;
-            let class = paths::rel_key(&main).ok().and_then(|main| {
-                let open = lock(&docs).get(&main).cloned();
-                match open {
-                    Some(doc) => doc.with(|source| source.document_class()),
-                    None => facts.at(root, &main)?.class.clone(),
-                }
-            });
-            let analysis = analyze::analyze_project(root, &facts, &main, &path, class.as_ref());
-            let answer = out(&analysis);
-            let mut kept = lock(&outline);
-            if seq > kept.seq {
-                (kept.seq, kept.headings) = (seq, analysis.outline);
+            if outline != self.outline {
+                self.emit("outline", outline.clone());
+                self.outline = outline;
             }
-            drop(kept);
-            reply.send(answer);
-        });
+        }
     }
 
     // MARK: - Search and replace
 
-    /// Worked out beside the session, as an analysis is: it reads every text file.
+    /// Worked out beside the session: it reads every text file.
     fn search(&self, query: Query, reply: Reply) {
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {

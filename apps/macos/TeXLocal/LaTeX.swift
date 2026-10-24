@@ -35,7 +35,7 @@ extension ProjectModel {
     }
 }
 
-/// A level the main file's class has, set and numbered as its class does (`session_analyze`): Normal Text first.
+/// A level the main file's class has, set and numbered as its class does (the session's `outline`): Normal Text first.
 nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
     nonisolated struct Font: Equatable, Decodable, Sendable {
         /// Of the text's size.
