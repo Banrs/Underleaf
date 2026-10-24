@@ -622,3 +622,12 @@ final class ProjectFlowTests {
         await app.close()
     }
 }
+
+struct FileTreeTests {
+    @Test func aFolderListsAsFinderDoes() {
+        let node = { (name: String, type: TreeNode.Entry) in TreeNode(type: type, name: name, path: name, children: type == .dir ? [] : nil) }
+        let tree = FileTree(id: "P")
+        tree.show(["ch10.tex", "ch2.tex", "B.tex", "c.tex"].map { node($0, .file) } + [node("figs", .dir), node("Appendix", .dir)])
+        #expect(tree.nodes.map(\.name) == ["Appendix", "figs", "B.tex", "c.tex", "ch2.tex", "ch10.tex"])
+    }
+}

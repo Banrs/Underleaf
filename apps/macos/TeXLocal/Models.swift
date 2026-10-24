@@ -33,7 +33,7 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     let name, path: String
     /// A file's, from its name; a folder has none.
     var kind: FileKind?
-    let children: [TreeNode]?
+    var children: [TreeNode]?
     /// The core's mark, as latexmk finds the main file.
     var main: Bool?
 

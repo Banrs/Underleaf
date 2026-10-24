@@ -1,7 +1,6 @@
 //! What a project shows of its folder: the entries the walks agree on, the file tree the sidebar
 //! lists, and what kind of file each is.
 
-use std::cmp::Reverse;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind::{NotFound, PermissionDenied};
@@ -131,7 +130,8 @@ pub(super) fn visit_files(
     })
 }
 
-/// The main file is marked however the settings spell it, as latexmk finds it.
+/// The main file is marked however the settings spell it, as latexmk finds it. The host orders
+/// each folder's entries, as its system lists files.
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     fn nodes(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut found = Vec::new();
@@ -150,13 +150,6 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
                 children,
             });
         }
-        found.sort_by_cached_key(|n| {
-            (
-                n.children.is_none(),
-                n.name.to_lowercase(),
-                Reverse(n.name.clone()),
-            )
-        });
         Ok(found)
     }
     let main = read_settings(&project.settings).main_file;
@@ -229,22 +222,22 @@ mod tests {
     }
 
     #[test]
-    fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
+    fn the_file_tree_nests_folders_and_marks_the_main_file_leaving_hidden_files_out() {
         let (_dir, root) = project();
-        for file in ["c.tex", "B.tex", "Zeta/z.png", "beta/y.tex", ".hidden.tex"] {
+        for file in ["c.tex", "Zeta/z.png", ".hidden.tex"] {
             create_free(&root, file, false).unwrap();
         }
         let tree = file_tree(&Project::in_folder(&root)).unwrap();
-        let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, ["beta", "Zeta", "B.tex", "c.tex", "main.tex"]);
-        let json = serde_json::to_value(&tree[1]).unwrap();
+        let named = |name: &str| tree.iter().find(|n| n.name == name).unwrap();
+        assert_eq!(tree.len(), 3);
+        let json = serde_json::to_value(named("Zeta")).unwrap();
         let child =
             json!({ "type": "file", "name": "z.png", "path": "Zeta/z.png", "kind": "image" });
         assert_eq!(
             json,
             json!({ "type": "dir", "name": "Zeta", "path": "Zeta", "children": [child] })
         );
-        let main = serde_json::to_value(&tree[4]).unwrap();
+        let main = serde_json::to_value(named("main.tex")).unwrap();
         assert_eq!(main["main"], true);
     }
 }
