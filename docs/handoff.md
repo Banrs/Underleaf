@@ -13,6 +13,17 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - Install TinyTeX from Settings, and its alert when offline. The PDF pane's button, its
   progress and a build once it is done are checked on the QA copy with TeX hidden by
   `sandbox-exec` and `HOME` pointed at a scratch folder; tlmgr adds a package there unelevated.
+- Open from launch, the inspector's form has small grey headers 10 pt in, as on main; opened
+  later it has its large title 20 pt in (`Mount`). Built when the workspace appears, it is still
+  small.
+- The File Outline's row scrolled to by the caret or the keys sits up to 10 pt under its header
+  (`OutlineList`'s -10 pt top padding and clip, since 16 October).
+- Open, the File Outline's header is the status bar's 36 pt, 8.5 pt taller than before, which
+  leaves 31 pt from its title to the first row where the Files section has 26.
+- A symbol chosen from a Math palette stays tinted the next time it opens, and the palette sits
+  7.5 pt right of centre: AppKit's own, as the observers that cleared and centred them went.
+- `qa click` refuses everywhere while macOS 27.2 keeps Notification Centre's clear full-screen
+  window over the others; Accessibility actions and keys still work.
 
 This round's, built and tested by CI but not yet seen:
 - Typing: `$` pairs and steps over its closer, `$|$` and `$` make a display; Return after
