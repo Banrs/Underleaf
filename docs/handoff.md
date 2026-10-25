@@ -2,10 +2,9 @@
 
 ## Mac, on screen
 
-Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/install-mac.sh`:
-- The haptic as the source|PDF divider stops at the even split (the stop itself is checked).
-- Aa opens with no level highlighted and the first arrow key highlights the caret's level; Tab's
-  path through the popover is unverified.
+These are checks to investigate on the QA copy (`tools/qa/README.md`), not fixed UI requirements.
+The workspace now uses a SwiftUI toolbar and native menus, with three editor layouts.
+
 - An opened folder's menu on Home, and Install's password dialog with MacTeX (the rows, the
   button, its progress and a failure are checked).
 - A click on a Live Preview issue opening the Live Preview Log (its look and a build's issue over
@@ -13,9 +12,6 @@ Check on the QA copy (`tools/qa/README.md`), then install with `zsh tools/instal
 - Install TinyTeX from Settings, and its alert when offline. The PDF pane's button, its
   progress and a build once it is done are checked on the QA copy with TeX hidden by
   `sandbox-exec` and `HOME` pointed at a scratch folder; tlmgr adds a package there unelevated.
-- Open from launch, the inspector's form has small grey headers 10 pt in, as on main; opened
-  later it has its large title 20 pt in (`Mount`). Built when the workspace appears, it is still
-  small.
 - The File Outline's row scrolled to by the caret or the keys sits up to 10 pt under its header
   (`OutlineList`'s -10 pt top padding and clip, since 16 October).
 - Open, the File Outline's header is the status bar's 36 pt, 8.5 pt taller than before, which
@@ -61,8 +57,7 @@ it is then: the C ABI dropped `tl_set_engine` and the in-process engine the iPad
 
 ## Left
 
-- AppKit's own completion list in place of `CompletionList` once the system's has glass; until
-  then the custom one stays (the look is decided).
+- Evaluate native completion against the editor's required completion behaviour.
 - arXiv's `00README.json`: written to its spec version 1 as remembered; info.arxiv.org couldn't be
   reached to check it.
 - Checks: environments a project declares verbatim (`\lstnewenvironment`, `\newminted`,
@@ -73,5 +68,5 @@ it is then: the C ABI dropped `tl_set_engine` and the in-process engine the iPad
   and ⌘− zoom the PDF with the source focused, where Xcode sizes the editor's text; a reopened
   project keeps the caret's line but not its column, the scroll or the PDF's place within the
   page; a rebuild clears a selection in the PDF; Open Recent doesn't tell two folders of one name
-  apart; a rename can replace a file another app made in the instant between the check and the
-  move (`renamex_np` with `RENAME_EXCL` would refuse, but needs care for a change of case alone).
+  apart. File and project renames now use `renamex_np` with `RENAME_EXCL`, including case-only
+  changes, so a concurrently created destination is preserved.

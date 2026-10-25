@@ -246,11 +246,7 @@ final class ProjectModel {
             guard let self else { return [] }
             return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.title) }
         }
-        // A double-click's, quiet, only to a PDF in view: it would bring a hidden one back at each word selected.
-        editor.textView.forwardSync = { [weak self] quietly in
-            guard let self, hasPDF, isLaTeX, !quietly || app?.showPDF == true else { return nil }
-            return { Task { await self.forwardSync(quietly: quietly) } }
-        }
+        editor.textView.canForwardSync = { [weak self] in self?.hasPDF == true && self?.isLaTeX == true }
         editor.textView.openDefinition = { [weak self] place in
             Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
         }

@@ -26,6 +26,34 @@ struct FindTests {
 }
 
 struct PDFFitTests {
+    @Test func commandClickNavigatesWhileDoubleClickSelectsText() throws {
+        let controller = showing(try textPDF(["alpha beta"])), view = controller.view
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        window.orderFrontUnseen()
+        defer { window.close() }
+        view.layoutDocumentView()
+        let page = try #require(view.document?.page(at: 0))
+        let letter = try #require(page.selection(for: NSRange(location: 1, length: 1))).bounds(for: page)
+        let point = view.convert(view.convert(CGPoint(x: letter.midX, y: letter.midY), from: page), to: nil)
+        var destinations: [Int] = []
+        view.onInverse = { page, _, _ in destinations.append(page) }
+        for (modifiers, clicks) in [(NSEvent.ModifierFlags(), 2), (.command, 1)] {
+            let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: modifiers,
+                                                     timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                     eventNumber: 0, clickCount: clicks, pressure: 1))
+            if modifiers.isEmpty {
+                let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                                                       timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                       eventNumber: 0, clickCount: clicks, pressure: 0))
+                NSApp.postEvent(up, atStart: false)
+            }
+            view.mouseDown(with: down)
+            #expect(view.currentSelection?.string == "alpha")
+            #expect(destinations == (modifiers.isEmpty ? [] : [1]))
+        }
+    }
+
     @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
         let controller = sizedController(), view = controller.view

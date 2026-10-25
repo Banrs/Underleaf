@@ -56,6 +56,8 @@ struct ExportFile: Transferable {
     }
 }
 
+nonisolated enum WorkspaceLayout { case source, split, pdf }
+
 /// The File Outline: open, folded to its header, or hidden with its header for search results.
 nonisolated enum OutlineState { case open, folded, hidden }
 
@@ -123,8 +125,7 @@ final class AppModel {
         }
     }
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
-    /// Kept by View › Show Source and View › Show PDF, with the toolbar's PDF; one always shows. Opening a file or a place
-    /// in one shows the source for now, as a PDF command shows the PDF.
+    /// Navigation can reveal a pane temporarily without changing the saved layout.
     var showSource: Bool
     var showPDF: Bool
     var outlineCollapsed: Bool { didSet { defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
@@ -146,7 +147,7 @@ final class AppModel {
         inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
-        showSource = defaults.bool(forKey: DefaultsKey.showSource)
+        showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
         showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
@@ -167,6 +168,11 @@ final class AppModel {
 
     func outlineState(of project: ProjectModel) -> OutlineState {
         project.search.isSearching ? .hidden : outlineOpen(of: project) ? .open : .folded
+    }
+
+    var layout: WorkspaceLayout {
+        get { showSource ? (showPDF ? .split : .source) : .pdf }
+        set { showPanes(source: newValue != .pdf, pdf: newValue != .source) }
     }
 
     func toggleSource() { showPanes(source: !showSource, pdf: showPDF || showSource) }

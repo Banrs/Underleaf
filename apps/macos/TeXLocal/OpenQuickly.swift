@@ -56,6 +56,7 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
     }
 
     override func close() {
+        searching?.cancel()
         parent?.removeChildWindow(self)
         super.close()
     }

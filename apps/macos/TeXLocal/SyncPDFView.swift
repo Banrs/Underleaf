@@ -146,6 +146,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    isolated deinit {
+        if let paperWatch { NotificationCenter.default.removeObserver(paperWatch) }
+        mark?.fading.cancel()
+    }
+
     /// A fade is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
@@ -224,12 +229,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return (index: document.index(for: page), point: convert(top, to: page))
     }
 
-    /// A double-click whose pointer has moved by the time PDFKit's handling returns was dragged on to select by words.
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command {
+            goToSource(at: convert(event.locationInWindow, from: nil))
+            return
+        }
         super.mouseDown(with: event)
-        guard event.clickCount == 2, let up = window?.mouseLocationOutsideOfEventStream else { return }
-        let down = event.locationInWindow
-        if abs(up.x - down.x) <= 4, abs(up.y - down.y) <= 4 { goToSource(at: convert(down, from: nil)) }
     }
 
     /// ⌃L, on the responder chain while the pages have the keyboard, as the text view's is.

@@ -137,7 +137,7 @@ struct SourceEditorTests {
     /// The source's own commands first, and of the text's those that aren't for prose; each is the menu bar's command.
     @Test func theContextMenuIsTheSourcesOwn() throws {
         open("word", caret: 0)
-        text.forwardSync = { _ in {} }
+        text.canForwardSync = { true }
         let menu = NSMenu()
         for (title, action) in [("Cut", #selector(NSText.cut(_:))), ("Speech", #selector(NSTextView.startSpeaking(_:))),
                                 ("Layout Orientation", #selector(NSTextView.changeLayoutOrientation(_:)))] {
@@ -471,18 +471,16 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == .caret(5))
     }
 
-    @Test func aDoubleClickGoesToThePDF() throws {
+    @Test func aDoubleClickSelectsAWordWithoutMovingThePDF() throws {
         let window = inWindow()
         open("one two", caret: 0)
         text.layoutSubtreeIfNeeded()
-        var went: [Bool] = []
-        text.forwardSync = { quietly in { went.append(quietly) } }
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
         let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
         try click(at: point, in: window)
-        #expect(went.isEmpty && text.selectedRange() == .caret(4))
+        #expect(text.selectedRange() == .caret(4))
         try click(at: point, in: window, clicks: 2)
-        #expect(went == [true] && text.selectedRange() == NSRange(location: 4, length: 3))
+        #expect(text.selectedRange() == NSRange(location: 4, length: 3))
     }
 
     @Test func aClickInTheGutterSelectsTheLine() throws {
