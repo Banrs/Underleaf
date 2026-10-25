@@ -221,7 +221,9 @@ fn save(
             projects::discard_replaced(project, &taken, trash)?;
         }
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
-        Ok(atomic::persist(temp, &abs)?)
+        atomic::rename_exclusive(&temp, &abs)?;
+        let _ = temp.keep();
+        Ok(())
     })
 }
 

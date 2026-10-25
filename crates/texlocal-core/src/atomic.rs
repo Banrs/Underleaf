@@ -1,5 +1,6 @@
 //! Writing a file whole or not at all: a temporary file beside it, then one rename, so a crash leaves the old file.
 
+use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -40,11 +41,19 @@ fn copy_xattrs(from: &Path, to: &File) {
     }
 }
 
-/// Moves a finished temporary file into place.
-pub(crate) fn persist(temp: TempPath, path: &Path) -> io::Result<()> {
-    fs::rename(&temp, path)?;
-    let _ = temp.keep();
-    Ok(())
+/// Refuses an occupied destination atomically. macOS also permits a case-only rename on a case-insensitive volume.
+pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let c_path = |path: &Path| {
+        CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
+    };
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated and live for the call.
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 /// Replace `path`'s contents with `bytes`, or create it. A symlink is written through and permissions and xattrs kept; a read-only file is refused. The stamp is the temporary file's, taken once it is closed.
@@ -67,15 +76,48 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     file.sync_all()?;
     drop(file);
     let stamp = Stamp::of(&fs::metadata(&temp)?);
-    persist(temp, &target)?;
+    fs::rename(&temp, &target)?;
+    let _ = temp.keep();
     Ok(stamp)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Stamp, write};
+    use super::{Stamp, rename_exclusive, write};
     use crate::projects::testing::names_in;
     use std::fs;
+
+    #[test]
+    fn an_exclusive_rename_never_replaces_a_file_folder_or_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("source");
+        let to = dir.path().join("destination");
+        fs::write(&from, "source").unwrap();
+        fs::write(&to, "destination").unwrap();
+        assert_eq!(
+            rename_exclusive(&from, &to).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_to_string(&from).unwrap(), "source");
+        assert_eq!(fs::read_to_string(&to).unwrap(), "destination");
+        fs::remove_file(&from).unwrap();
+        fs::remove_file(&to).unwrap();
+
+        fs::create_dir(&from).unwrap();
+        fs::create_dir(&to).unwrap();
+        assert_eq!(
+            rename_exclusive(&from, &to).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert!(from.is_dir() && to.is_dir());
+        fs::remove_dir(&to).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("missing"), &to).unwrap();
+        assert_eq!(
+            rename_exclusive(&from, &to).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert!(from.is_dir() && to.is_symlink());
+    }
 
     #[test]
     fn a_save_creates_and_replaces_leaving_no_temporary_file_and_answers_the_files_stamp() {

@@ -849,14 +849,25 @@ impl Actor {
         for path in &meaning.docs {
             self.check_disk(path);
         }
-        let others = meaning.listed.iter();
-        let others: Vec<&String> = others.filter(|p| !self.docs.contains_key(*p)).collect();
+        let others: Vec<&String> = meaning
+            .listed
+            .iter()
+            .filter(|p| !self.docs.contains_key(*p))
+            .collect();
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
         }
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
+        }
+        // Bibliographies, images and included files can change without ever being opened.
+        if meaning.tree || !others.is_empty() {
+            self.edits += 1;
+            self.mark_outdated();
+            if self.auto_compile {
+                self.later.push_back(Later::Compile(true));
+            }
         }
         if self.live.active() {
             self.live.disk_paths.extend(meaning.listed.iter().cloned());

@@ -168,11 +168,11 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     let main_file = read_settings(&project.settings).main_file;
     let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);
-    fs::rename(&src, &dest)?;
+    atomic::rename_exclusive(&src, &dest)?;
     if let Some(main_file) = &moved_main
         && let Err(err) = write_settings(&project.settings, &json!({ "mainFile": main_file }))
     {
-        return Err(match fs::rename(&dest, &src) {
+        return Err(match atomic::rename_exclusive(&dest, &src) {
             Ok(()) => err,
             Err(rollback) => CoreError::internal(format!(
                 "{}; rename rollback failed: {rollback}",

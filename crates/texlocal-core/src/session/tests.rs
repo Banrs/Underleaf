@@ -808,6 +808,73 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     assert_eq!(changed[0]["paths"], json!(["refs.bib"]));
 }
 
+#[tokio::test(start_paused = true)]
+async fn external_dependencies_mark_the_pdf_stale_and_queue_one_automatic_build() {
+    for auto in [false, true] {
+        let mut rig = Rig::new(auto).await;
+        fs::write(rig.root.join("refs.bib"), "@book{first,}").unwrap();
+        rig.changed("refs.bib", true);
+        wait(300).await;
+        if !auto {
+            rig.ok("compile", json!({ "auto": false })).await;
+        }
+        // Finish the initial build and any request queued while it was running.
+        while rig.state().await["build"]["compiling"] == true {
+            rig.fake.finish_build(built(true, Vec::new()));
+            rig.events().await;
+        }
+        let before = rig.fake.called("compile");
+        rig.write_elsewhere("refs.bib", "@book{second,}");
+        rig.write_elsewhere("refs.bib", "@book{third,}");
+        wait(300).await;
+        assert_eq!(rig.state().await["build"]["outdated"], true);
+        assert_eq!(rig.fake.called("compile"), before + usize::from(auto));
+        if auto {
+            // Another external edit during the build must not be declared up to date by it.
+            rig.write_elsewhere("refs.bib", "@book{fourth,}");
+            wait(300).await;
+            rig.fake.finish_build(built(true, Vec::new()));
+            assert_eq!(rig.state().await["build"]["outdated"], true);
+            assert_eq!(rig.fake.called("compile"), before + 2);
+            rig.fake.finish_build(built(true, Vec::new()));
+            rig.events().await;
+            assert_eq!(rig.state().await["build"]["outdated"], false);
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_watcher_rescan_reports_unopened_files_and_changed_settings() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("paper.tex"), "Paper").unwrap();
+    rig.changed("paper.tex", true);
+    wait(300).await;
+    rig.events().await;
+    fs::write(
+        rig.root.join(".texlocal.json"),
+        r#"{ "mainFile": "paper.tex" }"#,
+    )
+    .unwrap();
+    fs::write(
+        rig.root.join("paper.tex"),
+        "Changed without an individual notification",
+    )
+    .unwrap();
+    rig.changed("", true);
+    wait(300).await;
+    let events = rig.events().await;
+    assert!(events.iter().any(|e| e["type"] == "files_changed"
+        && e["paths"].as_array().unwrap().contains(&json!("paper.tex"))));
+    assert!(events.iter().any(|e| {
+        e["type"] == "tree"
+            && e["tree"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == "paper.tex" && file["main"] == true)
+    }));
+}
+
 /// Chosen here or by another app (by hand, by git or by a sync client), the main file is marked
 /// in the tree and built.
 #[tokio::test(start_paused = true)]

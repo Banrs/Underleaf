@@ -103,6 +103,21 @@ fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing()
 }
 
 #[test]
+fn a_project_created_after_the_rename_check_is_not_replaced() {
+    let (_dir, root) = project();
+    let data = root.parent().unwrap();
+    let dest = data.join("Taken");
+    let err = rename_project(data, "P", "Taken", |_| {
+        fs::create_dir(&dest)?;
+        Ok(())
+    })
+    .unwrap_err();
+    assert_eq!(err.status, 409);
+    assert!(root.join("main.tex").is_file());
+    assert!(dest.is_dir() && names_in(&dest).is_empty());
+}
+
+#[test]
 fn search_cuts_its_snippet_at_the_match_passes_over_other_files_and_stops_at_the_limit() {
     let (_dir, root) = project();
     for (file, text) in [
