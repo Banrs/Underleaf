@@ -146,6 +146,18 @@ struct PDFSwapTests {
         #expect(text(controller.view) == ["build"])
     }
 
+    @Test(arguments: [false, true]) func aGrowingLiveDocumentKeepsStreamedPagesUntilTheyCanBeInserted(complete: Bool) async throws {
+        var expected = (0..<100).map { "page\($0)" }
+        let controller = showing(try document(["original"]))
+        defer { controller.endLiveRun() }
+        controller.showLive(try document(expected), changed: IndexSet(integersIn: 0..<expected.count), complete: complete)
+        try #require(controller.pageCount <= 90)
+        controller.showLive(try page("streamed"), at: 90)
+        try await waitUntil { controller.livePending == nil }
+        expected[90] = "streamed"
+        #expect(text(controller.view) == expected && controller.pageCount == expected.count)
+    }
+
     @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {
         let controller = sizedController(), view = controller.view
         controller.show(try document(["a", "b"]))

@@ -25,8 +25,12 @@ extension PDFController {
     }
 
     func showLive(_ page: PDFPage, at index: Int) {
+        guard let gone = view.document?.replacePage(at: index, with: page) else {
+            // The displayed document can still be growing toward this newer page.
+            _ = livePending?.document.replacePage(at: index, with: page)
+            return
+        }
         livePending?.pages.remove(index)
-        guard let gone = view.document?.replacePage(at: index, with: page) else { return }
         replaced([gone])
     }
 
