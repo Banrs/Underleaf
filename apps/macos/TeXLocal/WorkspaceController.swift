@@ -83,8 +83,8 @@ final class WorkspaceController: ThinSplitViewController {
         super.viewDidAppear()
         guard !appeared else { return }
         appeared = true
-        if !app.showSource { sourceItem.isCollapsed = true }
-        if !app.showPDF { pdfItem.isCollapsed = true }
+        sourceItem.isCollapsed = !app.showSource
+        pdfItem.isCollapsed = !app.showPDF
         fitColumns()
     }
 

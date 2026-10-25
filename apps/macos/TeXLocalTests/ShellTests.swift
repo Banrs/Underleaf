@@ -79,6 +79,24 @@ struct ShellTests {
         #expect(workspace.app.sidebarShown == sidebar)
     }
 
+    @Test func theSavedLayoutOverridesRememberedCollapsedPanes() async throws {
+        let app = AppModel(defaults: defaults.store)
+        app.layout = .split
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1200, height: 700),
+                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
+                                            size: window.contentLayoutRect.size)
+        defer { workspace.close(); window.close() }
+        let source = workspace.columns.splitViewItems[0]
+        source.isCollapsed = true
+        window.contentViewController = workspace
+        window.toolbar = workspace.toolbar.toolbar
+        window.orderFrontUnseen()
+        try await waitUntil { !source.isCollapsed }
+        #expect(workspace.columns.splitViewItems.allSatisfy { !$0.isCollapsed })
+    }
+
     @Test func switchingLayoutsPreservesTheEditorAndPDF() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
