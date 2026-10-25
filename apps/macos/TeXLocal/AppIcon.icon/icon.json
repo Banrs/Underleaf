@@ -1,13 +1,10 @@
 {
-  "features": [
-    "specular-location"
-  ],
   "fill-specializations": [
     {
       "value": {
         "linear-gradient": [
-          "extended-srgb:0.96471,0.97255,0.98824,1.00000",
-          "extended-srgb:0.88627,0.90980,0.94902,1.00000"
+          "extended-srgb:0.00000,0.66275,0.60392,1.00000",
+          "extended-srgb:0.00000,0.31373,0.49412,1.00000"
         ]
       }
     },
@@ -15,15 +12,9 @@
       "appearance": "dark",
       "value": {
         "linear-gradient": [
-          "extended-srgb:0.12549,0.16471,0.18824,1.00000",
-          "extended-srgb:0.06275,0.08235,0.10980,1.00000"
+          "extended-srgb:0.00000,0.24706,0.27059,1.00000",
+          "extended-srgb:0.00000,0.09020,0.16471,1.00000"
         ]
-      }
-    },
-    {
-      "appearance": "tinted",
-      "value": {
-        "solid": "extended-srgb:0.50196,0.50196,0.50196,1.00000"
       }
     }
   ],
@@ -34,41 +25,31 @@
           "fill-specializations": [
             {
               "value": {
-                "linear-gradient": [
-                  "extended-srgb:0.26667,0.56078,0.94902,1.00000",
-                  "extended-srgb:0.15686,0.31373,0.80784,1.00000"
-                ]
+                "automatic-gradient": "extended-srgb:0.24706,0.87843,0.77647,1.00000"
               }
             },
             {
               "appearance": "dark",
               "value": {
-                "linear-gradient": [
-                  "extended-srgb:0.78431,0.90196,1.00000,1.00000",
-                  "extended-srgb:0.50196,0.68235,1.00000,1.00000"
-                ]
-              }
-            },
-            {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
+                "automatic-gradient": "extended-srgb:0.18431,0.80392,0.70588,1.00000"
               }
             }
           ],
-          "image-name": "TCap.svg",
-          "name": "T cap"
+          "glass": true,
+          "image-name": "Caret.svg",
+          "name": "Caret"
         }
       ],
-      "name": "T cap",
+      "lighting": "combined",
+      "name": "Caret",
       "shadow": {
-        "kind": "layer-color",
-        "opacity": 0.24
+        "kind": "neutral",
+        "opacity": 0.4
       },
-      "specular": "inside",
+      "specular": true,
       "translucency": {
         "enabled": true,
-        "value": 0.06
+        "value": 0.3
       }
     },
     {
@@ -77,41 +58,31 @@
           "fill-specializations": [
             {
               "value": {
-                "linear-gradient": [
-                  "extended-srgb:0.14118,0.28627,0.73725,1.00000",
-                  "extended-srgb:0.08627,0.18039,0.50588,1.00000"
-                ]
+                "automatic-gradient": "extended-srgb:0.49020,0.96863,0.89412,1.00000"
               }
             },
             {
               "appearance": "dark",
               "value": {
-                "linear-gradient": [
-                  "extended-srgb:0.44314,0.61961,0.97255,1.00000",
-                  "extended-srgb:0.23137,0.37647,0.80392,1.00000"
-                ]
-              }
-            },
-            {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
+                "automatic-gradient": "extended-srgb:0.37255,0.90196,0.81569,1.00000"
               }
             }
           ],
-          "image-name": "LBody.svg",
-          "name": "L body"
+          "glass": true,
+          "image-name": "Sigma.svg",
+          "name": "Sigma"
         }
       ],
-      "name": "L body",
+      "lighting": "combined",
+      "name": "Sigma",
       "shadow": {
-        "kind": "layer-color",
-        "opacity": 0.24
+        "kind": "neutral",
+        "opacity": 0.55
       },
-      "specular": "inside",
+      "specular": true,
       "translucency": {
         "enabled": true,
-        "value": 0.06
+        "value": 0.2
       }
     }
   ],
