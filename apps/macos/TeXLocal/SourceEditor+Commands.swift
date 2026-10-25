@@ -66,6 +66,8 @@ extension SourceEditor {
         title.map { String(localized: "Insert \($0)") } ?? String(localized: "Insert")
     }
 
+    var textStyles: TextStyles { path == nil ? TextStyles() : textView.document.textStyles(textView.selection) }
+
     /// What `reveal` selects, the match `length` long at `column`, the word there or the line's start, and what it shows
     /// found: that, or the line.
     func revealed(line: Int, column: Int?, length: Int?) -> (selection: NSRange, found: NSRange) {

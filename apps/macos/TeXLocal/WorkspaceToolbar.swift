@@ -20,6 +20,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private let app: AppModel
     private let project: ProjectModel
     private var closed = false
+    private lazy var format = FormatPopover(app: app, project: project)
 
     init(app: AppModel, project: ProjectModel) {
         self.app = app
@@ -33,12 +34,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         watch()
     }
 
-    func close() { closed = true }
+    func close() {
+        closed = true
+        format.popover.close()
+    }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .space, .back, .sidebarTrackingSeparator, .flexibleSpace, .format, .math, .insert,
-         .pdfSeparator, .flexibleSpace, .zoom, .compile, .space, .layout,
-         .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
+         .pdfSeparator, .flexibleSpace, .zoom, .compile,
+         .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -63,14 +67,22 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         switch id {
         case .back:
             item = NSToolbarItem(itemIdentifier: id)
-            item.label = "Projects"
+            item.label = "Back"
             item.toolTip = "Return to Projects"
             item.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: item.label)
             item.target = self
             item.action = #selector(back)
             item.isNavigational = true
         case .format:
-            item = menuItem(id, "Format", "textformat", Group { [app, project] in
+            // A button beside the menus shares their glass; the overflow menu has Aa as a menu.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Format"
+            item.toolTip = "Choose a style to apply to text"
+            item.image = NSImage(systemSymbolName: "textformat", accessibilityDescription: item.label)
+            item.target = self
+            item.action = #selector(showFormat)
+            item.menuFormRepresentation = NSMenuItem(title: item.label, action: nil, keyEquivalent: "")
+            item.menuFormRepresentation?.submenu = menu(id, Group { [app, project] in
                 ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
                     Button(command.title, systemImage: command.style!.symbol) { app.perform(command, on: project) }
                 }
@@ -123,12 +135,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let item = NSMenuToolbarItem(itemIdentifier: id)
         item.label = title
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
-        item.menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in
-            !project.closed && !project.isClosing && (![.format, .math, .insert].contains(id) || project.sourceToolsEnabled)
-        }) { content })
+        item.menu = menu(id, content)
         // Adjacent menus share AppKit's glass, as Notes' editing tools do.
         item.showsIndicator = false
         return item
+    }
+
+    private func menu(_ id: NSToolbarItem.Identifier, _ content: some View) -> NSMenu {
+        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in
+            !project.closed && !project.isClosing && (![.format, .math, .insert].contains(id) || project.sourceToolsEnabled)
+        }) { content })
     }
 
     private struct State {
@@ -161,12 +177,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
         switch item.itemIdentifier {
         case .format, .math, .insert:
-            update(item, \.isHidden, !state.sourceTools)
+            // Hidden with the source; dimmed for a file they don't apply to, where hiding would move their neighbours.
+            update(item, \.isHidden, state.layout == .pdf)
             update(item, \.isEnabled, state.open && state.sourceTools)
         case .pdfSeparator:
             update(item, \.isHidden, state.layout != .split)
         case .zoom:
-            update(item, \.isHidden, !state.showsPDF || !state.hasPDF)
+            update(item, \.isHidden, !state.showsPDF)
             update(item, \.isEnabled, state.open && state.hasPDF)
         case .share:
             update(item, \.isEnabled, state.open && state.canShare)
@@ -192,6 +209,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool { !project.closed && !project.isClosing && (item.action != #selector(compile) || state.canCompile) }
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
+    @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func back() { app.perform(.projectClose, on: project) }
     @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 

@@ -45,38 +45,75 @@ struct ShellTests {
         guard quiet == 5 else { throw TimedOut(state: "the window's views were still moving at width \(width)") }
     }
 
-    @Test(arguments: [false, true]) func theNativeToolbarSurvivesWindowResizing(sidebar: Bool) async throws {
+    private func item(_ id: NSToolbarItem.Identifier, in workspace: WorkspaceController) throws -> NSToolbarItem {
+        try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
+    }
+
+    /// A wide window has Compile as its word. Narrowing, it turns to its symbol before AppKit would take Zoom or Compile to
+    /// the overflow menu, with the sidebar open or not, and is its word again once there is room. At its narrowest the window
+    /// holds both panes, Compile is a circle beside Back, still Compile to the overflow menu and VoiceOver, and nothing
+    /// has left the toolbar but for its overflow menu, where each tool that can go has a menu form and the editing tools go
+    /// first.
+    @Test(arguments: [false, true]) func aNarrowWindowKeepsEveryToolOrItsMenuForm(sidebar: Bool) async throws {
         let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
-        let toolbar = try #require(window.toolbar)
-        workspace.project.tree.show(.sources)
-        workspace.project.openPath = "main.tex"
-        workspace.project.editor.open(path: "main.tex", text: "A document", focus: false)
-        workspace.pdf.show(try textPDF(["A page"]))
-        workspace.project.shown = .build(URL(filePath: "/dev/null"))
-        let identifiers = toolbar.items.map(\.itemIdentifier)
-        #expect(!identifiers.isEmpty)
-        for width in [ColumnMetrics.contentMinimum.width, 900, 1300] {
+        let toolbar = workspace.toolbar
+        let compile = try item(.compile, in: workspace)
+        let button = try #require(compile.view)
+        let word = button.fittingSize.width
+        #expect(!toolbar.compactCompile && word > 60 && compile.style == .prominent)
+        func shown(_ id: NSToolbarItem.Identifier) -> Bool { toolbar.toolbar.visibleItems?.contains { $0.itemIdentifier == id } == true }
+        for width in stride(from: 1300, to: ColumnMetrics.contentMinimum.width, by: -10) {
             try await resize(window, to: width)
-            if !sidebar { #expect(isClose(window.contentLayoutRect.width, width)) }
-            #expect(toolbar.items.map(\.itemIdentifier) == identifiers)
-            for item in toolbar.items where [.compile, .layout].contains(item.itemIdentifier) {
-                #expect(item.isVisible)
-            }
-            for pane in workspace.columns.splitViewItems {
-                #expect(pane.viewController.view.frame.width >= ColumnMetrics.paneMinimum)
-            }
-            if width == ColumnMetrics.contentMinimum.width { #expect(workspace.toolbar.compactCompile) }
-            if width == 1300 { #expect(!workspace.toolbar.compactCompile) }
+            if !toolbar.compactCompile { #expect(shown(.zoom) && shown(.compile), "at \(width)") }
         }
-        let split = workspace.columns.splitView
-        split.setPosition(split.bounds.width - ColumnMetrics.paneMinimum - split.dividerThickness, ofDividerAt: 0)
-        window.layoutIfNeeded()
-        #expect(workspace.toolbar.compactCompile)
-        split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
-        window.layoutIfNeeded()
-        #expect(!workspace.toolbar.compactCompile)
-        #expect(workspace.app.sidebarShown == sidebar)
+        try await resize(window, to: ColumnMetrics.contentMinimum.width)
+        // AppKit folds the sidebar only in a live resize.
+        #expect(sidebar || window.contentView?.frame.width == ColumnMetrics.contentMinimum.width)
+        for pane in workspace.columns.splitViewItems { #expect(pane.viewController.view.frame.width >= ColumnMetrics.paneMinimum) }
+        #expect(toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
+        #expect(shown(.compile) && shown(.back))
+        #expect(compile.label == MenuCommand.compileRun.title && compile.menuFormRepresentation?.title == MenuCommand.compileRun.title)
+        for id in [NSToolbarItem.Identifier.format, .math, .insert, .zoom] {
+            let item = try item(id, in: workspace)
+            #expect(!item.isHidden && item.visibilityPriority == .low)
+            #expect(item is NSMenuToolbarItem || item.menuFormRepresentation?.submenu != nil)
+        }
+        for id in [NSToolbarItem.Identifier.back, .compile, .layout] {
+            #expect(try item(id, in: workspace).visibilityPriority == .high)
+        }
+        try await resize(window, to: 1300)
+        #expect(!toolbar.compactCompile && button.fittingSize.width == word)
+    }
+
+    /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
+    /// where they are as a build starts and ends. The overflow menu and VoiceOver have Stop by name.
+    @Test func stopIsAsWideAsCompile() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let compile = try item(.compile, in: workspace)
+        let button = try #require(compile.view)
+        for width in [1300, ColumnMetrics.contentMinimum.width] {
+            try await resize(window, to: width)
+            let idle = button.fittingSize
+            workspace.project.compiling = true
+            try await waitUntil { compile.label == MenuCommand.compileStop.title }
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == .clear)
+            #expect(compile.menuFormRepresentation?.title == MenuCommand.compileStop.title)
+            workspace.project.compiling = false
+            try await waitUntil { compile.label == MenuCommand.compileRun.title }
+            #expect(button.fittingSize == idle && compile.backgroundTintColor == nil)
+        }
+    }
+
+    /// The overflow menu's Share is dimmed with its item while there is no PDF to share; AppKit's answer would ignore the item's.
+    @Test func shareIsDimmedWithoutAPDF() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let tools = workspace.toolbar
+        let share = try #require(tools.toolbar(tools.toolbar, itemForItemIdentifier: .share, willBeInsertedIntoToolbar: true)
+            as? NSSharingServicePickerToolbarItem)
+        #expect(!share.isEnabled && !share.validateMenuItem(share.menuFormRepresentation ?? NSMenuItem()))
     }
 
     @Test func theSavedLayoutOverridesRememberedCollapsedPanes() async throws {
@@ -187,6 +224,20 @@ struct ShellTests {
         }
     }
 
+    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels, as the menu bar's.
+    @Test func formatIsAPopoverWithAMenuForm() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let format = try item(.format, in: workspace)
+        #expect(!(format is NSMenuToolbarItem) && format.action != nil)
+        let menu = try #require(format.menuFormRepresentation?.submenu)
+        let titles = [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) + workspace.project.headingStyles.map(\.title)
+        try await waitUntil {
+            menu.update()
+            return menu.items.filter { !$0.isSeparatorItem }.map(\.title) == titles
+        }
+    }
+
     /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and
     /// away only while search results have the sidebar.
     @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {
@@ -225,19 +276,20 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
-    @Test func theInspectorOpensAndClosesWithoutChangingTheLayout() async throws {
+    /// Hidden as the workspace opens, the inspector opens with its grouped form's sections 20 pt in, as the form lays out
+    /// built in the open column; built in the hidden one, they keep 10 pt insets under small grey headers.
+    @Test func aHiddenInspectorOpensWithItsFormsLook() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let inspector = try #require(workspace.splitViewItems.last)
-        workspace.app.layout = .pdf
-        workspace.app.inspectorShown = true
+        workspace.app.perform(.viewToggleInspector, on: workspace.project)
         try await waitUntil { !inspector.isCollapsed }
         try await resize(window, to: 1300)
-        #expect(!inspector.viewController.view.descendants(of: NSScrollView.self).isEmpty)
-        #expect(workspace.app.layout == .pdf)
-        workspace.app.inspectorShown = false
-        try await waitUntil { inspector.isCollapsed }
-        #expect(workspace.app.layout == .pdf)
+        let view = inspector.viewController.view
+        func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
+        let form = try #require(all(view).compactMap { $0 as? NSScrollView }.first)
+        let section = try #require(form.documentView?.subviews.first?.subviews.first)
+        #expect(section.frame.minX == 20 && section.frame.width == view.bounds.width - 40, "\(section.frame)")
     }
 
     /// A project opened over another keeps the other's workspace until it has loaded: the window never shows Home between

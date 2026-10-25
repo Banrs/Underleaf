@@ -73,6 +73,7 @@ final class SourceDocument {
     func insertSymbol(_ command: String, replacing selection: NSRange) -> Insertion? {
         call("insert_symbol", ["command": command, "selection": selection.json])
     }
+    func textStyles(_ selection: NSRange) -> TextStyles { call("text_styles", ["selection": selection.json]) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call("math_at", ["caret": caret]) }
     /// One a line, by the line that stays and the last it hides, 1-based.
     struct Fold: Decodable, Hashable { let line: Int, end: Int }
@@ -217,6 +218,9 @@ nonisolated struct Tabbing: Decodable {
 }
 
 nonisolated enum TextStyle: String { case bold, italic, underline }
+
+/// Each style's edits to take it off, where the selection already has it.
+nonisolated struct TextStyles: Decodable, Equatable { var bold, italic, underline: [TextEdit]? }
 
 nonisolated struct Insertion: Decodable {
     var edit: TextEdit

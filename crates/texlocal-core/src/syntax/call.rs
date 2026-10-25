@@ -23,6 +23,7 @@ enum Command {
     InsertBlock { id: String, selection: TextRange },
     InsertSymbol { command: String, selection: TextRange },
     MathAt { caret: u32 },
+    TextStyles { selection: TextRange },
     CodeRanges { selection: TextRange, #[serde(rename = "for")] checker: Checker },
     Words { #[serde(flatten)] range: TextRange },
     Type { selection: TextRange, text: String, auto_pair: bool },
@@ -76,6 +77,7 @@ impl SourceDocument {
                 json(self.insert_symbol(&command, selection))
             }
             Command::MathAt { caret } => json(self.math_at(caret)),
+            Command::TextStyles { selection } => json(self.text_styles(selection)),
             Command::CodeRanges { selection, checker } => {
                 json(self.code_ranges(selection, checker))
             }

@@ -15,6 +15,7 @@ final class WorkspaceController: ThinSplitViewController {
     private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
     private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
+    private let inspectorMount: Mount
 
     private var appeared = false
     private var panelHeight: CGFloat = 0
@@ -25,6 +26,7 @@ final class WorkspaceController: ThinSplitViewController {
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
         self.project = project
+        inspectorMount = Mount(shown: app.inspectorVisible)
         toolbar = WorkspaceToolbar(app: app, project: project)
         super.init()
         toolbar.workspace = self
@@ -36,8 +38,10 @@ final class WorkspaceController: ThinSplitViewController {
         }
         // Before the side columns, which open at the width AppKit's inspector does, and the area, which opens in the room
         // they leave; added after them.
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mount: inspectorMount))
         buildSidebar(height: size.height)
+        // Collapsed before they are added: collapsed only once loaded, the inspector's form loses its grouped insets and
+        // large section titles, and opens narrower.
         inspectorItem.isCollapsed = !app.inspectorVisible
         inspectorItem.canCollapseFromWindowResize = true
         buildArea(size: size)
@@ -107,15 +111,18 @@ final class WorkspaceController: ThinSplitViewController {
         fitToolbar()
     }
 
+    /// Compile's word goes before AppKit would take Zoom or Compile to the overflow menu, where it is the first tool
+    /// without room.
     private func fitToolbar() {
-        let area = areaItem.viewController.view.convert(areaItem.viewController.view.bounds, to: splitView)
-        let trailing = min(area.maxX, splitView.bounds.maxX - 92)
-        let leading = max(area.minX, 180)
-        let editing: CGFloat = project.sourceToolsEnabled ? 338 : 218
-        let room = app.layout == .split
-            ? min(trailing - leading - editing, pdfItem.viewController.view.frame.width - (area.maxX - trailing))
-            : trailing - leading - editing
-        toolbar.compactCompile = room < (app.showPDF && project.hasPDF ? 266 : 110)
+        func edges(_ item: NSSplitViewItem) -> NSRect { item.viewController.view.convert(item.viewController.view.bounds, to: splitView) }
+        let source = edges(sourceItem), area = edges(areaItem)
+        let leading = max(source.minX, ColumnMetrics.windowControls)
+        let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
+        let tools = trailing - leading - ColumnMetrics.sourceTools + (app.showSource ? 0 : ColumnMetrics.editingTools)
+        // A PDF sliding in is already at its width.
+        let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
+            : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
+        toolbar.compactCompile = room < ColumnMetrics.compile
     }
 
     // MARK: - Layout
@@ -224,8 +231,8 @@ final class WorkspaceController: ThinSplitViewController {
     override func toggleInspector(_ sender: Any?) { app.inspectorShown.toggle() }
 
     /// Sized by the split item's limits: its content never sets the window's minimum.
-    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0) -> NSViewController {
-        let host = NSHostingController(rootView: Pane(project: project, content: content).environment(app))
+    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mount: Mount? = nil) -> NSViewController {
+        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
         return host
@@ -266,10 +273,7 @@ final class WorkspaceController: ThinSplitViewController {
             },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
             // Over the pages, which stay laid out for the next PDF.
-            track({ [project.hasPDF, project.sourceToolsEnabled] }) { [weak self] state in
-                self?.pdfEmpty.isHidden = state[0]
-                self?.fitToolbar()
-            },
+            track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in
                 guard let self else { return }
                 setCollapsed(sidebarItem, false)
@@ -312,6 +316,10 @@ final class WorkspaceController: ThinSplitViewController {
     private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: @escaping @MainActor () -> Void = {}) {
         // Repeated model notifications must not snap an animation already heading here.
         guard item.isCollapsed != collapsed else { return done() }
+        if item === inspectorItem, !collapsed, !inspectorMount.shown {
+            inspectorMount.shown = true
+            item.viewController.view.layoutSubtreeIfNeeded()
+        }
         // Unanimated, the panel changes layout without the live resize AppKit's animation starts even when instant.
         guard animates || item !== panelItem else {
             item.isCollapsed = collapsed
@@ -406,10 +414,18 @@ private final class AreaSplitViewController: ThinSplitViewController {
     }
 }
 
+/// The inspector's form, built and laid out as the column starts to open: built while hidden, or laid out only as it
+/// opens, the grouped form keeps 10 pt insets and small grey headers (`aHiddenInspectorOpensWithItsFormsLook`).
+@Observable private final class Mount {
+    var shown: Bool
+    init(shown: Bool) { self.shown = shown }
+}
+
 /// Off while a project opened over this one loads.
 private struct Pane<Content: View>: View {
     let project: ProjectModel
+    var mount: Mount?
     let content: Content
 
-    var body: some View { content.disabled(project.closed || project.isClosing) }
+    var body: some View { if mount?.shown ?? true { content.disabled(project.closed || project.isClosing) } }
 }
