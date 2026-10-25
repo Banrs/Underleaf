@@ -261,7 +261,7 @@ final class ProjectFlowTests {
     @Test func livePagesAreNeverTakenForABuilds() async throws {
         let project = try await opened("\\documentclass{article}\\begin{document}x\\end{document}").project
         try await startLivePreview(project)
-        #expect(project.editor.textView.canForwardSync())
+        #expect(project.editor.textView.forwardSync(false) != nil)
         await project.forwardSync()
         #expect(project.notices.current?.contains("TeXpresso") == true, "Notice: \(String(describing: project.notices.current))")
         project.stopTeXpresso()

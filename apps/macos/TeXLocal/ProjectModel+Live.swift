@@ -105,7 +105,7 @@ extension ProjectModel {
     }
 
     /// With the click, the core finds its word in the lines round SyncTeX's.
-    func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil) async {
+    func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil, quietly: Bool = false) async {
         await restart(&syncTask) { [self] in
             do {
                 let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "text": click?.text, "at": click?.at])
@@ -113,7 +113,7 @@ extension ProjectModel {
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {
-                if !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Spot in the Source") }
+                if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Spot in the Source") }
             }
         }.value
     }

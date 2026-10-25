@@ -29,7 +29,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
     /// A project's file opens or goes in as its text; one from outside is copied into the project first.
     enum FileDrop { case open(() -> Void), insert(String), copy(() async -> String?) }
-    var canForwardSync: () -> Bool = { false }
+    /// The PDF's place for the caret, if there is one; a double-click's, quietly, as the PDF's double-click goes to the source.
+    var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
     var openDefinition: (Definition.Place) -> Void = { _ in }
     var quickHelp: (Int) -> Void = { _ in }
     private(set) var loading = false
@@ -526,6 +527,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
         }
         super.mouseDown(with: event)
+        if isDoubleClick(event) { forwardSync(true)?() }
     }
 
     /// A single click's release; nil for a drag, reposted, and a double-click, which are the text view's.

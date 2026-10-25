@@ -31,6 +31,13 @@ extension NSView {
         return false
     }
 
+    /// After the view's own tracking of the press, which ends at its release: a double-click released away from where it
+    /// was pressed was dragged on to select by words.
+    func isDoubleClick(_ event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown, event.clickCount == 2, let up = NSApp.currentEvent, up.type == .leftMouseUp else { return false }
+        return abs(up.locationInWindow.x - event.locationInWindow.x) <= 4 && abs(up.locationInWindow.y - event.locationInWindow.y) <= 4
+    }
+
     func descendants<View: NSView>(of type: View.Type) -> [View] {
         [self as? View].compactMap(\.self) + subviews.flatMap { $0.descendants(of: type) }
     }

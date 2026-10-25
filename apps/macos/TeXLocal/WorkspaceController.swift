@@ -185,8 +185,10 @@ final class WorkspaceController: ThinSplitViewController {
             pane.autoresizingMask = [.width, .height]
             pdfPane.view.addSubview(pane)
         }
-        pdf.view.onInverse = { [weak project] page, point, click in
-            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
+        // Quietly only to a source in view, as the source's double-click goes only to a PDF in view.
+        pdf.view.onInverse = { [weak project, app] page, point, click, quietly in
+            guard !quietly || app.showSource else { return }
+            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
         }
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum

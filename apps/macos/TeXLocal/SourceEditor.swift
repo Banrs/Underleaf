@@ -108,7 +108,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
                         #selector(NSResponder.uppercaseWord(_:))]
         let offered: [(MenuCommand, Bool)] = [
             (.jumpToDefinition, true), (.findUsages, true), (.editRename, textView.isEditable && renamable != nil),
-            (.syncForward, textView.canForwardSync()), (.editComment, textView.isEditable),
+            (.syncForward, textView.forwardSync(false) != nil), (.editComment, textView.isEditable),
         ]
         let ours = offered.filter(\.1).map { command, _ in
             let item = NSMenuItem(title: command.title, action: #selector(choose), keyEquivalent: "")

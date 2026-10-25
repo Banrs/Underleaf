@@ -26,7 +26,8 @@ struct FindTests {
 }
 
 struct PDFFitTests {
-    @Test func commandClickNavigatesWhileDoubleClickSelectsText() throws {
+    /// As Overleaf's, a double-click selects its word and goes quietly to the source; a single click only places.
+    @Test func aDoubleClickSelectsAWordAndGoesToTheSource() throws {
         let controller = showing(try textPDF(["alpha beta"])), view = controller.view
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = view
@@ -36,22 +37,18 @@ struct PDFFitTests {
         let page = try #require(view.document?.page(at: 0))
         let letter = try #require(page.selection(for: NSRange(location: 1, length: 1))).bounds(for: page)
         let point = view.convert(view.convert(CGPoint(x: letter.midX, y: letter.midY), from: page), to: nil)
-        var destinations: [Int] = []
-        view.onInverse = { page, _, _ in destinations.append(page) }
-        for (modifiers, clicks) in [(NSEvent.ModifierFlags(), 2), (.command, 1)] {
-            let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: modifiers,
-                                                     timestamp: 0, windowNumber: window.windowNumber, context: nil,
-                                                     eventNumber: 0, clickCount: clicks, pressure: 1))
-            if modifiers.isEmpty {
-                let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
-                                                       timestamp: 0, windowNumber: window.windowNumber, context: nil,
-                                                       eventNumber: 0, clickCount: clicks, pressure: 0))
-                NSApp.postEvent(up, atStart: false)
+        var destinations: [(page: Int, quietly: Bool)] = []
+        view.onInverse = { page, _, _, quietly in destinations.append((page, quietly)) }
+        for clicks in [1, 2] {
+            for type in [NSEvent.EventType.leftMouseUp, .leftMouseDown] {
+                let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                                                          windowNumber: window.windowNumber, context: nil, eventNumber: clicks,
+                                                          clickCount: clicks, pressure: type == .leftMouseDown ? 1 : 0))
+                if type == .leftMouseUp { NSApp.postEvent(event, atStart: false) } else { view.mouseDown(with: event) }
             }
-            view.mouseDown(with: down)
-            #expect(view.currentSelection?.string == "alpha")
-            #expect(destinations == (modifiers.isEmpty ? [] : [1]))
         }
+        #expect(view.currentSelection?.string == "alpha")
+        #expect(destinations.map(\.page) == [1] && destinations.allSatisfy(\.quietly))
     }
 
     @Test(arguments: zip([CGFloat(0), 37], [0, 90]))

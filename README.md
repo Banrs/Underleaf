@@ -48,9 +48,10 @@ document as you write, without running TeX, for references and citations that po
 defined twice, missing input files, and environments, braces or maths left open. What it finds is
 listed and marked on its line with the build's issues, even before you first compile.
 
-Command-clicking in the PDF takes you to that place in the source. Go to PDF in the editor's
-context menu or Go menu goes the other way (SyncTeX), to the exact word. Double-clicking
-selects text in either pane. You can also search the PDF.
+As on Overleaf, double-clicking a word in the PDF selects it and takes you to its place in the
+source, and double-clicking in the source shows its place in the PDF (SyncTeX), to the exact
+word, while the other pane is showing. Go to Source and Go to PDF in the context menus and the
+Go menu do the same. You can also search the PDF.
 
 Live Preview, still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
