@@ -21,7 +21,8 @@ struct ShellTests {
         window.alphaValue = 0
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
-        window.contentViewController = workspace.hosted()
+        window.contentViewController = workspace
+        window.toolbar = workspace.toolbar.toolbar
         window.contentMinSize = ColumnMetrics.contentMinimum
         window.orderFront(nil)
         try await resize(window, to: 1300)
@@ -44,19 +45,38 @@ struct ShellTests {
         guard quiet == 5 else { throw TimedOut(state: "the window's views were still moving at width \(width)") }
     }
 
-    @Test func theNativeToolbarSurvivesWindowResizing() async throws {
-        let (window, workspace) = try await workspace()
+    @Test(arguments: [false, true]) func theNativeToolbarSurvivesWindowResizing(sidebar: Bool) async throws {
+        let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
         let toolbar = try #require(window.toolbar)
+        workspace.project.tree.show(.sources)
+        workspace.project.openPath = "main.tex"
+        workspace.project.editor.open(path: "main.tex", text: "A document", focus: false)
+        workspace.pdf.show(try textPDF(["A page"]))
+        workspace.project.shown = .build(URL(filePath: "/dev/null"))
         let identifiers = toolbar.items.map(\.itemIdentifier)
         #expect(!identifiers.isEmpty)
         for width in [ColumnMetrics.contentMinimum.width, 900, 1300] {
             try await resize(window, to: width)
+            if !sidebar { #expect(isClose(window.contentLayoutRect.width, width)) }
             #expect(toolbar.items.map(\.itemIdentifier) == identifiers)
+            for item in toolbar.items where [.compile, .layout].contains(item.itemIdentifier) {
+                #expect(item.isVisible)
+            }
             for pane in workspace.columns.splitViewItems {
                 #expect(pane.viewController.view.frame.width >= ColumnMetrics.paneMinimum)
             }
+            if width == ColumnMetrics.contentMinimum.width { #expect(workspace.toolbar.compactCompile) }
+            if width == 1300 { #expect(!workspace.toolbar.compactCompile) }
         }
+        let split = workspace.columns.splitView
+        split.setPosition(split.bounds.width - ColumnMetrics.paneMinimum - split.dividerThickness, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        #expect(workspace.toolbar.compactCompile)
+        split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        #expect(!workspace.toolbar.compactCompile)
+        #expect(workspace.app.sidebarShown == sidebar)
     }
 
     @Test func switchingLayoutsPreservesTheEditorAndPDF() async throws {
@@ -71,12 +91,20 @@ struct ShellTests {
         workspace.pdf.show(document)
         window.makeFirstResponder(editor.textView)
         let source = workspace.columns.splitViewItems[0], pdf = workspace.columns.splitViewItems[1]
+        let toolbar = workspace.toolbar.toolbar
+        let separator = try #require(toolbar.items.first { $0.itemIdentifier == .pdfSeparator } as? NSTrackingSeparatorToolbarItem)
+        #expect(separator.splitView === workspace.columns.splitView && separator.dividerIndex == 0)
         for layout in [WorkspaceLayout.pdf, .source, .split, .pdf, .split] {
             app.layout = layout
             try await waitUntil { source.isCollapsed == !app.showSource && pdf.isCollapsed == !app.showPDF }
             #expect(editor.textView.string == "A document with unsaved edits")
             #expect(workspace.pdf.view.document === document)
             #expect(!source.isCollapsed || !pdf.isCollapsed)
+            #expect(separator.isHidden == (layout != .split))
+            for item in toolbar.items where [.format, .math, .insert].contains(item.itemIdentifier) {
+                #expect(item.isHidden == (layout == .pdf))
+            }
+            #expect(NSImage(systemSymbolName: layout.symbol, accessibilityDescription: nil) != nil)
             if layout == .pdf { #expect((window.firstResponder as? NSView)?.isDescendant(of: workspace.pdf.view) == true) }
             if layout == .source { #expect(window.firstResponder === editor.textView) }
         }

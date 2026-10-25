@@ -411,7 +411,7 @@ impl Actor {
                 let answer = self.create_entry(&folder, &name, dir);
                 return self.after_events(answer, reply);
             }
-            Command::Close => Ok(self.close()),
+            Command::Close => self.close(),
             Command::SetOptions { auto_compile } => {
                 out(auto_compile.map(|auto| self.auto_compile = auto))
             }
@@ -505,13 +505,15 @@ impl Actor {
         })
     }
 
-    fn close(&mut self) -> Value {
-        let saved = self.flush_all(false).unwrap_or(false);
+    fn close(&mut self) -> Result<Value, CoreError> {
+        if !self.flush_all(true)? {
+            return Ok(json!({ "saved": false }));
+        }
         self.stop_compile();
         self.closed = true;
         self.live_stop();
         lock(&self.shared).clear();
-        json!({ "saved": saved })
+        Ok(json!({ "saved": true }))
     }
 
     // MARK: - Documents
@@ -764,7 +766,10 @@ impl Actor {
                 };
             }
         }
-        Ok(true)
+        Ok(self
+            .docs
+            .iter()
+            .all(|(path, doc)| only.is_some_and(|only| only != path) || !doc.dirty()))
     }
 
     fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {

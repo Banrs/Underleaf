@@ -743,6 +743,28 @@ async fn cancel_leaves_the_edits_unsaved_until_a_save_is_asked_for() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_close_refused_by_a_save_keeps_the_session_and_its_edits() {
+    let rig = Rig::new(false).await;
+    let doc = in_conflict(&rig).await;
+    let text = doc.snapshot().0;
+    assert_eq!(rig.ok("close", json!({})).await["saved"], false);
+    assert_eq!(rig.state().await["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        rig.sessions
+            .document(rig.session, "main.tex")
+            .unwrap()
+            .snapshot()
+            .0,
+        text
+    );
+    assert_eq!(rig.disk("main.tex"), "theirs");
+    rig.resolve("save").await;
+    assert_eq!(rig.ok("close", json!({})).await["saved"], true);
+    assert_eq!(rig.disk("main.tex"), text);
+    assert!(rig.sessions.document(rig.session, "main.tex").is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put_back() {
     let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("ch.tex"), "chapter").unwrap();

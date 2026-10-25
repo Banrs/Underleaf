@@ -100,7 +100,8 @@ final class ProjectModel {
     @ObservationIgnored var pdfLoad: Task<Bool, Never>?
     /// A finished build's PDF is shown before the next build event.
     @ObservationIgnored private var buildLane: Task<Void, Never>?
-    @ObservationIgnored private var closing: Task<Void, Never>?
+    private var closing: Task<Bool, Never>?
+    var isClosing: Bool { closing != nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
@@ -627,33 +628,45 @@ final class ProjectModel {
 
     // MARK: - Closing
 
-    func close() {
-        guard !closed else { return }
-        closed = true
-        // It can still show while the session closes.
+    @discardableResult
+    func close() -> Task<Bool, Never> {
+        if let closing { return closing }
+        guard !closed else { return Task { true } }
+        let editable = editor.textView.isEditable
         editor.textView.isEditable = false
-        // The window's undo stack outlives it.
-        let undo = app?.undoManager
-        undo?.removeAllActions(withTarget: self)
-        for item in trashed { undo?.removeAllActions(withTarget: item) }
-        trashed = []
-        removeExport()
-        notices.cancel()
-        tree.close()
-        syncTask?.cancel()
-        pdfLoad?.cancel()
-        liveLogWatch?.cancel()
-        if let session {
-            core.forget(session)
-            closing = Task { [uiStateWrites] in
-                await uiStateWrites?.value
-                try? await core.call("session_close", ["session": session])
+        let task = Task { [self] in
+            defer {
+                closing = nil
+                if !closed { editor.textView.isEditable = editable }
             }
+            await uiStateWrites?.value
+            if let session {
+                do {
+                    guard try await core.call("session_close", ["session": session], as: Saved.self).saved else { return false }
+                } catch {
+                    app?.report(error, notSavedTitle())
+                    return false
+                }
+                core.forget(session)
+            }
+            closed = true
+            // Keep undo and observers until the core confirms that every edit is saved.
+            let undo = app?.undoManager
+            undo?.removeAllActions(withTarget: self)
+            for item in trashed { undo?.removeAllActions(withTarget: item) }
+            trashed = []
+            removeExport()
+            notices.cancel()
+            tree.close()
+            syncTask?.cancel()
+            pdfLoad?.cancel()
+            liveLogWatch?.cancel()
+            pdf.endLiveRun()
+            return true
         }
+        closing = task
+        return task
     }
-
-    /// Until the session has stopped its build and Live Preview, which another model would race.
-    func waitUntilClosed() async { await closing?.value }
 
     // MARK: - Settings
 

@@ -4,10 +4,9 @@ struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        // By name: the numbers are Aa's.
         let styles = project?.headingStyles ?? HeadingStyle.standard
         ForEach(styles, id: \.command) { style in
-            if style == styles.first(where: \.isRunIn) { Divider() }
+            if style.command == "paragraph" { Divider() }
             Toggle(style.title,
                    isOn: Binding(get: { project?.headingCommand == style.command },
                                  set: { _ in project?.editor.perform(.heading(style.command)) }))

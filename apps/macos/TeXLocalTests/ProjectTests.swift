@@ -90,6 +90,21 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    @Test func aFailedFinalSaveKeepsTheProjectEditable() async throws {
+        let (project, folder) = try await opened("original")
+        let file = folder.appending(path: try #require(project.openPath))
+        project.editor.textView.insertText("unsaved ", replacementRange: .caret(0))
+        try files.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+        defer { try? files.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+        #expect(await project.close().value == false)
+        #expect(!project.closed && !project.isClosing && project.editor.textView.isEditable)
+        #expect(project.editor.textView.string == "unsaved original")
+        #expect(try String(contentsOf: file, encoding: .utf8) == "original")
+        try files.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        #expect(await app.close())
+        #expect(try String(contentsOf: file, encoding: .utf8) == "unsaved original")
+    }
+
     /// Overlapping requests settle at the new path; the scheduler chooses their core interleaving.
     @Test func overlappingRenameAndSaveRequestsKeepEditsAtTheNewPath() async throws {
         let (project, folder) = try await opened("original")

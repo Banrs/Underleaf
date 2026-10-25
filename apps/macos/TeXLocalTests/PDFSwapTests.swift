@@ -21,7 +21,7 @@ struct PDFSwapTests {
         }
     }
 
-    /// In an on-screen window, unseen: PDFKit draws pages, and gives a page its overlay, which a live page is drawn over, only there.
+    /// PDFKit draws pages only once the view is in an on-screen window.
     private func onScreen(_ controller: PDFController) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -109,43 +109,41 @@ struct PDFSwapTests {
         #expect(text(view) == ["a3", "b5"])
     }
 
-    @Test(arguments: [false, true])
-    func aLivePageLeavesTheSelectionAndFindOnOtherPages(inView: Bool) async throws {
-        let controller = inView ? PDFController() : sizedController(), view = controller.view
-        let window = inView ? onScreen(controller) : nil
-        defer { window?.close() }
-        controller.show(try document(["alpha", "beta", "alpha"]))
+    @Test func aLivePageUpdatesTheDocumentAndPreservesOtherSelections() async throws {
+        let controller = showing(try document(["alpha", "beta", "alpha"])), view = controller.view
         let shown = try #require(view.document)
-        if inView {
-            let first = try #require(shown.page(at: 0))
-            try await waitUntil(timeout: .seconds(5)) { view.shownOverlay(of: first) != nil }
-        }
         openFind("alpha", in: controller)
         try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
         let selection = try #require(shown.page(at: 1)?.selection(for: NSRange(location: 0, length: 4)))
         view.setCurrentSelection(selection, animate: false)
-        controller.showLive(try page("gamma"), at: inView ? 0 : 2)
-        if inView {
-            // Over the page, which PDFKit's document still has as it was.
-            #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
-            #expect(view.currentSelection?.string == "beta" && controller.find.matches.count == 400)
-            controller.showLive(try document(["gamma", "beta", "alpha"]), changed: [0], complete: true)
-            #expect(text(view) == ["gamma", "beta", "alpha"] && view.document === shown)
-        } else {
-            // Out of view, so PDFKit's document takes it at once.
-            #expect(text(view) == ["alpha", "beta", "gamma"])
-        }
+        controller.showLive(try page("gamma"), at: 0)
+        #expect(text(view) == ["gamma", "beta", "alpha"])
         #expect(view.currentSelection?.string == "beta" && controller.find.matches.count == 200)
-        try await waitUntil(timeout: .seconds(5)) { controller.find.query == "alpha" && view.highlightedSelections?.count == 200 }
-        #expect(view.currentSelection?.string == "beta")
-        if inView {
-            // The layer goes once PDFKit's own page has drawn beneath it.
-            try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
-        } else {
-            controller.showLive(try page("alpha"), at: 1)
-            #expect(view.currentSelection == nil)
-            try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
+        try await waitUntil(timeout: .seconds(5)) { view.highlightedSelections?.count == 200 }
+        controller.showLive(try page("alpha"), at: 1)
+        #expect(view.currentSelection == nil)
+        try await waitUntil(timeout: .seconds(5)) { controller.find.matches.count == 400 }
+    }
+
+    @Test func aLongLiveUpdateYieldsAndKeepsNewerPages() async throws {
+        func many(_ text: String) throws -> PDFDocument {
+            let page = try page(text), document = PDFDocument()
+            for index in 0..<100 { document.insert(try #require(page.copy() as? PDFPage), at: index) }
+            return document
         }
+        let controller = showing(try many("original"))
+        controller.showLive(try many("updated"), changed: IndexSet(integersIn: 0..<100), complete: true)
+        #expect(text(controller.view).last == "original")
+        controller.showLive(try many("latest"), changed: [0], complete: true)
+        controller.showLive(try page("streamed"), at: 90)
+        try await waitUntil { controller.livePending == nil }
+        let shown = text(controller.view)
+        #expect(shown[0] == "latest" && shown[1] == "updated" && shown[99] == "latest")
+        #expect(shown[90] == "streamed")
+        controller.showLive(try many("cancelled"), changed: IndexSet(integersIn: 0..<100), complete: true)
+        controller.show(try document(["build"]))
+        await settle()
+        #expect(text(controller.view) == ["build"])
     }
 
     @Test func aDocumentIsShownWholeOnceTheAppHasGrown() throws {

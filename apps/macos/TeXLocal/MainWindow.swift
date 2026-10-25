@@ -66,7 +66,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         window.toolbar = nil
-        setContent(workspace.hosted())
+        setContent(workspace)
+        window.toolbar = workspace.toolbar.toolbar
         window.contentMinSize = ColumnMetrics.contentMinimum
         // The toolbar's ground over the source is the editor's surface.
         window.backgroundColor = .untintedTextBackground

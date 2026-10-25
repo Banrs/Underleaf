@@ -272,7 +272,7 @@ impl Sessions {
             let (session, closing) = queued?;
             let answer = answer.await.unwrap_or_else(|_| Err(gone()));
             // Taken off here, not as the task ends, so the number is free once this answers.
-            if closing {
+            if closing && answer.as_ref().is_ok_and(|answer| answer["saved"] == true) {
                 lock(&open).remove(&session);
             }
             answer

@@ -3,7 +3,8 @@
 ## Mac, on screen
 
 These are checks to investigate on the QA copy (`tools/qa/README.md`), not fixed UI requirements.
-The workspace now uses a SwiftUI toolbar and native menus, with three editor layouts.
+The workspace uses a native toolbar with tracking separators, SwiftUI control content and three
+editor layouts. Live Preview updates PDFKit pages directly in small batches.
 
 - An opened folder's menu on Home, and Install's password dialog with MacTeX (the rows, the
   button, its progress and a failure are checked).

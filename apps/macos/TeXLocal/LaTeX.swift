@@ -35,28 +35,8 @@ extension ProjectModel {
     }
 }
 
-/// A level the main file's class has, set and numbered as its class does (the session's `outline`): Normal Text first.
-nonisolated struct HeadingStyle: Equatable, Decodable, Sendable {
-    nonisolated struct Font: Equatable, Decodable, Sendable {
-        /// Of the text's size.
-        var scale: Double
-        var bold: Bool
-        var shape: Shape
-    }
-
-    nonisolated enum Shape: String, Decodable, Sendable { case upright, italic, smallCaps }
-
-    let title: String
-    /// Without its backslash; empty for Normal Text.
-    let command: String
-    let font: Font
-    /// Its number as its heading prints it: "1.1" for a subsection.
-    let marker: String?
-
-    /// \paragraph starts its paragraph's text in every standard class: Aa and the menus set it apart.
-    var isRunIn: Bool { command == "paragraph" }
-
-    /// Every level, as the standard classes set them.
+nonisolated struct HeadingStyle: Decodable, Sendable {
+    let title, command: String
     static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])!
 }
 

@@ -476,12 +476,11 @@ final class AppModel {
 
     private func leave(_ generation: Int) async -> Bool {
         guard let project else { return true }
-        if !project.closed {
+        if !project.closed && !project.isClosing {
             guard await project.save(), generation == openGeneration else { return false }
             await project.savePlace()
-            project.close()
+            guard generation == openGeneration else { return false }
         }
-        await project.waitUntilClosed()
-        return generation == openGeneration
+        return await project.close().value && generation == openGeneration
     }
 }

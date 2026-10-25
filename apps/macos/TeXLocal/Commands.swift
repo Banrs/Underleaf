@@ -176,7 +176,8 @@ extension ProjectModel {
 
 extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
-        switch command {
+        guard project?.closed != true, project?.isClosing != true else { return false }
+        return switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine,
              .editGotoLine, .jumpToDefinition, .findUsages, .quickHelp, .editFold, .editUnfold, .editFoldAll, .editUnfoldAll:

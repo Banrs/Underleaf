@@ -5,6 +5,7 @@ final class WorkspaceController: ThinSplitViewController {
     let app: AppModel
     let project: ProjectModel
     var pdf: PDFController { project.pdf }
+    let toolbar: WorkspaceToolbar
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = AreaSplitViewController(isVertical: false)
@@ -19,11 +20,14 @@ final class WorkspaceController: ThinSplitViewController {
     private var panelHeight: CGFloat = 0
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
+    private var resizes: [NotificationCenter.ObservationToken] = []
 
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
         self.project = project
+        toolbar = WorkspaceToolbar(app: app, project: project)
         super.init()
+        toolbar.workspace = self
         // Not "Workspace", whose saved sidebar is the earlier opening width's.
         if app.savesLayout {
             for (split, name) in zip(splitViews, ["Workspace 2", "Sidebar", "Columns", "Area"]) {
@@ -42,16 +46,6 @@ final class WorkspaceController: ThinSplitViewController {
             item!.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
         watch()
-    }
-
-    func hosted() -> NSViewController {
-        let host = NSHostingController(rootView: WorkspaceView(controller: self)
-            .ignoresSafeArea()
-            .background { WindowModals(app: app, project: project) }
-            .toolbar(id: "Workspace") { WorkspaceToolbar(app: app, project: project) })
-        host.sizingOptions = []
-        host.sceneBridgingOptions = [.toolbars]
-        return host
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -74,6 +68,12 @@ final class WorkspaceController: ThinSplitViewController {
                 project.panel.shown = shown
             },
         ]
+        // Nested pane frames settle after their parent; divider drags don't lay out the root.
+        resizes = [sourceItem, pdfItem].map { item in
+            let view = item!.viewController.view
+            view.postsFrameChangedNotifications = true
+            return NotificationCenter.default.addObserver(of: view, for: .frameDidChange) { [weak self] _ in self?.fitToolbar() }
+        }
     }
 
     /// Unless a divider was dragged shut: a column AppKit folds as a toggle opens the other has the click as its event.
@@ -100,6 +100,22 @@ final class WorkspaceController: ThinSplitViewController {
         let both = !sourceItem.isCollapsed && !pdfItem.isCollapsed
         let area = both ? 2 * ColumnMetrics.paneMinimum + columns.splitView.dividerThickness : ColumnMetrics.paneMinimum
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        fitToolbar()
+    }
+
+    private func fitToolbar() {
+        let area = areaItem.viewController.view.convert(areaItem.viewController.view.bounds, to: splitView)
+        let trailing = min(area.maxX, splitView.bounds.maxX - 92)
+        let leading = max(area.minX, 180)
+        let editing: CGFloat = project.sourceToolsEnabled ? 338 : 218
+        let room = app.layout == .split
+            ? min(trailing - leading - editing, pdfItem.viewController.view.frame.width - (area.maxX - trailing))
+            : trailing - leading - editing
+        toolbar.compactCompile = room < (app.showPDF && project.hasPDF ? 266 : 110)
     }
 
     // MARK: - Layout
@@ -179,7 +195,7 @@ final class WorkspaceController: ThinSplitViewController {
             space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
         }
-        let bar = hostingView(StatusBar(project: project))
+        let bar = hostingView(StatusBar(project: project).background { WindowModals(app: app, project: project) })
         bar.sizingOptions = []
         // Not the toolbar's inset the columns take.
         bar.safeAreaRegions = []
@@ -250,7 +266,10 @@ final class WorkspaceController: ThinSplitViewController {
             },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
             // Over the pages, which stay laid out for the next PDF.
-            track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
+            track({ [project.hasPDF, project.sourceToolsEnabled] }) { [weak self] state in
+                self?.pdfEmpty.isHidden = state[0]
+                self?.fitToolbar()
+            },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in
                 guard let self else { return }
                 setCollapsed(sidebarItem, false)
@@ -363,6 +382,8 @@ final class WorkspaceController: ThinSplitViewController {
         // The next workspace's columns are AppKit's to fold afresh.
         (app.sidebarFolded, app.inspectorFolded) = (false, false)
         collapses = []
+        resizes = []
+        toolbar.close()
     }
 
     private func performPDF(_ action: PDFAction) {
@@ -390,12 +411,5 @@ private struct Pane<Content: View>: View {
     let project: ProjectModel
     let content: Content
 
-    var body: some View { content.disabled(project.closed) }
-}
-
-private struct WorkspaceView: NSViewControllerRepresentable {
-    let controller: WorkspaceController
-
-    func makeNSViewController(context: Context) -> WorkspaceController { controller }
-    func updateNSViewController(_ controller: WorkspaceController, context: Context) {}
+    var body: some View { content.disabled(project.closed || project.isClosing) }
 }

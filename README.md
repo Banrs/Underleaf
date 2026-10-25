@@ -16,6 +16,10 @@ folder, `.tex` file or `.zip` you already have. Choose Source Only, Source & PDF
 the toolbar's Editor Layout menu or the View menu. A project opens again where you left it, on the
 same file, line, page and zoom.
 
+The toolbar follows the source and PDF dividers. Formatting tools stay with the source, the
+zoom pill stays with the PDF, and Compile becomes a compact button when space is tight.
+Search Project lives above the file list; Command-F finds text in the focused source or PDF.
+
 A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
 and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
 projects folder.
