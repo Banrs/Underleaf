@@ -36,9 +36,25 @@ extension NSView {
     }
 }
 
+/// AppKit tracks a divider's drag within the press on it, the only place a split view itself is hit.
+class DraggedSplitView: NSSplitView {
+    private(set) var dragging = false
+
+    override func mouseDown(with event: NSEvent) {
+        let workspace = window?.contentViewController as? WorkspaceController
+        dragging = true
+        workspace?.quiet(true)
+        defer {
+            dragging = false
+            workspace?.quiet(false)
+        }
+        super.mouseDown(with: event)
+    }
+}
+
 /// Thin dividers, AppKit's default, which a split view of its own would otherwise lose.
 class ThinSplitViewController: NSSplitViewController {
-    init(splitView: NSSplitView = NSSplitView(), isVertical: Bool = true) {
+    init(splitView: DraggedSplitView = DraggedSplitView(), isVertical: Bool = true) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = isVertical
         splitView.dividerStyle = .thin
@@ -46,13 +62,25 @@ class ThinSplitViewController: NSSplitViewController {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// A drag of the source|PDF divider stops at the even split, with the haptic; a position set in code goes where it is
+    /// set. NSSplitViewController doesn't implement this delegate method, so there is no super to call.
+    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
+                            ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard let columns = splitView as? ColumnsSplitView, columns.dragging,
+              abs(proposedPosition - columns.evenPosition) <= 8 else { return proposedPosition }
+        if abs(columns.arrangedSubviews[0].frame.maxX - columns.evenPosition) >= 0.5 {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
+        return columns.evenPosition
+    }
 }
 
 /// Files over the File Outline. AppKit has no thin divider without a line: the files' scroll edge stands for it.
 final class SidebarSplitViewController: ThinSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: NSSplitView { override func drawDivider(in rect: NSRect) {} }
+    private final class SplitView: DraggedSplitView { override func drawDivider(in rect: NSRect) {} }
 
     init() { super.init(splitView: SplitView(), isVertical: false) }
 
@@ -67,9 +95,26 @@ final class SidebarSplitViewController: ThinSplitViewController {
     }
 }
 
-final class ColumnsSplitView: NSSplitView {
+final class ColumnsSplitView: DraggedSplitView {
     /// Short of the status bar, whose line is AppKit's scroll edge's. A split view is flipped.
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
+    }
+
+    var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
+}
+
+extension NSScrollView {
+    /// Shown again, a scroller is swapped out and in, which resets AppKit's fade: it stays hidden until the next scroll.
+    func hideOverlayScrollers(_ hidden: Bool) {
+        guard scrollerStyle == .overlay else { return }
+        for key in [\NSScrollView.verticalScroller, \NSScrollView.horizontalScroller] {
+            guard let scroller = self[keyPath: key] else { continue }
+            if !hidden {
+                self[keyPath: key] = NSScroller()
+                self[keyPath: key] = scroller
+            }
+            scroller.alphaValue = hidden ? 0 : 1
+        }
     }
 }

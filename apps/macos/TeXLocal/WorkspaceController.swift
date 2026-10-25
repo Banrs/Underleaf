@@ -19,6 +19,8 @@ final class WorkspaceController: ThinSplitViewController {
 
     private var appeared = false
     private var panelHeight: CGFloat = 0
+    private var quieting = 0
+    private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
     private var resizes: [NotificationCenter.ObservationToken] = []
@@ -112,7 +114,7 @@ final class WorkspaceController: ThinSplitViewController {
     }
 
     /// Compile's word goes before AppKit would take Zoom or Compile to the overflow menu, where it is the first tool
-    /// without room.
+    /// without room, and comes back once no pane moves.
     private func fitToolbar() {
         func edges(_ item: NSSplitViewItem) -> NSRect { item.viewController.view.convert(item.viewController.view.bounds, to: splitView) }
         let source = edges(sourceItem), area = edges(areaItem)
@@ -122,7 +124,8 @@ final class WorkspaceController: ThinSplitViewController {
         // A PDF sliding in is already at its width.
         let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
             : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
-        toolbar.compactCompile = room < ColumnMetrics.compile
+        let compact = room < ColumnMetrics.compile
+        if compact || quieting == 0 { toolbar.compactCompile = compact }
     }
 
     // MARK: - Layout
@@ -287,10 +290,14 @@ final class WorkspaceController: ThinSplitViewController {
 
     private func showPanes() {
         guard appeared else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            if !animates { context.duration = 0 }
-            sourceItem.animator().isCollapsed = !app.showSource
-            pdfItem.animator().isCollapsed = !app.showPDF
+        quiet(true)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { context in
+                if !animates { context.duration = 0 }
+                sourceItem.animator().isCollapsed = !app.showSource
+                pdfItem.animator().isCollapsed = !app.showPDF
+            }
+            quiet(false)
         }
         if let responder = view.window?.firstResponder as? NSView {
             if !app.showSource, responder.isDescendant(of: sourceItem.viewController.view) {
@@ -326,16 +333,31 @@ final class WorkspaceController: ThinSplitViewController {
             view.layoutSubtreeIfNeeded()
             return done()
         }
+        quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { context in
                 if !animates { context.duration = 0 }
                 item.animator().isCollapsed = collapsed
             }
+            quiet(false)
             done()
         }
     }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
+
+    /// Scroll bars come with scrolling (HIG, Scroll views), not with a drag's or animation's live resize, which an
+    /// animation puts every pane in.
+    func quiet(_ resizing: Bool) {
+        quieting += resizing ? 1 : -1
+        guard quieting == (resizing ? 1 : 0) else { return }
+        if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
+        for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
+        if !resizing {
+            quietScrollViews = []
+            fitToolbar()
+        }
+    }
 
     /// A hidden accessory only folds to no height, and its controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
@@ -345,9 +367,11 @@ final class WorkspaceController: ThinSplitViewController {
             (accessory.isHidden, accessory.view.isHidden) = (hidden, hidden)
             return
         }
+        quiet(true)
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
             if hidden, accessory.isHidden { accessory.view.isHidden = true }
+            quiet(false)
         }
     }
 
