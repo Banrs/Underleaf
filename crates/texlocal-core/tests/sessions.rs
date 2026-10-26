@@ -33,8 +33,12 @@ printf 'Output written on %s.pdf (1 page).\n' "$stem" > "$out/$stem.log"
 "#;
 
 fn stub_tex(library: &Library) {
-    let bin = library.path("tex");
-    fs::create_dir(&bin).unwrap();
+    let tex = library.path("tex");
+    let bin = tex.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir(tex.join("texmf-dist")).unwrap();
+    let ls_r = "./tex/latex/base:\narticle.cls\nsample2e.tex\n";
+    fs::write(tex.join("texmf-dist/ls-R"), ls_r).unwrap();
     let latexmk = bin.join("latexmk");
     fs::write(&latexmk, LATEXMK).unwrap();
     fs::set_permissions(&latexmk, fs::Permissions::from_mode(0o755)).unwrap();
@@ -76,7 +80,7 @@ async fn opening_answers_the_project_and_its_number_is_taken() {
 #[tokio::test(flavor = "multi_thread")]
 async fn checks_find_undefined_labels_and_unclosed_environments() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\begin{itemize}\n\\end{document}\n";
-    let rig = Rig::open(&[("main.tex", main)]).await;
+    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
     let checks = rig.event("checks", |e| {
         e["items"].as_array().is_some_and(|i| i.len() == 2)
     });
@@ -555,7 +559,7 @@ async fn a_fix_adds_the_package_a_command_needs() {
 #[tokio::test(flavor = "multi_thread")]
 async fn checks_find_duplicates_missing_files_and_open_groups() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\label{a}\\label{a}\n\\cite{nokey}\n\\input{missing}\n$x\n\nnext {\n\\end{document}\n";
-    let rig = Rig::open(&[("main.tex", main)]).await;
+    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
     let checks = rig.event("checks", |e| {
         e["items"].as_array().is_some_and(|i| i.len() == 5)
     });
