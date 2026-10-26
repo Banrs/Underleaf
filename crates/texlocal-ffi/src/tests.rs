@@ -129,10 +129,9 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
 
 #[test]
 fn syntax_commands_round_trip_through_the_c_abi() {
-    let light = json!({ "theme": "overleaf", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08] });
-    let args = c(&light.to_string());
-    let colors = unsafe { take_json(tl_syntax_call(c("theme_colors").as_ptr(), args.as_ptr())) };
-    assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(5));
+    let args = c(r"{}");
+    let menus = unsafe { take_json(tl_syntax_call(c("menus").as_ptr(), args.as_ptr())) };
+    assert!(menus.unwrap()["templates"].is_object());
     assert!(unsafe { tl_syntax_call(ptr::null(), c("{}").as_ptr()) }.is_null());
 }
 

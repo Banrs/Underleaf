@@ -14,7 +14,7 @@ C ABI (`crates/texlocal-ffi/include/texlocal.h`; the app links the static librar
 | `tl_call_async(h, command, args_json, done, ctx)` | JSON in; on a core thread, `done(ctx, envelope_json)` gets `{"ok": value}` or `{"error": message, "status": code}`, and may call the core itself. `done` may be NULL. A session's commands are queued for it before this returns (see Threading). |
 | `tl_session_source(h, session, path)` | A session's open document as a `TlSource` (see Documents). Free with `tl_source_free`. Each source handed out starts with no typing state: the brackets the editor closed and a snippet's fields from an earlier visit are forgotten. |
 | `tl_source_*` | Highlighting, completions and editing commands on a source; `tl_source_reload` takes a reloaded text. Each edit is `tl_source_edit`, each move of the (first) selection `tl_source_select`; `tl_source_text` gives the whole text as UTF-8 bytes (see The editor's source). |
-| `tl_syntax_call(command, args_json)` | Commands that need no source: themes and colours, menus, maths as SVG, and `drop_text` (below). |
+| `tl_syntax_call(command, args_json)` | Commands that need no source: menus, heading styles and maths as SVG (below). |
 
 Callbacks are plain C: `void (*)(void *ctx, const char *json)`, UTF-8 JSON valid only during
 the call.
@@ -214,13 +214,9 @@ Syntax commands (`tl_syntax_call`), JSON in, JSON out:
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `drop_text` | `path`, `kind`, `into?` ("tex") | `{"insert": "\\includegraphics{path}"}`, `{"open": true}` or `null` | What a project file dropped on the editor does. `path` is the file's project path and `kind` its `file_tree` kind (`image`, `pdf`, `tex`, …; a folder has none: `null`, nothing happens). `into` is the kind of the file dropped on. A PNG, JPEG or PDF, which graphicx reads in every engine, dropped on a `tex` file inserts `\includegraphics{path}` at the caret, unless TeX can't read the path as written (`%`, `#`, `\` or unpaired braces); any other file opens (`{"open": true}`). The path is written as given. |
-| `themes` | | `[{id, title}]` | |
-| `theme_colors` | `theme`, `dark`, `increaseContrast?`, `background`, `fill`, `system?` | `[[r, g, b, a]]`, one per highlight kind | `system` maps the System theme's colour names to the host's values; each colour is made `legible`. |
 | `menus` | | `{templates, symbolGroups}` | The Insert and Math menus' catalogue. |
 | `math_svg` | `tex`, `display`, `size` (points) | `{svg, width, height}` in points, or `{"error": why}` | The SVG is `<path>` and `<rect>` alone, in black, for the host to tint. |
 | `heading_styles` | | as the `outline` event's `headingStyles` | The levels without a project: every supported sectioning level. |
-| `legible` | `color`, `background`, `fill`, `increaseContrast?`, `ratio?` | `[r, g, b, a]` | The colour raised to a contrast `ratio` against the background and the current line. Without `ratio`: 4.5, or 7 with `increaseContrast`. With `ratio`, `increaseContrast` is ignored; a PDF find border under Increase Contrast wants `ratio: 3.0`. |
 
 ## Events
 

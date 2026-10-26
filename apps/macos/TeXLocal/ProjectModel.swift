@@ -427,12 +427,11 @@ final class ProjectModel {
             // From outside, only a figure to insert: the sidebar adds other files.
             let type = UTType(filenameExtension: url.pathExtension)
             let kind = type?.conforms(to: .pdf) == true ? "pdf" : type?.conforms(to: .image) == true ? "image" : ""
-            let drop: DropText? = Syntax.call("drop_text", ["path": url.lastPathComponent, "kind": kind, "into": into])
-            return drop?.insert == nil ? nil : .copy { [weak self] in await self?.copyFigure(url) }
+            return Self.includeGraphics(url.lastPathComponent, kind: kind, into: into) == nil ? nil
+                : .copy { [weak self] in await self?.copyFigure(url) }
         }
         guard let kind = tree.node(at: path)?.kind else { return nil }
-        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue, "into": into])
-        if let insert = drop?.insert { return .insert(insert) }
+        if let insert = Self.includeGraphics(path, kind: kind.rawValue, into: into) { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
     }
 
@@ -446,8 +445,25 @@ final class ProjectModel {
         await tree.reload()
         let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
         guard let kind = tree.node(at: path)?.kind else { return nil }
-        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue])
-        return drop?.insert
+        return Self.includeGraphics(path, kind: kind.rawValue)
+    }
+
+    /// A figure's `\includegraphics`, dropped in a TeX file: of images, those pdfTeX, XeTeX and LuaTeX alike read (not GIF,
+    /// SVG, WebP or BMP), at a path TeX reads as written. `%`, `#` and `\` mean something else to it, and braces must pair;
+    /// the rest (spaces, `_`, `&`, `$`, `^`, `~`) it takes as they are.
+    static func includeGraphics(_ path: String, kind: String, into: String = "tex") -> String? {
+        guard into == "tex", ["image", "pdf"].contains(kind),
+              ["png", "jpg", "jpeg", "pdf"].contains((path as NSString).pathExtension.lowercased()) else { return nil }
+        var depth = 0
+        for character in path {
+            switch character {
+            case "%", "#", "\\": return nil
+            case "{": depth += 1
+            case "}": depth -= 1; if depth < 0 { return nil }
+            default: break
+            }
+        }
+        return depth == 0 ? "\\includegraphics{\(path)}" : nil
     }
 
     /// A build follows when automatic.
@@ -706,7 +722,6 @@ final class ProjectModel {
 }
 
 /// None: the file dropped opens.
-private nonisolated struct DropText: Decodable { let insert: String? }
 
 /// `session_replace`'s and `session_rename_symbol`'s.
 private nonisolated struct ProjectEdits: Decodable {

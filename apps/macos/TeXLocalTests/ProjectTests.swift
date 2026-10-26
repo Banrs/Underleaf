@@ -482,6 +482,18 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A figure is inserted only where TeX reads its kind and its path as written.
+    @Test func aFigureIsInsertedWhereTeXReadsItsPath() {
+        let insert = { ProjectModel.includeGraphics($0, kind: $1, into: $2) }
+        #expect(insert("figs/plot.png", "image", "tex") == "\\includegraphics{figs/plot.png}")
+        #expect(insert("Shot.JPG", "image", "tex") != nil && insert("a.pdf", "pdf", "tex") != nil)
+        #expect(insert("figs/a b_c&{d}~$^.png", "image", "tex") == "\\includegraphics{figs/a b_c&{d}~$^.png}")
+        for (path, kind, into) in [("a.pdf", "pdf", "bib"), ("ch1.tex", "tex", "tex"), ("logo.svg", "image", "tex")] {
+            #expect(insert(path, kind, into) == nil, "\(path)")
+        }
+        for path in ["50%.png", "a#1.png", "a\\b.png", "a}{.png", "a{.png"] { #expect(insert(path, "image", "tex") == nil, "\(path)") }
+    }
+
     /// Jump to Next and Previous Issue skip an issue with no place and go round the list's ends.
     @Test func issuesAreSteppedThroughRoundTheEnds() async throws {
         let project = try await opened("a\nb\n").project

@@ -3,11 +3,10 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::complete::SnippetField;
 use super::edit::{Style, map_selections};
-use super::theme::{self, Appearance, Rgba};
 use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
 use crate::service::parse;
@@ -48,14 +47,9 @@ enum Command {
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
 enum Free {
-    DropText { path: String, kind: Option<String>, into: Option<String> },
-    Themes,
     MathSvg { tex: String, display: bool, size: f64 },
     Menus,
     HeadingStyles,
-    ThemeColors { theme: String, #[serde(flatten)] appearance: Appearance },
-    Legible { color: Rgba, background: Rgba, fill: Rgba, #[serde(default)] increase_contrast: bool,
-        ratio: Option<f64> },
 }
 
 fn json(value: impl Serialize) -> Option<String> {
@@ -124,73 +118,22 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
 
 /// What a file dropped on the editor does: an image or PDF graphicx reads, on a LaTeX file, is
 /// `\includegraphics` at the caret; any other file opens.
-fn dropped(path: &str, kind: &str, into: &str) -> Value {
-    // pdfTeX, XeTeX and LuaTeX alike: not GIF, SVG, WebP or BMP.
-    let graphic = || {
-        let ext = path.rsplit_once('.').map_or("", |(_, ext)| ext);
-        ["png", "jpg", "jpeg", "pdf"]
-            .iter()
-            .any(|known| ext.eq_ignore_ascii_case(known))
-    };
-    match kind {
-        "" => Value::Null,
-        "image" | "pdf" if into == "tex" && graphic() && tex_reads(path) => {
-            json!({ "insert": format!("\\includegraphics{{{path}}}") })
-        }
-        _ => json!({ "open": true }),
-    }
-}
-
-/// Whether `\includegraphics` reads `path` as written, in pdfTeX, XeTeX and LuaTeX
-/// alike: `%`, `#` and `\` mean something else to TeX there, and its braces must
-/// pair. The rest (spaces, `_`, `&`, `$`, `^`, `~`) it takes as they are.
-fn tex_reads(path: &str) -> bool {
-    path.chars().try_fold(0u32, |depth, c| match c {
-        '%' | '#' | '\\' => None,
-        '{' => Some(depth + 1),
-        '}' => depth.checked_sub(1),
-        _ => Some(depth),
-    }) == Some(0)
-}
-
 /// The commands that need no document; docs/core-api.md lists them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     match read(command, args_json)? {
-        Free::DropText { path, kind, into } => json(dropped(
-            &path,
-            kind.as_deref().unwrap_or(""),
-            into.as_deref().unwrap_or("tex"),
-        )),
-        Free::Themes => json(theme::THEMES.map(|t| json!({ "id": t.id, "title": t.title }))),
         Free::MathSvg { tex, display, size } => rendered(render::math_svg(&tex, display, size)),
         Free::Menus => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
         }
         Free::HeadingStyles => json(headings::heading_styles(None)),
-        Free::ThemeColors { theme, appearance } => {
-            json(theme::theme_colors(theme::theme(&theme)?, &appearance))
-        }
-        Free::Legible {
-            color,
-            background,
-            fill,
-            increase_contrast,
-            ratio,
-        } => {
-            let ratio = ratio.unwrap_or_else(|| theme::text_contrast(increase_contrast));
-            json(theme::legible(color, background, fill, ratio))
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::call;
     use crate::syntax::SourceDocument;
-    use crate::syntax::theme::contrast;
 
     #[test]
     fn commands_answer_by_name() {
@@ -224,55 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_file_is_inserted_or_opened() {
-        let drop = |args: &str| call("drop_text", args);
-        let image = r#"{"path": "figs/plot.png", "kind": "image"}"#;
-        assert_eq!(
-            drop(image).as_deref(),
-            Some(r#"{"insert":"\\includegraphics{figs/plot.png}"}"#)
-        );
-        let pdf = r#"{"path": "a.pdf", "kind": "pdf", "into": "tex"}"#;
-        assert!(drop(pdf).unwrap().contains("includegraphics{a.pdf}"));
-        let into_bib = r#"{"path": "a.pdf", "kind": "pdf", "into": "bib"}"#;
-        assert_eq!(drop(into_bib).as_deref(), Some(r#"{"open":true}"#));
-        let tex = r#"{"path": "ch1.tex", "kind": "tex"}"#;
-        assert_eq!(drop(tex).as_deref(), Some(r#"{"open":true}"#));
-        // Of images, those graphicx reads, in any case.
-        let jpeg = r#"{"path": "Shot.JPG", "kind": "image"}"#;
-        assert!(drop(jpeg).unwrap().contains("includegraphics{Shot.JPG}"));
-        let svg = r#"{"path": "logo.svg", "kind": "image"}"#;
-        assert_eq!(drop(svg).as_deref(), Some(r#"{"open":true}"#));
-        let taken = r#"{"path": "figs/a b_c&{d}~$^.png", "kind": "image"}"#;
-        assert!(
-            drop(taken)
-                .unwrap()
-                .contains("includegraphics{figs/a b_c&{d}~$^.png}")
-        );
-        for path in ["50%.png", "a#1.png", "a\\\\b.png", "a}{.png", "a{.png"] {
-            let args = json!({ "path": path, "kind": "image" }).to_string();
-            assert_eq!(drop(&args).as_deref(), Some(r#"{"open":true}"#), "{path}");
-        }
-        assert_eq!(drop(r#"{"path": "figs"}"#).as_deref(), Some("null"));
-        assert_eq!(drop("{}"), None);
-    }
-
-    #[test]
     fn the_free_commands_answer_by_name() {
-        let themes = call("themes", "{}").unwrap();
-        assert!(themes.starts_with(r#"[{"id":"overleaf","title":"Overleaf"},{"id":"#));
-        let ratio_of = |extra: &str| {
-            let args = format!(
-                r#"{{"color": [0.6, 0.6, 0.6, 1], "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0]{extra}}}"#
-            );
-            let raised: [f64; 4] = serde_json::from_str(&call("legible", &args).unwrap()).unwrap();
-            contrast(raised, [1.0; 4])
-        };
-        let plain = ratio_of("");
-        assert!((4.5..5.0).contains(&plain), "{plain}");
-        let border = ratio_of(r#", "ratio": 3.0"#);
-        assert!((3.0..3.5).contains(&border), "{border}");
-        let enhanced = ratio_of(r#", "increaseContrast": true"#);
-        assert!((7.0..7.6).contains(&enhanced), "{enhanced}");
         let menus: serde_json::Value = serde_json::from_str(&call("menus", "{}").unwrap()).unwrap();
         let alpha = serde_json::json!({ "glyph": "α", "command": "\\alpha" });
         assert!(
