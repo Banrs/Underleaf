@@ -1,11 +1,9 @@
 import SwiftUI
 
-/// The bar's safe area reaches SwiftUI but not an AppKit scroll view, which takes it as an inset.
 struct LogPane: View {
     let text: String
     let filter: String
     var title = "Build Log"
-    /// Found off the main actor, not on every redraw of a log that can be megabytes; the last ones stay until the next.
     @State private var filtered: (filter: String, lines: String)?
 
     var body: some View {

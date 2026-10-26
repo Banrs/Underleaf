@@ -1,6 +1,3 @@
-//! tlmgr and osascript as stub scripts, on a PATH that reaches neither the real ones nor the
-//! system's dialog.
-
 use std::path::Path;
 
 use tempfile::TempDir;
@@ -10,8 +7,6 @@ use crate::compile::stubs::stub;
 
 const REPOSITORY: &str = "tlmgr: package repository https://mirror.aarnet.edu.au/pub/CTAN/systems/texlive/tlnet (verified)\n";
 
-/// A tlmgr that answers `search` with `search` and `install` with `install`, as a shell
-/// script's lines, and writes down each call's arguments.
 fn tlmgr(dir: &Path, search: &str, install: &str) {
     let answer = |text: &str| match text.rsplit_once("\nexit ") {
         Some((text, code)) => format!("cat <<'END'\n{text}\nEND\nexit {code}"),

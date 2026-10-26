@@ -8,7 +8,6 @@ struct SourceEditorTests {
     private var text: SourceTextView { editor.textView }
     private let typed = NSRange(location: NSNotFound, length: 0)
     private let defaults = TestDefaults()
-    /// What the test holds to its end: the window the text lays out in, and a project's folder, removed then.
     private let held = Held()
     private final class Held {
         var window: NSWindow?
@@ -21,12 +20,10 @@ struct SourceEditorTests {
         text.setSelectedRange(.caret(caret ?? (string as NSString).length))
     }
 
-    /// Each key as the keyboard types it.
     private func type(_ keys: String...) {
         for key in keys { text.insertText(key, replacementRange: typed) }
     }
 
-    /// An app with a new project in the test library open, `main` its main file's text and `files` beside it.
     private func opened(_ main: String, with files: [String: String] = [:]) async throws -> (AppModel, ProjectModel) {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         let info = try await newProject()
@@ -39,8 +36,6 @@ struct SourceEditorTests {
         return (app, try #require(app.project))
     }
 
-    /// A file's undo comes back with it while its text is unchanged, and follows a rename onto a name whose own file
-    /// went elsewhere.
     @Test func eachFileKeepsItsUndo() throws {
         open("one", caret: 0, path: "a.tex")
         type("x")
@@ -48,7 +43,6 @@ struct SourceEditorTests {
         open("two", path: "b.tex")
         #expect(text.undoManager !== a && text.undoManager?.canUndo == false)
         open("main", path: "main.tex")
-        // b.tex deleted in the Finder, so its kept state stays; a.tex takes its name.
         editor.rename(from: "a.tex", to: "b.tex")
         open("xone", path: "b.tex")
         #expect(text.undoManager === a)
@@ -59,7 +53,6 @@ struct SourceEditorTests {
         #expect(text.undoManager !== a)
     }
 
-    /// The mirror keeps a U+0000 the editor keeps, and the offsets after it (#24), and gives it back in its text.
     @Test func aNulCharacterKeepsTheMirrorInStep() {
         let document = SourceDocument(text: "a\u{0}\nb")
         #expect(document.lineCount == 2)
@@ -67,7 +60,6 @@ struct SourceEditorTests {
         #expect(document.lineCount == 3 && document.lineStart(3) == 6 && document.text == "a\u{0}\nb\u{0}\nc")
     }
 
-    /// Each key goes through the core (whose rules are its own tests'): a bracket, a newline, Tab.
     @Test func typingIsTheCores() {
         open("")
         type("{", "}")
@@ -80,12 +72,9 @@ struct SourceEditorTests {
         #expect(text.string == "  x" && text.document.text == text.string)
     }
 
-    /// Jump to Definition at a \ref opens the file its label is in, with the label selected; what defines a name is the
-    /// core's (complete.rs).
     @Test func jumpAtARefOpensItsLabelsFileAtTheLabel() async throws {
         let (app, project) = try await opened("See \\ref{fig:a}.", with: ["figures.tex": "Figures.\n\\label{fig:a}\n"])
         let text = project.editor.textView
-        // Once the session's first scan of the project's files has reached the document.
         try await waitUntil(timeout: .seconds(5)) { text.document.definition(at: 10) != nil }
         text.setSelectedRange(.caret(10))
         app.perform(.jumpToDefinition, on: project)
@@ -94,14 +83,11 @@ struct SourceEditorTests {
         await app.close()
     }
 
-    /// The open document's edits, the label's and its reference's, undo as one, in a group of their own: with no grouping
-    /// by event, an undo registered outside a group raises.
     @Test func aRenamesEditsAreOneUndoStepInTheSource() async throws {
         let original = "\\label{a} see \\ref{a}"
         let (app, project) = try await opened(original)
         let text = project.editor.textView, undo = try #require(text.undoManager)
         undo.groupsByEvent = false
-        // In the reference: the core's `definition` answers where a name is used.
         text.setSelectedRange(.caret(19))
         app.perform(.editRename, on: project)
         guard case .rename(let symbol)? = app.prompt else { Issue.record("Rename opened no sheet"); return }
@@ -134,7 +120,6 @@ struct SourceEditorTests {
         #expect(isIgnored("\\emph") && !isIgnored("Some") && !isIgnored("prose"))
     }
 
-    /// The source's own commands first, and of the text's those that aren't for prose; each is the menu bar's command.
     @Test func theContextMenuIsTheSourcesOwn() throws {
         open("word", caret: 0)
         text.forwardSync = { _ in {} }
@@ -160,7 +145,6 @@ struct SourceEditorTests {
         #expect(performed == [.syncForward])
     }
 
-    /// TextKit 2 estimates what's above a revealed line, and a new width changes that; lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
     @Test func aRevealedLineStaysAtTheTop() {
         inWindow()
         open((1...2000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
@@ -177,14 +161,12 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
-    /// Far down a long file, whose heights TextKit 2 has only estimated.
     private func farLine() -> NSRange {
         inWindow()
         open((1...6000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         return NSRange(location: text.document.lineStart(5000), length: 4)
     }
 
-    /// Within a line: TextKit settles the heights above as it lays out what now shows.
     @Test func jumpToSelectionCentresIt() throws {
         let range = farLine()
         text.setSelectedRange(range)
@@ -204,11 +186,8 @@ struct SourceEditorTests {
         #expect(text.shownRect.contains(segments), "Range at \(segments), shown \(text.shownRect)")
     }
 
-    /// Until a scroll prepares content, TextKit's content view can end at the scroll view's insets, which left the lines
-    /// under the status bar undrawn after a launch or a resize. Once laid out, the source has prepared all that shows.
     @Test func theShownTextIsPreparedBeforeAnyScroll() async throws {
         let window = inWindow()
-        // The bar's accessory gives the pane its safe area, which the scroll view takes as its insets.
         try #require(window.contentView).additionalSafeAreaInsets.bottom = BarMetrics.height
         window.orderFrontUnseen()
         open(String(repeating: "A line of text.\n", count: 200), caret: 0)
@@ -234,7 +213,6 @@ struct SourceEditorTests {
         #expect(clip.bounds.minY == -clip.contentInsets.top)
     }
 
-    /// From here each `grouping` is a top-level undo group of its own, as AppKit groups an event's changes.
     private func groupingByEvent() throws -> UndoManager {
         let undo = try #require(text.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -269,8 +247,6 @@ struct SourceEditorTests {
         #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }
 
-    /// A completion's first field is selected, and what's typed in a mirrored field goes in both its places, one Undo
-    /// taking it all back once the selection leaves the field.
     @Test func completionsFillTheirFields() throws {
         open("  \\beg")
         let undo = try #require(text.undoManager)
@@ -293,7 +269,6 @@ struct SourceEditorTests {
         #expect(text.string == "  \\beg")
     }
 
-    /// What AppKit does as it handles each event: the undo groups opened since the last end, where grouping by event.
     private func endEvent() { _ = (UndoManager.self as AnyObject).perform(NSSelectorFromString("_endTopLevelGroupings")) }
 
     @Test func theCompletionListTakesOnlyItsKeys() throws {
@@ -325,8 +300,6 @@ struct SourceEditorTests {
 
     private var completionList: NSView? { editor.scrollView.subviews.first { $0 is NSHostingView<CompletionRowsView> } }
 
-    /// The list is a view over the editor's text, and nothing in it takes the keyboard: a click chooses a row, and the
-    /// text view goes on typing and moving through the rows.
     @Test func theCompletionListNeverTakesTheKeyboard() throws {
         inWindow()
         open("\\")
@@ -337,11 +310,9 @@ struct SourceEditorTests {
         #expect(all(list).count > 1 && !all(list).contains { $0.acceptsFirstResponder })
     }
 
-    /// The list is a view of the scroll view's, over the text: a scroll the viewport needs no new layout for moves it too.
     @Test func theCompletionListFollowsAScroll() throws {
         inWindow()
         let lines = (1...200).map { $0 == 6 ? "\\be" : "Line \($0)" }
-        // After "\be".
         open(lines.joined(separator: "\n"), caret: (lines[..<6].joined(separator: "\n") as NSString).length)
         try layOut()
         text.complete(nil)
@@ -352,13 +323,11 @@ struct SourceEditorTests {
         clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + step))
         editor.scrollView.reflectScrolledClipView(clip)
         #expect(abs(before.minY - list.frame.minY - step) <= 1, "Moved by \(before.minY - list.frame.minY), scrolled by \(step)")
-        // Its line scrolled out of sight: it closes.
         clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY + 30 * step))
         editor.scrollView.reflectScrolledClipView(clip)
         #expect(text.completions.offered == nil && list.superview == nil)
     }
 
-    /// The session's autosave waits while marked (IME) text shows; the text itself is the mirror's at every step.
     @Test func markedTextIsToldAsItComesAndGoes() {
         open("start")
         var told: [Bool] = []
@@ -373,7 +342,6 @@ struct SourceEditorTests {
         #expect(told == [true, false, true, false] && !text.hasMarkedText() && text.string == "startあい亜" && text.document.text == text.string)
     }
 
-    /// The old undo referred to provisional text that wasn't saved to a.tex.
     @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
         open("first", path: "a.tex")
         text.setMarkedText("仮", selectedRange: .caret(1), replacementRange: typed)
@@ -384,7 +352,6 @@ struct SourceEditorTests {
         #expect(text.string == "first" && text.document.text == "first")
     }
 
-    /// AppKit's results count from the range checked, which starts here inside a \label whose code range starts before it.
     @Test func spellingIsTheProses() {
         let string = "\\label{sec:labelwrod} \\emph{prosewrod}" as NSString
         open(string as String)
@@ -413,14 +380,12 @@ struct SourceEditorTests {
                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
     }
 
-    /// A press at `point` in the window: its release, posted first, ends the text view's own tracking.
     private func click(at point: NSPoint, releasedAt release: NSPoint? = nil, in window: NSWindow, clicks: Int = 1,
                        _ modifiers: NSEvent.ModifierFlags = []) throws {
         NSApp.postEvent(try mouse(.leftMouseUp, at: release ?? point, in: window, clicks: clicks, modifiers), atStart: false)
         text.mouseDown(with: try mouse(.leftMouseDown, at: point, in: window, clicks: clicks, modifiers))
     }
 
-    /// As drawn, which validates the shown fragments' colours.
     private func colour(of word: String) throws -> NSColor? {
         let manager = try #require(text.textLayoutManager)
         text.layoutSubtreeIfNeeded()
@@ -435,12 +400,10 @@ struct SourceEditorTests {
         return colour
     }
 
-    /// Until `word` is drawn in `expected`; a timeout says what it was.
     private func waitUntilColoured(_ word: String, _ expected: NSColor) async throws {
         try await waitUntil { (try? self.colour(of: word)) == expected } state: { "\(word): \(String(describing: try? self.colour(of: word)))" }
     }
 
-    /// An edit recolours the lines below it, as its Undo does, and a line typed anew is coloured.
     @Test func anEditRecoloursTheLinesBelowIt() async throws {
         inWindow()
         open("a\nb\nxyz\n\\]", caret: 0)
@@ -455,7 +418,6 @@ struct SourceEditorTests {
         try await waitUntilColoured("\\section", theme.color(.command))
     }
 
-    /// Another app's text for the file shown keeps the caret and the top line where they were, as Xcode does.
     @Test func aReloadKeepsTheCaretAndTheTopLine() throws {
         inWindow()
         let long = (1...400).map { "Line \($0)" }.joined(separator: "\n")
@@ -471,7 +433,6 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == .caret(5))
     }
 
-    /// A double-click selects its word and goes quietly to the PDF; a single click doesn't.
     @Test func aDoubleClickGoesToThePDF() throws {
         let window = inWindow()
         open("one two", caret: 0)
@@ -484,7 +445,6 @@ struct SourceEditorTests {
         #expect(went.isEmpty && text.selectedRange() == .caret(4))
         try click(at: point, in: window, clicks: 2)
         #expect(went == [true] && text.selectedRange() == NSRange(location: 4, length: 3))
-        // A command's name has no place in the PDF.
         open("\\textbf{x}", caret: 0)
         text.layoutSubtreeIfNeeded()
         let name = text.firstRect(forCharacterRange: NSRange(location: 3, length: 1), actualRange: nil)
@@ -512,8 +472,6 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 4) && asked == [2])
     }
 
-    /// A fold leaves its lines out of the layout, so the numbers skip them. An edit above it moves it and one into it opens
-    /// it; an arrow key steps over it from its edges, and the selection put inside it opens it.
     @Test func aFoldHidesItsLinesUntilAnEditOrTheSelectionReachesIn() throws {
         let window = inWindow()
         open("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nlast", caret: 0)
@@ -534,12 +492,10 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == .caret(end) && text.folded.count == 1)
         text.setSelectedRange(.caret(text.document.lineStart(3)))
         #expect(text.folded.isEmpty && (try shown()) == [1, 2, 3, 4, 5])
-        // The chevron between the numbers and the text folds its line; an edit inside the fold opens it.
         let glyph = text.firstRect(forCharacterRange: .caret(0), actualRange: nil)
         let y = text.convert(window.convertPoint(fromScreen: NSPoint(x: glyph.minX, y: glyph.midY)), from: nil).y
         #expect(text.foldClick(at: NSPoint(x: (text.gutter.numbersEnd + text.textContainerOrigin.x) / 2, y: y)))
         #expect(try shown() == [1, 4, 5])
-        // Kept while another file shows, as its text is.
         let kept = text.string
         editor.open(path: "other.tex", text: "other", focus: false)
         editor.open(path: "main.tex", text: kept, focus: false)
@@ -548,8 +504,6 @@ struct SourceEditorTests {
         #expect(text.folded.isEmpty)
     }
 
-    /// An issue's message is whole where there is room for it and cut at its tail, by the box, where there isn't, down to
-    /// ten of its characters. An undefined command's is set in fewer words before it is cut, so that the name is kept.
     @Test func anIssuesMessageFitsItsRoom() {
         let font = NSFont.systemFont(ofSize: 12)
         func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
@@ -571,7 +525,6 @@ struct SourceEditorTests {
         #expect(shortCut?.text == "Undefined: \\undefinedmacro" && shortCut?.width == nil)
     }
 
-    /// An issue as the session's `issues` event has it, its one-line form the message itself.
     private func issue(_ line: Int, _ message: String, error: Bool = true, compact: String? = nil, tokens: [NSRange] = [],
                        others: [String] = []) -> IssuesEvent.Line {
         IssuesEvent.Line(line: line, error: error, message: message, short: message, compact: compact,
@@ -588,8 +541,6 @@ struct SourceEditorTests {
         try #require(text.textLayoutManager).textViewportLayoutController.layoutViewport()
     }
 
-    /// The box is a point inside its band's end on the first wrapped line; narrower panes cut its words short, then leave
-    /// the symbol alone, then nothing, with a help tag's words. An undefined command is underlined where it stands.
     @Test func anIssuesMessageIsAtItsLinesEnd() throws {
         inWindow()
         let undefined = issue(2, "Undefined control sequence: \\foo", compact: "Undefined: \\foo",
@@ -601,20 +552,16 @@ struct SourceEditorTests {
         let digit = ("0" as NSString).size(withAttributes: [.font: try #require(text.font)]).width
         let font = NSFont.systemFont(ofSize: 13)
         var rows = text.issues.rows
-        // The last line is the document's empty one, laid out with the paragraph before it.
         #expect(rows.map(\.line) == [1, 2, 4] && rows.map { $0.message?.view.rootView.isError } == [false, true, true])
         for row in rows {
             let message = try #require(row.message)
             #expect(!message.cut && message.rect.maxX == row.band.maxX - 1 && message.rect.minY == row.band.minY)
             #expect(row.band.contains(message.rect) && message.view.superview === text && message.view.frame == message.rect)
-            // It takes no click.
             #expect(text.hitTest(text.convert(NSPoint(x: message.rect.midX, y: message.rect.midY), to: text.superview)) === text)
         }
         #expect(rows[0].tip == nil && rows[1].tip == nil && rows[2].tip == "Emergency stop\nMissing \\begin{document}")
-        // Both places the command stands, and none for the other lines.
         #expect(rows.map(\.tokens.count) == [0, 2, 0])
         let start = text.textContainerOrigin.x + padding
-        // Narrower: fewer words, the box taking all the room from a character after the text, on whole points, in its view.
         try layOut(width: 520)
         let views = rows.map { $0.message?.view }
         rows = text.issues.rows
@@ -622,13 +569,11 @@ struct SourceEditorTests {
         #expect(cut.cut && cut.rect.maxX == rows[1].band.maxX - 1 && cut.rect.width == cut.rect.width.rounded())
         #expect(cut.rect.minX >= start + 31 * digit && cut.rect.minX < start + 31 * digit + 1 && cut.view === views[1])
         #expect(rows[1].tip == "Undefined control sequence: \\foo" && rows[0].message?.cut == false)
-        // Room for the symbol and not for words: the symbol alone, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
         show(undefined)
         try layOut(width: 480)
         let alone = try #require(text.issues.rows.first?.message)
         #expect(alone.cut && alone.rect.width == IssueBox.Metrics.width(ofText: nil, font: font, issues: 1) && text.issues.rows.first?.tip != nil)
-        // No room: the band is left, and the help tag's words.
         open("one\nUse \\foo here, and \\foo there, to the edge\n", caret: 0)
         show(undefined)
         try layOut(width: 420)
@@ -645,7 +590,6 @@ struct SourceEditorTests {
         var asked: [Int] = []
         text.issues.clicked = { asked.append($0) }
         let message = try #require(text.issues.rows.first?.message).rect
-        // In the window's coordinates.
         func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint { text.convert(NSPoint(x: x, y: y), to: nil) }
         let inside = point(message.midX, message.midY)
         try click(at: inside, releasedAt: point(message.minX - 20, message.midY), in: window)

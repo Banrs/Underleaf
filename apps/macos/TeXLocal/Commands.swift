@@ -15,8 +15,6 @@ enum MenuCommand: CaseIterable {
     var title: String { spec.title }
     var shortcut: KeyboardShortcut? { spec.shortcut }
 
-    /// Each command's title and key, side by side. ⌥⌘G is Go to Page, as in the Mac's PDF readers; Find in PDF… has none,
-    /// as ⌘F finds in the PDF while it has the keyboard.
     private var spec: (title: String, shortcut: KeyboardShortcut?) {
         switch self {
         case .projectNew: ("New Project…", KeyboardShortcut("n", modifiers: [.command, .shift]))
@@ -47,7 +45,6 @@ enum MenuCommand: CaseIterable {
         case .editDuplicateLine: ("Duplicate Line", KeyboardShortcut("d"))
         case .editDeleteLine: ("Delete Line", KeyboardShortcut("k", modifiers: [.control, .shift]))
         case .editGotoLine: ("Go to Line…", KeyboardShortcut("l"))
-        // Xcode's.
         case .editFold: ("Fold", KeyboardShortcut(.leftArrow, modifiers: [.command, .option]))
         case .editUnfold: ("Unfold", KeyboardShortcut(.rightArrow, modifiers: [.command, .option]))
         case .editFoldAll: ("Fold All", KeyboardShortcut(.leftArrow, modifiers: [.command, .option, .shift]))
@@ -81,7 +78,6 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    /// Text commands on the source's selection, which the menu bar's follow the source's keyboard for (`isEnabledInMenuBar`).
     var editsSelection: Bool {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
@@ -91,7 +87,6 @@ enum MenuCommand: CaseIterable {
         }
     }
 
-    /// The editor's or the PDF's own command, where that is all it does.
     var action: Action? {
         switch self {
         case .editBold: .edit(.bold)
@@ -120,7 +115,6 @@ enum MenuCommand: CaseIterable {
 
     enum Action { case edit(EditorCommand), pdf(PDFAction) }
 
-    /// The format toggles' symbol, and what they do (HIG, Offering help).
     var style: (symbol: String, help: String)? {
         switch self {
         case .editBold: ("bold", String(localized: "Make text bold"))
@@ -143,7 +137,6 @@ struct NewEntry: Equatable {
     var folder: String?
 }
 
-/// A folder opened where it is has neither Rename nor Move to Trash.
 struct ItemActions {
     let rename: (() -> Void)?
     let showInFinder: () -> Void
@@ -156,7 +149,6 @@ enum PDFAction {
 }
 
 extension ProjectModel {
-    /// On the pages showing; `find` opens each app's own find.
     func perform(_ action: PDFAction, find: () -> Void) {
         guard hasPDF else { return }
         switch action {
@@ -198,14 +190,10 @@ extension AppModel {
         }
     }
 
-    /// As Xcode's and Notes': with a field, the file list or the PDF focused, the menu bar's text commands are dim and their
-    /// shortcuts are the focused view's. The toolbar's still act on the source, which is theirs.
     func isEnabledInMenuBar(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         isEnabled(command, on: project) && (!command.editsSelection || project?.sourceHasKeyboard == true)
     }
 
-    /// The app Finder would open a PDF in, Preview or another the user chose, named as Finder names it: read once, not at
-    /// each menu's check.
     private static let pdfApp = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
         .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
 
@@ -263,7 +251,6 @@ extension AppModel {
         case .fileBrowseVersions: prompt = .versionHistory
         case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
         case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
-        // The PDF, not the first responder (usually the source), and whether or not its pane shows.
         case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
         case .editShiftRight: project?.editor.textView.shiftLines(1)
         case .editShiftLeft: project?.editor.textView.shiftLines(-1)
@@ -292,8 +279,6 @@ extension AppModel {
     var canPreviewLive: Bool { tex?.texpresso != nil }
 }
 
-/// The inspector's and Compile ▸ Engine's, whose choices dim with no project rather than the submenu. A project's engine,
-/// even nil or unlisted, is a choice: a selection with no tag is a SwiftUI fault.
 struct EnginePicker: View {
     let project: ProjectModel?
 

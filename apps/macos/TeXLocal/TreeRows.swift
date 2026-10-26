@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// A tree's rows, folders and headings as disclosure groups whose open state the project keeps with its settings.
 struct TreeRows<Node: Identifiable, Row: View>: View {
     let nodes: [Node]
     let children: (Node) -> [Node]?
@@ -32,8 +31,6 @@ struct TreeRows<Node: Identifiable, Row: View>: View {
     }
 }
 
-/// Not a `Binding` of the set: two changes in one click would each start from the set as it was. On the Mac, Option takes
-/// the `subtree`'s keys with it (HIG, Outline views).
 func disclosure(_ set: ReferenceWritableKeyPath<ProjectModel, Set<String>>, of project: ProjectModel, key: String,
                 inverted: Bool = false, subtree: @autoclosure @escaping () -> [String] = []) -> Binding<Bool> {
     Binding(get: { project[keyPath: set].contains(key) != inverted },

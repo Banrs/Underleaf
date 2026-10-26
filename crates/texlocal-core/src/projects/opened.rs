@@ -1,9 +1,3 @@
-//! Folders opened where they are. The library lists each in its store, `.opened/<key>/`, which
-//! holds where the folder is (`folder.json`), its ui state and the settings it has no
-//! `.texlocal.json` of its own for (`project.json`), its build output (`build/`) and its history
-//! (`history/`): nothing is written in the folder but the author's files. Its id is `.<key>`,
-//! which no project in the library can have.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,14 +16,12 @@ const STORE: &str = ".opened";
 const FOLDER: &str = "folder.json";
 const SIDECAR: &str = "project.json";
 
-/// Where an opened folder is, and which folder it is wherever it moves on its volume.
 #[derive(Serialize, Deserialize)]
 pub(super) struct Folder {
     pub path: PathBuf,
     identity: Option<(u64, u64)>,
 }
 
-/// The project a path opens, and the file in it to show.
 #[derive(Debug, Serialize)]
 pub struct Opening {
     pub project: ProjectInfo,
@@ -48,7 +40,6 @@ fn read(store: &Path) -> Option<Folder> {
     serde_json::from_slice(&fs::read(store.join(FOLDER)).ok()?).ok()
 }
 
-/// Every opened folder, by its id; one whose record can't be read is left out.
 pub(super) fn folders(data_dir: &Path) -> Vec<(String, Folder)> {
     let Ok(stores) = fs::read_dir(data_dir.join(STORE)) else {
         return Vec::new();
@@ -60,8 +51,6 @@ pub(super) fn folders(data_dir: &Path) -> Vec<(String, Folder)> {
     stores.flatten().filter_map(folder).collect()
 }
 
-/// Its own `.texlocal.json` holds its settings while it has one, but not a link, whose file
-/// elsewhere a settings write would change.
 fn project(root: &Path, store: &Path) -> Project {
     let (own, sidecar) = (root.join(SETTINGS_FILE), store.join(SIDECAR));
     let own_file = fs::symlink_metadata(&own).is_ok_and(|meta| meta.is_file());
@@ -98,9 +87,6 @@ pub(crate) fn find(data_dir: &Path, id: &str) -> Result<Project, CoreError> {
     Ok(project)
 }
 
-/// What `path` opens: the project it is in (a folder in an opened folder is a project of its
-/// own); a folder where it is; a .tex's folder where it is, at the .tex, or the .tex alone where
-/// its folder can't be opened; else a .zip's files or the file alone, imported.
 pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
     let meta = fs::metadata(path).map_err(CoreError::at(path))?;
     let data_dir = &service.data_dir;
@@ -132,9 +118,6 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
     Ok(Opening { project, file })
 }
 
-/// The folder at `root`, resolved, as listed before at that path or, moved, by its identity;
-/// else listed anew, with the settings its sources name unless it has its own, `chosen` the
-/// .tex opened in it.
 fn open_folder(
     service: &Service,
     root: &Path,
@@ -192,9 +175,6 @@ fn open_folder(
     Ok(ProjectInfo::of(id, &project(root, &store)))
 }
 
-/// Takes an opened folder off the list, with its settings and build output, after `stop` ends
-/// what runs in it; the folder stays as it is. Its store, with the build output and history, goes
-/// once the other projects' edits can go on.
 pub fn forget_folder(
     service: &Service,
     id: &str,
@@ -262,8 +242,6 @@ mod tests {
         assert!(found.history.starts_with(service.data_dir.join(STORE)));
         assert_eq!(names_in(&folder), [".git", "chapters", "main.tex"]);
 
-        // Opened again it is the same; a folder in it is a project of its own, and a path is
-        // in the innermost one that has it.
         assert_eq!(open_path(&service, &folder).unwrap().project.id, id);
         let inner = open_path(&service, &folder.join("chapters")).unwrap();
         let inner = inner.project.id;
@@ -289,7 +267,6 @@ mod tests {
 
     #[test]
     fn its_own_settings_file_keeps_its_settings_but_not_its_state() {
-        // Into a library that doesn't exist yet, as on a first open.
         let dir = tempfile::tempdir().unwrap();
         let service = Service::new(dir.path().join("data"));
         let own = r#"{ "mainFile": "paper.tex" }"#;
@@ -349,11 +326,9 @@ mod tests {
             (opened.project.id.as_str(), opened.file.as_deref()),
             ("P", Some("main.tex"))
         );
-        // The folder that holds the library, or the library itself, isn't a project's.
         for folder in [dir.path(), &service.data_dir] {
             fails_with(open_path(&service, folder), "holds TeXLocal’s projects");
         }
-        // Nor is a folder without a .tex, or a file that's neither a .tex nor a .zip.
         let photos = write(
             &dir.path().join("Photos"),
             &[("a.png", ""), ("sub/b.txt", "")],

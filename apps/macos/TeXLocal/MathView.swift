@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// Not focusable, or it takes the source's keyboard as it shows. Maths the core can't draw shows as its TeX, in red.
 struct MathView: View {
     var tex = ""
     var em: CGFloat = 0
     var image: NSImage?
 
-    /// Longer maths is shown smaller: wider than this.
     private static let widest: CGFloat = 560
 
     var body: some View {

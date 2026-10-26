@@ -2,7 +2,6 @@ import AppKit
 import Testing
 @testable import TeXLocal
 
-/// Home's and the Dock menu's flows, in `ProjectFlowTests` for its library and its clean-up.
 extension ProjectFlowTests {
     @Test func aRefusalOnHomeIsAnAlertThatNamesIt() async throws {
         let missing = files.temporaryDirectory.appending(path: "\(UUID().uuidString).zip")
@@ -17,7 +16,6 @@ extension ProjectFlowTests {
 
     @Test func aNewProjectOpensItsSheetWithTheTemplateAndAFreeName() async throws {
         app.newProject(.report)
-        // Once the core has named it.
         try await waitUntil { app.newProjectDraft != nil }
         #expect(app.newProjectDraft?.template == .report && app.newProjectDraft?.name.isEmpty == false)
         app.newProjectDraft = nil
@@ -34,7 +32,6 @@ extension ProjectFlowTests {
         let menu = dock.menu
         #expect(menu.items.map(\.title) == [second.name, first.name, "", "New Project…"])
         menu.performActionForItem(at: 3)
-        // Once the core has named it.
         try await waitUntil { app.newProjectDraft != nil }
         #expect(shown == 1)
         app.newProjectDraft = nil

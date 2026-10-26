@@ -26,7 +26,6 @@ struct FindTests {
 }
 
 struct PDFFitTests {
-    /// As Overleaf's, a double-click selects its word and goes quietly to the source; a single click only places.
     @Test func aDoubleClickSelectsAWordAndGoesToTheSource() throws {
         let controller = showing(try textPDF(["alpha beta"])), view = controller.view
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
@@ -64,7 +63,6 @@ struct PDFFitTests {
         for (width, height) in [(600.0, 500.0), (600, 380), (300, 500), (420, 500), (1000, 300)] {
             view.setFrameSize(NSSize(width: width, height: height))
             view.layoutDocumentView()
-            // In page space, magnified by the scale.
             let pages = try #require(view.documentView).frame.size
             let shown = CGSize(width: pages.width * view.scaleFactor, height: pages.height * view.scaleFactor)
             let room = CGSize(width: width, height: height - bottomInset)
@@ -75,16 +73,13 @@ struct PDFFitTests {
         }
     }
 
-    /// A document zooms from a tenth to eight times, though PDFKit puts its own limits back with each one.
     @Test func eachDocumentHasTheZoomsLimits() throws {
         let view = showing(try pages(1)).view
         #expect(view.minScaleFactor == 0.1 && view.maxScaleFactor == 8)
     }
 
-    /// A pinch's steps are the scroll view's magnification, which posts no PDFViewScaleChanged until a pinch ends.
     @Test func theScaleFollowsEveryZoom() throws {
         let controller = showing(try pages(3)), view = controller.view
-        /// Off a fit, the zoom is the scale.
         func follows(_ fit: PDFController.Zoom?, _ step: String) {
             let zoom = fit ?? .scale(Double(view.scaleFactor))
             #expect(controller.scale == view.scaleFactor && controller.zoom == zoom, "\(step)")
@@ -105,7 +100,6 @@ struct PDFFitTests {
         scrollView.magnification = 2
         follows(nil, "pinched")
         #expect(controller.scale == 2)
-        // Back at the width while autoScales is still on, as through a pinch: fitted again.
         scrollView.magnification = view.scaleFactorForSizeToFit
         follows(.fitWidth, "pinched back")
     }
@@ -116,18 +110,15 @@ struct PDFFitTests {
         project.shown = .build(URL(filePath: "/dev/null"))
         project.pdf.restoreZoom = zoom
         project.pdf.show(try pages(3))
-        // Kept until the view has a size to fit in.
         #expect(project.pdf.keptZoom == zoom)
         project.pdf.view.setFrameSize(NSSize(width: 600, height: 500))
         project.pdf.view.layoutDocumentView()
         #expect(project.pdf.restoreZoom == nil && project.pdf.keptZoom == zoom)
         if case .scale(let scale) = zoom { #expect(abs(project.pdf.view.scaleFactor - scale) < 0.001) }
-        // As the core keeps it.
         let kept = try JSONSerialization.data(withJSONObject: zoom.json, options: .fragmentsAllowed)
         #expect(try JSONDecoder().decode(PDFController.Zoom.self, from: kept) == zoom)
     }
 
-    /// The mark is beside the page, not an annotation, which Print and VoiceOver would see.
     @Test func theForwardSearchMarkIsOneAndNoAnnotation() throws {
         let document = try pages(2)
         let controller = showing(document)
@@ -139,14 +130,12 @@ struct PDFFitTests {
         #expect(controller.view.mark == nil)
     }
 
-    /// Blank US Letter pages.
     private func pages(_ count: Int) throws -> PDFDocument { try textPDF(Array(repeating: "", count: count)) }
 }
 
 @Suite(.serialized)
 struct PDFFindTests {
     init() {
-        // The system's find text is the user's: the tests keep their own.
         PDFFind.board = NSPasteboard.withUniqueName()
     }
 
@@ -197,7 +186,6 @@ struct PDFFindTests {
         #expect(controller.find.matchIndex == 2)
     }
 
-    /// The field's text as its typing delay ends.
     private func type(_ text: String, in controller: PDFController) {
         controller.find.text = text
         controller.find.typed()
@@ -215,13 +203,13 @@ struct PDFFindTests {
 
         type("gamma", in: controller)
         try #require(controller.view.document?.isFinding == true)
-        PDFFind.shared = "target" // Another pane changes it while gamma is still being searched.
+        PDFFind.shared = "target"
         controller.find.next(step)
         #expect(controller.find.text == "target")
         try await waitUntil(timeout: .seconds(5)) { controller.view.document?.isFinding == false }
         #expect(controller.find.query == "target" && controller.find.matches.count == 3)
 
-        controller.find.text = "gamma" // Its typing debounce has not fired yet.
+        controller.find.text = "gamma"
         controller.find.next(step)
         try await waitUntil(timeout: .seconds(5)) { controller.find.query == "gamma" && controller.find.matches.count == 1 }
         #expect(controller.find.text == "gamma" && PDFFind.shared == "gamma")
@@ -235,29 +223,24 @@ struct PDFFindTests {
         type("ab", in: controller)
         type("a", in: controller)
         try await waitUntil { controller.find.query == "a" && controller.find.matches.count == 3 }
-        // The longer search, had it gone on, would have ended by now.
         try await Task.sleep(for: .milliseconds(300))
         #expect(controller.find.query == "a" && controller.find.matches.count == 3)
     }
 
-    /// The letter on a line under another, where `characterIndex` is a letter behind for each line above.
     @Test func aClickSendsThePagesTextAndTheLetter() throws {
         let pdf = try textPDF(["alpha beta\ngamma delta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
         let e = text.range(of: "e", options: .backwards)
         let letter = try #require(page.selection(for: e)).bounds(for: page)
-        // A page holds its document weakly; it's the view's in the app.
         let click = try #require(withExtendedLifetime(pdf) { page.click(at: CGPoint(x: letter.midX, y: letter.midY)) })
         #expect(click == PageClick(text: text as String, at: e.location))
     }
 
-    /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
     @Test func aPageWithoutItsDocumentHasNoWord() throws {
         let page = try autoreleasepool { try #require(try textPDF(["alpha beta"]).page(at: 0)) }
         #expect(page.document == nil && page.click(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
-    /// The core finds the source's word in the text round SyncTeX's box, and the PDF selects it.
     @Test func forwardSearchSelectsTheWordTheCoreFinds() async throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         let line = "An echo repeats. An echo repeats."
@@ -272,7 +255,6 @@ struct PDFFindTests {
         controller.reveal(ForwardLoc(page: 1, h: box.minX, v: page.bounds(for: .cropBox).maxY - box.minY, width: box.width, height: box.height),
                           from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: column))
         let second = NSRange(try #require(rendered.ranges(of: "echo").last), in: rendered)
-        // PDFKit's selection of a word that ends a row takes the row's break along.
         try await waitUntil {
             let selection = controller.view.currentSelection
             return selection?.range(at: 0, on: page).location == second.location
@@ -280,7 +262,6 @@ struct PDFFindTests {
         } state: { "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page)))" }
     }
 
-    /// A double-click's search, quiet, shows nothing for a word the PDF hasn't; the menu's flashes SyncTeX's box.
     @Test func aQuietForwardSearchShowsOnlyAWordFound() async throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         let line = "Bold words here, unprinted."
@@ -298,7 +279,6 @@ struct PDFFindTests {
         }
     }
 
-    /// PDFKit searches off the main thread and posts what it finds to the main queue: found once each match is on a page showing.
     private func found(_ controller: PDFController) async throws {
         try await waitUntil(timeout: .seconds(5)) {
             guard let document = controller.view.document, !controller.find.matches.isEmpty else { return false }

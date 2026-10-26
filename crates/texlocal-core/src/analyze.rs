@@ -1,7 +1,3 @@
-//! A document's outline and word count, read from its main file through the files it
-//! inputs, and what each file defines and refers to, and where; each file is read once per
-//! change.
-
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -20,8 +16,6 @@ use crate::syntax::scan::{Group, Scanner, Visit};
 use crate::syntax::{SymbolKind, Symbols, Text, headings, prose, scan};
 use crate::{lock, paths};
 
-// What a title drops whole: \texorpdfstring's TeX argument (its PDF string is
-// the group after), labels, notes, and on a label's line an environment's \begin and \end.
 static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\(?:texorpdfstring|label|index|footnote|begin|end)\s*\{").unwrap()
 });
@@ -30,17 +24,11 @@ static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
-// Matched on the decoded text, not the raw bytes: in Unicode mode a byte that
-// isn't UTF-8 (a Latin-1 umlaut) drops its entry, and `(?-u)` narrows `\s` to
-// ASCII, which swallows a non-breaking space into the key.
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
-// Only a field's name, in any case as BibTeX reads it: the first of an entry's fields or one
-// after a comma.
 static CROSSREF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)(?:^|,)\s*crossref\s*=\s*[{"]?\s*([^\s,{}"]+)"#).unwrap());
 
-/// A sectioning command's heading: depth (0 for \part to 5 for \paragraph), title as plain text, 1-based line and file. An empty title is `untitled`, shown by its level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Heading {
     pub depth: usize,
@@ -51,8 +39,6 @@ pub struct Heading {
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
-    /// Its own prose words: up to the next heading or input of its file, and in an outline up
-    /// to the next heading the document reads.
     #[serde(skip)]
     pub words: usize,
 }
@@ -73,37 +59,24 @@ impl Heading {
     }
 }
 
-/// What one file says, each list in the file's order: the project's symbols are their union
-/// over files, its outline and word count a walk over them from the main file.
 #[derive(Default)]
 pub struct Facts {
-    /// Without their file, which is the name the walk reaches it by.
     pub headings: Vec<Heading>,
     pub inputs: Vec<Input>,
     pub words: usize,
     pub labels: Vec<Named>,
-    /// A .bib file's keys, or a .tex file's \bibitems.
     pub citations: Vec<Named>,
     pub commands: Vec<Defined>,
     pub environments: Vec<Named>,
-    /// Labels and citations referred to, one for each key a list names, environments begun or
-    /// ended, graphics included, and every command, from its backslash.
     pub uses: Vec<Named>,
     pub class: Option<String>,
-    /// What `\usepackage` and `\RequirePackage` load.
     pub packages: Vec<String>,
-    /// Where a new `\usepackage` goes: at the end of the line where the last one's argument ends,
-    /// else `\documentclass`'s, which a package can't come before.
     pub new_package: Option<Place>,
-    /// What `\bibliography` and `\addbibresource` name, as written.
     pub bibliographies: Vec<String>,
-    /// What TeX would find unbalanced in it.
     pub slips: Vec<Slip>,
-    /// Where TeX stops reading it, if before its end.
     pub end: Option<Place>,
 }
 
-/// Where a name is written: its line, from 1, and its column, from 0, and length in UTF-16 units.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Place {
     pub line: u32,
@@ -122,51 +95,37 @@ impl Place {
     }
 }
 
-/// A name a file defines or refers to.
 #[derive(Clone)]
 pub struct Named {
     pub kind: SymbolKind,
     pub name: String,
     pub place: Place,
-    /// What completion says of a citation beside its key: its .bib entry's authors, year and
-    /// title; or of a label, what it labels.
     pub detail: Option<String>,
 }
 
-/// A command the project defines, with the arguments it takes in braces.
 #[derive(Clone)]
 pub struct Defined {
     pub name: String,
     pub arguments: usize,
     pub place: Place,
-    /// The definition as the maths preview gives it to RaTeX; none without its body, or for a
-    /// `\def` with parameters.
     pub tex: Option<String>,
 }
 
-/// A file read in place after the first `before` headings of the file that names it.
 pub struct Input {
     pub(crate) before: usize,
     pub(crate) name: String,
     folder: Folder,
     pub(crate) place: Place,
-    /// The prose words after it, up to the next heading or input.
     pub(crate) words: usize,
 }
 
-/// Where an input's name is looked for, as the import package has it.
 enum Folder {
-    /// That of the file naming it if that was imported, then the main file's.
     Inherited,
-    /// \import's, from the main file's.
     Import(String),
-    /// \subimport's, from the naming file's.
     Sub(String),
 }
 
 impl Input {
-    /// The file it names, spelt as `found` finds it, read from `file`, which an \import gave the
-    /// folder `within`; and the folder that file's own inputs are looked for in.
     pub(crate) fn resolve(
         &self,
         file: &str,
@@ -186,7 +145,6 @@ impl Input {
         };
         let name = &self.name;
         let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
-        // TeX tries name.tex before the name as written.
         let input = folders
             .iter()
             .flat_map(|folder| [joined(folder, &tex), joined(folder, name)])
@@ -201,7 +159,6 @@ impl Facts {
         let mut facts = Self::default();
         if kind == "bib" {
             let (mut byte, mut unit) = (0, 0);
-            // Each is after the last, so counted on from it.
             let mut cited = |at: Range<usize>| {
                 unit += source[byte..at.start].encode_utf16().count();
                 byte = at.start;
@@ -218,7 +175,6 @@ impl Facts {
                     detail: detail(&fields(body)),
                     ..cited(entry.get(2).expect("an entry has a key").range())
                 });
-                // The entry it takes fields from, which a rename of that one must reach.
                 if let Some(parent) = CROSSREF.captures(body).and_then(|parent| parent.get(1)) {
                     let at = start + parent.start()..start + parent.end();
                     facts.uses.push(cited(at));
@@ -226,9 +182,7 @@ impl Facts {
             }
             return facts;
         }
-        // Found as the words are counted, so none is in a comment, maths or literal code.
         let mut heading_line = None;
-        // Where each heading and input is, in the file's order, and whether it is a heading.
         let mut cuts = Vec::new();
         let prose = prose::prose(&text, |text, name, name_end| {
             let line = text.line_index(name_end as u32) + 1;
@@ -274,9 +228,6 @@ impl Facts {
     }
 }
 
-/// What a text names for others to refer to, and the names it refers to, outside comments and
-/// literal code; and the last caption's or heading's title, with where its argument closes, for
-/// a label just after it to say what it labels; and what TeX would find unbalanced.
 struct Names<'a>(&'a Text, &'a mut Facts, Option<(usize, String)>, Structure);
 
 impl Visit for Names<'_> {
@@ -351,7 +302,6 @@ impl Visit for Names<'_> {
 }
 
 impl Names<'_> {
-    /// A label's definition, or a name that refers to something, in prose or maths.
     fn used(&mut self, name: &str, start: usize, name_end: usize) {
         let (text, catalog) = (self.0, &*CATALOG);
         let kind = match name {
@@ -360,7 +310,6 @@ impl Names<'_> {
             name if catalog.ref_commands.contains(name) => SymbolKind::Label,
             name if catalog.cite_commands.contains(name) => SymbolKind::Citation,
             "label" => {
-                // The title it is in or just after, else its line.
                 let after = |close: usize| {
                     let between = text.units.get(close + 1..start).unwrap_or_default();
                     String::from_utf16_lossy(between).trim().is_empty()
@@ -375,7 +324,6 @@ impl Names<'_> {
                     detail: detail.clone(),
                     ..named(text, SymbolKind::Label, at)
                 });
-                // One still being typed (`fig:`) isn't a label yet.
                 let labels = labels.filter(|label| !label.name.ends_with(':'));
                 self.1.labels.extend(labels);
                 return;
@@ -397,8 +345,6 @@ fn named(text: &Text, kind: SymbolKind, at: Range<usize>) -> Named {
     }
 }
 
-/// Each .bib entry and what follows its key, read to the next entry at most, so one left
-/// unbalanced takes nothing of those after it.
 fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>, &str)> {
     let mut found = BIB_KEY.captures_iter(source).peekable();
     std::iter::from_fn(move || {
@@ -411,10 +357,6 @@ fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>, &str)> {
     })
 }
 
-/// A .bib entry's fields from just after its key, each named in lower case, with its value as
-/// written but for the braces or quotes around it and any `#` joining its parts. Braces nest
-/// and hold quotes; the entry ends at the brace or parenthesis that closes it, or, unbalanced,
-/// with `body`.
 fn fields(body: &str) -> Vec<(String, String)> {
     let (mut fields, mut name, mut value) = (Vec::new(), String::new(), None::<String>);
     let (mut depth, mut quoted) = (0_usize, false);
@@ -455,17 +397,13 @@ fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
     named.next().map(|(_, value)| value.as_str())
 }
 
-/// Its year, or biblatex's date's.
 fn year(fields: &[(String, String)]) -> Option<String> {
     let date = || field(fields, "date").and_then(|date| date.get(..4));
     field(fields, "year").or_else(date).and_then(plain_title)
 }
 
-/// What completion says of a .bib entry, "Knuth · 1984 · The TeXbook", as far as its fields
-/// tell: its authors' last names, its year and its title.
 fn detail(fields: &[(String, String)]) -> Option<String> {
     let field = |name| field(fields, name);
-    // A last name comes first before a comma, else last.
     let last = |name: &str| {
         let name = name.trim();
         let last = match parted(name, ",").as_slice() {
@@ -492,13 +430,10 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-/// What Quick Help says of the entry `key` in a .bib file's `source`, a line for each of what
-/// its fields tell: its authors' whole names, its title, its year and where it was published.
 pub(crate) fn bib_entry(source: &str, key: &str) -> Option<String> {
     let (_, body) = entries(source).find(|(entry, _)| &entry[2] == key)?;
     let fields = fields(body);
     let field = |name| field(&fields, name);
-    // "Knuth, Donald" is Donald Knuth.
     let author = |name: &str| match parted(name.trim(), ",").as_slice() {
         [last, first, ..] => plain_title(&format!("{first} {last}")),
         _ => plain_title(name),
@@ -520,8 +455,6 @@ pub(crate) fn bib_entry(source: &str, key: &str) -> Option<String> {
     Some(lines.into_iter().flatten().collect::<Vec<_>>().join("\n"))
 }
 
-/// `text` parted at each `at` outside braces, which hold a name's own spaces, commas and
-/// `and`s, as BibTeX parts names; `and` in any case.
 fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
     let (mut parts, mut depth, mut from) = (Vec::new(), 0_usize, 0);
     for (i, c) in text.char_indices() {
@@ -544,14 +477,10 @@ fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
     parts
 }
 
-/// Each file's facts by its name as the volume compares names, with the stamp read at. An
-/// analysis and a symbol scan may read at once, so it isn't held while a file is read.
 #[derive(Default)]
 pub struct Files(Mutex<HashMap<String, (Stamp, Arc<Facts>)>>);
 
 impl Files {
-    /// Read again once the file's stamp changes, or always on a volume that keeps whole
-    /// seconds, where a write of the same length in the same second keeps the stamp.
     pub fn facts(&self, abs: &Path, rel: &str) -> io::Result<Arc<Facts>> {
         let stamp = Stamp::of(&fs::metadata(abs)?);
         let key = paths::fold_case(rel);
@@ -561,22 +490,18 @@ impl Files {
         {
             return Ok(Arc::clone(facts));
         }
-        // A line ends where an editor's does, at a carriage return alone too.
         let text = crate::lf(crate::lossy_string(fs::read(abs)?));
         let facts = Arc::new(Facts::read(&text, file_kind(rel)));
         lock(&self.0).insert(key, (stamp, Arc::clone(&facts)));
         Ok(facts)
     }
 
-    /// Those of other files go, as a scan of the project finds them gone.
     pub fn keep<'a>(&self, rels: impl Iterator<Item = &'a String>) {
         let kept: HashSet<String> = rels.map(|rel| paths::fold_case(rel)).collect();
         lock(&self.0).retain(|key, _| kept.contains(key));
     }
 }
 
-/// A heading with what nests under it. `fold_key` names its fold in the
-/// project's saved UI state: file, depth, title and which of that name it is.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutlineNode {
@@ -584,13 +509,11 @@ pub struct OutlineNode {
     #[serde(flatten)]
     pub heading: Heading,
     pub fold_key: String,
-    /// Its words and its children's: up to the next heading at its level or above.
     pub words: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Self>,
 }
 
-/// The outline nested by depth; a subsection before any section sits flush.
 pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     fn nest(
         outline: &[Heading],
@@ -605,8 +528,6 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
             let index = *next;
             *next += 1;
             let file = heading.file.as_deref().unwrap_or_default();
-            // An untitled heading's key is as it was before it had a title,
-            // so its saved fold stays.
             let title = if heading.untitled {
                 "(untitled)"
             } else {
@@ -630,13 +551,11 @@ pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     nest(outline, &mut 0, None, &mut HashMap::new())
 }
 
-/// A session's `outline` event; the outline itself and the files read are kept for quick open.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Analysis {
     #[serde(skip)]
     pub outline: Vec<Heading>,
-    /// The files read, each once, in the order read.
     #[serde(skip)]
     pub files: Vec<String>,
     pub tree: Vec<OutlineNode>,
@@ -644,9 +563,6 @@ pub struct Analysis {
     pub heading_styles: Vec<headings::Level>,
 }
 
-/// The document LaTeX reads from the main file through the files it inputs, each once, as the
-/// symbol scan last read them; `shown`, the editor's file, alone when the main file doesn't reach
-/// it. Its heading levels are those of the main file's class.
 pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {
     let mut walk = Walk::from(symbols, main.unwrap_or_default());
     if let Some(shown) = shown
@@ -668,9 +584,6 @@ pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str
     }
 }
 
-/// The project file `rel` names, spelt as the disk spells it. TeX names a file as the author
-/// wrote it, which a volume that ignores case finds under another spelling; a document kept
-/// by that spelling would be out of step with the tree, and its save would rename the file.
 pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
     let mut path = root.to_path_buf();
     let mut spelt = Vec::new();
@@ -688,13 +601,8 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
     path.is_file().then(|| spelt.join("/"))
 }
 
-/// TeX Live's `max_in_open`: TeX reads inputs no deeper, and a walk that did could run out of
-/// stack on a chain made to.
 pub(crate) const INPUT_DEPTH: usize = 15;
 
-/// What \newcommand and its kin, \DeclareMathOperator, \def or \newenvironment defines, named
-/// braced or not, with the arguments it takes in braces: as many as its first option counts, but
-/// for an optional one.
 fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
     let units = &text.units;
     let (name, at, stop) = match braced(units, name_end) {
@@ -723,8 +631,6 @@ fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
     let arguments = count
         .unwrap_or(0_usize)
         .saturating_sub(usize::from(options.len() > 1));
-    // As \def, which RaTeX takes whether or not the name is defined; an optional first argument,
-    // which RaTeX's \newcommand lacks, comes through the preview's \texlocal@optional.
     let body = String::from_utf16_lossy(&body);
     let parameters = |count| (1..=count).map(|n| format!("#{n}")).collect::<String>();
     let tex = match (command, options.get(1)) {
@@ -752,7 +658,6 @@ fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
     })
 }
 
-/// The end of the line a command's arguments end on.
 fn after_line(text: &Text, name_end: usize) -> Place {
     let (_, stop) = braced(&text.units, name_end);
     let end = text.around(stop - 1).end;
@@ -766,8 +671,6 @@ fn joined(folder: &str, name: &str) -> String {
     }
 }
 
-/// A command's braced argument as TeX reads it, comments left out, and the range it spans; and
-/// where the reading stopped.
 fn braced(units: &[u16], name_end: usize) -> (Option<(String, Range<usize>)>, usize) {
     let (mut text, mut span) = (Vec::new(), None);
     let (stop, closed) = scan::arguments(units, name_end, |piece, braced| {
@@ -781,8 +684,6 @@ fn braced(units: &[u16], name_end: usize) -> (Option<(String, Range<usize>)>, us
     (found, stop)
 }
 
-/// The names a command's closed braced argument holds, without the spaces around them: each
-/// key of a `list` that commas part, or else the one name.
 fn listed(units: &[u16], name_end: usize, list: bool) -> Vec<Range<usize>> {
     let blank = |u: &&u16| scan::tex_space(**u) || **u == u16::from(b'\n');
     let mut names = Vec::new();
@@ -806,8 +707,6 @@ fn listed(units: &[u16], name_end: usize, list: bool) -> Vec<Range<usize>> {
     if closed { names } else { Vec::new() }
 }
 
-/// The file an \input, \include, \subfile, \import or \subimport names, and where; \input also
-/// takes an unbraced name.
 fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folder, Range<usize>)> {
     let (name, folder, at) = match (command, braced(units, name_end)) {
         ("input" | "include" | "subfile", (Some((name, at)), _)) => (name, Folder::Inherited, at),
@@ -869,7 +768,6 @@ mod tests {
         }
     }
 
-    /// Words part at Unicode spaces and TeX's special characters; only prose counts.
     #[test]
     fn words_part_at_unicode_spaces_and_tex_specials() {
         let cases = [
@@ -919,8 +817,6 @@ mod tests {
                 ],
                 10,
             ),
-            // TeX's spaces and comments come before an argument, a no-break
-            // space doesn't.
             (
                 "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\\section\u{a0}{After a no-break space}\n\\section % a note\n{After a comment}",
                 &[
@@ -931,8 +827,6 @@ mod tests {
                 ],
                 13,
             ),
-            // Titles that wrap, and one on the line after its command; not
-            // across a blank line, nor its comment.
             (
                 "\\section{A title the editor\n  wraps at eighty}\n\\section\n{Next line}\n\\section{Not\n\nclosed}\n\\section{Commented % out\n here}",
                 &[
@@ -970,7 +864,6 @@ mod tests {
             ),
         ];
         for &(text, outline, words) in cases {
-            // A line ends where an editor's does, at a carriage return alone too.
             let facts = Facts::read(&crate::lf(text.into()), "tex");
             let headings = facts.headings.iter();
             let found: Vec<_> = headings.map(|h| (h.depth, &*h.title, h.line)).collect();
@@ -978,7 +871,6 @@ mod tests {
         }
     }
 
-    /// In UTF-16 units, as the editors count: the emoji is two.
     #[test]
     fn a_file_places_what_it_defines_and_refers_to() {
         let at = |line, column, length| Place {
@@ -1051,7 +943,6 @@ mod tests {
         );
     }
 
-    /// The caption or heading it follows or is in, else its line where that is plain text.
     #[test]
     fn a_label_says_what_it_labels() {
         let tex = "\\section{Intro}\\label{sec:intro}\n\
@@ -1075,8 +966,6 @@ mod tests {
         );
     }
 
-    /// Through braces and quotes, a biblatex date, `#`, names in braces and an `AND`; an entry
-    /// left open reads to the next one, not past it.
     #[test]
     fn a_bib_entry_tells_its_authors_year_and_title() {
         let bib = "@book{knuth,\n  author = {Knuth, Donald E.},\n  title = \"The {TeX}book, \" # {Vol. A},\n  year = 1984,\n}\n\
@@ -1181,7 +1070,6 @@ mod tests {
         assert_eq!(loose.words, 2);
     }
 
-    /// Through the files it inputs; the words before the first heading are none's.
     #[test]
     fn a_heading_counts_its_words_and_its_childrens_up_to_the_next_of_its_level() {
         let symbols = symbols_of(&[

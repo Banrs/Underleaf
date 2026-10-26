@@ -15,7 +15,6 @@ struct SectionLevelItems: View {
     }
 }
 
-/// A grid per kind: a list of 30 Greek letters runs off a laptop's screen.
 struct SymbolItems: View {
     let project: ProjectModel?
 
@@ -27,7 +26,6 @@ struct SymbolItems: View {
             let columns = Self.columns(symbols.count)
             Menu(group.title) {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
-                    // A palette row, which shows its items' images: text alone draws blank.
                     ControlGroup {
                         ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { symbol in
                             Button { project?.editor.perform(.symbol(symbol.command)) } label: {
@@ -48,11 +46,9 @@ struct SymbolItems: View {
     }
 }
 
-/// Its items dim outside LaTeX or with the source hidden, not its submenus (HIG Menus).
 struct MathMenuItems: View {
     let project: ProjectModel?
     var shortcut: KeyboardShortcut?
-    /// The menu bar's follows the source's keyboard (`isEnabledInMenuBar`).
     var inlineMathEnabled = true
     let inlineMath: () -> Void
 
@@ -67,7 +63,6 @@ struct MathMenuItems: View {
         Group {
             Button { project?.editor.perform(.displayMath) } label: {
                 Text("Display Math")
-                // Verbatim: a string literal is Markdown, where "\\[" is "[".
                 Text(verbatim: "\\[ … \\]")
             }
             ForEach(Menus.shared.templates.math, id: \.title) { template in

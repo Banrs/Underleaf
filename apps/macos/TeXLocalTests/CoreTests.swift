@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import TeXLocal
 
-/// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
 struct CoreTests {
     init() throws {
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
@@ -19,7 +18,6 @@ struct CoreTests {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }
         #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.kind == nil)
-        // Arguments JSON can't hold are the same fault, not an exception.
         let unsent = await #expect(throws: CoreError.self) { try await core.call("file_tree", ["id": info.id, "n": Double.nan]) }
         #expect(unsent?.message == fault?.message)
     }

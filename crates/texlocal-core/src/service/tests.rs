@@ -1,6 +1,3 @@
-//! The command surface, the JSON dispatch every host forwards to, and the
-//! edit lock.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -80,7 +77,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     }
 }
 
-/// A stand-in program `name` in `dir` that prints `line`: a shell script. Its path.
 fn fake_program(dir: &Path, name: &str, line: &str) -> PathBuf {
     fs::create_dir_all(dir).unwrap();
     use std::os::unix::fs::PermissionsExt;
@@ -109,7 +105,6 @@ async fn the_tex_folder_holds_latexmk_or_is_a_root_above_one_and_is_kept_until_c
     );
     assert_eq!(tex_dir(&service), None);
 
-    // A TeX root resolves to its bin folder, which the status reports.
     let bin = fake_tex(&tex.path().join("bin").join("universal-darwin"));
     let chosen = call(&service, "set_tex_dir", json!({ "dir": tex.path() })).await;
     assert_eq!(chosen["texDir"], bin);
@@ -155,8 +150,6 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
     assert_eq!(tex_dir(&service).unwrap().to_string_lossy(), bin);
 }
 
-// MARK: - The edit lock
-
 #[test]
 fn every_session_of_a_project_takes_turns_with_one_history() {
     let (_dir, service) = with_project();
@@ -174,8 +167,6 @@ fn a_panic_during_an_edit_does_not_stop_later_edits() {
     assert!(service.with_project("P", |_| Ok(())).is_ok());
 }
 
-/// The interface state a host keeps and the main file a session's rename moves share the
-/// settings file: each read, change and write keeps the other's change.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ui_state_patches_and_main_file_renames_preserve_both_changes() {
     let (_dir, service) = with_project();

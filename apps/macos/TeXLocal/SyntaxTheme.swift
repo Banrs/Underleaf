@@ -1,12 +1,7 @@
 import AppKit
 
-/// The editor's syntax colours, by `HighlightKind`, each raised to a legible contrast in every appearance.
 enum SyntaxTheme: String, CaseIterable, Identifiable {
-    /// Overleaf's source editor themes ("textmate", "overleaf_dark"), by the lezer tags it gives LaTeX's nodes; its
-    /// `.tok-keyword` has no kind here.
     case overleaf
-    /// TeXstudio's formats (defaultFormats.qxf, defaultFormatsDark.qxf); invalid is "braceMismatch", whose fill Light
-    /// takes and whose text Dark takes, the fill not being drawn.
     case texstudio
     case system
 

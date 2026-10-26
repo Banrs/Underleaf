@@ -4,7 +4,6 @@ import UniformTypeIdentifiers
 
 enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }
 
-/// A Settings scene's TabView is its toolbar of panes, and titles and sizes the window to the pane (HIG, Settings).
 struct SettingsView: View {
     @AppStorage(DefaultsKey.settingsPane) private var pane = SettingsPane.general
 
@@ -69,7 +68,6 @@ private struct EditorSettings: View {
                     Text("System Monospaced").tag("")
                     Divider()
                     ForEach(Self.families, id: \.self) { Text($0).tag($0) }
-                    // A family since removed: a selection with no tag is a fault.
                     if !fontName.isEmpty, !Self.families.contains(fontName) { Text(fontName).tag(fontName) }
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
@@ -86,7 +84,6 @@ private struct EditorSettings: View {
         }
     }
 
-    /// Double for the stepper's formatted value; clamped, as the range bounds its arrows and not a size typed in.
     private var size: Binding<Double> {
         Binding(get: { Double(fontSize) }, set: {
             fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
@@ -141,7 +138,6 @@ private struct LivePreviewSettings: View {
     }
 }
 
-/// Each row has its own file dialog and alert, so neither can act for the other program.
 private struct ProgramFolder: View {
     enum Program {
         case tex, texpresso
@@ -175,7 +171,6 @@ private struct ProgramFolder: View {
     private enum Choice: Hashable { case automatic, chosen, other }
 
     var body: some View {
-        // A spinner until the status is in, not a flash of "Not Found".
         if let tex = app.tex {
             let chosen = program == .tex ? tex.texDir : tex.texpressoDir
             LabeledContent {
@@ -217,10 +212,8 @@ private struct ProgramFolder: View {
             }
             .fileDialogConfirmationLabel("Choose")
             .fileDialogMessage(program.dialogMessage)
-            // TeX lives under folders the dialog hides (/usr/local, /opt, /Library/TeX).
             .fileDialogBrowserOptions(.includeHiddenFiles)
             .fileDialogDefaultDirectory(URL(filePath: program.folder(in: tex) ?? "/usr/local", directoryHint: .isDirectory))
-            // Not in the project window, which Settings may cover.
             .alert($alert)
         } else {
             LabeledContent(program.title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(program.title)") }

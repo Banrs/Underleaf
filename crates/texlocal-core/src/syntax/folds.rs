@@ -1,7 +1,3 @@
-//! Where the editor folds: an environment's body between its \begin and \end lines, a heading's
-//! section up to the next heading at its level or above, and a run of comment lines under its
-//! first. The document environment doesn't fold: its sections do.
-
 use std::ops::Range;
 
 use serde::Serialize;
@@ -9,7 +5,6 @@ use serde::Serialize;
 use super::scan::{Group, Scanner, Visit, tex_space};
 use super::{SourceDocument, headings, is};
 
-/// A line that stays and the last line under it that folds away with those between (1-based).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Fold {
     pub line: u32,
@@ -18,9 +13,7 @@ pub struct Fold {
 
 #[derive(Default)]
 struct Found {
-    /// Each environment's \begin and \end offsets.
     environments: Vec<(usize, usize)>,
-    /// Each sectioning command's start, name's end and depth.
     headings: Vec<(usize, usize, usize)>,
     document_end: Option<usize>,
     comments: Vec<usize>,
@@ -51,7 +44,6 @@ impl Visit for Found {
 }
 
 impl SourceDocument {
-    /// Outer before inner, one a line: the one that folds the most.
     pub fn folds(&self) -> Vec<Fold> {
         let units = &self.text.units;
         let mut found = Found::default();
@@ -75,7 +67,6 @@ impl SourceDocument {
         for &(open, close) in &found.environments {
             add(line(open), line(close) - 1);
         }
-        // A heading takes an argument: `\renewcommand{\section}` names one.
         let headings: Vec<_> = (found.headings.iter())
             .filter(|&&(_, name_end, _)| {
                 let next = units[name_end..].iter().find(|&&u| !tex_space(u));
@@ -155,9 +146,7 @@ Last.
     fn what_has_no_line_to_hide_doesnt_fold() {
         assert_eq!(folds("\\begin{x}\n\\end{x}\n\\section{A}\n\n"), []);
         assert_eq!(folds("\\begin{x} a \\end{x}\n% one comment\n"), []);
-        // An environment left open has no end to fold to.
         assert_eq!(folds("\\begin{x}\na\nb\n"), []);
-        // Without a document environment a heading folds to the text's end.
         assert_eq!(folds("\\section{A}\na\nb"), [(1, 3)]);
     }
 }

@@ -25,7 +25,6 @@ struct MenuCommandTests {
         #expect(app.isEnabled(.syncInverse, on: project) && !app.isEnabled(.syncInverse, on: nil))
     }
 
-    /// The one reckoning the pane, its header and View's command share: open for LaTeX unless folded, hidden for search results.
     @Test func theFileOutlineIsOpenForLaTeXUnlessFoldedOrSearched() {
         let app = AppModel(defaults: defaults.store)
         let project = ProjectModel(id: "MenuCommandTests", app: app)
@@ -55,7 +54,6 @@ struct MenuStructureTests {
         return menu
     }
 
-    /// The menus show the images the app asks for and hide the system's, which the Edit menu leaves out of this.
     @Test func theMenuBarFollowsTheGuidelines() throws {
         let titles = try #require(NSApp.mainMenu).items.map(\.title)
         #expect(Array(titles.dropFirst()) == ["File", "Edit", "Format", "View", "Go", "Insert", "Compile", "Window", "Help"])
@@ -85,14 +83,12 @@ struct MenuStructureTests {
             #expect(Set(rows.map(\.items.count)) == [SymbolItems.columns(group.symbols.count)], "\(group.title)")
             let glyphs = rows.flatMap(\.items)
             #expect(glyphs.map(\.toolTip) == group.symbols.map(\.command))
-            // The core's drawing, as a template the menu tints.
             #expect(glyphs.allSatisfy { $0.image?.isTemplate == true && $0.title.hasSuffix(", " + ($0.toolTip ?? "")) })
         }
     }
 }
 
 struct OpenQuicklyTests {
-    /// As Xcode's: the arrows stop at the ends, and each new list chooses its first.
     @Test func theArrowsStopAtTheEndsAndNewMatchesChooseTheFirst() {
         let rows = ChoiceRows<QuickOpenItem> { [$0.title] }
         let item = QuickOpenItem(kind: "file", title: "main.tex", detail: "", path: "main.tex", line: nil)

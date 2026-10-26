@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// In the PDF's place while there is none (`WorkspaceController.buildArea`).
 struct PDFEmptyState: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -37,7 +36,6 @@ struct PDFEmptyState: View {
                 LinkButton(title: "Get MacTeX", url: Links.mactex)
             }
         } else if project.compiling {
-            // The toolbar's Stop can be in its overflow menu (HIG, Progress indicators).
             ContentUnavailableView {
                 Label("Compiling…", systemImage: "richtext.page")
             } actions: {
@@ -72,7 +70,6 @@ struct PDFFindBar: View {
     @Bindable var find: PDFFind
 
     var body: some View {
-        // For the query the matches are for, which the field can be ahead of.
         let label = PDFFind.count(find.matchIndex + 1, of: find.matches.count, limited: find.limited, for: find.query)
         HStack {
             SearchField(text: $find.text, prompt: "Find in PDF", handle: find.field,
@@ -93,7 +90,6 @@ struct PDFFindBar: View {
             Button("Done") { find.close() }
         }
         .lineLimit(1)
-        // VoiceOver's focus stays in the field: it hears the count once it settles.
         .task(id: label) {
             guard !label.isEmpty, (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
             var spoken = AttributedString(label)
@@ -107,7 +103,6 @@ struct PDFFindBar: View {
     }
 }
 
-/// The zoom menu's choices, ticked as a menu's picker ticks its selection.
 struct ScaleMenuItems: View {
     let pdf: PDFController
 
@@ -124,7 +119,6 @@ struct ScaleMenuItems: View {
         .labelsHidden()
     }
 
-    /// A scale to the nearest percent, so a pinch that ends at 99.6% ticks 100%.
     private var shown: PDFController.Zoom {
         guard case .scale(let scale) = pdf.zoom else { return pdf.zoom }
         return .scale((scale * 100).rounded() / 100)

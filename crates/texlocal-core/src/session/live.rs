@@ -1,7 +1,3 @@
-//! The session's side of live preview. Starts, stops and whole texts go one at a time; a
-//! key's edit goes on as the editor makes it; what the preview tells comes back as
-//! `Msg::Live` and goes on to the host as events.
-
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -18,7 +14,6 @@ use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
 
-/// TeXpresso's own limit on a file sent to it; one larger it reads from the disk at the rescan.
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
@@ -33,20 +28,15 @@ pub(crate) enum Phase {
     Stopping,
 }
 
-/// An error of the last run TeXpresso had every edit for, on a project file's line.
 struct Issue {
-    /// `line` follows the edits since.
     item: LogItem,
-    /// A UTF-16 offset in the line, while its document is open.
     at: u32,
 }
 
 #[derive(Default)]
 pub(crate) struct Live {
     phase: Phase,
-    /// Whole texts to send: an open document's as it is then, or another file's as read.
     pending: BTreeMap<String, Option<String>>,
-    /// TeXpresso keeps these through a rescan: only a new start drops one whose file went.
     synced: HashSet<String>,
     sent: HashMap<String, u64>,
     rejected: BTreeMap<String, String>,
@@ -60,13 +50,10 @@ pub(crate) struct Live {
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
     pub disk_paths: BTreeSet<String>,
-    /// Rises with each Start the user asks for and each Stop: a restart for an older one is dropped.
     pub intent: u64,
-    /// Rises with each start and each end: what an earlier start's preview tells is dropped.
     generation: u64,
     pub document_seen: bool,
     shown: Value,
-    /// The session's count of edits as the last change was sent, and as TeXpresso last read.
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
@@ -77,7 +64,6 @@ impl Live {
         matches!(self.phase, Phase::Starting | Phase::Running)
     }
 
-    /// No whole text is waiting to go before it. One its copy can't take is refused (412).
     fn fits(&self, path: &str) -> bool {
         self.phase == Phase::Running && !self.pending.contains_key(path)
     }
@@ -96,7 +82,6 @@ impl Actor {
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         json!({
             "phase": live.phase,
-            // Whatever the project's: TeXpresso has only XeTeX.
             "engine": Engine::Xelatex,
             "halted": live.halted,
             "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
@@ -136,7 +121,6 @@ impl Actor {
         }
     }
 
-    /// An error not reported before alerts.
     fn report(&mut self) {
         let mut errors: BTreeSet<String> = self.live.errors().into_iter().collect();
         errors.extend(self.live.error.clone());
@@ -187,8 +171,6 @@ impl Actor {
         }
     }
 
-    /// Only the user's Start and Stop are remembered, so a project closed or the app quit
-    /// while it ran starts it again as it opens. Best effort: the state is a convenience.
     fn remember_live(&self, on: bool) {
         let _ = self.service.with_project(&self.project_id, |project| {
             settings::store_ui(&project.ui, |ui| {
@@ -198,7 +180,6 @@ impl Actor {
         });
     }
 
-    /// A restart still pending gives way to a user's Start: it would stop the preview this starts.
     pub fn live_start_asked(&mut self) -> Value {
         self.remember_live(true);
         if self.live.phase == Phase::Stopped {
@@ -208,7 +189,6 @@ impl Actor {
         self.live_state()
     }
 
-    /// In place of a preview running, as a restart.
     pub fn live_start(&mut self) {
         let live = &mut self.live;
         live.phase = Phase::Starting;
@@ -284,8 +264,6 @@ impl Actor {
         }
     }
 
-    // MARK: - Edits
-
     pub fn live_edited(&mut self, path: &str, version: u64, edit: &TextEdit) {
         if !self.live.active() {
             return;
@@ -345,7 +323,6 @@ impl Actor {
                     self.mark_sent();
                     self.publish_live(false);
                 }
-                // This text can't be taken, whenever it is sent: its error stays until the file is edited.
                 Err(error) if error.kind == crate::ErrorKind::Invalid => {
                     self.live.rejected.insert(path, error.message);
                     self.live.failure = None;
@@ -368,8 +345,6 @@ impl Actor {
             self.fail(error);
         }
     }
-
-    // MARK: - The view and the caret
 
     pub fn live_view(&mut self, first: u32, last: u32) {
         let pages = (first, last.max(first));
@@ -398,10 +373,6 @@ impl Actor {
         }
     }
 
-    // MARK: - Files on disk
-
-    /// TeXpresso keeps the texts it has through a rescan, so only a new session drops one
-    /// whose file went.
     pub fn live_files_changed(&mut self) {
         if !self.live.active() {
             return;
@@ -415,8 +386,6 @@ impl Actor {
         }
     }
 
-    /// A save of an open document isn't news to TeXpresso: a rescan as it typesets the edit
-    /// stalled it (TeXpresso e8df770).
     pub fn refresh_live_disk(&mut self) {
         let paths = std::mem::take(&mut self.live.disk_paths);
         if !self.live.active() {
@@ -441,8 +410,6 @@ impl Actor {
             self.live_rescan();
         }
     }
-
-    // MARK: - What the preview tells
 
     pub fn live_event(&mut self, generation: u64, event: LiveEvent) {
         if generation != self.live.generation {
@@ -476,8 +443,6 @@ impl Actor {
             LiveEvent::Log if self.live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
-                // It stays `starting` meanwhile: a host that saw it stop would show the build's PDF
-                // until the new run's first page came.
                 if self.timers.contains_key(&Timer::Restart) {
                     self.live.phase = Phase::Starting;
                     self.live_reset();
@@ -496,8 +461,6 @@ impl Actor {
         self.after(Timer::Issues);
         match run {
             "partial" => {}
-            // A brace or a dollar half typed stops TeX for a moment at every other key, so a
-            // stopped run shows as halted only once it has lasted.
             "stopped" => self.soon(Timer::Halting),
             _ => {
                 self.timers.remove(&Timer::Halting);
@@ -514,16 +477,12 @@ impl Actor {
     }
 }
 
-// MARK: - Issues
-
 impl Actor {
     fn mark_sent(&mut self) {
         self.live.mark_sent = self.edits;
         let _ = self.preview.mark(self.id, self.edits);
     }
 
-    /// A run has lasted: once TeXpresso has read every change sent, TeX's log is of the
-    /// documents as they are, and its errors replace the issues.
     pub fn live_issues_settled(&mut self) {
         let live = &self.live;
         if live.phase != Phase::Running || live.mark_read != live.mark_sent {
@@ -532,7 +491,6 @@ impl Actor {
         let (Some(log), Some(main)) = (self.preview.tex_log(self.id), &self.tree.main) else {
             return;
         };
-        // TeX names a file from the main file's folder, in the case it was asked for.
         let folder = main.rsplit_once('/').map_or("", |(folder, _)| folder);
         let files = self.tree.files.iter();
         let files: HashMap<String, &String> = files.map(|f| (paths::fold_case(f), f)).collect();
@@ -557,8 +515,6 @@ impl Actor {
         self.show_all_live_issues();
     }
 
-    /// An edit moves the issues after it in its document, and drops one whose line's start it
-    /// replaces; a whole new text drops them all.
     pub fn live_issues_edited(&mut self, path: &str, edit: Option<&TextEdit>) {
         let doc = &self.docs[path].doc;
         let inserted = edit.map_or(0, |edit| edit.text.encode_utf16().count() as u32);

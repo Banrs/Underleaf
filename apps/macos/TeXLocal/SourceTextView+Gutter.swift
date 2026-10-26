@@ -1,6 +1,5 @@
 import AppKit
 
-/// The gutter's numbers and the current line's band, drawn under the text from the fragments last laid out.
 extension SourceTextView {
     func updateGutterWidth() {
         guard gutter.fit(lineCount: document.lineCount, numbered: showsLineNumbers, padding: textContainer?.lineFragmentPadding ?? 0)
@@ -39,7 +38,6 @@ extension SourceTextView {
         return (document.line(at: selection.location), band(lines, of: entry.fragment))
     }
 
-    /// The current line's or an issue's band over these lines, on the display's pixels.
     func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> CGRect {
         let frame = fragment.layoutFragmentFrame
         let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)

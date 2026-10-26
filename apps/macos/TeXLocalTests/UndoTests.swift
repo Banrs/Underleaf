@@ -4,8 +4,6 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct UndoableTrashTests {
-    /// Undo puts a trashed item back and Redo trashes it again; an Undo asked while a Redo is still on its way to the Trash
-    /// waits for it, rather than finding nothing to put back (#36).
     @Test func undoPutsATrashedItemBackAndWaitsForARedo() async throws {
         let files = FileManager.default
         let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
@@ -13,7 +11,6 @@ struct UndoableTrashTests {
         let undo = UndoManager()
         undo.groupsByEvent = false
         var listed = 0
-        // Not kept here: the undo manager's entries keep it, as in the app. A turn late, as the project's lane can be.
         var item: UndoableTrash? = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
                                  trash: { item in await Task.yield(); return (try? item.recycle()) != nil },
                                  changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })

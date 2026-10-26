@@ -1,6 +1,3 @@
-//! Typing, through an editor that applies the answers as a text view does: each change reported back (`follow`),
-//! each selection (`select`), and a snippet's field mirrored once the text has changed.
-
 use crate::syntax::complete::SnippetField;
 use crate::syntax::edit::{Change, Style, map_selections};
 use crate::syntax::typing::{Completing, Keystroke};
@@ -80,7 +77,6 @@ impl Editor {
         self.replace(e, Some(caret(e.start + units(&e.text))));
     }
 
-    /// The key's answer, or what the text view does by itself when there is none.
     fn apply_key(&mut self, key: Keystroke, own: TextEdit) {
         if key.edit.is_none() && key.selection.is_none() {
             self.type_edit(&own);
@@ -93,7 +89,6 @@ impl Editor {
         }
     }
 
-    /// Each key in turn: ⌫ is Delete, ⏎ Return, ⇥ Tab and ⇤ Shift-Tab, and any other character is typed.
     fn keys(&mut self, keys: &str) {
         for key in keys.chars() {
             let s = self.selection();
@@ -162,28 +157,23 @@ fn keys_type_as_the_editor_assists() {
         ("", caret(0), "{}", "{}", caret(2)),
         ("x", caret(0), "(", "(x", caret(1)),
         ("ab", range(0, 2), "[", "[ab]", range(1, 2)),
-        // An empty pair the editor closed goes as one; one that was there loses only its bracket.
         ("", caret(0), "{⌫", "", caret(0)),
         ("{}", caret(1), "⌫", "}", caret(0)),
         ("\\", caret(1), "[", "\\[\\]", caret(2)),
         ("\\", caret(1), "[x\\]", "\\[x\\]", caret(5)),
-        // A command typed inside keeps the closer whole, and the bracket alone steps over it.
         ("\\", caret(1), "(\\pi", "\\(\\pi\\)", caret(5)),
         ("\\", caret(1), "(\\pi)", "\\(\\pi\\)", caret(7)),
         ("\\", caret(1), "{", "\\{\\}", caret(2)),
         ("\\", caret(1), "{⌫", "\\", caret(1)),
         ("\\", caret(1), "[⏎", "\\[\n  \n\\]", caret(5)),
         ("\\\\", caret(2), "[", "\\\\[]", caret(3)),
-        // An emoji after an opening bracket is occupied text.
         ("😀", caret(0), "(", "(😀", caret(1)),
         ("  a", caret(3), "⏎", "  a\n  ", caret(6)),
-        // Between an opener and its closer the new line goes a step in.
         ("  a{}", caret(4), "⏎", "  a{\n    \n  }", caret(9)),
         ("\ta  b", caret(2), "⏎", "\ta\n\tb", caret(4)),
         ("    x", caret(2), "⏎", "\n    x", caret(5)),
         ("\ta\t b", caret(2), "⏎", "\ta\n\tb", caret(4)),
         ("\t\tx", caret(1), "⏎", "\n\t\tx", caret(3)),
-        // A CRLF line's carriage return is no part of its indentation.
         ("  a\r\n  b", caret(3), "⏎", "  a\n  \r\n  b", caret(6)),
         ("x", caret(0), "⇥", "  x", caret(2)),
         ("x", caret(0), "⇥⇤", "x", caret(0)),
@@ -193,7 +183,6 @@ fn keys_type_as_the_editor_assists() {
     assists(&cases);
 }
 
-/// A text with its selection, the keys typed in it, and the text and selection after them.
 type Case<'a> = (&'a str, TextRange, &'a str, &'a str, TextRange);
 
 fn assists(cases: &[Case]) {
@@ -209,7 +198,6 @@ fn assists(cases: &[Case]) {
     }
 }
 
-/// As brackets, but only where they open maths: in it a dollar closes it, and `\$` is one in the text.
 #[test]
 fn dollars_pair_as_brackets_do() {
     #[rustfmt::skip]
@@ -221,9 +209,7 @@ fn dollars_pair_as_brackets_do() {
         ("\\", caret(1), "$", "\\$", caret(2)),
         ("\\\\", caret(2), "$", "\\\\$$", caret(3)),
         ("", caret(0), "$\\$5", "$\\$5$", caret(4)),
-        // A display opened before is closed by hand.
         ("$$ x ", caret(5), "$$", "$$ x $$", caret(7)),
-        // An empty pair becomes a display's, whose closers are stepped over too.
         ("", caret(0), "$$x$$", "$$x$$", caret(5)),
         ("", caret(0), "$⌫", "", caret(0)),
         ("", caret(0), "$$⌫", "$$", caret(1)),
@@ -232,8 +218,6 @@ fn dollars_pair_as_brackets_do() {
     assists(cases);
 }
 
-/// Unclosed, it is closed on a line of its own; closed, the new line just goes a step in, as it does between a
-/// `\begin` and its `\end` on one line. A document's body isn't indented, and tabs stay tabs.
 #[test]
 fn return_after_a_begin_closes_its_environment() {
     #[rustfmt::skip]
@@ -250,7 +234,6 @@ fn return_after_a_begin_closes_its_environment() {
     assists(cases);
 }
 
-/// An item with text goes on to the next; an empty one is taken away, so a second Return leaves the list.
 #[test]
 fn return_in_a_list_goes_on_with_it() {
     let list = |items: &str| format!("\\begin{{itemize}}\n  {items}\n\\end{{itemize}}");
@@ -267,8 +250,6 @@ fn return_in_a_list_goes_on_with_it() {
     assists(cases);
 }
 
-/// A name with a partner is typed in both, until the selection leaves it or a brace or line break is typed. Escape
-/// is the host's.
 #[test]
 fn an_environments_name_is_typed_in_its_begin_and_end() {
     let source = "\\begin{x}\n  \\begin{y}\\end{y}\n\\end{x}";
@@ -279,9 +260,7 @@ fn an_environments_name_is_typed_in_its_begin_and_end() {
         (source, caret(8), "z⌫", source, caret(8)),
         (source, caret(8), "{", "\\begin{x{}}\n  \\begin{y}\\end{y}\n\\end{x}", caret(9)),
         (source, caret(8), "⏎", "\\begin{x\n}\n  \\begin{y}\\end{y}\n\\end{x}", caret(9)),
-        // With no other field to go to, Shift-Tab outdents.
         (source, caret(19), "⇤", "\\begin{x}\n\\begin{y}\\end{y}\n\\end{x}", caret(17)),
-        // An \end that closes nothing, and a \begin nothing closes, have no partner.
         ("\\end{x}", caret(6), "z", "\\end{xz}", caret(7)),
         ("\\begin{x}\n\\end{y}", caret(8), "z", "\\begin{xz}\n\\end{y}", caret(9)),
     ];
@@ -417,7 +396,6 @@ fn a_field_in_two_places_is_typed_in_both() {
     assert_eq!(e.doc.text(), "\\begin{fi}\n  \n\\end{fi}");
     e.keys("⇥");
     assert_eq!(e.selection(), caret(13));
-    // Typing outside the fields ends the snippet, and Tab then indents.
     let mut e = Editor::open("\\beg", caret(4));
     e.put(edit(0, 4, &item.text), 0);
     let first = e.doc.start_snippet(&item.fields, 0).unwrap();
@@ -452,7 +430,6 @@ fn a_completions_own_bracket_is_stepped_over() {
     let item = &offer.items[0];
     assert_eq!(item.text, "\\textbf{}");
     e.put(edit(offer.start, 6, &item.text), 9);
-    // One field is no snippet, but the bracket after it is still the user's to step over.
     let first = e.doc.start_snippet(&item.fields, offer.start).unwrap();
     e.select(first);
     e.keys("x}");
@@ -461,8 +438,6 @@ fn a_completions_own_bracket_is_stepped_over() {
 
 #[test]
 fn the_range_an_editor_says_it_changes_stands_for_the_edit() {
-    // TextKit may report an insertion as the paragraph's tail replaced by itself
-    // with the text in it; the change alone leaves a closer after it standing.
     let mut doc = SourceDocument::new("");
     doc.type_text(caret(0), "(", true);
     doc.edit(0, 0, "()");
@@ -499,7 +474,6 @@ fn lines_move_up_and_down_with_their_selections() {
         bool,
         Option<(&'a str, &'a [(u32, u32)])>,
     );
-    // Several selections move together.
     const SIX: &str = "1\n2\n3\n4\n5\n6";
     #[rustfmt::skip]
     let cases: [Case; 11] = [
@@ -572,8 +546,6 @@ fn lines_are_deleted_leaving_the_caret_on_the_next() {
     ], SourceDocument::delete_lines);
 }
 
-/// Not an escaped bracket, nor one in a comment, which has no partner of its own; an escaped one pairs only with
-/// the escaped, and the next line is no comment, nor is an escaped percent one.
 #[test]
 fn a_bracket_finds_its_partner() {
     let far = format!("({})", "x".repeat(10_000));

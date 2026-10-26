@@ -1,13 +1,3 @@
-/* Type 1 fonts as OpenType, for the pages Live Preview writes as PDF.
- *
- * MuPDF's PDF writer embeds a Type 1 font program as the descendant of a CID font, which PDF
- * doesn't allow (CID fonts take CID-keyed CFF or TrueType programs): PDF viewers other than
- * MuPDF draw the wrong glyphs, or the text in a substitute font. The glyphs a Type 1 font shows
- * go to the page through an OpenType copy of it instead: a CID-keyed CFF with the same glyphs
- * in the same order, CID i being glyph i, and a Unicode cmap from the glyphs' names, from which
- * MuPDF writes the ToUnicode map that copying and finding text need. The Type 1 font still
- * answers the DVI's glyph lookups. */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,7 +31,6 @@ static void put8(cff_buf *b, int v) { unsigned char c = v; put(b, &c, 1); }
 static void put16(cff_buf *b, int v) { put8(b, v >> 8); put8(b, v); }
 static void put32(cff_buf *b, long v) { put16(b, (int)(v >> 16)); put16(b, (int)(v & 0xffff)); }
 
-/* A Type 2 charstring operand, or a DICT one: the same encodings up to two bytes. */
 static void put_number(cff_buf *b, long v, int dict)
 {
   if (v >= -107 && v <= 107)
@@ -72,10 +61,8 @@ static void put_number(cff_buf *b, long v, int dict)
   }
 }
 
-/* A DICT offset at a fixed five bytes, so the DICT's size is known before its offsets. */
 static void put_offset(cff_buf *b, long v) { put8(b, 29); put32(b, v); }
 
-/* An INDEX of `count` items, `data` holding them end to end and `ends` where each ends. */
 static void put_index(cff_buf *b, const unsigned char *data, const size_t *ends, int count)
 {
   put16(b, count);
@@ -99,7 +86,6 @@ static size_t index_size(size_t total, int count)
   return 3 + (size_t)size * (count + 1) + total;
 }
 
-/* The outline, in 1000 units to the em, as Type 2 operators; the advance leads the first. */
 typedef struct { cff_buf *b; double scale; long x, y; long width; int started; } outline_state;
 
 static long units(outline_state *s, FT_Pos v) { return lround(v * s->scale); }
@@ -117,7 +103,7 @@ static int move_to(const FT_Vector *to, void *user)
   start(s);
   put_number(s->b, x - s->x, 0);
   put_number(s->b, y - s->y, 0);
-  put8(s->b, 21); /* rmoveto */
+  put8(s->b, 21);
   s->x = x; s->y = y;
   return 0;
 }
@@ -128,7 +114,7 @@ static int line_to(const FT_Vector *to, void *user)
   long x = units(s, to->x), y = units(s, to->y);
   put_number(s->b, x - s->x, 0);
   put_number(s->b, y - s->y, 0);
-  put8(s->b, 5); /* rlineto */
+  put8(s->b, 5);
   s->x = x; s->y = y;
   return 0;
 }
@@ -141,7 +127,7 @@ static void curve(outline_state *s, long x1, long y1, long x2, long y2, long x3,
   put_number(s->b, y2 - y1, 0);
   put_number(s->b, x3 - x2, 0);
   put_number(s->b, y3 - y2, 0);
-  put8(s->b, 8); /* rrcurveto */
+  put8(s->b, 8);
   s->x = x3; s->y = y3;
 }
 
@@ -152,7 +138,6 @@ static int cubic_to(const FT_Vector *c1, const FT_Vector *c2, const FT_Vector *t
   return 0;
 }
 
-/* Type 1 has no quadratic curves; a font FreeType gives one for still converts. */
 static int conic_to(const FT_Vector *c, const FT_Vector *to, void *user)
 {
   outline_state *s = user;
@@ -172,7 +157,6 @@ static unsigned long checksum(const cff_buf *t)
   return sum & 0xffffffff;
 }
 
-/* An OpenType font around a CID-keyed CFF (malloc'd, `*len` bytes), or NULL on a failure. */
 static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *advance,
                                const long bbox[4], size_t *len)
 {
@@ -185,7 +169,6 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
                            {"name"}, {"post"} };
   put(&t[CFF].data, cff->data, cff->len);
 
-  /* Unicode from the glyphs' names, which FreeType reads into a charmap of a Type 1 face. */
   FT_CharMap encoding = face->charmap;
   cff_buf groups = {0};
   long ngroups = 0;
@@ -210,7 +193,7 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
   cff_buf *h = &t[HEAD].data;
   put32(h, 0x10000); put32(h, 0x10000); put32(h, 0); put32(h, 0x5F0F3CF5);
   put16(h, 3); put16(h, 1000);
-  for (int k = 0; k < 4; k++) put32(h, 0); /* created, modified */
+  for (int k = 0; k < 4; k++) put32(h, 0);
   for (int k = 0; k < 4; k++) put16(h, (int)bbox[k]);
   put16(h, 0); put16(h, 8); put16(h, 2); put16(h, 0); put16(h, 0);
 
@@ -224,7 +207,6 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
   for (int gid = 0; gid < n; gid++) { put16(&t[HMTX].data, (int)advance[gid]); put16(&t[HMTX].data, 0); }
   put32(&t[MAXP].data, 0x5000); put16(&t[MAXP].data, n);
 
-  /* Its family, full and PostScript names, which some viewers want of an embedded font. */
   const char *ps_name = FT_Get_Postscript_Name(face);
   if (!ps_name || !*ps_name) ps_name = "Type1";
   int name_len = (int)strlen(ps_name);
@@ -237,7 +219,7 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
   }
   for (int k = 0; k < name_len; k++) put16(h, (unsigned char)ps_name[k]);
 
-  put32(&t[POST].data, 0x30000); /* no glyph names */
+  put32(&t[POST].data, 0x30000);
   for (int k = 0; k < 7; k++) put32(&t[POST].data, 0);
 
   cff_buf out = {0};
@@ -265,7 +247,6 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
     free(out.data);
     return NULL;
   }
-  /* head's checkSumAdjustment makes the whole font sum to the magic number. */
   unsigned long adjust = (0xB1B0AFBAUL - checksum(&out)) & 0xffffffff;
   size_t head_at = 12 + 16 * TABLES;
   for (int k = 0; k < HEAD; k++) head_at += (t[k].data.len + 3) & ~(size_t)3;
@@ -274,8 +255,6 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
   return out.data;
 }
 
-/* A Type 1 face as OpenType (malloc'd, `*len` bytes), or NULL for another kind of font, or a
- * failure. CID i is glyph i, the face's glyph i with its advance; hints go. */
 static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
 {
   const char *format = FT_Get_Font_Format(face);
@@ -293,7 +272,6 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
     return NULL;
   }
 
-  /* Charstrings, from FreeType's outlines in font units. */
   FT_Outline_Funcs funcs = { move_to, line_to, conic_to, cubic_to, 0, 0 };
   for (int gid = 0; gid < n; gid++)
   {
@@ -305,7 +283,7 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
         FT_Outline_Decompose(&face->glyph->outline, &funcs, &s);
     }
     start(&s);
-    put8(&glyphs, 14); /* endchar */
+    put8(&glyphs, 14);
     glyph_ends[gid] = glyphs.len;
     advance[gid] = s.width;
   }
@@ -313,19 +291,18 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
   const char *ps_name = FT_Get_Postscript_Name(face);
   if (!ps_name || !*ps_name) ps_name = "Type1";
   size_t name_len = strlen(ps_name);
-  static const char strings[] = "AdobeIdentity"; /* SIDs 391 and 392, for the ROS */
+  static const char strings[] = "AdobeIdentity";
   static const size_t string_ends[] = { 5, 13 };
 
-  /* The Top DICT: everything after it is laid out from its size. */
   long bbox[4] = { lround(face->bbox.xMin * scale), lround(face->bbox.yMin * scale),
                    lround(face->bbox.xMax * scale), lround(face->bbox.yMax * scale) };
   put_number(&fixed, 391, 1); put_number(&fixed, 392, 1); put_number(&fixed, 0, 1);
-  put8(&fixed, 12); put8(&fixed, 30); /* ROS: Adobe-Identity-0 */
+  put8(&fixed, 12); put8(&fixed, 30);
   for (int k = 0; k < 4; k++) put_number(&fixed, bbox[k], 1);
-  put8(&fixed, 5); /* FontBBox */
-  put_number(&fixed, n, 1); put8(&fixed, 12); put8(&fixed, 34); /* CIDCount */
+  put8(&fixed, 5);
+  put_number(&fixed, n, 1); put8(&fixed, 12); put8(&fixed, 34);
   size_t top_len = fixed.len + 6 + 6 + 7 + 7, fd_len = 11;
-  unsigned char private_dict[] = { 139, 20, 139, 21 }; /* defaultWidthX 0, nominalWidthX 0 */
+  unsigned char private_dict[] = { 139, 20, 139, 21 };
 
   size_t charset_at = 4 + index_size(name_len, 1) + index_size(top_len, 1)
                       + index_size(sizeof strings - 1, 2) + index_size(0, 0);
@@ -343,14 +320,14 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
   put_offset(&fd, (long)sizeof private_dict); put_offset(&fd, (long)private_at); put8(&fd, 18);
   size_t fd_end = fd.len;
 
-  put8(&out, 1); put8(&out, 0); put8(&out, 4); put8(&out, 4); /* Header */
+  put8(&out, 1); put8(&out, 0); put8(&out, 4); put8(&out, 4);
   put_index(&out, (const unsigned char *)ps_name, &name_len, 1);
   put_index(&out, top.data, &top_end, 1);
   put_index(&out, (const unsigned char *)strings, string_ends, 2);
-  put_index(&out, NULL, NULL, 0); /* Global Subrs */
-  put8(&out, 0); /* charset, format 0: glyph i is CID i */
+  put_index(&out, NULL, NULL, 0);
+  put8(&out, 0);
   for (int gid = 1; gid < n; gid++) put16(&out, gid);
-  put8(&out, 3); put16(&out, 1); put16(&out, 0); put8(&out, 0); put16(&out, n); /* FDSelect */
+  put8(&out, 3); put16(&out, 1); put16(&out, 0); put8(&out, 0); put16(&out, n);
   put_index(&out, glyphs.data, glyph_ends, n);
   put_index(&out, fd.data, &fd_end, 1);
   put(&out, private_dict, sizeof private_dict);
@@ -364,7 +341,6 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
   return font;
 }
 
-/* Each Type 1 font met and its OpenType copy (NULL when it couldn't be made), for the session. */
 typedef struct page_font { fz_font *font, *copy; struct page_font *next; } page_font;
 static page_font *page_fonts, *last;
 static bool page_fonts_on;
@@ -393,14 +369,12 @@ fz_font *dvi_page_font(fz_context *ctx, fz_font *font)
     if (!last)
     {
       last = fz_malloc_struct(ctx, page_font);
-      /* Kept, so another font can't come to have its address. */
       last->font = fz_keep_font(ctx, font);
       last->next = page_fonts;
       page_fonts = last;
       size_t len;
       unsigned char *data = NULL;
       FT_Face face = fz_font_ft_face(ctx, font);
-      /* MuPDF's FreeType allocates through the context only while it's locked. */
       if (face)
       {
         fz_ft_lock(ctx);

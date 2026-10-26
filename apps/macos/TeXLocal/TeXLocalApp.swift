@@ -13,7 +13,6 @@ struct TeXLocalApp: App {
     }
 }
 
-/// Quit waits for the project's writes, and refuses when a save fails rather than drop the only copy of the edits.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) static weak var shared: AppDelegate?
     let app = AppModel()
@@ -24,7 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.shared = self
     }
 
-    /// After state restoration, which may have made the window.
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindow.start()
     }
@@ -55,10 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             let left = await app.leave()
             if left {
-                // Compiles run in their own process groups, which nothing else stops.
                 try? await Core.shared.call("kill_all", [:])
             } else if mainWindow.window?.isVisible != true {
-                // The window its alert shows in comes back if closing it began the quit.
                 mainWindow.showWindow(nil)
             }
             sender.reply(toApplicationShouldTerminate: left)

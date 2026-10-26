@@ -1,7 +1,3 @@
-//! The session's builds: one at a time with one more queued, Clean once the build
-//! stops, and the issues of the last build on the editor's lines. latexmk is behind a seam
-//! (`Engine`), so the session's rules are tested without it.
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -59,20 +55,16 @@ pub(crate) struct Builds {
     outdated: bool,
     issues: Vec<LogItem>,
     error_count: usize,
-    /// None until the first scan has checked the project.
     checks: Option<Vec<LogItem>>,
     checks_shown: Value,
-    /// The session's count of edits as the checks' scan began.
     checked: u64,
     result_edits: u64,
     pub cleaners: Vec<Reply>,
-    /// Whether live preview ran as the clean began, and the Start it ran for.
     cleaning: Option<(bool, u64)>,
     shown: Value,
 }
 
 impl Builds {
-    /// The checks but those on a line the last build has an issue on, whose issue wins the line.
     fn checks(&self) -> impl Iterator<Item = &LogItem> {
         let checks = self.checks.iter().flatten();
         checks.filter(|check| {
@@ -81,7 +73,6 @@ impl Builds {
         })
     }
 
-    /// The session's issues: the last build's errors, then its warnings, then the checks.
     fn listed(&self) -> impl Iterator<Item = &LogItem> {
         self.issues.iter().chain(self.checks())
     }
@@ -92,8 +83,6 @@ impl Actor {
         self.builds.pdf || self.live.document_seen
     }
 
-    /// An automatic build waits while live preview runs, and for TeX to be found. Err: a save
-    /// someone asked for failed.
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
         if auto && self.live_previewing() {
             return Ok(());
@@ -102,7 +91,6 @@ impl Actor {
             self.builds.waiting_for_tex = true;
             return Ok(());
         }
-        // A clean deletes the folder the build writes in.
         if self.builds.compiling || self.builds.cleaning.is_some() {
             self.builds.queued = Some(self.builds.queued.unwrap_or(true) && auto);
             return Ok(());
@@ -135,7 +123,6 @@ impl Actor {
             errors: vec![LogItem::error(err.message)],
             ..CompileResult::default()
         });
-        // As the documents are kept, not as TeX wrote them.
         let mut spelt: HashMap<String, String> = HashMap::new();
         let items = result.errors.iter_mut().chain(&mut result.warnings);
         let files = items
@@ -164,8 +151,6 @@ impl Actor {
         let outdated = builds.outdated;
         self.mark_issues();
         self.publish_checks();
-        // Live Preview reads the build folder's .aux and .bbl; TeXpresso goes back only as far
-        // as their first changed byte. A stopped build may have left them half written.
         if !result.stopped {
             self.live_rescan();
         }
@@ -176,7 +161,6 @@ impl Actor {
         if !self.builds.cleaners.is_empty() && self.builds.cleaning.is_none() {
             self.start_clean();
         }
-        // Published once the queued build has started: builds back to back show as one.
         if let Some(auto) = self.builds.queued.take() {
             let _ = self.compile(auto);
         }
@@ -251,8 +235,6 @@ impl Actor {
         }
     }
 
-    // MARK: - Issues
-
     pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {
         (self.builds.checked, self.builds.checks) = (edits, Some(checks));
         self.publish_checks();
@@ -279,8 +261,6 @@ impl Actor {
         }
     }
 
-    /// A document edited since the last build or check began isn't marked with its issues: its
-    /// lines may have moved.
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         let builds = &self.builds;
@@ -309,10 +289,6 @@ impl Actor {
     }
 }
 
-/// Each line's first issue, with the messages of the others there. An undefined command's
-/// issue has where the line has the command (`tokens`), and a `compact` message that names it
-/// in fewer words; so does one that needs shell escape. `index`: where a line's issues start in
-/// the session's list, for a click on it.
 pub(super) fn issue_lines<'a>(
     issues: impl IntoIterator<Item = &'a LogItem>,
     path: &str,

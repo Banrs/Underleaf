@@ -1,5 +1,3 @@
-//! The text styles a selection is in, as a word processor's Bold, Italic and Underline show theirs, and the edits that take each away.
-
 use std::ops::Range;
 
 use serde::Serialize;
@@ -7,7 +5,6 @@ use serde::Serialize;
 use super::scan::{Group, Visit};
 use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
-/// Declarations ({\bfseries …}) aren't read, nor a command whose argument doesn't close by the end of the selection's paragraph.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TextStyles {
     pub bold: Option<Vec<TextEdit>>,
@@ -15,8 +12,6 @@ pub struct TextStyles {
     pub underline: Option<Vec<TextEdit>>,
 }
 
-/// The font shape so far, outermost command first: \emph turns it upright
-/// in italic or slanted text, as LaTeX's \em does, and italic otherwise.
 #[derive(Clone, Copy, PartialEq)]
 enum Shape {
     Upright,
@@ -71,7 +66,6 @@ impl SourceDocument {
             .map(|(a, _)| a)
             .collect();
         groups.extend(found.whole.as_ref());
-        // Only text styles: maths has its own (\mathbf).
         let text_from = groups.iter().rposition(|g| g.math).map_or(0, |k| k + 1);
         let (mut bold, mut shape, mut underline) = (None, Shape::Upright, None);
         for (k, group) in groups.iter().enumerate().skip(text_from) {
@@ -133,7 +127,6 @@ mod tests {
         let units: Vec<u16> = source.encode_utf16().collect();
         let (start, end) = (utf16(&source[..start]) as u32, utf16(&source[..end]) as u32);
         let found = SourceDocument::new(&source).text_styles(range(start, end - start));
-        // Each style's command, from the edits that take away its name and its braces.
         [found.bold, found.italic, found.underline].map(|edits| {
             edits.map_or(String::new(), |edits| {
                 let (head, tail) = (&edits[0], &edits[1]);

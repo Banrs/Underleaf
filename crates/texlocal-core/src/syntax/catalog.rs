@@ -1,5 +1,3 @@
-//! The LaTeX the editors insert, complete and recognise (catalog.json).
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -13,15 +11,11 @@ pub struct Catalog {
     pub bib_entry_types: Vec<String>,
     pub cite_commands: HashSet<String>,
     pub ref_commands: HashSet<String>,
-    /// Commands whose options and first argument are names, not prose:
-    /// classes, packages, environments, labels, bibliography keys and files.
     pub name_commands: HashSet<String>,
     pub math_environments: HashSet<String>,
     pub verbatim_environments: HashSet<String>,
     pub text_commands: HashSet<String>,
     pub preview_environments: HashSet<String>,
-    /// The package that defines a command (with its backslash) or an environment, for a build's
-    /// error to offer to load.
     pub packages: HashMap<String, String>,
     pub commands: Vec<(String, String)>,
     pub templates: Templates,
@@ -36,7 +30,6 @@ pub struct Templates {
     pub references: Vec<Template>,
 }
 
-/// `symbol` names the SF Symbol the Mac's toolbar shows it by, which makes it a toolbar button.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Template {
     pub title: String,
@@ -62,8 +55,6 @@ pub struct Symbol {
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
     let mut catalog: Catalog =
         serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid");
-    // The palette's symbols complete as themselves, after the commands, but
-    // for those with a snippet there or an argument (\sqrt{}).
     let symbols = catalog.symbol_groups.iter().flat_map(|g| &g.symbols);
     let more: Vec<_> = symbols
         .map(|s| s.command.clone())

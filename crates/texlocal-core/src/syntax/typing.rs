@@ -1,7 +1,3 @@
-//! Typing as the source editor assists it: brackets and dollars that close and are stepped over, Delete back to an
-//! indent stop, Return keeping indentation, closing an environment and going on with a list, and a bracket's partner.
-//! The closers put in are kept between keys, as the snippet's fields are.
-
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -14,8 +10,6 @@ use super::{
     splice, utf16,
 };
 
-/// What a key does instead of the editor: an edit typed as a key types (so it undoes with the typing around it),
-/// and where the selection goes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Keystroke {
     pub edit: Option<TextEdit>,
@@ -40,7 +34,6 @@ pub(crate) struct Typing {
     pending: Option<(usize, usize)>,
 }
 
-/// An opening bracket is closed for the user before these, or space, or the end.
 const CLOSE_BEFORE: &str = ")]}:;>";
 
 const PARTNER_WITHIN: usize = 10_000;
@@ -68,7 +61,6 @@ fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
 impl SourceDocument {
     pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
         self.typing.pending = None;
-        // More than a character, as an input method commits, goes in as it is.
         let Some(key) = typed
             .encode_utf16()
             .next()
@@ -82,7 +74,6 @@ impl SourceDocument {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let length = end - start;
         let dollar = auto_pair && is(key, '$');
-        // A dollar closes maths or opens it, which only the scan can tell.
         let innermost = (dollar && length == 0)
             .then(|| self.scanned_to(start).groups().pop())
             .flatten();
@@ -90,7 +81,6 @@ impl SourceDocument {
         let units = &self.text.units[..];
         let next = units.get(start).copied();
         if length == 0 && typing.closers.contains(&start) && (is_closing(key) || dollar) {
-            // An empty pair of dollars the editor put in becomes a display's.
             let empty = |g: &Group| g.end == "$" && g.open + 1 == start;
             if dollar && next == Some(key) && innermost.as_ref().is_some_and(empty) {
                 typing.pending = Some((start, start + 1));
@@ -100,8 +90,6 @@ impl SourceDocument {
                     ..Keystroke::default()
                 };
             }
-            // A closer put in as \] or \}: its bracket steps over both, and a backslash typed for it goes. A
-            // backslash alone is typed in, being a command's as often as the closer's.
             let escaped_closer =
                 next.is_some_and(|u| is(u, '\\')) && units.get(start + 1) == Some(&key);
             if next == Some(key) && !(dollar && escaped(units, start)) || escaped_closer {
@@ -130,8 +118,6 @@ impl SourceDocument {
                 };
             }
             let before = |c: char| c.is_whitespace() || CLOSE_BEFORE.contains(c);
-            // In maths a dollar closes it, and \$ is one in the text. One just after a dollar closes a display: the scan,
-            // reading only to the caret, took that first one as closing it.
             let literal = dollar
                 && (innermost.is_some_and(|g| g.math)
                     || escaped(units, start)
@@ -202,7 +188,6 @@ impl SourceDocument {
             completions: Completing::Close,
             ..Keystroke::default()
         };
-        // The \begin just before the caret, with its arguments, its name the first.
         let begun = groups
             .last()
             .filter(|g| g.open >= line.start)
@@ -215,7 +200,6 @@ impl SourceDocument {
                 (read.0 == start).then_some((name, g.open))
             });
         let step = match begun {
-            // A document's body is written at its \begin's indentation.
             Some(("document", _)) => "",
             _ if indented.starts_with('\t') => "\t",
             _ => INDENT,
@@ -242,11 +226,9 @@ impl SourceDocument {
         let item = content.strip_prefix("\\item");
         if matches!(list, Some("itemize" | "enumerate" | "description"))
             && blank_line(rest)
-            // A bare \item is left to Return, as some write its text on the next line.
             && let Some(after) =
                 item.filter(|after| after.starts_with(|c: char| !c.is_ascii_alphabetic()))
         {
-            // An empty item ends the list, as a word processor's empty bullet does.
             if after.trim().is_empty() {
                 return key(from, line.end - from, String::new(), from);
             }
@@ -267,9 +249,6 @@ impl SourceDocument {
         key(start, length, format!("\n{indented}"), start + 1 + indent)
     }
 
-    /// Each change to the editor's storage, once: the closers typing put in and a snippet's
-    /// fields move with it. While a field is typed in, the edits that put what was typed in its
-    /// other places, from the last; the editor applies them `mirroring`, which answers none.
     pub fn apply_edit(
         &mut self,
         start: u32,
@@ -287,7 +266,6 @@ impl SourceDocument {
         self.mirror_snippet()
     }
 
-    /// `changing`, the range the editor said it would change, stands for `old` when it is within it from the same start.
     pub(super) fn follow(
         &mut self,
         old: TextRange,
@@ -342,8 +320,6 @@ impl SourceDocument {
         }
     }
 
-    /// The `\end` closing the `\begin` at `at`, or the `\begin` the `\end` at `at` closes. An unclosed `\begin`
-    /// is dropped by the `\end` of an environment around it, which ends the search.
     pub(super) fn environment_partner(&mut self, at: usize) -> Option<usize> {
         let mut scanner = self.scans.resume(&self.text, at, at).scanner;
         let units = &self.text.units;
@@ -358,7 +334,6 @@ impl SourceDocument {
         partner.found
     }
 
-    /// Brackets in comments are no one's, and an escaped one pairs only with the escaped.
     pub fn partner(&self, at: u32) -> Option<u32> {
         let at = at as usize;
         let units = &self.text.units[..];
@@ -370,7 +345,6 @@ impl SourceDocument {
         let partner = if opens { close } else { open } as u16;
         let near = at.saturating_sub(PARTNER_WITHIN)..(at + PARTNER_WITHIN + 1).min(units.len());
         let escaped_here = escaped(units, at);
-        // A comment is known from its line's start, so reading starts there.
         let mut brackets = Vec::new();
         let (mut comment, mut slashes) = (false, 0);
         let from = self.text.around(near.start).start;

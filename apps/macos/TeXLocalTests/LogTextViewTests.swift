@@ -15,7 +15,6 @@ struct LogTextViewTests {
         LogTextView(text: initial + "new output\n").updateText(in: scroll)
         #expect(view.selectedRange() == selection && scroll.contentView.bounds.origin == origin && view.string == initial + "new output\n")
 
-        // A restart or bounded-log rollover can replace everything, shortening past the selected error; that must not crash AppKit.
         LogTextView(text: "é\n").updateText(in: scroll)
         #expect(view.selectedRange() == .caret(2))
         LogTextView(text: "e\u{301}\nnext\n").updateText(in: scroll)
@@ -35,7 +34,6 @@ struct LogTextViewTests {
 
     @Test func aBarInsetKeepsAnAtEndLogFollowing() throws {
         let (scroll, view) = try logScroll()
-        // The inset the build panel's bar gives the scroll view, which SwiftUI's safe area does not reach.
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets.bottom = 28
         view.scrollToEndOfDocument(nil)
@@ -44,7 +42,6 @@ struct LogTextViewTests {
         #expect(scroll.contentView.bounds.origin.y > end)
     }
 
-    /// Laid out through the text layout manager: asking an NSTextView for its `layoutManager` switches it to TextKit 1, which the app's log view is not.
     private func logScroll() throws -> (NSScrollView, NSTextView) {
         let scroll = NSTextView.scrollableTextView()
         scroll.setFrameSize(NSSize(width: 400, height: 160))

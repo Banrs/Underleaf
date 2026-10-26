@@ -1,5 +1,3 @@
-/* TeXLocal core, which the Mac app links as a static library. Calls are JSON in, JSON out; docs/core-api.md is the
- * contract, with every command and event. */
 #ifndef TEXLOCAL_H
 #define TEXLOCAL_H
 
@@ -11,91 +9,49 @@
 extern "C" {
 #endif
 
-/* A pointer may be NULL only where it is marked _Nullable. */
 #pragma clang assume_nonnull begin
 
 typedef struct TlHandle TlHandle;
 
-/* Called with the pointer it was given and a JSON text valid only during the
- * call, on a core thread: hop to the UI thread before touching the UI. */
 typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
 
-/* The service over the library folder data_dir, a UTF-8 path, telling listener
- * the sessions' events, one JSON object at a time, in order, on one core
- * thread. NULL for a NULL data_dir or listener, or on failure. The handle
- * lives as long as the app: kill_all stops builds and live previews as it
- * quits. */
 TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable listener, void *_Nullable ctx);
 
 void tl_free(char *_Nullable text);
 
-/* A command, answered on a core thread: done gets {"ok": value} or {"error":
- * message, "kind": kind}; a NULL done runs the command for its effect alone.
- * A session's commands (every session_* but session_open) are queued before
- * this returns, so it takes them in the order sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
                    TlCallback _Nullable done, void *_Nullable ctx);
 
-/* The source editor's view of a file's text. Calls on one TlSource must not
- * overlap, queries included. Offsets and lengths count UTF-16 units; lines
- * count from 1. A call that fails inside answers nothing: 0, no runs or NULL. */
 typedef struct TlSource TlSource;
 
-/* The document a session has open at path, NULL if none: its edits are the
- * session's, and its completions offer the project's labels and citations.
- * Each source starts with no typing state from an earlier one. Free with
- * tl_source_free, which leaves the document open. */
 TlSource *_Nullable tl_session_source(const TlHandle *handle, uint64_t session, const char *path);
 
-/* Text is len bytes of UTF-8, so it may hold U+0000; bytes that aren't UTF-8
- * read as U+FFFD. */
 TlSource *tl_source_new(const uint8_t *_Nullable text, size_t len);
 
-/* A range of the text, in UTF-16 units. */
 typedef struct {
     uint32_t start;
     uint32_t length;
 } TlRange;
 
-/* The editor replaced length units at start with text, having said it would
- * change changing (NULL if no one range). Unless mirroring (the source's own
- * mirror edits going in), returns what was typed in a snippet's field for its
- * other places, a JSON array of edits from the last, or NULL for none; free it
- * with tl_free. */
 char *_Nullable tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uint8_t *_Nullable text, size_t len,
                                const TlRange *_Nullable changing, bool mirroring);
 
-/* The editor's (first) selection moved. */
 void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mirroring);
 
-/* The whole text as *len bytes of UTF-8, not NUL-terminated; NULL for a NULL
- * len. Free with tl_source_free_text. */
 uint8_t *_Nullable tl_source_text(TlSource *source, size_t *_Nullable len);
 void tl_source_free_text(uint8_t *_Nullable text, size_t len);
 
-/* The text whole, as a document_reload event gave it, before the editor shows
- * it: not an edit to save. False, changing nothing, when keys were typed since
- * the event was sent: the editor keeps its text, and a conflict follows. */
 bool tl_source_reload(TlSource *source, const uint8_t *_Nullable text, size_t len);
 
 uint32_t tl_source_line_at(TlSource *source, uint32_t offset);
 uint32_t tl_source_line_start(TlSource *source, uint32_t line);
 uint32_t tl_source_line_count(TlSource *source);
 
-/* The highlighted runs of the lines a range touches: start, length and kind
- * (HighlightKind's order) for each; *count is the number of values, NULL for
- * a NULL count. Free with tl_source_free_runs. */
 uint32_t *_Nullable tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *_Nullable count);
 void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 
-/* A command of SourceDocument::call (crates/texlocal-core/src/syntax/call.rs),
- * or "version" (null for a source of the host's own), with a JSON object of
- * arguments. The result's JSON, or NULL for an unknown command or arguments;
- * free it with tl_free. */
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
-/* A command that needs no source, on any thread, answering as tl_source_call:
- * "menus", "heading_styles" and "math_svg" (docs/core-api.md). */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 
 void tl_source_free(TlSource *_Nullable source);

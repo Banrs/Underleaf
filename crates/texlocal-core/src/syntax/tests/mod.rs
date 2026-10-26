@@ -1,6 +1,3 @@
-//! The editing logic through `SourceDocument`'s commands: its lines and
-//! offsets here, and in the files beside this one what the editors ask of it.
-
 use super::*;
 
 mod answers;
@@ -11,7 +8,6 @@ fn units(s: &str) -> u32 {
     utf16(s) as u32
 }
 
-/// Citations as a .bib file's entries of these keys, with nothing to say of them.
 pub(crate) fn cited(keys: &[&str]) -> Vec<crate::analyze::Named> {
     let bib: String = keys
         .iter()
@@ -24,7 +20,7 @@ pub(crate) fn cited(keys: &[&str]) -> Vec<crate::analyze::Named> {
 fn line_starts_follow_edits_in_utf16_units() {
     let mut doc = SourceDocument::new("a\nb\nc");
     assert_eq!(doc.line_count(), 3);
-    doc.edit(1, 2, "x\ny\nz"); // "a" + "x\ny\nz" + "\nc"
+    doc.edit(1, 2, "x\ny\nz");
     assert_eq!(doc.text(), "ax\ny\nz\nc");
     assert_eq!(
         (0..4).map(|l| doc.line_start(l + 1)).collect::<Vec<_>>(),
@@ -36,15 +32,12 @@ fn line_starts_follow_edits_in_utf16_units() {
     assert_eq!(doc.line_at(1), 1);
     doc.edit(10, 5, "!");
     assert_eq!(doc.text(), "c!");
-    // é is one unit, the emoji two, then the line feed.
     let mut doc = SourceDocument::new("é😀\nx");
     assert_eq!(doc.line_start(2), 4);
     doc.edit(1, 2, "");
     assert_eq!(doc.text(), "é\nx");
 }
 
-/// The project's other files as last scanned, this one as it is now: its last scan's label is
-/// gone, the label typed since is found.
 #[test]
 fn a_definition_is_found_for_each_kind_of_name() {
     use crate::analyze::Facts;

@@ -1,9 +1,3 @@
-//! The SyncTeX file TeX writes beside its PDF, read and searched as TeX Live's synctex program
-//! does (synctex_parser.c, version 1.21), so the answers are the program's without running it.
-//! A PDF form's content shows on no page here, and content without the
-//! Postamble a finished run writes (Live Preview's while TeX hasn't reached the end) is used
-//! as far as it goes, where the program answers nothing.
-
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
@@ -11,9 +5,7 @@ use std::sync::Arc;
 
 use crate::stamp::Kept;
 
-/// What is nowhere near, as synctex's `INT_MAX`.
 const FAR: i64 = i32::MAX as i64;
-/// synctex keeps its nodes in this many lists by tag plus line ("friends").
 const LISTS: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -29,9 +21,7 @@ enum Kind {
     Rule,
     Math,
     Boundary,
-    /// An hbox's first and last child, which the reader adds.
     BoxBoundary,
-    /// A use of a form, which goes once read.
     Ref,
 }
 
@@ -48,7 +38,6 @@ impl Kind {
     }
 }
 
-/// In scaled points from the page's top left, v going down.
 #[derive(Clone, Copy, Default)]
 struct Extent {
     h: i32,
@@ -58,7 +47,6 @@ struct Extent {
     depth: i32,
 }
 
-/// Where in which input a node comes from: its tag, line and column.
 type Place = (i32, i32, i32);
 
 struct Node {
@@ -66,12 +54,9 @@ struct Node {
     tag: i32,
     line: i32,
     column: i32,
-    /// Its sheet's, or -1 in a form.
     page: i32,
     at: Extent,
-    /// An hbox grown round what it holds (synctex's `_V` values); for the rest, `at`.
     seen: Extent,
-    /// An hbox's lines' mean, weighted by its nodes, and their count.
     mean_line: i32,
     weight: i32,
     parent: Option<u32>,
@@ -79,8 +64,6 @@ struct Node {
     sibling: Option<u32>,
 }
 
-/// One result of a forward search, in PDF points from the page's top left: `v` is the box's
-/// bottom and `height` takes its depth in.
 pub(super) struct Shown {
     pub page: i32,
     pub h: f32,
@@ -92,23 +75,19 @@ pub(super) struct Shown {
 struct Sheet {
     page: i32,
     node: u32,
-    /// Its hboxes as they close; synctex chains them the last first.
     hboxes: Vec<u32>,
 }
 
 struct Input {
     tag: i32,
     name: String,
-    /// The last line any node gives the input.
     last_line: i32,
 }
 
 pub(super) struct SyncTex {
     nodes: Vec<Node>,
     sheets: Vec<Sheet>,
-    /// By tag, which TeX numbers them by in the order it opens them: the newest last.
     inputs: BTreeMap<i32, Input>,
-    /// Nodes by `(tag + line) % LISTS`, the oldest first.
     friends: Vec<Vec<u32>>,
     magnification: i32,
     unit: f32,
@@ -117,8 +96,6 @@ pub(super) struct SyncTex {
 }
 
 impl SyncTex {
-    /// `name.synctex` beside `name.pdf`, else `name.synctex.gz`, in the program's order; parsed
-    /// again only once it changes, as a thesis's takes a while.
     pub fn beside(pdf: &Path) -> std::io::Result<Arc<Self>> {
         static PARSED: Kept<SyncTex> = Kept::new();
         let plain = pdf.with_extension("synctex");
@@ -144,7 +121,6 @@ impl SyncTex {
         })
     }
 
-    /// Each input's tag and name as TeX opened it, the newest first.
     pub fn inputs(&self) -> impl Iterator<Item = (i32, &str)> {
         let inputs = self.inputs.values().rev();
         inputs.map(|input| (input.tag, input.name.as_str()))
@@ -171,15 +147,11 @@ impl SyncTex {
     }
 }
 
-// MARK: - Reading
-
-/// A record's fields, decoded as synctex's `_synctex_decode_*` do.
 struct Fields<'a> {
     text: &'a [u8],
     at: usize,
 }
 
-/// `strtol`'s digits from `at`: the number and where it ends, or None without a digit.
 fn number(text: &[u8], mut at: usize) -> Option<(i32, usize)> {
     while text.get(at).is_some_and(u8::is_ascii_whitespace) {
         at += 1;
@@ -200,7 +172,6 @@ fn number(text: &[u8], mut at: usize) -> Option<(i32, usize)> {
 }
 
 impl Fields<'_> {
-    /// An integer after one optional `:` or `,`.
     fn int(&mut self) -> Option<i32> {
         let at = self.at + usize::from(matches!(self.text.get(self.at), Some(b':' | b',')));
         let (value, end) = number(self.text, at)?;
@@ -208,7 +179,6 @@ impl Fields<'_> {
         Some(value)
     }
 
-    /// A column, which only a `,` brings; -1 without one.
     fn column(&mut self) -> Option<i32> {
         if self.text.get(self.at) != Some(&b',') {
             return Some(-1);
@@ -218,7 +188,6 @@ impl Fields<'_> {
         Some(value)
     }
 
-    /// A v, or `,=` for the last v read.
     fn v(&mut self, last: &mut i32) -> Option<i32> {
         if let Some(v) = self.int() {
             *last = v;
@@ -232,19 +201,16 @@ impl Fields<'_> {
     }
 }
 
-/// The list of the nodes with this tag and line, and others: none where they sum below 0.
 fn friends_of(tag: i32, line: i32) -> Option<usize> {
     usize::try_from(i64::from(tag) + i64::from(line))
         .ok()
         .map(|key| key % LISTS)
 }
 
-/// The value after `name` at a line's start.
 fn named<'a>(line: &'a [u8], name: &str) -> Option<&'a [u8]> {
     line.strip_prefix(name.as_bytes())
 }
 
-/// The state synctex's `__synctex_parse_sfi` keeps between records.
 struct Reader {
     s: SyncTex,
     last_v: i32,
@@ -252,8 +218,6 @@ struct Reader {
     form: Option<u32>,
     parent: Option<u32>,
     child: Option<u32>,
-    /// Per open box, the boundaries whose line may be wrong until the next node in the box
-    /// gives them its own (synctex's `x_handle`); the oldest first.
     pending: Vec<Vec<u32>>,
     last_kern: Option<u32>,
     last_glue: Option<u32>,
@@ -321,7 +285,6 @@ impl SyncTex {
         Some(s)
     }
 
-    /// A form's uses go: the program puts the form's content in their place.
     fn unlink_refs(&mut self) {
         for id in 0..self.nodes.len() as u32 {
             let mut link = self.node(id).child;
@@ -356,7 +319,6 @@ impl Input {
 }
 
 impl Reader {
-    /// One line; false at the Postamble.
     fn record(&mut self, line: &[u8]) -> bool {
         if self.ignored_forms > 0 {
             match line.first() {
@@ -415,8 +377,6 @@ impl Reader {
             }
             _ => false,
         };
-        // A form, a character, an anchor or a record the program ignores leaves the last kern
-        // behind.
         if !handled || matches!(first, b'c' | b'!') {
             self.reset_kern();
         }
@@ -427,7 +387,6 @@ impl Reader {
         (self.last_kern, self.last_glue) = (None, None);
     }
 
-    /// Between sheets: inputs, a sheet, a form, or the Postamble.
     fn outside(&mut self, line: &[u8]) -> bool {
         (self.parent, self.child) = (None, None);
         if let Some(input) = Input::parse(line) {
@@ -463,7 +422,6 @@ impl Reader {
         }
     }
 
-    /// As the last child of the open container.
     fn append(&mut self, mut node: Node) -> u32 {
         node.parent = self.parent;
         node.page = self.page();
@@ -509,7 +467,6 @@ impl Reader {
         })
     }
 
-    /// Lines past an input's last make the program's forward search look no further.
     fn register_line(&mut self, id: u32) {
         let node = self.s.node(id);
         let (tag, line) = (node.tag, node.line);
@@ -525,8 +482,6 @@ impl Reader {
         }
     }
 
-    /// The pending boundaries take `from`'s tag, line and column, the newest first, and are
-    /// listed.
     fn settle_pending(&mut self, from: u32) {
         let pending = std::mem::take(self.pending.last_mut().expect("the outermost level stays"));
         let place = self.s.node(from).place();
@@ -558,7 +513,6 @@ impl Reader {
         true
     }
 
-    /// Closes the open box, which becomes the last child of its parent.
     fn close(&mut self) -> u32 {
         let closed = self.parent.expect("a box is open");
         self.child = Some(closed);
@@ -578,7 +532,6 @@ impl Reader {
 
     fn end_vbox(&mut self) {
         let vbox = self.parent.expect("a vbox is open");
-        // Only a vbox with nothing in it is listed.
         if self.s.node(vbox).child.is_none() && self.form.is_none() {
             self.make_friend(vbox);
         }
@@ -617,7 +570,6 @@ impl Reader {
             let node = &mut self.s.nodes[hbox as usize];
             (node.mean_line, node.weight) = (node.line, 1);
         }
-        // The closing boundary, at the box's end, takes the last child's lines (past form uses).
         let source = self
             .s
             .children(hbox)
@@ -637,7 +589,6 @@ impl Reader {
             ..Extent::default()
         };
         start.seen = start.at;
-        // A kern and glue that end the box take the lines of what comes before them.
         if let (Some(kern), Some(glue)) = (self.last_kern, self.last_glue) {
             let before = self
                 .s
@@ -714,7 +665,6 @@ impl Reader {
         let Some((tag, h, v)) = decode() else {
             return false;
         };
-        // A form's use has no line: the program counts it as line 0 in its box's mean.
         let at = Extent {
             h,
             v,
@@ -737,7 +687,6 @@ impl Reader {
             return;
         };
         self.form_depth += 1;
-        // A form within a form within a form is passed over whole.
         if self
             .form
             .is_some_and(|form| self.s.node(form).parent.is_some())
@@ -771,7 +720,6 @@ impl Reader {
         self.reset_kern();
     }
 
-    /// The open hbox grows to hold `bounds`, as what it shows can be past its size.
     fn contain(&mut self, bounds: Bounds) {
         let Some(parent) = self.parent.filter(|&p| self.s.node(p).kind == Kind::HBox) else {
             return;
@@ -805,7 +753,6 @@ impl Reader {
 }
 
 impl Node {
-    /// A box's start or end: a point with a place.
     fn boundary(place: Place, at: Extent) -> Self {
         let at = Extent {
             h: at.h,
@@ -847,7 +794,6 @@ impl Node {
     }
 }
 
-/// In i64, as a damaged file's sums can pass i32's.
 #[derive(Clone, Copy)]
 struct Bounds {
     min_h: i64,
@@ -883,9 +829,6 @@ impl Bounds {
     }
 }
 
-// MARK: - Searching
-
-/// A node and how far it is, as synctex's `synctex_nd_s`.
 #[derive(Clone, Copy)]
 struct Near {
     node: Option<u32>,
@@ -897,21 +840,17 @@ const NOWHERE: Near = Near {
     distance: FAR,
 };
 
-/// In scaled points.
 #[derive(Clone, Copy)]
 struct Point {
     h: i64,
     v: i64,
 }
 
-/// The program's steps from a line with nothing on the page: +1, -2, +3, -4…
 fn next_step(step: i32) -> i32 {
     if step < 0 { -(step - 1) } else { -(step + 1) }
 }
 
 impl SyncTex {
-    /// The boxes that show `line` of the input `tag`, else the nearest line that shows, in the
-    /// program's order (synctex's `synctex_iterator_new_display`, no page hint).
     pub fn forward(&self, tag: i32, line: i32) -> Vec<Shown> {
         let Some(last) = self.inputs.get(&tag).map(|input| input.last_line) else {
             return Vec::new();
@@ -944,8 +883,6 @@ impl SyncTex {
         Vec::new()
     }
 
-    /// The listed nodes with this tag and line, a group per page, as synctex's
-    /// `_synctex_display_query_v2` links them; boxes left out first.
     fn on_line(&self, list: &[u32], tag: i32, line: i32, no_boxes: bool) -> Option<Vec<Vec<u32>>> {
         let mut found = list.iter().rev().copied().filter(|&id| {
             let node = self.node(id);
@@ -973,7 +910,6 @@ impl SyncTex {
         Some(groups)
     }
 
-    /// The groups, each sorted, the one on the lowest page first and the rest after it in reverse.
     fn ordered(&self, groups: Vec<Vec<u32>>) -> Vec<u32> {
         let page = |chain: &[u32]| self.node(chain[0]).page.unsigned_abs();
         let mut groups = groups.into_iter();
@@ -992,11 +928,8 @@ impl SyncTex {
         chains.concat()
     }
 
-    /// A page's matches by how many of their box's nodes share their line, one per box (synctex's
-    /// `_synctex_vertically_sorted_v2`).
     fn weighed(&self, group: Vec<u32>) -> Vec<u32> {
         let (tag, line) = (self.node(group[0]).tag, self.node(group[0]).line);
-        // Only an hbox keeps the weight it is given, so a second match in one is left out.
         let mut weighed_hboxes = std::collections::HashSet::new();
         let mut chain: Vec<(u32, usize)> = Vec::new();
         for id in group {
@@ -1028,8 +961,6 @@ impl SyncTex {
         chain.into_iter().map(|(id, _)| id).collect()
     }
 
-    /// In the program's words, the visible box of `id`: its own or its parent, grown to the
-    /// highest hbox round it on the same line, unless one is wider or taller than 1,500,000 sp.
     fn shown(&self, id: u32) -> Shown {
         let mut node = id;
         if !self.node(node).kind.is_box() {
@@ -1071,8 +1002,6 @@ impl SyncTex {
         }
     }
 
-    /// The input's name and line under the point, in PDF points from the page's top left
-    /// (synctex's `synctex_iterator_new_edit`, its first result).
     pub fn inverse(&self, page: i32, h: f32, v: f32) -> Option<(&str, i32)> {
         let sheet = self.sheets.iter().find(|sheet| sheet.page == page)?;
         let hit = Point {
@@ -1083,7 +1012,6 @@ impl SyncTex {
         let ((mut left, right), container) =
             match hboxes.by_ref().find(|&id| self.contains(hit, id)) {
                 Some(first) => {
-                    // Where hboxes overlap, the smallest.
                     let mut node = first;
                     for other in hboxes.filter(|&other| self.contains(hit, other)) {
                         node = self.smallest(other, node);
@@ -1100,7 +1028,6 @@ impl SyncTex {
             (Some(l), Some(r)) => {
                 let (ln, rn) = (self.node(l), self.node(r));
                 if ln.place() != rn.place() {
-                    // Of two lines, the first, or of one, the nearer.
                     if rn.line < ln.line || (rn.line == ln.line && left.distance > right.distance) {
                         left.node = Some(r);
                     }
@@ -1121,7 +1048,6 @@ impl SyncTex {
         self.h_ordered(hit, id) == 0 && self.v_ordered(hit, id) == 0
     }
 
-    /// Of two hboxes, the one of least area, else widest as TeX made it, else least tall.
     fn smallest(&self, node: u32, other: u32) -> u32 {
         let measure = |id: u32| {
             let seen = self.node(id).seen;
@@ -1144,7 +1070,6 @@ impl SyncTex {
         if height > other_height { other } else { node }
     }
 
-    /// How far right of the point the node is: positive to its right, negative to its left.
     fn h_ordered(&self, hit: Point, id: u32) -> i64 {
         let node = self.node(id);
         let outside = |min: i64, max: i64| {
@@ -1165,8 +1090,6 @@ impl SyncTex {
                 let min = i64::from(node.seen.h);
                 outside(min, min + i64::from(node.seen.width).abs())
             }
-            // Its place is recorded after the move, and it holds no text: the nearer edge counts,
-            // with a point's penalty.
             Kind::Kern => {
                 let (h, width) = (i64::from(node.at.h), i64::from(node.at.width));
                 let (min, max) = if width < 0 {
@@ -1192,7 +1115,6 @@ impl SyncTex {
         }
     }
 
-    /// How far below the point the node is: positive below, negative above.
     fn v_ordered(&self, hit: Point, id: u32) -> i64 {
         let node = self.node(id);
         let (v, height, depth) = match node.kind {
@@ -1217,7 +1139,6 @@ impl SyncTex {
         }
     }
 
-    /// synctex's distance from a point to a node: 0 inside, else nearly the L1 distance.
     fn distance(&self, hit: Point, id: u32) -> i64 {
         let node = self.node(id);
         let at = node.at;
@@ -1257,7 +1178,6 @@ impl SyncTex {
                     v + i64::from(seen.depth).abs(),
                 )
             }
-            // The nearer of its two edges.
             Kind::VoidVBox | Kind::VoidHBox => {
                 let (top, bottom) = (
                     v - i64::from(at.height).abs(),
@@ -1282,8 +1202,6 @@ impl SyncTex {
         }
     }
 
-    /// The deepest box with children that holds the point, else a vbox's nearest such child
-    /// (synctex's `_synctex_eq_deepest_container_v2`).
     fn deepest(&self, hit: Point, id: u32) -> Option<u32> {
         self.node(id).child?;
         for child in self.children(id) {
@@ -1313,7 +1231,6 @@ impl SyncTex {
         self.contains(hit, id).then_some(id)
     }
 
-    /// As `deepest`, but going into every child first (synctex's `_v3`).
     fn deepest_anywhere(&self, hit: Point, id: u32) -> Near {
         if self.node(id).child.is_none() {
             return NOWHERE;
@@ -1350,8 +1267,6 @@ impl SyncTex {
         }
     }
 
-    /// The nearest node to the point among the descendants that aren't boxes; at an equal
-    /// distance the later, unless it is a kern.
     fn closest_deep_child(&self, hit: Point, id: u32) -> Near {
         let mut best = NOWHERE;
         for child in self.children(id) {
@@ -1371,15 +1286,11 @@ impl SyncTex {
         best
     }
 
-    /// The nodes of an hbox nearest the point on its left and on its right, each narrowed to
-    /// what is deepest within it (synctex's `__synctex_eq_get_closest_children_in_hbox_v2`). The
-    /// program's search in a vbox starts from no node and finds none, which this keeps.
     fn closest_children(&self, hit: Point, id: u32) -> (Near, Near) {
         if self.node(id).kind != Kind::HBox || self.node(id).child.is_none() {
             return (NOWHERE, NOWHERE);
         }
         let (mut left, mut right) = (NOWHERE, NOWHERE);
-        // At an equal distance, the earlier place in the same input.
         let earlier = |node: u32, than: u32| {
             let (n, t) = (self.node(node), self.node(than));
             t.tag == n.tag && (t.line > n.line || (t.line == n.line && t.column > n.column))
@@ -1426,9 +1337,6 @@ impl SyncTex {
 mod tests {
     use std::path::Path;
 
-    /// fixtures/main.tex built by pdflatex with `-synctex=1`, and TeX Live's synctex program's
-    /// answers for it (answers.txt): every line of each input forward, and points across its
-    /// pages back.
     #[test]
     fn answers_as_tex_lives_synctex_program() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/synctex/fixtures");

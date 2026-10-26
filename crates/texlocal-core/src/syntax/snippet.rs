@@ -1,7 +1,3 @@
-//! A snippet's fields: the places of a completion's or block's text to type in, which Tab and Shift-Tab go through
-//! and which mirror each other, as an environment's name does in its `\begin` and `\end`. Each edit the editor makes
-//! answers the edits that copy the typed field to its other places, which the editor applies with `mirroring` set.
-
 use serde::Serialize;
 
 use super::scan::environment_name;
@@ -62,12 +58,10 @@ impl Snippet {
         self.fields.iter().find(|f| f.index == index).copied()
     }
 
-    /// A field alone, as an environment's name is, has none to go to.
     fn tabs(&self) -> bool {
         self.place(1).is_some()
     }
 
-    /// False if the change is outside the field typed in, which ends the snippet.
     pub(super) fn follow(&mut self, start: usize, end: usize, delta: i64, mirroring: bool) -> bool {
         let typed = self.place(self.active);
         if !mirroring {
@@ -115,7 +109,6 @@ impl Snippet {
     }
 }
 
-/// The name of the `\begin` or `\end` at `at`.
 fn name_field(units: &[u16], at: usize) -> Option<Field> {
     let word = units[at + 1..].iter().take_while(|&&u| letter(u)).count();
     let command = &units[at + 1..at + 1 + word];
@@ -134,8 +127,6 @@ impl SourceDocument {
     pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
         let snippet = Snippet::new(fields, at as usize);
         let first = snippet.place(0)?;
-        // A bracket closing an empty field is the snippet's own, put in for
-        // the user like one auto-closed: typing it steps over.
         for field in snippet.fields.iter().filter(|f| f.length == 0) {
             if let Some(&u) = self.text.units.get(field.start)
                 && is_closing(u)
@@ -147,13 +138,11 @@ impl SourceDocument {
         Some(span(first.start, first.length))
     }
 
-    /// Escape is the host's in a snippet with no field to go to.
     pub fn end_snippet(&mut self) -> bool {
         self.typing.snippet.take_if(|s| s.tabs()).is_some()
     }
 
     pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
-        // Without a field to go to, Tab and Shift-Tab indent.
         let snippet = self.typing.snippet.as_mut().filter(|s| s.tabs());
         let moved = snippet.map(|snippet| snippet.go(step));
         let edits = match moved {
@@ -173,8 +162,6 @@ impl SourceDocument {
         Tab { field: None, edits }
     }
 
-    /// An environment's name, in its `\begin` and its `\end`, as one field in two places, the selection's first: the
-    /// names are typed in together while they match.
     pub(super) fn environment_names(&mut self, selection: TextRange) -> Option<Snippet> {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let line = self.text.around(start).start;
@@ -193,7 +180,6 @@ impl SourceDocument {
     pub(super) fn mirror_snippet(&mut self) -> Vec<TextEdit> {
         let snippet = self.typing.snippet.as_mut();
         let edits = snippet.map_or(vec![], |snippet| snippet.mirror(&self.text.units));
-        // A brace or a line break, as one typed at a name's end, would break the other places too.
         if edits.iter().any(|e| e.text.contains(['{', '}', '\n'])) {
             self.typing.snippet = None;
             return vec![];

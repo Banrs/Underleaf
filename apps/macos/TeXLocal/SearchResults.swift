@@ -1,16 +1,13 @@
 import SwiftUI
 
-/// Find in Project's matches by file, or Find Usages' under the name; a hit opens as a jump, which Go Back returns from.
 struct SearchResults: View {
     let project: ProjectModel
-    /// At the inset and spacing the search field's accessory has (measured).
     private static let inset: (side: CGFloat, below: CGFloat) = (10, 9)
 
     var body: some View {
         list
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
-            // Usages aren't the query's matches, which Replace All would replace.
             .safeAreaBar(edge: .top, spacing: 0) {
                 Group {
                     if let usages = project.search.usages {
@@ -43,7 +40,6 @@ struct SearchResults: View {
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
     }
 
-    /// Under the search field, as Xcode's Find navigator in Replace mode.
     private var replaceBar: some View {
         HStack {
             SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
@@ -98,8 +94,6 @@ struct SearchResults: View {
 }
 
 extension View {
-    /// The project's search as its query changes, once typing pauses, as each search reads every file. VoiceOver hears the
-    /// count, as it does the PDF's find count.
     func searching(_ project: ProjectModel) -> some View {
         task(id: project.search.asked) {
             if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }

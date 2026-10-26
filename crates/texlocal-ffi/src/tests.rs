@@ -1,5 +1,3 @@
-//! Round trips through the C ABI exactly as a native host drives it.
-
 use std::path::Path;
 use std::ptr;
 use std::sync::mpsc;
@@ -43,7 +41,6 @@ unsafe fn source_call(source: *mut TlSource, command: &str, args: Value) -> Opti
     unsafe { take_json(tl_source_call(source, c(command).as_ptr(), args.as_ptr())) }
 }
 
-/// The answer, waited for. The sink is leaked: `done` may still be returning from its send.
 fn call_raw(handle: *const TlHandle, command: &str, args: Option<&str>) -> Value {
     let args = args.map(c);
     let args = args.as_ref().map_or(ptr::null(), |a| a.as_ptr());
@@ -59,7 +56,6 @@ fn call(handle: *const TlHandle, command: &str, args: Value) -> Value {
 
 extern "C" fn ignore(_ctx: *mut c_void, _json: *const c_char) {}
 
-/// The service over `data`, telling `listener` its events, holding a blank project "P".
 fn open(data: &Path, listener: Done, ctx: *mut c_void) -> *mut TlHandle {
     let data = c(data.to_str().unwrap());
     let handle = unsafe { tl_open(data.as_ptr(), Some(listener), ctx) };
@@ -121,8 +117,6 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let maths = source_call(source, "math_at", json!({ "caret": 1 }));
         assert_eq!(maths, Some(Value::Null), "é isn't maths");
         assert_eq!(source_call(source, "unknown", json!({})), None);
-        // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them, so the edit lands with
-        // the editor's length; past the text, it lands at its end.
         edit(source, 99, 99, b"\xff\0c");
         assert_eq!(text_of(source), "é \n\\emph{x}\u{fffd}\0c");
         tl_source_free(source);
@@ -138,13 +132,10 @@ fn syntax_commands_round_trip_through_the_c_abi() {
     assert!(unsafe { tl_syntax_call(ptr::null(), c("{}").as_ptr()) }.is_null());
 }
 
-/// A session's document source edits the session's document: a save writes its edits, it
-/// answers the version a replace is made against, and shown again it keeps no typing state.
 #[test]
 fn a_session_documents_source_is_the_sessions_document() {
     let dir = tempfile::tempdir().unwrap();
     let (sink, events) = mpsc::channel();
-    // The handle outlives the test, as the app's does, and may tell its listener after it.
     let handle = open(dir.path(), collect, context(Box::leak(Box::new(sink))));
     let session = open_main(handle);
     let typed = |at: u32, text: &str| json!({ "selection": { "start": at, "length": 0 }, "text": text, "autoPair": true });
@@ -205,7 +196,6 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     let dir = tempfile::tempdir().unwrap();
     let handle = open(dir.path(), ignore, ptr::null_mut());
     let (sink, answers) = mpsc::channel();
-    // The handle outlives the test, as the app's does, and may call `done` after it.
     let sink = Box::leak(Box::new(sink));
     let seven = json!({ "id": "P", "session": 7 });
     call_async(handle, "session_open", seven, collect, context(sink));
@@ -224,7 +214,6 @@ fn a_session_takes_its_commands_in_the_order_they_were_sent_without_waiting() {
     }
 }
 
-/// As a host's continuation may, resumed on the thread that answered.
 #[test]
 fn a_session_commands_done_may_call_the_core() {
     extern "C" fn call_within(ctx: *mut c_void, _json: *const c_char) {

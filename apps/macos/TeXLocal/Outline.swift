@@ -1,9 +1,7 @@
-/// A heading with what nests under it (the session's `outline`'s `tree`); `foldKey` names its fold in the project's saved state.
 nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     let item: OutlineItem
     let children: [OutlineNode]?
     let foldKey: String
-    /// Its prose and its subheadings', to the next heading at its level or above.
     let words: Int
 
     var id: Int { item.id }
@@ -20,8 +18,6 @@ nonisolated struct OutlineNode: Identifiable, Equatable, Decodable, Sendable {
     }
 }
 
-/// A heading by its place in the outline: its command without the backslash, its level's name, and its title
-/// ("Untitled Section" for one with none).
 nonisolated struct OutlineItem: Identifiable, Hashable, Decodable, Sendable {
     let id: Int
     let command, level, title: String

@@ -1,6 +1,3 @@
-//! Builds run for real by stub TeX tools on the PATH: shell scripts, so Unix
-//! only, as CI runs these on macOS.
-
 use std::cell::Cell;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -60,7 +57,6 @@ fn in_flight(service: &Arc<Service>, root: &Path) -> JoinHandle<CompileResult> {
     tokio::spawn(async move { compile(&service, &root).await })
 }
 
-/// Waits up to five seconds for a stub to make `path`, or fails saying `what` it didn't do.
 async fn appears(path: &Path, what: &str) {
     tokio::time::timeout(Duration::from_secs(5), async {
         while !path.exists() {
@@ -71,7 +67,6 @@ async fn appears(path: &Path, what: &str) {
     .unwrap_or_else(|_| panic!("{what}"));
 }
 
-/// Ten seconds is long past any kill, and well short of a stub's sleep.
 fn promptly(started: Instant) {
     let took = started.elapsed();
     assert!(took < Duration::from_secs(10), "took {took:?}");
@@ -110,8 +105,6 @@ async fn an_incremental_no_op_keeps_the_existing_warnings() {
     assert_eq!(second.warnings.len(), 1);
 }
 
-/// latexmk's record (.fdb_latexmk) stays after a good run and goes with a
-/// failed one, so the next run starts afresh.
 #[tokio::test]
 async fn latexmks_record_is_kept_by_a_good_run_and_forgotten_by_a_failed_one() {
     for (end, kept) in [
@@ -148,8 +141,6 @@ async fn outputs_a_run_did_not_write_are_not_reported_as_its_own() {
 async fn a_timed_out_automatic_build_is_killed_and_reported_failed_with_the_output_it_wrote() {
     let (_dir, service, root) = setup("echo 'Running pdflatex'\ntouch printed\nsleep 20\n");
     let started = Instant::now();
-    // Once the stub has printed, tokio's clock jumps to the build's time limit: moved, as it
-    // doesn't move itself while the build's exit is awaited on a blocking thread.
     let (project, path) = (Project::in_folder(&root), stubs(&service));
     let auto = service.compile.compile(&project, &path, true);
     let (result, ()) = tokio::join!(auto, async {
@@ -170,7 +161,6 @@ async fn a_timed_out_automatic_build_is_killed_and_reported_failed_with_the_outp
     promptly(started);
 }
 
-/// Asked for, a build runs past the automatic one's time limit until it ends.
 #[tokio::test]
 async fn a_build_asked_for_has_no_time_limit() {
     let (_dir, service, root) = setup(
@@ -187,14 +177,12 @@ async fn a_build_asked_for_has_no_time_limit() {
 
 #[tokio::test]
 async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
-    // latexmk has exited but a background child still holds stdout open: the compile answers after a short drain grace.
     let started = Instant::now();
     let build = built("sleep 30 &\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
     assert!(build.await.ok);
     promptly(started);
 }
 
-/// An unchanged compile lets latexmk skip the engine; builds compile past errors unless the project stops on the first; -norc is dropped only for a trusted project; the user's rc comes before every option it could override; the glossary rules are given either way.
 #[tokio::test]
 async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     let (_dir, service, root) =
@@ -234,8 +222,6 @@ async fn latexmk_is_given_the_arguments_the_settings_call_for() {
     }
 }
 
-/// A folder opened where it is builds beside the library, where `-outdir` says, writing
-/// nothing in the folder.
 #[tokio::test]
 async fn an_opened_folders_build_lands_in_its_store() {
     let (dir, service, _) = setup(
@@ -258,8 +244,6 @@ async fn an_opened_folders_build_lands_in_its_store() {
     assert_eq!(names_in(&folder), ["main.tex"]);
 }
 
-/// A failure the engine's log doesn't explain names its cause: bibtex's own
-/// log, else latexmk's summary of the step that failed, else the exit code.
 #[tokio::test]
 async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
     let quiet = "mkdir -p build\nprintf 'No errors here.\\n' > build/main.log\n";
@@ -284,7 +268,6 @@ async fn a_failure_the_engines_log_doesnt_explain_names_its_cause() {
     );
 }
 
-/// At the package's error that asks for it, else with no place when TeX refused a program.
 #[tokio::test]
 async fn a_build_failed_for_want_of_shell_escape_says_where_to_allow_it() {
     let log = |text| format!("mkdir -p build\nprintf '{text}\\n' > build/main.log\nexit 12\n");
@@ -335,8 +318,6 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     assert!(again.ok && !again.stopped);
     assert!(!stop("one"), "nothing is running");
 
-    // A rename refused leaves the build running; one that goes ahead stops it,
-    // and its record goes before the folder moves, where the build can't reach it.
     create_project(&service.data_dir, "taken", "blank", None).unwrap();
     let refused = service
         .call("rename_project", json!({ "id": "two", "name": "taken" }))
@@ -392,10 +373,8 @@ extern "C" fn forked() {
     FORKS.with(|forks| forks.set(forks.get() + 1));
 }
 
-/// A forked child of a multithreaded process can crash before its exec, so a missing latexmk is reported without starting anything.
 #[tokio::test]
 async fn tools_report_their_version_and_start_by_posix_spawn_never_a_fork() {
-    // SAFETY: the handler only counts, in the parent, after a fork.
     assert_eq!(unsafe { libc::pthread_atfork(None, Some(forked), None) }, 0);
     let before = FORKS.with(Cell::get);
     let (_dir, service, root) = setup("echo 'Latexmk, John Collins, Version 4.85'\nexit 0\n");

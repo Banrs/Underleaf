@@ -3,7 +3,6 @@ import os
 import TeXLocalCore
 
 nonisolated struct CoreError: LocalizedError {
-    /// What the app may act on (docs/core-api.md, Errors).
     enum Kind: String, Decodable { case invalid, denied, notFound, conflict, unfit, unavailable, `internal` }
 
     let message: String
@@ -11,9 +10,6 @@ nonisolated struct CoreError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The Rust core (docs/core-api.md). Commands answer on a core thread (`tl_call_async`), so nothing waits on the main actor,
-/// and a session takes them in the order sent. Events are decoded on the core's thread and reach their session's observer
-/// on the main actor in order.
 final class Core {
     static let shared = Core()
 
@@ -43,9 +39,6 @@ final class Core {
 
     func reopen() { if handle == nil { handle = Self.open() } }
 
-    // MARK: - Commands
-
-    /// A value JSON can't hold (a NaN) is a fault: JSONSerialization would raise an exception `try` can't catch.
     private func prepared(_ command: String, _ args: [String: any Sendable]) throws -> (OpaquePointer, String) {
         guard let handle else { throw Self.unavailable }
         guard JSONSerialization.isValidJSONObject(args) else { throw Self.fault(command, "Arguments that aren't JSON") }
@@ -57,8 +50,6 @@ final class Core {
         init(_ take: @escaping @Sendable (Data) -> Void) { self.take = take }
     }
 
-    /// Nonisolated, so the C callback formed here is too: one formed in a main-actor context would be taken as the main
-    /// actor's and trap on the core's thread. The envelope, valid only during the callback, is copied.
     private nonisolated static func start(_ handle: OpaquePointer, _ command: String, _ json: String,
                                           _ answered: @escaping @Sendable (Data) -> Void) {
         let context = Unmanaged.passRetained(Answer(answered)).toOpaque()
@@ -72,7 +63,6 @@ final class Core {
         }
     }
 
-    /// An optional `T` takes a null answer.
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let answer: Result<T, CoreError>
 
@@ -107,7 +97,6 @@ final class Core {
         return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
-    /// Sent before this first suspends, so a session takes it in the order called, beside `send`'s.
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
         let (handle, json) = try prepared(command, args)
         return try await withCheckedThrowingContinuation { done in
@@ -121,7 +110,6 @@ final class Core {
         _ = try await call(command, args, as: Ignored?.self)
     }
 
-    /// Not waited for: a failure is only logged.
     func send(_ command: String, _ args: [String: any Sendable]) {
         let logged = { @Sendable (error: any Error) in
             Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -136,15 +124,10 @@ final class Core {
         }
     }
 
-    /// The session's open document at `path`, for the editor; nil if it isn't open.
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
-
-    // MARK: - Events
 
     private nonisolated static let events = AsyncStream.makeStream(of: (UInt64, SessionEvent).self)
 
-    /// The text, valid only during the call, is decoded on the core's thread, and Live Preview's PDF read there, so its
-    /// page reaches the main actor ready to draw. Nonisolated for the C callback, as `start`'s.
     private nonisolated static let listener: TlCallback = { _, json in
         let event = Data(bytes: json, count: strlen(json))
         do {
@@ -158,7 +141,6 @@ final class Core {
     private var observers: [UInt64: (SessionEvent) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    /// A number for a session about to open: its first events can come before `session_open` has answered.
     func observe(_ observer: @escaping (SessionEvent) -> Void) -> UInt64 {
         numbered += 1
         observers[numbered] = observer

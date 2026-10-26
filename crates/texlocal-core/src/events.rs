@@ -1,7 +1,3 @@
-//! What the core tells its host unasked: one JSON object per event, handed to one listener in
-//! order on the hub's own thread, so a slow host never holds a session up. docs/core-api.md lists
-//! the events.
-
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 
@@ -11,26 +7,21 @@ pub type Listener = Box<dyn Fn(&Value) + Send>;
 
 pub(crate) enum Queued {
     Event(Value),
-    /// Done once the listener has had the events before it: an answer that follows them.
     Then(Box<dyn FnOnce() + Send>),
 }
 
 pub struct Hub {
-    /// Each session sends on its own clone.
     pub(crate) queue: mpsc::Sender<Queued>,
 }
 
 impl Hub {
     pub fn new(listen: Listener) -> Self {
         let (queue, events) = mpsc::channel::<Queued>();
-        // A hub that can't deliver would lose every event unseen, so a failed
-        // spawn panics, and tl_open turns that into its NULL.
         std::thread::Builder::new()
             .name("texlocal-events".into())
             .spawn(move || {
                 for queued in events {
                     match queued {
-                        // A host's panic must not end delivery for the rest.
                         Queued::Event(event) => {
                             let _ = catch_unwind(AssertUnwindSafe(|| listen(&event)));
                         }

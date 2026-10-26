@@ -1,6 +1,3 @@
-//! The commands outside a project session, which every host forwards here, and the lock that
-//! takes a project's edits one at a time.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -28,19 +25,11 @@ pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
     pub texpresso: Arc<texpresso::Manager>,
-    /// Edits, settings read/modify/write, renames, deletes and the list of opened folders change
-    /// one at a time.
     pub(crate) edits: Mutex<()>,
-    /// Whether the last look for TeX (`status`) found it: sessions build by themselves only
-    /// then, and one waiting builds once it is. None found before the first look.
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
-    /// One for each store, so two sessions of a project take turns with it: one's pruning would
-    /// remove what the other has stored for a snapshot not yet written.
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
 }
 
-/// The commands outside a session, by the name a host sends (docs/core-api.md), with their
-/// arguments: a table, one a line.
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
@@ -71,7 +60,6 @@ enum Command {
     Unknown,
 }
 
-/// With `live`, the live preview of the host's project session (`session`) syncs, not the build.
 #[derive(Deserialize)]
 struct Live {
     #[serde(default)]
@@ -97,8 +85,6 @@ impl Service {
         Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
     }
 
-    /// Stop every compile and live preview, as a host does when it quits.
-    /// Compiles run in their own process groups, so nothing else stops them.
     pub fn kill_all(&self) {
         self.compile.kill_all();
         self.texpresso.kill_all();
@@ -108,7 +94,6 @@ impl Service {
         Project::find(&self.data_dir, id)
     }
 
-    /// The live session's number and its PDF, the one shown, when the live preview syncs.
     fn live(&self, live: Live) -> Result<Option<(u64, PathBuf)>, CoreError> {
         if !live.live {
             return Ok(None);
@@ -119,7 +104,6 @@ impl Service {
         Ok(Some((session, self.texpresso.live_pdf(session)?)))
     }
 
-    /// Finds the project once the lock is held, so a rename or delete that held it first is seen.
     pub(crate) fn with_project<T>(
         &self,
         id: &str,
@@ -146,8 +130,6 @@ impl Service {
     }
 
     pub async fn call(&self, name: &str, args: Value) -> Result<Value, CoreError> {
-        // A build or live preview would go on in a folder moved or taken off the list, and
-        // report back from the old path.
         let stop = |root: &Path| {
             self.compile.stop(root);
             self.texpresso.stop(root)
@@ -173,7 +155,6 @@ impl Service {
                 out(self.status().await)
             }
             Command::ListProjects => projects::list_projects(&self.data_dir).and_then(out),
-            // The project made is answered, so its `id` is the name it got.
             Command::CreateProject {
                 name,
                 template,
@@ -246,7 +227,6 @@ impl Service {
                 };
                 zipexport::export_zip(&project.root, &dest, &added).and_then(out)
             }
-            // On quit, while a compile may be in flight, stop the latexmk trees that would outlive the app.
             Command::KillAll => {
                 self.kill_all();
                 Ok(Value::Null)
@@ -276,8 +256,6 @@ pub(crate) fn unknown() -> CoreError {
     CoreError::not_found("Unknown command")
 }
 
-/// A command's arguments as the type that takes them; with `name` as their `call`, an enum of
-/// commands tagged by it reads which it is (`command` is some commands' argument).
 pub(crate) fn parse<T: DeserializeOwned>(name: &str, mut args: Value) -> Result<T, CoreError> {
     let object = args
         .as_object_mut()
@@ -286,7 +264,6 @@ pub(crate) fn parse<T: DeserializeOwned>(name: &str, mut args: Value) -> Result<
     T::deserialize(args).map_err(|err| CoreError::bad_request(format!("Invalid arguments: {err}")))
 }
 
-/// A command's answer as JSON, which every answer of the core's serializes to.
 pub(crate) fn out(value: impl Serialize) -> Result<Value, CoreError> {
     Ok(json!(value))
 }

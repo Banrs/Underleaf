@@ -5,7 +5,6 @@ struct SourceColumn: View {
     let project: ProjectModel
 
     var body: some View {
-        // Under previews, so it keeps its text and scroll.
         ZStack {
             EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
@@ -35,7 +34,6 @@ private struct EditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
     func updateNSView(_ view: NSScrollView, context: Context) {
-        // A new size only: setting one builds the font.
         if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
         editor.textView.fontName = fontName
         editor.textView.showsLineNumbers = lineNumbers

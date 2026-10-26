@@ -1,7 +1,3 @@
-//! A persistent stack: a copy is one pointer, and copies share their frames,
-//! so the highlighter and the maths scan keep their state at many places in
-//! a text for no more than a pointer each, however deep it is.
-
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -88,8 +84,6 @@ impl<T> Stack<T> {
     }
 }
 
-/// Unlinked a frame at a time: dropping a deep stack recursively would
-/// overflow the thread's own.
 impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut next = self.0.take();

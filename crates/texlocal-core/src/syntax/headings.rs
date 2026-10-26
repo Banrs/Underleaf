@@ -1,5 +1,3 @@
-//! Section levels available in the main document's class.
-
 use serde::Serialize;
 
 use super::SourceDocument;
@@ -18,7 +16,6 @@ impl SourceDocument {
         }
         let units = &self.text.units;
         let (mut scanner, mut first) = (Scanner::default(), First(None));
-        // The class comes before the document, which isn't read for it.
         while first.0.is_none() && scanner.i < units.len() {
             scanner.run(units, scanner.i + SPACING, &[], &mut first);
         }

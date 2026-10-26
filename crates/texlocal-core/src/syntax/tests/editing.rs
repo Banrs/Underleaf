@@ -1,6 +1,3 @@
-//! The editing commands' answers, case by case: maths at a place, the maths
-//! to preview, completions, headings, blocks, and comments and indentation.
-
 use super::{cited, units};
 use crate::analyze::Facts;
 use crate::syntax::{Insertion, SourceDocument, Symbols, range, render};
@@ -25,8 +22,8 @@ fn math_mode_is_known_at_a_place() {
         ("Let $x$| be", false),
         ("$a$ and $b$ and |", false),
         ("$a$ and $b$ and $|", true),
-        ("$|$", true), // an empty pair, the caret between
-        ("a $x$$|y$", true), // two inline spans back to back
+        ("$|$", true),
+        ("a $x$$|y$", true),
         ("a $x$$y$ |", false),
         ("$$|$$", true),
         ("$$ x + |y $$", true),
@@ -36,27 +33,27 @@ fn math_mode_is_known_at_a_place() {
         ("\\(x\\)|", false),
         ("\\[\n  a = |b\n\\]", true),
         ("\\[ a = b \\] |", false),
-        ("one\\\\[2pt] |two", false), // a line break with a length is not display maths
+        ("one\\\\[2pt] |two", false),
         ("\\begin{itemize}\n\\item |\n\\end{itemize}", false),
         ("\\begin{align}\n\\begin{cases} x |\\end{cases}\n\\end{align}", true),
         ("\\begin{equation}\n\\begin{cases} x \\end{cases} |\n\\end{equation}", true),
-        ("\\begin{align}\na &= b \\\\\nc &= |d\n\\end{align}", true), // \\ does not end it
+        ("\\begin{align}\na &= b \\\\\nc &= |d\n\\end{align}", true),
         ("$x \\text{ for |all } y$", false),
         ("$x \\text{ for all } |y$", true),
-        ("$x \\text{ if $|y$ } z$", true), // maths inside the text
+        ("$x \\text{ if $|y$ } z$", true),
         ("\\begin{align} a \\intertext{so |} b \\end{align}", false),
-        ("\\textbf{bold |}", false), // a text command in text
+        ("\\textbf{bold |}", false),
         ("It costs \\$5 and |", false),
         ("It costs \\$5 and \\$6 |", false),
-        ("$ \\$ |$", true), // an escaped $ inside maths
-        ("\\\\$|x$", true), // an escaped backslash, then a real $
+        ("$ \\$ |$", true),
+        ("\\\\$|x$", true),
         ("% a $ in a comment\n|", false),
         ("text % $\n|", false),
         ("$x % comment $\n|y$", true),
-        ("100\\% $|x$", true), // an escaped percent is not a comment
+        ("100\\% $|x$", true),
         ("% \\begin{equation}\n|", false),
         ("\\verb+$+ and |", false),
-        ("\\verb+$|+ x", false), // inside \verb
+        ("\\verb+$|+ x", false),
         ("\\verb*+x+ $a|", true),
         ("a \\verb+x\n$y|", true),
         ("\\verb\n$y|", true),
@@ -124,7 +121,6 @@ fn the_maths_to_preview_is_found_around_a_place() {
     assert_eq!(found(&between), None);
 }
 
-/// Only those it uses, itself or through theirs, so one that RaTeX can't draw breaks no other.
 #[test]
 fn the_maths_previewed_draws_with_the_project_definitions_it_uses() {
     let preamble = "\\newcommand{\\R}{\\mathbb{R}} \\def\\RR{\\R^2} \\newcommand{\\broken}{\\frac{1}}\n\
@@ -263,11 +259,9 @@ fn comments_and_indentation_go_by_line() {
     let cases: [Case; 9] = [
         ("a\n  b\n\nc", "comment", &[(0, 8)], &[(0, 0, "% "), (2, 0, "% "), (7, 0, "% ")]),
         ("% a\n  %b\n", "comment", &[(0, 9)], &[(0, 2, ""), (6, 1, "")]),
-        // A selection that ends at a line's start leaves that line alone.
         ("a\nb", "comment", &[(0, 2)], &[(0, 0, "% ")]),
         ("a\n b\n", "indent", &[(0, 3), (5, 0)], &[(0, 0, "  "), (2, 0, "  "), (5, 0, "  ")]),
         ("   a\nb", "outdent", &[(0, 6)], &[(1, 2, "")]),
-        // CRLF: the carriage return is no indentation, and an empty line is blank.
         ("a\r\n  \r\n b", "outdent", &[(0, 9)], &[(3, 2, ""), (7, 1, "")]),
         ("a\r\n\r\nb", "comment", &[(0, 6)], &[(0, 0, "% "), (5, 0, "% ")]),
         ("a\r\n\r\nb", "outdent", &[(0, 6)], &[]),

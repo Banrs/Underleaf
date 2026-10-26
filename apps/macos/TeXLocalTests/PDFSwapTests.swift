@@ -3,7 +3,6 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-/// The pane never flashes empty, as a new document would, and nothing on the pages leads back to the old ones.
 struct PDFSwapTests {
     private func document(_ pages: [String]) throws -> PDFDocument {
         try textPDF(pages.map { String(repeating: $0 + " ", count: 200) })
@@ -21,7 +20,6 @@ struct PDFSwapTests {
         }
     }
 
-    /// In an on-screen window, unseen: PDFKit draws pages, and gives a page its overlay, which a live page is drawn over, only there.
     private func onScreen(_ controller: PDFController) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -39,7 +37,6 @@ struct PDFSwapTests {
         return (0..<document.pageCount).map { document.page(at: $0)?.string?.components(separatedBy: " ").first ?? "" }
     }
 
-    /// A new document would show only PDFKit's background until its pages draw; the pages go into the one showing instead.
     @Test func aRebuildNeverShowsAnEmptyPane() async throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)
@@ -47,7 +44,6 @@ struct PDFSwapTests {
         controller.show(try document(["first"]))
         try await waitUntil(timeout: .seconds(5)) { paper(view) > 0 }
         let shown = try #require(view.document)
-        // Back to back, as live preview writes them while typing.
         for index in 0..<3 {
             controller.show(try document(["rebuild\(index)"]))
             #expect(view.document === shown && text(view) == ["rebuild\(index)"] && controller.pageCount == 1)
@@ -72,7 +68,6 @@ struct PDFSwapTests {
         #expect(text(view) == ["a", "b2", "c3"] && controller.pageCount == 3)
         controller.showLive(try document(["a4", "b4", "c4", "d4", "e4"]), changed: [3, 4], complete: true)
         #expect(text(view) == ["a", "b2", "c3", "d4", "e4"] && controller.pageCount == 5)
-        // A forward search under way still lands: these are the pages it was asked about.
         #expect(controller.shownVersion == version && shown.page(at: 0) === first)
         controller.showLive(try document(["x"]), changed: nil, complete: true)
         #expect(text(view) == ["x"] && view.document === shown)
@@ -86,7 +81,6 @@ struct PDFSwapTests {
         #expect(text(view) == ["a2", "b2"] && view.document === shown)
         controller.showLive(try live(["a3", "b3"], changed: [1]))
         #expect(text(view) == ["a2", "b3"])
-        // A page past the document showing goes: the next document has it.
         controller.showLive(.page(LivePage(index: 2, page: try page("c"))))
         #expect(text(view) == ["a2", "b3"] && controller.pageCount == 2)
     }
@@ -94,13 +88,11 @@ struct PDFSwapTests {
     @Test func aLivePageWaitsForItsOwnRunsDocument() throws {
         let controller = showing(try document(["a", "b"])), view = controller.view
         func first(_ text: String) throws -> LiveRead { .page(LivePage(index: 0, page: try page(text))) }
-        // Not over the build's PDF. Out of a window, a page PDFKit's document takes at once.
         controller.showLive(try first("a1"))
         #expect(text(view) == ["a", "b"])
         controller.showLive(try live(["a2", "b2"], changed: [1]))
         controller.showLive(try first("a3"))
         #expect(text(view) == ["a3", "b2"])
-        // Nor over the last run's; and that run's unread document leaves the next run's first its own changes.
         controller.showLive(.document(nil))
         controller.endLiveRun()
         controller.showLive(try first("a4"))
@@ -126,20 +118,17 @@ struct PDFSwapTests {
         view.setCurrentSelection(selection, animate: false)
         controller.showLive(try page("gamma"), at: inView ? 0 : 2)
         if inView {
-            // Over the page, which PDFKit's document still has as it was.
             #expect(view.hasLive(at: 0) && text(view) == ["alpha", "beta", "alpha"])
             #expect(view.currentSelection?.string == "beta" && controller.find.matches.count == 400)
             controller.showLive(try document(["gamma", "beta", "alpha"]), changed: [0], complete: true)
             #expect(text(view) == ["gamma", "beta", "alpha"] && view.document === shown)
         } else {
-            // Out of view, so PDFKit's document takes it at once.
             #expect(text(view) == ["alpha", "beta", "gamma"])
         }
         #expect(view.currentSelection?.string == "beta" && controller.find.matches.count == 200)
         try await waitUntil(timeout: .seconds(5)) { controller.find.query == "alpha" && view.highlightedSelections?.count == 200 }
         #expect(view.currentSelection?.string == "beta")
         if inView {
-            // The layer goes once PDFKit's own page has drawn beneath it.
             try await waitUntil(timeout: .seconds(5)) { !view.hasLive(at: 0) }
         } else {
             controller.showLive(try page("alpha"), at: 1)
@@ -155,13 +144,11 @@ struct PDFSwapTests {
         controller.showLive(try document(["a2", "b"]), changed: [0], complete: true)
         #expect(view.document === first && text(view) == ["a2", "b"])
         controller.wholeAt = 0
-        // TeX stopped short of the end: the pages past there aren't in its document.
         controller.showLive(try document(["a3"]), changed: [0], complete: false)
         #expect(view.document === first && text(view) == ["a3", "b"])
         let whole = try document(["a4", "b4"])
         controller.showLive(whole, changed: [0], complete: true)
         #expect(view.document === whole && text(view) == ["a4", "b4"])
-        // Counted from there on.
         controller.showLive(try document(["a5", "b4"]), changed: [0], complete: true)
         #expect(view.document === whole && text(view) == ["a5", "b4"])
         controller.wholeAt = 0
@@ -177,7 +164,6 @@ struct PDFSwapTests {
             let link = PDFAnnotation(bounds: CGRect(x: 72, y: 72, width: 100, height: 20), forType: .link, withProperties: nil)
             link.destination = PDFDestination(page: target, at: CGPoint(x: 0, y: 792))
             page.addAnnotation(link)
-            // As a build writes it, read back.
             let data = try #require(source.dataRepresentation())
             return try #require(PDFDocument(data: data))
         }

@@ -5,7 +5,6 @@ import SwiftUI
 final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     static let maxMatches = 5000
     static let debounce: Duration = .milliseconds(200)
-    /// Past Live Preview's gap between keys, so the search runs again as the typing pauses.
     private static let rerunDelay: Duration = .milliseconds(350)
 
     private static func normalize(_ query: String) -> String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -17,7 +16,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         return String(localized: "\(index) of \(count)")
     }
 
-    /// The find text every app shares, so ⌘E in one pane and ⌘G in the other find the same; the tests use their own.
     static var board = NSPasteboard(name: .find)
 
     static var shared: String? {
@@ -31,10 +29,8 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     private let view: SyncPDFView
     var isOpen = false { didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } } }
-    /// What the field holds, which can be ahead of `query`.
     var text = ""
     let field = FieldHandle()
-    /// The query `matches` are for.
     private(set) var query = ""
     private(set) var matches: [PDFSelection] = []
     private(set) var matchIndex = 0
@@ -51,8 +47,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         running?.document.cancelFindString()
     }
 
-    // MARK: - Searching
-
     func typed() {
         guard Self.normalize(text) != running?.query ?? query else { return }
         Self.shared = Self.normalize(text)
@@ -62,19 +56,16 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     func search(_ value: String, keepingPlace: Bool = false) {
         guard let document = view.document else { return }
         let query = Self.normalize(value)
-        // A rebuild can start this query before the field's typing delay ends.
         guard running?.document !== document || running?.query != query else { return }
         cancel()
         guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
         document.delegate = self
         running = (document, query, keepingPlace, [])
-        // As Safari's and Mail's Find: "Godel" finds "Gödel".
         document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
     }
 
     func rerun() { if isOpen { search(text, keepingPlace: true) } }
 
-    /// Cancelling posts its end at once, unheard as `running` is cleared first.
     func cancel() {
         rerunning?.cancel()
         let document = running?.document
@@ -88,7 +79,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         (query, matches, matchIndex, limited, startFrom) = ("", [], 0, false, nil)
     }
 
-    // On the main thread, as PDFKit posts them.
     func documentDidFindMatch(_ note: Notification) {
         guard note.object as? PDFDocument === running?.document,
               let match = note.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection else { return }
@@ -112,11 +102,9 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
         if matches.isEmpty { view.clearSelection() }
-        // Use Selection for Find stays at the selection, which is its match; so does a search again over live pages.
         if !keepingPlace || view.currentSelection == nil { select(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
     }
 
-    /// Their matches go at once, and the search runs again once pages stop coming: a burst of keys costs one search.
     func pagesReplaced(_ gone: Set<PDFPage>) {
         let kept = matches.filter { !$0.pages.contains(where: gone.contains) }
         if kept.count != matches.count {
@@ -129,8 +117,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         cancel()
         restart(&rerunning, after: Self.rerunDelay) { [weak self] in self?.rerun() }
     }
-
-    // MARK: - Where the next match is
 
     private typealias Position = (page: Int, down: CGFloat, across: CGFloat)
 
@@ -152,8 +138,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         default: return places.lastIndex { $0.map { $0 < anchor } ?? false } ?? matches.count - 1
         }
     }
-
-    // MARK: - The menus' find
 
     var canNext: Bool { view.document != nil && (!matches.isEmpty || !(Self.shared ?? "").isEmpty) }
 
@@ -192,7 +176,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     private func select(scrolling: Bool = true) {
         guard matches.indices.contains(matchIndex), let match = matches[matchIndex].copy() as? PDFSelection else { return }
-        // A copy without Find's colour, which PDFKit draws as the selection, over the mark every match has.
         match.color = nil
         view.setCurrentSelection(match, animate: scrolling && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         if scrolling { view.scrollSelectionToVisible(nil) }

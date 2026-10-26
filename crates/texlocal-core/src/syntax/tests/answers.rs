@@ -1,6 +1,3 @@
-//! Answers that read the text from its start are the same however they are reached: resumed from kept points,
-//! after edits that forget some, or on a document read fresh.
-
 use std::fmt::Debug;
 
 use crate::syntax::scans::SPACING;
@@ -206,8 +203,8 @@ fn a_kept_points_names_follow_an_edit_past_it() {
         "word ".repeat(1200)
     );
     let mut doc = SourceDocument::new(&source);
-    assert!(code(&mut doc, 9_000, 10).is_empty()); // keeps the points at 4096 and 8192
-    doc.edit(5_000, 1, ""); // the closing brace goes: the argument runs on
+    assert!(code(&mut doc, 9_000, 10).is_empty());
+    doc.edit(5_000, 1, "");
     let mut fresh = SourceDocument::new(&doc.text());
     assert_eq!(code(&mut doc, 9_000, 10), code(&mut fresh, 9_000, 10));
     assert_eq!(code(&mut doc, 9_000, 10), [range(6, 9_004)]);
@@ -226,12 +223,9 @@ fn a_kept_points_names_follow_an_edit_past_it() {
 
 #[test]
 fn a_point_that_read_past_the_question_is_not_resumed_from() {
-    // Reading the line feed before 4096 looked at the one after, which made
-    // it a blank line and closed the $: but the text before 4096 alone
-    // leaves the $ open, as the caret there sees it.
     let source = format!("${}\n\n", "a".repeat(4094));
     let mut doc = SourceDocument::new(&source);
-    code(&mut doc, 4096, 0); // keeps the points up to 4096
+    code(&mut doc, 4096, 0);
     let symbol = doc.insert_symbol("\\alpha", range(4096, 0));
     assert_eq!(symbol.edit.text, "\\alpha");
 }

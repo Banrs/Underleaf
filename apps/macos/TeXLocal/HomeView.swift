@@ -7,7 +7,6 @@ struct HomeView: View {
     @FocusState private var listFocused: Bool
     @FocusState private var searching: Bool
     @State private var query = ""
-    /// Still at work 300 ms on: a quick open or copy shows no spinner.
     @State private var slowOpening: String?
     @State private var slowImports: [URL] = []
 
@@ -40,10 +39,8 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            // No section header: the list pins its first one with a rule the window's width.
             VStack(alignment: .leading, spacing: 8) {
                 Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
-                // The pages under the header and level with the projects' icons; the hover shapes reach past them.
                 templates.padding(.horizontal, -TemplateButtonStyle.edge)
             }
             .selectionDisabled()
@@ -56,7 +53,6 @@ struct HomeView: View {
                     ProjectLabel(detail: Text("Opening…"), progress: "Opening") { Text(url.lastPathComponent).font(.headline) }
                 }
                 ForEach(shown) { project in
-                    // Its own view, so a row redraws only as its rename starts or ends.
                     ProjectRow(project: project, working: project.id == app.opening && (project.id == slowOpening || copied),
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
@@ -89,7 +85,6 @@ struct HomeView: View {
         }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in shown.first { $0.id == id }.map(actions) }
-        // The latest, as Xcode's welcome window selects it, so Return opens it again.
         .onChange(of: app.projectsLoaded, initial: true) { if selection == nil { selection = app.projects.first?.id } }
     }
 
@@ -99,7 +94,6 @@ struct HomeView: View {
                     moveToTrash: project.opened ? nil : { Task { await app.delete(project) } })
     }
 
-    /// Wrapping, so no card is cut off in a narrow window; 4 pt apart, so the hover shapes don't touch (HIG, Buttons).
     private var templates: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
                   alignment: .leading, spacing: 4) {
@@ -118,7 +112,6 @@ struct HomeView: View {
 
     private var copying: [URL] { query.isEmpty ? slowImports.filter(app.importing.contains) : [] }
 
-    /// A copy shown has ended: the project opening is at work in its own row.
     private var copied: Bool { slowImports.contains { !app.importing.contains($0) } }
 
     private var shown: [ProjectInfo] {
@@ -135,7 +128,6 @@ struct HomeView: View {
         }
     }
 
-    /// In the section, not over the list, so the templates stay in view.
     @ViewBuilder private var noProjects: some View {
         if !query.isEmpty {
             ContentUnavailableView.search(text: query)
@@ -168,7 +160,6 @@ private struct ProjectRow: View {
         }
     }
 
-    /// An opened folder's path, as Xcode's welcome window lists projects.
     private var detail: Text {
         guard project.opened else {
             return Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))")
@@ -194,7 +185,6 @@ private struct ProjectLabel<Name: View>: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
             } icon: {
-                // Grey, as the detail: the hierarchical style would tint it the accent.
                 Image(systemName: symbol)
                     .font(.title2)
                     .foregroundStyle(dimmed ? Color(nsColor: .tertiaryLabelColor) : .secondary)
@@ -209,10 +199,8 @@ private struct ProjectLabel<Name: View>: View {
     }
 }
 
-/// A drawing of the template's first page with its name under it.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    /// A US Letter page, 120 pt wide, its corner drawn to look like paper.
     private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
     static let width = page.width + 2 * TemplateButtonStyle.edge
     private static let corner: CGFloat = 6
@@ -223,11 +211,9 @@ private struct TemplateCard: View {
         VStack(spacing: 8) {
             PagePreview(template: template)
                 .frame(width: Self.page.width, height: Self.page.height)
-                // White paper in either appearance, dimmed a little in dark mode.
                 .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1), in: paper)
                 .overlay { paper.strokeBorder(.separator) }
                 .environment(\.colorScheme, .light)
-                // The card reads as its name ("Blank", not "Add, Blank").
                 .accessibilityHidden(true)
             Text(template.title)
         }
@@ -235,8 +221,6 @@ private struct TemplateCard: View {
     }
 }
 
-/// An image button (HIG, Buttons): no border at rest, 10 pt to the clickable edge, a fill under the pointer that deepens
-/// while pressed.
 private struct TemplateButtonStyle: ButtonStyle {
     static let edge: CGFloat = 10
     @State private var hovered = false

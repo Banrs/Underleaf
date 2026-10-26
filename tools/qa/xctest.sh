@@ -1,10 +1,7 @@
 #!/bin/zsh
-# xctest.sh <repo root> <derived data dir> [xcodebuild args after `test`…]: the native tests of one checkout. One run
-# at a time across the whole session (the test host shares a data folder), so it waits its turn.
 S=${QA_SCRATCH:?export QA_SCRATCH=<scratchpad>, set up by tools/qa/setup.sh}; R=${1:A}; D=$2; shift 2
 mkdir -p $S/locks $S/logs
 while ! mkdir $S/locks/xctest 2>/dev/null; do
-  # A run that was killed leaves its lock: one older than 25 minutes is taken over.
   if [[ -n $(find $S/locks/xctest -maxdepth 0 -mmin +25 2>/dev/null) ]]; then rmdir $S/locks/xctest 2>/dev/null; else sleep 4; fi
 done
 trap 'rmdir $S/locks/xctest 2>/dev/null' EXIT

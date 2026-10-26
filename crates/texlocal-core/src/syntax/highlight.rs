@@ -1,23 +1,14 @@
-//! Highlighting by the rules of CodeMirror's stex mode, except where stex reads TeX otherwise than TeX does (\verb
-//! and verbatim are plain, a `%` after a number starts a comment, any letter in maths is a letter).
-//! Lines keep their start states, so an edit re-reads only from its line.
-
 use super::catalog::CATALOG;
 use super::scan::blank_line;
 use super::stack::Stack;
 use super::{NAME, Text, ascii, letter};
 
-/// One per colour a theme has, numbered in the C ABI as a theme's colours are ordered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HighlightKind {
-    /// `\command`, `\begin`, `\end`, escapes.
     Command,
-    /// Environment, label, reference, citation, file and package-option names; numbers outside maths.
     Argument,
-    /// Maths' delimiters, letters and numbers.
     Maths,
     Comment,
-    /// A stray closing brace, or what maths can't hold.
     Invalid,
 }
 
@@ -113,7 +104,6 @@ fn styled(commands: &Stack<Open>) -> Option<Command> {
 
 use HighlightKind::*;
 
-/// The names the rest of the core reads as names (catalog.json), not prose.
 fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
     let mut buf = [0; NAME];
     let name = ascii(name, &mut buf);
@@ -133,7 +123,6 @@ fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
     }
 }
 
-/// A blank line ends everything open (stex's blankLine) but a verbatim environment, which may hold one.
 fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, HighlightKind)) {
     if blank_line(line) {
         if !matches!(state.mode, Mode::Verbatim(_)) {
@@ -207,7 +196,6 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         open(&mut state.commands, &[]);
         None
     } else if is_digit(c) {
-        // Not stex's `%` too, which TeX reads as a comment's start.
         s.eat_while(|u| word(u) || u == b'.' as u16);
         Some(Argument)
     } else {
@@ -221,8 +209,6 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
 }
 
 fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<HighlightKind> {
-    // Any space, as stex has it: TeX reads one it doesn't skip (a no-break
-    // space is `~`) as no error either.
     if s.eat_while(|u| char::from_u32(u.into()).is_some_and(char::is_whitespace)) {
         return None;
     }
@@ -253,7 +239,6 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
         s.pos += 1;
         return None;
     }
-    // \d+\.\d*|\d*\.\d+|\d+
     if is_digit(c) || (c == b'.' as u16 && next.is_some_and(is_digit)) {
         s.eat_while(is_digit);
         if s.peek() == Some(b'.' as u16) {
@@ -387,7 +372,6 @@ fn word(u: u16) -> bool {
     u < 128 && ((u as u8).is_ascii_alphanumeric() || u == b'_' as u16)
 }
 
-/// A command name's letters: [a-zA-Z@\xc0-\u1fff\u2060-\uffff].
 fn command_letter(u: u16) -> bool {
     u == b'@' as u16 || math_letter(u)
 }
@@ -442,7 +426,6 @@ mod tests {
             "$ Maths",
         ];
         assert_eq!(runs("$x^2 + \\alpha$"), expected);
-        // stex's own reading: a line break in \[ \] is an error.
         assert_eq!(runs("\\[ a \\\\ \\]")[2], "\\ Invalid");
     }
 
@@ -455,9 +438,8 @@ mod tests {
             .map(|h| (h.start, h.kind))
             .collect();
         assert_eq!(kinds, [(0, Maths), (3, Maths)]);
-        doc.edit(0, 0, "$$"); // "$$$$\nx…": opened and closed on line 1
+        doc.edit(0, 0, "$$");
         assert_eq!(doc.highlights(5, 1).len(), 0);
-        // A blank line may hold spaces, or a Windows line ending's return.
         for blank in ["\r", "  \t"] {
             let source = format!("$$ x\n{blank}\ny");
             assert_eq!(runs(&source), ["$$ Maths", "x Maths"]);
@@ -504,7 +486,6 @@ mod tests {
 
     #[test]
     fn unclosed_groups_cost_no_more_as_they_pile_up() {
-        // Each line opens a group nobody closes under a command with a rule: styling each word must not cost the groups' depth.
         const LINES: usize = 20_000;
         let source: String = (0..LINES)
             .map(|n| format!("{{ \\cite{{ line {n} word\n"))
@@ -518,6 +499,6 @@ mod tests {
         assert_eq!(runs.last().map(|r| r.kind), Some(Argument));
         let work = crate::syntax::stack::WORK.get();
         assert!(work <= 8 * LINES, "{work} frames for {LINES} lines");
-        drop(doc); // a deep stack drops without overflowing
+        drop(doc);
     }
 }

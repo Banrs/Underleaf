@@ -1,5 +1,3 @@
-//! What a project's files define and refer to, for completion and definitions.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -10,8 +8,6 @@ use crate::analyze::{Facts, Files};
 use crate::error::CoreError;
 pub use crate::syntax::Symbols;
 
-/// Their union over the project's .tex and .bib files, each read again only once it changes;
-/// one an editor has open from its text in `open`.
 pub fn scan_symbols(
     root: &Path,
     facts: &Files,
@@ -31,7 +27,6 @@ pub fn scan_symbols(
         Ok(true)
     })?;
     facts.keep(files.keys());
-    /// The first of each name, in the files' order.
     fn firsts<'a, T: Clone>(
         all: impl Iterator<Item = &'a T>,
         name: fn(&'a T) -> &'a str,

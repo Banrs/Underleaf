@@ -1,5 +1,3 @@
-//! Search across a project's text files, and replacing what is found in them.
-
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
@@ -16,16 +14,12 @@ use crate::analyze::Place;
 use crate::error::CoreError;
 use crate::{lf, lossy_string, newline};
 
-/// The largest file but a .tex or .bib that a search reads; a data set or log that size isn't
-/// where anyone looks.
 const SEARCH_FILE_MAX: u64 = 8 << 20;
 
 #[derive(Debug, Serialize)]
 pub struct SearchHit {
     pub file: String,
     pub line: u32,
-    /// Where the match starts in its line and how long it is, in UTF-16 units
-    /// of the line's own text, as an editor counts them.
     pub column: u32,
     pub length: u32,
     pub before: String,
@@ -51,8 +45,6 @@ pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
         .collect()
 }
 
-// Keep one folded character per original character so snippet offsets agree.
-// ASCII, most of a TeX file, folds without Unicode's tables.
 fn fold_into(s: &str, match_case: bool, out: &mut String) {
     out.clear();
     out.extend(s.chars().map(|c| match c {
@@ -62,9 +54,7 @@ fn fold_into(s: &str, match_case: bool, out: &mut String) {
     }));
 }
 
-/// What a search or a replace looks for.
 pub struct Query {
-    /// Folded as each line is.
     text: String,
     chars: usize,
     match_case: bool,
@@ -72,8 +62,6 @@ pub struct Query {
 }
 
 impl Query {
-    /// In any case unless `match_case`; with `whole_word`, only where no letter, digit or `_` is
-    /// on either side, as editors take a word.
     pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
         let mut folded = String::new();
         fold_into(text, match_case, &mut folded);
@@ -85,8 +73,6 @@ impl Query {
         }
     }
 
-    /// Each match in `line`, left to right and none inside another, as the chars it spans;
-    /// `folded` is room for the line in any case.
     fn in_line(&self, line: &str, folded: &mut String) -> Vec<Range<usize>> {
         let mut found = Vec::new();
         if self.text.is_empty() {
@@ -111,8 +97,6 @@ impl Query {
         found
     }
 
-    /// Every match in `text`: its line, from 1, and its column and length in UTF-16 units of
-    /// the line, as the editors count them.
     pub fn places(&self, text: &str) -> Vec<Place> {
         let (mut places, mut folded) = (Vec::new(), String::new());
         for (i, line) in text.split('\n').enumerate() {
@@ -135,9 +119,6 @@ fn utf16(chars: &[char]) -> u32 {
     chars.iter().map(|c| c.len_utf16() as u32).sum()
 }
 
-/// What search reads of a file: one too large to be where anyone looks is passed over, but a
-/// .tex or .bib file is read at any size, as the symbols are, since a shared bibliography can
-/// be larger and a rename must reach its keys.
 fn cap(rel: &str) -> u64 {
     match file_kind(rel) {
         "tex" | "bib" => u64::MAX,
@@ -145,10 +126,6 @@ fn cap(rel: &str) -> u64 {
     }
 }
 
-/// The first of `found`'s places on each line, which it gives in order, of each text file
-/// `chosen` takes, given its text with line feeds alone, up to `limit` lines; a file `open`
-/// holds is read as the editor has it there. A line ends where the editor's does, at a carriage
-/// return alone too.
 pub fn search_project(
     root: &Path,
     open: &HashMap<String, String>,
@@ -180,7 +157,6 @@ pub fn search_project(
             }
             last = place.line;
             let chars: Vec<char> = lines[place.line as usize - 1].chars().collect();
-            // The char `units` UTF-16 units into the line starts.
             let char_at = |units: u32| {
                 let mut seen = 0;
                 let before = |c: &&char| {
@@ -211,19 +187,12 @@ pub fn search_project(
     Ok(hits)
 }
 
-/// `to` in place of what `found` finds in each file `chosen` takes of those a search walks,
-/// given its text with line feeds alone, each written with its lines ending as they did:
-/// `{file, count}` for each, in the order of their paths. One too large to search is left out;
-/// one that isn't UTF-8, which writing would change, or too large, before or after, for the
-/// version history to keep, which a host puts the files back from, refuses them all before any is
-/// written, and one that can't be written puts back those written before it.
 pub(crate) fn replace_in_files(
     root: &Path,
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     to: &str,
 ) -> Result<Vec<Value>, CoreError> {
-    // The file replaced, how many, and the file as it was.
     let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize, String)>, CoreError> {
         let Some(bytes) = read_capped(abs, cap(rel))? else {
             return Ok(None);
@@ -256,7 +225,6 @@ pub(crate) fn replace_in_files(
         }
         Ok(true)
     })?;
-    // Each read again as it's written: another app may have written it while the rest were read.
     write_all(edited, |(rel, abs)| {
         let planned = replace(&abs, &rel)?.map(|(file, count, was)| Planned {
             abs,
@@ -268,13 +236,8 @@ pub(crate) fn replace_in_files(
     })
 }
 
-/// `to` in place of each of `places`, which are in order, in `file` as written: a place's line
-/// and column count as they do with line feeds alone, so each line keeps its own ending, which
-/// in a file edited on more than one system needn't be the first's. A break in `to` is written
-/// as the file's own, as a save writes one.
 fn replaced(file: &str, places: &[Place], to: &str) -> String {
     let to = &to.replace('\n', newline(file));
-    // The byte the first `units` UTF-16 units of `s` end at.
     let byte = |s: &str, units: u32| {
         let mut seen = 0;
         let mut chars = s.char_indices();
@@ -312,9 +275,6 @@ mod tests {
     fn a_search_skips_a_file_too_large_to_read_and_finds_what_is_in_the_rest() {
         let (_dir, root) = project();
         fs::write(root.join("notes.tex"), "a needle\n").unwrap();
-        // Sparse: past the cap without writing it, and made of NULs that no
-        // line break splits. A bibliography that large is read, as the symbols are, so a rename
-        // finds its keys.
         let big = fs::File::create(root.join("big.csv")).unwrap();
         big.set_len(SEARCH_FILE_MAX + 1).unwrap();
         fs::write(root.join("big.bib"), "@misc{needle,}\n").unwrap();
@@ -348,7 +308,6 @@ mod tests {
         assert_eq!(replaced("a\r\nb\r\n", &[place], "x\ny"), "a\r\nx\r\ny\r\n");
     }
 
-    /// Another app's write while the replace reads the project is kept, not written over.
     #[test]
     fn a_replace_reads_each_file_again_as_it_writes_it() {
         let (_dir, root) = project();
@@ -381,8 +340,6 @@ mod tests {
         assert_eq!(fs::read_to_string(outside).unwrap(), "cat");
     }
 
-    /// Neither one already too large nor one the change would make so: the history the host puts
-    /// files back from couldn't keep it.
     #[test]
     fn a_replace_refuses_them_all_for_a_file_too_large_for_the_history() {
         let (_dir, root) = project();
@@ -401,7 +358,6 @@ mod tests {
         }
     }
 
-    /// A file refused partway, read only here, leaves those before it as they were.
     #[test]
     fn a_replace_that_cannot_write_a_file_puts_back_those_it_wrote() {
         let (_dir, root) = project();
@@ -421,8 +377,6 @@ mod tests {
         fs::set_permissions(&b, perms).unwrap();
     }
 
-    /// Apart from each other and in any case, folded as Unicode folds it; placed in UTF-16 units
-    /// of the line as written, not of its folded copy, as an editor host selects the match.
     #[test]
     fn the_matcher_finds_every_match_on_a_line() {
         let text = "😀 Cat cat catalogue\nCAT_cat cat\naaaa";

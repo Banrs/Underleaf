@@ -3,7 +3,6 @@ import Testing
 @testable import TeXLocal
 
 struct ConcurrencyTests {
-    /// The latest of a kind carries on; what it replaced is cancelled and does nothing.
     @Test(.timeLimit(.minutes(1)))
     func theLatestOfItsKindCarriesOn() async {
         var slot: Task<Int, Never>?
@@ -26,7 +25,6 @@ struct ConcurrencyTests {
         #expect(ran == [2])
     }
 
-    /// The Redo is there as the Undo starts; work that fails takes every action of its target away.
     @Test func anAsyncUndoRegistersItsRedoAndAFailureClearsTheStack() async throws {
         final class Target {}
         let target = Target(), undo = UndoManager()

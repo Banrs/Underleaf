@@ -1,5 +1,3 @@
-//! The editing commands of the menus and shortcuts, each answering edits and, where it moves the selection, where it goes.
-
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
@@ -26,7 +24,6 @@ pub enum Style {
     Underline,
 }
 
-/// A selection ending at a line's start leaves that line alone.
 fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
     let len = text.units.len() as u32;
     let mut lines = BTreeSet::new();
@@ -43,7 +40,6 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
     lines
 }
 
-/// The touched lines in runs of consecutive ones, each its first and last.
 fn runs(text: &Text, selections: &[TextRange]) -> Vec<(usize, usize)> {
     let mut runs: Vec<(usize, usize)> = Vec::new();
     for line in touched_lines(text, selections) {
@@ -61,7 +57,6 @@ static HEADING: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 impl SourceDocument {
-    /// Off when every line is already commented (or blank), on otherwise.
     pub fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
         let text = &self.text;
         let lines = touched_lines(text, selections);
@@ -97,7 +92,6 @@ impl SourceDocument {
                 if indent.is_empty() {
                     return None;
                 }
-                // A tab is four columns.
                 let columns = indent.iter().fold(0usize, |col, &u| {
                     if is(u, '\t') {
                         col + 4 - col % 4
@@ -120,8 +114,6 @@ impl SourceDocument {
             .collect()
     }
 
-    /// A comment at the line's end stays outside the braces. A title whose closing brace is on another line has no brace
-    /// added, and as plain text the line is left as it is, since the brace would be left behind.
     pub fn set_heading(&self, caret: u32, command: &str) -> Insertion {
         let text = &self.text;
         let caret = caret.min(text.len());
@@ -131,7 +123,6 @@ impl SourceDocument {
         let split = comment_start(line);
         let code = &String::from_utf16_lossy(&line[..split]);
         let comment = String::from_utf16_lossy(&line[split..]);
-        // What comes before the heading, its star and short title, the title, and what follows its closing brace.
         let (before, marks, title, rest) = match HEADING.captures(code) {
             Some(c) => {
                 let open = c.get_match();
@@ -176,12 +167,9 @@ impl SourceDocument {
         let template = catalog::CATALOG.blocks.get(id)?;
         let line = text.line_index(selection.start);
         let before = &text.units[text.lines[line] as usize..selection.start as usize];
-        // After text, a line feed first; the template ends with its own.
         let newline = if blank_line(before) { "" } else { "\n" };
         let (mut block, mut fields) =
             complete::expand(text, selection.start, &format!("{newline}{template}"));
-        // Text the block is made over goes in, not away: a list of the selected line is that
-        // line as its item.
         if let Some((first, rest)) = fields.split_first_mut().filter(|_| selection.length > 0) {
             let (start, end) = selection.bounds();
             let mut units: Vec<u16> = block.encode_utf16().collect();
@@ -199,7 +187,6 @@ impl SourceDocument {
         })
     }
 
-    /// Between dollars in text, where the bare command would stop the build.
     pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
         let at = selection.start as usize;
@@ -226,7 +213,6 @@ impl SourceDocument {
             if end == start || (if up { first == 0 } else { end >= len }) {
                 return None;
             }
-            // The line breaks stay where they were, so a last line without one keeps none.
             let (from, to) = if up {
                 (first - 1, last)
             } else {
@@ -272,7 +258,6 @@ impl SourceDocument {
         Some(Change { edits, selections })
     }
 
-    /// The copy goes above, so the selections, moved down with the lines, are on the copy.
     pub fn duplicate_lines(&self, selections: &[TextRange]) -> Change {
         let text = &self.text;
         let edits: Vec<TextEdit> = runs(text, selections)
@@ -281,7 +266,6 @@ impl SourceDocument {
                 let start = text.bounds(first).start;
                 let Line { end, next, .. } = text.bounds(last);
                 let mut copy = text.units[start..next].to_vec();
-                // The text's last line has no break of its own: the line before lends its.
                 if end == next {
                     let before = last.checked_sub(1).map(|line| text.bounds(line));
                     copy.extend(before.map_or(&[NEWLINE][..], |b| &text.units[b.end..b.next]));
@@ -295,7 +279,6 @@ impl SourceDocument {
         }
     }
 
-    /// The caret goes to the line after, or to the end of the line before when none is after.
     pub fn delete_lines(&self, selections: &[TextRange]) -> Change {
         let text = &self.text;
         let edits: Vec<TextEdit> = runs(text, selections)
@@ -347,7 +330,6 @@ impl SourceDocument {
 
 pub fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Vec<TextRange> {
     let map = |position: usize| {
-        // So nothing is taken from a position before it was added to.
         let (mut added, mut removed) = (0, 0);
         for e in edits {
             let inserted = utf16(&e.text);

@@ -8,7 +8,6 @@ struct InspectorView: View {
         Form {
             Section("Project") {
                 let texFiles = project.tree.nodes.flattened.filter { $0.kind == .tex }.map(\.path)
-                // The current value, even nil or unlisted, is a choice: a selection with no tag is a SwiftUI fault.
                 let main = project.settings?.mainFile
                 Picker("Main File", selection: Binding(get: { main }, set: { new in
                     if let new { Task.immediate { await project.patchSettings(.mainFile(new)) } }

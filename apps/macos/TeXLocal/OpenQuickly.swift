@@ -1,9 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Xcode's Open Quickly: a field at the window's top centre over the core's best matches among the project's files, headings
-/// and labels (`session_quick_open`). The arrows choose, Return opens, Escape or a click elsewhere closes. A key panel of
-/// its own, whose glass draws as the completion list's.
 final class OpenQuickly: NSPanel, NSTextFieldDelegate {
     private static weak var shown: OpenQuickly?
 
@@ -35,7 +32,6 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         hasShadow = true
         isReleasedWhenClosed = false
         field.placeholderString = String(localized: "Open Quickly")
-        // For VoiceOver, as the placeholder goes once there's text.
         field.setAccessibilityLabel(field.placeholderString)
         field.font = .systemFont(ofSize: 20)
         (field.isBezeled, field.drawsBackground, field.focusRingType) = (false, false, .none)
@@ -51,7 +47,6 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
 
     override func resignKey() {
         super.resignKey()
-        // Closing orders it out, which resigns again.
         if parent != nil { close() }
     }
 
@@ -64,7 +59,6 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
     func controlTextDidChange(_ notification: Notification) { search() }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        // The input method's Return and Escape first.
         guard !textView.hasMarkedText() else { return false }
         switch selector {
         case #selector(NSResponder.moveUp(_:)): rows.move(-1)
@@ -84,7 +78,6 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
             guard let items = try? await project.core.call("session_quick_open", ["session": session, "query": query],
                                                            as: [QuickOpenItem].self), !Task.isCancelled else { return }
             rows.items = items
-            // Down from the field, the top staying where it is.
             var frame = self.frame
             let height = Self.fieldHeight + (items.isEmpty ? 0 : CGFloat(min(items.count, Self.shownRows)) * Self.rowHeight
                 + 2 * CompletionRowsView.margin)
@@ -93,7 +86,6 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         }
     }
 
-    /// As a click in the sidebar or the outline opens it, at its line.
     private func open(_ row: Int) {
         guard rows.items.indices.contains(row) else { return }
         let item = rows.items[row]
@@ -103,12 +95,10 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
 }
 
 nonisolated struct QuickOpenItem: Decodable {
-    /// `file`, `heading` or `label`.
     let kind, title, detail, path: String
     let line: Int?
 }
 
-/// The completion list's look at the field's size: rows 5 pt in, the chosen one in the accent with white text.
 private struct QuickOpenView: View {
     let field: NSTextField
     let rows: ChoiceRows<QuickOpenItem>
@@ -172,7 +162,6 @@ private struct QuickOpenView: View {
     }
 }
 
-/// The panel's own field, whose delegate takes the arrows, Return and Escape.
 private struct Field: NSViewRepresentable {
     let field: NSTextField
 

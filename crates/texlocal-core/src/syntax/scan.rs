@@ -1,6 +1,3 @@
-//! The TeX scanner every question about the text's meaning shares: maths, literal code, comments and groups,
-//! read as TeX reads them.
-
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -22,7 +19,6 @@ pub(crate) fn closing_brace(body: &str) -> Option<usize> {
     })
 }
 
-/// Any other character, a no-break space among them, is text.
 pub(crate) fn tex_space(u: u16) -> bool {
     matches!(u, 0x09 | 0x0d | 0x20)
 }
@@ -43,8 +39,6 @@ fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
 }
 
-/// A command's arguments as TeX reads them: past spaces, line breaks and comments, a star, options and one
-/// braced argument, none of it past a blank line.
 pub(crate) fn arguments(
     src: &[u16],
     mut i: usize,
@@ -62,7 +56,6 @@ pub(crate) fn arguments(
                 from = i;
                 continue;
             }
-            // An escape, but not of a line feed: that may end the paragraph.
             ('\\', Some(_)) if i + 1 < src.len() && at(i + 1) != '\n' => i += 1,
             ('{', Some(_)) => depth += 1,
             ('}', Some(_)) if depth > 0 => depth -= 1,
@@ -120,26 +113,20 @@ impl Group {
         }
     }
 
-    /// Maths a paragraph's end closes: an environment's goes on past it.
     pub fn delimited(&self) -> bool {
         matches!(self.end.as_ref(), "$" | "$$" | "\\)" | "\\]")
     }
 }
 
-/// What a scan reports as it reads; callers merge the ranges.
 pub(crate) trait Visit {
     fn range(&mut self, _from: usize, _to: usize) {}
     fn command(&mut self, _name: &str, _start: usize, _name_end: usize) {}
-    /// One in maths, which isn't prose, but may still name something (\label in an equation).
     fn math_command(&mut self, _name: &str, _start: usize, _name_end: usize) {}
     fn comment(&mut self, _from: usize, _to: usize) {}
     fn at(&mut self, _groups: Vec<Group>) {}
     fn closed(&mut self, _group: &Group, _close: Range<usize>) {}
-    /// A verbatim environment, from its \begin to its \end, which opens no group.
     fn literal(&mut self, _open: usize, _close: Range<usize>) {}
-    /// Every brace TeX groups with, matched or not.
     fn brace(&mut self, _at: usize, _open: bool) {}
-    /// Maths a paragraph's end finds open, which TeX ends with an error.
     fn unclosed(&mut self, _group: &Group) {}
 }
 
@@ -147,7 +134,6 @@ impl Visit for () {}
 
 #[cfg(test)]
 thread_local! {
-    /// The units scanners have read on this thread, for tests to tell how far a question read.
     pub(crate) static READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -158,7 +144,6 @@ pub(crate) struct Scanner {
     math_run: bool,
     last_command: Option<(usize, usize)>,
     pub(super) i: usize,
-    /// Past the text's end once a token ran into it, as a longer text could have read on.
     pub(super) reach: usize,
 }
 
@@ -173,8 +158,6 @@ impl Scanner {
         groups
     }
 
-    /// Stops once all probes are answered and no brace group is open, or at the paragraph's end after them:
-    /// a command's argument rarely runs past it.
     pub fn run(&mut self, src: &[u16], until: usize, probes: &[usize], visit: &mut impl Visit) {
         #[cfg(test)]
         let from = self.i;
@@ -238,7 +221,6 @@ impl Scanner {
         READ.with(|read| read.set(read.get() + (self.i - from)));
     }
 
-    /// In `\url`'s or `\href`'s address, whose `%` is the address's, not a comment's.
     fn in_address(&self, src: &[u16]) -> bool {
         let command = self.stack.top().and_then(|group| group.command);
         command.is_some_and(|(start, name_end)| {
@@ -247,7 +229,6 @@ impl Scanner {
         })
     }
 
-    /// Prose, which keeps a command's argument coming, as a line feed does.
     fn comment(
         &mut self,
         src: &[u16],
@@ -298,7 +279,7 @@ impl Scanner {
             let end = if double { "$$" } else { "$" };
             self.stack.push(Group::new(true, end, start));
             self.i += double as usize;
-        } // else a stray $ in an environment's maths
+        }
         self.text_argument = false;
     }
 
@@ -347,9 +328,6 @@ impl Scanner {
         (code, read)
     }
 
-    /// `\verb`'s code, or `\lstinline`'s after its options, or `\mintinline`'s after its options
-    /// and language, between two of one character or, but for `\verb`'s, in braces. It can't
-    /// cross a line: unclosed, it ends where its line does.
     fn verb(&mut self, src: &[u16], name: &str) -> usize {
         let line_end = find(src, self.i, &[NEWLINE]);
         let line = &src[..line_end.unwrap_or(src.len())];
@@ -376,7 +354,7 @@ impl Scanner {
         } else {
             self.skip_literal(src, self.i + 1, &[delimiter], line_end);
         }
-        line_end.unwrap_or(src.len()) + 1 // looking for the line's end
+        line_end.unwrap_or(src.len()) + 1
     }
 
     fn environment(
@@ -412,7 +390,6 @@ impl Scanner {
         (false, read)
     }
 
-    /// Unclosed at the text's end, the code runs to it and no group is open after.
     fn skip_literal(&mut self, src: &[u16], from: usize, end: &[u16], line_end: Option<usize>) {
         let limit = line_end.unwrap_or(src.len());
         self.i = match (find(&src[..limit], from, end), line_end) {
@@ -440,8 +417,6 @@ mod tests {
 
     #[test]
     fn a_probed_scan_stops_once_its_probes_are_answered() {
-        // Only a brace group reports its close, so the document environment
-        // (open to the end of every real file) keeps no scan reading.
         let words = "More words in a paragraph.\n\n".repeat(1_000);
         let source = format!("\\begin{{document}}\n\\textbf{{a b}} c\n{words}\\end{{document}}\n");
         assert!(probed_read(&source) < 100);

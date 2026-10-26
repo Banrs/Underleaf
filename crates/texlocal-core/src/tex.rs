@@ -1,6 +1,3 @@
-//! Finding TeX: the PATH a GUI app's thin environment lacks, the programs on
-//! it, whether latexmk runs, and the packages it has.
-
 use std::ffi::OsStr;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -23,7 +20,6 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
         .map(|entry| entry.path())
 }
 
-/// TeX Live's year folders' programs, newest first.
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     let mut years: Vec<_> = children("/usr/local/texlive")
         .filter(|year| {
@@ -37,7 +33,6 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     years.into_iter().flat_map(children)
 }
 
-/// The PATHs for TeX's tools and for TeXpresso's: the chosen TeX folder, the user's PATH, then discovered TeX dirs. Built per use, so an install made while the app runs is found.
 pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
     let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
@@ -49,8 +44,6 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
     (join_path(tex), texpresso)
 }
 
-/// Where TeX's installers put its programs, besides TeX Live's years: MacTeX's
-/// link and Homebrew's folders, then TinyTeX's.
 fn usual_tex_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
         .map(PathBuf::from)
@@ -59,8 +52,6 @@ fn usual_tex_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Folders as a PATH, in the platform's form. A folder whose name holds the
-/// separator can't be one of them, and is left out.
 pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
     let dirs = dirs
         .into_iter()
@@ -70,8 +61,6 @@ pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
         .unwrap_or_default()
 }
 
-/// A PATH's absolute folders: an empty or relative entry would be looked up
-/// from the project, where a latexmk of its own could stand.
 fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
@@ -90,8 +79,6 @@ fn executable(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
 }
 
-/// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a
-/// TeX Live root picked in its place.
 pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
     std::iter::once(dir.to_path_buf())
         .chain(children(dir.join("bin")))
@@ -127,8 +114,6 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     }
 }
 
-/// The TeX that latexmk on `path_env` belongs to, read again once its ls-R changes, as a TeX or
-/// a package installed does. Nothing without TeX, or from MiKTeX, which keeps no ls-R.
 pub(crate) fn installed(path_env: &str) -> Arc<Installed> {
     static READ: Kept<Installed> = Kept::new();
     let ls_r = find_tool("latexmk", path_env).and_then(|latexmk| ls_r_above(&latexmk));
@@ -136,9 +121,6 @@ pub(crate) fn installed(path_env: &str) -> Arc<Installed> {
     installed.unwrap_or_default()
 }
 
-/// The ls-R database in the first texmf-dist above the program, as TeX Live and TinyTeX keep
-/// it; a link followed first, since a latexmk on the PATH may be a link into texmf-dist from
-/// another folder.
 fn ls_r_above(program: &Path) -> Option<PathBuf> {
     let program = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
     let mut found = program
@@ -147,7 +129,6 @@ fn ls_r_above(program: &Path) -> Option<PathBuf> {
     found.find(|ls_r| ls_r.is_file())
 }
 
-/// Its folders under tex and bibtex hold what TeX loads, as its doc and source ones don't.
 fn read_installed(ls_r: &Path) -> std::io::Result<Installed> {
     let ls_r = crate::lossy_string(std::fs::read(ls_r)?);
     let mut installed = Installed::default();

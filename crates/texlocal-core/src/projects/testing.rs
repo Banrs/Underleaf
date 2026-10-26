@@ -1,5 +1,3 @@
-//! What the unit tests of projects, import and export set up alike.
-
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -50,7 +48,6 @@ pub(crate) fn zip_names(path: &Path) -> Vec<String> {
     archive.file_names().map(str::to_owned).collect()
 }
 
-/// A project of `files` as the symbol scan reads it, with no TeX installed.
 pub(crate) fn symbols_of(files: &[(&str, &str)]) -> Symbols {
     let read = |&(rel, text): &(&str, &str)| {
         let kind = file_kind(rel);

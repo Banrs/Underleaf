@@ -12,7 +12,6 @@ final class BuildPanelModel {
     var logFilter = ""
     var showsWarnings = true
 
-    /// Whether it shows the Live Preview Log, which the session sends only then.
     var showsLiveLog: Bool { shown && tab == .texpresso }
 
     func show(_ tab: PanelTab) {
@@ -32,7 +31,6 @@ final class BuildPanelModel {
             || (item.file?.localizedCaseInsensitiveContains(issueFilter) ?? false)
     }
 
-    /// Enumerated before filtering: duplicate messages keep distinct, stable row IDs.
     func rows(of listed: [LogItem]) -> [(offset: Int, element: LogItem)] {
         listed.enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
     }

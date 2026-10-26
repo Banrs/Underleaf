@@ -1,6 +1,3 @@
-//! The commands by name: a JSON object of arguments in, the answer's JSON out, as the C ABI forwards them.
-//! An argument a command needs is required: one left out is no call, never the text's start.
-
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,7 +8,6 @@ use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
 use crate::service::parse;
 
-/// A source's commands (docs/core-api.md): a table, one a line.
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
@@ -42,7 +38,6 @@ enum Command {
     Folds,
 }
 
-/// The commands that need no document.
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
@@ -116,7 +111,6 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     }
 }
 
-/// The commands that need no document; docs/core-api.md lists them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     match read(command, args_json)? {
         Free::MathSvg { tex, display, size } => rendered(render::math_svg(&tex, display, size)),

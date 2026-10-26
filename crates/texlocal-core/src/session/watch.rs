@@ -1,6 +1,3 @@
-//! The project folder's watcher (through `notify`), and what its changes mean to a
-//! session: the listed tree changed, or a file changed in place.
-
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -25,7 +22,6 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let changes = match event {
             Ok(event) if !event.need_rescan() => changes(event),
-            // Changes may have been lost: the whole folder is looked at again.
             _ => vec![Change {
                 path: base.clone(),
                 structural: true,
@@ -56,7 +52,6 @@ fn changes(event: notify::Event) -> Vec<Change> {
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,
-    /// So another main file's mark sends the tree again.
     pub main: Option<String>,
 }
 
@@ -91,7 +86,6 @@ impl TreeIndex {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Meaning {
     pub tree: bool,
-    /// The settings changed, perhaps their main file, which the tree marks.
     pub settings: bool,
     pub docs: BTreeSet<String>,
     pub listed: BTreeSet<String>,
@@ -115,7 +109,6 @@ pub(crate) fn classify(
             continue;
         };
         if rel.is_empty() {
-            // The folder itself moved, or the system lost count: any file may have changed unseen.
             if change.structural {
                 meaning.tree = true;
                 meaning.settings = true;
@@ -142,9 +135,6 @@ pub(crate) fn classify(
     meaning
 }
 
-/// A save renames a new file over a listed one, which leaves the listing as it was, as does an
-/// entry the tree doesn't list. A rename that changes only case leaves a file at the old
-/// spelling on a volume that ignores case.
 fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
     !listed(rel) || index.files.contains(rel) && disk_spelling(root, rel).as_deref() == Some(rel)
 }
@@ -197,7 +187,6 @@ mod tests {
         assert!(tree("new.tex"));
         assert!(tree("gone.tex"));
         assert!(tree("fig/plot.pdf"));
-        // Renamed in case only: the old spelling is no longer the disk's.
         assert!(tree("main.tex"));
         assert!(!tree("build/main.aux"));
         assert!(!tree("unlisted/deep.tex"));
@@ -224,7 +213,6 @@ mod tests {
             lost.listed,
             BTreeSet::from(["ch/one.tex".into(), "main.tex".into()])
         );
-        // A file that only starts like the folder's name isn't in it.
         let near = classify(root, &[change(root, "c", true)], &index, &docs);
         assert!(near.docs.is_empty());
         let elsewhere = Change {

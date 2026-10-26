@@ -1,6 +1,3 @@
-//! What isn't prose: maths, literal code, command names and the names commands take (and, for Writing Tools,
-//! comments). What's left is the text's words, which the status bar counts.
-
 use std::ops::Range;
 
 use super::scan::{Scanner, Visit, arguments};
@@ -56,8 +53,6 @@ fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
     }
 }
 
-/// Where name arguments have been read to, and where the last command that takes them starts its: a reading resumed
-/// after it reads that again. A command inside another's names is none, and none is read across a blank line.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Names {
     from: Option<usize>,
@@ -139,15 +134,11 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
     }
 }
 
-/// A text read for its words: its prose is what Writing Tools is given, the runs between what
-/// `skipped` holds.
 pub(crate) struct Prose<'a> {
     units: &'a [u16],
     skipped: Vec<TextRange>,
 }
 
-/// Each command outside maths and code goes to `command` too, so the outline finds its headings
-/// and inputs in the same reading.
 pub(crate) fn prose<'a>(text: &'a Text, command: impl FnMut(&Text, &str, usize)) -> Prose<'a> {
     let len = text.units.len();
     let writing = Checker::WritingTools;
@@ -162,10 +153,8 @@ pub(crate) fn prose<'a>(text: &'a Text, command: impl FnMut(&Text, &str, usize))
 }
 
 impl Prose<'_> {
-    /// The runs of prose in `range` that hold a letter; one the range cuts counts on each side.
     pub fn words(&self, range: Range<usize>) -> usize {
         let end = |r: &TextRange| (r.start + r.length) as usize;
-        // Merged, so ordered by their ends too: those before the range are passed over.
         let first = self.skipped.partition_point(|r| end(r) <= range.start);
         let mut at = first.checked_sub(1).map_or(0, |i| end(&self.skipped[i]));
         let mut words = 0;
@@ -204,7 +193,6 @@ fn count(prose: &[u16]) -> usize {
 mod tests {
     use crate::syntax::{Checker, SourceDocument, range, utf16};
 
-    /// The text with what `checker` passes over in «», of the whole text or of the character after `‸`.
     fn marked(source: &str, checker: Checker) -> String {
         let text = source.replace('‸', "");
         let units: Vec<u16> = text.encode_utf16().collect();
@@ -232,7 +220,6 @@ mod tests {
         marked(source, Checker::Spelling)
     }
 
-    /// What a command takes as names, not prose.
     fn names(source: &str) -> Vec<String> {
         let marked = spelling(source);
         let ranges = marked.split('«').skip(1).filter_map(|r| r.split_once('»'));
@@ -257,7 +244,6 @@ mod tests {
             names("\\includegraphics[width=0.8\\linewidth]{plots/a b}"),
             ["width=0.8\\linewidth", "plots/a b"]
         );
-        // Only the first braced argument: a frame's title is prose.
         assert_eq!(
             names("\\begin{frame}{Title} \\emph{x} \\\\ \\%cite{y}"),
             ["frame"]
@@ -266,9 +252,7 @@ mod tests {
             names("\\usepackage{amsmath,\n  {amssymb}}"),
             ["amsmath,\n  {amssymb}"]
         );
-        // Not in a comment, nor past a blank line.
         assert_eq!(names("% \\cite{x}\n\\input{a\n\nprose}"), ["a"]);
-        // Not even after a backslash at the end of a line, a command with it.
         assert_eq!(names("\\cite{a\\\n\nprose}"), ["a\\\n"]);
         assert_eq!(
             names("\\usepackage\n[utf8]\n{inputenc}"),
@@ -277,7 +261,6 @@ mod tests {
         assert_eq!(names("😀 \\cite\n{𐐀key}"), ["𐐀key"]);
     }
 
-    /// Both checkers pass over command names, an escape's too, and what isn't prose; only spelling checks a comment.
     #[test]
     fn checkers_leave_code_alone() {
         let text = "Prose \\emph{word} $x$ 50\\% % note";
@@ -286,7 +269,6 @@ mod tests {
         assert_eq!(writing, "Prose «\\emph»{word} «$x$» 50«\\%» «% note»");
     }
 
-    /// A question reads from the paragraph's start, and what started before it keeps its own start.
     #[test]
     fn a_question_answers_from_where_its_ranges_start() {
         let cases = [
@@ -316,8 +298,6 @@ mod tests {
         }
     }
 
-    /// A comment stays prose and closes nothing, maths' text commands hold prose, and literal code runs to its end
-    /// or the text's, holding no commands.
     #[test]
     fn maths_and_code_are_not_prose() {
         let cases = [
@@ -355,7 +335,6 @@ mod tests {
         }
     }
 
-    /// Read in the whole text, so a range that starts in maths knows it.
     #[test]
     fn a_range_counts_its_prose_words_alone() {
         let text = "Before $x + y$ one \\textbf{two} \\cite{key} three. After";

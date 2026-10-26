@@ -1,5 +1,3 @@
-//! Placing a word by the text round it: SyncTeX's boxes are coarse, so letters are compared, forward in the PDF's page text and inverse in the source. Pure text.
-
 use std::cmp::Reverse;
 use std::ops::Range;
 
@@ -27,13 +25,8 @@ const LIGATURES: [(char, &str); 5] = [
     ('ﬃ', "ffi"),
     ('ﬄ', "ffl"),
 ];
-/// Source lines either side of SyncTeX's that a clicked word is looked for on:
-/// TeX may be reading a later one as it sets the text.
 const LINE_REACH: u32 = 3;
-/// How far from a SyncTeX box, in letters (about two lines), a word may stand
-/// when its context doesn't reach both ends of the source line.
 const BOX_REACH: usize = 150;
-/// The distance from no box at all, far enough to lose to any box.
 const FAR: usize = usize::MAX / 4;
 
 #[derive(Clone, Copy)]
@@ -43,7 +36,6 @@ struct Span {
     end: u32,
 }
 
-/// What the matcher compares of a text: its letters and digits, ligatures spelt out; PDF text spaces, wraps and hyphenates unlike the source, but not its letters.
 #[derive(Default)]
 struct Letters {
     chars: Vec<char>,
@@ -151,8 +143,6 @@ fn evidence(from: &Letters, word: &Range<usize>, to: &Letters, k: usize) -> (usi
     (before, after, to.edges(k, word.len()))
 }
 
-/// The best-ranked candidate, unless another ranks as well: equal evidence
-/// can't say which was meant, and a guess would move the caret wrongly.
 fn unique<K: Ord, T>(mut ranked: Vec<(K, T)>) -> Option<T> {
     ranked.sort_by(|a, b| a.0.cmp(&b.0));
     let mut ranked = ranked.into_iter();
@@ -163,7 +153,6 @@ fn unique<K: Ord, T>(mut ranked: Vec<(K, T)>) -> Option<T> {
         .then_some(found)
 }
 
-/// Forward: the word at UTF-16 `column` of a source `line`, found in `pages`. Candidates rank by surrounding text, then word edges, then nearness to the boxes.
 pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHit> {
     let mut source = Letters::default();
     source.push(line, 0, true);
@@ -189,7 +178,6 @@ pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Optio
             let (before, after, edges) = evidence(&source, &word, &pdf, k);
             let near = dist(k).min(dist(k + n - 1));
             let whole = before == word.start && after == source.chars.len() - word.end;
-            // The two ends of the matched text apart tell identical sentences apart.
             let ends = dist(k - before) + dist(k + n + after - 1);
             (whole || near <= BOX_REACH)
                 .then_some(((Reverse(before + after), Reverse(edges), near, ends), k))
@@ -204,7 +192,6 @@ pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Optio
     })
 }
 
-/// Inverse: the letter at UTF-16 index `at` of a PDF page's text, found in `source` as (line, UTF-16 column). SyncTeX's line isn't always the word's own, so a few lines either side are searched too.
 pub(crate) fn find_in_source(
     source: &str,
     line: u32,

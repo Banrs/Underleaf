@@ -1,6 +1,3 @@
-//! The session's rules on tokio's paused clock, with a fake latexmk and
-//! TeXpresso (`Fake`) and the folder's changes sent in by hand.
-
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,8 +19,6 @@ use crate::service::Service;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane, Sink, Status};
 use crate::{CoreError, lock};
 
-// MARK: - A fake engine
-
 #[derive(Default)]
 struct Fake {
     calls: Mutex<Vec<String>>,
@@ -31,7 +26,6 @@ struct Fake {
     starts: Mutex<Vec<Vec<String>>>,
     updates: Mutex<Vec<(String, String)>>,
     edits: Mutex<Vec<(String, usize, usize, String)>>,
-    /// The next edit's refusal.
     refusal: Mutex<Option<CoreError>>,
     sink: Mutex<Option<Sink>>,
     log: Mutex<String>,
@@ -202,8 +196,6 @@ impl Preview for Fake {
     }
 }
 
-// MARK: - A session to drive
-
 struct Rig {
     _data: tempfile::TempDir,
     root: PathBuf,
@@ -225,7 +217,6 @@ impl Rig {
         let root = std::fs::canonicalize(data.path().join("P")).unwrap();
         fs::write(root.join("main.tex"), "Hello").unwrap();
         let service = Arc::new(Service::new(data.path().to_path_buf()));
-        // As if `status` had found TeX, which automatic builds wait for.
         service.tex_found.send_replace(true);
         let fake = Arc::new(Fake {
             log: Mutex::new("TeX's log".into()),
@@ -267,7 +258,6 @@ impl Rig {
         self.sessions.document(self.session, path).unwrap()
     }
 
-    /// Every event since the last call, once the session has taken what was sent before.
     async fn events(&mut self) -> Vec<Value> {
         self.state().await;
         self.marks += 1;
@@ -326,8 +316,6 @@ async fn wait(ms: u64) {
     tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
-// MARK: - Autosave
-
 #[tokio::test(start_paused = true)]
 async fn the_autosave_writes_700_ms_after_the_last_edit() {
     let mut rig = Rig::new(false).await;
@@ -337,8 +325,6 @@ async fn the_autosave_writes_700_ms_after_the_last_edit() {
     doc.edit(11, 0, "!", None, false);
     wait(600).await;
     assert_eq!(rig.disk("main.tex"), "Hello");
-    // The open's alone: Not Saved is for an error or Cancel, so edits and saves change
-    // nothing a `document` event tells.
     assert_eq!(rig.of_type("document").await.len(), 1);
     assert_eq!(rig.state().await["documents"][0]["dirty"], true);
     wait(150).await;
@@ -367,7 +353,6 @@ async fn an_autosave_builds_when_auto_compile_is_on() {
     assert!(rig.of_type("build").await.iter().any(automatic));
 }
 
-/// The host builds after a fix, once it has applied the fix's edits.
 #[tokio::test(start_paused = true)]
 async fn a_fix_that_changes_a_setting_leaves_the_build_to_the_host() {
     let rig = Rig::new(true).await;
@@ -394,8 +379,6 @@ async fn ime_composition_holds_the_autosave_until_it_ends() {
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "Helloか");
 }
-
-// MARK: - Builds
 
 #[tokio::test(start_paused = true)]
 async fn requests_during_a_build_queue_one_more_and_stop_drops_it() {
@@ -502,8 +485,6 @@ async fn the_outline_has_heading_styles_from_the_document_as_edited() {
     outline_until(&mut rig, |outline| !chapters(outline)).await;
 }
 
-/// The shown document's, by when it was shown rather than opened: one a failed save kept open
-/// has its outline again when it shows again.
 #[tokio::test(start_paused = true)]
 async fn the_outline_is_the_document_shown_again() {
     let mut rig = Rig::new(false).await;
@@ -520,7 +501,6 @@ async fn the_outline_is_the_document_shown_again() {
     }
 }
 
-/// The first `outline` event that passes `test`, which a scan sends perhaps a scan or two later.
 async fn outline_until(rig: &mut Rig, test: impl Fn(&Value) -> bool) -> Value {
     loop {
         let events = until_sent(rig, "outline").await;
@@ -552,8 +532,6 @@ async fn a_document_edited_since_the_build_shows_no_marks_when_it_opens_again() 
     assert_eq!(issues[0]["lines"][0]["line"], 2);
 }
 
-/// The events up to one of `kind`, which a scan beside the session sends perhaps a scan or two
-/// later.
 async fn until_sent(rig: &mut Rig, kind: &str) -> Vec<Value> {
     let mut events = Vec::new();
     for _ in 0..500 {
@@ -567,9 +545,6 @@ async fn until_sent(rig: &mut Rig, kind: &str) -> Vec<Value> {
     panic!("no {kind} came");
 }
 
-/// They come as the session opens and as they change, by file and then line; they follow the
-/// build's issues in the session's list and on a line, and come back after an edit's save. One on
-/// a line the build has an issue on joins that issue's line, and isn't listed again.
 #[tokio::test(start_paused = true)]
 async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved() {
     let mut rig = Rig::new(false).await;
@@ -623,8 +598,6 @@ async fn an_automatic_build_announces_only_when_its_errors_change_and_a_stopped_
     let announced: Vec<bool> = finished.iter().map(|f| f["announce"] == true).collect();
     assert_eq!(announced, [true, false, false]);
 }
-
-// MARK: - Changes on disk
 
 #[tokio::test(start_paused = true)]
 async fn another_apps_change_to_a_clean_document_reloads_it_and_the_pdf_is_out_of_date() {
@@ -690,7 +663,6 @@ async fn a_change_under_unsaved_edits_is_asked_about_and_save_anyway_keeps_them(
         "type": "conflict", "session": rig.session, "path": "main.tex", "kind": "changed"
     });
     assert_eq!(rig.of_type("conflict").await, [asked]);
-    // Nothing writes over theirs while it is asked about.
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "theirs");
     rig.resolve("save").await;
@@ -723,7 +695,6 @@ async fn cancel_leaves_the_edits_unsaved_until_a_save_is_asked_for() {
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "theirs");
     assert!(rig.of_type("conflict").await.is_empty());
-    // A save someone asks for asks again.
     let saved = rig.ok("save", json!({})).await;
     assert_eq!(saved["saved"], false);
     assert_eq!(rig.of_type("conflict").await.len(), 1);
@@ -777,7 +748,6 @@ async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put
     assert_eq!(rig.disk("main.tex"), "Hello mine");
 }
 
-/// A folder that can't be read for now, as another app's lock leaves it, is no deletion.
 #[tokio::test(start_paused = true)]
 async fn a_file_that_cant_be_read_for_now_shows_not_saved_and_isnt_taken_as_gone() {
     use std::os::unix::fs::PermissionsExt;
@@ -827,7 +797,6 @@ async fn external_dependencies_mark_the_pdf_stale_and_queue_one_automatic_build(
         if !auto {
             rig.ok("compile", json!({ "auto": false })).await;
         }
-        // Finish the initial build and any request queued while it was running.
         while rig.state().await["build"]["compiling"] == true {
             rig.fake.finish_build(built(true, Vec::new()));
             rig.events().await;
@@ -839,7 +808,6 @@ async fn external_dependencies_mark_the_pdf_stale_and_queue_one_automatic_build(
         assert_eq!(rig.state().await["build"]["outdated"], true);
         assert_eq!(rig.fake.called("compile"), before + usize::from(auto));
         if auto {
-            // Another external edit during the build must not be declared up to date by it.
             rig.write_elsewhere("refs.bib", "@book{fourth,}");
             wait(300).await;
             rig.fake.finish_build(built(true, Vec::new()));
@@ -884,8 +852,6 @@ async fn a_watcher_rescan_reports_unopened_files_and_changed_settings() {
     }));
 }
 
-/// Chosen here or by another app (by hand, by git or by a sync client), the main file is marked
-/// in the tree and built.
 #[tokio::test(start_paused = true)]
 async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_built() {
     let mut rig = Rig::new(true).await;
@@ -903,7 +869,6 @@ async fn the_tree_marks_the_main_file_and_another_chosen_anywhere_is_marked_and_
     let paper = (json!("paper.tex"), Some(json!(true)));
     assert_eq!(marks, [(json!("main.tex"), None), paper]);
     let builds = rig.fake.called("compile");
-    // A fold's write keeps the main file, so the folder isn't walked for files it didn't hear of.
     fs::write(rig.root.join("unheard.tex"), "").unwrap();
     let folds = r#"{ "mainFile": "paper.tex", "ui": { "foldedHeadings": ["a"] } }"#;
     fs::write(rig.root.join(".texlocal.json"), folds).unwrap();
@@ -928,7 +893,6 @@ async fn a_document_holds_line_feeds_and_saves_the_files_own_line_ends() {
     doc.edit(4, 0, "c\r\nd\re", None, false);
     wait(800).await;
     assert_eq!(rig.disk("main.tex"), "a\r\nb\r\nc\r\nd\r\ne");
-    // Another app changing only the line ends changes no text, and the next save keeps its.
     rig.write_elsewhere("main.tex", "a\nb\nc\nd\ne");
     wait(300).await;
     assert!(rig.of_type("document_reload").await.is_empty());
@@ -976,9 +940,6 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
     assert_eq!(fs::read(rig.root.join("main.tex")).unwrap(), latin);
 }
 
-// MARK: - Files
-
-/// So a host selects the entry in a tree that has it, with no tree of its own to read.
 #[tokio::test(start_paused = true)]
 async fn a_new_or_renamed_entry_is_answered_after_the_tree_that_lists_it() {
     let rig = Rig::new(false).await;
@@ -995,7 +956,6 @@ async fn a_new_or_renamed_entry_is_answered_after_the_tree_that_lists_it() {
     assert!(listed("ch/b.tex"));
 }
 
-/// Its edits are saved first; a rename only in case moves it rather than closing it.
 #[tokio::test(start_paused = true)]
 async fn a_rename_moves_the_open_document_and_its_saves() {
     let mut rig = Rig::new(false).await;
@@ -1025,7 +985,7 @@ async fn a_file_tex_names_in_another_case_is_spelt_as_the_disk_spells_it() {
     fs::create_dir(rig.root.join("chapters")).unwrap();
     fs::write(rig.root.join("chapters/intro.tex"), "\\section{Intro}\n").unwrap();
     if !rig.root.join("Chapters/Intro.tex").exists() {
-        return; // A volume that compares case, where TeX wouldn't find the file either.
+        return;
     }
     fs::write(rig.root.join("main.tex"), "\\input{Chapters/Intro}\n").unwrap();
     rig.changed("chapters", true);
@@ -1070,8 +1030,6 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
     assert!(rig.sessions.document(rig.session, "old.tex").is_none());
 }
 
-/// `command`'s answer, with `typed` put at the start of `doc` while the save before it
-/// waits for the project's lock: the two saves show it came after that save's snapshot.
 async fn typed_during_a_save(rig: &mut Rig, doc: &Document, typed: &str, command: &str) -> Value {
     let (held_tx, held) = std::sync::mpsc::channel();
     let (release, release_rx) = std::sync::mpsc::channel::<()>();
@@ -1113,8 +1071,6 @@ async fn text_typed_during_a_save_is_saved_before_a_build_or_a_trash_goes_on() {
     assert_eq!(ready["ready"], true);
     assert_eq!(rig.disk("old.tex"), "dcbaold");
 }
-
-// MARK: - Live preview
 
 async fn live(rig: &Rig) -> Value {
     let started = rig.ok("live_start", json!({})).await;
@@ -1289,7 +1245,6 @@ async fn the_live_event_carries_the_log_while_the_host_shows_it() {
     rig.fake.tell(exited());
     wait(1).await;
     assert_eq!(logs(rig.of_type("live").await).last().unwrap(), failed);
-    // Hidden, the log is no longer sent, but with an alert, which opens it.
     rig.ok("live_log", json!({ "shown": false })).await;
     live(&rig).await;
     assert!(logs(rig.of_type("live").await).iter().all(Value::is_null));
@@ -1302,8 +1257,6 @@ async fn the_live_event_carries_the_log_while_the_host_shows_it() {
     assert!(logs(others).iter().all(Value::is_null));
 }
 
-/// A rename stops the preview, which starts again once the change settles. It shows only as
-/// `starting` meanwhile, as a host told it stopped would show the build's PDF.
 #[tokio::test(start_paused = true)]
 async fn a_rename_restarts_the_preview_once_it_settles_showing_it_as_starting_meanwhile() {
     let mut rig = Rig::new(false).await;
@@ -1378,7 +1331,6 @@ fn run_done() -> LiveEvent {
     LiveEvent::Done("complete".into())
 }
 
-/// TeXpresso's log, as TeX writes it, of a run that met `\foo` on main.tex's `lines`.
 fn undefined_on(lines: &[u32]) -> String {
     let errors = lines
         .iter()
@@ -1400,7 +1352,6 @@ async fn live_errors_go_on_their_lines_once_texpresso_has_every_edit_and_follow_
     let shown = rig.of_type("live_issues").await;
     assert_eq!(issue_lines(shown.clone()), [[2]]);
     assert_eq!(shown[0]["lines"][0]["compact"], "Undefined: \\foo");
-    // Its log is of the text before the edit until TeXpresso says it has read it.
     doc.edit(0, 0, "\n", None, false);
     rig.fake.tell(run_done());
     wait(1100).await;
@@ -1422,7 +1373,6 @@ async fn a_live_error_shows_in_a_document_opened_after_and_goes_with_its_line_or
     wait(1100).await;
     let doc = rig.open("main.tex").await;
     assert_eq!(issue_lines(rig.of_type("live_issues").await), [[2, 3]]);
-    // Line 2's break and backslash: its error goes, and line 3's moves up.
     doc.edit(5, 2, "", None, false);
     assert_eq!(issue_lines(rig.of_type("live_issues").await), [[2]]);
     rig.ok("live_stop", json!({})).await;
@@ -1444,8 +1394,6 @@ async fn closing_saves_and_stops_the_preview() {
         crate::ErrorKind::NotFound
     );
 }
-
-// MARK: - The folder's watcher, for real
 
 fn until_event(seen: &Mutex<Vec<Value>>, found: impl Fn(&Value) -> bool) -> Option<Value> {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -1498,10 +1446,6 @@ async fn automatic_builds_wait_for_tex_to_be_found() {
     assert_eq!(rig.fake.called("compile"), 2);
 }
 
-// MARK: - The edges
-
-/// Another app's write the watcher hasn't told of yet (its changes settle for 250 ms) is
-/// asked about, not written over by the autosave.
 #[tokio::test(start_paused = true)]
 async fn a_write_elsewhere_just_before_the_autosave_is_asked_about_not_written_over() {
     let mut rig = Rig::new(false).await;
@@ -1548,7 +1492,6 @@ async fn a_build_asked_for_during_a_clean_starts_once_it_is_over() {
     assert!(cleaned.unwrap() < started.unwrap(), "{events:?}");
 }
 
-/// Until the document's symbols pass `test`, perhaps a scan or two later.
 async fn until(doc: &Document, test: impl Fn(&Symbols) -> bool) -> bool {
     for _ in 0..500 {
         if test(&doc.symbols()) {
@@ -1566,7 +1509,6 @@ async fn citations_and_files_another_app_writes_reach_completion() {
     let doc = rig.open("main.tex").await;
     fs::write(rig.root.join("refs.bib"), "@book{first,").unwrap();
     rig.changed("refs.bib", true);
-    // The file list comes with the tree's own rescan, perhaps one scan after the key.
     let cited = |symbols: &Symbols, key| {
         symbols.citations.iter().any(|cited| cited.name == key)
             && symbols.files == ["main.tex", "refs.bib"]
@@ -1580,7 +1522,6 @@ async fn citations_and_files_another_app_writes_reach_completion() {
 async fn the_symbol_scan_and_a_search_read_an_open_document_as_the_editor_has_it() {
     let rig = Rig::new(false).await;
     let doc = rig.open("main.tex").await;
-    // Marked text holds the autosave, so the label never reaches the disk.
     let composing = json!({ "path": "main.tex", "composing": true });
     rig.ok("composing", composing).await;
     doc.edit(5, 0, " \\label{typed}", None, false);
@@ -1604,19 +1545,15 @@ async fn an_open_documents_definitions_are_placed_under_its_name_once_it_moves()
     doc.edit(0, 0, "\\label{typed} \\ref{typed}", None, false);
     let renamed = json!({ "from": "a.tex", "to": "b.tex" });
     rig.ok("rename", renamed).await;
-    // Other files are as the last scan found them, which may be the old name's.
     assert!(until(&doc, |symbols| !symbols.by_file.contains_key("a.tex")).await);
     let answer = doc.with(|source| source.call("definition", r#"{"at": 20}"#));
     let answer: Value = serde_json::from_str(&answer.unwrap()).unwrap();
     assert_eq!(answer["places"][0]["file"], "b.tex");
 }
 
-/// Every match in a file goes; one that isn't UTF-8 refuses them all, as writing it would change
-/// its bytes.
 #[tokio::test(start_paused = true)]
 async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_their_line_ends() {
     let rig = Rig::new(false).await;
-    // Each line as it ended, though the first's ending isn't the second's.
     fs::write(rig.root.join("ch.tex"), "a cat\nand a cat\r\n").unwrap();
     fs::write(rig.root.join("latin.tex"), b"cat caf\xe9").unwrap();
     let doc = rig.open("main.tex").await;
@@ -1639,14 +1576,11 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
         .unwrap();
     assert_eq!(answered, answer);
     assert_eq!(rig.disk("ch.tex"), "a dog\nand a dog\r\n");
-    // As a host whose editor was typed in since puts back the rest, not to leave it half replaced.
     let restore = json!({ "id": snapshot, "paths": ["ch.tex"] });
     rig.ok("history_restore", restore).await;
     assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
 }
 
-/// A label's definition and each reference to it, the open document's as the editor has it, but
-/// not one in a comment, by file as a search's hits.
 #[tokio::test(start_paused = true)]
 async fn usages_are_where_the_name_at_an_offset_is_defined_and_used_as_a_search_lists_them() {
     let rig = Rig::new(false).await;
@@ -1675,8 +1609,6 @@ async fn usages_are_where_the_name_at_an_offset_is_defined_and_used_as_a_search_
     assert_eq!(usages, answer);
 }
 
-/// A citation's .bib entry, the key of a list that names it and an entry's crossref; refused
-/// for a key TeX couldn't read, one nothing defines and one taken.
 #[tokio::test(start_paused = true)]
 async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_disk() {
     let rig = Rig::new(false).await;
@@ -1707,9 +1639,6 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
     assert_eq!(rig.disk("refs.bib"), bib.replace("knuth", "knuth84"));
 }
 
-/// After the preamble's last `\usepackage`, written on disk or answered as the open main file's
-/// edits, and not again once it is loaded; in the main file however the settings spell it. The
-/// fix answers the settings too.
 #[tokio::test(start_paused = true)]
 async fn a_package_is_added_after_the_last_one_the_main_file_loads_unless_it_loads_it() {
     let rig = Rig::new(false).await;
@@ -1747,7 +1676,6 @@ async fn nothing_is_renamed_or_replaced_while_a_change_on_disk_is_unsettled() {
     }
 }
 
-/// Two files on their way to the Trash at once: the first's end leaves the second held.
 #[tokio::test(start_paused = true)]
 async fn two_trashes_under_way_each_keep_their_file_from_being_saved_again() {
     let rig = Rig::new(false).await;
@@ -1775,8 +1703,6 @@ async fn an_automatic_build_whose_saves_are_held_shows_nothing() {
     assert_eq!(rig.fake.called("compile"), 0);
 }
 
-/// A panic ends the session loudly: held edits are written, each document says nothing more
-/// is saved, and waiting commands are told the session stopped.
 #[tokio::test(start_paused = true)]
 async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     let rig = Rig::new(false).await;
@@ -1797,8 +1723,6 @@ async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
         crate::ErrorKind::NotFound
     );
 }
-
-// MARK: - History
 
 #[tokio::test(start_paused = true)]
 async fn a_replace_all_keeps_the_files_as_they_were_first() {
@@ -1846,7 +1770,6 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
     );
 }
 
-/// A file added since is left alone.
 #[tokio::test(start_paused = true)]
 async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_they_were() {
     let rig = Rig::new(false).await;
@@ -1884,10 +1807,6 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
     assert_eq!(list[0]["changed"], json!([change("gone.tex", "added")]));
 }
 
-// MARK: - Navigation
-
-/// Every file, and the headings and labels of the files the main file reaches; a match at a
-/// word's start before one inside a word, though its title is longer.
 #[tokio::test(start_paused = true)]
 async fn open_quickly_lists_files_headings_and_labels_best_first() {
     let mut rig = Rig::new(false).await;
@@ -1954,7 +1873,6 @@ async fn quick_help_tells_of_a_citation_a_label_and_a_command() {
         \\newlabel{sec:a}{{1}{3}{Intro}{section.1}{}}\n";
     fs::write(rig.root.join("build/main.aux"), aux).unwrap();
     assert_eq!(help("sec:a").await, label("1 on page 3"));
-    // An `\include`d file's labels are in its own .aux, which the main one inputs.
     let included = "\\newlabel{sec:a}{{2}{5}{Intro}{section.2}{}}\n";
     fs::write(rig.root.join("build/ch.aux"), included).unwrap();
     fs::write(rig.root.join("build/main.aux"), "\\@input{ch.aux}\n").unwrap();

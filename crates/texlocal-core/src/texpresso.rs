@@ -1,8 +1,3 @@
-//! Optional persistent TeXpresso viewer. Author buffers stay in its VFS; the ordinary
-//! latexmk build and PDF continue to use saved project files.
-//!
-//! A build with Underleaf's patch (tools/texpresso) writes the pages the client says it
-//! shows as one-page PDFs when retypeset, and the whole document when a run ends.
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,16 +16,12 @@ use crate::tex::{find_tool, program_at};
 use crate::{CoreError, lock, settings, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
-/// TeX's log is kept whole for its errors' files, which only its start opens.
 const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
-/// How long TeXpresso may leave what it was sent unread before the session is given up:
-/// it reads nothing while it makes its TeX formats, five seconds and more the first time.
 const UNREAD: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
 const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh (docs/texpresso.md).";
-/// The patch's protocol, which its first message names.
 const LIVE_VERSION: u64 = 2;
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
@@ -40,8 +31,6 @@ pub struct FileBuffer {
     pub text: String,
 }
 
-/// A client that shows the document itself: the pages it shows (from 0) and its caret (a
-/// path, and UTF-16 units in), so a patched build has those pages first and a snapshot ready.
 #[derive(Debug, Default)]
 pub struct Pane {
     pub view: Option<(u32, u32)>,
@@ -62,9 +51,6 @@ pub enum LiveEvent {
         page: u32,
         path: String,
     },
-    /// The whole document, complete on disk, its SyncTeX beside it. `run`: how the run ended
-    /// (`complete`, `stopped`, or `partial` while still typeset). `changed`: first/last page
-    /// ranges that differ from before.
     Document {
         path: String,
         pages: u32,
@@ -72,7 +58,6 @@ pub enum LiveEvent {
         changed: Vec<[u32; 2]>,
     },
     Done(String),
-    /// TeXpresso has read every change sent before the mark of this number.
     Synced(u64),
     Log,
     Ended(Option<String>),
@@ -81,8 +66,6 @@ pub enum LiveEvent {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of `project` for the session `owner`, in place of any the owner had, written
-    /// for the `pane` by a TeXpresso with Underleaf's patch.
     fn start(
         &self,
         owner: u64,
@@ -93,9 +76,6 @@ pub(crate) trait Preview: Send + Sync {
         sink: Sink,
     ) -> Result<Status, CoreError>;
     fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError>;
-    /// A keystroke: `remove` UTF-16 units at `start` replaced by `text`. It waits for nothing.
-    /// An edit that doesn't fit the session's copy is refused as unfit and changes
-    /// nothing: `update` with the whole text then puts both right.
     fn edit(
         &self,
         owner: u64,
@@ -107,16 +87,13 @@ pub(crate) trait Preview: Send + Sync {
     fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError>;
     fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError>;
     fn rescan(&self, owner: u64) -> Result<(), CoreError>;
-    /// Numbers the changes sent before it, for `LiveEvent::Synced`.
     fn mark(&self, owner: u64, mark: u64) -> Result<(), CoreError>;
-    /// TeX's log, whole: None once its start was dropped.
     fn tex_log(&self, owner: u64) -> Option<String>;
     fn status(&self, owner: u64) -> Result<Status, CoreError>;
     fn stop_request(&self, owner: u64) -> Status;
     fn stop(&self, root: &Path) -> Result<(), CoreError>;
 }
 
-/// A buffer TeXpresso writes by byte offset, of which the last `max` bytes are kept.
 struct Output {
     base: u64,
     bytes: Vec<u8>,
@@ -156,14 +133,12 @@ impl Output {
         self.bytes.drain(..excess);
         self.base += excess as u64;
     }
-    /// The last `MAX_OUTPUT` bytes, to show.
     fn text(&self) -> String {
         let start = self.bytes.len().saturating_sub(MAX_OUTPUT);
         String::from_utf8_lossy(&self.bytes[start..]).into_owned()
     }
 }
 
-/// The byte `units` UTF-16 units into `text`, unless that is inside a character.
 fn byte_offset(text: &str, units: usize) -> Option<usize> {
     let mut counted = 0;
     for (at, char) in text.char_indices() {
@@ -175,8 +150,6 @@ fn byte_offset(text: &str, units: usize) -> Option<usize> {
     (counted == units).then_some(text.len())
 }
 
-/// Replaces `remove` UTF-16 units at `start` with `inserted`; the byte offset and length
-/// it replaced, as TeXpresso counts them.
 fn splice(
     text: &mut String,
     start: usize,
@@ -189,10 +162,8 @@ fn splice(
     Some((offset, removed))
 }
 
-/// A running session's way to TeXpresso: dropping it closes TeXpresso's input, which ends it.
 struct Link {
     lines: mpsc::UnboundedSender<Vec<u8>>,
-    /// The program's and its engine's processes.
     tree: Tree,
 }
 
@@ -201,7 +172,6 @@ struct State {
     link: Option<Link>,
     output: Output,
     log: Output,
-    /// The patch's handshake has come.
     live: bool,
     protocol_seen: bool,
     stderr: Output,
@@ -223,7 +193,6 @@ impl Session {
     fn stop(&self, error: Option<String>) {
         let mut state = lock(&self.state);
         if let Some(link) = state.link.take() {
-            // The viewer starts an engine: stopping just its parent leaks it.
             link.tree.kill();
             remove_pdf_folder(&self.pdf);
             state.error.clone_from(&error);
@@ -236,8 +205,6 @@ impl Session {
     fn status(&self) -> Status {
         let state = lock(&self.state);
         let mut log = state.log.text();
-        // stderr includes historical TeX diagnostics and echoed VFS commands.
-        // The protocol buffers alone track the engine's current backtracking.
         if !state.protocol_seen || state.error.is_some() {
             log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
@@ -297,7 +264,6 @@ impl Manager {
             .cloned()
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
     }
-    /// A file's text as the owner's preview typesets it: the editor's, saved or not.
     pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
         lock(&self.owned(owner).ok()?.files).get(rel).cloned()
     }
@@ -313,15 +279,12 @@ impl Manager {
 }
 
 impl Manager {
-    /// The build folder and where the session's pages go, once the owner's last preview has
-    /// stopped.
     fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
         fs::create_dir_all(&project.build)?;
         let build = std::fs::canonicalize(&project.build)?;
         if let Some(previous) = lock(&self.sessions).get(&owner) {
             previous.stop(None);
         }
-        // The session's own folder, for its owner alone; the session removes it as it stops.
         let mut folder = tempfile::Builder::new();
         folder.prefix("texlocal-texpresso-");
         folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
@@ -329,7 +292,6 @@ impl Manager {
         Ok((build, pdf))
     }
 
-    /// The owner's running session, and the lines it sends TeXpresso.
     fn open(
         &self,
         owner: u64,
@@ -355,7 +317,6 @@ impl Manager {
             }),
         });
         let mut sessions = lock(&self.sessions);
-        // Under the map's lock, so `kill_all` stops it either way.
         if self.shutdown.load(Ordering::Acquire) {
             session.stop(None);
         }
@@ -364,9 +325,6 @@ impl Manager {
     }
 }
 
-/// The editor's files as TeXpresso is first told them and as the session keeps them, then the
-/// pages in view and the caret. TeXpresso's idle reruns stay off: each restarts TeX from nothing
-/// after a pause in typing and shows no page until it is over.
 fn opening(
     root: &Path,
     files: &[FileBuffer],
@@ -389,7 +347,6 @@ fn opening(
     (buffers, opening)
 }
 
-/// TeXpresso's command line, building `main` from `root` into `build` and its pages into `pdf`.
 fn command(
     executable: &Path,
     path_env: &str,
@@ -406,9 +363,6 @@ fn command(
         .current_dir(root)
         .stdin(Stdio::piped())
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    // A Mac app runs with signals ignored or blocked that a child inherits across exec.
-    // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends.
-    // SAFETY: only async-signal-safe calls, between fork and exec.
     unsafe {
         command.pre_exec(|| {
             for signal in 1..32 {
@@ -567,7 +521,6 @@ impl Preview for Manager {
     }
 }
 
-/// TEXLOCAL_TEXPRESSO, for development, else `texpresso` on the path.
 pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
         return program_at(Path::new(&override_path));
@@ -579,8 +532,6 @@ fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) 
     a.zip(b).take_while(|(a, b)| a == b).count()
 }
 
-/// The change from one whole text to the next, in bytes. Both boundaries must be UTF-8
-/// boundaries even when differing characters share leading or trailing bytes.
 pub(crate) fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
     let mut start = common(a.iter(), b.iter());
@@ -598,8 +549,6 @@ pub(crate) fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     )
 }
 
-/// Stops the session when TeXpresso exits, saying why (`exit`'s status) unless it exited
-/// cleanly; also when the runtime drops this task first.
 async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<Session>) {
     struct Stop(Weak<Session>, Option<String>);
     impl Drop for Stop {
@@ -615,8 +564,6 @@ async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<
     });
 }
 
-/// The session's one writer to TeXpresso's stdin: a TeXpresso that has stopped reading
-/// stops the session instead of holding the queued lines.
 async fn write_lines(
     mut stdin: impl AsyncWrite + Unpin,
     mut queued: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -686,7 +633,6 @@ fn apply_message(session: &Session, message: &Value) {
         }
         state.live
     };
-    // Upstream's first message under -json is TeX's output or log.
     if !live {
         return session.stop(Some(UNPATCHED.into()));
     }
@@ -722,7 +668,6 @@ fn apply_message(session: &Session, message: &Value) {
             Some(mark) => LiveEvent::Synced(mark),
             None => return,
         },
-        // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
         "truncate" | "append" => {
             let mut state = lock(&session.state);
             let output = match message[1].as_str() {
@@ -830,9 +775,6 @@ mod tests {
         pub(super) const OWNER: u64 = 1;
         const SOON: Duration = Duration::from_secs(3);
 
-        /// TeXpresso as a build with Underleaf's patch speaks, beside an engine it starts. It
-        /// writes each command it is sent to `commands` in the folder above its own, and
-        /// answers a few as TeXpresso would.
         const STUB: &str = r#"#!/bin/sh
 here=${0%/bin/texpresso}
 /bin/sleep 300 &
@@ -909,7 +851,6 @@ done
             *event != LiveEvent::Log
         }
 
-        /// A start for `OWNER`, with `main.tex` open in the editor at `text` if given.
         pub(super) fn start(
             manager: &Manager,
             root: &Path,
@@ -1022,7 +963,6 @@ done
             until(|| unsafe { libc::kill(engine, 0) == -1 }).await;
         }
 
-        /// Upstream's first message under -json is TeX's output.
         #[tokio::test]
         async fn a_texpresso_without_the_patch_fails_saying_how_to_build_it() {
             let (tmp, root, path_env) = setup();
@@ -1042,8 +982,6 @@ done
             begin(&manager, &root, &path_env);
             let session = manager.owned(OWNER).unwrap();
             until(|| lock(&session.state).live).await;
-            // Backtracking drops TeX's log, and the process's historical stderr is
-            // not put in its place.
             let diagnostic = "Undefined control sequence";
             lock(&session.state).stderr.append(0, diagnostic.as_bytes());
             apply_message(&session, &json!(["append", "log", 0, diagnostic]));
@@ -1147,12 +1085,9 @@ done
         }
     }
 
-    /// With TeX and the patched TeXpresso: `TEXLOCAL_TEXPRESSO=… cargo test -p texlocal-core
-    /// finishing_pass -- --ignored`.
     #[tokio::test]
     #[ignore = "needs TeX and the patched TeXpresso"]
     async fn a_finishing_pass_that_stops_on_an_error_leaves_the_pages_shown_and_typing_goes_on() {
-        // The pass, which reads the label, stops on its second page with 100 errors.
         let main = r"\documentclass{article}
 \begin{document}
 Section~\ref{a}.
@@ -1167,7 +1102,6 @@ Section~\ref{a}.
         let path = std::env::var("PATH").unwrap();
         let (_, mut events) =
             stub::start(&manager, tmp.path(), &path, Some(main), &Pane::default());
-        // What shows until the next page or end of a run.
         let mut until_shown = async || {
             let mut shown = Vec::new();
             let read = async {
@@ -1188,7 +1122,6 @@ Section~\ref{a}.
         };
         let first = until_shown().await;
         assert_eq!(first.last(), Some(&LiveEvent::Done("complete".into())));
-        // The first run's whole document, then the end of the pass, with no page of the pass's.
         let pass = until_shown().await;
         assert_eq!(
             pass.last(),

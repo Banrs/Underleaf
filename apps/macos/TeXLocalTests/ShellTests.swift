@@ -4,12 +4,10 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// One at a time: AppKit keeps toolbars of one identifier alike, so a tool taken out of one window's is out of every window's.
 @Suite(.serialized)
 struct ShellTests {
     private let defaults = TestDefaults()
 
-    /// Layout preferences stay in the test's own defaults.
     private func workspace(sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel(defaults: defaults.store)
         app.sidebarVisible = sidebar
@@ -29,7 +27,6 @@ struct ShellTests {
         return (window, workspace)
     }
 
-    /// Until no view in the window has moved for five turns.
     private func resize(_ window: NSWindow, to width: CGFloat) async throws {
         func frames(_ view: NSView) -> String { "\(view.frame)" + view.subviews.map(frames).joined() }
         let root = try #require(window.contentView?.superview)
@@ -49,11 +46,6 @@ struct ShellTests {
         try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == id })
     }
 
-    /// A wide window has Compile as its word. Narrowing, it turns to its symbol before AppKit would take Zoom or Compile to
-    /// the overflow menu, with the sidebar open or not, and is its word again once there is room. At its narrowest the window
-    /// holds both panes, Compile is a circle beside Back, still Compile to the overflow menu and VoiceOver, and nothing
-    /// has left the toolbar but for its overflow menu, where each tool that can go has a menu form and the editing tools go
-    /// first.
     @Test(arguments: [false, true]) func aNarrowWindowKeepsEveryToolOrItsMenuForm(sidebar: Bool) async throws {
         let (window, workspace) = try await workspace(sidebar: sidebar)
         defer { workspace.close(); window.close() }
@@ -68,7 +60,6 @@ struct ShellTests {
             if !toolbar.compactCompile { #expect(shown(.zoom) && shown(.compile), "at \(width)") }
         }
         try await resize(window, to: ColumnMetrics.contentMinimum.width)
-        // AppKit folds the sidebar only in a live resize.
         #expect(sidebar || window.contentView?.frame.width == ColumnMetrics.contentMinimum.width)
         for pane in workspace.columns.splitViewItems { #expect(pane.viewController.view.frame.width >= ColumnMetrics.paneMinimum) }
         #expect(toolbar.compactCompile && button.fittingSize == NSSize(width: 36, height: 36))
@@ -86,8 +77,6 @@ struct ShellTests {
         #expect(!toolbar.compactCompile && button.fittingSize.width == word)
     }
 
-    /// Stop, with the build's spinner, is as wide as Compile was, as its word and as its symbol: the tools beside it stay
-    /// where they are as a build starts and ends. The overflow menu and VoiceOver have Stop by name.
     @Test func stopIsAsWideAsCompile() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
@@ -106,8 +95,6 @@ struct ShellTests {
         }
     }
 
-    /// The overflow menu's Share is dimmed with its item while there is no PDF to share; AppKit's answer would ignore the
-    /// item's. The zoom's scale keeps its widest label's width, so the capsule and the tools after it stay put.
     @Test func theToolbarsControlsKeepTheirStateAndWidth() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
@@ -190,12 +177,9 @@ struct ShellTests {
         #expect(app.showSource && !app.showPDF)
     }
 
-    /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
-    /// split takes a press there before the bar does, with the panel shut and open.
     @Test func theStatusBarsLineTakesThePanelsDrag() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
-        // The area's split: the first stacked one the columns are in.
         let area = try #require(sequence(first: workspace.columns.view, next: \.superview).lazy.compactMap { $0 as? NSSplitView }
             .first { !$0.isVertical })
         let outside = try #require(area.superview)
@@ -209,8 +193,6 @@ struct ShellTests {
         #expect(pressed() === area)
     }
 
-    /// At the document's start the first page meets the toolbar's edge, and it stays there as the window's width changes.
-    /// Pages have no top margin, so the page at the edge, a fraction of a point above it as the clip view rounds, is at the start.
     @Test func theFirstPageStaysAtTheToolbarsEdge() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
@@ -229,7 +211,6 @@ struct ShellTests {
         }
     }
 
-    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels, as the menu bar's.
     @Test func formatIsAPopoverWithAMenuForm() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
@@ -243,8 +224,6 @@ struct ShellTests {
         }
     }
 
-    /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and
-    /// away only while search results have the sidebar.
     @Test func theOutlineHeaderGoesOnlyForSearchResults() async throws {
         let (window, workspace) = try await workspace(sidebar: true)
         defer { workspace.close(); window.close() }
@@ -259,20 +238,16 @@ struct ShellTests {
         #expect(files.bottomAlignedAccessoryViewControllers == [header] && sidebar.splitViewItems[1].isCollapsed)
     }
 
-    /// A sidebar the window folded is still the user's shown sidebar: it isn't saved as hidden, View offers to show it, and
-    /// showing it unfolds it.
     @Test func aFoldedSidebarIsNotAHiddenOne() async throws {
         let (window, workspace) = try await workspace(sidebar: true)
         defer { workspace.close(); window.close() }
         let app = workspace.app, project = workspace.project
         let saved = defaults.saved(DefaultsKey.sidebarVisible) as? Bool
         #expect(app.title(.viewToggleSidebar, on: project) == "Hide Sidebar")
-        // Shut by AppKit with no click or drag behind it: as a narrowing window folds it.
         workspace.sidebarItem.isCollapsed = true
         #expect(app.sidebarVisible && app.sidebarFolded && !app.sidebarShown)
         #expect(defaults.saved(DefaultsKey.sidebarVisible) as? Bool == saved)
         #expect(app.title(.viewToggleSidebar, on: project) == "Show Sidebar")
-        // The workspace applies a change of the model's once a turn: a fold and a show in one turn would read as no change.
         await settle()
         app.perform(.viewToggleSidebar, on: project)
         try await waitUntil { !workspace.sidebarItem.isCollapsed }
@@ -281,8 +256,6 @@ struct ShellTests {
         #expect(!app.sidebarVisible && defaults.saved(DefaultsKey.sidebarVisible) as? Bool == false)
     }
 
-    /// Hidden as the workspace opens, the inspector opens with its grouped form's sections 20 pt in, as the form lays out
-    /// built in the open column; built in the hidden one, they keep 10 pt insets under small grey headers.
     @Test func aHiddenInspectorOpensWithItsFormsLook() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
@@ -297,8 +270,6 @@ struct ShellTests {
         #expect(section.frame.minX == 20 && section.frame.width == view.bounds.width - 40, "\(section.frame)")
     }
 
-    /// A project opened over another keeps the other's workspace until it has loaded: the window never shows Home between
-    /// them. With no project open, it shows Home.
     @Test func aProjectSwitchNeverShowsHome() {
         let app = AppModel(defaults: defaults.store)
         let first = ProjectModel(id: "ShellTests A", app: app), next = ProjectModel(id: "ShellTests B", app: app)
@@ -309,7 +280,6 @@ struct ShellTests {
         #expect(app.workspaceProject(after: first) == nil)
     }
 
-    /// A PDF command shows the column for now, not for later launches, and reaches the workspace.
     @Test func aPDFRequestShowsTheColumnAndReachesTheWorkspace() {
         let app = AppModel(defaults: defaults.store)
         app.showPDF = false
@@ -320,7 +290,6 @@ struct ShellTests {
         #expect(app.showPDF && asked == 2 && defaults.saved(DefaultsKey.showPDF) == nil)
     }
 
-    /// Hiding the source or the PDF while the other is hidden shows the other, for later launches too.
     @Test func theSourceOrThePDFAlwaysShows() {
         let app = AppModel(defaults: defaults.store)
         app.toggleSource()
@@ -333,7 +302,6 @@ struct ShellTests {
         #expect(!next.showSource && next.showPDF)
     }
 
-    /// On Home, Find focuses the projects' search field.
     @Test func findOnHomeSearchesTheProjects() {
         let app = AppModel(defaults: defaults.store)
         let controller = MainWindowController(app: app)
@@ -351,7 +319,6 @@ struct ShellTests {
         let tracks = [track({ app.searchFocusToken / 2 }) { all.append($0) },
                       track({ app.searchFocusToken / 2 }, initial: false) { later.append($0) }]
         defer { tracks.forEach { $0.cancel() } }
-        // Both have read the first value before it changes: the second shows nothing of its own.
         try await waitUntil { all == [0] }
         await settle()
         app.searchFocusToken = 1

@@ -1,5 +1,3 @@
-//! Project and file management over the modules below; all returned paths use forward slashes.
-
 mod files;
 mod history;
 mod library;
@@ -19,8 +17,6 @@ use std::path::Path;
 
 use crate::error::CoreError;
 
-/// A whole repository or home folder, not a document's: the tree and the scans would walk it all
-/// on each change.
 pub(crate) const MAX_FILES: usize = 20_000;
 
 pub(crate) use files::{Trash, copy_paths, discard, discard_replaced, write_creating};
@@ -43,8 +39,6 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
-/// A file's bytes, or None if it can't be read or holds more than `cap`, however it grows as
-/// it's read.
 pub(crate) fn read_capped(path: &Path, cap: u64) -> Result<Option<Vec<u8>>, CoreError> {
     let Some(file) = skip_unreadable(File::open(path))? else {
         return Ok(None);
@@ -54,7 +48,6 @@ pub(crate) fn read_capped(path: &Path, cap: u64) -> Result<Option<Vec<u8>>, Core
     Ok(read.filter(|&len| len as u64 <= cap).map(|_| bytes))
 }
 
-/// Names a project folder holds that are not the author's work, at any depth: version control, what macOS leaves behind, and the core's temporary files. Other dotfiles (.latexmkrc) are the author's.
 pub(crate) fn is_litter(name: &str) -> bool {
     name.starts_with("._")
         || name.starts_with(".texlocal-")

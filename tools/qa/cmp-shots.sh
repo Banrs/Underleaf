@@ -1,10 +1,7 @@
 #!/bin/zsh
-# cmp-shots.sh <name>: captures for a before/after comparison, in the background. Each launch starts from the
-# seed library and empty QA defaults, so two runs of one build differ only by noise. QA_APP names the build.
 S=${QA_SCRATCH:?export QA_SCRATCH=<scratchpad>, set up by tools/qa/setup.sh}
 export QA_BG=1
 APP=${QA_APP:?QA_APP}
-# A locked screen hides every window from Accessibility and screencapture: nothing would be captured.
 $S/qa/locked | grep -q "locked: 1" && { echo "screen locked: not captured"; exit 4 }
 Q=($S/qa/qa --app $APP)
 O=$S/shots/$1; mkdir -p $O

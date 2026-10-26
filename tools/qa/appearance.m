@@ -1,5 +1,4 @@
 #import <Cocoa/Cocoa.h>
-// Injected into the QA app only (DYLD_INSERT_LIBRARIES): forces NSApp.appearance from QA_APPEARANCE=dark|light.
 static void apply(void) {
     const char *v = getenv("QA_APPEARANCE");
     if (!v) return;

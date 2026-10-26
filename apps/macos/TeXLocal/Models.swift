@@ -4,7 +4,6 @@ nonisolated struct ProjectInfo: Decodable, Identifiable {
     let id, name: String
     let mtime: Double
     let mainFile, path: String
-    /// A folder opened where it is, and one no longer there.
     let opened, missing: Bool
 
     var modified: Date { Date(timeIntervalSince1970: mtime / 1000) }
@@ -31,10 +30,8 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
 
     let type: Entry
     let name, path: String
-    /// A file's, from its name; a folder has none.
     var kind: FileKind?
     var children: [TreeNode]?
-    /// The core's mark, as latexmk finds the main file.
     var main: Bool?
 
     var id: String { path }
@@ -77,7 +74,6 @@ nonisolated extension NSRange {
 
 nonisolated struct TexStatus: Decodable {
     let available: Bool
-    /// "4.86".
     var latexmkVersion: String?
     var texDir, found, texpresso, texpressoDir: String?
 }
@@ -87,7 +83,6 @@ nonisolated struct ProjectSettings: Decodable {
     var shellEscape, stopOnFirstError: Bool
 }
 
-/// One setting's new value: shown at once, and sent to the session as its patch.
 nonisolated struct SettingsChange {
     let patch: [String: any Sendable]
     let apply: (inout ProjectSettings) -> Void
@@ -105,21 +100,17 @@ nonisolated struct LogItem: Decodable {
     let file: String?
     let line: Int?
     let message: String
-    /// What TeX's message means here and what usually fixes it.
     let explain: String?
     let fix: Fix?
 
     var isError: Bool { type == "error" }
 
-    /// Run by the session by its id (docs/core-api.md, Explanations and fixes): the app knows no fix by name.
     nonisolated struct Fix: Decodable, Equatable {
         let id, title, help: String
-        /// Asked before it runs.
         let confirm: String?
     }
 }
 
-/// A failed build may still have written a PDF; `stopped`: Stop, a newer build or quitting ended it.
 nonisolated struct CompileResult: Decodable {
     let ok, stopped: Bool
     let pdf: String?
@@ -151,14 +142,11 @@ nonisolated struct SearchGroup: Decodable, Identifiable {
     var id: String { file }
 }
 
-/// Every line that defines or uses a name, as a search's hits (`session_usages`).
 nonisolated struct Usages: Decodable {
-    /// As the source writes it: `\label{x}`, `\foo`, a file's path.
     let name: String
     let groups: [SearchGroup]
 }
 
-/// In PDF points, origin at the page's top-left: the baseline point (h, v) and the box's width and height above it.
 nonisolated struct ForwardLoc: Decodable {
     let page: Double
     let h, v, width, height: Double?
@@ -167,13 +155,11 @@ nonisolated struct ForwardLoc: Decodable {
 
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
-/// A line, from 1, of a project's file: where Back and Forward go.
 struct Place: Equatable {
     var path: String
     let line: Int
 }
 
-/// Where jumps left the caret, the latest last: Back's places and Forward's, 50 kept each way.
 struct Trail {
     private(set) var back: [Place] = [], forward: [Place] = []
 
@@ -182,8 +168,6 @@ struct Trail {
         forward.removeAll()
     }
 
-    /// The latest place whose file is there still and that isn't the caret's, those passed over dropped; the caret's place
-    /// is kept for the other way.
     mutating func step(back: Bool, from at: Place, exists: (Place) -> Bool) -> Place? {
         var (from, other) = back ? (self.back, forward) : (forward, self.back)
         var to: Place?
@@ -206,14 +190,11 @@ struct Trail {
     }
 }
 
-/// `session_quick_help`'s, for the popover.
 nonisolated struct QuickHelp: Decodable {
     let title, detail: String
     let place: Definition.Place?
 }
 
-/// Where a forward search began, for `synctex_match`; the column in UTF-16. Quietly, a double-click's, it shows only its
-/// word found, as the PDF's double-click goes only to its word found in the source: a command or the preamble has none.
 nonisolated struct SyncSource: Sendable {
     let id, file: String
     let line, column: Int
@@ -222,11 +203,9 @@ nonisolated struct SyncSource: Sendable {
 
 nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }
 
-/// For `synctex_inverse`: the page's text, and the clicked letter's UTF-16 index.
 nonisolated struct PageClick: Equatable, Sendable { let text: String, at: Int }
 
 nonisolated struct Imported: Decodable {
-    /// A name taken, and the free one Keep Both gives it.
     nonisolated struct Clash: Decodable { let path, keepBoth: String }
 
     let existing: [Clash]
@@ -237,7 +216,6 @@ nonisolated struct RenameResult: Decodable {
     let ui: UIState
 }
 
-/// One of `session_history_list`'s: what it was taken for, and the files that differ from the one before it.
 nonisolated struct Snapshot: Decodable, Identifiable {
     nonisolated struct Change: Decodable {
         nonisolated enum Kind: String, Decodable { case added, deleted, changed }
@@ -255,8 +233,6 @@ nonisolated struct Snapshot: Decodable, Identifiable {
     var title: String { name ?? reason ?? String(localized: "Automatic") }
 }
 
-/// A row of `session_history_compare`'s unified diff: a line in both, the snapshot's alone or now's alone, or a count of
-/// unchanged lines folded away.
 nonisolated struct DiffLine: Decodable { let same, removed, added: String?; let skipped: Int? }
 
 func remapPath(_ path: String, from: String, to: String) -> String {

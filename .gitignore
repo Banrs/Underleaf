@@ -1,23 +1,15 @@
-# Rust build output
 target/
 
-# Logs
 *.log
 
-# macOS
 .DS_Store
-# Xcode's per-user state
 xcuserdata/
 *.xcuserstate
 
-# Editor/IDE / tooling
 .vscode/
 .idea/
 .claude/
 
-# Apple UI kits: local reference only (licence, and too large for GitHub).
 /design/
 
-# TeXpresso checkout made by tools/texpresso/build.sh
 /tools/texpresso/source/
-

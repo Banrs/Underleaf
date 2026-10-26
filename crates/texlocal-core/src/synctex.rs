@@ -1,6 +1,3 @@
-//! SyncTeX queries: editor line to PDF position and back, from the SyncTeX TeX writes beside the
-//! PDF (`parser`); words are placed by `wordmatch`.
-
 mod parser;
 
 use std::path::{Path, PathBuf};
@@ -16,8 +13,6 @@ use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
 use parser::SyncTex;
 
-/// Only `page` is always given: the rest are null where SyncTeX has no finite value, for the
-/// host to fall back on rather than draw an invisible zero-size box.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ForwardLoc {
     pub page: f64,
@@ -25,7 +20,6 @@ pub struct ForwardLoc {
     pub v: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
-    /// All matching boxes in reading order; the top-level fields keep SyncTeX's first.
     pub matches: Vec<Self>,
 }
 
@@ -50,13 +44,10 @@ fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, Core
         .map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
 }
 
-/// The project's file TeX opened as `name`, as the disk spells it; generated files and anything
-/// outside the project are none.
 fn source_file(root: &Path, name: &str) -> Option<String> {
     source_rel(root, name).and_then(|rel| disk_spelling(root, &rel))
 }
 
-/// Every box of the line, as some TeX engines record lines but not columns.
 pub fn synctex_forward_at(
     project: &Project,
     file: &str,
@@ -103,8 +94,6 @@ pub fn synctex_forward_at(
     Ok(first)
 }
 
-/// `typeset` gives a file's text where the PDF wasn't made from the disk's, as Live Preview's
-/// is from the editor's.
 pub fn synctex_inverse(
     project: &Project,
     page: f64,
@@ -158,7 +147,6 @@ mod tests {
     use super::*;
     use crate::projects::testing::project;
 
-    /// main.tex's line 3 and chapter.tex's line 7, each an hbox of words, on page 1.
     const SYNCTEX: &str = "SyncTeX Version:1
 Input:1:{root}/./main.tex
 Input:2:{root}/./chapter.tex
@@ -186,7 +174,6 @@ x2,7:14000000,10300473
 ";
     const POSTAMBLE: &str = "Postamble:\nCount:12\n!600\nPost scriptum:\n";
 
-    /// Whether `found` is `sp` scaled points, in PDF points.
     fn at(found: Option<f64>, sp: i32) -> bool {
         found.is_some_and(|found| (found - f64::from(sp) / 65781.76).abs() < 1e-3)
     }
@@ -216,7 +203,6 @@ x2,7:14000000,10300473
         assert_eq!((shown.page, shown.matches.len()), (1.0, 1));
         let (bottom, height) = (10300473 + 127431, 455111 + 127431);
         assert!(at(shown.h, 8799518) && at(shown.v, bottom) && at(shown.height, height));
-        // A line with nothing on the page shows the nearest that has something.
         let nearest = synctex_forward_at(&project, "main.tex", 4, None).unwrap();
         assert!(at(nearest.v, 8865054), "{nearest:?}");
         for (click, line, column) in [
@@ -233,7 +219,6 @@ x2,7:14000000,10300473
         }
     }
 
-    /// TeX writes the Postamble at the end of its run, which Live Preview's may not have reached.
     #[test]
     fn a_synctex_without_its_postamble_answers_as_far_as_it_goes() {
         let (_dir, project, synctex) = setup();
@@ -245,7 +230,6 @@ x2,7:14000000,10300473
         assert_eq!((loc.file.as_str(), loc.line), ("main.tex", 3));
     }
 
-    /// Live Preview's PDF is made from the editor's text, saved or not.
     #[test]
     fn a_click_finds_its_word_in_the_text_the_pdf_was_made_from() {
         let (_dir, project, synctex) = setup();
@@ -256,8 +240,6 @@ x2,7:14000000,10300473
         assert_eq!((loc.line, loc.column), (7, Some(4)));
     }
 
-    /// A damaged file's values needn't sum within i32 as TeX's do: with boxes, kerns, pages and
-    /// lines at i32's ends, queries answer or fail without overflowing.
     #[test]
     fn a_damaged_synctex_answers_without_overflowing() {
         let (_dir, project, _) = setup();

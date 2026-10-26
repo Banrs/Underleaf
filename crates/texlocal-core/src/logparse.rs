@@ -1,5 +1,3 @@
-//! latexmk/TeX log parsing. Warnings name no file, so the open file is tracked from the log's "(./x.tex" and ")" marks.
-
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -9,7 +7,6 @@ use serde_json::json;
 
 use crate::syntax::catalog::CATALOG;
 
-/// How serious an item is: "error" or "warning" on the wire.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -24,33 +21,25 @@ pub struct LogItem {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
-    /// `message` for a line's end: on one line, without LaTeX's own prefix; the `issues` event's.
     #[serde(skip)]
     pub short: String,
     #[serde(skip)]
     pub command: Option<String>,
-    /// What TeX's message means here and what usually fixes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explain: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<Fix>,
 }
 
-/// One action that usually ends an error, which a host offers as a button and has the session
-/// run by its id (`session_fix`), then compiles again.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Fix {
-    /// A package or class file LaTeX didn't find.
     Install(String),
-    /// A package that defines what TeX doesn't know.
     AddPackage(String),
     Xelatex,
     ShellEscape,
 }
 
 impl Fix {
-    /// The id a host sends back: the fix and its argument, which only this reads, so no table of
-    /// the issues is kept for it.
     pub(crate) fn parse(id: &str) -> Option<Self> {
         match id.split_once(':') {
             Some(("install", file)) => Some(Self::Install(file.into())),
@@ -122,28 +111,20 @@ impl LogItem {
     }
 }
 
-/// The command a message names as undefined, as `parse_log` writes it, and for
-/// no other message: one from a file TeX loaded has that file's name before it.
 fn undefined_command(message: &str) -> Option<String> {
     let name = message.strip_prefix("Undefined control sequence: \\")?;
     let letters = name.chars().all(|c| c.is_ascii_alphabetic() || c == '@');
     ((!name.is_empty() && letters) || name.chars().count() == 1).then(|| format!("\\{name}"))
 }
 
-/// What an entry of `EXPLAINED` offers to do.
 #[derive(Clone, Copy)]
 enum Offer {
     Nothing,
-    /// Installing the file the message's first group names.
     Install,
-    /// Loading the package that defines the command the message names undefined, or the
-    /// environment its first group names.
     Package,
     Xelatex,
 }
 
-/// TeX's and LaTeX's common messages, as `short` has them: the first that matches explains.
-/// Unanchored where a file TeX loaded may put its name first.
 static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
     use Offer::{Install, Nothing, Package, Xelatex};
     [
@@ -253,7 +234,6 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
     .collect()
 });
 
-/// What a message means and the fix it offers; `command` is the one it names undefined.
 fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Option<Fix>) {
     if short == SHELL_ESCAPE {
         return (None, Some(Fix::ShellEscape));
@@ -276,7 +256,6 @@ fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Optio
     (Some(explain), fix)
 }
 
-// `path:line: ` from -file-line-error for any file TeX reads, or TeX's own `! `; `error_start` also requires a path, which a time like "12:30: " is not.
 static ERROR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:(?P<file>(?:[A-Za-z]:)?[^\s:!][^:]*):(?P<line>\d+):(?:\s+|$)|! )(?P<message>.*)$",
@@ -310,7 +289,6 @@ fn error_start(line: &str) -> Option<Captures<'_>> {
         .filter(|m| m.name("file").is_none_or(|f| is_path(f.as_str())))
 }
 
-/// Whether the text before "12:" is a path and not words: TeX prints project files as "./name", so even a name with a space has a slash.
 fn is_path(text: &str) -> bool {
     text.contains(['/', '\\']) || (text.contains('.') && !text.contains(char::is_whitespace))
 }
@@ -321,8 +299,6 @@ fn warning_start(line: &str) -> Option<Captures<'_>> {
         .flatten()
 }
 
-/// A forward-slash project path; None for an absolute TeX distribution path,
-/// `/…` or, from a TeX on Windows, `C:/…`, `C:\…` or `\\server\…`.
 fn project_path(path: &str) -> Option<String> {
     let absolute = match path.as_bytes() {
         [b'/' | b'\\', ..] => true,
@@ -332,9 +308,6 @@ fn project_path(path: &str) -> Option<String> {
     (!absolute).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
 }
 
-/// Whether the word after a "(" is a file TeX opens, not text in parentheses:
-/// it has a slash, or is a Windows path in full, `C:\…` or `\\server\…`. A
-/// backslash alone would take a command: "(\end occurred inside a group".
 fn opens_file(token: &str) -> bool {
     token.contains('/')
         || match token.as_bytes() {
@@ -344,7 +317,6 @@ fn opens_file(token: &str) -> bool {
         }
 }
 
-/// A file's name alone, as TeXpresso's log gives one (`article.cls`), not `e.g.` or `1.5pt`.
 fn named_file(token: &str) -> bool {
     token.rsplit_once('.').is_some_and(|(stem, ext)| {
         !stem.is_empty() && !ext.is_empty() && ext.bytes().all(|b| b.is_ascii_alphabetic())
@@ -372,7 +344,6 @@ fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str, opens: &dyn Fn(&str
     }
 }
 
-/// An absolute TeX distribution path is attributed to the open project file, with no line number.
 fn locate(
     named: Option<&str>,
     line: Option<u32>,
@@ -396,7 +367,6 @@ fn locate(
     (files.find_map(project), None)
 }
 
-/// The name a diagnostic's continuation lines carry in parentheses, e.g. "(hyperref)".
 fn continuation_tag(text: &str) -> Option<&str> {
     let mut words = text.split_whitespace();
     match (words.next()?, words.next()?) {
@@ -415,7 +385,6 @@ fn starts_new(line: &str) -> bool {
         || warning_start(line).is_some()
 }
 
-/// What `next` adds to a message after `prev`: a line led by the diagnostic's own "(name)", an indented one, or the rest of a line an engine wrapped at column 79.
 fn continuation<'a>(
     prev: &str,
     next: &'a str,
@@ -445,17 +414,12 @@ fn echo_of(lines: &[&str], i: usize) -> Option<usize> {
         .map(|k| i + 1 + k)
 }
 
-/// The log's errors and warnings, and apart from them its overfull and underfull boxes.
 pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
     parse(log, main_file, None)
 }
 
-/// A file's name as the log gives it, as the project's path; None for one not the project's.
 type Ours<'a> = &'a dyn Fn(&str) -> Option<String>;
 
-/// The errors of TeXpresso's log, which names a file as TeX found it from the main file's
-/// folder, a distribution's by its name alone (`(article.cls`): `ours` gives a name's project
-/// path, or None for one not the project's.
 pub fn parse_live_log(log: &str, main_file: &str, ours: Ours) -> Vec<LogItem> {
     let (items, _) = parse(log, main_file, Some(ours));
     items
@@ -464,16 +428,12 @@ pub fn parse_live_log(log: &str, main_file: &str, ours: Ours) -> Vec<LogItem> {
         .collect()
 }
 
-/// An error or warning as the lines from its start (`lines[i]`, matched as `m`) give it.
 struct Diagnostic<'a> {
     named: Option<&'a str>,
     error: bool,
-    /// Its message, with the lines that carry it on.
     message: String,
     line: Option<u32>,
-    /// Where an error's echo of the source line is.
     echo: Option<usize>,
-    /// A fatal summary, which repeats the error that stopped TeX.
     summary: bool,
 }
 
@@ -532,11 +492,9 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
     let mut items: Vec<LogItem> = Vec::new();
     let mut bad_boxes = Vec::new();
     let mut open = Vec::new();
-    // Lines before this echo source whose parentheses needn't pair up.
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        // Skip the regexes for most lines: an error starts "! " or has colons.
         let may_err = line.starts_with("! ") || line.contains(':');
         let start = may_err
             .then(|| error_start(line))
@@ -547,7 +505,6 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
             if found.error {
                 quiet_until = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             }
-            // A summary is kept only alone.
             if found.summary && items.iter().any(|item| item.kind == Severity::Error) {
                 continue;
             }
@@ -577,15 +534,12 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
         }
     }
 
-    // Reruns duplicate messages; keep the first in order.
     let mut seen = HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
     bad_boxes.retain(|item| seen.insert(item.clone()));
     (items, bad_boxes)
 }
 
-/// Errors and warnings from bibtex's or biber's .blg; bibtex names the .bib line after an
-/// error's message or on the line below it, and below a warning's.
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     let mut items: Vec<LogItem> = Vec::new();
     let mut above = "";
@@ -627,9 +581,6 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
 
 pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
 
-/// A failed build's error that asks for shell escape (minted's "invoke LaTeX with the
-/// -shell-escape flag") says where to allow it; without one, a program TeX refused
-/// ("runsystem(…)...disabled") adds that error with no place.
 pub(crate) fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
     if let Some(error) = errors
         .iter_mut()
@@ -691,15 +642,11 @@ mod tests {
                 "! Emergency stop.\nl.9 \\end\n".into(),
                 &["error main.tex:9 Emergency stop."],
             ),
-            // A "!" error doesn't take the next error's "l.<n>".
             (
                 format!("! Emergency stop.\n{error}"),
                 &["error -:- Emergency stop.", undefined],
             ),
-            // TeX's closing summary names the stopping error's line, not its
-            // own, and folds into the error before it.
             (format!("{error}\n./main.tex:12:  {fatal}\n"), &[undefined]),
-            // Alone, it is the failure's one record, with no place.
             (format!("./main.tex:12:  {fatal}\n"), &[&alone]),
             (
                 format!("! Emergency stop.\n! {fatal}\n"),
@@ -754,7 +701,6 @@ mod tests {
         ];
         let expected: Vec<_> = expected.iter().map(|(s, c)| (s.as_str(), *c)).collect();
         assert_eq!(found, expected);
-        // The name of a file TeX loaded comes first in its message: not this file's command.
         for message in [
             "x.sty: Undefined control sequence: \\a",
             "Undefined control sequence: \\ab-c",
@@ -765,7 +711,6 @@ mod tests {
 
     #[test]
     fn a_package_or_class_file_tex_cannot_find_is_named_whole() {
-        // As pdfLaTeX, XeLaTeX and LuaLaTeX write it, wrapped at 79 columns without max_print_line.
         let log = "! LaTeX Error: File `nosuchpackagewithaveryveryverylongnamethatwillwrapthelinea\n\
                    tseventyninecolumnsx.sty' not found.\n\
                    \n\
@@ -884,7 +829,6 @@ mod tests {
 
     #[test]
     fn a_message_takes_the_file_tex_has_open() {
-        // Parentheses in echoed source and box contents don't pair up, and a command in parentheses opens no file.
         let log = "(./main.tex\n\
                    (/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls\n\
                    Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
@@ -967,8 +911,6 @@ mod tests {
                  (y) not this warning's.\n",
                 &["warning -:- You have requested package `a', but the package provides `b'."],
             ),
-            // A line of exactly 79 columns is a line, not a wrap, when the
-            // next is the package's own "(name)" line.
             (
                 "Package microtype Warning: Unknown slot number of character 12 in font encoding\n\
                  (microtype)                removing it on input line 44.\n",

@@ -1,6 +1,3 @@
-//! Tests across the projects module's parts: renames under the settings' and the paths' rules,
-//! search, the symbol scan, and links.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -18,13 +15,11 @@ use crate::projects::{
 };
 use crate::settings::{read_settings, write_settings};
 
-/// In any case and in part of a word, with nothing open, as the service searches.
 fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
     let found = |_: &str, text: &str| Query::new(query, false, false).places(text);
     search_project(root, &HashMap::new(), &is_text, &found, limit)
 }
 
-/// With nothing open and nothing read before.
 fn scan(root: &Path) -> Result<Symbols, CoreError> {
     scan_symbols(root, &Files::default(), &HashMap::new())
 }
@@ -66,16 +61,12 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
     let err = rename_entry(&project, "moved", "moved/old/moved").unwrap_err();
     assert_eq!(err.kind, crate::ErrorKind::Invalid, "{}", err.message);
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
-    // create_entry and uploads accept a leading "-"; only the main file, which reaches
-    // latexmk's command line, may not start with one.
     create_free(&root, "-draft.tex", false).unwrap();
     let result = rename_entry(&project, "-draft.tex", "-notes/-draft.tex").unwrap();
     assert_eq!(result.to, "-notes/-draft.tex");
     assert!(root.join("-notes/-draft.tex").is_file());
 }
 
-/// On case-insensitive volumes too; and one stopped before the move leaves no folder of the new
-/// name.
 #[test]
 fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing() {
     let (_dir, root) = project();
@@ -141,13 +132,9 @@ fn search_cuts_its_snippet_at_the_match_passes_over_other_files_and_stops_at_the
     assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
 
-/// A Latin-1 .bib read as bytes by a Unicode-mode pattern loses the whole entry, so it is
-/// decoded first; and a non-breaking space before the brace isn't swallowed into the key by an
-/// ASCII-only `\s`.
 #[test]
 fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     let (_dir, root) = project();
-    // 0xFC is "ü" in ISO-8859-1, and not UTF-8 alone.
     let bib = b"@article{m\xFCller2020,\n  title={x}\n}\n@article{ok2021,\n  title={y}\n}\n";
     fs::write(root.join("refs.bib"), bib).unwrap();
     fs::write(
@@ -248,7 +235,6 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     let scanned = || labels(scan_symbols(&root, &facts, &HashMap::new()).unwrap());
     assert_eq!(scanned(), ["one"]);
     let modified = fs::metadata(&file).unwrap().modified().unwrap();
-    // Written in place at the same length and dated back, it stamps as before.
     fs::write(&file, "\\label{two}").unwrap();
     let written = fs::File::options().write(true).open(&file).unwrap();
     written.set_modified(modified).unwrap();
@@ -257,10 +243,6 @@ fn the_symbol_scan_reads_a_file_again_only_once_its_stamp_changes() {
     assert_eq!(scanned(), ["three"]);
 }
 
-/// The walk the tree, search, the scans, history and export share: links followed to files
-/// only, inside or out (a shared .bib), as one to a folder may loop; an entry unreadable read
-/// as empty, but by a copy refused; and, with the tree's rule, no dotfiles and no top-level build folder in any case,
-/// though a build deeper in is the author's.
 #[test]
 fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read_unless_copying() {
     use std::os::unix::fs::{PermissionsExt, symlink};
@@ -288,7 +270,6 @@ fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read_unless
     }
     let lock = |mode| fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(mode));
     lock(0o000).unwrap();
-    // Running as root, permissions lock nothing.
     let locked = fs::read_dir(root.join("locked")).is_err();
     let whole = walk(&root, &listed, true, &mut |_| Ok(true)).map_err(|err| err.kind);
     let mut walked = Vec::new();

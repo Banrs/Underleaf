@@ -18,7 +18,6 @@ final class ProjectFlowTests {
     let app = AppModel()
 
     init() throws {
-        // Removed rather than trashed, as `CoreTests` explains: only in the test library.
         _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         app.autoCompile = false
@@ -38,7 +37,6 @@ final class ProjectFlowTests {
         return (info, info.folder)
     }
 
-    /// Opened with its main file's `text` and the `others` written beside it.
     private func opened(_ text: String = "text", with others: [String: String] = [:]) async throws -> (project: ProjectModel, folder: URL) {
         let (info, folder) = try await project(text)
         for (path, other) in others { try info.write(other, to: path) }
@@ -54,7 +52,6 @@ final class ProjectFlowTests {
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
 
-    /// The window's, which groups only where a test says.
     private func windowUndo() -> UndoManager {
         let undo = UndoManager()
         undo.groupsByEvent = false
@@ -62,7 +59,6 @@ final class ProjectFlowTests {
         return undo
     }
 
-    /// The session builds on a thread of its own, and says when it's done.
     private func built(_ project: ProjectModel, auto: Bool = false) async throws {
         let before = project.finishedBuilds
         await project.compile(auto: auto)
@@ -82,7 +78,6 @@ final class ProjectFlowTests {
 
     @Test func theLastOpenHasTheEditor() async throws {
         let first = try await project("first").info, second = try await project("second").info
-        // Started in this order on the main actor, each waiting on the core in turn.
         let opens = [Task { await app.open(first.id) }, Task { await app.open(second.id) }]
         for open in opens { await open.value }
         let editor = try #require(app.project?.editor)
@@ -105,7 +100,6 @@ final class ProjectFlowTests {
         #expect(try String(contentsOf: file, encoding: .utf8) == "unsaved original")
     }
 
-    /// Overlapping requests settle at the new path; the scheduler chooses their core interleaving.
     @Test func overlappingRenameAndSaveRequestsKeepEditsAtTheNewPath() async throws {
         let (project, folder) = try await opened("original")
         for to in ["chapter.tex", "references.bib", "main.tex"] {
@@ -157,14 +151,12 @@ final class ProjectFlowTests {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         unzip.waitUntilExit()
         #expect(String(decoding: data, as: UTF8.self) == expected)
-        // The archive is the save panel's to copy: the next export removes it, and closing the last.
         let next = try await project.exportZip()
         #expect(!exists(zip) && exists(next))
         await app.close()
         #expect(!exists(next.deletingLastPathComponent()))
     }
 
-    /// CI has no TeX.
     @Test func onlyCompileMovesThePanel() async throws {
         let project = try await openedWithTeX("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}")
         try await built(project, auto: true)
@@ -235,8 +227,6 @@ final class ProjectFlowTests {
         #expect(try files.contentsOfDirectory(atPath: moved.path(percentEncoded: false)) == ["paper.tex"])
     }
 
-    /// Live Preview from a TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's patched
-    /// build does, and reads edits until it's stopped.
     private func startLivePreview(_ project: ProjectModel) async throws {
         let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
         try files.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -250,7 +240,6 @@ final class ProjectFlowTests {
         exec cat > /dev/null
         """.write(to: script, atomically: true, encoding: .utf8)
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        // Read as Live Preview starts.
         setenv("TEXLOCAL_TEXPRESSO", script.path, 1)
         project.startTeXpresso()
         try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
@@ -285,7 +274,6 @@ final class ProjectFlowTests {
     @Test func theOutlineFollowsTheTopHeadingOnly() async throws {
         let project = try await opened("\\section{A}\n1\n2\n\\section{B}\n3").project
         try await waitUntil { project.outline.count == 2 }
-        // The caret's move as the file opened is a turn behind.
         await settle()
         project.editor.onScroll(2)
         let told = OSAllocatedUnfairLock(initialState: false)
@@ -294,7 +282,6 @@ final class ProjectFlowTests {
         #expect(!told.withLock { $0 } && project.topLine == 3)
         project.editor.onScroll(4)
         #expect(told.withLock { $0 } && project.currentHeading == project.outline[1].id && project.topHeading == project.outline[1].id)
-        // A scroll the caret's move makes, in the same turn, leaves the caret's heading current.
         project.editor.onCursor(5, 0)
         project.editor.onScroll(1)
         #expect(project.topHeading == project.outline[0].id && project.currentHeading == project.outline[1].id)
@@ -328,7 +315,6 @@ final class ProjectFlowTests {
         #expect(changes == 2 && tree.node(at: "more.tex") == nil)
     }
 
-    /// The session's watcher, reload and conflict reach the editor; the rules are the core's (session/tests.rs).
     @Test func anotherAppsChangeReachesTheEditor() async throws {
         let (project, folder) = try await opened("original")
         let main = folder.appending(path: "main.tex"), text = project.editor.textView
@@ -336,7 +322,6 @@ final class ProjectFlowTests {
 
         try "theirs".write(to: main, atomically: false, encoding: .utf8)
         try await waitUntil(timeout: .seconds(5)) { text.string == "theirs" }
-        // Shown without an edit, and taken: the next edit is saved over it.
         #expect(project.editor.perform(.bold))
         #expect(await project.save() && onDisk() == text.string)
 
@@ -349,11 +334,9 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A failed autosave is told once in an alert, and Not Saved stays in the status bar until a save succeeds.
     @Test func aFailedAutosaveIsToldOnceAndNotSavedStaysUntilASave() async throws {
         let (project, folder) = try await opened()
         let path = folder.path(percentEncoded: false)
-        // The write replaces the file, so its folder refuses it.
         try files.setAttributes([.posixPermissions: 0o555], ofItemAtPath: path)
         defer { try? files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path) }
         #expect(project.editor.perform(.bold))
@@ -404,7 +387,6 @@ final class ProjectFlowTests {
         #expect(await refused.value == false)
         #expect(project.settings?.engine == "pdflatex" && project.settings?.shellEscape == true)
         app.alert = nil
-        // Their answers can come back in either order; the settings shown are the last patch's.
         let both = [Task.immediate { await project.patchSettings(.stopOnFirstError(true)) },
                     Task.immediate { await project.patchSettings(.shellEscape(false)) }]
         for patch in both { #expect(await patch.value) }
@@ -412,19 +394,16 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Arrowing down the sidebar's files: each open closes the one before, and one a later open overtook closes its own.
     @Test func onlyTheFileShownStaysOpenInTheSession() async throws {
         let project = try await opened(with: ["a.tex": "a", "b.tex": "b"]).project
         let session = try #require(project.session)
         let paths = ["main.tex", "a.tex", "b.tex"]
-        // A few turns apart, so the later open comes at different points in the earlier one's.
         for (round, turns) in [0, 1, 3, 10, 30].enumerated() {
             let first = paths[(2 * round + 1) % 3], last = paths[(2 * round + 2) % 3]
             let opening = Task { await project.open(first) }
             for _ in 0..<turns { await Task.yield() }
             await Task { await project.open(last) }.value
             await opening.value
-            // Taken after any close an overtaken open sent: a session takes its commands in the order sent.
             try await Core.shared.call("session_set_options", ["session": session])
             #expect(project.openPath == last && project.editor.path == last)
             #expect(paths.filter { SourceDocument(session: session, path: $0) != nil } == [last], "after \(turns) turns")
@@ -433,8 +412,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Stop and the session's word that Live Preview ended each put the build's PDF back: the pane never empties, and the
-    /// build's pages go into the document showing.
     @Test func stoppingLivePreviewGoesBackToTheBuildsPDF() async throws {
         let (info, folder) = try await project("\\documentclass{article}\\begin{document}x\\end{document}")
         try files.createDirectory(at: folder.appending(path: "build"), withIntermediateDirectories: true)
@@ -455,8 +432,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Live Preview's issues as the core sends them: each event replaces a document's, an edit keeps them (the core moves
-    /// them), `[]` ends them, and a document opened later shows its own.
     @Test func liveIssuesAreEachDocumentsLatestApartFromTheBuilds() async throws {
         let project = try await opened("a\nb\nc\n", with: ["other.tex": "x\ny\n"]).project
         func send(_ type: String, _ lines: [Int], in path: String = "main.tex") throws {
@@ -482,7 +457,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A figure is inserted only where TeX reads its kind and its path as written.
     @Test func aFigureIsInsertedWhereTeXReadsItsPath() {
         let insert = { ProjectModel.includeGraphics($0, kind: $1, into: $2) }
         #expect(insert("figs/plot.png", "image", "tex") == "\\includegraphics{figs/plot.png}")
@@ -494,7 +468,6 @@ final class ProjectFlowTests {
         for path in ["50%.png", "a#1.png", "a\\b.png", "a}{.png", "a{.png"] { #expect(insert(path, "image", "tex") == nil, "\(path)") }
     }
 
-    /// Jump to Next and Previous Issue skip an issue with no place and go round the list's ends.
     @Test func issuesAreSteppedThroughRoundTheEnds() async throws {
         let project = try await opened("a\nb\n").project
         let items = #"[{"type":"warning","file":"main.tex","line":1,"message":"a"},{"type":"warning","message":"b"},"# +
@@ -517,7 +490,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Which lines match is the core's rule; a hit keeps its match's place for the editor.
     @Test func aSearchShowsWhatItSearchedAndABlankOneClears() async throws {
         let project = try await opened("a needle").project
         project.search.query = "needle"
@@ -533,7 +505,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Find Usages puts its name in the field, and its hits stay, under their heading, until the query changes.
     @Test func usagesShowUntilTheQueryChanges() async throws {
         let project = try await opened("\\label{a} \\ref{a}").project
         project.editor.textView.setSelectedRange(.caret(7))
@@ -547,7 +518,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The core refuses a name with a leading dash before it looks for tlmgr, so nothing is installed.
     @Test func aRefusedFixIsAnAlertAndEndsItsProgress() async throws {
         let project = try await opened().project
         await project.run(LogItem.Fix(id: "install:-foo.sty", title: "Install", help: "", confirm: nil))
@@ -555,8 +525,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A figure dropped from outside or pasted is copied beside the file shown, named as a copy is where the name is
-    /// taken, and inserted; graphicx's formats only.
     @Test func aFigureFromOutsideOrPastedIsCopiedInAndInserted() async throws {
         let (project, folder) = try await opened()
         let text = project.editor.textView
@@ -582,8 +550,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A selection made while a figure is copied in isn't replaced: the figure goes where it was asked for, or after an
-    /// edit meanwhile, at the caret.
     @Test func aFigureCopiedInReplacesNoSelectionMadeMeanwhile() async throws {
         let text = try await opened("abc def").project.editor.textView
         text.selection = .caret(0)
@@ -601,7 +567,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The open document's match is an unsaved edit, which the session finds and replaces as the editor has it.
     @Test func replaceAllReplacesInTheOpenDocumentAndOnDisk() async throws {
         let (project, folder) = try await opened("a", with: ["b.tex": "needle b"])
         let text = project.editor.textView
@@ -609,7 +574,6 @@ final class ProjectFlowTests {
         project.search.query = "needle"
         await project.search.run(in: project.session)
         project.search.replacement = "pin"
-        // Return steps through the hits, round from the last to the first.
         let hits = project.search.groups?.flatMap(\.hits).map(\.id)
         project.search.step(-1)
         #expect(project.search.chosen == hits?.last)
@@ -622,7 +586,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A rename's answer has the state the core moved, written before the rename asked for it.
     @Test func theSidebarsStateIsKeptForTheProjectAndFollowsARename() async throws {
         let project = try await opened(with: ["ch/a.tex": ""]).project
         project.expandedFolders = ["ch"]
@@ -636,7 +599,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The free names are the core's.
     @Test func aNewFileOpensInTheTree() async throws {
         let project = try await opened(with: ["untitled.tex": "x"]).project
         #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
@@ -677,7 +639,6 @@ struct FileTreeTests {
 struct TrailTests {
     private func at(_ line: Int, in path: String = "main.tex") -> Place { Place(path: path, line: line) }
 
-    /// A jump from where the last left adds no place; Forward retraces what Back undid until a new jump.
     @Test func backAndForwardRetraceTheLastFiftyPlacesJumpsLeft() {
         var trail = Trail()
         for line in Array(1...52) + [52] { trail.jumped(from: at(line)) }
@@ -690,7 +651,6 @@ struct TrailTests {
         #expect(trail.back == [at(1)] && trail.forward.isEmpty)
     }
 
-    /// A jump that left the caret where it was keeps a place Back would show no move to.
     @Test func backPassesOverTheCaretsOwnPlace() {
         var trail = Trail()
         for line in [3, 5] { trail.jumped(from: at(line)) }

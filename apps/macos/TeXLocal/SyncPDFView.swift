@@ -6,10 +6,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?, _ quietly: Bool) -> Void = { _, _, _, _ in }
     var onResize: () -> Void = {}
 
-    /// PDFKit's scroll view isn't in its interface: its document view leads to it.
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
 
-    /// Settings' paper, white, dark, or the window's appearance's.
     private var paperWatch: (any NSObjectProtocol)?
 
     override func viewDidChangeEffectiveAppearance() {
@@ -22,7 +20,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         darkPaper = paper.isDark(onDark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
 
-    /// Inverted with its hues turned back, as Smart Invert: Core Image over PDFKit's drawing, so a change redraws nothing.
     private(set) var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
@@ -38,10 +35,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return [CIFilter.colorInvert(), hue]
     }
 
-    /// The knob is over the paper, whatever the window's appearance.
     func matchScroller() { pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark }
 
-    /// On white, off the main actor as PDFKit draws its tiles.
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
         Self.drawPaper(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)), to: context) {
             page.draw(with: .cropBox, to: context)
@@ -56,13 +51,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         draw()
     }
 
-    // MARK: - Live preview
-
-    /// A page given to PDFKit fades in over a quarter of a second; a layer's contents change in one frame.
     private let liveCanvas: NSView = {
         let canvas = FilterView()
         canvas.autoresizingMask = [.width, .height]
-        // Over the page views PDFKit adds after it.
         canvas.layer?.zPosition = 1
         return canvas
     }()
@@ -71,8 +62,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
     var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
 
-    /// At PDFKit's scale from its pixel-rounded frame's corner, so its page takes the layer's place unseen. Only the
-    /// part in view: the whole is half a gigabyte for A4 at 800%.
     func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
         guard let documentView, let window, let overlay = shownOverlay(of: shown) else { return false }
         let visible = overlay.visibleRect
@@ -81,14 +70,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             liveCanvas.frame = documentView.bounds
             documentView.addSubview(liveCanvas)
         }
-        // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
         let pixel = window.backingScaleFactor, box = overlay.bounds
         let onScreen = overlay.convert(box, to: nil).size.applying(CGAffineTransform(scaleX: pixel, y: pixel))
         let toPixels = CGAffineTransform(scaleX: onScreen.width / box.width, y: onScreen.height / box.height)
             .translatedBy(x: -box.minX, y: -box.minY)
         let whole = CGRect(x: 0, y: 0, width: onScreen.width.rounded(), height: onScreen.height.rounded())
         let part = visible.applying(toPixels).integral.intersection(whole)
-        // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours.
         guard part.width >= 1, part.height >= 1,
               let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
                                                    .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
@@ -129,9 +116,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         liveLayers.removeAll()
     }
 
-    // MARK: - SyncTeX's mark
-
-    /// In the page's overlay rather than an annotation, which would be printed and read by VoiceOver.
     private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView, fading: Task<Void, Never>)?
     private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
 
@@ -151,7 +135,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         mark?.fading.cancel()
     }
 
-    /// A fade is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
         let view = MarkView(onDarkPaper: darkPaper)
@@ -171,7 +154,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         mark = nil
     }
 
-    /// While PDFKit shows the page in a window: a live page is drawn only over one.
     func shownOverlay(of page: PDFPage) -> NSView? { overlays.object(forKey: page).flatMap { $0.window == nil ? nil : $0 } }
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
@@ -185,7 +167,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
     }
 
-    /// Unrotated: PDFKit rotates the overlay itself.
     private func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
         let box = page.bounds(for: displayBox)
         let scale = CGAffineTransform(scaleX: overlay.bounds.width / box.width, y: overlay.bounds.height / box.height)
@@ -194,12 +175,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         overlay.addSubview(mark)
     }
 
-    // MARK: - The view
-
     override func mouseMoved(with event: NSEvent) { if !updateDividerCursor(with: event) { super.mouseMoved(with: event) } }
     override func cursorUpdate(with event: NSEvent) { if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) } }
 
-    /// At the document's start, the first page's top stays at the toolbar's edge as the width or Fit Page changes.
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize != frame.size else { return }
         let widthChanged = newSize.width != frame.width, atStart = hasShownArea && atDocumentStart
@@ -210,7 +188,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    /// The first page's top at the shown area's top, give or take a device pixel for the clip view's rounding.
     private var atDocumentStart: Bool {
         guard let page = document?.page(at: 0) else { return false }
         let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
@@ -221,7 +198,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
-    /// At the top between the bars, where `currentDestination` lies behind them; a page whose top is there is under it.
     var shownPlace: (index: Int, point: CGPoint)? {
         let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
         guard let page = page(for: CGPoint(x: top.x, y: top.y - 1 / (window?.backingScaleFactor ?? 1)), nearest: true),
@@ -229,13 +205,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return (index: document.index(for: page), point: convert(top, to: page))
     }
 
-    /// As Overleaf's, a double-click selects its word and shows its place in the source, as the source's does in the PDF.
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         if isDoubleClick(event) { goToSource(at: convert(event.locationInWindow, from: nil), quietly: true) }
     }
 
-    /// ⌃L, on the responder chain while the pages have the keyboard, as the text view's is.
     override func centerSelectionInVisibleArea(_ sender: Any?) {
         guard let selection = currentSelection, let page = selection.pages.first else { return }
         let box = selection.bounds(for: page)
@@ -263,7 +237,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 }
 
-/// A layer for dark paper's filters over the pages, which clicks go through.
 private class FilterView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -277,7 +250,6 @@ private class FilterView: NSView {
 }
 
 private final class PageOverlay: FilterView {
-    /// Over the page and everything PDFKit lays under its tiles, so no white is left at its edges.
     var dark = false { didSet { layer?.backgroundFilters = dark ? SyncPDFView.invert : nil } }
 }
 
@@ -305,14 +277,12 @@ private final class MarkView: NSView {
 }
 
 extension NSMenu {
-    /// The items before the text's own (Look Up and the like), and of the rest those with the actions, with their separators.
     func keep(_ actions: Set<Selector>) {
         func kept(_ item: NSMenuItem) -> Bool { item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true }
         let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
         tidy(items[..<word] + items[word...].filter { $0.isSeparatorItem || kept($0) })
     }
 
-    /// Shows these items with a separator only between two groups.
     func tidy(_ list: [NSMenuItem]) {
         var shown: [NSMenuItem] = []
         for item in list where !item.isSeparatorItem || shown.last?.isSeparatorItem == false { shown.append(item) }

@@ -1,11 +1,8 @@
 import Foundation
 
-/// Each asynchronous Undo and Redo waits for the one before, so two quick ones reach the core and the disk in order (#36).
 private var undoLane: Task<Void, Never>?
 
 extension UndoManager {
-    /// An Undo or Redo that does asynchronous work: `reversal` registers its opposite as the work starts, as an undo manager
-    /// expects, and work that fails takes away every action of `target`.
     func registerAsyncUndo<Target: AnyObject>(withTarget target: Target, actionName: String,
                                               reversal: @escaping @MainActor () -> Void,
                                               work: @escaping @MainActor () async -> Bool) {
@@ -17,7 +14,6 @@ extension UndoManager {
     }
 }
 
-/// Through `FileManager`, which says where the Trash put the item. Undo puts it back and Redo trashes it again.
 final class UndoableTrash {
     let original: URL
     let name: String

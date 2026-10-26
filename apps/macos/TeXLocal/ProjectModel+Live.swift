@@ -1,11 +1,7 @@
 import AppKit
 import Foundation
 
-/// Live Preview, which the session runs, and SyncTeX between the source and either PDF.
 extension ProjectModel {
-    // MARK: - Live preview
-
-    /// The inspector's toggle and the Compile menu's.
     var livePreview: Bool {
         get { texpresso.active }
         set { if newValue { startTeXpresso() } else { stopTeXpresso() } }
@@ -13,8 +9,6 @@ extension ProjectModel {
 
     var canSwitchLivePreview: Bool { app?.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
 
-    /// The engine Live Preview typesets with, while its pages show and it isn't the project's: their line breaks may
-    /// differ from the compiled PDF's.
     var liveEngine: String? {
         texpresso.engine.flatMap { engine in
             livePDF && engine != settings?.engine ? TeXEngine(rawValue: engine)?.title ?? engine : nil
@@ -33,11 +27,9 @@ extension ProjectModel {
         guard let session else { return }
         texpresso.stopping()
         Task {
-            // A preview that had ended already sends no event.
             if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self), state.phase == .stopped,
                texpresso.phase == .stopping { liveChanged(state) }
         }
-        // Its pages go now, not as the stop ends.
         Task { await endLivePDF() }
     }
 
@@ -51,8 +43,6 @@ extension ProjectModel {
         core.send("session_live_caret", ["session": session, "path": path, "offset": editor.caret])
     }
 
-    /// The build's PDF, or none, in place of the live one: at Stop and again as the session says it ended, whose load
-    /// takes over the first's.
     func endLivePDF() async {
         guard livePDF, !texpresso.active, !(await showBuildPDF(buildPDF?.path(percentEncoded: false), replacingLive: true)), livePDF,
               !texpresso.active, !closed else { return }
@@ -60,7 +50,6 @@ extension ProjectModel {
         pdf.clear()
     }
 
-    /// A run's PDFs start afresh.
     func liveChanged(_ state: LiveState) {
         let was = texpresso.phase
         texpresso.receive(state)
@@ -69,7 +58,6 @@ extension ProjectModel {
         if state.phase != .running { pdf.endLiveRun() }
     }
 
-    /// Read where the event arrived, in the session's order; a page is drawn over its own run's document only.
     func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
         if case .document(_?) = read {
@@ -79,15 +67,12 @@ extension ProjectModel {
         pdf.showLive(read)
     }
 
-    // MARK: - SyncTeX
-
     func forwardSync(quietly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column) = (editor.currentLine, editor.currentColumn)
         let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line])
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
-            // A rebuild may have moved it.
             let shown = pdf.shownVersion
             do {
                 let loc = try await core.call("synctex_forward", args, as: ForwardLoc.self)
@@ -104,7 +89,6 @@ extension ProjectModel {
         return arguments.merging(["live": true, "session": session]) { $1 }
     }
 
-    /// With the click, the core finds its word in the lines round SyncTeX's.
     func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil, quietly: Bool = false) async {
         await restart(&syncTask) { [self] in
             do {
@@ -118,7 +102,6 @@ extension ProjectModel {
         }.value
     }
 
-    /// No match is ordinary (a comment, the preamble, a figure).
     private func reportSync(_ error: any Error, _ title: String) {
         guard (error as? CoreError)?.kind == .notFound else { app?.report(error, title); return }
         NSSound.beep()

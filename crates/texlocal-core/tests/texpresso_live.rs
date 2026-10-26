@@ -1,8 +1,3 @@
-//! Live preview end to end with a real TeXpresso, through a project session as the hosts
-//! drive it. `TEXLOCAL_TEXPRESSO` names the program, and TeX Live must be on the PATH.
-//!
-//! cargo test -p texlocal-core --test texpresso_live -- --ignored --nocapture
-
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,7 +14,6 @@ fn live_preview_follows_unsaved_edits() {
         return;
     }
     let scratch = tempfile::tempdir().unwrap();
-    // SAFETY: before this test starts a thread; it is its binary's only test.
     unsafe {
         for (key, dir) in [
             ("XDG_CACHE_HOME", "cache"),
@@ -67,8 +61,6 @@ impl Client {
         assert_eq!(started["phase"], "running", "{started}");
     }
 
-    /// Until TeX has said something the log has TeXpresso's stderr too, which may echo what
-    /// it was sent.
     async fn shows(&self, session: u64, text: &str, check: &str) {
         let began = Instant::now();
         loop {
@@ -132,8 +124,6 @@ impl Client {
     }
 }
 
-/// Types `text` over the document's own as one edit of the range that differs, in UTF-16
-/// units. The texts here differ by whole characters.
 fn retype(document: &Document, text: &str) {
     let old: Vec<u16> = document.with(|source| source.text().encode_utf16().collect());
     let new: Vec<u16> = text.encode_utf16().collect();
@@ -227,7 +217,6 @@ async fn run(library: &Path) {
             .is_some_and(|log| log.contains("! Undefined"))
     };
     client.event(&mut from, a, "live", error).await;
-    // The error on its line once the run has lasted, and on the line it moves to.
     let on = |line: u32| {
         move |e: &Value| {
             let issue = &e["lines"][0];
@@ -237,8 +226,6 @@ async fn run(library: &Path) {
         }
     };
     client.event(&mut from, a, "live_issues", on(4)).await;
-    // Typed at the file's start, it starts TeX again from nothing, and the next edit comes as
-    // that TeX starts.
     main_doc.edit(0, 0, "%\n", None, false);
     client.event(&mut from, a, "live_issues", on(5)).await;
     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -313,8 +300,6 @@ async fn run(library: &Path) {
         .shows(a, "UL_NESTED_UNSAVED", "An edit to a nested input")
         .await;
 
-    // The pages in view as PDFs of their own as they change, and the whole document when
-    // typing pauses. Only a build with Underleaf's patch (tools/texpresso) sends them.
     let main_again = json!({ "patch": { "mainFile": "main.tex" } });
     client.ask(a, "set_settings", main_again).await;
     let marker = format!("UL_TYPING_RECOVERED_{}", incomplete.len() - 1);
@@ -333,7 +318,6 @@ async fn run(library: &Path) {
     let synctex = std::fs::read(path.with_extension("synctex")).unwrap();
     assert!(!synctex.is_empty());
 
-    // An offset in UTF-16 units, past the é that is two bytes to TeXpresso.
     let mut from = client.settled().await;
     let began = Instant::now();
     main_doc.edit(units_to(paged, "two"), 0, "number ", None, false);
@@ -362,7 +346,6 @@ async fn run(library: &Path) {
     main_doc.edit(two, 8, "", None, false);
     client.event(&mut from, a, "live", halted(false)).await;
 
-    // No failure was reported.
     let failed = client.since(0, "live");
     let failed = failed.iter().find(|e| !e["failure"].is_null());
     assert!(failed.is_none(), "{failed:?}");

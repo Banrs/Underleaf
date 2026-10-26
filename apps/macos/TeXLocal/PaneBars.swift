@@ -22,7 +22,6 @@ struct SearchField: NSViewRepresentable {
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
-    /// In the magnifier's menu, as Mail's.
     var options: [(title: String, isOn: Binding<Bool>)] = []
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
@@ -35,7 +34,6 @@ struct SearchField: NSViewRepresentable {
         @objc func toggle(_ item: NSMenuItem) { field.options[item.tag].isOn.wrappedValue.toggle() }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            // The input method's Return and Escape first.
             guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
@@ -74,13 +72,10 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
         view.placeholderString = prompt
-        // For VoiceOver, as the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
-        // Not during input-method composition, whose marked text it would discard.
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
         }
-        // The cell copies the template, so its ticks are set afresh.
         if !options.isEmpty, let cell = view.cell as? NSSearchFieldCell {
             let menu = NSMenu()
             for (tag, option) in options.enumerated() {
@@ -99,7 +94,6 @@ final class FindPassingTextView: NSTextView {
 
     override func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard item.action == Self.find else { return super.validateMenuItem(item) }
-        // From the next responder: NSApp.target(forAction:) starts at this editor.
         let target = nextResponder.flatMap { first in sequence(first: first, next: \.nextResponder).first { $0.responds(to: Self.find) } }
         return target.map { ($0 as? any NSMenuItemValidation)?.validateMenuItem(item) ?? true } ?? false
     }
@@ -110,7 +104,6 @@ struct DialogSheet<Fields: View>: View {
     var message: String?
     let action: String
     let enabled: Bool
-    /// Read when it fails: the toolbar keeps the button's action from its last change of state.
     var failure: () -> String = { "" }
     let submit: () async throws -> Void
     @ViewBuilder var fields: Fields
@@ -131,9 +124,7 @@ struct DialogSheet<Fields: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // The grouped form's inset, so the title lines up with its sections.
             .scenePadding([.horizontal, .top])
-            // Its own background leaves seams in Dark.
             Form { fields }
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
@@ -158,7 +149,6 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
-/// A group has icons for all its items or none (HIG, Menus).
 struct ItemMenuItems: View {
     let actions: ItemActions?
     var trashShortcut: KeyboardShortcut?
@@ -176,7 +166,6 @@ struct ItemMenuItems: View {
 }
 
 extension View {
-    /// Through `AppModel`: a focused value doesn't reach the menus from an AppKit window's hosting views.
     func offersActions<ID: Hashable>(for id: ID?, _ actions: @escaping (ID) -> ItemActions?) -> some View {
         modifier(ActionsOffer(id: id, actions: actions))
     }
@@ -188,7 +177,6 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     let actions: (ID) -> ItemActions?
 
     func body(content: Content) -> some View {
-        // Only while its item exists.
         let present = id.flatMap { actions($0) == nil ? nil : $0 }
         content
             .onChange(of: present, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }

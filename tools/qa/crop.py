@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""crop.py in.png out.png x0 y0 x1 y1 [zoom]: a region in the capture's own pixels, enlarged only by
-whole-number nearest-neighbour zoom (every source pixel stays a sharp square), never shrunk. Lossless PNG."""
 import sys
 from PIL import Image
 src, out = sys.argv[1], sys.argv[2]

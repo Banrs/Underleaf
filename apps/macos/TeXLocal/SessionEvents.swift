@@ -1,6 +1,5 @@
 import Foundation
 
-/// A session's event (docs/core-api.md), decoded on the core's event thread (`Core`).
 nonisolated enum SessionEvent: Sendable {
     case document(DocumentState)
     case outline(Analysis)
@@ -17,10 +16,8 @@ nonisolated enum SessionEvent: Sendable {
     case tree(TreeEvent)
     case filesChanged(PathsEvent)
     case live(LiveState)
-    /// A `live_document` or `live_page`, its PDF read already.
     case livePDF(LiveRead)
 
-    /// Nil for a type the app has no use for.
     init?(_ type: String, _ decoder: any Decoder) throws {
         func fields<T: Decodable>(_: T.Type = T.self) throws -> T { try T(from: decoder) }
         switch type {
@@ -53,7 +50,6 @@ nonisolated struct SessionOpened: Decodable, Sendable {
     let ui: UIState
 }
 
-/// The project's interface as it was left (docs/core-api.md).
 nonisolated struct UIState: Decodable, Sendable {
     let expandedFolders, foldedHeadings: [String]
     let file: String?
@@ -68,7 +64,6 @@ nonisolated struct DocumentState: Decodable, Equatable { let path: String, error
 
 nonisolated struct ReloadEvent: Decodable { let path, text: String }
 nonisolated struct PathEvent: Decodable, Sendable { let path: String }
-/// `reason`: `gone`, `deleted`, or `closed` when the app closed it.
 nonisolated struct ClosedEvent: Decodable { let path, reason: String }
 nonisolated struct RenamedEvent: Decodable { let from, to: String }
 nonisolated struct ConflictEvent: Decodable {
@@ -87,14 +82,10 @@ nonisolated struct IssuesEvent: Decodable {
         let line: Int
         let error: Bool
         let message: String
-        /// On one line, without LaTeX's words for what the symbol says already.
         let short: String
-        /// An undefined command's, in fewer words that keep its name.
         let compact: String?
-        /// Where the line has the undefined command, from its start.
         let tokens: [SourceRange]
         let others: [String]
-        /// Where the line's issues start in the session's list; none for Live Preview's.
         let index: Int?
     }
 

@@ -1,11 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The core's completions under the caret, a view over the editor: Liquid Glass in a borderless panel that isn't key
-/// draws flat, and AppKit's own completion list is still its square box. Typing stays in the document.
 final class CompletionList {
     private unowned let editor: SourceTextView
-    /// Nil while the list is closed.
     private(set) var offered: Completions?
 
     private let look = CompletionLook()
@@ -15,7 +12,6 @@ final class CompletionList {
         surface.sizingOptions = []
         surface.safeAreaRegions = []
         surface.wantsLayer = true
-        // A menu's shadow.
         let shadow = NSShadow()
         shadow.shadowOffset = NSSize(width: 0, height: -4)
         shadow.shadowBlurRadius = 22
@@ -24,7 +20,6 @@ final class CompletionList {
         return surface
     }()
 
-    /// A click chooses a row and leaves the keyboard in the document.
     private final class Surface: NSHostingView<CompletionRowsView> { override var acceptsFirstResponder: Bool { false } }
 
     init(for editor: SourceTextView) {
@@ -32,10 +27,8 @@ final class CompletionList {
         rows = ChoiceRows { [look] in [$0.label, $0.detail, look.kind.name] }
     }
 
-    /// With Settings' completion off, only a list already showing follows the typing.
     func offer() { if editor.autoComplete || offered != nil { complete(explicit: false) } }
 
-    /// `explicit` (Escape, or Complete) offers what typing alone wouldn't.
     func complete(explicit: Bool) {
         guard editor.isEditable, editor.selection.length == 0, editor.selections.count == 1, !editor.hasMarkedText(),
               let found = editor.document.completions(caret: editor.caret, explicit: explicit), !found.items.isEmpty
@@ -51,7 +44,6 @@ final class CompletionList {
         rows.items = []
     }
 
-    /// Closed once what it completes is out of sight.
     func follow() { show(reload: false) }
 
     func accept() { accept(rows.selection) }
@@ -66,7 +58,6 @@ final class CompletionList {
         editor.insert(inserted, named: String(localized: "Completion"))
     }
 
-    /// Under the start of what it completes, in the editor's scroll view.
     private func show(reload: Bool) {
         guard let offered, let window = editor.window, let host = editor.enclosingScrollView else { return }
         let start = host.convert(window.convertFromScreen(editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
@@ -84,7 +75,6 @@ final class CompletionList {
         fit()
         if surface.superview !== host { host.addSubview(surface) }
         place(under: start, in: shown)
-        // Typing that changes the count is spoken too, after the typed character.
         if opening || rows.items.count != count { rows.announce(interrupting: opening) }
         editor.previewMath()
     }
@@ -94,20 +84,16 @@ final class CompletionList {
 
     private func fit() {
         let labels = rows.items.map(\.label)
-        // Fixed-pitch: of the ASCII labels the longest is the widest; other scripts come from fallback fonts and are measured.
         let isASCII = { (row: Int) in labels[row].utf8.allSatisfy { $0 < 0x80 } }
         var measured = labels.indices.filter { !isASCII($0) }
         if let longest = labels.indices.filter(isASCII).max(by: { labels[$0].utf8.count < labels[$1].utf8.count }) { measured.append(longest) }
         let widest = measured.map { width(of: labels[$0]) }.max() ?? 0
-        // Details are a column beside the labels', as a menu's key equivalents beside its titles. Only the longest is measured,
-        // not a bibliography's thousands: a row truncates a wider one.
         let details = rows.items.compactMap(\.detail).max { $0.utf16.count < $1.utf16.count }
             .map { ($0 as NSString).size(withAttributes: [.font: look.detailFont]).width + CompletionRowsView.detailSpacing } ?? 0
         size = CGSize(width: (widest + details + 2 * Self.textStart).rounded(.up),
                       height: CGFloat(min(labels.count, 8)) * look.height + 2 * CompletionRowsView.margin)
     }
 
-    /// With the typed part in bold, as the row shows it.
     private func width(of label: String) -> CGFloat {
         let text = NSMutableAttributedString(string: label, attributes: [.font: look.font])
         text.addAttribute(.font, value: look.boldFont, range: NSRange(location: 0, length: min(look.typed, text.length)))
@@ -116,7 +102,6 @@ final class CompletionList {
 
     private(set) var isAbove = false
 
-    /// An editor too short for either side has it on the one with more room, cut to whole rows.
     private func place(under start: CGRect, in editor: CGRect) {
         guard let host = surface.superview else { return }
         var frame = CGRect(origin: CGPoint(x: start.minX - Self.textStart, y: 0), size: size)
@@ -131,7 +116,6 @@ final class CompletionList {
             frame.size.height = shown * look.height + margins
         }
         frame.origin.y = isAbove ? start.minY - frame.height : start.maxY
-        // The text's start is between pixels, and the glass's edge would blur.
         frame = host.backingAlignedRect(frame, options: .alignAllEdgesNearest)
         guard frame != surface.frame else { return }
         let shorter = frame.height != surface.frame.height
@@ -144,22 +128,16 @@ final class CompletionList {
     func move(_ step: Int) { rows.move(step) }
 }
 
-/// A list chosen from with the arrows while the keyboard stays in the document or a field: the completion list's and Open
-/// Quickly's. VoiceOver's focus stays there too, so the row chosen is spoken as the list opens and as the arrows move.
 @Observable final class ChoiceRows<Item> {
-    /// Each new list chooses its first.
     var items: [Item] = [] { didSet { selection = 0 } }
     var selection = 0
-    /// Bumped to scroll the chosen row into view.
     private(set) var revealed = 0
-    /// What VoiceOver says of a row, before its place in the list.
     @ObservationIgnored private let spoken: (Item) -> [String?]
 
     init(spoken: @escaping (Item) -> [String?]) { self.spoken = spoken }
 
     func reveal() { revealed += 1 }
 
-    /// The arrows stop at the ends.
     func move(_ step: Int) {
         selection = max(0, min(items.count - 1, selection + step))
         reveal()
@@ -176,7 +154,6 @@ final class CompletionList {
 }
 
 @Observable final class CompletionLook {
-    /// The UTF-16 units typed, which are bold.
     var typed = 0
     var kind = CompletionKind.command
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -185,7 +162,6 @@ final class CompletionList {
     var height: CGFloat = 24
 }
 
-/// An NSMenu's measures: 13 pt corners, rows 5 pt in, the chosen one in the accent with 8 pt corners and white text.
 struct CompletionRowsView: View {
     let rows: ChoiceRows<Completion>
     let look: CompletionLook
@@ -202,7 +178,6 @@ struct CompletionRowsView: View {
                     ForEach(rows.items.indices, id: \.self) { row in
                         let chosen = row == rows.selection, detail = rows.items[row].detail
                         HStack(spacing: Self.detailSpacing) {
-                            // The key whole, while its detail truncates.
                             Text(label(row)).layoutPriority(1)
                             if let detail {
                                 Text(detail)
@@ -228,7 +203,6 @@ struct CompletionRowsView: View {
                     }
                 }
             }
-            // As a menu's: a scroller shown always would cut the labels.
             .scrollIndicators(.never)
             .padding(.vertical, Self.margin)
             .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }

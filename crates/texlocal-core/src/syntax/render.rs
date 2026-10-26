@@ -1,7 +1,3 @@
-//! Maths as SVG by RaTeX (KaTeX's layout in Rust), every glyph an outline from the compiled-in KaTeX fonts, so the SVG
-//! needs no fonts. Text they lack (CJK, Cyrillic) is drawn from the system's fonts; what has no outline, such as a
-//! colour emoji on macOS, is an error.
-
 use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_lexer::token::Token;
 use ratex_parser::macro_expander::{MacroDefinition, MacroExpander};
@@ -18,11 +14,8 @@ pub struct MathSvg {
     pub height: f64,
 }
 
-/// No larger than this, in ems: `\rule{1e9pt}{1pt}` would otherwise ask the host for an image of millions of points.
 const MAX_EM: f64 = 1000.0;
 
-/// `\texlocal@optional\name@{default}`: `\name@` given the bracketed option that follows, else
-/// the default, as a project's `\newcommand` with an optional first argument is previewed.
 fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
     let name = gullet.pop_token();
     let mut option = gullet.consume_arg(None)?.tokens;
@@ -31,7 +24,6 @@ fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
         gullet.pop_token();
         option = gullet.consume_arg(Some(&["]"]))?.tokens;
     }
-    // Reversed, as the gullet's stack holds them.
     let brace = |text| Token::new(text, name.loc.start, name.loc.end);
     let mut tokens = vec![brace("}")];
     tokens.extend(option);
@@ -62,7 +54,6 @@ fn display_list(tex: &str, display: bool) -> Result<DisplayList, String> {
     };
     list.width = clamp(list.width).max(0.0);
     list.height = clamp(list.height);
-    // A box's height and depth can be negative; the drawing's can't.
     list.depth = (list.height + clamp(list.depth)).clamp(0.0, MAX_EM) - list.height;
     Ok(list)
 }
@@ -76,11 +67,9 @@ fn svg(list: &DisplayList, size: f64) -> Result<String, String> {
         font_dir: String::new(),
     };
     let svg = render_to_svg_with_color_syntax(list, &options, SvgColorSyntax::Rgb);
-    // A glyph without an outline falls back to text in a font the host may lack.
     if svg.contains("<text") || svg.contains("<image") {
         return Err("The maths fonts can't draw this".into());
     }
-    // A length past what a number holds, which no SVG reader takes.
     if svg.contains("inf") || svg.contains("NaN") {
         return Err("The maths is too large to draw".into());
     }
@@ -132,7 +121,6 @@ mod tests {
     fn what_cant_be_drawn_is_an_error() {
         assert!(math_svg(r"x^", false, 10.0).is_err());
         assert!(math_svg(r"\frac{1}", false, 10.0).is_err());
-        // A colour emoji has no outline to draw: macOS's emoji font is bitmaps alone.
         assert!(math_svg(r"\text{😀}", false, 10.0).is_err());
         assert!(math_svg(r"\def\a{\a}\a", false, 10.0).is_err());
         assert!(math_svg("x", false, f64::NAN).is_err());

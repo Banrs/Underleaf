@@ -1,6 +1,3 @@
-//! The library: the projects under the data dir and the folders opened where they are, made,
-//! listed, named, renamed and found again by their paths.
-
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
@@ -22,8 +19,6 @@ use crate::syntax::SourceDocument;
 use crate::templates;
 use crate::{SETTINGS_FILE, atomic};
 
-/// `missing`: an opened folder that isn't where it was (moved, deleted, its volume away), dated
-/// 0 so it is listed last.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectInfo {
@@ -68,9 +63,6 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// A project's date: the newest of its folders' and top-level files', without a stat of every
-/// file. The app's saves rename into place and so move the folder's date; another app's in-place
-/// save moves only the file's.
 fn newest(root: &Path) -> u64 {
     let mut newest = fs::metadata(root).map_or(0, |meta| mtime_ms(&meta));
     let _ = walk(root, &listed, false, &mut |entry| {
@@ -114,9 +106,6 @@ pub fn create_project(
     })
 }
 
-/// A project in a new folder named `name`, or "name 2" and so on when that is taken, as Finder
-/// numbers copies, filled by `fill` in a folder beside it and renamed into place, so the library
-/// never lists half a project; nothing is left if that fails.
 pub(crate) fn new_project(
     data_dir: &Path,
     name: &str,
@@ -126,8 +115,6 @@ pub(crate) fn new_project(
     fs::create_dir_all(data_dir)?;
     let temp = atomic::temp_builder(0o777).tempdir_in(data_dir)?;
     fill(temp.path())?;
-    // Passing over anything there, a dangling link or case alias too, and what another create
-    // of the name moved there since. Once it is moved, its drop finds nothing to remove.
     let id = project_names(&name)
         .find_map(
             |id| match atomic::rename_exclusive(temp.path(), &data_dir.join(&id)) {
@@ -139,8 +126,6 @@ pub(crate) fn new_project(
     Ok(ProjectInfo::read(data_dir, &id)?)
 }
 
-/// The first free name in the series "Untitled", "Untitled 2", …, however the volume spells
-/// case; creates nothing, so a host can offer it as the name to edit.
 pub fn free_project_name(data_dir: &Path) -> Result<String, CoreError> {
     let taken: HashSet<String> = match fs::read_dir(data_dir) {
         Ok(entries) => entries
@@ -163,7 +148,6 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        // A name latexmk would read as an option can't be the main file.
         if entry.file_type()?.is_file() && file_kind(&name) == "tex" && !name.starts_with('-') {
             tex.push(name);
         }
@@ -208,8 +192,6 @@ pub fn rename_project(
     Ok(ProjectInfo::read(data_dir, &clean)?)
 }
 
-/// `path` with its links resolved as far as it exists, so one not yet made or just trashed
-/// still compares with the library.
 fn real_path(path: &Path) -> PathBuf {
     let (mut head, mut tail) = (path, Vec::new());
     loop {
@@ -224,14 +206,11 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
-/// The project `path` is in: a library project's folder, else the innermost opened folder, both
-/// sides resolved.
 pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
     if !path.is_absolute() {
         return Ok(None);
     }
     let real = real_path(path);
-    // Its names in a folder, as the disk spells them.
     let segments = |rest: &Path| -> Option<Vec<String>> {
         (rest.components())
             .map(|part| match part {

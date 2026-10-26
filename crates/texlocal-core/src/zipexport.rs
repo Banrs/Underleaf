@@ -1,6 +1,3 @@
-//! Project ZIP export, written where the host asks: the Mac app exports into a fresh folder of its own outside the project.
-//! What goes in is what an import takes back: all but what `left_out` names.
-
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -16,7 +13,6 @@ use crate::paths::{Project, fold_case, in_build_dir, safe_rel_file};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
 
-/// `added`: files of the export's own, each at its path in the archive in place of the project's.
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
     let file = File::create(dest).map_err(CoreError::at(dest))?;
     let replaced = |rel: &str| added.iter().any(|(path, _)| path.eq_ignore_ascii_case(rel));
@@ -30,7 +26,6 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
                 let modified = fs::metadata(&entry.path).and_then(|meta| meta.modified());
                 writer.add_directory(format!("{}/", entry.rel), options(modified))?;
             } else {
-                // One gone since it was listed is left out.
                 match add_file(&mut writer, &entry.rel, &entry.path) {
                     Err(err) if err.kind == crate::ErrorKind::NotFound => {}
                     added => added?,
@@ -50,18 +45,11 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
 fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), CoreError> {
     let mut file = File::open(path)?;
     let meta = file.metadata()?;
-    // Past 4 GiB sizes need ZIP64's fields, and from 3 GiB a file gets them too, since deflate
-    // can store an incompressible one larger.
     let options = options(meta.modified()).large_file(meta.len() >= 3 << 30);
     writer.start_file(rel, options)?;
-    // No flush per file: on a deflated entry it forces a sync block into the stream.
     io::copy(&mut file, writer)?;
     Ok(())
 }
-/// What arXiv takes beside the project's files: a 00README.json naming the compiler and the main
-/// file as the top-level source, and what the build made of the main file that arXiv doesn't
-/// make itself. Refused while shell escape is on or the engine is LuaLaTeX, as arXiv compiles
-/// without either.
 pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     let settings = read_settings(&project.settings);
     if granted(project) {
@@ -82,9 +70,6 @@ pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, Cor
     });
     let readme = serde_json::to_vec_pretty(&readme).expect("JSON from JSON");
     let mut added = vec![("00README.json".to_owned(), readme)];
-    // arXiv runs BibTeX or Biber itself, but not makeindex or the glossary tools. TeX reads
-    // `\jobname`'s files from the folder it runs in, and arXiv, as latexmk here, runs it from
-    // the root whatever folder the main file is in.
     let stem = Path::new(&main)
         .file_stem()
         .unwrap_or_default()
@@ -99,20 +84,14 @@ pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, Cor
     Ok(added)
 }
 
-/// What an export leaves out and an import leaves behind, by its path in the
-/// project: `is_litter` at any depth, and the compile output and the project's
-/// own settings at the top, in any case.
 pub(crate) fn left_out(rel: &str) -> bool {
     in_build_dir(rel) || fold_case(rel) == SETTINGS_FILE || rel.split('/').any(is_litter)
 }
 
-/// A deflated entry dated as `modified`. ZIP stores local time, as unzipping
-/// tools show it; undated, every entry would say 1 January 1980.
 fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {
     fn local(modified: SystemTime) -> Option<zip::DateTime> {
         let secs = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
         let secs = libc::time_t::try_from(secs).ok()?;
-        // SAFETY: both pointers are to live locals; the call fills `tm`, or returns null, checked.
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
         if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
             return None;
@@ -148,7 +127,6 @@ mod tests {
             ("figs/.DS_Store", "x"),
             ("figs/._a.png", "fork"),
             ("figs/a.png", "png"),
-            // What atomic::write leaves beside a document mid-save.
             (".texlocal-AbC123", "half"),
             ("Build/main.pdf", "output"),
         ] {

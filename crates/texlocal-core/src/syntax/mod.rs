@@ -1,7 +1,3 @@
-//! LaTeX editing logic for the editors, as ranges and edits for the editor to apply. A `SourceDocument` mirrors the
-//! editor's text and answers in UTF-16 offsets, which NSString counts in. Its commands are its methods,
-//! each in the file of its kind.
-
 mod call;
 pub(crate) mod catalog;
 mod complete;
@@ -125,7 +121,6 @@ impl Text {
         self.lines.partition_point(|&start| start <= offset) - 1
     }
 
-    /// A carriage return before a line feed is part of the break, so a CRLF file has a LF file's lines.
     pub fn bounds(&self, index: usize) -> Line {
         let start = self.lines[index] as usize;
         let last = index + 1 == self.lines.len();
@@ -170,8 +165,6 @@ pub struct SourceDocument {
     scans: scans::Scans,
     symbols: Arc<Symbols>,
     typing: typing::Typing,
-    /// The project's name for the file, which its own definitions are placed in; none for a
-    /// source of the editor's own.
     pub(crate) path: String,
 }
 
@@ -194,12 +187,10 @@ impl SourceDocument {
         }
     }
 
-    /// Kept here rather than sent with each completions call: a bibliography is thousands of keys.
     pub fn set_symbols(&mut self, symbols: Arc<Symbols>) {
         self.symbols = symbols;
     }
 
-    /// A range past the end is cut to the text: the mirror never fails the editor.
     pub fn edit(&mut self, start: u32, length: u32, text: &str) {
         let start = start.min(self.text.len());
         let length = length.min(self.text.len() - start);
@@ -231,8 +222,6 @@ impl SourceDocument {
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
-    /// Not as the start of a longer name, nor after a backslash that is itself a command's (`\\foo` is a line break
-    /// and a word), nor in a comment.
     pub fn command_ranges(&self, line: u32, command: &str) -> Vec<TextRange> {
         let index = line.max(1) as usize - 1;
         let name: Vec<u16> = command.encode_utf16().collect();
@@ -240,7 +229,6 @@ impl SourceDocument {
             return vec![];
         }
         let units = self.text.line(index);
-        // TeX's letters, with `@` as in a class's or a package's own source.
         let tex_letter = |u: u16| letter(u) || is(u, '@');
         let end = comment_start(units);
         let word = name.get(1).is_some_and(|&u| tex_letter(u));
@@ -256,12 +244,10 @@ impl SourceDocument {
         found
     }
 
-    /// They belong to a visit, not to the text.
     pub fn reset_typing(&mut self) {
         self.typing = typing::Typing::default();
     }
 
-    /// The scan up to `at`, having read nothing past it: what is open where something would be typed.
     fn scanned_to(&mut self, at: usize) -> scan::Scanner {
         let mut scanner = self.scans.resume(&self.text, at, at).scanner;
         scanner.run(&self.text.units[..at], at, &[], &mut ());
@@ -282,7 +268,6 @@ fn escaped(units: &[u16], at: usize) -> bool {
     slashes % 2 == 1
 }
 
-/// A line alone can't tell a `%` that \verb or a verbatim environment holds.
 fn comment_start(line: &[u16]) -> usize {
     let percent = |&i: &usize| is(line[i], '%') && !escaped(line, i);
     (0..line.len()).find(percent).unwrap_or(line.len())
@@ -290,7 +275,6 @@ fn comment_start(line: &[u16]) -> usize {
 
 const NAME: usize = 64;
 
-/// What Tab indents by.
 const INDENT: &str = "  ";
 
 fn ascii<'a>(units: &[u16], buf: &'a mut [u8; NAME]) -> &'a str {
