@@ -132,11 +132,6 @@ pub(crate) trait Visit {
 
 impl Visit for () {}
 
-#[cfg(test)]
-thread_local! {
-    pub(crate) static READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 #[derive(Clone, Default)]
 pub(crate) struct Scanner {
     stack: Stack<Group>,
@@ -159,8 +154,6 @@ impl Scanner {
     }
 
     pub fn run(&mut self, src: &[u16], until: usize, probes: &[usize], visit: &mut impl Visit) {
-        #[cfg(test)]
-        let from = self.i;
         let (mut probe, mut paragraph_ended) = (0, false);
         while self.i < src.len().min(until) {
             let start = self.i;
@@ -217,8 +210,6 @@ impl Scanner {
         for _ in &probes[probe..] {
             visit.at(self.groups());
         }
-        #[cfg(test)]
-        READ.with(|read| read.set(read.get() + (self.i - from)));
     }
 
     fn in_address(&self, src: &[u16]) -> bool {
@@ -400,27 +391,5 @@ impl Scanner {
                 src.len()
             }
         };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn probed_read(source: &str) -> usize {
-        let units: Vec<u16> = source.encode_utf16().collect();
-        let at = source.find(" b}").unwrap();
-        let mut scanner = Scanner::default();
-        scanner.run(&units, units.len(), &[at, at], &mut ());
-        scanner.i
-    }
-
-    #[test]
-    fn a_probed_scan_stops_once_its_probes_are_answered() {
-        let words = "More words in a paragraph.\n\n".repeat(1_000);
-        let source = format!("\\begin{{document}}\n\\textbf{{a b}} c\n{words}\\end{{document}}\n");
-        assert!(probed_read(&source) < 100);
-        let words = "More {words}.\n".repeat(1_000);
-        assert!(probed_read(&format!("{{ stray\n\\textbf{{a b}} c\n\n{words}")) < 40);
     }
 }

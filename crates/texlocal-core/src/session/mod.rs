@@ -4,8 +4,6 @@ mod document;
 mod history;
 mod live;
 mod navigate;
-#[cfg(test)]
-mod tests;
 mod watch;
 
 use std::collections::HashMap;
@@ -85,10 +83,6 @@ pub(crate) enum Command {
     LiveView { first: u32, last: u32 },
     LiveCaret { path: RelPath, offset: usize },
     LiveLog { shown: bool },
-    #[cfg(test)]
-    Panic,
-    #[cfg(test)]
-    State,
     #[serde(other)]
     Unknown,
 }

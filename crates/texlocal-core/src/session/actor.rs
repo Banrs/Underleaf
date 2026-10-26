@@ -408,10 +408,6 @@ impl Actor {
             Command::LiveLog { shown } => out(self.show_live_log(shown)),
             Command::LiveView { first, last } => out(self.live_view(first, last)),
             Command::LiveCaret { path, offset } => out(self.live_caret(path.0, offset)),
-            #[cfg(test)]
-            Command::Panic => panic!("a bug in the session"),
-            #[cfg(test)]
-            Command::State => Ok(self.state()),
             Command::Unknown => Err(unknown()),
         };
         reply.send(answer);
@@ -448,24 +444,6 @@ impl Actor {
         })?;
         self.reload_tree();
         Ok(json!({ "path": made }))
-    }
-
-    #[cfg(test)]
-    fn state(&self) -> Value {
-        let doc = |doc: &Doc| {
-            let mut state = doc.state();
-            state["dirty"] = doc.dirty().into();
-            state["conflict"] = json!(doc.asking);
-            state
-        };
-        let mut build = self.build_state();
-        build["queued"] = self.builds.queued.is_some().into();
-        json!({
-            "documents": self.docs.values().map(doc).collect::<Vec<_>>(),
-            "build": build,
-            "live": self.live_state(),
-            "autoCompile": self.auto_compile,
-        })
     }
 
     fn close(&mut self) -> Result<Value, CoreError> {

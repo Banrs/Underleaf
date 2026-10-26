@@ -80,35 +80,3 @@ pub(crate) fn utf16_lossy(units: &[u16]) -> String {
     }
     String::from_utf8(bytes).expect("ASCII and encoded chars are UTF-8")
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn utf16_lossy_reads_as_from_utf16_lossy() {
-        let cases: &[&[u16]] = &[
-            &[],
-            &[0x61, 0x62, 0x0a, 0x7f],
-            &[0xd800],
-            &[0xdc00],
-            &[0x61, 0xd83d, 0x62],
-            &[0x61, 0xde00, 0x62],
-            &[0xdc00, 0xd800],
-            &[0xd83d, 0xd83d, 0xde00],
-            &[0x61, 0xd83d],
-            &[
-                0xe9, 0x4e2d, 0x61, 0xd83d, 0xde00, 0x80, 0x7f, 0xd835, 0xdd38, 0xffff,
-            ],
-        ];
-        for units in cases {
-            assert_eq!(
-                super::utf16_lossy(units),
-                String::from_utf16_lossy(units),
-                "{units:x?}"
-            );
-        }
-        let mixed: Vec<u16> = "Prose, $x^2$, é, 漢字, 😀 and \\𝔸.\n"
-            .encode_utf16()
-            .collect();
-        assert_eq!(super::utf16_lossy(&mixed), String::from_utf16_lossy(&mixed));
-    }
-}

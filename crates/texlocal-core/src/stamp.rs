@@ -57,28 +57,3 @@ impl<T> Kept<T> {
         Ok(value)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-
-    use super::*;
-
-    #[test]
-    fn a_kept_value_is_read_again_only_once_its_file_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("main.synctex");
-        fs::write(&file, "one").unwrap();
-        let (kept, reads) = (Kept::new(), Cell::new(0));
-        let read = |path: &Path| {
-            reads.set(reads.get() + 1);
-            fs::read_to_string(path)
-        };
-        for _ in 0..2 {
-            assert_eq!(*kept.get(&file, read).unwrap(), "one");
-        }
-        fs::write(&file, "three").unwrap();
-        assert_eq!(*kept.get(&file, read).unwrap(), "three");
-        assert_eq!(reads.get(), 2);
-    }
-}

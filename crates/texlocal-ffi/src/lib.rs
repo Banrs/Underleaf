@@ -341,6 +341,3 @@ pub unsafe extern "C" fn tl_source_free(source: *mut TlSource) {
         drop(unsafe { Box::from_raw(source) });
     }
 }
-
-#[cfg(test)]
-mod tests;

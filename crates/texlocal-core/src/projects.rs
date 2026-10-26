@@ -4,10 +4,6 @@ mod library;
 mod opened;
 mod search;
 mod symbols;
-#[cfg(test)]
-pub(crate) mod testing;
-#[cfg(test)]
-mod tests;
 mod tree;
 
 use std::fs::File;

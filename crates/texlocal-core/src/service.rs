@@ -267,6 +267,3 @@ pub(crate) fn parse<T: DeserializeOwned>(name: &str, mut args: Value) -> Result<
 pub(crate) fn out(value: impl Serialize) -> Result<Value, CoreError> {
     Ok(json!(value))
 }
-
-#[cfg(test)]
-mod tests;

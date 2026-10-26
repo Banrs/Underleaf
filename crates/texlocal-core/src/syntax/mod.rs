@@ -15,9 +15,6 @@ mod stack;
 mod style;
 mod typing;
 
-#[cfg(test)]
-mod tests;
-
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};

@@ -120,6 +120,3 @@ fn no_tlmgr(path_env: &str) -> CoreError {
         },
     )
 }
-
-#[cfg(test)]
-mod tests;

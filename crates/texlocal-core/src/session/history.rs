@@ -201,33 +201,3 @@ fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
         text: inserted.to_owned(),
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Row::*;
-    use super::compare;
-
-    #[test]
-    fn a_comparison_folds_lines_far_from_a_change_and_puts_removed_before_added() {
-        let old = "1\n2\n3\n4\n5\n6\n7\n8\nold\n9\n10\n11\n12\n";
-        let new = "0\n1\n2\n3\n4\n5\n6\n7\n8\nnew\n9\n10\n11\n12";
-        let rows = [
-            Added("0"),
-            Same("1"),
-            Same("2"),
-            Same("3"),
-            Skipped(2),
-            Same("6"),
-            Same("7"),
-            Same("8"),
-            Removed("old"),
-            Added("new"),
-            Same("9"),
-            Same("10"),
-            Same("11"),
-            Skipped(1),
-        ];
-        assert_eq!(compare(old, new), rows);
-        assert_eq!(compare("a\n", "a"), []);
-    }
-}

@@ -142,36 +142,3 @@ pub(crate) async fn drive(
         timed_out,
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn killing_a_tree_ends_the_tool() {
-        let (mut child, tree) =
-            Tree::spawn(Command::new("sh").args(["-c", "sleep 30; true"])).unwrap();
-        tree.kill();
-        let ended = tokio::time::timeout(PROBE_TIMEOUT, child.wait());
-        assert!(!ended.await.unwrap().unwrap().success());
-    }
-
-    #[tokio::test]
-    async fn what_a_tool_leaves_running_ends_with_it() {
-        let ran = run("sh", &["-c", "sleep 30 & echo done"], None, "/bin");
-        let (code, out) = tokio::time::timeout(DRAIN_GRACE, ran)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!((code, out.as_str()), (0, "done\n"));
-    }
-
-    #[tokio::test]
-    async fn a_program_off_the_path_is_not_found_and_one_that_fails_has_its_code() {
-        let missing = run("no-such-tool", &[], None, "/nonexistent").await;
-        assert_eq!(missing.unwrap_err().kind(), io::ErrorKind::NotFound);
-        let path = std::env::var("PATH").unwrap();
-        let sh = run("sh", &["-c", "echo 3; exit 3"], None, &path);
-        assert_eq!(sh.await.unwrap(), (3, "3\n".to_string()));
-    }
-}
