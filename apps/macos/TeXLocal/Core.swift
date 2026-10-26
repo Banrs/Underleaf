@@ -3,8 +3,11 @@ import os
 import TeXLocalCore
 
 nonisolated struct CoreError: LocalizedError {
+    /// What the app may act on (docs/core-api.md, Errors).
+    enum Kind: String, Decodable { case invalid, denied, notFound, conflict, unfit, unavailable, `internal` }
+
     let message: String
-    var status: Int?
+    var kind: Kind?
     var errorDescription: String? { message }
 }
 
@@ -73,12 +76,12 @@ final class Core {
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let answer: Result<T, CoreError>
 
-        private enum Keys: CodingKey { case ok, error, status }
+        private enum Keys: CodingKey { case ok, error, kind }
 
         init(from decoder: any Decoder) throws {
             let envelope = try decoder.container(keyedBy: Keys.self)
             if let error = try envelope.decodeIfPresent(String.self, forKey: .error) {
-                answer = .failure(CoreError(message: error, status: try envelope.decodeIfPresent(Int.self, forKey: .status)))
+                answer = .failure(CoreError(message: error, kind: try? envelope.decodeIfPresent(CoreError.Kind.self, forKey: .kind)))
             } else {
                 answer = .success(try envelope.decode(T.self, forKey: .ok))
             }

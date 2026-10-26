@@ -18,7 +18,6 @@ use tokio::time::Instant;
 
 use super::build::Builds;
 use super::live::Live;
-use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Command, Document, Engine, Msg, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
@@ -171,7 +170,6 @@ pub(crate) struct Actor {
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
-    pub trail: Trail,
     closed: bool,
 }
 
@@ -189,20 +187,17 @@ impl Actor {
             .watch
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let pdf = settings::read_settings(&project.settings)
-            .output(&project.build, "pdf")
-            .ok();
-        let pdf = pdf.filter(|pdf| pdf.is_file());
         let opened = json!({
             "name": project.name(),
             "root": project.root.to_string_lossy(),
-            "pdf": pdf.as_ref().map(|pdf| pdf.to_string_lossy()),
             "tree": out(&tree)?,
             "settings": settings::shown(&project),
             "ui": settings::read_ui(&project.ui),
         });
         let mut builds = Builds::default();
-        builds.pdf = pdf.is_some();
+        builds.pdf = settings::read_settings(&project.settings)
+            .output(&project.build, "pdf")
+            .is_ok_and(|pdf| pdf.is_file());
         let mut later = VecDeque::new();
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
@@ -238,7 +233,6 @@ impl Actor {
             live: Live::default(),
             later,
             history,
-            trail: Trail::default(),
             closed: false,
         };
         actor.snapshot_soon();
@@ -411,7 +405,7 @@ impl Actor {
                 let answer = self.create_entry(&folder, &name, dir);
                 return self.after_events(answer, reply);
             }
-            Command::Close => Ok(self.close()),
+            Command::Close => self.close(),
             Command::SetOptions { auto_compile } => {
                 out(auto_compile.map(|auto| self.auto_compile = auto))
             }
@@ -424,11 +418,6 @@ impl Actor {
             Command::Resolve { path, answer } => self.resolve(&path.0, &answer),
             Command::Compile { auto } => self.compile(auto).and_then(out),
             Command::StopCompile => out(self.stop_compile()),
-            Command::Issue { next } => Ok(self.next_issue(next)),
-            Command::ChooseIssue { index } => Ok(self.choose_issue(index)),
-            Command::Navigate { from } => Ok(self.navigate(from)),
-            Command::Back { at } => Ok(self.step(at, true)),
-            Command::Forward { at } => Ok(self.step(at, false)),
             Command::Replace {
                 query,
                 replacement,
@@ -505,13 +494,15 @@ impl Actor {
         })
     }
 
-    fn close(&mut self) -> Value {
-        let saved = self.flush_all(false).unwrap_or(false);
+    fn close(&mut self) -> Result<Value, CoreError> {
+        if !self.flush_all(true)? {
+            return Ok(json!({ "saved": false }));
+        }
         self.stop_compile();
         self.closed = true;
         self.live_stop();
         lock(&self.shared).clear();
-        json!({ "saved": saved })
+        Ok(json!({ "saved": true }))
     }
 
     // MARK: - Documents
@@ -764,7 +755,10 @@ impl Actor {
                 };
             }
         }
-        Ok(true)
+        Ok(self
+            .docs
+            .iter()
+            .all(|(path, doc)| only.is_some_and(|only| only != path) || !doc.dirty()))
     }
 
     fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {
@@ -849,14 +843,25 @@ impl Actor {
         for path in &meaning.docs {
             self.check_disk(path);
         }
-        let others = meaning.listed.iter();
-        let others: Vec<&String> = others.filter(|p| !self.docs.contains_key(*p)).collect();
+        let others: Vec<&String> = meaning
+            .listed
+            .iter()
+            .filter(|p| !self.docs.contains_key(*p))
+            .collect();
         let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
         }
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
+        }
+        // Bibliographies, images and included files can change without ever being opened.
+        if meaning.tree || !others.is_empty() {
+            self.edits += 1;
+            self.mark_outdated();
+            if self.auto_compile {
+                self.later.push_back(Later::Compile(true));
+            }
         }
         if self.live.active() {
             self.live.disk_paths.extend(meaning.listed.iter().cloned());
@@ -1116,7 +1121,7 @@ impl Actor {
                 tokio::spawn(async move {
                     let installed = packages::install_package(&file, &service.tool_paths().0).await;
                     reply.send(match installed {
-                        Err(err) if err.status == 403 => Ok(Value::Null),
+                        Err(err) if err.kind == crate::ErrorKind::Denied => Ok(Value::Null),
                         installed => installed.map(|_| fixed(Value::Null, &project)),
                     });
                 });
@@ -1234,7 +1239,6 @@ impl Actor {
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
-        self.trail.moved(from, to);
         // Names compare without case, so a rename only in case leaves the entry itself at the
         // new name: that one moves rather than closes.
         for path in self.docs_within(to) {

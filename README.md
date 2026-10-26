@@ -12,8 +12,13 @@ There were also iPad and Windows apps. They are parked while the Mac app is fini
 ## What it does
 
 You start a project from a template (blank, article, report or Beamer presentation), or open a
-folder, `.tex` file or `.zip` you already have. The source sits on the left and the PDF on the
-right. A project opens again where you left it, on the same file, line, page and zoom.
+folder, `.tex` file or `.zip` you already have. Choose Source Only, Source & PDF, or PDF Only from
+the toolbar's Editor Layout menu or the View menu. A project opens again where you left it, on the
+same file, line, page and zoom.
+
+The toolbar follows the source and PDF dividers. Formatting tools stay with the source, the
+zoom pill stays with the PDF, and Compile becomes a compact button when space is tight.
+Search Project lives above the file list; Command-F finds text in the focused source or PDF.
 
 A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
 and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
@@ -33,7 +38,8 @@ needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list 
 nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
 first error. You get the PDF along with every error and warning, each marked on its line in the
 source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
-compiles on its own when you pause typing; Settings can turn that off.
+compiles on its own when you pause typing; Settings can turn that off. Changes made outside the
+app, including to unopened images, bibliography files and included sources, also update the build.
 
 The errors new users meet most come with a sentence on what TeX means and what usually fixes it.
 Where one click can fix an error, such as a missing package to install with TeX Live's tlmgr or a
@@ -42,8 +48,10 @@ document as you write, without running TeX, for references and citations that po
 defined twice, missing input files, and environments, braces or maths left open. What it finds is
 listed and marked on its line with the build's issues, even before you first compile.
 
-Double-clicking in the PDF takes you to that place in the source, and you can go the other way
-(SyncTeX), to the exact word. You can also search the PDF.
+As on Overleaf, double-clicking a word in the PDF selects it and takes you to its place in the
+source, and double-clicking in the source shows its place in the PDF (SyncTeX), to the exact
+word, while the other pane is showing. Go to Source and Go to PDF in the context menus and the
+Go menu do the same. You can also search the PDF.
 
 Live Preview, still experimental, updates the PDF as you type, before you
 save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile

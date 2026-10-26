@@ -128,13 +128,13 @@ pub(crate) fn new_project(
     fill(temp.path())?;
     // Passing over anything there, a dangling link or case alias too, and what another create
     // of the name moved there since. Once it is moved, its drop finds nothing to remove.
-    let taken = |id: &str| fs::symlink_metadata(data_dir.join(id)).is_ok();
     let id = project_names(&name)
-        .filter(|id| !taken(id))
-        .find_map(|id| match fs::rename(temp.path(), data_dir.join(&id)) {
-            Err(_) if taken(&id) => None,
-            moved => Some(moved.map(|()| id)),
-        })
+        .find_map(
+            |id| match atomic::rename_exclusive(temp.path(), &data_dir.join(&id)) {
+                Err(err) if err.kind() == ErrorKind::AlreadyExists => None,
+                moved => Some(moved.map(|()| id)),
+            },
+        )
         .expect("a free name")?;
     Ok(ProjectInfo::read(data_dir, &id)?)
 }
@@ -204,7 +204,7 @@ pub fn rename_project(
         ));
     }
     before_move(&root)?;
-    fs::rename(&root, &dest)?;
+    atomic::rename_exclusive(&root, &dest)?;
     Ok(ProjectInfo::read(data_dir, &clean)?)
 }
 
@@ -310,7 +310,7 @@ mod tests {
         );
 
         let refused = create_project(data, "Other", "blank", Some("word"));
-        assert_eq!(refused.unwrap_err().status, 400);
+        assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Invalid);
         for bad in ["   ", ".hidden"] {
             fails_with(create_project(data, bad, "blank", None), "Invalid name");
         }

@@ -26,6 +26,31 @@ struct FindTests {
 }
 
 struct PDFFitTests {
+    /// As Overleaf's, a double-click selects its word and goes quietly to the source; a single click only places.
+    @Test func aDoubleClickSelectsAWordAndGoesToTheSource() throws {
+        let controller = showing(try textPDF(["alpha beta"])), view = controller.view
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        window.orderFrontUnseen()
+        defer { window.close() }
+        view.layoutDocumentView()
+        let page = try #require(view.document?.page(at: 0))
+        let letter = try #require(page.selection(for: NSRange(location: 1, length: 1))).bounds(for: page)
+        let point = view.convert(view.convert(CGPoint(x: letter.midX, y: letter.midY), from: page), to: nil)
+        var destinations: [(page: Int, quietly: Bool)] = []
+        view.onInverse = { page, _, _, quietly in destinations.append((page, quietly)) }
+        for clicks in [1, 2] {
+            for type in [NSEvent.EventType.leftMouseUp, .leftMouseDown] {
+                let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                                                          windowNumber: window.windowNumber, context: nil, eventNumber: clicks,
+                                                          clickCount: clicks, pressure: type == .leftMouseDown ? 1 : 0))
+                if type == .leftMouseUp { NSApp.postEvent(event, atStart: false) } else { view.mouseDown(with: event) }
+            }
+        }
+        #expect(view.currentSelection?.string == "alpha")
+        #expect(destinations.map(\.page) == [1] && destinations.allSatisfy(\.quietly))
+    }
+
     @Test(arguments: zip([CGFloat(0), 37], [0, 90]))
     func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
         let controller = sizedController(), view = controller.view
@@ -253,6 +278,24 @@ struct PDFFindTests {
             return selection?.range(at: 0, on: page).location == second.location
                 && selection?.string?.trimmingCharacters(in: .whitespacesAndNewlines) == "echo"
         } state: { "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page)))" }
+    }
+
+    /// A double-click's search, quiet, shows nothing for a word the PDF hasn't; the menu's flashes SyncTeX's box.
+    @Test func aQuietForwardSearchShowsOnlyAWordFound() async throws {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let line = "Bold words here, unprinted."
+        let info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
+        try info.write(line, to: info.mainFile)
+        let pdf = try textPDF(["Bold words here."], width: 180), page = try #require(pdf.page(at: 0))
+        let controller = showing(pdf)
+        let loc = ForwardLoc(page: 1, h: 10, v: page.bounds(for: .cropBox).height - 20, width: 60, height: 12)
+        for quietly in [true, false] {
+            controller.reveal(loc, from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: 18, quietly: quietly))
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(controller.view.currentSelection == nil)
+            #expect((controller.view.mark != nil) == !quietly)
+        }
     }
 
     /// PDFKit searches off the main thread and posts what it finds to the main queue: found once each match is on a page showing.

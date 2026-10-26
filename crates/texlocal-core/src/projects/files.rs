@@ -168,11 +168,11 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     let main_file = read_settings(&project.settings).main_file;
     let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);
-    fs::rename(&src, &dest)?;
+    atomic::rename_exclusive(&src, &dest)?;
     if let Some(main_file) = &moved_main
         && let Err(err) = write_settings(&project.settings, &json!({ "mainFile": main_file }))
     {
-        return Err(match fs::rename(&dest, &src) {
+        return Err(match atomic::rename_exclusive(&dest, &src) {
             Ok(()) => err,
             Err(rollback) => CoreError::internal(format!(
                 "{}; rename rollback failed: {rollback}",
@@ -256,7 +256,10 @@ mod tests {
         let err = write_creating(&folder.join("main.tex"), b"x").unwrap_err();
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
         let said = "You don’t have permission to save the file “main.tex” in the folder “Thesis”.";
-        assert_eq!((err.status, err.message.as_str()), (403, said));
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (crate::ErrorKind::Denied, said)
+        );
     }
 
     #[test]
@@ -299,7 +302,10 @@ mod tests {
         assert_eq!(folders, ["untitled folder", "untitled folder 2"]);
         assert!(root.join("untitled folder 2").is_dir());
         for bad in [".texlocal.json", "../x.tex"] {
-            assert_eq!(create_free(&root, bad, false).unwrap_err().status, 400);
+            assert_eq!(
+                create_free(&root, bad, false).unwrap_err().kind,
+                crate::ErrorKind::Invalid
+            );
         }
         fs::write(root.join("plain"), "a file").unwrap();
         assert!(create_free(&root, "plain/x.tex", false).is_err());

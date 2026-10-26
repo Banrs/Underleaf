@@ -94,7 +94,7 @@ pub(crate) trait Preview: Send + Sync {
     ) -> Result<Status, CoreError>;
     fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError>;
     /// A keystroke: `remove` UTF-16 units at `start` replaced by `text`. It waits for nothing.
-    /// An edit that doesn't fit the session's copy is refused with status 412 and changes
+    /// An edit that doesn't fit the session's copy is refused as unfit and changes
     /// nothing: `update` with the whole text then puts both right.
     fn edit(
         &self,
@@ -983,7 +983,10 @@ done
             until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
             assert!(!manager.stop_request(OWNER).running);
             assert!(!folder.exists());
-            assert_eq!(manager.status(OWNER).unwrap_err().status, 404);
+            assert_eq!(
+                manager.status(OWNER).unwrap_err().kind,
+                crate::ErrorKind::NotFound
+            );
             begin(&manager, &root, &path_env);
             manager.kill_all();
             assert!(!manager.status(OWNER).unwrap().running);
@@ -1083,9 +1086,9 @@ done
             assert!(!sent.iter().any(|c| c[0] == "rerun"));
 
             let refused = manager.edit(OWNER, "other.tex", 0, 0, "no");
-            assert_eq!(refused.unwrap_err().status, 412);
+            assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Unfit);
             let refused = manager.edit(OWNER + 1, "main.tex", 0, 0, "x");
-            assert_eq!(refused.unwrap_err().status, 404);
+            assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::NotFound);
             manager.update(OWNER, "main.tex", "aXb").unwrap();
             manager.edit(OWNER, "main.tex", 3, 0, "!").unwrap();
             until(|| commands(&tmp).len() >= 8).await;

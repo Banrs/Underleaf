@@ -17,7 +17,6 @@ mod scans;
 mod snippet;
 mod stack;
 mod style;
-pub(crate) mod theme;
 mod typing;
 
 #[cfg(test)]

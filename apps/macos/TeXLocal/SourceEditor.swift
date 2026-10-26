@@ -76,8 +76,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.setSelectedRange(selection)
         atTop ? textView.scroll(toTop: textView.document.lineStart(line)) : textView.centerSelectionInVisibleArea(nil)
         if focus { self.focus() }
-        // Once the scroll's layout is done.
-        if found.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { Task { self.textView.showFindIndicator(for: found) } }
+        // Once the scroll's layout is done, in a window still shown: AppKit's pulse joins the window as a child, and one
+        // closed meanwhile is freed under it (`aRevealedLineStaysAtTheTop` could crash the host).
+        if found.length > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            Task { [textView] in if textView.window?.isVisible == true { textView.showFindIndicator(for: found) } }
+        }
     }
 
     func textDidChange(_ notification: Notification) { changes.count += 1 }

@@ -6,13 +6,15 @@ enum ColumnMetrics {
     static let pdfShare: CGFloat = 0.5
     static let panelMinimum: CGFloat = 140
     /// AppKit's layout of the default tools, measured, for Compile's word alone: AppKit neither narrows a tool's view nor
-    /// says what its overflow menu would take. The window controls and sidebar toggle; the PDF and Inspector toggles; the
-    /// source's tools (Back, the narrowest title, Aa, Math and Insert); Zoom; Compile as its word; the source|PDF
-    /// separator's own gap while the PDF is hidden. Compile's word is 90 pt on macOS 27.2, whose toolbar takes Zoom 11 to
-    /// 19 pt later than 27.0's (CI's runner): 20 more keep the word from meeting the overflow menu on either.
+    /// says what its overflow menu would take. The window controls and sidebar toggle; the layout and Inspector toggles;
+    /// the source's tools (Back, the narrowest title, Aa, Math and Insert), of which PDF Only hides the editing tools;
+    /// Zoom; Compile as its word; the source|PDF separator's own gap while the PDF is hidden. Compile's word is 90 pt on
+    /// macOS 27.2, whose toolbar takes Zoom 11 to 19 pt later than 27.0's (CI's runner): 20 more keep the word from
+    /// meeting the overflow menu on either.
     static let windowControls: CGFloat = 132
     static let toggles: CGFloat = 92
     static let sourceTools: CGFloat = 338
+    static let editingTools: CGFloat = 120
     static let zoom: CGFloat = 156
     static let compile: CGFloat = 110
     static let separator: CGFloat = 5

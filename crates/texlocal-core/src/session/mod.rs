@@ -34,7 +34,6 @@ use crate::{CoreError, lock, paths};
 
 pub(crate) use build::Engine;
 pub use document::Document;
-use navigate::Place;
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -78,9 +77,6 @@ pub(crate) enum Command {
     Usages { path: RelPath, offset: u32 },
     QuickHelp { path: RelPath, offset: u32 },
     QuickOpen { query: String },
-    Navigate { from: Place },
-    Back { at: Place },
-    Forward { at: Place },
     Replace { query: String, replacement: String, #[serde(default)] match_case: bool,
         #[serde(default)] whole_word: bool },
     RenameSymbol { kind: String, from: String, to: String },
@@ -89,8 +85,6 @@ pub(crate) enum Command {
     HistorySave { name: String },
     HistoryCompare { id: String, path: RelPath },
     HistoryRestore { id: String, paths: Option<Vec<RelPath>> },
-    Issue { next: bool },
-    ChooseIssue { index: Option<usize> },
     Rename { from: RelPath, to: Option<String>, name: Option<String> },
     CreateEntry { #[serde(default)] folder: String, name: String, #[serde(default)] dir: bool },
     SetSettings { patch: Value },
@@ -272,7 +266,7 @@ impl Sessions {
             let (session, closing) = queued?;
             let answer = answer.await.unwrap_or_else(|_| Err(gone()));
             // Taken off here, not as the task ends, so the number is free once this answers.
-            if closing {
+            if closing && answer.as_ref().is_ok_and(|answer| answer["saved"] == true) {
                 lock(&open).remove(&session);
             }
             answer

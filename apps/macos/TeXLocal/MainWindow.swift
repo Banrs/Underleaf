@@ -10,7 +10,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     /// Made each time the projects show, so one screen's alerts and sheets never wait in another's views.
     private var home: NSViewController?
     private(set) var workspace: WorkspaceController?
-    private let modals: NSHostingView<WindowModals>
     /// The project the window showed as the app last quit.
     private var restored: String?
     private var watches: [Task<Void, Never>] = []
@@ -19,7 +18,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     init(app: AppModel) {
         self.app = app
-        modals = NSHostingView(rootView: WindowModals(app: app, project: nil))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
@@ -31,7 +29,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
-        modals.sizingOptions = []
         findEditor.isFieldEditor = true
         showHome()
         window.center()
@@ -68,11 +65,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         guard workspace?.project !== project, let window else { return }
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
-        setContent(workspace, project: project)
+        window.toolbar = nil
+        setContent(workspace)
+        window.toolbar = workspace.toolbar.toolbar
         window.contentMinSize = ColumnMetrics.contentMinimum
         // The toolbar's ground over the source is the editor's surface.
         window.backgroundColor = .untintedTextBackground
-        window.toolbar = workspace.toolbar.toolbar
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
@@ -96,19 +94,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // SwiftUI sets the window's minimum from its content's: the workspace's narrowest.
         let home = NSHostingController(rootView: HomeView()
             .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
-            .environment(app))
+            .environment(app)
+            .background { WindowModals(app: app, project: nil) })
         home.sceneBridgingOptions = [.title, .toolbars]
-        setContent(home, project: nil)
+        setContent(home)
         self.home = home
     }
 
     /// A new content view controller would reset the window's frame.
-    private func setContent(_ controller: NSViewController, project: ProjectModel?) {
+    private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         window.contentViewController = controller
-        modals.rootView = WindowModals(app: app, project: project)
-        controller.view.addSubview(modals)
     }
 
     // MARK: - Window
@@ -192,7 +189,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static let projectKey = "project"
 }
 
-private struct WindowModals: View {
+struct WindowModals: View {
     let app: AppModel
     let project: ProjectModel?
 

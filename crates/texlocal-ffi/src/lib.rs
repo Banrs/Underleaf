@@ -100,7 +100,7 @@ unsafe fn command_args<'a>(
 fn envelope(result: Result<Value, CoreError>) -> Value {
     match result {
         Ok(value) => json!({ "ok": value }),
-        Err(err) => json!({ "error": err.message, "status": err.status }),
+        Err(err) => json!({ "error": err.message, "kind": err.kind }),
     }
 }
 

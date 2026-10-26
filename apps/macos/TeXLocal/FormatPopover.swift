@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked.
+/// Aa's popover, as Notes' Aa: a toolbar button has no SwiftUI popover.
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
@@ -21,10 +21,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func toggle(relativeTo item: NSToolbarItem) {
         if popover.isShown { return popover.close() }
         if let click, click == closingClick { return }
-        // Made anew, so it opens at the caret's level.
-        let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in
-            self?.popover.close()
-        })
+        let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in self?.popover.close() })
         content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
         popover.show(relativeTo: item)
@@ -34,31 +31,17 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
-/// The styles, lit while the selection is in their command, then the class's levels in their weight and shape. A style
-/// toggles and the popover stays, as in Notes; a level is chosen and it closes, as a menu. It opens with nothing
-/// highlighted; the pointer highlights a level without taking the focus, the arrow keys and Tab move both, and Return
-/// and Space choose the highlighted level.
+/// Notes' Aa: the styles' toggles, lit while the selection has them, then the class's levels, each in its heading's
+/// weight, the caret's checked. A style toggles and the popover stays; a level is chosen and it closes, as a menu.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
     let close: () -> Void
-    @FocusState private var focused: String?
-    /// The level under the pointer or last reached by the keys, as a menu's highlight.
-    @State private var highlighted: String?
-    /// The keyboard starts at the caret's level as the popover opens; only a key's move of it is a highlight, as a menu's.
-    @State private var keyed = false
     @State private var styles = TextStyles()
-
-    /// Notes' Aa, measured through Accessibility: parts 7 pt apart and from the edges, dividers 7 pt in, rows at a 29 pt
-    /// pitch 10 pt in with their content 16 pt in, 8 pt corners, list markers a word space from their text.
-    fileprivate static let gap: CGFloat = 7, dividerInset: CGFloat = 7, rowInset: CGFloat = 10, rowGap: CGFloat = 1,
-                           contentInset: CGFloat = 16, highlightRadius: CGFloat = 8, notesPitch: CGFloat = 29, markerGap: CGFloat = 4
+    @State private var hovered: String?
 
     var body: some View {
         let headings = project.headingStyles
-        let levels = headings.map(\.command)
-        let layout = Layout(headings)
-        // Read once: it searches the outline.
         let current = project.headingCommand
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -68,150 +51,72 @@ struct FormatPanel: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Self.gap)
+            .padding(.vertical, 7)
             separator
-                .padding(.horizontal, Self.dividerInset)
-            VStack(spacing: Self.rowGap) {
+                .padding(.horizontal, 7)
+            // Notes' rows, measured: 10 pt in, 1 pt apart, their content 16 pt in, 8 pt corners.
+            VStack(spacing: 1) {
                 ForEach(headings, id: \.command) { style in
-                    // The run-in levels apart, as Notes sets Block Quote apart from its styles.
-                    if style == headings.first(where: \.isRunIn), style != headings.first {
-                        separator
-                            .padding(.horizontal, Self.dividerInset - Self.rowInset)
-                            .padding(.vertical, Self.gap - Self.rowGap)
-                    }
-                    row(style, layout: layout, checked: style.command == current)
+                    // Run in, apart, as Notes sets Block Quote apart from its styles.
+                    if style.command == "paragraph" { separator.padding(.horizontal, -3).padding(.vertical, 6) }
+                    row(style, checked: style.command == current)
                 }
             }
-            .padding(.horizontal, Self.rowInset)
-            .padding(.vertical, Self.gap)
-            .onKeyPress(.downArrow) { move(by: 1, in: levels, from: current) }
-            .onKeyPress(.upArrow) { move(by: -1, in: levels, from: current) }
-            .onKeyPress(keys: [.return, .space]) { _ in
-                guard let highlighted else { return .ignored }
-                choose(highlighted)
-                return .handled
-            }
-            // At the caret's level, as a pop-up menu opens at its item.
-            .defaultFocus($focused, current)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Section Level")
         }
         .fixedSize()
-        .onKeyPress(phases: .down) { _ in
-            keyed = true
-            return .ignored
-        }
-        .onKeyPress(.escape) {
-            close()
-            return .handled
-        }
-        .onChange(of: focused) { _, level in
-            if keyed { highlighted = level }
-        }
         .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
     /// Notes' half-point separator: a `Divider` framed to half a point still inks a whole one.
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
-    /// Notes' style toggles, as the accessory bar's, which draw their own hover, press and on; one size for the three, 36 by
-    /// 23 pt in its padding, where its own would differ by the symbol.
+    /// The accessory bar's toggles draw their own hover, press and on; one size for the three, which their symbols would vary.
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
         Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: project) })) {
             Label(command.title, systemImage: command.style!.symbol)
                 .labelStyle(.iconOnly)
                 .imageScale(.large)
-                .frame(width: 12, height: 15)
+                .frame(width: 12, height: 16)
         }
         .toggleStyle(.button)
         .buttonStyle(.accessoryBar)
         .help(command.style!.help)
     }
 
-    private func row(_ style: HeadingStyle, layout: Layout, checked: Bool) -> some View {
-        let lit = highlighted == style.command
-        return Button { choose(style.command) } label: {
+    private func row(_ style: HeadingStyle, checked: Bool) -> some View {
+        let lit = hovered == style.command
+        return Button {
+            project.editor.perform(.heading(style.command))
+            close()
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark")
                     .font(.body.bold())
                     .opacity(checked ? 1 : 0)
                     .accessibilityHidden(true)
-                HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
-                    if layout.markers > 0 {
-                        Text(verbatim: style.marker ?? "")
-                            .foregroundStyle(.secondary)
-                            .frame(width: layout.markers, alignment: .trailing)
-                    }
-                    Text(style.title)
-                }
-                .font(layout.font(style))
+                Text(style.title)
+                    .font(Self.fonts[style.command] ?? .body)
                 Spacer(minLength: 12)
             }
-            .padding(.horizontal, Self.contentInset - Self.rowInset)
-            .frame(height: layout.pitch - Self.rowGap)
-            // A menu's highlight, on which the text's styles turn as a selected row's do.
-            .foregroundStyle(.primary)
-            .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: Self.highlightRadius))
+            .padding(.horizontal, 6)
+            .frame(minHeight: 28)
+            // A menu's highlight, on which the text turns as a selected row's does.
+            .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
             .environment(\.backgroundProminence, lit ? .increased : .standard)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .focusable()
-        .focused($focused, equals: style.command)
-        .focusEffectDisabled()
         .onHover { inside in
-            if inside { highlighted = style.command } else if highlighted == style.command { highlighted = nil }
+            if inside { hovered = style.command } else if hovered == style.command { hovered = nil }
         }
-        // The level alone: the marker is the document's numbering, not the level's name.
-        .accessibilityLabel(style.title)
         .accessibilityAddTraits(checked ? .isSelected : [])
     }
 
-    private func move(by step: Int, in levels: [String], from current: String) -> KeyPress.Result {
-        // With no highlight yet, the caret's level first: the keyboard may not have reached it.
-        let next = highlighted.flatMap(levels.firstIndex).map { levels[min(max($0 + step, 0), levels.count - 1)] }
-            ?? (levels.contains(current) ? current : focused)
-        highlighted = next
-        focused = next
-        return .handled
-    }
-
-    private func choose(_ command: String) {
-        project.editor.perform(.heading(command))
-        close()
-    }
-
-    /// The levels' fonts, the even pitch the largest needs, and the markers' column, as wide as the widest.
-    struct Layout {
-        private let fonts: [String: NSFont]
-        let pitch: CGFloat
-        let markers: CGFloat
-
-        init(_ headings: [HeadingStyle]) {
-            let fonts = Dictionary(headings.map { ($0.command, Self.font($0.font)) }) { first, _ in first }
-            self.fonts = fonts
-            let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
-            pitch = max(FormatPanel.notesPitch, (line + 4).rounded(.up))
-            markers = headings.compactMap { style in
-                style.marker.map { NSAttributedString(string: $0, attributes: [.font: fonts[style.command]!]).size().width }
-            }.max().map { $0.rounded(.up) } ?? 0
-        }
-
-        func font(_ style: HeadingStyle) -> Font { Font(fonts[style.command] ?? .systemFont(ofSize: NSFont.systemFontSize)) }
-
-        /// LaTeX's sizes scaled into Notes': \Huge comes out at its Title's 22 pt, \large and \Large near its Subheading and Heading.
-        private static func font(_ style: HeadingStyle.Font) -> NSFont {
-            let size = (NSFont.systemFontSize * pow(style.scale, 0.58)).rounded()
-            var descriptor = NSFont.systemFont(ofSize: size, weight: style.bold ? .bold : .regular).fontDescriptor
-            switch style.shape {
-            case .upright: break
-            case .italic: descriptor = descriptor.withSymbolicTraits(.italic)
-            case .smallCaps:
-                descriptor = descriptor.addingAttributes([.featureSettings: [[NSFontDescriptor.FeatureKey.typeIdentifier: kLowerCaseType,
-                                                                              .selectorIdentifier: kLowerCaseSmallCapsSelector]]])
-            }
-            return NSFont(descriptor: descriptor, size: size) ?? .systemFont(ofSize: size)
-        }
-    }
+    /// Larger to smaller, as Notes' Title, Heading and Subheading: a class sets each its own way.
+    private static let fonts: [String: Font] = ["part": .title.bold(), "chapter": .title.bold(), "section": .title2.bold(),
+                                                "subsection": .title3.bold(), "subsubsection": .headline, "paragraph": .headline]
 }

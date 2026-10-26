@@ -51,7 +51,8 @@ extension PDFController {
                                                                     "column": source.column, "pages": pages.map(\.args)],
                                                   as: PageHit?.self)
             // The match is for the pages that were read, which a rebuild or a live page may have replaced.
-            guard !Task.isCancelled, view.document === document, read.allSatisfy({ document.number(of: $0) != nil }) else { return }
+            guard !Task.isCancelled, view.document === document, read.allSatisfy({ document.number(of: $0) != nil }),
+                  !source.quietly || hit != nil else { return }
             showFound(loc, on: located, hit: hit)
         }
     }

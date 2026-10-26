@@ -24,9 +24,10 @@ pub struct LogItem {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
-    /// `message` for a line's end: on one line, without LaTeX's own prefix.
+    /// `message` for a line's end: on one line, without LaTeX's own prefix; the `issues` event's.
+    #[serde(skip)]
     pub short: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub command: Option<String>,
     /// What TeX's message means here and what usually fixes it.
     #[serde(skip_serializing_if = "Option::is_none")]

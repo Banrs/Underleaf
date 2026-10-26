@@ -9,8 +9,7 @@ import Testing
 struct ShellTests {
     private let defaults = TestDefaults()
 
-    /// With a model on the test's own defaults, which saves neither the splits nor the toolbar (`AppModel.savesLayout`), and
-    /// the PDF shown, in a window 1,300 points wide.
+    /// Layout preferences stay in the test's own defaults.
     private func workspace(sidebar: Bool = false) async throws -> (NSWindow, WorkspaceController) {
         let app = AppModel(defaults: defaults.store)
         app.sidebarVisible = sidebar
@@ -23,8 +22,8 @@ struct ShellTests {
         let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
                                             size: window.contentLayoutRect.size)
         window.contentViewController = workspace
-        window.contentMinSize = ColumnMetrics.contentMinimum
         window.toolbar = workspace.toolbar.toolbar
+        window.contentMinSize = ColumnMetrics.contentMinimum
         window.orderFront(nil)
         try await resize(window, to: 1300)
         return (window, workspace)
@@ -80,7 +79,7 @@ struct ShellTests {
             #expect(!item.isHidden && item.visibilityPriority == .low)
             #expect(item is NSMenuToolbarItem || item.menuFormRepresentation?.submenu != nil)
         }
-        for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF] {
+        for id in [NSToolbarItem.Identifier.back, .compile, .layout] {
             #expect(try item(id, in: workspace).visibilityPriority == .high)
         }
         try await resize(window, to: 1300)
@@ -122,6 +121,75 @@ struct ShellTests {
         #expect(zoom.intrinsicContentSize.width == width)
     }
 
+    @Test func theSavedLayoutOverridesRememberedCollapsedPanes() async throws {
+        let app = AppModel(defaults: defaults.store)
+        app.layout = .split
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1200, height: 700),
+                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let workspace = WorkspaceController(app: app, project: ProjectModel(id: "ShellTests", app: app),
+                                            size: window.contentLayoutRect.size)
+        defer { workspace.close(); window.close() }
+        let source = workspace.columns.splitViewItems[0]
+        source.isCollapsed = true
+        window.contentViewController = workspace
+        window.toolbar = workspace.toolbar.toolbar
+        window.orderFrontUnseen()
+        try await waitUntil { !source.isCollapsed }
+        #expect(workspace.columns.splitViewItems.allSatisfy { !$0.isCollapsed })
+    }
+
+    @Test func switchingLayoutsPreservesTheEditorAndPDF() async throws {
+        let (window, workspace) = try await workspace()
+        defer { workspace.close(); window.close() }
+        let app = workspace.app, editor = workspace.project.editor
+        workspace.project.tree.show(.sources)
+        workspace.project.openPath = "main.tex"
+        editor.open(path: "main.tex", text: "A document with unsaved edits", focus: false)
+        try await waitUntil { editor.shown }
+        let document = try textPDF(["Page one", "Page two"])
+        workspace.pdf.show(document)
+        window.makeFirstResponder(editor.textView)
+        let source = workspace.columns.splitViewItems[0], pdf = workspace.columns.splitViewItems[1]
+        let toolbar = workspace.toolbar.toolbar
+        let separator = try #require(toolbar.items.first { $0.itemIdentifier == .pdfSeparator } as? NSTrackingSeparatorToolbarItem)
+        #expect(separator.splitView === workspace.columns.splitView && separator.dividerIndex == 0)
+        for layout in [WorkspaceLayout.pdf, .source, .split, .pdf, .split] {
+            app.layout = layout
+            try await waitUntil { source.isCollapsed == !app.showSource && pdf.isCollapsed == !app.showPDF }
+            #expect(editor.textView.string == "A document with unsaved edits")
+            #expect(workspace.pdf.view.document === document)
+            #expect(!source.isCollapsed || !pdf.isCollapsed)
+            #expect(separator.isHidden == (layout != .split))
+            for item in toolbar.items where [.format, .math, .insert].contains(item.itemIdentifier) {
+                #expect(item.isHidden == (layout == .pdf))
+            }
+            #expect(NSImage(systemSymbolName: layout.symbol, accessibilityDescription: nil) != nil)
+            if layout == .pdf { #expect((window.firstResponder as? NSView)?.isDescendant(of: workspace.pdf.view) == true) }
+            if layout == .source { #expect(window.firstResponder === editor.textView) }
+        }
+    }
+
+    @Test func theLayoutMenuSelectsAndRestoresEveryMode() async throws {
+        let app = AppModel(defaults: defaults.store)
+        let menu = NSHostingMenu(rootView: WorkspaceLayoutPicker(app: app))
+        try await waitUntil { menu.update(); return menu.items.filter { !$0.isSeparatorItem && !$0.title.isEmpty }.count >= 3 }
+        let choices = menu.items.filter { ["Source Only", "Source & PDF", "PDF Only"].contains($0.title) }
+        #expect(choices.map(\.title) == ["Source Only", "Source & PDF", "PDF Only"])
+        for (index, layout) in [WorkspaceLayout.source, .split, .pdf].enumerated() {
+            menu.performActionForItem(at: try #require(menu.items.firstIndex(of: choices[index])))
+            #expect(app.layout == layout)
+            #expect(AppModel(defaults: defaults.store).layout == layout)
+        }
+    }
+
+    @Test func legacyDefaultsCannotHideBothPanes() {
+        defaults.store.set(false, forKey: DefaultsKey.showSource)
+        defaults.store.set(false, forKey: DefaultsKey.showPDF)
+        let app = AppModel(defaults: defaults.store)
+        #expect(app.showSource && !app.showPDF)
+    }
+
     /// As Xcode's debug area, the build panel is dragged open, resized and dragged shut from the status bar's line: the area's
     /// split takes a press there before the bar does, with the panel shut and open.
     @Test func theStatusBarsLineTakesThePanelsDrag() async throws {
@@ -136,7 +204,8 @@ struct ShellTests {
         }
         #expect(pressed() === area)
         workspace.project.panel.shown = true
-        try await waitUntil { area.arrangedSubviews[0].frame.maxY < area.bounds.height - ColumnMetrics.panelMinimum }
+        try await waitUntil { !area.isSubviewCollapsed(area.arrangedSubviews[1])
+            && area.arrangedSubviews[1].frame.height >= ColumnMetrics.panelMinimum }
         #expect(pressed() === area)
     }
 
@@ -160,23 +229,18 @@ struct ShellTests {
         }
     }
 
-    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels by name, as the menu
-    /// bar's Section Level, while the popover numbers them as the class does ("1.1" for a subsection).
+    /// Aa opens Notes' popover; its overflow form is a menu of the styles and the class's levels, as the menu bar's.
     @Test func formatIsAPopoverWithAMenuForm() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let format = try item(.format, in: workspace)
         #expect(!(format is NSMenuToolbarItem) && format.action != nil)
         let menu = try #require(format.menuFormRepresentation?.submenu)
-        let headings = workspace.project.headingStyles
-        let titles = [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) + headings.map(\.title)
+        let titles = [MenuCommand.editBold, .editItalic, .editUnderline].map(\.title) + workspace.project.headingStyles.map(\.title)
         try await waitUntil {
             menu.update()
             return menu.items.filter { !$0.isSeparatorItem }.map(\.title) == titles
         }
-        #expect(headings.contains { $0.marker == "1.1" })
-        let layout = FormatPanel.Layout(headings)
-        #expect(layout.markers > 0 && layout.pitch >= 24)
     }
 
     /// The File Outline's header is at the files' foot from the first, over an outline folded for a file that has none, and

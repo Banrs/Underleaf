@@ -85,7 +85,10 @@ unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *
 
 #[test]
 fn commands_and_bad_input_answer_through_the_c_abi() {
-    assert_eq!(call_raw(ptr::null(), "list_projects", None)["status"], 400);
+    assert_eq!(
+        call_raw(ptr::null(), "list_projects", None)["kind"],
+        "invalid"
+    );
     let dir = tempfile::tempdir().unwrap();
     let path = c(dir.path().to_str().unwrap());
     let null = ptr::null_mut();
@@ -95,10 +98,10 @@ fn commands_and_bad_input_answer_through_the_c_abi() {
     let handle = open(dir.path(), ignore, null);
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
     assert_eq!(
-        call_raw(handle, "list_projects", Some("{not json"))["status"],
-        400
+        call_raw(handle, "list_projects", Some("{not json"))["kind"],
+        "invalid"
     );
-    assert_eq!(call_raw(handle, "nope", None)["status"], 404);
+    assert_eq!(call_raw(handle, "nope", None)["kind"], "notFound");
     unsafe {
         tl_free(ptr::null_mut());
     }
@@ -129,10 +132,9 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
 
 #[test]
 fn syntax_commands_round_trip_through_the_c_abi() {
-    let light = json!({ "theme": "overleaf", "dark": false, "background": [1, 1, 1, 1], "fill": [0, 0, 0, 0.08] });
-    let args = c(&light.to_string());
-    let colors = unsafe { take_json(tl_syntax_call(c("theme_colors").as_ptr(), args.as_ptr())) };
-    assert_eq!(colors.unwrap().as_array().map(Vec::len), Some(5));
+    let args = c(r"{}");
+    let menus = unsafe { take_json(tl_syntax_call(c("menus").as_ptr(), args.as_ptr())) };
+    assert!(menus.unwrap()["templates"].is_object());
     assert!(unsafe { tl_syntax_call(ptr::null(), c("{}").as_ptr()) }.is_null());
 }
 

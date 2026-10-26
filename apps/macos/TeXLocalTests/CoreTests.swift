@@ -14,11 +14,11 @@ struct CoreTests {
         let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("file_tree", ["id": "../x"], as: FileText.self)
         }
-        #expect(error?.message == "Bad project id")
+        #expect(error?.message == "Bad project id" && error?.kind == .invalid)
         let fault = await #expect(throws: CoreError.self) {
             _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
         }
-        #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.status == nil)
+        #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.kind == nil)
         // Arguments JSON can't hold are the same fault, not an exception.
         let unsent = await #expect(throws: CoreError.self) { try await core.call("file_tree", ["id": info.id, "n": Double.nan]) }
         #expect(unsent?.message == fault?.message)

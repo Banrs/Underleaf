@@ -41,26 +41,6 @@ struct MenuCommandTests {
         project.search.query = "needle"
         #expect(app.outlineState(of: project) == .hidden)
     }
-
-    /// The toolbar's buttons and their copies in the overflow menu answer alike: the LaTeX tools off outside LaTeX.
-    @Test func theToolbarsOverflowCopiesValidateAsItsButtons() throws {
-        let app = AppModel(defaults: defaults.store)
-        let project = ProjectModel(id: "MenuCommandTests", app: app)
-        let toolbar = WorkspaceToolbar(app: app, project: project)
-        defer { toolbar.close() }
-        let template = try #require(toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).first { $0.rawValue.hasPrefix("template.") })
-        let items = try [NSToolbarItem.Identifier.bold, template].map { id in
-            try #require(toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: false))
-        }
-        project.tree.show(.sources)
-        for (path, latex) in [("references.bib", false), ("main.tex", true)] {
-            project.openPath = path
-            for item in items {
-                let copy = NSMenuItem(title: item.label, action: item.action, keyEquivalent: "")
-                #expect(toolbar.validateToolbarItem(item) == latex && toolbar.validateMenuItem(copy) == latex, "\(path)")
-            }
-        }
-    }
 }
 
 struct MenuStructureTests {

@@ -141,11 +141,11 @@ async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
         (0, _) => Ok(()),
         // curl's codes for a host it couldn't resolve or connect to, and for its time limits.
         (6 | 7, _) => Err(CoreError::new(
-            503,
+            crate::ErrorKind::Unavailable,
             "GitHub, where TinyTeX comes from, can't be reached. Check the internet connection, then try again.",
         )),
         (28, _) => Err(CoreError::new(
-            504,
+            crate::ErrorKind::Unavailable,
             "TinyTeX's download stalled, and was stopped. Try again later.",
         )),
         (_, out) => Err(CoreError::internal(format!(
@@ -200,13 +200,16 @@ mod tests {
         let root = home.path().join("TinyTeX");
         std::fs::create_dir(&root).unwrap();
         let err = install_into(&root, "").await.unwrap_err();
-        assert_eq!(err.status, 409, "{}", err.message);
+        assert_eq!(err.kind, crate::ErrorKind::Conflict, "{}", err.message);
         assert!(root.exists());
 
         // An unfinished folder a quit left goes; without curl, this install fails at once.
         std::fs::remove_dir(&root).unwrap();
         std::fs::create_dir(home.path().join(format!("{UNFINISHED}quit"))).unwrap();
-        assert_eq!(install_into(&root, "").await.unwrap_err().status, 404);
+        assert_eq!(
+            install_into(&root, "").await.unwrap_err().kind,
+            crate::ErrorKind::NotFound
+        );
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
     }
 

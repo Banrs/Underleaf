@@ -3,7 +3,7 @@ import CoreImage.CIFilterBuiltins
 import PDFKit
 
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
-    var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?) -> Void = { _, _, _ in }
+    var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?, _ quietly: Bool) -> Void = { _, _, _, _ in }
     var onResize: () -> Void = {}
 
     /// PDFKit's scroll view isn't in its interface: its document view leads to it.
@@ -146,6 +146,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    isolated deinit {
+        if let paperWatch { NotificationCenter.default.removeObserver(paperWatch) }
+        mark?.fading.cancel()
+    }
+
     /// A fade is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
@@ -224,12 +229,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         return (index: document.index(for: page), point: convert(top, to: page))
     }
 
-    /// A double-click whose pointer has moved by the time PDFKit's handling returns was dragged on to select by words.
+    /// As Overleaf's, a double-click selects its word and shows its place in the source, as the source's does in the PDF.
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
-        guard event.clickCount == 2, let up = window?.mouseLocationOutsideOfEventStream else { return }
-        let down = event.locationInWindow
-        if abs(up.x - down.x) <= 4, abs(up.y - down.y) <= 4 { goToSource(at: convert(down, from: nil)) }
+        if isDoubleClick(event) { goToSource(at: convert(event.locationInWindow, from: nil), quietly: true) }
     }
 
     /// ⌃L, on the responder chain while the pages have the keyboard, as the text view's is.
@@ -253,10 +256,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     @objc private func goToSource(_ item: NSMenuItem) { if let location = item.representedObject as? CGPoint { goToSource(at: location) } }
 
-    private func goToSource(at location: CGPoint) {
+    private func goToSource(at location: CGPoint, quietly: Bool = false) {
         guard let page = page(for: location, nearest: true), let number = document?.number(of: page) else { return }
         let point = convert(location, to: page)
-        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.click(at: point))
+        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.click(at: point), quietly)
     }
 }
 

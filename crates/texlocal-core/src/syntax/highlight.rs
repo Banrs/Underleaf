@@ -113,12 +113,23 @@ fn styled(commands: &Stack<Open>) -> Option<Command> {
 
 use HighlightKind::*;
 
+/// The names the rest of the core reads as names (catalog.json), not prose.
 fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
-    match ascii(name, &mut [0; NAME]) {
-        "documentclass" => &[None, Some(Argument)],
-        "usepackage" | "begin" | "end" | "label" | "ref" | "eqref" | "cite" | "bibitem"
-        | "Bibitem" | "RBibitem" => &[Some(Argument)],
-        _ => &[],
+    let mut buf = [0; NAME];
+    let name = ascii(name, &mut buf);
+    let named = [
+        &CATALOG.name_commands,
+        &CATALOG.ref_commands,
+        &CATALOG.cite_commands,
+    ];
+    if name == "documentclass" {
+        &[None, Some(Argument)]
+    } else if named.iter().any(|names| names.contains(name))
+        || matches!(name, "Bibitem" | "RBibitem")
+    {
+        &[Some(Argument)]
+    } else {
+        &[]
     }
 }
 
@@ -412,6 +423,10 @@ mod tests {
             ["article Argument"]
         );
         assert_eq!(runs("\\textbf{bold}"), ["\\textbf Command"]);
+        for command in ["cref", "citep", "input"] {
+            let source = format!("\\{command}{{name}}");
+            assert_eq!(runs(&source)[1], "name Argument", "{source}");
+        }
         assert_eq!(runs("50\\% off"), ["50 Argument", "\\% Command"]);
         assert_eq!(runs("}"), ["} Invalid"]);
     }

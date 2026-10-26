@@ -30,7 +30,7 @@ TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable
 void tl_free(char *_Nullable text);
 
 /* A command, answered on a core thread: done gets {"ok": value} or {"error":
- * message, "status": code}; a NULL done runs the command for its effect alone.
+ * message, "kind": kind}; a NULL done runs the command for its effect alone.
  * A session's commands (every session_* but session_open) are queued before
  * this returns, so it takes them in the order sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,
@@ -95,8 +95,7 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command that needs no source, on any thread, answering as tl_source_call:
- * "themes", "theme_colors", "legible", "menus", "heading_styles", "drop_text"
- * and "math_svg" (docs/core-api.md). */
+ * "menus", "heading_styles" and "math_svg" (docs/core-api.md). */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 
 void tl_source_free(TlSource *_Nullable source);

@@ -41,7 +41,7 @@ fn a_rename_that_cannot_write_the_settings_is_undone_and_leaves_them_as_they_wer
     let broken = "{ \"mainFile\": \"paper.tex\", \"engine\": \"xelatex\", }";
     fs::write(&file, broken).unwrap();
     let refused = rename_entry(&project, "main.tex", "a.tex").unwrap_err();
-    assert_eq!(refused.status, 409);
+    assert_eq!(refused.kind, crate::ErrorKind::Conflict);
     assert!(root.join("main.tex").is_file() && !root.join("a.tex").exists());
     create_free(&root, "b.tex", false).unwrap();
     rename_entry(&project, "b.tex", "c.tex").unwrap();
@@ -64,7 +64,7 @@ fn a_rename_takes_the_main_file_along_only_when_it_holds_it_and_keeps_to_the_rul
     rename_entry(&project, "chapters", "moved").unwrap();
     assert_eq!(read_settings(settings).main_file, "chapters2/other.tex");
     let err = rename_entry(&project, "moved", "moved/old/moved").unwrap_err();
-    assert_eq!(err.status, 400, "{}", err.message);
+    assert_eq!(err.kind, crate::ErrorKind::Invalid, "{}", err.message);
     assert_eq!(names_in(&root.join("moved")), ["x.tex"]);
     // create_entry and uploads accept a leading "-"; only the main file, which reaches
     // latexmk's command line, may not start with one.
@@ -90,16 +90,31 @@ fn a_case_only_rename_works_and_one_onto_another_entry_or_stopped_does_nothing()
     assert_eq!(names_in(&root), [".texlocal.json", "Main.tex", "figures"]);
     create_free(&root, "other.tex", false).unwrap();
     let err = rename_entry(&project, "other.tex", "Main.tex").unwrap_err();
-    assert_eq!(err.status, 409);
+    assert_eq!(err.kind, crate::ErrorKind::Conflict);
 
     rename_project(data, "P", "p", |_| Ok(())).unwrap();
     assert_eq!(names_in(data), ["p"]);
     create_project(data, "second", "blank", None).unwrap();
     let err = rename_project(data, "second", "p", |_| panic!("moved")).unwrap_err();
-    assert_eq!(err.status, 409);
+    assert_eq!(err.kind, crate::ErrorKind::Conflict);
     let stopped = rename_project(data, "p", "S", |_| Err(CoreError::conflict("no")));
-    assert_eq!(stopped.unwrap_err().status, 409);
+    assert_eq!(stopped.unwrap_err().kind, crate::ErrorKind::Conflict);
     assert_eq!(names_in(data), ["p", "second"]);
+}
+
+#[test]
+fn a_project_created_after_the_rename_check_is_not_replaced() {
+    let (_dir, root) = project();
+    let data = root.parent().unwrap();
+    let dest = data.join("Taken");
+    let err = rename_project(data, "P", "Taken", |_| {
+        fs::create_dir(&dest)?;
+        Ok(())
+    })
+    .unwrap_err();
+    assert_eq!(err.kind, crate::ErrorKind::Conflict);
+    assert!(root.join("main.tex").is_file());
+    assert!(dest.is_dir() && names_in(&dest).is_empty());
 }
 
 #[test]
@@ -275,7 +290,7 @@ fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read_unless
     lock(0o000).unwrap();
     // Running as root, permissions lock nothing.
     let locked = fs::read_dir(root.join("locked")).is_err();
-    let whole = walk(&root, &listed, true, &mut |_| Ok(true)).map_err(|err| err.status);
+    let whole = walk(&root, &listed, true, &mut |_| Ok(true)).map_err(|err| err.kind);
     let mut walked = Vec::new();
     let walk = walk(&root, &listed, false, &mut |entry| {
         walked.push(entry.rel.clone());
@@ -283,7 +298,14 @@ fn the_walk_follows_links_to_files_only_and_passes_over_what_it_cant_read_unless
     });
     lock(0o755).unwrap();
     walk.unwrap();
-    assert_eq!(whole, if locked { Err(403) } else { Ok(()) });
+    assert_eq!(
+        whole,
+        if locked {
+            Err(crate::ErrorKind::Denied)
+        } else {
+            Ok(())
+        }
+    );
     let mut listed = vec![
         "chapters",
         "chapters/build",

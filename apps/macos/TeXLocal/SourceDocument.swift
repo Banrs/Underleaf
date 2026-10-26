@@ -219,6 +219,7 @@ nonisolated struct Tabbing: Decodable {
 
 nonisolated enum TextStyle: String { case bold, italic, underline }
 
+/// Each style's edits to take it off, where the selection already has it.
 nonisolated struct TextStyles: Decodable, Equatable { var bold, italic, underline: [TextEdit]? }
 
 nonisolated struct Insertion: Decodable {

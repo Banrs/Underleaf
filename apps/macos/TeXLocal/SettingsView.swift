@@ -75,7 +75,7 @@ private struct EditorSettings: View {
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
                 Picker("Theme", detail: "Colours for commands, math and comments. All follow light and dark appearance.",
                        selection: $syntaxTheme) {
-                    ForEach(SyntaxTheme.all) { Text($0.title).tag($0) }
+                    ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
                 }
                 Toggle("Show Line Numbers", isOn: $lineNumbers)
             }

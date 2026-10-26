@@ -414,7 +414,7 @@ mod tests {
         fs::set_permissions(&b, perms.clone()).unwrap();
         let found = |_: &str, text: &str| Query::new("cat", false, false).places(text);
         let replaced = replace_in_files(&root, &|rel| rel != "main.tex", &found, "dog");
-        assert_eq!(replaced.unwrap_err().status, 403);
+        assert_eq!(replaced.unwrap_err().kind, crate::ErrorKind::Denied);
         assert_eq!(fs::read_to_string(root.join("a.tex")).unwrap(), "cat");
         #[allow(clippy::permissions_set_readonly_false)]
         perms.set_readonly(false);

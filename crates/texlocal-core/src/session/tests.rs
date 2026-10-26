@@ -462,11 +462,6 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     assert_eq!(lines[0]["others"], json!(["Again"]));
     let indices: Vec<&Value> = lines.iter().map(|line| &line["index"]).collect();
     assert_eq!(indices, [0, 2]);
-    let next = rig.ok("issue", json!({ "next": true })).await;
-    assert_eq!(next["index"], 0);
-    rig.ok("choose_issue", json!({ "index": 2 })).await;
-    assert_eq!(rig.ok("issue", json!({ "next": true })).await["index"], 0);
-    assert_eq!(rig.ok("issue", json!({ "next": false })).await["index"], 2);
     doc.edit(0, 0, "x", None, false);
     let cleared = rig.of_type("issues").await;
     let none = json!({ "type": "issues", "session": rig.session, "path": "main.tex", "lines": [] });
@@ -588,7 +583,7 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
     rig.changed("a.tex", true);
     let items = checks(until_sent(&mut rig, "checks").await).remove(0);
     let undefined = "No label “nowhere” is defined.";
-    let check = json!({ "type": "warning", "file": "main.tex", "line": 2, "message": undefined, "short": undefined });
+    let check = json!({ "type": "warning", "file": "main.tex", "line": 2, "message": undefined });
     assert_eq!(items[0]["file"], "a.tex");
     assert_eq!(items[1], check);
     let doc = rig.open("main.tex").await;
@@ -603,14 +598,6 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
         (&line["message"], &line["others"]),
         (&json!("Undefined"), &json!([undefined]))
     );
-    for (index, file) in [
-        (0, json!("main.tex")),
-        (1, json!("a.tex")),
-        (2, Value::Null),
-    ] {
-        let chosen = rig.ok("choose_issue", json!({ "index": index })).await;
-        assert_eq!(chosen["issue"]["file"], file);
-    }
     doc.edit(24, 0, "x", None, false);
     assert_eq!(rig.of_type("issues").await[0]["lines"], json!([]));
     wait(850).await;
@@ -743,6 +730,28 @@ async fn cancel_leaves_the_edits_unsaved_until_a_save_is_asked_for() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_close_refused_by_a_save_keeps_the_session_and_its_edits() {
+    let rig = Rig::new(false).await;
+    let doc = in_conflict(&rig).await;
+    let text = doc.snapshot().0;
+    assert_eq!(rig.ok("close", json!({})).await["saved"], false);
+    assert_eq!(rig.state().await["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        rig.sessions
+            .document(rig.session, "main.tex")
+            .unwrap()
+            .snapshot()
+            .0,
+        text
+    );
+    assert_eq!(rig.disk("main.tex"), "theirs");
+    rig.resolve("save").await;
+    assert_eq!(rig.ok("close", json!({})).await["saved"], true);
+    assert_eq!(rig.disk("main.tex"), text);
+    assert!(rig.sessions.document(rig.session, "main.tex").is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_deleted_file_closes_and_one_with_unsaved_edits_is_asked_about_not_put_back() {
     let mut rig = Rig::new(false).await;
     fs::write(rig.root.join("ch.tex"), "chapter").unwrap();
@@ -806,6 +815,73 @@ async fn a_new_file_changes_the_tree_and_a_changed_unopened_file_is_told_of() {
     wait(300).await;
     let changed = rig.of_type("files_changed").await;
     assert_eq!(changed[0]["paths"], json!(["refs.bib"]));
+}
+
+#[tokio::test(start_paused = true)]
+async fn external_dependencies_mark_the_pdf_stale_and_queue_one_automatic_build() {
+    for auto in [false, true] {
+        let mut rig = Rig::new(auto).await;
+        fs::write(rig.root.join("refs.bib"), "@book{first,}").unwrap();
+        rig.changed("refs.bib", true);
+        wait(300).await;
+        if !auto {
+            rig.ok("compile", json!({ "auto": false })).await;
+        }
+        // Finish the initial build and any request queued while it was running.
+        while rig.state().await["build"]["compiling"] == true {
+            rig.fake.finish_build(built(true, Vec::new()));
+            rig.events().await;
+        }
+        let before = rig.fake.called("compile");
+        rig.write_elsewhere("refs.bib", "@book{second,}");
+        rig.write_elsewhere("refs.bib", "@book{third,}");
+        wait(300).await;
+        assert_eq!(rig.state().await["build"]["outdated"], true);
+        assert_eq!(rig.fake.called("compile"), before + usize::from(auto));
+        if auto {
+            // Another external edit during the build must not be declared up to date by it.
+            rig.write_elsewhere("refs.bib", "@book{fourth,}");
+            wait(300).await;
+            rig.fake.finish_build(built(true, Vec::new()));
+            assert_eq!(rig.state().await["build"]["outdated"], true);
+            assert_eq!(rig.fake.called("compile"), before + 2);
+            rig.fake.finish_build(built(true, Vec::new()));
+            rig.events().await;
+            assert_eq!(rig.state().await["build"]["outdated"], false);
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_watcher_rescan_reports_unopened_files_and_changed_settings() {
+    let mut rig = Rig::new(false).await;
+    fs::write(rig.root.join("paper.tex"), "Paper").unwrap();
+    rig.changed("paper.tex", true);
+    wait(300).await;
+    rig.events().await;
+    fs::write(
+        rig.root.join(".texlocal.json"),
+        r#"{ "mainFile": "paper.tex" }"#,
+    )
+    .unwrap();
+    fs::write(
+        rig.root.join("paper.tex"),
+        "Changed without an individual notification",
+    )
+    .unwrap();
+    rig.changed("", true);
+    wait(300).await;
+    let events = rig.events().await;
+    assert!(events.iter().any(|e| e["type"] == "files_changed"
+        && e["paths"].as_array().unwrap().contains(&json!("paper.tex"))));
+    assert!(events.iter().any(|e| {
+        e["type"] == "tree"
+            && e["tree"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == "paper.tex" && file["main"] == true)
+    }));
 }
 
 /// Chosen here or by another app (by hand, by git or by a sync client), the main file is marked
@@ -880,7 +956,7 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
     let refused = rig
         .call("open_document", json!({ "path": "latin.tex" }))
         .await;
-    assert_eq!(refused.unwrap_err().status, 400);
+    assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Invalid);
     rig.open("main.tex").await;
     fs::write(rig.root.join("main.tex"), latin).unwrap();
     rig.changed("main.tex", false);
@@ -978,7 +1054,7 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
     let rig = Rig::new(false).await;
     for path in ["main.tex", "MAIN.tex"] {
         let refused = rig.call("prepare_delete", json!({ "path": path })).await;
-        assert_eq!(refused.unwrap_err().status, 409);
+        assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Conflict);
     }
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
@@ -1363,7 +1439,10 @@ async fn closing_saves_and_stops_the_preview() {
     assert_eq!(closed["saved"], true);
     assert_eq!(rig.disk("main.tex"), "xHello");
     assert_eq!(rig.fake.called("live_stop"), 1);
-    assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
+    assert_eq!(
+        rig.call("state", json!({})).await.unwrap_err().kind,
+        crate::ErrorKind::NotFound
+    );
 }
 
 // MARK: - The folder's watcher, for real
@@ -1398,7 +1477,7 @@ async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     assert_eq!(build.expect("the build is told")["session"], rig.session);
     let again = json!({ "id": "P", "session": rig.session });
     let taken = rig.sessions.call("session_open", again).await.unwrap_err();
-    assert_eq!(taken.status, 409);
+    assert_eq!(taken.kind, crate::ErrorKind::Conflict);
     assert_eq!(rig.state().await["build"]["compiling"], true);
 }
 
@@ -1544,7 +1623,7 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     doc.edit(5, 0, " cat", None, false);
     let replace = || rig.call("replace", json!({ "query": "Cat", "replacement": "dog" }));
     let refused = replace().await.unwrap_err();
-    assert!(refused.status == 400 && refused.message.contains("latin.tex"));
+    assert!(refused.kind == crate::ErrorKind::Invalid && refused.message.contains("latin.tex"));
     assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
     fs::remove_file(rig.root.join("latin.tex")).unwrap();
     let edit = json!({ "start": 6, "length": 3, "text": "dog" });
@@ -1610,12 +1689,12 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
         rig.call("rename_symbol", args)
     };
     let refusals = [
-        ("knuth", "knuth 84", 400),
-        ("nobody", "x", 404),
-        ("knuth", "lamport", 409),
+        ("knuth", "knuth 84", crate::ErrorKind::Invalid),
+        ("nobody", "x", crate::ErrorKind::NotFound),
+        ("knuth", "lamport", crate::ErrorKind::Conflict),
     ];
-    for (from, to, status) in refusals {
-        assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
+    for (from, to, kind) in refusals {
+        assert_eq!(rename(from, to).await.unwrap_err().kind, kind, "{to}");
     }
     let mut renamed = rename("knuth", "knuth84").await.unwrap();
     renamed.as_object_mut().unwrap().remove("snapshot");
@@ -1662,7 +1741,8 @@ async fn nothing_is_renamed_or_replaced_while_a_change_on_disk_is_unsettled() {
     let replace = json!({ "query": "Hello", "replacement": "Bye" });
     for (command, args) in [("rename_symbol", rename), ("replace", replace)] {
         let refused = rig.call(command, args).await.unwrap_err();
-        let unsettled = refused.status == 409 && refused.message.contains("changed on disk");
+        let unsettled = refused.kind == crate::ErrorKind::Conflict
+            && refused.message.contains("changed on disk");
         assert!(unsettled, "{command}");
     }
 }
@@ -1705,14 +1785,17 @@ async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     let args = json!({ "session": rig.session });
     let panicked = rig.sessions.call("session_panic", args.clone());
     let behind = rig.sessions.call("session_state", args.clone());
-    assert_eq!(panicked.await.unwrap_err().status, 500);
-    assert_eq!(behind.await.unwrap_err().status, 500);
+    assert_eq!(panicked.await.unwrap_err().kind, crate::ErrorKind::Internal);
+    assert_eq!(behind.await.unwrap_err().kind, crate::ErrorKind::Internal);
     assert_eq!(rig.disk("main.tex"), "Hello mine");
     let told = until_event(&rig.seen, |e| {
         e["type"] == "document" && e["error"].as_str().is_some_and(|e| e.contains("saved"))
     });
     assert!(told.is_some());
-    assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
+    assert_eq!(
+        rig.call("state", json!({})).await.unwrap_err().kind,
+        crate::ErrorKind::NotFound
+    );
 }
 
 // MARK: - History
@@ -1757,7 +1840,10 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
     ] {
         assert_eq!(compare(path).await.unwrap(), rows, "{path}");
     }
-    assert_eq!(compare("figure.png").await.unwrap_err().status, 400);
+    assert_eq!(
+        compare("figure.png").await.unwrap_err().kind,
+        crate::ErrorKind::Invalid
+    );
 }
 
 /// A file added since is left alone.
@@ -1799,69 +1885,6 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
 }
 
 // MARK: - Navigation
-
-fn at(path: &str, line: u32) -> Value {
-    json!({ "path": path, "line": line })
-}
-
-/// A jump from where the last left adds no place; Forward retraces what Back undid until a
-/// new jump.
-#[tokio::test(start_paused = true)]
-async fn back_and_forward_retrace_the_last_fifty_places_jumps_left() {
-    let rig = Rig::new(false).await;
-    for line in (1..=52).chain([52]) {
-        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
-            .await;
-    }
-    let back = rig.ok("back", json!({ "at": at("main.tex", 60) })).await;
-    let answer = json!({ "to": at("main.tex", 52), "back": true, "forward": true });
-    assert_eq!(back, answer);
-    let forward = rig.ok("forward", json!({ "at": at("main.tex", 52) })).await;
-    let answer = json!({ "to": at("main.tex", 60), "back": true, "forward": false });
-    assert_eq!(forward, answer);
-    let mut lines = Vec::new();
-    loop {
-        let back = rig.ok("back", json!({ "at": at("main.tex", 1) })).await;
-        let Some(line) = back["to"]["line"].as_u64() else {
-            assert_eq!(back, json!({ "to": null, "back": false, "forward": true }));
-            break;
-        };
-        lines.push(line);
-    }
-    assert_eq!(lines, (3..=52).rev().collect::<Vec<_>>());
-    let jump = rig
-        .ok("navigate", json!({ "from": at("main.tex", 1) }))
-        .await;
-    assert_eq!(jump, json!({ "back": true, "forward": false }));
-}
-
-/// A jump that left the caret where it was keeps a place Back would show no move to.
-#[tokio::test(start_paused = true)]
-async fn back_passes_over_the_carets_own_place() {
-    let rig = Rig::new(false).await;
-    for line in [3, 5] {
-        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
-            .await;
-    }
-    let back = rig.ok("back", json!({ "at": at("main.tex", 5) })).await;
-    let answer = json!({ "to": at("main.tex", 3), "back": false, "forward": true });
-    assert_eq!(back, answer);
-}
-
-#[tokio::test(start_paused = true)]
-async fn back_follows_a_rename_and_skips_a_file_gone() {
-    let rig = Rig::new(false).await;
-    for file in ["a.tex", "b.tex"] {
-        fs::write(rig.root.join(file), "").unwrap();
-        rig.ok("navigate", json!({ "from": at(file, 1) })).await;
-    }
-    rig.ok("rename", json!({ "from": "a.tex", "to": "c.tex" }))
-        .await;
-    fs::remove_file(rig.root.join("b.tex")).unwrap();
-    let back = rig.ok("back", json!({ "at": at("main.tex", 1) })).await;
-    let answer = json!({ "to": at("c.tex", 1), "back": false, "forward": true });
-    assert_eq!(back, answer);
-}
 
 /// Every file, and the headings and labels of the files the main file reaches; a match at a
 /// word's start before one inside a word, though its title is longer.

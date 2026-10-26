@@ -40,7 +40,7 @@ struct StatusBar: View {
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            if project.editsText || PagePlace.shows(project, app) { Divider().frame(height: 12) }
+            if app.showSource && project.editsText || PagePlace.shows(project, app) { Divider().frame(height: 12) }
             PanelToggle(project: project)
         }
     }
@@ -148,7 +148,7 @@ private struct CaretPlace: View {
     let detail: StatusBar.Detail
 
     var body: some View {
-        if project.editsText {
+        if app.showSource, project.editsText {
             Button { app.perform(.editGotoLine, on: project) } label: {
                 place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
                       short: "\(project.cursorLine):\(project.cursorColumn + 1)",
@@ -167,7 +167,7 @@ private struct WordCount: View {
     @State private var selectedWords: Int?
 
     var body: some View {
-        if detail == .full, project.editsText, app.showWordCount, let words = project.words {
+        if detail == .full, app.showSource, project.editsText, app.showWordCount, let words = project.words {
             Group {
                 if let selectedWords {
                     Text("\(selectedWords) of ^[\(words) word](inflect: true)")

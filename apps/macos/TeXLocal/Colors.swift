@@ -7,27 +7,49 @@ extension NSColor {
     /// An Increase Contrast appearance asked for by name is the plain one unless the setting is on, so its ratio goes by the name.
     static let textAppearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
-    /// The core's colour commands' arguments for an appearance: the editor's background and current line's fill.
-    static func contrastArguments(in name: NSAppearance.Name) -> [String: Any]? {
-        guard let appearance = NSAppearance(named: name) else { return nil }
-        return ["dark": name == .darkAqua || name == .accessibilityHighContrastDarkAqua,
-                "increaseContrast": name != .aqua && name != .darkAqua,
-                "background": NSColor.textBackgroundColor.rgba(in: appearance),
-                "fill": NSColor.currentLine.rgba(in: appearance)]
-    }
-
     /// Xcode 27's Default (Light) and Default (Dark) themes' `DVTSourceTextCurrentLineHighlightColor`, in sRGB.
     static let currentLine = NSColor(name: nil) {
         srgb($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? [0.138526, 0.146864, 0.169283, 1] : [0.909804, 0.94902, 1, 1])
     }
 
-    /// Raised by the core to the HIG's 4.5:1 on the editor's background and current line, 7:1 with Increase Contrast, or `ratio`.
+    /// Raised to the HIG's 4.5:1 on the editor's background and current line, WCAG's 7:1 with Increase Contrast, or `ratio`:
+    /// towards black on a light background or white on a dark one, as little as it takes, so it keeps its hue.
     func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
-        guard var args = Self.contrastArguments(in: name), let appearance = NSAppearance(named: name) else { return self }
-        args["color"] = rgba(in: appearance)
-        if let ratio { args["ratio"] = ratio }
-        let legible: [Double]? = Syntax.call("legible", args)
-        return legible.map { Self.srgb($0) } ?? self
+        guard let appearance = NSAppearance(named: name) else { return self }
+        let ratio = ratio ?? (name == .aqua || name == .darkAqua ? 4.5 : 7)
+        let background = NSColor.textBackgroundColor.rgba(in: appearance)
+        let line = Self.over(NSColor.currentLine.rgba(in: appearance), background)
+        let raised = Self.contrasting(Self.contrasting(Self.over(rgba(in: appearance), background), background, ratio), line, ratio)
+        return Self.srgb(raised)
+    }
+
+    static func luminance(_ c: [Double]) -> Double {
+        let linear = { (v: Double) in v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])
+    }
+
+    static func contrast(_ a: [Double], _ b: [Double]) -> Double {
+        let (a, b) = (luminance(a), luminance(b))
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    private static func blend(_ a: [Double], _ b: [Double], _ fraction: Double) -> [Double] {
+        zip(a, b).map { $0 * (1 - fraction) + $1 * fraction }
+    }
+
+    /// Mixed by sRGB's components, as the window server mixes them.
+    private static func over(_ color: [Double], _ background: [Double]) -> [Double] {
+        var shown = blend(background, color, color[3])
+        shown[3] = 1
+        return shown
+    }
+
+    private static func contrasting(_ color: [Double], _ background: [Double], _ ratio: Double) -> [Double] {
+        // Where black and white contrast equally with a colour.
+        let ink: [Double] = luminance(background) > 0.179 ? [0, 0, 0, 1] : [1, 1, 1, 1]
+        var mixed = color
+        for step in 1...20 where contrast(mixed, background) < ratio { mixed = blend(color, ink, Double(step) / 20) }
+        return mixed
     }
 
     static func adapting(_ colors: [NSAppearance.Name: NSColor], fallback: NSColor) -> NSColor {
@@ -49,35 +71,4 @@ extension NSColor {
 
     /// PDFKit tints a system colour it's given with the wallpaper, which would set it a shade apart from the editor's.
     static let untintedTextBackground = NSColor(name: nil) { srgb(NSColor.textBackgroundColor.rgba(in: $0)) }
-}
-
-/// A theme's colours, made legible in each appearance.
-extension SyntaxTheme {
-    func color(_ kind: HighlightKind) -> NSColor {
-        let shown = Self.made[self] ?? colors()
-        Self.made[self] = shown
-        return shown[Int(kind.rawValue)]
-    }
-
-    private static var made: [SyntaxTheme: [NSColor]] = [:]
-
-    private static let systemColors: [String: NSColor] = [
-        "systemPink": .systemPink, "systemTeal": .systemTeal, "systemPurple": .systemPurple,
-        "secondaryLabelColor": .secondaryLabelColor, "systemRed": .systemRed,
-    ]
-
-    private func colors() -> [NSColor] {
-        var shades: [NSAppearance.Name: [[Double]]] = [:]
-        for name in NSColor.textAppearances {
-            guard var args = NSColor.contrastArguments(in: name), let appearance = NSAppearance(named: name) else { continue }
-            args["theme"] = rawValue
-            args["system"] = Self.systemColors.mapValues { $0.rgba(in: appearance) }
-            shades[name] = Syntax.call("theme_colors", args) as [[Double]]?
-        }
-        return HighlightKind.allCases.map { kind in
-            let index = Int(kind.rawValue)
-            let byName = shades.compactMapValues { index < $0.count ? $0[index] : nil }
-            return NSColor.adapting(byName.mapValues { NSColor.srgb($0) }, fallback: .textColor)
-        }
-    }
 }

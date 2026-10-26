@@ -276,7 +276,11 @@ func windows() -> [[String: Any]] {
 
 // MARK: - events
 
-func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap) }
+/// In the background a real event would reach the person's own windows, and their caret, so only Accessibility acts.
+func post(_ e: CGEvent?) {
+    if BG { fail("refusing to post a mouse or key event in the background (QA_BG): use an Accessibility command") }
+    e?.post(tap: .cghidEventTap)
+}
 
 let keyCodes: [String: CGKeyCode] = [
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14,

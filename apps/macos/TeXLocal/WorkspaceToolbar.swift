@@ -3,36 +3,24 @@ import SwiftUI
 
 extension NSToolbarItem.Identifier {
     static let back = Self("back")
-    static let undo = Self("undo")
-    static let redo = Self("redo")
-    static let format = Self("sectionLevel")
-    static let bold = Self("bold")
-    static let italic = Self("italic")
-    static let underline = Self("underline")
+    static let format = Self("format")
     static let math = Self("math")
     static let insert = Self("insert")
     static let pdfSeparator = Self("pdfSeparator")
     static let zoom = Self("zoom")
-    static let share = Self("share")
     static let compile = Self("compile")
-    static let togglePDF = Self("togglePDF")
-
-    static func template(_ template: Template) -> Self { Self("template." + template.title) }
+    static let layout = Self("layout")
+    static let share = Self("share")
 }
 
-/// What a narrow window has no room for goes to the overflow menu, the editing tools and Zoom first (HIG, Toolbars).
-final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSToolbarItemValidation, NSMenuItemValidation {
-    /// Renamed as the defaults change: a layout saved under an earlier name would bring back or lack items.
-    let toolbar = NSToolbar(identifier: "Workspace 5")
-    /// Compile as its symbol, where the workspace finds its word would be the first tool without room.
+final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate, NSMenuItemValidation {
+    let toolbar = NSToolbar(identifier: "Workspace 6")
     var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
+    weak var workspace: WorkspaceController?
     private let app: AppModel
     private let project: ProjectModel
-    private var pdf: PDFController { project.pdf }
-    weak var workspace: WorkspaceController?
-    private lazy var format = FormatPopover(app: app, project: project)
     private var closed = false
+    private lazy var format = FormatPopover(app: app, project: project)
 
     init(app: AppModel, project: ProjectModel) {
         self.app = app
@@ -40,7 +28,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // Compile's word is the one label.
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = app.savesLayout
@@ -52,125 +39,99 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         format.popover.close()
     }
 
-    // MARK: - Items
-
-    /// Each pane's tools at its trailing end, as Mail's columns', with Zoom beside Compile (HIG, Toolbars).
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector]
+         .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.undo, .redo, .format, .bold, .italic, .underline, .math, .insert] + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
-            + [.zoom, .share, .space, .flexibleSpace] + toolbarImmovableItemIdentifiers(toolbar)
+        toolbarDefaultItemIdentifiers(toolbar) + [.share]
     }
-
-    private static let buttonTemplates: [Template] = {
-        let templates = Menus.shared.templates
-        return (templates.references + templates.insert + templates.list).filter { $0.symbol != nil }
-    }()
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile, .inspectorTrackingSeparator, .togglePDF, .toggleInspector]
+        [.toggleSidebar, .back, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .toggleInspector]
     }
 
-    /// To the window's split, not the nested ones, which would answer first, and out of the overflow menu (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
+        // Nested split controllers would otherwise receive these actions first.
         item.target = workspace
         item.visibilityPriority = .high
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
-                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+                 willBeInsertedIntoToolbar inserted: Bool) -> NSToolbarItem? {
         let item: NSToolbarItem
         switch id {
         case .back:
-            item = button(id, "Back", "chevron.backward", #selector(back), help: "Return to Projects")
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Back"
+            item.toolTip = "Return to Projects"
+            item.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: item.label)
+            item.target = self
+            item.action = #selector(back)
             item.isNavigational = true
-        case .undo, .redo:
-            let undo = id == .undo
-            item = button(id, undo ? "Undo" : "Redo", undo ? "arrow.uturn.backward" : "arrow.uturn.forward",
-                          Selector(undo ? "undo:" : "redo:"), help: undo ? "Undo the last change" : "Redo the last undone change")
-            // Whatever has the keyboard, as the menu's: it validates them too.
-            item.target = nil
         case .format:
-            // Notes' words, from its strings.
-            item = button(id, "Format", "textformat", #selector(showFormat(_:)), help: "Choose a style to apply to text")
-            let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
-            form.submenu = menu(Group { [app, project] in
+            // A button beside the menus shares their glass; the overflow menu has Aa as a menu.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Format"
+            item.toolTip = "Choose a style to apply to text"
+            item.image = NSImage(systemSymbolName: "textformat", accessibilityDescription: item.label)
+            item.target = self
+            item.action = #selector(showFormat)
+            item.menuFormRepresentation = NSMenuItem(title: item.label, action: nil, keyEquivalent: "")
+            item.menuFormRepresentation?.submenu = menu(id, Group { [app, project] in
                 ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
-                    Button(command.title) { app.perform(command, on: project) }
+                    Button(command.title, systemImage: command.style!.symbol) { app.perform(command, on: project) }
                 }
                 Divider()
                 SectionLevelItems(project: project)
             })
-            item.menuFormRepresentation = form
-            item.autovalidates = false
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot",
-                            MathMenuItems(project: project) { [app, project] in app.perform(.editMath, on: project) },
-                            help: "Insert math or a symbol")
+            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [app, project] in
+                app.perform(.editMath, on: project)
+            })
         case .insert:
-            item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project), help: "Insert a figure, table, list or reference")
-        case .bold, .italic, .underline:
-            let command = Self.styles[id]!
-            item = button(id, command.title, command.style!.symbol, #selector(style(_:)), help: command.style!.help)
+            item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
-            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
+            item = NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
         case .zoom:
             item = zoomItem()
+        case .compile:
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = MenuCommand.compileRun.title
+            if inserted { item.view = NSHostingView(rootView: compileButton(state)) } else { item.title = item.label }
+            item.style = .prominent
+            let form = NSMenuItem(title: item.label, action: #selector(compile), keyEquivalent: "")
+            form.target = self
+            item.menuFormRepresentation = form
+        case .layout:
+            item = menuItem(id, "Editor Layout", app.layout.symbol, WorkspaceLayoutPicker(app: app))
+            item.toolTip = "Choose Source Only, Source & PDF, or PDF Only"
         case .share:
             let share = ShareItem(itemIdentifier: id)
             share.delegate = self
             share.toolTip = "Share the PDF"
             item = share
-        case .compile:
-            // A word: a play symbol reads as media. Customize Toolbar draws custom views without their style, so a title.
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = MenuCommand.compileRun.title
-            if flag { item.view = NSHostingView(rootView: compileButton(state)) } else { item.title = MenuCommand.compileRun.title }
-            item.style = .prominent
-            let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
-            form.target = self
-            item.menuFormRepresentation = form
-        case .togglePDF:
-            item = button(id, "PDF", "richtext.page", #selector(togglePDF), help: "Show or hide the PDF")
-        default:
-            guard let template = Self.buttonTemplates.first(where: { .template($0) == id }), let symbol = template.symbol else { return nil }
-            item = button(id, template.title, symbol, #selector(insertTemplate(_:)), help: "Insert \(template.title.lowercased())")
+        default: return nil
         }
-        // Plain buttons and their overflow copies validate through their targets; other controls follow the models (`configure`).
-        if (item.target !== self && ![.undo, .redo].contains(item.itemIdentifier)) || item.view != nil { item.autovalidates = false }
-        item.visibilityPriority = [.back, .compile, .togglePDF].contains(id) ? .high : .low
-        if flag { configure(item, state) }
-        return item
-    }
-
-    private static let styles: [NSToolbarItem.Identifier: MenuCommand] = [.bold: .editBold, .italic: .editItalic, .underline: .editUnderline]
-
-    /// Its help tag says what it does (HIG, Offering help: not the name again).
-    private func button(_ id: NSToolbarItem.Identifier, _ label: String, _ symbol: String, _ action: Selector, help: String) -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: id)
-        item.label = label
-        item.toolTip = help
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-        item.target = self
-        item.action = action
+        item.autovalidates = false
+        item.visibilityPriority = [.back, .compile, .layout].contains(id) ? .high : .low
+        if inserted { configure(item, state) }
         return item
     }
 
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF }) { [app, project, pdf] in
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && !project.closed && !project.isClosing }) { [app, project] in
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }.disabled(!app.isEnabled(command, on: project))
             }
             Divider()
-            ScaleMenuItems(pdf: pdf)
+            ScaleMenuItems(pdf: project.pdf)
         })
         let control = ZoomControl()
         control.segmentCount = 3
@@ -178,9 +139,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         control.addTarget(self, action: #selector(zoom(_:)), for: .primaryActionTriggered)
         control.setImage(NSImage(systemSymbolName: "minus.magnifyingglass", accessibilityDescription: "Zoom Out"), forSegment: 0)
         control.setImage(NSImage(systemSymbolName: "plus.magnifyingglass", accessibilityDescription: "Zoom In"), forSegment: 2)
-        control.setLabel(pdf.zoomLabel, forSegment: 1)
-        control.widestLabel = pdf.widestZoomLabel
-        control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
+        control.setLabel(project.pdf.zoomLabel, forSegment: 1)
+        control.widestLabel = project.pdf.widestZoomLabel
+        control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: project.pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         for (index, help) in ["Zoom out of the PDF", "Choose a zoom level", "Zoom in on the PDF"].enumerated() {
             control.setToolTip(help, forSegment: index)
@@ -193,39 +154,36 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
-    private func menuItem(_ id: NSToolbarItem.Identifier, _ title: String, _ symbol: String, _ items: some View,
-                          help: String) -> NSMenuToolbarItem {
+    private func menuItem(_ id: NSToolbarItem.Identifier, _ title: String, _ symbol: String, _ content: some View) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: id)
         item.label = title
-        item.toolTip = help
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
-        item.menu = menu(items)
-        // No chevrons, as Notes' tools: with them, each menu draws its own capsule.
+        item.menu = menu(id, content)
+        // Adjacent menus share AppKit's glass, as Notes' editing tools do.
         item.showsIndicator = false
         return item
     }
 
-    private func menu(_ items: some View) -> NSMenu {
-        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.sourceToolsEnabled }) { items })
+    private func menu(_ id: NSToolbarItem.Identifier, _ content: some View) -> NSMenu {
+        NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in
+            !project.closed && !project.isClosing && (![.format, .math, .insert].contains(id) || project.sourceToolsEnabled)
+        }) { content })
     }
 
-    // MARK: - State
-
-    /// Off, all of it, while a project opened over this one loads.
-    private nonisolated struct State: Equatable {
-        let sourceTools, hasPDF, canShare, showsPDF: Bool
+    private struct State {
+        let sourceTools, hasPDF, showsPDF, canShare, compiling, canCompile, open: Bool
+        let layout: WorkspaceLayout
         let zoomLabel: String
-        let canZoomIn, canZoomOut, compiling, canCompile, compactCompile: Bool
+        let canZoomIn, canZoomOut: Bool
     }
 
     private var state: State {
-        let open = !project.closed
-        return State(sourceTools: open && project.sourceToolsEnabled, hasPDF: open && project.hasPDF, canShare: open && project.buildPDF != nil,
-                     showsPDF: app.showPDF, zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-                     compiling: project.compiling, canCompile: canCompile, compactCompile: compactCompile)
+        State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, showsPDF: app.showPDF,
+              canShare: project.buildPDF != nil, compiling: project.compiling,
+              canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: !project.closed && !project.isClosing, layout: app.layout,
+              zoomLabel: project.pdf.zoomLabel, canZoomIn: project.pdf.canZoomIn, canZoomOut: project.pdf.canZoomOut)
     }
 
-    /// Not a turn later as a `track` would: the toolbar would draw each frame of a sidebar's animation twice.
     private func watch() {
         guard !closed else { return }
         apply(withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
@@ -238,90 +196,94 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         for item in toolbar.items { configure(item, state) }
     }
 
-    /// Only what changed: an unchanged label still lays the toolbar out again.
     private func configure(_ item: NSToolbarItem, _ state: State) {
+        // Setting an unchanged property can restart a toolbar layout during a split animation.
         func update<Root: AnyObject, Value: Equatable>(_ root: Root?, _ key: ReferenceWritableKeyPath<Root, Value>, _ value: Value) {
             if let root, root[keyPath: key] != value { root[keyPath: key] = value }
         }
         switch item.itemIdentifier {
         case .format, .math, .insert:
-            update(item, \.isEnabled, state.sourceTools)
+            // Hidden with the source; dimmed for a file they don't apply to, where hiding would move their neighbours.
+            update(item, \.isHidden, state.layout == .pdf)
+            update(item, \.isEnabled, state.open && state.sourceTools)
+        case .pdfSeparator:
+            update(item, \.isHidden, state.layout != .split)
         case .zoom:
             guard let control = item.view as? NSSegmentedControl else { return }
+            let shown = state.open && state.hasPDF
             if control.label(forSegment: 1) != state.zoomLabel { control.setLabel(state.zoomLabel, forSegment: 1) }
             for (segment, enabled) in [state.canZoomOut, true, state.canZoomIn].enumerated()
-            where control.isEnabled(forSegment: segment) != (state.hasPDF && enabled) {
-                control.setEnabled(state.hasPDF && enabled, forSegment: segment)
+            where control.isEnabled(forSegment: segment) != (shown && enabled) {
+                control.setEnabled(shown && enabled, forSegment: segment)
             }
-            update(item, \.isEnabled, state.hasPDF)
+            update(item, \.isEnabled, shown)
             update(item, \.isHidden, !state.showsPDF)
         case .share:
-            update(item, \.isEnabled, state.canShare)
+            update(item, \.isEnabled, state.open && state.canShare)
         case .compile:
             let title = (state.compiling ? MenuCommand.compileStop : .compileRun).title
             update(item, \.label, title)
             update(item.menuFormRepresentation, \.title, title)
-            // Stop on clear glass: a prominent item's glass stays its own, where a plain item's joins its neighbours'.
             update(item, \.backgroundTintColor, state.compiling ? .clear : nil)
-            update(item, \.isEnabled, state.canCompile)
-            // A help tag for the symbol alone: the word says as much itself (HIG, Buttons).
-            update(item, \.toolTip, !state.compactCompile ? nil : state.compiling ? "Stop the build" : "Compile the project")
+            update(item, \.isEnabled, state.open && state.canCompile)
+            update(item, \.toolTip, compactCompile ? state.compiling ? "Stop the build" : "Compile the project" : nil)
             if let host = item.view as? NSHostingView<CompileButton>,
-               (host.rootView.compiling, host.rootView.compact, host.rootView.enabled) != (state.compiling, state.compactCompile, state.canCompile) {
+               (host.rootView.compiling, host.rootView.compact, host.rootView.enabled) != (state.compiling, compactCompile, state.open && state.canCompile) {
                 host.rootView = compileButton(state)
             }
-        case .togglePDF:
-            update(item, \.toolTip, app.title(.viewTogglePDF, on: project))
-        default:
-            break
+        case .layout:
+            update(item, \.isEnabled, state.open)
+            if item.image?.accessibilityDescription != state.layout.title {
+                item.image = NSImage(systemSymbolName: state.layout.symbol, accessibilityDescription: state.layout.title)
+            }
+        default: update(item, \.isEnabled, state.open)
         }
     }
 
-    /// The buttons, and their copies in the overflow menu, which AppKit validates through their target.
-    func validateToolbarItem(_ item: NSToolbarItem) -> Bool { allows(item.action) }
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { allows(menuItem.action) }
-
-    private func allows(_ action: Selector?) -> Bool {
-        guard !project.closed else { return false }
-        switch action {
-        case #selector(style(_:)), #selector(insertTemplate(_:)): return project.sourceToolsEnabled
-        // The overflow menu's Compile, which the item's own view doesn't enable.
-        case #selector(compile): return canCompile
-        default: return true
-        }
-    }
-
-    private var canCompile: Bool { !project.closed && (project.compiling || app.isEnabled(.compileRun, on: project)) }
-
-    // MARK: - Actions
-
-    @objc private func back() { app.perform(.projectClose, on: project) }
-
-    /// A toolbar button's action comes from its item.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { !project.closed && !project.isClosing && (item.action != #selector(compile) || state.canCompile) }
+    func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
-    @objc private func style(_ item: NSToolbarItem) { if let command = Self.styles[item.itemIdentifier] { app.perform(command, on: project) } }
-    @objc private func togglePDF() { app.perform(.viewTogglePDF, on: project) }
-
-    @objc private func insertTemplate(_ item: NSToolbarItem) {
-        if let template = Self.buttonTemplates.first(where: { .template($0) == item.itemIdentifier }) { project.insert(template) }
-    }
-
     @objc private func zoom(_ control: NSSegmentedControl) {
-        if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }
+        if [0, 2].contains(control.selectedSegment) { project.pdf.zoom(in: control.selectedSegment == 2) }
     }
-
+    @objc private func back() { app.perform(.projectClose, on: project) }
     @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
     private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, compact: state.compactCompile, enabled: state.canCompile) { [weak self] in self?.compile() }
+        CompileButton(compiling: state.compiling, compact: compactCompile, enabled: state.open && state.canCompile) { [weak self] in self?.compile() }
     }
-
-    func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
 }
 
-/// The menu asks the item, and AppKit's answer for it ignores `isEnabled` (`theToolbarsControlsKeepTheirStateAndWidth`).
-private final class ShareItem: NSSharingServicePickerToolbarItem {
-    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
+extension WorkspaceLayout {
+    var title: String {
+        switch self {
+        case .source: String(localized: "Source Only")
+        case .split: String(localized: "Source & PDF")
+        case .pdf: String(localized: "PDF Only")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .source: "rectangle.lefthalf.inset.filled"
+        case .split: "rectangle.split.2x1"
+        case .pdf: "rectangle.righthalf.inset.filled"
+        }
+    }
+}
+
+struct WorkspaceLayoutPicker: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        Picker("Editor Layout", selection: $app.layout) {
+            ForEach([WorkspaceLayout.source, .split, .pdf], id: \.self) { layout in
+                Label(layout.title, systemImage: layout.symbol).tag(layout)
+            }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+    }
 }
 
 /// The scale's segment keeps the widest label's width, in tabular digits: otherwise the capsule, and the items after it, move.
@@ -406,10 +368,13 @@ private struct CompileButton: View {
     }
 }
 
-/// The overflow menu still opens the menu, which stays available with its items dimmed (HIG, Menus).
 private struct ToolbarMenuItems<Content: View>: View {
     let isEnabled: () -> Bool
     @ViewBuilder let content: () -> Content
 
     var body: some View { content().disabled(!isEnabled()) }
+}
+
+private final class ShareItem: NSSharingServicePickerToolbarItem {
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }

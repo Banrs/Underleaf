@@ -35,6 +35,7 @@ extension ProjectModel {
             try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
         }), let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
+        trail.moved(result.from, to: result.to)
         let now = before.map { remapPath($0, from: result.from, to: result.to) }
         let moved = now != before && (openPath == before || openPath == now)
         if moved { openPath = now }

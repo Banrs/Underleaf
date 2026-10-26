@@ -28,8 +28,8 @@ final class ProjectModel {
     @ObservationIgnored private var currentLine = 1
     /// For the rest of the turn the caret moved in: a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
-    /// Go Back's and Go Forward's, from the session's last answer.
-    private(set) var trail = Trail()
+    /// Go Back's and Go Forward's places.
+    var trail = Trail()
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
@@ -62,7 +62,7 @@ final class ProjectModel {
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
-    /// In the session's order, which `session_choose_issue` numbers.
+    /// In the session's order, which an `issues` line's `index` numbers.
     var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) + checks }
     /// The bad boxes after the issues, as Overleaf lists its typesetting warnings: numbered on from them, which the session
     /// numbers alone.
@@ -100,7 +100,8 @@ final class ProjectModel {
     @ObservationIgnored var pdfLoad: Task<Bool, Never>?
     /// A finished build's PDF is shown before the next build event.
     @ObservationIgnored private var buildLane: Task<Void, Never>?
-    @ObservationIgnored private var closing: Task<Void, Never>?
+    private var closing: Task<Bool, Never>?
+    var isClosing: Bool { closing != nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
@@ -246,7 +247,7 @@ final class ProjectModel {
             guard let self else { return [] }
             return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.title) }
         }
-        // A double-click's, quiet, only to a PDF in view: it would bring a hidden one back at each word selected.
+        // Only to a PDF in view, quietly: a double-click would bring a hidden one back at each word selected.
         editor.textView.forwardSync = { [weak self] quietly in
             guard let self, hasPDF, isLaTeX, !quietly || app?.showPDF == true else { return nil }
             return { Task { await self.forwardSync(quietly: quietly) } }
@@ -361,10 +362,7 @@ final class ProjectModel {
         await enqueue(&opens) { [self] in
             guard latest() else { return }
             if showsSource { app?.showSource = true }
-            if jump, let session, let from = caretPlace,
-               let trail = try? await core.call("session_navigate", ["session": session, "from": from], as: Trail.self) {
-                self.trail = trail
-            }
+            if jump, let from = caretPlace { trail.jumped(from: from) }
             if path != openPath {
                 guard let session else { return }
                 // A file made a moment ago may not be in the tree yet.
@@ -429,12 +427,11 @@ final class ProjectModel {
             // From outside, only a figure to insert: the sidebar adds other files.
             let type = UTType(filenameExtension: url.pathExtension)
             let kind = type?.conforms(to: .pdf) == true ? "pdf" : type?.conforms(to: .image) == true ? "image" : ""
-            let drop: DropText? = Syntax.call("drop_text", ["path": url.lastPathComponent, "kind": kind, "into": into])
-            return drop?.insert == nil ? nil : .copy { [weak self] in await self?.copyFigure(url) }
+            return Self.includeGraphics(url.lastPathComponent, kind: kind, into: into) == nil ? nil
+                : .copy { [weak self] in await self?.copyFigure(url) }
         }
         guard let kind = tree.node(at: path)?.kind else { return nil }
-        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue, "into": into])
-        if let insert = drop?.insert { return .insert(insert) }
+        if let insert = Self.includeGraphics(path, kind: kind.rawValue, into: into) { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
     }
 
@@ -448,8 +445,25 @@ final class ProjectModel {
         await tree.reload()
         let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
         guard let kind = tree.node(at: path)?.kind else { return nil }
-        let drop: DropText? = Syntax.call("drop_text", ["path": path, "kind": kind.rawValue])
-        return drop?.insert
+        return Self.includeGraphics(path, kind: kind.rawValue)
+    }
+
+    /// A figure's `\includegraphics`, dropped in a TeX file: of images, those pdfTeX, XeTeX and LuaTeX alike read (not GIF,
+    /// SVG, WebP or BMP), at a path TeX reads as written. `%`, `#` and `\` mean something else to it, and braces must pair;
+    /// the rest (spaces, `_`, `&`, `$`, `^`, `~`) it takes as they are.
+    static func includeGraphics(_ path: String, kind: String, into: String = "tex") -> String? {
+        guard into == "tex", ["image", "pdf"].contains(kind),
+              ["png", "jpg", "jpeg", "pdf"].contains((path as NSString).pathExtension.lowercased()) else { return nil }
+        var depth = 0
+        for character in path {
+            switch character {
+            case "%", "#", "\\": return nil
+            case "{": depth += 1
+            case "}": depth -= 1; if depth < 0 { return nil }
+            default: break
+            }
+        }
+        return depth == 0 ? "\\includegraphics{\(path)}" : nil
     }
 
     /// A build follows when automatic.
@@ -536,16 +550,16 @@ final class ProjectModel {
     }
 
     /// Where the caret is, for the places Go Back and Go Forward keep.
-    private var caretPlace: [String: any Sendable]? { openPath.map { ["path": $0, "line": editsText ? cursorLine : 1] } }
+    private var caretPlace: Place? { openPath.map { Place(path: $0, line: editsText ? cursorLine : 1) } }
+
+    func canRetrace(back: Bool) -> Bool { openPath != nil && (back ? trail.back : trail.forward).contains(where: exists) }
+
+    private func exists(_ place: Place) -> Bool { root.map { FileManager.default.fileExists(atPath: $0.appending(path: place.path).path) } ?? false }
 
     /// Go Back, or Go Forward: shown as a jump is, but leaving no place behind.
     func retrace(back: Bool) async {
-        guard let session, let at = caretPlace,
-              let step = await alerting(back ? "Couldn’t Go Back" : "Couldn’t Go Forward", {
-                  try await core.call(back ? "session_back" : "session_forward", ["session": session, "at": at], as: Trail.self)
-              }) else { return }
-        trail = step
-        if let to = step.to { await open(to.path, line: to.line) }
+        guard let at = caretPlace, let to = trail.step(back: back, from: at, exists: exists) else { return }
+        await open(to.path, line: to.line)
     }
 
     /// A refusal is the core's sentence, for the sheet to show.
@@ -631,33 +645,45 @@ final class ProjectModel {
 
     // MARK: - Closing
 
-    func close() {
-        guard !closed else { return }
-        closed = true
-        // It can still show while the session closes.
+    @discardableResult
+    func close() -> Task<Bool, Never> {
+        if let closing { return closing }
+        guard !closed else { return Task { true } }
+        let editable = editor.textView.isEditable
         editor.textView.isEditable = false
-        // The window's undo stack outlives it.
-        let undo = app?.undoManager
-        undo?.removeAllActions(withTarget: self)
-        for item in trashed { undo?.removeAllActions(withTarget: item) }
-        trashed = []
-        removeExport()
-        notices.cancel()
-        tree.close()
-        syncTask?.cancel()
-        pdfLoad?.cancel()
-        liveLogWatch?.cancel()
-        if let session {
-            core.forget(session)
-            closing = Task { [uiStateWrites] in
-                await uiStateWrites?.value
-                try? await core.call("session_close", ["session": session])
+        let task = Task { [self] in
+            defer {
+                closing = nil
+                if !closed { editor.textView.isEditable = editable }
             }
+            await uiStateWrites?.value
+            if let session {
+                do {
+                    guard try await core.call("session_close", ["session": session], as: Saved.self).saved else { return false }
+                } catch {
+                    app?.report(error, notSavedTitle())
+                    return false
+                }
+                core.forget(session)
+            }
+            closed = true
+            // Keep undo and observers until the core confirms that every edit is saved.
+            let undo = app?.undoManager
+            undo?.removeAllActions(withTarget: self)
+            for item in trashed { undo?.removeAllActions(withTarget: item) }
+            trashed = []
+            removeExport()
+            notices.cancel()
+            tree.close()
+            syncTask?.cancel()
+            pdfLoad?.cancel()
+            liveLogWatch?.cancel()
+            pdf.endLiveRun()
+            return true
         }
+        closing = task
+        return task
     }
-
-    /// Until the session has stopped its build and Live Preview, which another model would race.
-    func waitUntilClosed() async { await closing?.value }
 
     // MARK: - Settings
 
@@ -694,9 +720,6 @@ final class ProjectModel {
         Task { await open(item.file, line: item.line, atTop: true, focus: false, jump: true) }
     }
 }
-
-/// None: the file dropped opens.
-private nonisolated struct DropText: Decodable { let insert: String? }
 
 /// `session_replace`'s and `session_rename_symbol`'s.
 private nonisolated struct ProjectEdits: Decodable {

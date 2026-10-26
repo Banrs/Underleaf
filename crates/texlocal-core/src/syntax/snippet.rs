@@ -1,7 +1,6 @@
 //! A snippet's fields: the places of a completion's or block's text to type in, which Tab and Shift-Tab go through
-//! and which mirror each other, as an environment's name does in its `\begin` and `\end`. The editor reports each
-//! change with `follow`; `mirror_snippet` then answers the edits that copy the typed field to its other places, which
-//! the editor applies with `mirroring` set.
+//! and which mirror each other, as an environment's name does in its `\begin` and `\end`. Each edit the editor makes
+//! answers the edits that copy the typed field to its other places, which the editor applies with `mirroring` set.
 
 use serde::Serialize;
 

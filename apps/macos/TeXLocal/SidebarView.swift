@@ -285,7 +285,11 @@ struct OutlineHeader: View {
             // Level with the Files section's header above (measured), the chevron where AppKit puts a section's.
             .padding(.leading, 14)
             .padding(.trailing, 18)
-            .frame(maxHeight: .infinity)
+            // Open, as far over its first row as the Files header is over its own, 17 pt text to text (measured);
+            // folded, level with the status bar's text.
+            .padding(.bottom, open ? 5 : 0)
+            .frame(maxHeight: .infinity, alignment: open ? .bottom : .center)
+            .animation(.default, value: open)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

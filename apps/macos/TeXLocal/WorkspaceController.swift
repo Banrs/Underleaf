@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// AppKit's splits, as only they give the editor and PDFKit's view the system's scroll edges under one status bar.
 final class WorkspaceController: ThinSplitViewController {
     let app: AppModel
     let project: ProjectModel
@@ -75,9 +74,9 @@ final class WorkspaceController: ThinSplitViewController {
                 project.panel.shown = shown
             },
         ]
-        // The splits tell of a resize before the nested panes have their frames.
-        resizes = [sourceItem, pdfItem].map { pane in
-            let view = pane!.viewController.view
+        // Nested pane frames settle after their parent; divider drags don't lay out the root.
+        resizes = [sourceItem, pdfItem].map { item in
+            let view = item!.viewController.view
             view.postsFrameChangedNotifications = true
             return NotificationCenter.default.addObserver(of: view, for: .frameDidChange) { [weak self] _ in self?.fitToolbar() }
         }
@@ -90,8 +89,8 @@ final class WorkspaceController: ThinSplitViewController {
         super.viewDidAppear()
         guard !appeared else { return }
         appeared = true
-        if !app.showSource { sourceItem.isCollapsed = true }
-        if !app.showPDF { pdfItem.isCollapsed = true }
+        sourceItem.isCollapsed = !app.showSource
+        pdfItem.isCollapsed = !app.showPDF
         fitColumns()
     }
 
@@ -107,6 +106,10 @@ final class WorkspaceController: ThinSplitViewController {
         let both = !sourceItem.isCollapsed && !pdfItem.isCollapsed
         let area = both ? 2 * ColumnMetrics.paneMinimum + columns.splitView.dividerThickness : ColumnMetrics.paneMinimum
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
         fitToolbar()
     }
 
@@ -117,7 +120,7 @@ final class WorkspaceController: ThinSplitViewController {
         let source = edges(sourceItem), area = edges(areaItem)
         let leading = max(source.minX, ColumnMetrics.windowControls)
         let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
-        let tools = trailing - leading - ColumnMetrics.sourceTools
+        let tools = trailing - leading - ColumnMetrics.sourceTools + (app.showSource ? 0 : ColumnMetrics.editingTools)
         // A PDF sliding in is already at its width.
         let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
             : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
@@ -166,7 +169,7 @@ final class WorkspaceController: ThinSplitViewController {
         let panes = max(size.width - sideColumns, 2 * ColumnMetrics.paneMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.paneMinimum)
         // As Xcode keeps its debug area's: the height it was last shown at, in every project.
-        let kept = UserDefaults.standard.double(forKey: DefaultsKey.buildPanelHeight)
+        let kept = app.defaults.double(forKey: DefaultsKey.buildPanelHeight)
         panelHeight = max(ColumnMetrics.panelMinimum, kept > 0 ? kept : (size.height * 0.25).rounded())
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
@@ -182,8 +185,10 @@ final class WorkspaceController: ThinSplitViewController {
             pane.autoresizingMask = [.width, .height]
             pdfPane.view.addSubview(pane)
         }
-        pdf.view.onInverse = { [weak project] page, point, click in
-            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click) }
+        // Quietly only to a source in view, as the source's double-click goes only to a PDF in view.
+        pdf.view.onInverse = { [weak project, app] page, point, click, quietly in
+            guard !quietly || app.showSource else { return }
+            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
         }
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
@@ -202,7 +207,7 @@ final class WorkspaceController: ThinSplitViewController {
             space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
         }
-        let bar = hostingView(StatusBar(project: project))
+        let bar = hostingView(StatusBar(project: project).background { WindowModals(app: app, project: project) })
         bar.sizingOptions = []
         // Not the toolbar's inset the columns take.
         bar.safeAreaRegions = []
@@ -285,14 +290,23 @@ final class WorkspaceController: ThinSplitViewController {
         app.performPDF = { [weak self] in self?.performPDF($0) }
     }
 
-    /// Until the workspace appears, `viewDidAppear` has them. The one shown opens first and the other closes after it, so
-    /// both are never shut and the one closing keeps its own width to come back at.
     private func showPanes() {
         guard appeared else { return }
-        let (opening, closing) = app.showSource ? (sourceItem!, pdfItem!) : (pdfItem!, sourceItem!)
-        setCollapsed(opening, false) { [weak self] in
-            guard let self else { return }
-            setCollapsed(closing, !(closing === sourceItem ? app.showSource : app.showPDF))
+        quiet(true)
+        Task.immediate {
+            await NSAnimationContext.runAnimationGroup { context in
+                if !animates { context.duration = 0 }
+                sourceItem.animator().isCollapsed = !app.showSource
+                pdfItem.animator().isCollapsed = !app.showPDF
+            }
+            quiet(false)
+        }
+        if let responder = view.window?.firstResponder as? NSView {
+            if !app.showSource, responder.isDescendant(of: sourceItem.viewController.view) {
+                view.window?.makeFirstResponder(pdf.view)
+            } else if !app.showPDF, responder.isDescendant(of: pdfItem.viewController.view) {
+                project.editor.focus()
+            }
         }
     }
 
@@ -383,7 +397,7 @@ final class WorkspaceController: ThinSplitViewController {
 
     private func keepPanelHeight() {
         panelHeight = panelItem.viewController.view.frame.height
-        UserDefaults.standard.set(Double(panelHeight), forKey: DefaultsKey.buildPanelHeight)
+        app.defaults.set(Double(panelHeight), forKey: DefaultsKey.buildPanelHeight)
     }
 
     private var animates: Bool { view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -439,5 +453,5 @@ private struct Pane<Content: View>: View {
     var mount: Mount?
     let content: Content
 
-    var body: some View { if mount?.shown ?? true { content.disabled(project.closed) } }
+    var body: some View { if mount?.shown ?? true { content.disabled(project.closed || project.isClosing) } }
 }

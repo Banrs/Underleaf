@@ -90,6 +90,21 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    @Test func aFailedFinalSaveKeepsTheProjectEditable() async throws {
+        let (project, folder) = try await opened("original")
+        let file = folder.appending(path: try #require(project.openPath))
+        project.editor.textView.insertText("unsaved ", replacementRange: .caret(0))
+        try files.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+        defer { try? files.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+        #expect(await project.close().value == false)
+        #expect(!project.closed && !project.isClosing && project.editor.textView.isEditable)
+        #expect(project.editor.textView.string == "unsaved original")
+        #expect(try String(contentsOf: file, encoding: .utf8) == "original")
+        try files.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        #expect(await app.close())
+        #expect(try String(contentsOf: file, encoding: .utf8) == "unsaved original")
+    }
+
     /// Overlapping requests settle at the new path; the scheduler chooses their core interleaving.
     @Test func overlappingRenameAndSaveRequestsKeepEditsAtTheNewPath() async throws {
         let (project, folder) = try await opened("original")
@@ -467,6 +482,33 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A figure is inserted only where TeX reads its kind and its path as written.
+    @Test func aFigureIsInsertedWhereTeXReadsItsPath() {
+        let insert = { ProjectModel.includeGraphics($0, kind: $1, into: $2) }
+        #expect(insert("figs/plot.png", "image", "tex") == "\\includegraphics{figs/plot.png}")
+        #expect(insert("Shot.JPG", "image", "tex") != nil && insert("a.pdf", "pdf", "tex") != nil)
+        #expect(insert("figs/a b_c&{d}~$^.png", "image", "tex") == "\\includegraphics{figs/a b_c&{d}~$^.png}")
+        for (path, kind, into) in [("a.pdf", "pdf", "bib"), ("ch1.tex", "tex", "tex"), ("logo.svg", "image", "tex")] {
+            #expect(insert(path, kind, into) == nil, "\(path)")
+        }
+        for path in ["50%.png", "a#1.png", "a\\b.png", "a}{.png", "a{.png"] { #expect(insert(path, "image", "tex") == nil, "\(path)") }
+    }
+
+    /// Jump to Next and Previous Issue skip an issue with no place and go round the list's ends.
+    @Test func issuesAreSteppedThroughRoundTheEnds() async throws {
+        let project = try await opened("a\nb\n").project
+        let items = #"[{"type":"warning","file":"main.tex","line":1,"message":"a"},{"type":"warning","message":"b"},"# +
+            #"{"type":"warning","file":"main.tex","line":2,"message":"c"}]"#
+        project.checks = try JSONDecoder().decode([LogItem].self, from: Data(items.utf8))
+        var went: [Int?] = []
+        for next in [true, true, true, false] {
+            project.goToIssue(next: next)
+            went.append(project.chosenIssue)
+        }
+        #expect(went == [0, 2, 0, 2])
+        await app.close()
+    }
+
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
         let (project, folder) = try await opened(with: ["build/main.aux": "x"])
         await project.cleanBuildFolder()
@@ -629,5 +671,36 @@ struct FileTreeTests {
         let tree = FileTree(id: "P")
         tree.show(["ch10.tex", "ch2.tex", "B.tex", "c.tex"].map { node($0, .file) } + [node("figs", .dir), node("Appendix", .dir)])
         #expect(tree.nodes.map(\.name) == ["Appendix", "figs", "B.tex", "c.tex", "ch2.tex", "ch10.tex"])
+    }
+}
+
+struct TrailTests {
+    private func at(_ line: Int, in path: String = "main.tex") -> Place { Place(path: path, line: line) }
+
+    /// A jump from where the last left adds no place; Forward retraces what Back undid until a new jump.
+    @Test func backAndForwardRetraceTheLastFiftyPlacesJumpsLeft() {
+        var trail = Trail()
+        for line in Array(1...52) + [52] { trail.jumped(from: at(line)) }
+        #expect(trail.step(back: true, from: at(60)) { _ in true } == at(52))
+        #expect(trail.step(back: false, from: at(52)) { _ in true } == at(60) && trail.forward.isEmpty)
+        var lines: [Int] = []
+        while let place = trail.step(back: true, from: at(1), exists: { _ in true }) { lines.append(place.line) }
+        #expect(lines == Array((3...52).reversed()) && trail.back.isEmpty && !trail.forward.isEmpty)
+        trail.jumped(from: at(1))
+        #expect(trail.back == [at(1)] && trail.forward.isEmpty)
+    }
+
+    /// A jump that left the caret where it was keeps a place Back would show no move to.
+    @Test func backPassesOverTheCaretsOwnPlace() {
+        var trail = Trail()
+        for line in [3, 5] { trail.jumped(from: at(line)) }
+        #expect(trail.step(back: true, from: at(5)) { _ in true } == at(3) && trail.back.isEmpty)
+    }
+
+    @Test func backFollowsARenameAndSkipsAFileGone() {
+        var trail = Trail()
+        for file in ["a.tex", "b.tex"] { trail.jumped(from: at(1, in: file)) }
+        trail.moved("a.tex", to: "c.tex")
+        #expect(trail.step(back: true, from: at(1)) { $0.path != "b.tex" } == at(1, in: "c.tex") && trail.back.isEmpty)
     }
 }

@@ -89,7 +89,7 @@ pub struct Facts {
     /// Labels and citations referred to, one for each key a list names, environments begun or
     /// ended, graphics included, and every command, from its backslash.
     pub uses: Vec<Named>,
-    pub class: Option<headings::DocumentClass>,
+    pub class: Option<String>,
     /// What `\usepackage` and `\RequirePackage` load.
     pub packages: Vec<String>,
     /// Where a new `\usepackage` goes: at the end of the line where the last one's argument ends,
@@ -654,12 +654,11 @@ pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str
     {
         walk = Walk::from(symbols, shown);
     }
-    let class = main.and_then(|main| symbols.by_file.get(main)?.class.as_ref());
-    let chapters = walk.outline.iter().any(|h| h.command == "chapter");
+    let class = main.and_then(|main| symbols.by_file.get(main)?.class.as_deref());
     Analysis {
         tree: outline_tree(&walk.outline),
         words: walk.words,
-        heading_styles: headings::heading_styles(class, chapters),
+        heading_styles: headings::heading_styles(class),
         files: walk
             .files
             .iter()

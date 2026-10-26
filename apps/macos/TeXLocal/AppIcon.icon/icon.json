@@ -1,35 +1,88 @@
 {
-  "fill": {
-    "linear-gradient": [
-      "extended-srgb:0.22745,0.50588,0.96078,1.00000",
-      "extended-srgb:0.11373,0.30588,0.84706,1.00000"
-    ],
-    "orientation": {
-      "start": {
-        "x": 0.5,
-        "y": 0
-      },
-      "stop": {
-        "x": 0.5,
-        "y": 1
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.00000,0.66275,0.60392,1.00000",
+          "extended-srgb:0.00000,0.31373,0.49412,1.00000"
+        ]
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.00000,0.24706,0.27059,1.00000",
+          "extended-srgb:0.00000,0.09020,0.16471,1.00000"
+        ]
       }
     }
-  },
+  ],
   "groups": [
     {
       "layers": [
         {
-          "image-name": "TeX.svg",
-          "name": "TeX"
+          "fill-specializations": [
+            {
+              "value": {
+                "automatic-gradient": "extended-srgb:0.24706,0.87843,0.77647,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "automatic-gradient": "extended-srgb:0.18431,0.80392,0.70588,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "Caret.svg",
+          "name": "Caret"
         }
       ],
+      "lighting": "combined",
+      "name": "Caret",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.5
+        "opacity": 0.4
       },
+      "specular": true,
       "translucency": {
         "enabled": true,
-        "value": 0.5
+        "value": 0.3
+      }
+    },
+    {
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "automatic-gradient": "extended-srgb:0.49020,0.96863,0.89412,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "automatic-gradient": "extended-srgb:0.37255,0.90196,0.81569,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "Sigma.svg",
+          "name": "Sigma"
+        }
+      ],
+      "lighting": "combined",
+      "name": "Sigma",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.55
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.2
       }
     }
   ],

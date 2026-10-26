@@ -118,7 +118,9 @@ pub(crate) fn classify(
             // The folder itself moved, or the system lost count: any file may have changed unseen.
             if change.structural {
                 meaning.tree = true;
+                meaning.settings = true;
                 meaning.docs.extend(docs.iter().cloned());
+                meaning.listed.extend(index.files.iter().cloned());
             }
             continue;
         }
@@ -217,7 +219,11 @@ mod tests {
             structural: true,
         };
         let lost = classify(root, &[rescan], &index, &docs);
-        assert!(lost.tree && lost.docs.len() == 2);
+        assert!(lost.tree && lost.settings && lost.docs.len() == 2);
+        assert_eq!(
+            lost.listed,
+            BTreeSet::from(["ch/one.tex".into(), "main.tex".into()])
+        );
         // A file that only starts like the folder's name isn't in it.
         let near = classify(root, &[change(root, "c", true)], &index, &docs);
         assert!(near.docs.is_empty());
