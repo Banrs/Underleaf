@@ -99,14 +99,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             guard let split = workspace?.columns.splitView else { return nil }
             item = NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
         case .zoom:
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = "Zoom"
-            item.view = NSHostingView(rootView: ZoomControl(project: project))
-            let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-            form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && !project.closed && !project.isClosing }) { [project] in
-                ScaleMenuItems(pdf: project.pdf)
-            })
-            item.menuFormRepresentation = form
+            item = zoomItem()
         case .compile:
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
@@ -131,6 +124,36 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
+    private func zoomItem() -> NSToolbarItem {
+        let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && !project.closed && !project.isClosing }) { [app, project] in
+            ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
+                Button(command.title) { app.perform(command, on: project) }.disabled(!app.isEnabled(command, on: project))
+            }
+            Divider()
+            ScaleMenuItems(pdf: project.pdf)
+        })
+        let control = ZoomControl()
+        control.segmentCount = 3
+        control.trackingMode = .momentary
+        control.addTarget(self, action: #selector(zoom(_:)), for: .primaryActionTriggered)
+        control.setImage(NSImage(systemSymbolName: "minus.magnifyingglass", accessibilityDescription: "Zoom Out"), forSegment: 0)
+        control.setImage(NSImage(systemSymbolName: "plus.magnifyingglass", accessibilityDescription: "Zoom In"), forSegment: 2)
+        control.setLabel(project.pdf.zoomLabel, forSegment: 1)
+        control.widestLabel = project.pdf.widestZoomLabel
+        control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: project.pdf)), forSegment: 1)
+        control.setShowsMenuIndicator(true, forSegment: 1)
+        for (index, help) in ["Zoom out of the PDF", "Choose a zoom level", "Zoom in on the PDF"].enumerated() {
+            control.setToolTip(help, forSegment: index)
+        }
+        control.setAccessibilityLabel("Zoom")
+        let item = NSToolbarItem(itemIdentifier: .zoom)
+        item.label = "Zoom"
+        item.view = control
+        item.menuFormRepresentation = form
+        return item
+    }
+
     private func menuItem(_ id: NSToolbarItem.Identifier, _ title: String, _ symbol: String, _ content: some View) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: id)
         item.label = title
@@ -150,12 +173,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private struct State {
         let sourceTools, hasPDF, showsPDF, canShare, compiling, canCompile, open: Bool
         let layout: WorkspaceLayout
+        let zoomLabel: String
+        let canZoomIn, canZoomOut: Bool
     }
 
     private var state: State {
         State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, showsPDF: app.showPDF,
               canShare: project.buildPDF != nil, compiling: project.compiling,
-              canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: !project.closed && !project.isClosing, layout: app.layout)
+              canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: !project.closed && !project.isClosing, layout: app.layout,
+              zoomLabel: project.pdf.zoomLabel, canZoomIn: project.pdf.canZoomIn, canZoomOut: project.pdf.canZoomOut)
     }
 
     private func watch() {
@@ -183,8 +209,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .pdfSeparator:
             update(item, \.isHidden, state.layout != .split)
         case .zoom:
+            guard let control = item.view as? NSSegmentedControl else { return }
+            let shown = state.open && state.hasPDF
+            if control.label(forSegment: 1) != state.zoomLabel { control.setLabel(state.zoomLabel, forSegment: 1) }
+            for (segment, enabled) in [state.canZoomOut, true, state.canZoomIn].enumerated()
+            where control.isEnabled(forSegment: segment) != (shown && enabled) {
+                control.setEnabled(shown && enabled, forSegment: segment)
+            }
+            update(item, \.isEnabled, shown)
             update(item, \.isHidden, !state.showsPDF)
-            update(item, \.isEnabled, state.open && state.hasPDF)
         case .share:
             update(item, \.isEnabled, state.open && state.canShare)
         case .compile:
@@ -210,6 +243,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func validateMenuItem(_ item: NSMenuItem) -> Bool { !project.closed && !project.isClosing && (item.action != #selector(compile) || state.canCompile) }
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
+    @objc private func zoom(_ control: NSSegmentedControl) {
+        if [0, 2].contains(control.selectedSegment) { project.pdf.zoom(in: control.selectedSegment == 2) }
+    }
     @objc private func back() { app.perform(.projectClose, on: project) }
     @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
@@ -250,30 +286,31 @@ struct WorkspaceLayoutPicker: View {
     }
 }
 
-private struct ZoomControl: View {
-    let project: ProjectModel
-    private var pdf: PDFController { project.pdf }
+/// The scale's segment keeps the widest label's width, in tabular digits: otherwise the capsule, and the items after it, move.
+private final class ZoomControl: NSSegmentedControl {
+    var widestLabel = ""
+    private var measuredSize: CGFloat?
 
-    var body: some View {
-        ControlGroup {
-            Button("Zoom Out", systemImage: "minus.magnifyingglass") { pdf.zoom(in: false) }
-                .disabled(!pdf.canZoomOut)
-                .help("Zoom out of the PDF")
-            Menu { ScaleMenuItems(pdf: pdf) } label: {
-                ZStack {
-                    Text(pdf.widestZoomLabel).hidden()
-                    Text(pdf.zoomLabel)
-                }.monospacedDigit()
-            }
-            .accessibilityLabel("Zoom")
-            .help("Choose a zoom level")
-            Button("Zoom In", systemImage: "plus.magnifyingglass") { pdf.zoom(in: true) }
-                .disabled(!pdf.canZoomIn)
-                .help("Zoom in on the PDF")
-        }
-        .controlGroupStyle(.navigation)
-        .disabled(!project.hasPDF || project.closed || project.isClosing)
-        .fixedSize()
+    override var font: NSFont? {
+        get { super.font }
+        set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
+    }
+
+    override var controlSize: NSControl.ControlSize { didSet { font = font } }
+
+    /// Inside the toolbar's own update the control's size lags each font change by one
+    /// (`theToolbarsControlsKeepTheirStateAndWidth`).
+    override func layout() {
+        super.layout()
+        guard let size = font?.pointSize, size != measuredSize else { return }
+        measuredSize = size
+        let label = label(forSegment: 1) ?? ""
+        setLabel(widestLabel, forSegment: 1)
+        setWidth(0, forSegment: 1)
+        let widest = intrinsicContentSize.width
+        setWidth(widest, forSegment: 1)
+        setWidth(2 * widest - intrinsicContentSize.width, forSegment: 1)
+        setLabel(label, forSegment: 1)
     }
 }
 
@@ -341,3 +378,4 @@ private struct ToolbarMenuItems<Content: View>: View {
 private final class ShareItem: NSSharingServicePickerToolbarItem {
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }
+

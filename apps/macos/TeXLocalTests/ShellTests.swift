@@ -106,14 +106,19 @@ struct ShellTests {
         }
     }
 
-    /// The overflow menu's Share is dimmed with its item while there is no PDF to share; AppKit's answer would ignore the item's.
-    @Test func shareIsDimmedWithoutAPDF() async throws {
+    /// The overflow menu's Share is dimmed with its item while there is no PDF to share; AppKit's answer would ignore the
+    /// item's. The zoom's scale keeps its widest label's width, so the capsule and the tools after it stay put.
+    @Test func theToolbarsControlsKeepTheirStateAndWidth() async throws {
         let (window, workspace) = try await workspace()
         defer { workspace.close(); window.close() }
         let tools = workspace.toolbar
         let share = try #require(tools.toolbar(tools.toolbar, itemForItemIdentifier: .share, willBeInsertedIntoToolbar: true)
             as? NSSharingServicePickerToolbarItem)
         #expect(!share.isEnabled && !share.validateMenuItem(share.menuFormRepresentation ?? NSMenuItem()))
+        let zoom = try #require(item(.zoom, in: workspace).view as? NSSegmentedControl)
+        let width = zoom.intrinsicContentSize.width
+        zoom.setLabel("1%", forSegment: 1)
+        #expect(zoom.intrinsicContentSize.width == width)
     }
 
     @Test func theSavedLayoutOverridesRememberedCollapsedPanes() async throws {

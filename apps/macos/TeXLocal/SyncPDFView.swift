@@ -27,6 +27,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         didSet {
             guard darkPaper != oldValue else { return }
             for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] { overlay.dark = darkPaper }
+            liveCanvas.layer?.filters = darkPaper ? Self.invert : nil
             matchScroller()
         }
     }
@@ -42,11 +43,90 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// On white, off the main actor as PDFKit draws its tiles.
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
+        Self.drawPaper(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)), to: context) {
+            page.draw(with: .cropBox, to: context)
+        }
+    }
+
+    private nonisolated static func drawPaper(_ box: CGRect, to context: CGContext, page draw: () -> Void) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setFillColor(.white)
-        context.fill(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)))
-        page.draw(with: .cropBox, to: context)
+        context.fill(box)
+        draw()
+    }
+
+    // MARK: - Live preview
+
+    /// A page given to PDFKit fades in over a quarter of a second; a layer's contents change in one frame.
+    private let liveCanvas: NSView = {
+        let canvas = FilterView()
+        canvas.autoresizingMask = [.width, .height]
+        // Over the page views PDFKit adds after it.
+        canvas.layer?.zPosition = 1
+        return canvas
+    }()
+    private var liveLayers: [Int: CALayer] = [:]
+    private var liveScale: CGFloat = 0
+    private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
+    var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
+
+    /// At PDFKit's scale from its pixel-rounded frame's corner, so its page takes the layer's place unseen. Only the
+    /// part in view: the whole is half a gigabyte for A4 at 800%.
+    func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
+        guard let documentView, let window, let overlay = shownOverlay(of: shown) else { return false }
+        let visible = overlay.visibleRect
+        guard !visible.isEmpty else { return false }
+        if liveCanvas.superview !== documentView {
+            liveCanvas.frame = documentView.bounds
+            documentView.addSubview(liveCanvas)
+        }
+        // PDFKit's scale is its scroll view's magnification: the size on screen is the one in the window.
+        let pixel = window.backingScaleFactor, box = overlay.bounds
+        let onScreen = overlay.convert(box, to: nil).size.applying(CGAffineTransform(scaleX: pixel, y: pixel))
+        let toPixels = CGAffineTransform(scaleX: onScreen.width / box.width, y: onScreen.height / box.height)
+            .translatedBy(x: -box.minX, y: -box.minY)
+        let whole = CGRect(x: 0, y: 0, width: onScreen.width.rounded(), height: onScreen.height.rounded())
+        let part = visible.applying(toPixels).integral.intersection(whole)
+        // A surface the window server takes as it is: a bitmap of the layer's own is redrawn into the display's colours.
+        guard part.width >= 1, part.height >= 1,
+              let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
+                                                   .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
+              surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
+        let context = CGContext(data: surface.baseAddress, width: surface.width, height: surface.height, bitsPerComponent: 8,
+                                bytesPerRow: surface.bytesPerRow, space: Self.liveSpace,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        if let context {
+            let paper = page.bounds(for: .cropBox)
+            context.translateBy(x: -part.minX, y: -part.minY)
+            context.scaleBy(x: scaleFactor * pixel, y: scaleFactor * pixel)
+            context.translateBy(x: -paper.minX, y: -paper.minY)
+            Self.drawPaper(paper, to: context) { page.draw(with: .cropBox, to: context) }
+        }
+        surface.unlock(options: [], seed: nil)
+        if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
+        let layer = liveLayers[index] ?? {
+            let layer = CALayer()
+            layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+            liveCanvas.layer?.addSublayer(layer)
+            liveLayers[index] = layer
+            return layer
+        }()
+        layer.contents = surface
+        layer.frame = liveCanvas.convert(part.applying(toPixels.inverted()), from: overlay)
+        liveScale = shownScale
+        return true
+    }
+
+    private static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
+    func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
+
+    func removeLive(at index: Int) { liveLayers.removeValue(forKey: index)?.removeFromSuperlayer() }
+
+    func removeLive() {
+        for layer in liveLayers.values { layer.removeFromSuperlayer() }
+        liveLayers.removeAll()
     }
 
     // MARK: - SyncTeX's mark
@@ -90,6 +170,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         mark?.view.removeFromSuperview()
         mark = nil
     }
+
+    /// While PDFKit shows the page in a window: a live page is drawn only over one.
+    func shownOverlay(of page: PDFPage) -> NSView? { overlays.object(forKey: page).flatMap { $0.window == nil ? nil : $0 } }
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
         let overlay = PageOverlay()

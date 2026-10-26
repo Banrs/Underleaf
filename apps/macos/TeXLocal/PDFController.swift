@@ -30,11 +30,15 @@ final class PDFController: NSObject {
     @ObservationIgnored var wholeAt = UInt64.max
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
+    @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
 
+    @ObservationIgnored var liveWaiting: [Int: PDFPage] = [:]
+    @ObservationIgnored var liveSettling: Task<Void, Never>?
+    @ObservationIgnored var liveClearing: Task<Void, Never>?
+    @ObservationIgnored var liveTaking: Task<Void, Never>?
+    @ObservationIgnored var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
     @ObservationIgnored var liveMissed = false
     @ObservationIgnored var liveShown = false
-    @ObservationIgnored var livePending: (document: PDFDocument, pages: IndexSet, complete: Bool)?
-    @ObservationIgnored var liveTaking: Task<Void, Never>?
 
     @ObservationIgnored var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
     @ObservationIgnored var revealing: Task<Void, Never>?
@@ -48,6 +52,7 @@ final class PDFController: NSObject {
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
+            dropLive()
             if zoom == .fitPage { fitPage() }
             restoreIfReady()
             if let pending = pendingReveal { reveal(pending.loc, from: pending.source) }
@@ -82,9 +87,12 @@ final class PDFController: NSObject {
         magnification = scrollView.observe(\.magnification, options: .initial) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.scaleChanged() }
         }
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrolling = NotificationCenter.default.addObserver(of: scrollView.contentView, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
 
     @objc private func scaleChanged() {
+        if view.liveScaleChanged { dropLive() }
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
         // A pinch keeps autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
@@ -183,7 +191,8 @@ final class PDFController: NSObject {
     func show(_ document: PDFDocument) {
         shownVersion += 1
         revealing?.cancel()
-        endLiveRun()
+        resetLive()
+        clearLiveLater()
         // Read before the swap: a page keeps its document only weakly.
         let place = restorePage == nil ? view.shownPlace : nil
         let (autoScales, scale) = (view.autoScales, view.scaleFactor)
@@ -196,6 +205,7 @@ final class PDFController: NSObject {
         if let shown = view.document, !hasGrown {
             shown.replacePages(with: document)
         } else {
+            view.removeLive()
             view.document = document
             wholeAt = Self.footprint + 512 << 20
         }
@@ -241,7 +251,8 @@ final class PDFController: NSObject {
         shownVersion += 1
         pendingReveal = nil
         revealing?.cancel()
-        endLiveRun()
+        resetLive()
+        dropLive()
         view.removeMark()
         find.reset()
         view.document = nil

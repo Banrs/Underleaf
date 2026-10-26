@@ -506,7 +506,12 @@ func launch() {
         // process alone sets NSApp.appearance.
         let dylib = "\(SCR)/qa/appearance.dylib"
         if dark || light, FileManager.default.fileExists(atPath: dylib) {
-            envs = ["QA_APPEARANCE=\(dark ? "dark" : "light")", "DYLD_INSERT_LIBRARIES=\(dylib)"] + envs
+            envs = ["QA_APPEARANCE=\(dark ? "dark" : "light")"] + envs
+        }
+        // QA_INVISIBLE=1: the app lays out and draws in windows that show nothing and take no clicks.
+        if env["QA_INVISIBLE"] != nil { envs.append("QA_INVISIBLE=1") }
+        if dark || light || env["QA_INVISIBLE"] != nil, FileManager.default.fileExists(atPath: dylib) {
+            envs.append("DYLD_INSERT_LIBRARIES=\(dylib)")
         }
         // QA_ENV="K=V;K2=V2": more environment, such as a scratch TEXLOCAL_TEXPRESSO.
         envs += (env["QA_ENV"] ?? "").split(separator: ";").filter { $0.contains("=") }.map(String.init)
