@@ -30,7 +30,7 @@ mod tinytex;
 mod wordmatch;
 mod zipexport;
 
-pub use error::CoreError;
+pub use error::{CoreError, ErrorKind};
 
 pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";

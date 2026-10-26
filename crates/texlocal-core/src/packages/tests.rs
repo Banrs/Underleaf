@@ -25,9 +25,9 @@ fn tlmgr(dir: &Path, search: &str, install: &str) {
     stub(dir, "tlmgr", &script);
 }
 
-async fn installed(dir: &TempDir, file: &str) -> Result<String, u16> {
+async fn installed(dir: &TempDir, file: &str) -> Result<String, crate::ErrorKind> {
     let path = format!("{}:/bin", dir.path().join("bin").display());
-    install_package(file, &path).await.map_err(|err| err.status)
+    install_package(file, &path).await.map_err(|err| err.kind)
 }
 
 fn calls(dir: &TempDir, program: &str) -> String {
@@ -47,20 +47,20 @@ async fn the_package_with_the_file_itself_is_installed_and_tlmgrs_failures_are_n
     );
     let older = "tlmgr: Local TeX Live (2025) is older than remote repository (2026).\nexit 1";
     let offline = "tlmgr: TLPDB::from_file could not get texlive.tlpdb from: https://x/tlnet/tlpkg/texlive.tlpdb\nexit 1";
-    let cases: [(&str, &str, &str, Result<&str, u16>); 8] = [
+    let cases: [(&str, &str, &str, Result<&str, crate::ErrorKind>); 8] = [
         ("fixltx2e.sty", &fixltx2e, "", Ok("latex")),
         ("minted.sty", &minted, "", Ok("minted")),
-        ("hooks.4ht", &minted, "", Err(404)),
-        ("x.sty", older, "", Err(409)),
-        ("x.sty", offline, "", Err(503)),
+        ("hooks.4ht", &minted, "", Err(crate::ErrorKind::NotFound)),
+        ("x.sty", older, "", Err(crate::ErrorKind::Conflict)),
+        ("x.sty", offline, "", Err(crate::ErrorKind::Unavailable)),
         (
             "minted.sty",
             &minted,
             "tlmgr: package minted failed to install\nexit 1",
-            Err(500),
+            Err(crate::ErrorKind::Internal),
         ),
-        ("-x.sty", &minted, "", Err(400)),
-        ("a/minted.sty", &minted, "", Err(400)),
+        ("-x.sty", &minted, "", Err(crate::ErrorKind::Invalid)),
+        ("a/minted.sty", &minted, "", Err(crate::ErrorKind::Invalid)),
     ];
     for (file, search, install, expected) in cases {
         let dir = TempDir::new().unwrap();
@@ -74,7 +74,10 @@ async fn the_package_with_the_file_itself_is_installed_and_tlmgrs_failures_are_n
     }
 
     let dir = TempDir::new().unwrap();
-    assert_eq!(installed(&dir, "x.sty").await, Err(501));
+    assert_eq!(
+        installed(&dir, "x.sty").await,
+        Err(crate::ErrorKind::Unavailable)
+    );
 }
 
 #[tokio::test]
@@ -85,7 +88,7 @@ async fn a_tree_only_an_administrator_may_change_is_installed_through_the_system
         ("exit 0", Ok("url".to_owned())),
         (
             "echo '0:1: execution error: User canceled. (-128)' >&2\nexit 1",
-            Err(403),
+            Err(crate::ErrorKind::Denied),
         ),
     ] {
         let dir = TempDir::new().unwrap();

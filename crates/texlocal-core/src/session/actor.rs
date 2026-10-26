@@ -1121,7 +1121,7 @@ impl Actor {
                 tokio::spawn(async move {
                     let installed = packages::install_package(&file, &service.tool_paths().0).await;
                     reply.send(match installed {
-                        Err(err) if err.status == 403 => Ok(Value::Null),
+                        Err(err) if err.kind == crate::ErrorKind::Denied => Ok(Value::Null),
                         installed => installed.map(|_| fixed(Value::Null, &project)),
                     });
                 });

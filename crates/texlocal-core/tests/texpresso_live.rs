@@ -51,7 +51,7 @@ impl Client {
 
     async fn call(&self, command: &str, args: Value) -> Value {
         let answer = self.sessions.call(command, args).await;
-        answer.unwrap_or_else(|err| panic!("{command}: {} {}", err.status, err.message))
+        answer.unwrap_or_else(|err| panic!("{command}: {:?} {}", err.kind, err.message))
     }
 
     async fn document(&self, session: u64, path: &str) -> Document {

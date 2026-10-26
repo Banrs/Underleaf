@@ -120,7 +120,7 @@ extension ProjectModel {
 
     /// No match is ordinary (a comment, the preamble, a figure).
     private func reportSync(_ error: any Error, _ title: String) {
-        guard (error as? CoreError)?.status == 404 else { app?.report(error, title); return }
+        guard (error as? CoreError)?.kind == .notFound else { app?.report(error, title); return }
         NSSound.beep()
         notices.note(error.localizedDescription)
     }

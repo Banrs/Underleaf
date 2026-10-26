@@ -56,7 +56,7 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
         // AppleScript's error -128.
         if installed.1.contains("(-128)") {
             let message = format!("Installing “{package}” was cancelled.");
-            return Err(CoreError::new(403, message));
+            return Err(CoreError::new(crate::ErrorKind::Denied, message));
         }
     }
     checked(installed)?;
@@ -97,7 +97,7 @@ pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError
     let (code, mut out, err, timed_out) = drive(&mut child, &tree, Some(TIMEOUT)).await;
     if timed_out {
         return Err(CoreError::new(
-            504,
+            crate::ErrorKind::Unavailable,
             "Installing took over ten minutes, and was stopped.",
         ));
     }
@@ -114,7 +114,7 @@ pub(crate) fn checked((code, out): (i32, String)) -> Result<String, CoreError> {
         ))
     } else if UNREACHABLE.is_match(&out) {
         Err(CoreError::new(
-            503,
+            crate::ErrorKind::Unavailable,
             "TeX Live's package repository can't be reached. Check the internet connection, then try again.",
         ))
     } else {
@@ -127,7 +127,7 @@ pub(crate) fn checked((code, out): (i32, String)) -> Result<String, CoreError> {
 
 fn no_tlmgr(path_env: &str) -> CoreError {
     CoreError::new(
-        501,
+        crate::ErrorKind::Unavailable,
         if find_tool("mpm", path_env).is_some() {
             "MiKTeX installs missing packages itself as it compiles: in MiKTeX Console's Settings, choose to always install missing packages on-the-fly, then compile again."
         } else {

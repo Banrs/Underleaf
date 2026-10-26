@@ -32,7 +32,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
             } else {
                 // One gone since it was listed is left out.
                 match add_file(&mut writer, &entry.rel, &entry.path) {
-                    Err(err) if err.status == 404 => {}
+                    Err(err) if err.kind == crate::ErrorKind::NotFound => {}
                     added => added?,
                 }
             }
@@ -214,7 +214,7 @@ mod tests {
         let (dir, root) = project();
         let dest = dir.path().join("no such folder/out.zip");
         let err = export_zip(&root, &dest, &[]).unwrap_err();
-        assert_eq!(err.status, 404);
+        assert_eq!(err.kind, crate::ErrorKind::NotFound);
         assert!(err.message.contains("out.zip"), "{}", err.message);
     }
 
@@ -266,7 +266,7 @@ mod tests {
 
         let refused = |text: &str| {
             let err = for_arxiv(&project).unwrap_err();
-            assert_eq!(err.status, 409);
+            assert_eq!(err.kind, crate::ErrorKind::Conflict);
             assert!(err.message.contains(text), "{}", err.message);
         };
         let settings = json!({ "mainFile": "tex/paper.tex", "engine": "lualatex" });

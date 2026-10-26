@@ -85,7 +85,10 @@ unsafe fn session_source(handle: *const TlHandle, session: u64, path: &str) -> *
 
 #[test]
 fn commands_and_bad_input_answer_through_the_c_abi() {
-    assert_eq!(call_raw(ptr::null(), "list_projects", None)["status"], 400);
+    assert_eq!(
+        call_raw(ptr::null(), "list_projects", None)["kind"],
+        "invalid"
+    );
     let dir = tempfile::tempdir().unwrap();
     let path = c(dir.path().to_str().unwrap());
     let null = ptr::null_mut();
@@ -95,10 +98,10 @@ fn commands_and_bad_input_answer_through_the_c_abi() {
     let handle = open(dir.path(), ignore, null);
     assert_eq!(call_raw(handle, "list_projects", None)["ok"][0]["id"], "P");
     assert_eq!(
-        call_raw(handle, "list_projects", Some("{not json"))["status"],
-        400
+        call_raw(handle, "list_projects", Some("{not json"))["kind"],
+        "invalid"
     );
-    assert_eq!(call_raw(handle, "nope", None)["status"], 404);
+    assert_eq!(call_raw(handle, "nope", None)["kind"], "notFound");
     unsafe {
         tl_free(ptr::null_mut());
     }

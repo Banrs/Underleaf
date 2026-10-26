@@ -256,7 +256,10 @@ mod tests {
         let err = write_creating(&folder.join("main.tex"), b"x").unwrap_err();
         fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
         let said = "You don’t have permission to save the file “main.tex” in the folder “Thesis”.";
-        assert_eq!((err.status, err.message.as_str()), (403, said));
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (crate::ErrorKind::Denied, said)
+        );
     }
 
     #[test]
@@ -299,7 +302,10 @@ mod tests {
         assert_eq!(folders, ["untitled folder", "untitled folder 2"]);
         assert!(root.join("untitled folder 2").is_dir());
         for bad in [".texlocal.json", "../x.tex"] {
-            assert_eq!(create_free(&root, bad, false).unwrap_err().status, 400);
+            assert_eq!(
+                create_free(&root, bad, false).unwrap_err().kind,
+                crate::ErrorKind::Invalid
+            );
         }
         fs::write(root.join("plain"), "a file").unwrap();
         assert!(create_free(&root, "plain/x.tex", false).is_err());

@@ -318,7 +318,7 @@ mod tests {
             (json!([1]), "Invalid settings"),
         ] {
             let err = write_settings(&file, &bad).unwrap_err();
-            assert_eq!(err.status, 400, "{}", err.message);
+            assert_eq!(err.kind, crate::ErrorKind::Invalid, "{}", err.message);
             assert!(err.message.contains(why), "{:?} lacks {why:?}", err.message);
         }
         assert_eq!(fs::read(&file).unwrap(), before);
@@ -406,10 +406,10 @@ mod tests {
         fs::write(&file, broken).unwrap();
         fs::write(&app_file, broken).unwrap();
         let err = write_settings(&file, &json!({ "engine": "lualatex" })).unwrap_err();
-        assert_eq!(err.status, 409);
+        assert_eq!(err.kind, crate::ErrorKind::Conflict);
         assert!(err.message.contains(SETTINGS_FILE), "{}", err.message);
         let chosen = AppSettings::update(root, |app| app.tex_dir = Some("/tex".into()));
-        assert_eq!(chosen.unwrap_err().status, 409);
+        assert_eq!(chosen.unwrap_err().kind, crate::ErrorKind::Conflict);
         assert_eq!(fs::read_to_string(&file).unwrap(), broken);
         assert_eq!(fs::read_to_string(&app_file).unwrap(), broken);
         assert_eq!(read_settings(&file).main_file, "main.tex");

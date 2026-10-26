@@ -956,7 +956,7 @@ async fn a_file_that_isnt_utf8_neither_opens_nor_is_written_over() {
     let refused = rig
         .call("open_document", json!({ "path": "latin.tex" }))
         .await;
-    assert_eq!(refused.unwrap_err().status, 400);
+    assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Invalid);
     rig.open("main.tex").await;
     fs::write(rig.root.join("main.tex"), latin).unwrap();
     rig.changed("main.tex", false);
@@ -1054,7 +1054,7 @@ async fn the_main_file_cant_go_to_the_trash_and_nothing_puts_a_trashed_file_back
     let rig = Rig::new(false).await;
     for path in ["main.tex", "MAIN.tex"] {
         let refused = rig.call("prepare_delete", json!({ "path": path })).await;
-        assert_eq!(refused.unwrap_err().status, 409);
+        assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Conflict);
     }
     fs::write(rig.root.join("old.tex"), "old").unwrap();
     let doc = rig.open("old.tex").await;
@@ -1439,7 +1439,10 @@ async fn closing_saves_and_stops_the_preview() {
     assert_eq!(closed["saved"], true);
     assert_eq!(rig.disk("main.tex"), "xHello");
     assert_eq!(rig.fake.called("live_stop"), 1);
-    assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
+    assert_eq!(
+        rig.call("state", json!({})).await.unwrap_err().kind,
+        crate::ErrorKind::NotFound
+    );
 }
 
 // MARK: - The folder's watcher, for real
@@ -1474,7 +1477,7 @@ async fn a_host_numbers_its_sessions_and_a_number_open_already_is_refused() {
     assert_eq!(build.expect("the build is told")["session"], rig.session);
     let again = json!({ "id": "P", "session": rig.session });
     let taken = rig.sessions.call("session_open", again).await.unwrap_err();
-    assert_eq!(taken.status, 409);
+    assert_eq!(taken.kind, crate::ErrorKind::Conflict);
     assert_eq!(rig.state().await["build"]["compiling"], true);
 }
 
@@ -1620,7 +1623,7 @@ async fn a_replace_answers_the_open_documents_edits_and_writes_the_rest_keeping_
     doc.edit(5, 0, " cat", None, false);
     let replace = || rig.call("replace", json!({ "query": "Cat", "replacement": "dog" }));
     let refused = replace().await.unwrap_err();
-    assert!(refused.status == 400 && refused.message.contains("latin.tex"));
+    assert!(refused.kind == crate::ErrorKind::Invalid && refused.message.contains("latin.tex"));
     assert_eq!(rig.disk("ch.tex"), "a cat\nand a cat\r\n");
     fs::remove_file(rig.root.join("latin.tex")).unwrap();
     let edit = json!({ "start": 6, "length": 3, "text": "dog" });
@@ -1686,12 +1689,12 @@ async fn a_rename_answers_the_open_documents_edits_and_writes_the_definition_on_
         rig.call("rename_symbol", args)
     };
     let refusals = [
-        ("knuth", "knuth 84", 400),
-        ("nobody", "x", 404),
-        ("knuth", "lamport", 409),
+        ("knuth", "knuth 84", crate::ErrorKind::Invalid),
+        ("nobody", "x", crate::ErrorKind::NotFound),
+        ("knuth", "lamport", crate::ErrorKind::Conflict),
     ];
-    for (from, to, status) in refusals {
-        assert_eq!(rename(from, to).await.unwrap_err().status, status, "{to}");
+    for (from, to, kind) in refusals {
+        assert_eq!(rename(from, to).await.unwrap_err().kind, kind, "{to}");
     }
     let mut renamed = rename("knuth", "knuth84").await.unwrap();
     renamed.as_object_mut().unwrap().remove("snapshot");
@@ -1738,7 +1741,8 @@ async fn nothing_is_renamed_or_replaced_while_a_change_on_disk_is_unsettled() {
     let replace = json!({ "query": "Hello", "replacement": "Bye" });
     for (command, args) in [("rename_symbol", rename), ("replace", replace)] {
         let refused = rig.call(command, args).await.unwrap_err();
-        let unsettled = refused.status == 409 && refused.message.contains("changed on disk");
+        let unsettled = refused.kind == crate::ErrorKind::Conflict
+            && refused.message.contains("changed on disk");
         assert!(unsettled, "{command}");
     }
 }
@@ -1781,14 +1785,17 @@ async fn a_panic_ends_the_session_with_its_edits_written_and_the_host_told() {
     let args = json!({ "session": rig.session });
     let panicked = rig.sessions.call("session_panic", args.clone());
     let behind = rig.sessions.call("session_state", args.clone());
-    assert_eq!(panicked.await.unwrap_err().status, 500);
-    assert_eq!(behind.await.unwrap_err().status, 500);
+    assert_eq!(panicked.await.unwrap_err().kind, crate::ErrorKind::Internal);
+    assert_eq!(behind.await.unwrap_err().kind, crate::ErrorKind::Internal);
     assert_eq!(rig.disk("main.tex"), "Hello mine");
     let told = until_event(&rig.seen, |e| {
         e["type"] == "document" && e["error"].as_str().is_some_and(|e| e.contains("saved"))
     });
     assert!(told.is_some());
-    assert_eq!(rig.call("state", json!({})).await.unwrap_err().status, 404);
+    assert_eq!(
+        rig.call("state", json!({})).await.unwrap_err().kind,
+        crate::ErrorKind::NotFound
+    );
 }
 
 // MARK: - History
@@ -1833,7 +1840,10 @@ async fn a_comparison_is_with_the_open_document_as_edited_and_the_others_on_disk
     ] {
         assert_eq!(compare(path).await.unwrap(), rows, "{path}");
     }
-    assert_eq!(compare("figure.png").await.unwrap_err().status, 400);
+    assert_eq!(
+        compare("figure.png").await.unwrap_err().kind,
+        crate::ErrorKind::Invalid
+    );
 }
 
 /// A file added since is left alone.

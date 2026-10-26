@@ -346,7 +346,7 @@ impl Actor {
                     self.publish_live(false);
                 }
                 // This text can't be taken, whenever it is sent: its error stays until the file is edited.
-                Err(error) if error.status == 400 => {
+                Err(error) if error.kind == crate::ErrorKind::Invalid => {
                     self.live.rejected.insert(path, error.message);
                     self.live.failure = None;
                     self.report();

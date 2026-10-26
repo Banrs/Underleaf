@@ -30,7 +30,7 @@ TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable
 void tl_free(char *_Nullable text);
 
 /* A command, answered on a core thread: done gets {"ok": value} or {"error":
- * message, "status": code}; a NULL done runs the command for its effect alone.
+ * message, "kind": kind}; a NULL done runs the command for its effect alone.
  * A session's commands (every session_* but session_open) are queued before
  * this returns, so it takes them in the order sent. */
 void tl_call_async(const TlHandle *handle, const char *command, const char *_Nullable args_json,

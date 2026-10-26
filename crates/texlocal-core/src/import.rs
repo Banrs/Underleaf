@@ -560,7 +560,7 @@ mod tests {
             ["a.png", "../x.png"],
         ] {
             let err = validate(&root, "", batch.into_iter()).unwrap_err();
-            assert_eq!(err.status, 400);
+            assert_eq!(err.kind, crate::ErrorKind::Invalid);
         }
         put(&service, "img/c.png", b"png", false).unwrap();
         assert_eq!(fs::read(root.join("img/c.png")).unwrap(), b"png");
@@ -604,8 +604,8 @@ mod tests {
 
         let err = put(&service, "figs/a.png", b"new", false).unwrap_err();
         assert_eq!(
-            (err.status, err.message.as_str()),
-            (409, "“figs/a.png” already exists")
+            (err.kind, err.message.as_str()),
+            (crate::ErrorKind::Conflict, "“figs/a.png” already exists")
         );
         assert_eq!(fs::read(root.join("figs/a.png")).unwrap(), b"old");
         // Replacing a folder that holds the main file is refused before the Trash, however the
@@ -617,8 +617,14 @@ mod tests {
             &json!({ "mainFile": "ch/main.tex" }),
         )
         .unwrap();
-        assert_eq!(put(&service, "ch", b"x", true).unwrap_err().status, 409);
-        assert_eq!(put(&service, "CH", b"x", true).unwrap_err().status, 409);
+        assert_eq!(
+            put(&service, "ch", b"x", true).unwrap_err().kind,
+            crate::ErrorKind::Conflict
+        );
+        assert_eq!(
+            put(&service, "CH", b"x", true).unwrap_err().kind,
+            crate::ErrorKind::Conflict
+        );
         assert!(root.join("ch/main.tex").is_file());
         // Nothing is left beside the project's files by the refused saves.
         for folder in ["", "figs"] {
@@ -814,7 +820,7 @@ mod tests {
     fn a_failed_import_makes_no_project_and_names_what_failed() {
         let (dir, service) = library();
         let err = import_project(&service, &dir.path().join("gone.zip")).unwrap_err();
-        assert_eq!(err.status, 404);
+        assert_eq!(err.kind, crate::ErrorKind::NotFound);
         assert!(err.message.contains("gone.zip"), "{}", err.message);
         assert!(!err.message.contains("os error"), "{}", err.message);
 
@@ -822,7 +828,7 @@ mod tests {
         let src = dir.path().join("not.zip");
         fs::write(&src, "plain text").unwrap();
         let err = import_project(&service, &src).unwrap_err();
-        assert_eq!(err.status, 400);
+        assert_eq!(err.kind, crate::ErrorKind::Invalid);
         assert!(err.message.contains("not.zip"), "{}", err.message);
 
         // A zip whose second file's bytes no longer match its checksum.
@@ -865,7 +871,10 @@ mod tests {
         bytes[header + 24..header + 28].copy_from_slice(&(2u32 << 30).to_le_bytes());
         fs::write(&src, bytes).unwrap();
         let err = import_project(&service, &src).unwrap_err();
-        assert_eq!((err.status, err.message.as_str()), (400, TOO_LARGE));
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (crate::ErrorKind::Invalid, TOO_LARGE)
+        );
         assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
     }
 
@@ -892,7 +901,7 @@ mod tests {
         // A path that isn't there is named.
         let gone = [drop.join("gone.png")];
         let err = import_files(&service, "P", "", &gone, None, remove).unwrap_err();
-        assert_eq!(err.status, 404);
+        assert_eq!(err.kind, crate::ErrorKind::NotFound);
         assert!(err.message.contains("gone.png"), "{}", err.message);
     }
 
@@ -978,7 +987,7 @@ mod tests {
         write_all(&folder, &[("main.tex", "\\documentclass{article}")]);
         let opened = projects::open_path(&service, &folder).unwrap().project.id;
         let refused = duplicate_project(&service, &opened, "Elsewhere copy").unwrap_err();
-        assert_eq!(refused.status, 409);
+        assert_eq!(refused.kind, crate::ErrorKind::Conflict);
 
         // A link to a file, as to a shared .bib, is copied as what it points at.
         let shared = dir.path().join("shared.bib");

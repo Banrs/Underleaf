@@ -341,7 +341,7 @@ async fn stop_rename_and_quit_each_end_only_their_own_builds_and_say_so() {
     let refused = service
         .call("rename_project", json!({ "id": "two", "name": "taken" }))
         .await;
-    assert_eq!(refused.unwrap_err().status, 409);
+    assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Conflict);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!two.is_finished());
 

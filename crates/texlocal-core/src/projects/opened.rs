@@ -122,7 +122,9 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
     } else {
         let folder = real.parent().expect("a file's folder");
         let project = match open_folder(service, folder, Some(&name)) {
-            Err(refused) if refused.status == 400 => import::import_project(service, path)?,
+            Err(refused) if refused.kind == crate::ErrorKind::Invalid => {
+                import::import_project(service, path)?
+            }
             opened => opened?,
         };
         (project, Some(name.into_owned()))
@@ -326,7 +328,7 @@ mod tests {
             Vec::<String>::new()
         );
         let again = forget_folder(&service, &id, |_| Ok(()));
-        assert_eq!(again.unwrap_err().status, 404);
+        assert_eq!(again.unwrap_err().kind, crate::ErrorKind::NotFound);
     }
 
     #[test]
@@ -377,8 +379,8 @@ mod tests {
         assert_eq!(
             open_path(&service, &dir.path().join("gone"))
                 .unwrap_err()
-                .status,
-            404
+                .kind,
+            crate::ErrorKind::NotFound
         );
     }
 }

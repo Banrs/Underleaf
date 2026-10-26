@@ -14,11 +14,11 @@ async fn call(service: &Service, command: &str, args: Value) -> Value {
     service
         .call(command, args)
         .await
-        .unwrap_or_else(|e| panic!("{command} failed: {} {}", e.status, e.message))
+        .unwrap_or_else(|e| panic!("{command} failed: {:?} {}", e.kind, e.message))
 }
 
-async fn status_of(service: &Service, command: &str, args: Value) -> u16 {
-    service.call(command, args).await.unwrap_err().status
+async fn kind_of(service: &Service, command: &str, args: Value) -> crate::ErrorKind {
+    service.call(command, args).await.unwrap_err().kind
 }
 
 fn tex_dir(service: &Service) -> Option<PathBuf> {
@@ -43,7 +43,10 @@ async fn a_free_project_name_is_the_next_untitled() {
     let args = json!({ "name": "Untitled 3", "template": "blank" });
     let numbered = call(&service, "create_project", args).await;
     assert_eq!(numbered["id"], "Untitled 3 2");
-    assert_eq!(status_of(&service, "create_project", json!({})).await, 400);
+    assert_eq!(
+        kind_of(&service, "create_project", json!({})).await,
+        crate::ErrorKind::Invalid
+    );
 }
 
 #[tokio::test]
@@ -64,10 +67,16 @@ async fn a_new_project_is_made_with_its_engine() {
 #[tokio::test]
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     let (_dir, service) = with_project();
-    assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
+    assert_eq!(
+        kind_of(&service, "no_such_command", json!({})).await,
+        crate::ErrorKind::NotFound
+    );
     let line = json!({ "id": "P", "file": "a.tex", "line": "x" });
     for args in [line, json!({ "id": "P" }), json!([])] {
-        assert_eq!(status_of(&service, "synctex_forward", args).await, 400);
+        assert_eq!(
+            kind_of(&service, "synctex_forward", args).await,
+            crate::ErrorKind::Invalid
+        );
     }
 }
 
@@ -94,7 +103,10 @@ async fn the_tex_folder_holds_latexmk_or_is_a_root_above_one_and_is_kept_until_c
         .call("set_tex_dir", json!({ "dir": tex.path() }))
         .await;
     let empty = empty.unwrap_err();
-    assert!(empty.status == 400 && empty.message.contains("doesn't contain latexmk"));
+    assert!(
+        empty.kind == crate::ErrorKind::Invalid
+            && empty.message.contains("doesn't contain latexmk")
+    );
     assert_eq!(tex_dir(&service), None);
 
     // A TeX root resolves to its bin folder, which the status reports.
@@ -124,7 +136,7 @@ async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
         .call("set_texpresso_dir", json!({ "dir": empty.path() }))
         .await
         .unwrap_err();
-    assert_eq!(refused.status, 400);
+    assert_eq!(refused.kind, crate::ErrorKind::Invalid);
     assert!(call(&service, "status", json!({})).await["texpressoDir"].is_null());
 
     let exe = fake_program(empty.path(), "texpresso", "");

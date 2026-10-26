@@ -310,7 +310,7 @@ mod tests {
         );
 
         let refused = create_project(data, "Other", "blank", Some("word"));
-        assert_eq!(refused.unwrap_err().status, 400);
+        assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Invalid);
         for bad in ["   ", ".hidden"] {
             fails_with(create_project(data, bad, "blank", None), "Invalid name");
         }
