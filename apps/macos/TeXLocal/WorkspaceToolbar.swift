@@ -378,4 +378,3 @@ private struct ToolbarMenuItems<Content: View>: View {
 private final class ShareItem: NSSharingServicePickerToolbarItem {
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled && super.validateMenuItem(menuItem) }
 }
-

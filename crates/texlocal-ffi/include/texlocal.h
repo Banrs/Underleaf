@@ -95,8 +95,7 @@ void tl_source_free_runs(uint32_t *_Nullable runs, size_t count);
 char *_Nullable tl_source_call(TlSource *source, const char *command, const char *args_json);
 
 /* A command that needs no source, on any thread, answering as tl_source_call:
- * "themes", "theme_colors", "legible", "menus", "heading_styles", "drop_text"
- * and "math_svg" (docs/core-api.md). */
+ * "menus", "heading_styles" and "math_svg" (docs/core-api.md). */
 char *_Nullable tl_syntax_call(const char *command, const char *args_json);
 
 void tl_source_free(TlSource *_Nullable source);

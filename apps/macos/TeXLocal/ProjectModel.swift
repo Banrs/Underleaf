@@ -28,7 +28,7 @@ final class ProjectModel {
     @ObservationIgnored private var currentLine = 1
     /// For the rest of the turn the caret moved in: a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
-    /// Go Back's and Go Forward's, from the session's last answer.
+    /// Go Back's and Go Forward's places.
     var trail = Trail()
 
     @ObservationIgnored private(set) var session: UInt64?
@@ -720,8 +720,6 @@ final class ProjectModel {
         Task { await open(item.file, line: item.line, atTop: true, focus: false, jump: true) }
     }
 }
-
-/// None: the file dropped opens.
 
 /// `session_replace`'s and `session_rename_symbol`'s.
 private nonisolated struct ProjectEdits: Decodable {

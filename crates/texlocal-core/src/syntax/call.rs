@@ -116,8 +116,6 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     }
 }
 
-/// What a file dropped on the editor does: an image or PDF graphicx reads, on a LaTeX file, is
-/// `\includegraphics` at the caret; any other file opens.
 /// The commands that need no document; docs/core-api.md lists them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     match read(command, args_json)? {
