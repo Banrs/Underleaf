@@ -64,4 +64,3 @@ jobs:
       - run: cargo test -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso
-          TEXLOCAL_TINYTEX_RELEASE: file://${{ runner.temp }}/tinytex-release.json

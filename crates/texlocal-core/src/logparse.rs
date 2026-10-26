@@ -607,3 +607,127 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
         .map(|line| LogItem::error(line.trim()))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn errors(log: &str) -> Vec<LogItem> {
+        let (items, _) = parse_log(log, "main.tex");
+        items
+            .into_iter()
+            .filter(|i| i.kind == Severity::Error)
+            .collect()
+    }
+
+    fn warnings(log: &str) -> Vec<LogItem> {
+        let (items, _) = parse_log(log, "main.tex");
+        items
+            .into_iter()
+            .filter(|i| i.kind == Severity::Warning)
+            .collect()
+    }
+
+    #[test]
+    fn an_error_names_its_file_and_line() {
+        let log = "(./main.tex\n(./chapters/intro.tex\n./chapters/intro.tex:12: Undefined control sequence.\nl.12 \\foo\n          \n)\n)";
+        let found = errors(log);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].file.as_deref(), Some("chapters/intro.tex"));
+        assert_eq!(found[0].line, Some(12));
+        assert!(found[0].message.contains("Undefined control sequence"));
+    }
+
+    #[test]
+    fn a_missing_package_offers_to_install_it() {
+        let log = "(./main.tex\n./main.tex:3: LaTeX Error: File `fancyfoo.sty' not found.\n\nType X to quit or <RETURN> to proceed,\nl.3 \\usepackage{fancyfoo}\n)";
+        let found = errors(log);
+        assert_eq!(found[0].line, Some(3));
+        assert_eq!(found[0].fix, Some(Fix::Install("fancyfoo.sty".into())));
+        assert!(found[0].explain.is_some());
+    }
+
+    #[test]
+    fn a_command_a_known_package_defines_offers_that_package() {
+        let log = "(./main.tex\n./main.tex:8: Undefined control sequence.\nl.8 \\toprule\n)";
+        assert_eq!(errors(log)[0].fix, Some(Fix::AddPackage("booktabs".into())));
+    }
+
+    #[test]
+    fn a_character_pdflatex_lacks_offers_xelatex() {
+        let log = "(./main.tex\n./main.tex:5: LaTeX Error: Unicode character ✓ (U+2713)\n               not set up for use with LaTeX.\nl.5 ✓\n)";
+        assert_eq!(errors(log)[0].fix, Some(Fix::Xelatex));
+    }
+
+    #[test]
+    fn undefined_references_and_citations_are_warnings_on_their_lines() {
+        let log = "(./main.tex\nLaTeX Warning: Reference `fig:x' on page 1 undefined on input line 7.\n\nLaTeX Warning: Citation `knuth' on page 1 undefined on input line 9.\n)";
+        let found = warnings(log);
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            (found[0].file.as_deref(), found[0].line),
+            (Some("main.tex"), Some(7))
+        );
+        assert_eq!(found[1].line, Some(9));
+    }
+
+    #[test]
+    fn overfull_boxes_are_kept_apart_from_the_issues() {
+        let log = "(./main.tex\nOverfull \\hbox (12.0pt too wide) in paragraph at lines 5--6\n[]\\OT1/cmr/m/n/10 text\n)";
+        let (items, bad_boxes) = parse_log(log, "main.tex");
+        assert!(items.is_empty());
+        assert_eq!(bad_boxes.len(), 1);
+        assert_eq!(bad_boxes[0].line, Some(5));
+    }
+
+    #[test]
+    fn a_clean_log_has_nothing() {
+        let log = "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-11-01>\n) [1]\nOutput written on main.pdf (1 page, 1234 bytes).";
+        let (items, bad_boxes) = parse_log(log, "main.tex");
+        assert!(items.is_empty() && bad_boxes.is_empty());
+    }
+
+    #[test]
+    fn bibtex_reports_missing_entries() {
+        let blg = "Warning--I didn't find a database entry for \"knuth\"\n";
+        let found = parse_blg(blg);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, Severity::Warning);
+        assert!(found[0].message.contains("knuth"));
+    }
+
+    #[test]
+    fn biber_errors_are_errors() {
+        let blg = "[12] Biber.pm:131> ERROR - Cannot find 'refs.bib'!\n";
+        assert_eq!(parse_blg(blg)[0].kind, Severity::Error);
+    }
+
+    #[test]
+    fn latexmk_summarises_what_failed() {
+        let output = "Latexmk: Errors, so I did not complete making targets\nCollected error summary (may duplicate other messages):\n  pdflatex: Command for 'pdflatex' gave return code 1\n      Refer to 'main.log' for details\n";
+        let found = latexmk_errors(output);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].message.starts_with("pdflatex: Command"));
+    }
+
+    #[test]
+    fn shell_escape_refused_says_how_to_turn_it_on() {
+        let mut found = Vec::new();
+        point_to_shell_escape(&mut found, "runsystem(pygmentize -V)...disabled.");
+        assert_eq!(found[0].message, SHELL_ESCAPE);
+    }
+
+    #[test]
+    fn a_fix_id_round_trips() {
+        for id in [
+            "install:foo.sty",
+            "package:booktabs",
+            "engine:xelatex",
+            "shellEscape",
+        ] {
+            let fix = Fix::parse(id).unwrap();
+            assert_eq!(serde_json::to_value(&fix).unwrap()["id"], id);
+        }
+        assert_eq!(Fix::parse("format:disk"), None);
+    }
+}
