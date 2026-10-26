@@ -1876,69 +1876,6 @@ async fn a_restore_writes_changed_and_deleted_files_back_after_keeping_them_as_t
 
 // MARK: - Navigation
 
-fn at(path: &str, line: u32) -> Value {
-    json!({ "path": path, "line": line })
-}
-
-/// A jump from where the last left adds no place; Forward retraces what Back undid until a
-/// new jump.
-#[tokio::test(start_paused = true)]
-async fn back_and_forward_retrace_the_last_fifty_places_jumps_left() {
-    let rig = Rig::new(false).await;
-    for line in (1..=52).chain([52]) {
-        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
-            .await;
-    }
-    let back = rig.ok("back", json!({ "at": at("main.tex", 60) })).await;
-    let answer = json!({ "to": at("main.tex", 52), "back": true, "forward": true });
-    assert_eq!(back, answer);
-    let forward = rig.ok("forward", json!({ "at": at("main.tex", 52) })).await;
-    let answer = json!({ "to": at("main.tex", 60), "back": true, "forward": false });
-    assert_eq!(forward, answer);
-    let mut lines = Vec::new();
-    loop {
-        let back = rig.ok("back", json!({ "at": at("main.tex", 1) })).await;
-        let Some(line) = back["to"]["line"].as_u64() else {
-            assert_eq!(back, json!({ "to": null, "back": false, "forward": true }));
-            break;
-        };
-        lines.push(line);
-    }
-    assert_eq!(lines, (3..=52).rev().collect::<Vec<_>>());
-    let jump = rig
-        .ok("navigate", json!({ "from": at("main.tex", 1) }))
-        .await;
-    assert_eq!(jump, json!({ "back": true, "forward": false }));
-}
-
-/// A jump that left the caret where it was keeps a place Back would show no move to.
-#[tokio::test(start_paused = true)]
-async fn back_passes_over_the_carets_own_place() {
-    let rig = Rig::new(false).await;
-    for line in [3, 5] {
-        rig.ok("navigate", json!({ "from": at("main.tex", line) }))
-            .await;
-    }
-    let back = rig.ok("back", json!({ "at": at("main.tex", 5) })).await;
-    let answer = json!({ "to": at("main.tex", 3), "back": false, "forward": true });
-    assert_eq!(back, answer);
-}
-
-#[tokio::test(start_paused = true)]
-async fn back_follows_a_rename_and_skips_a_file_gone() {
-    let rig = Rig::new(false).await;
-    for file in ["a.tex", "b.tex"] {
-        fs::write(rig.root.join(file), "").unwrap();
-        rig.ok("navigate", json!({ "from": at(file, 1) })).await;
-    }
-    rig.ok("rename", json!({ "from": "a.tex", "to": "c.tex" }))
-        .await;
-    fs::remove_file(rig.root.join("b.tex")).unwrap();
-    let back = rig.ok("back", json!({ "at": at("main.tex", 1) })).await;
-    let answer = json!({ "to": at("c.tex", 1), "back": false, "forward": true });
-    assert_eq!(back, answer);
-}
-
 /// Every file, and the headings and labels of the files the main file reaches; a match at a
 /// word's start before one inside a word, though its title is longer.
 #[tokio::test(start_paused = true)]

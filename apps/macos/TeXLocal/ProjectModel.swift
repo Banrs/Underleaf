@@ -29,7 +29,7 @@ final class ProjectModel {
     /// For the rest of the turn the caret moved in: a scroll that move made leaves the caret's heading current.
     @ObservationIgnored private var caretMoved = false
     /// Go Back's and Go Forward's, from the session's last answer.
-    private(set) var trail = Trail()
+    var trail = Trail()
 
     @ObservationIgnored private(set) var session: UInt64?
     @ObservationIgnored private var root: URL?
@@ -362,10 +362,7 @@ final class ProjectModel {
         await enqueue(&opens) { [self] in
             guard latest() else { return }
             if showsSource { app?.showSource = true }
-            if jump, let session, let from = caretPlace,
-               let trail = try? await core.call("session_navigate", ["session": session, "from": from], as: Trail.self) {
-                self.trail = trail
-            }
+            if jump, let from = caretPlace { trail.jumped(from: from) }
             if path != openPath {
                 guard let session else { return }
                 // A file made a moment ago may not be in the tree yet.
@@ -537,16 +534,16 @@ final class ProjectModel {
     }
 
     /// Where the caret is, for the places Go Back and Go Forward keep.
-    private var caretPlace: [String: any Sendable]? { openPath.map { ["path": $0, "line": editsText ? cursorLine : 1] } }
+    private var caretPlace: Place? { openPath.map { Place(path: $0, line: editsText ? cursorLine : 1) } }
+
+    func canRetrace(back: Bool) -> Bool { openPath != nil && (back ? trail.back : trail.forward).contains(where: exists) }
+
+    private func exists(_ place: Place) -> Bool { root.map { FileManager.default.fileExists(atPath: $0.appending(path: place.path).path) } ?? false }
 
     /// Go Back, or Go Forward: shown as a jump is, but leaving no place behind.
     func retrace(back: Bool) async {
-        guard let session, let at = caretPlace,
-              let step = await alerting(back ? "Couldn’t Go Back" : "Couldn’t Go Forward", {
-                  try await core.call(back ? "session_back" : "session_forward", ["session": session, "at": at], as: Trail.self)
-              }) else { return }
-        trail = step
-        if let to = step.to { await open(to.path, line: to.line) }
+        guard let at = caretPlace, let to = trail.step(back: back, from: at, exists: exists) else { return }
+        await open(to.path, line: to.line)
     }
 
     /// A refusal is the core's sentence, for the sheet to show.

@@ -1,18 +1,17 @@
-//! Moving about a project: the places Back and Forward go to, Open Quickly's list and Quick
-//! Help's answer.
+//! Moving about a project: Open Quickly's list and Quick Help's answer.
 
 use std::cmp::Reverse;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, PoisonError};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::Reply;
 use super::actor::Actor;
 use crate::analyze;
-use crate::paths::{self, RelPath};
+use crate::paths;
 use crate::service::out;
 use crate::settings;
 use crate::syntax::SymbolKind;
@@ -20,50 +19,11 @@ use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::closing_brace;
 use crate::{lf, lock, lossy_string};
 
-/// Back's places, and Forward's, kept at most.
-const KEPT: usize = 50;
 /// Open Quickly's items at most.
 const LISTED: usize = 50;
 /// What a character matched at a word's start scores, and one just after the last matched.
 const WORD_START: i64 = 8;
 const RUN: i64 = 4;
-
-/// A line, from 1, of a project's file.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Place {
-    path: RelPath,
-    line: u32,
-}
-
-/// Where jumps left the caret, the latest last.
-#[derive(Default)]
-pub(crate) struct Trail {
-    back: Vec<Place>,
-    forward: Vec<Place>,
-}
-
-impl Trail {
-    pub fn moved(&mut self, from: &str, to: &str) {
-        for place in self.back.iter_mut().chain(&mut self.forward) {
-            if let Some(rest) = paths::after_entry(&place.path.0, from) {
-                place.path.0 = format!("{to}{rest}");
-            }
-        }
-    }
-}
-
-fn push(places: &mut Vec<Place>, place: Place) {
-    if places.last() != Some(&place) {
-        places.push(place);
-    }
-    if places.len() > KEPT {
-        places.remove(0);
-    }
-}
-
-fn exists(root: &Path, place: &Place) -> bool {
-    paths::safe_path(root, &place.path.0).is_ok_and(|path| path.is_file())
-}
 
 /// One of Open Quickly's items.
 #[derive(Serialize)]
@@ -76,36 +36,6 @@ struct Item {
 }
 
 impl Actor {
-    pub fn navigate(&mut self, from: Place) -> Value {
-        push(&mut self.trail.back, from);
-        self.trail.forward.clear();
-        self.trail_state()
-    }
-
-    /// Back, or Forward: the latest place whose file is there still and that isn't the caret's,
-    /// those passed over dropped, with the caret's place kept for the other way.
-    pub fn step(&mut self, at: Place, back: bool) -> Value {
-        let (root, trail) = (&self.project.root, &mut self.trail);
-        let (from, other) = if back {
-            (&mut trail.back, &mut trail.forward)
-        } else {
-            (&mut trail.forward, &mut trail.back)
-        };
-        let to =
-            std::iter::from_fn(|| from.pop()).find(|place| *place != at && exists(root, place));
-        if to.is_some() {
-            push(other, at);
-        }
-        let mut answer = self.trail_state();
-        answer["to"] = json!(to);
-        answer
-    }
-
-    fn trail_state(&self) -> Value {
-        let any = |places: &[Place]| places.iter().any(|p| exists(&self.project.root, p));
-        json!({ "back": any(&self.trail.back), "forward": any(&self.trail.forward) })
-    }
-
     /// Worked out beside the session, as a search is, from the last symbol scan: headings and
     /// labels of the files the main file reaches.
     pub fn quick_open(&self, query: String, reply: Reply) {

@@ -18,7 +18,6 @@ use tokio::time::Instant;
 
 use super::build::Builds;
 use super::live::Live;
-use super::navigate::Trail;
 use super::watch::{self, Change, TreeIndex};
 use super::{Command, Document, Engine, Msg, Preview, Reply, Sessions};
 use crate::analyze::{self, Facts, Place};
@@ -171,7 +170,6 @@ pub(crate) struct Actor {
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
-    pub trail: Trail,
     closed: bool,
 }
 
@@ -235,7 +233,6 @@ impl Actor {
             live: Live::default(),
             later,
             history,
-            trail: Trail::default(),
             closed: false,
         };
         actor.snapshot_soon();
@@ -421,9 +418,6 @@ impl Actor {
             Command::Resolve { path, answer } => self.resolve(&path.0, &answer),
             Command::Compile { auto } => self.compile(auto).and_then(out),
             Command::StopCompile => out(self.stop_compile()),
-            Command::Navigate { from } => Ok(self.navigate(from)),
-            Command::Back { at } => Ok(self.step(at, true)),
-            Command::Forward { at } => Ok(self.step(at, false)),
             Command::Replace {
                 query,
                 replacement,
@@ -1245,7 +1239,6 @@ impl Actor {
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
-        self.trail.moved(from, to);
         // Names compare without case, so a rename only in case leaves the entry itself at the
         // new name: that one moves rather than closes.
         for path in self.docs_within(to) {

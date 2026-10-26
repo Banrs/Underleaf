@@ -661,3 +661,34 @@ struct FileTreeTests {
         #expect(tree.nodes.map(\.name) == ["Appendix", "figs", "B.tex", "c.tex", "ch2.tex", "ch10.tex"])
     }
 }
+
+struct TrailTests {
+    private func at(_ line: Int, in path: String = "main.tex") -> Place { Place(path: path, line: line) }
+
+    /// A jump from where the last left adds no place; Forward retraces what Back undid until a new jump.
+    @Test func backAndForwardRetraceTheLastFiftyPlacesJumpsLeft() {
+        var trail = Trail()
+        for line in Array(1...52) + [52] { trail.jumped(from: at(line)) }
+        #expect(trail.step(back: true, from: at(60)) { _ in true } == at(52))
+        #expect(trail.step(back: false, from: at(52)) { _ in true } == at(60) && trail.forward.isEmpty)
+        var lines: [Int] = []
+        while let place = trail.step(back: true, from: at(1), exists: { _ in true }) { lines.append(place.line) }
+        #expect(lines == Array((3...52).reversed()) && trail.back.isEmpty && !trail.forward.isEmpty)
+        trail.jumped(from: at(1))
+        #expect(trail.back == [at(1)] && trail.forward.isEmpty)
+    }
+
+    /// A jump that left the caret where it was keeps a place Back would show no move to.
+    @Test func backPassesOverTheCaretsOwnPlace() {
+        var trail = Trail()
+        for line in [3, 5] { trail.jumped(from: at(line)) }
+        #expect(trail.step(back: true, from: at(5)) { _ in true } == at(3) && trail.back.isEmpty)
+    }
+
+    @Test func backFollowsARenameAndSkipsAFileGone() {
+        var trail = Trail()
+        for file in ["a.tex", "b.tex"] { trail.jumped(from: at(1, in: file)) }
+        trail.moved("a.tex", to: "c.tex")
+        #expect(trail.step(back: true, from: at(1)) { $0.path != "b.tex" } == at(1, in: "c.tex") && trail.back.isEmpty)
+    }
+}

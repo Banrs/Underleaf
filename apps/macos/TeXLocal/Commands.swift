@@ -182,8 +182,7 @@ extension AppModel {
         case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine,
              .editGotoLine, .jumpToDefinition, .findUsages, .quickHelp, .editFold, .editUnfold, .editFoldAll, .editUnfoldAll:
             project?.editsText == true
-        case .goBack: project.map { $0.openPath != nil && $0.trail.back } ?? false
-        case .goForward: project.map { $0.openPath != nil && $0.trail.forward } ?? false
+        case .goBack, .goForward: project?.canRetrace(back: command == .goBack) ?? false
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
         case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
         case .compileRun: tex?.available == true && project?.compiling == false

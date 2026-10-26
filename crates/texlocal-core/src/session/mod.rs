@@ -34,7 +34,6 @@ use crate::{CoreError, lock, paths};
 
 pub(crate) use build::Engine;
 pub use document::Document;
-use navigate::Place;
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -78,9 +77,6 @@ pub(crate) enum Command {
     Usages { path: RelPath, offset: u32 },
     QuickHelp { path: RelPath, offset: u32 },
     QuickOpen { query: String },
-    Navigate { from: Place },
-    Back { at: Place },
-    Forward { at: Place },
     Replace { query: String, replacement: String, #[serde(default)] match_case: bool,
         #[serde(default)] whole_word: bool },
     RenameSymbol { kind: String, from: String, to: String },

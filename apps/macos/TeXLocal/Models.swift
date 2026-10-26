@@ -168,15 +168,42 @@ nonisolated struct ForwardLoc: Decodable {
 nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
 /// A line, from 1, of a project's file: where Back and Forward go.
-nonisolated struct Place: Decodable {
-    let path: String
+struct Place: Equatable {
+    var path: String
     let line: Int
 }
 
-/// Whether Back and Forward have somewhere to go, and where one went (`session_navigate`, `session_back`).
-nonisolated struct Trail: Decodable {
-    var back = false, forward = false
-    var to: Place?
+/// Where jumps left the caret, the latest last: Back's places and Forward's, 50 kept each way.
+struct Trail {
+    private(set) var back: [Place] = [], forward: [Place] = []
+
+    mutating func jumped(from place: Place) {
+        Self.push(place, on: &back)
+        forward.removeAll()
+    }
+
+    /// The latest place whose file is there still and that isn't the caret's, those passed over dropped; the caret's place
+    /// is kept for the other way.
+    mutating func step(back: Bool, from at: Place, exists: (Place) -> Bool) -> Place? {
+        var (from, other) = back ? (self.back, forward) : (forward, self.back)
+        var to: Place?
+        while let place = from.popLast() {
+            if place != at && exists(place) { to = place; break }
+        }
+        if to != nil { Self.push(at, on: &other) }
+        (self.back, forward) = back ? (from, other) : (other, from)
+        return to
+    }
+
+    mutating func moved(_ from: String, to: String) {
+        for index in back.indices { back[index].path = remapPath(back[index].path, from: from, to: to) }
+        for index in forward.indices { forward[index].path = remapPath(forward[index].path, from: from, to: to) }
+    }
+
+    private static func push(_ place: Place, on places: inout [Place]) {
+        if places.last != place { places.append(place) }
+        if places.count > 50 { places.removeFirst() }
+    }
 }
 
 /// `session_quick_help`'s, for the popover.
