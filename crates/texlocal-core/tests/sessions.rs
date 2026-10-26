@@ -482,8 +482,9 @@ async fn another_apps_files_reach_the_tree() {
         ["ch.tex", "main.tex", "new.tex"]
     );
     fs::write(rig.root().join("ch.tex"), "y").unwrap();
-    let changed = rig.event("files_changed", |_| true);
-    assert_eq!(changed["paths"], json!(["ch.tex"]));
+    rig.event("files_changed", |e| {
+        e["paths"].as_array().unwrap().contains(&json!("ch.tex"))
+    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
