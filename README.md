@@ -91,4 +91,3 @@ MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under T
 licence, and the maths previews are drawn with [RaTeX](https://crates.io/crates/ratex-layout) and
 KaTeX's fonts, which are under the SIL Open Font License. Report bugs in
 [Issues](https://github.com/Banrs/Underleaf/issues).
-The iPad and Windows apps are archived on the `archived-multi-platform` branch.
