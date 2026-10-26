@@ -6,6 +6,7 @@ while ! mkdir $S/locks/xctest 2>/dev/null; do
 done
 trap 'rmdir $S/locks/xctest 2>/dev/null' EXIT
 L=$S/logs/xctest-${D:t}.log
+rm -rf /tmp/texlocal-xctest
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug -destination 'platform=macOS' \
   -derivedDataPath $D -parallel-testing-enabled NO TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev CODE_SIGNING_ALLOWED=NO test "$@" > $L 2>&1
 r=$?
