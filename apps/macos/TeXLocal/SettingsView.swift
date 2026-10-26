@@ -104,8 +104,6 @@ private struct CompilingSettings: View {
             }
             Section {
                 ProgramFolder(program: .tex)
-            } footer: {
-                HelpLink(destination: Links.requirements).frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }

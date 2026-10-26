@@ -21,7 +21,7 @@ const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
-const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh (docs/texpresso.md).";
+const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh.";
 const LIVE_VERSION: u64 = 2;
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 

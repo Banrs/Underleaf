@@ -28,11 +28,8 @@ struct InspectorView: View {
                            : Self.livePreviewMissing, isOn: Bindable(project).livePreview)
                 .disabled(!project.canSwitchLivePreview)
                 if !app.canPreviewLive {
-                    HStack {
-                        LinkButton(title: "Install Guide", url: Links.texpressoGuide)
-                        Spacer()
-                        SettingsLink { Text("Open Settings…") }
-                    }
+                    SettingsLink { Text("Open Settings…") }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
         }

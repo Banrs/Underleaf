@@ -29,8 +29,7 @@ nonisolated enum DefaultsKey {
 enum Links {
     static let repository = URL(string: "https://github.com/Banrs/Underleaf")!
     static let issues = repository.appending(path: "issues")
-    static let requirements = URL(string: "https://github.com/Banrs/Underleaf#requirements")!
-    static let texpressoGuide = repository.appending(path: "blob/main/docs/texpresso.md")
+    static let texpressoGuide = URL(string: "https://github.com/Banrs/Underleaf#live-preview")!
     static let mactex = URL(string: "https://tug.org/mactex/")!
 }
 
