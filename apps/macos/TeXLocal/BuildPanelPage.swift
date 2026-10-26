@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The panel's issues, the build's log or Live Preview's, under each app's own bar.
 struct BuildPanelPage: View {
     let project: ProjectModel
 
@@ -27,7 +26,6 @@ struct BuildPanelPage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// "No Issues" before any build too: the status says whether one has run.
     @ViewBuilder private var issues: some View {
         let items = project.panel.rows(of: project.listed)
         if !items.isEmpty {
@@ -46,10 +44,8 @@ struct BuildPanelPage: View {
     }
 }
 
-/// An issue with its explanation and place, and the core's fix for it.
 struct IssueRow: View {
     let item: LogItem
-    /// Its place in the list, which `chooseIssue` takes.
     let place: Int
     let project: ProjectModel
 
@@ -60,7 +56,6 @@ struct IssueRow: View {
         }
     }
 
-    /// The explanation under the message, as Xcode shows an issue's note.
     private var label: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
@@ -82,7 +77,6 @@ struct IssueRow: View {
         .accessibilityValue([item.explain, location(line: ", line ")].compactMap(\.self).joined(separator: " "))
     }
 
-    /// As Xcode's Fix: a small button at the row's end, its progress in its place.
     @ViewBuilder private func offer(_ fix: LogItem.Fix) -> some View {
         Spacer()
         if project.fixing == fix {
@@ -97,7 +91,6 @@ struct IssueRow: View {
 
     private func run(_ fix: LogItem.Fix) { Task { if await confirmed(fix) { await project.run(fix) } } }
 
-    /// AppKit's, as the window's other questions are: the fix's title on the default button (HIG, Alerts).
     private func confirmed(_ fix: LogItem.Fix) async -> Bool {
         guard let confirm = fix.confirm else { return true }
         let alert = NSAlert()

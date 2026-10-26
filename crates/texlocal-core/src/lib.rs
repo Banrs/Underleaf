@@ -1,10 +1,3 @@
-// TeXLocal's core: projects, compilation, the path rules that keep both
-// inside the data directory, project sessions, and the editors' LaTeX logic
-// (`syntax`). Deliberately GUI-free.
-//
-// Path convention: every project-relative path this crate RETURNS or STORES
-// uses forward slashes — the hosts and SyncTeX both expect '/'.
-
 mod analyze;
 mod atomic;
 mod checks;
@@ -34,14 +27,8 @@ pub use error::{CoreError, ErrorKind};
 
 pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";
-/// A library project's history: in its folder, as all else of it is, but not in the build folder,
-/// which Clean Build Folder deletes. As a dotfile the tree leaves it out, and as `is_litter`
-/// exports and imports do.
 pub(crate) const HISTORY_DIR: &str = ".texlocal-history";
 
-/// The crate's mutexes guard bookkeeping that no panic leaves half-written,
-/// or nothing at all, so a poisoned one is still good: it must not fail
-/// every later edit, nor panic in a Drop or at quit, where that aborts the host.
 pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
@@ -60,7 +47,6 @@ pub(crate) fn lf(text: String) -> String {
     }
 }
 
-/// A file's own line ending, a save's and a replace's: its first line break's.
 pub(crate) fn newline(text: &str) -> &'static str {
     let Some(at) = text.find(['\r', '\n']) else {
         return "\n";
@@ -77,8 +63,6 @@ pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
 }
 
-/// `String::from_utf16_lossy`, faster on mostly ASCII text: runs of ASCII are
-/// copied as bytes, and only the rest is decoded, a lone surrogate as U+FFFD.
 pub(crate) fn utf16_lossy(units: &[u16]) -> String {
     let mut bytes = Vec::with_capacity(units.len());
     let mut rest = units;
@@ -95,36 +79,4 @@ pub(crate) fn utf16_lossy(units: &[u16]) -> String {
         rest = &rest[other..];
     }
     String::from_utf8(bytes).expect("ASCII and encoded chars are UTF-8")
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn utf16_lossy_reads_as_from_utf16_lossy() {
-        let cases: &[&[u16]] = &[
-            &[],
-            &[0x61, 0x62, 0x0a, 0x7f],
-            &[0xd800],
-            &[0xdc00],
-            &[0x61, 0xd83d, 0x62],
-            &[0x61, 0xde00, 0x62],
-            &[0xdc00, 0xd800],
-            &[0xd83d, 0xd83d, 0xde00],
-            &[0x61, 0xd83d],
-            &[
-                0xe9, 0x4e2d, 0x61, 0xd83d, 0xde00, 0x80, 0x7f, 0xd835, 0xdd38, 0xffff,
-            ],
-        ];
-        for units in cases {
-            assert_eq!(
-                super::utf16_lossy(units),
-                String::from_utf16_lossy(units),
-                "{units:x?}"
-            );
-        }
-        let mixed: Vec<u16> = "Prose, $x^2$, é, 漢字, 😀 and \\𝔸.\n"
-            .encode_utf16()
-            .collect();
-        assert_eq!(super::utf16_lossy(&mixed), String::from_utf16_lossy(&mixed));
-    }
 }

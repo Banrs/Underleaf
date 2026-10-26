@@ -1,8 +1,6 @@
 import AppKit
 
-/// The editor's commands: the core's answers put into the text view.
 extension SourceEditor {
-    /// At the selection's start. The command is enabled wherever the caret is, so a name nothing defines beeps.
     func jumpToDefinition() {
         guard let place = textView.document.definition(at: textView.selection.location)?.places.first else {
             NSSound.beep()
@@ -11,8 +9,6 @@ extension SourceEditor {
         textView.openDefinition(place)
     }
 
-    /// The label or citation at the selection's start, which Rename renames everywhere. Read through `changes`, so a menu
-    /// showing it follows the caret.
     var renamable: Definition? {
         _ = changes.count
         guard let found = textView.document.definition(at: textView.selection.location),
@@ -32,7 +28,6 @@ extension SourceEditor {
         case .displayMath: textView.apply(document.wrap(selections, in: "\\[$0\\]"), named: String(localized: "Display Math"))
         case .inline(let template, let title):
             textView.apply(document.wrap(selections, in: template), named: Self.insertion(titled: title))
-            // Empty braces: their labels or citations, once the menu has closed.
             if selection.length == 0 { Task { self.textView.completions.complete(explicit: true) } }
         case .comment:
             textView.apply(document.toggleComment(selections), named: String(localized: "Comment"))
@@ -68,8 +63,6 @@ extension SourceEditor {
 
     var textStyles: TextStyles { path == nil ? TextStyles() : textView.document.textStyles(textView.selection) }
 
-    /// What `reveal` selects, the match `length` long at `column`, the word there or the line's start, and what it shows
-    /// found: that, or the line.
     func revealed(line: Int, column: Int?, length: Int?) -> (selection: NSRange, found: NSRange) {
         let document = textView.document
         let start = document.lineStart(line)

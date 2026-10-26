@@ -1,5 +1,3 @@
-//! The maths at the caret, to preview, read by the scanner spelling and symbols use, so display maths is paired as TeX pairs it.
-
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::LazyLock;
@@ -58,7 +56,6 @@ impl Visit for Close {
 }
 
 impl SourceDocument {
-    /// The outermost display holding the caret, else the innermost inline maths; none when its close isn't within 20,000 units.
     pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
         let (units, caret) = (&self.text.units, caret.min(self.text.len()) as usize);
         let ahead = (caret + AHEAD).min(units.len());
@@ -98,8 +95,6 @@ impl SourceDocument {
         })
     }
 
-    /// The project's definitions the maths uses, itself or through theirs, before it: only those,
-    /// so what RaTeX reads grows with the maths, not with the project.
     fn with_definitions(&self, tex: String) -> String {
         fn words(tex: &str) -> impl Iterator<Item = &str> {
             CONTROL_WORD.find_iter(tex).map(|word| word.as_str())

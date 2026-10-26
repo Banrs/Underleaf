@@ -14,7 +14,6 @@ final class FileTree {
 
     init(id: String) { self.id = id }
 
-    /// Down the folders on its way only: views ask as they draw.
     func node(at path: String) -> TreeNode? {
         var level = nodes
         while let next = level.first(where: { path == $0.path || path.hasPrefix($0.path + "/") }) {
@@ -24,7 +23,6 @@ final class FileTree {
         return nil
     }
 
-    /// A read older than the last taken is dropped: it would take away a new file's row as its name is typed.
     func reload() async {
         reads += 1
         let read = reads
@@ -33,7 +31,6 @@ final class FileTree {
         if !Task.isCancelled { take(files) }
     }
 
-    /// The session watcher's: a read started before is older.
     func show(_ files: [TreeNode]) {
         taken = reads
         take(files)
@@ -46,7 +43,6 @@ final class FileTree {
         onChange()
     }
 
-    /// As Finder lists a folder (`localizedStandardCompare`): folders first, then names in the user's language, numbers by value.
     private static func ordered(_ nodes: [TreeNode]) -> [TreeNode] {
         nodes.map { node in
             var node = node

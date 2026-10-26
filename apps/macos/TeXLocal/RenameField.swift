@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// A name edited where it shows, as Finder and Files rename.
 @Observable
 final class InPlaceRename<ID: Hashable> {
     private(set) var id: ID?
@@ -45,7 +44,6 @@ struct RenameField: View {
                 if now { selection = isFile ? .baseName(of: text) : TextSelection(range: text.startIndex..<text.endIndex) }
                 if was, !now { commit() }
             }
-            // Taken from wherever it is: a default focus would leave it there.
             .onAppear { focused = true }
     }
 }

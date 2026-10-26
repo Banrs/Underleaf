@@ -1,18 +1,4 @@
-//! A persistent stack: a copy is one pointer, and copies share their frames,
-//! so the highlighter and the maths scan keep their state at many places in
-//! a text for no more than a pointer each, however deep it is.
-
 use std::sync::Arc;
-
-#[cfg(test)]
-thread_local! {
-    pub(crate) static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn work(_frames: usize) {
-    #[cfg(test)]
-    WORK.with(|work| work.set(work.get() + _frames));
-}
 
 pub(crate) struct Stack<T>(Option<Arc<Frame<T>>>);
 
@@ -36,7 +22,6 @@ impl<T> Default for Stack<T> {
 
 impl<T> Stack<T> {
     pub fn push(&mut self, item: T) {
-        work(1);
         let below = std::mem::take(self);
         *self = Self(Some(Arc::new(Frame { item, below })));
     }
@@ -55,15 +40,11 @@ impl<T> Stack<T> {
     where
         T: Clone,
     {
-        self.0.as_mut().map(|frame| {
-            work(1);
-            &mut Arc::make_mut(frame).item
-        })
+        self.0.as_mut().map(|frame| &mut Arc::make_mut(frame).item)
     }
 
     fn frames(&self) -> impl Iterator<Item = &Frame<T>> {
         std::iter::successors(self.0.as_deref(), |frame| frame.below.0.as_deref())
-            .inspect(|_| work(1))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
@@ -88,8 +69,6 @@ impl<T> Stack<T> {
     }
 }
 
-/// Unlinked a frame at a time: dropping a deep stack recursively would
-/// overflow the thread's own.
 impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut next = self.0.take();

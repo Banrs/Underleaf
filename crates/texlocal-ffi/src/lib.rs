@@ -1,6 +1,3 @@
-//! The C ABI the Mac app links; `include/texlocal.h` is its
-//! contract.
-
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -18,8 +15,6 @@ pub struct TlHandle {
     sessions: Arc<Sessions>,
 }
 
-/// `body`'s result, or none if it panicked: no panic may unwind into the
-/// host, which would abort the app and lose the user's unsaved text.
 fn caught<T>(body: impl FnOnce() -> T) -> Option<T> {
     catch_unwind(AssertUnwindSafe(body)).ok()
 }
@@ -30,7 +25,6 @@ struct Callback {
     ctx: *mut c_void,
 }
 
-// SAFETY: the header asks the host for a callback any thread may call with its pointer.
 unsafe impl Send for Callback {}
 unsafe impl Sync for Callback {}
 
@@ -40,20 +34,14 @@ impl Callback {
     }
 }
 
-/// JSON text for C: JSON escapes a NUL inside a string, so it holds none.
 fn c_json(text: String) -> CString {
     CString::new(text).expect("JSON has no interior NUL")
 }
 
-/// # Safety
-/// `ptr` is null or a NUL-terminated string valid for the call.
 unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
     (!ptr.is_null()).then(|| unsafe { CStr::from_ptr(ptr) }.to_str().ok())?
 }
 
-/// # Safety
-/// `data_dir` is null or a NUL-terminated string; `listener`, if not null, may be called on a
-/// core thread with `ctx` for as long as the handle lives.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_open(
     data_dir: *const c_char,
@@ -80,8 +68,6 @@ fn panicked() -> CoreError {
     CoreError::internal("The command panicked")
 }
 
-/// # Safety
-/// The strings are null or NUL-terminated.
 unsafe fn command_args<'a>(
     command: *const c_char,
     args_json: *const c_char,
@@ -104,8 +90,6 @@ fn envelope(result: Result<Value, CoreError>) -> Value {
     }
 }
 
-/// A host's `done` for one call, called once: with the answer, or with the panic of a command
-/// that dropped it unanswered. A session that closes with commands queued answers them itself.
 struct Done(Option<Callback>);
 
 impl Done {
@@ -124,9 +108,6 @@ impl Drop for Done {
     }
 }
 
-/// # Safety
-/// `handle` came from `tl_open`; the strings are null or NUL-terminated; `done`, if not null,
-/// may be called from any thread with `ctx`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_call_async(
     handle: *const TlHandle,
@@ -146,15 +127,12 @@ pub unsafe extern "C" fn tl_call_async(
     let Some(answer) = caught(|| handle.sessions.call(command, args)) else {
         return done.send(Err(panicked()));
     };
-    // `done` is called on the blocking pool, where it may call the core again.
     let runtime = handle.runtime.handle().clone();
     handle
         .runtime
         .spawn_blocking(move || done.send(runtime.block_on(answer)));
 }
 
-/// # Safety
-/// `text` is null or a string this library answered, freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     if !text.is_null() {
@@ -162,8 +140,6 @@ pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     }
 }
 
-/// A file's text as the editor has it (`syntax::SourceDocument`):
-/// the host's own, or a session's document.
 pub enum TlSource {
     Own(Box<SourceDocument>),
     Session(Document),
@@ -178,20 +154,12 @@ impl TlSource {
     }
 }
 
-/// `body`'s answer for `source`, or the default for a null source or a panic.
-///
-/// # Safety
-/// `source` is null or came from `tl_source_new` and is not freed, and no
-/// two calls on it overlap: one thread at a time, queries included.
 unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut TlSource) -> T) -> T {
     unsafe { source.as_mut() }
         .and_then(|source| caught(|| body(source)))
         .unwrap_or_default()
 }
 
-/// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches
-/// the mirror. Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes
-/// them, so an edit still lands with the length the editor has.
 unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     if ptr.is_null() {
         return Cow::Borrowed("");
@@ -199,8 +167,6 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
-/// # Safety
-/// `handle` came from `tl_open`; `path` is null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_session_source(
     handle: *const TlHandle,
@@ -218,18 +184,12 @@ pub unsafe extern "C" fn tl_session_source(
         })
 }
 
-/// # Safety
-/// `text` is null (empty) or `len` bytes of UTF-8.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
     let doc = SourceDocument::new(&unsafe { text_arg(text, len) });
     Box::into_raw(Box::new(TlSource::Own(Box::new(doc))))
 }
 
-/// # Safety
-/// `source` came from `tl_source_new` and is not freed, and no other call
-/// on it (queries included) overlaps this one; `text` is null (nothing) or
-/// `len` bytes of UTF-8; `changing` is null or valid for a read.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_edit(
     source: *mut TlSource,
@@ -252,8 +212,6 @@ pub unsafe extern "C" fn tl_source_edit(
     unsafe { on_source(source, edit) }.unwrap_or(std::ptr::null_mut())
 }
 
-/// # Safety
-/// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_select(
     source: *mut TlSource,
@@ -265,8 +223,6 @@ pub unsafe extern "C" fn tl_source_select(
     unsafe { on_source(source, |s| s.with(|doc| doc.select(selection, mirroring))) }
 }
 
-/// # Safety
-/// As `tl_source_edit`; `len` is null or valid for a write.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) -> *mut u8 {
     let Some(len) = (unsafe { len.as_mut() }) else {
@@ -278,9 +234,6 @@ pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) 
     Box::into_raw(bytes).cast()
 }
 
-/// # Safety
-/// `text` is null (nothing to free) or, with `len`, came from one
-/// `tl_source_text`, freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
     if !text.is_null() {
@@ -288,8 +241,6 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
     }
 }
 
-/// # Safety
-/// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_reload(
     source: *mut TlSource,
@@ -307,29 +258,21 @@ pub unsafe extern "C" fn tl_source_reload(
     unsafe { on_source(source, reload) }
 }
 
-/// # Safety
-/// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_at(source: *mut TlSource, offset: u32) -> u32 {
     unsafe { on_source(source, |s| s.with(|doc| doc.line_at(offset))) }
 }
 
-/// # Safety
-/// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_start(source: *mut TlSource, line: u32) -> u32 {
     unsafe { on_source(source, |s| s.with(|doc| doc.line_start(line))) }
 }
 
-/// # Safety
-/// As `tl_source_edit`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_line_count(source: *mut TlSource) -> u32 {
     unsafe { on_source(source, |s| s.with(|doc| doc.line_count())) }
 }
 
-/// # Safety
-/// As `tl_source_edit`; `count` is null or valid for a write.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_highlights(
     source: *mut TlSource,
@@ -351,9 +294,6 @@ pub unsafe extern "C" fn tl_source_highlights(
     Box::into_raw(runs).cast()
 }
 
-/// # Safety
-/// `runs` is null (nothing to free) or, with `count`, came from one
-/// `tl_source_highlights`, freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     if !runs.is_null() {
@@ -361,8 +301,6 @@ pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
     }
 }
 
-/// # Safety
-/// As `tl_source_edit`; the strings are null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_call(
     source: *mut TlSource,
@@ -372,7 +310,6 @@ pub unsafe extern "C" fn tl_source_call(
     let call = |source: &mut TlSource| {
         let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
         match source {
-            // The session counts a document's edits, not the syntax module.
             TlSource::Session(document) if command == "version" => {
                 Some(document.version().to_string())
             }
@@ -384,8 +321,6 @@ pub unsafe extern "C" fn tl_source_call(
     answer.map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
 }
 
-/// # Safety
-/// The strings are null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_syntax_call(
     command: *const c_char,
@@ -400,8 +335,6 @@ pub unsafe extern "C" fn tl_syntax_call(
         .map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
 }
 
-/// # Safety
-/// `source` is null or came from `tl_source_new`, and is freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_free(source: *mut TlSource) {
     if !source.is_null() {

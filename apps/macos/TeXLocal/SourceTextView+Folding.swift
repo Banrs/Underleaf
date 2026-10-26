@@ -1,8 +1,5 @@
 import AppKit
 
-/// Folded lines are left out of the layout, as TextKit 2 leaves out a paragraph its content storage doesn't enumerate, so the
-/// gutter's numbers skip them. The core finds what folds (`folds`): an environment's body, a heading's section, a run of
-/// comments. A fold opens when an edit reaches into it or the selection is put inside it; the arrow keys step over it.
 extension SourceTextView: NSTextContentStorageDelegate {
     func textContentManager(_ textContentManager: NSTextContentManager, shouldEnumerate textElement: NSTextElement,
                             options: NSTextContentManager.EnumerationOptions) -> Bool {
@@ -11,7 +8,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return !folded.contains { $0.contains(start) }
     }
 
-    /// The core's folds of the text as it is, by the line that stays.
     var foldable: [Int: SourceDocument.Fold] {
         if let foldCache { return foldCache }
         let found = Dictionary(document.folds().map { ($0.line, $0) }) { first, _ in first }
@@ -19,17 +15,14 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return found
     }
 
-    /// The lines a fold hides: those after the one that stays, to its end.
     func hidden(_ fold: SourceDocument.Fold) -> NSRange {
         let start = document.lineStart(fold.line + 1)
         let end = fold.end < document.lineCount ? document.lineStart(fold.end + 1) : length
         return NSRange(location: start, length: end - start)
     }
 
-    /// The folds by the line that stays, read from the folds themselves: no scan while typing.
     var foldedLines: [Int: NSRange] { Dictionary(folded.map { (document.line(at: $0.location - 1), $0) }) { first, _ in first } }
 
-    /// The innermost fold over the caret's line, or the caret's line's own; the caret goes to the end of the line that stays.
     func foldAtCaret() {
         let line = document.line(at: caret)
         let over = foldable.values.filter { $0.line <= line && line <= $0.end && !folded.contains(hidden($0)) }
@@ -37,7 +30,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         setFolds(folded + [hidden(fold)], keeping: fold.line)
     }
 
-    /// The caret's line's folds, or those the selection reaches.
     func unfoldAtCaret() {
         let line = document.line(at: caret)
         let own = foldable[line].map(hidden)
@@ -49,7 +41,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
     func foldAll() {
         let all = foldable.values.sorted { $0.line < $1.line }
         guard !all.isEmpty else { return NSSound.beep() }
-        // The caret goes to the outermost fold's line that stays, if it is under one.
         let line = document.line(at: caret)
         let outer = all.first { $0.line < line && line <= $0.end }
         setFolds(all.map(hidden), keeping: outer?.line)
@@ -66,7 +57,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         setFolds(folded + [hidden(fold)], keeping: line)
     }
 
-    /// With the caret at the end of `line` if it would be hidden.
     private func setFolds(_ ranges: [NSRange], keeping line: Int? = nil) {
         var unique: [NSRange] = []
         for range in ranges.sorted(by: { $0.location < $1.location }) where !unique.contains(range) { unique.append(range) }
@@ -87,9 +77,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         needsDisplay = true
     }
 
-    // MARK: edits and the selection
-
-    /// After an edit of `old`, now `delta` longer: a fold after it moves with it, one it reaches into opens.
     func foldsEdited(_ old: NSRange, delta: Int) {
         foldCache = nil
         guard !folded.isEmpty else { return }
@@ -100,11 +87,9 @@ extension SourceTextView: NSTextContentStorageDelegate {
             opened = true
             return nil
         }
-        // After the edit: a layout mid-edit would lay out stale text.
         if opened { Task { self.relayOutFolds() } }
     }
 
-    /// A selection's end put inside a fold opens it; one a key steps into from its edge steps over it.
     func selectionMoved(from old: NSRange) -> NSRange? {
         guard !folded.isEmpty else { return nil }
         let new = selection
@@ -119,14 +104,10 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return nil
     }
 
-    // MARK: the gutter's chevrons and the folded lines' marks
-
-    /// Between the numbers and the text, as Xcode's.
     private var chevronX: CGFloat { (gutter.numbersEnd + textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0)) / 2 }
 
     func inChevrons(_ point: NSPoint) -> Bool { point.x >= gutter.numbersEnd && point.x < textContainerOrigin.x }
 
-    /// A folded line's chevron always; the others' while the pointer is over the gutter.
     func drawFolds(in rect: CGRect) {
         foldMarks.removeAll(keepingCapacity: true)
         guard !folded.isEmpty || gutterHovered else { return }
@@ -155,7 +136,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         }
     }
 
-    /// Upright in the flipped view.
     private func draw(_ image: NSImage, at origin: CGPoint) {
         image.draw(in: CGRect(origin: origin, size: image.size), from: .zero, operation: .sourceOver, fraction: 1,
                    respectFlipped: true, hints: nil)
@@ -167,7 +147,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) ?? NSImage()
     }
 
-    /// A click on a chevron folds or unfolds its line; one on a folded line's mark unfolds it.
     func foldClick(at point: NSPoint) -> Bool {
         if let mark = foldMarks.first(where: { $0.rect.contains(point) }) {
             setFolds(folded.filter { $0 != mark.range })

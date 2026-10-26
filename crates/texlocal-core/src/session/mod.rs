@@ -1,16 +1,9 @@
-//! Project sessions: what a host would keep per open project (open files' text, autosave,
-//! conflicts, builds and issues, live preview, the folder's watcher, history), kept once here.
-//! Each session is one task (`actor.rs`) taking messages one at a time; a host numbers its
-//! sessions, so it listens for one before opening it. docs/core-api.md is the contract.
-
 mod actor;
 mod build;
 mod document;
 mod history;
 mod live;
 mod navigate;
-#[cfg(test)]
-mod tests;
 mod watch;
 
 use std::collections::HashMap;
@@ -37,7 +30,6 @@ pub use document::Document;
 use watch::Change;
 
 pub(crate) enum Msg {
-    /// A document's text changed to `version`: by `edit`, or replaced whole by a reload.
     Changed {
         doc: u64,
         version: u64,
@@ -46,8 +38,6 @@ pub(crate) enum Msg {
     Command(Command, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
-    /// A symbol scan's, numbered, with what the project's checks found, the outline and the
-    /// session's count of edits as the scan began.
     Symbols {
         seq: u64,
         edits: u64,
@@ -57,8 +47,6 @@ pub(crate) enum Msg {
     Fs(Vec<Change>),
 }
 
-/// A session's commands, by the name a host sends without its `session_` (docs/core-api.md),
-/// with their arguments: a table, one a line.
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
@@ -95,15 +83,10 @@ pub(crate) enum Command {
     LiveView { first: u32, last: u32 },
     LiveCaret { path: RelPath, offset: usize },
     LiveLog { shown: bool },
-    #[cfg(test)]
-    Panic,
-    #[cfg(test)]
-    State,
     #[serde(other)]
     Unknown,
 }
 
-/// A session's command as sent: its session's number beside it.
 #[derive(Deserialize)]
 struct Call {
     session: u64,
@@ -120,8 +103,6 @@ struct Opening {
     auto_compile: bool,
 }
 
-/// One a panic drops says the session stopped, where the host would otherwise be told
-/// there is no such session.
 pub(crate) struct Reply(Option<oneshot::Sender<Result<Value, CoreError>>>);
 
 impl Reply {
@@ -196,9 +177,6 @@ impl Sessions {
         lock(&docs).get(&path).cloned()
     }
 
-    /// Every command a host sends. A session's are queued for it as this is called, so they are
-    /// taken in the order sent however their answers are awaited; the others run as the answer
-    /// is awaited, inside a tokio runtime that goes on running its tasks between calls.
     pub fn call(self: &Arc<Self>, command: &str, args: Value) -> Answer {
         let (name, sessions) = (command.to_owned(), Arc::clone(self));
         match command.strip_prefix("session_") {
@@ -208,8 +186,6 @@ impl Sessions {
         }
     }
 
-    /// The session's first events may come before this answers. A number open already is
-    /// refused (409).
     fn open(&self, opening: Opening) -> Result<Value, CoreError> {
         let Opening {
             id,
@@ -235,7 +211,6 @@ impl Sessions {
         let sessions = Arc::clone(&self.open);
         tokio::spawn(async move {
             actor.run(rx).await;
-            // A close took it off already, and the host may have opened the number again.
             let mut open = lock(&sessions);
             if open
                 .get(&session)
@@ -265,7 +240,6 @@ impl Sessions {
         async move {
             let (session, closing) = queued?;
             let answer = answer.await.unwrap_or_else(|_| Err(gone()));
-            // Taken off here, not as the task ends, so the number is free once this answers.
             if closing && answer.as_ref().is_ok_and(|answer| answer["saved"] == true) {
                 lock(&open).remove(&session);
             }

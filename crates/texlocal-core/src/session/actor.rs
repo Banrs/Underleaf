@@ -1,6 +1,3 @@
-//! One project session's task: documents, saves, builds and the file watcher's news,
-//! handled one message at a time, so no two of them race.
-
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
@@ -38,8 +35,6 @@ pub(super) const ONE_DOCUMENT: &str =
     "Only one open document can be edited at once: close the others first.";
 const NOT_UTF8: &str =
     "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
-/// A data set or log far larger would freeze the editor, which holds it whole, as each save
-/// writes it.
 pub(super) const MAX_EDITED: u64 = 64 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -60,18 +55,13 @@ pub(crate) struct Doc {
     path: String,
     saved: u64,
     force: bool,
-    /// The disk's text as the document would hold it; None while the file isn't UTF-8.
     disk_text: Option<String>,
-    /// The file's own line ending, which a save writes.
     newline: &'static str,
-    /// While a stat still gives it, a change told of is the session's own save, or none.
     disk_stamp: Option<Stamp>,
-    /// Asked about once; until answered, no save writes over the other app's change.
     conflict: Option<Conflict>,
     asking: Option<Conflict>,
     held: bool,
     error: Option<String>,
-    /// The `document_reload`s the host has yet to apply, in order: nothing is saved meanwhile.
     reloads: VecDeque<Reload>,
     composing: bool,
     pub issues: Vec<Value>,
@@ -89,7 +79,6 @@ impl Doc {
     }
 }
 
-/// Work a step leaves for after it, so none of it runs inside another.
 pub(crate) enum Later {
     Compile(bool),
     Restart,
@@ -116,14 +105,10 @@ impl Timer {
         Duration::from_millis(match self {
             Self::Autosave => 700,
             Self::Symbols | Self::Caret => 150,
-            // FSEvents' latency: changes this close together are taken together.
             Self::Fs => 250,
             Self::Retry => 750,
-            // A brace or a command half typed is an error for a moment at every other key.
             Self::Halting | Self::Issues => 1000,
             Self::Restart | Self::Disk => 180,
-            // The log's whole text is copied, sent and laid out again each time, beside pages that
-            // must land within a frame.
             Self::Log => 200,
         })
     }
@@ -147,17 +132,12 @@ pub(crate) struct Actor {
     pub shared: Arc<Mutex<HashMap<String, Document>>>,
     pub docs: BTreeMap<String, Doc>,
     next_doc: u64,
-    /// The id of the document the editor last showed: one a failed save kept open shows again
-    /// after one opened since.
     shown: u64,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
-    /// The `outline` event last sent.
     outline: Value,
     pub facts: Arc<analyze::Files>,
     pub edits: u64,
-    /// Kept for the session's life: a document closed since isn't marked with a build's
-    /// issues on lines that may have moved.
     pub last_edits: HashMap<String, u64>,
     pub auto_compile: bool,
     pub builds: Builds,
@@ -242,7 +222,6 @@ impl Actor {
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
         let mut woken = None;
         loop {
-            // A panic is a bug: the session ends, but the edits it holds mustn't end with it.
             let step = catch_unwind(AssertUnwindSafe(|| {
                 match woken.take() {
                     Some(Wake::Message(message)) => self.handle(message),
@@ -376,10 +355,6 @@ impl Actor {
         }
     }
 
-    // MARK: - Commands
-
-    /// Those worked out beside the session answer from there; the rest answer as they're done,
-    /// those with nothing to say `()`, which is null.
     #[expect(clippy::unit_arg)]
     fn command(&mut self, command: Command, reply: Reply) {
         let answer = match command {
@@ -396,7 +371,6 @@ impl Actor {
             Command::HistoryList => return self.history_list(reply),
             Command::HistorySave { name } => return self.history_save(name, reply),
             Command::HistoryCompare { id, path } => return self.history_compare(id, path.0, reply),
-            // After the `tree` event they make, so the host has the entry's row as it hears.
             Command::Rename { from, to, name } => {
                 let answer = self.rename(&from.0, to, name);
                 return self.after_events(answer, reply);
@@ -434,10 +408,6 @@ impl Actor {
             Command::LiveLog { shown } => out(self.show_live_log(shown)),
             Command::LiveView { first, last } => out(self.live_view(first, last)),
             Command::LiveCaret { path, offset } => out(self.live_caret(path.0, offset)),
-            #[cfg(test)]
-            Command::Panic => panic!("a bug in the session"),
-            #[cfg(test)]
-            Command::State => Ok(self.state()),
             Command::Unknown => Err(unknown()),
         };
         reply.send(answer);
@@ -476,24 +446,6 @@ impl Actor {
         Ok(json!({ "path": made }))
     }
 
-    #[cfg(test)]
-    fn state(&self) -> Value {
-        let doc = |doc: &Doc| {
-            let mut state = doc.state();
-            state["dirty"] = doc.dirty().into();
-            state["conflict"] = json!(doc.asking);
-            state
-        };
-        let mut build = self.build_state();
-        build["queued"] = self.builds.queued.is_some().into();
-        json!({
-            "documents": self.docs.values().map(doc).collect::<Vec<_>>(),
-            "build": build,
-            "live": self.live_state(),
-            "autoCompile": self.auto_compile,
-        })
-    }
-
     fn close(&mut self) -> Result<Value, CoreError> {
         if !self.flush_all(true)? {
             return Ok(json!({ "saved": false }));
@@ -504,8 +456,6 @@ impl Actor {
         lock(&self.shared).clear();
         Ok(json!({ "saved": true }))
     }
-
-    // MARK: - Documents
 
     fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
         let path =
@@ -553,7 +503,6 @@ impl Actor {
         };
         self.docs.insert(path.to_owned(), doc);
         lock(&self.shared).insert(path.to_owned(), document);
-        // Its outline, or the main file's if it reaches it.
         self.after(Timer::Symbols);
         self.publish_doc(path);
         self.mark_issues();
@@ -577,7 +526,6 @@ impl Actor {
         }
     }
 
-    /// A document's text changed: by an edit, or to a reload's text.
     fn changed(&mut self, id: u64, version: u64, edit: Option<TextEdit>) {
         let Some(doc) = self.docs.values().find(|doc| doc.doc.id() == id) else {
             return;
@@ -592,7 +540,6 @@ impl Actor {
             Some(edit) => {
                 self.after(Timer::Autosave);
                 self.live_edited(&path, version, &edit);
-                // Typed before the reload reached the editor, which refuses it now.
                 let doc = self.docs.get_mut(&path).expect("found by its id");
                 if !doc.reloads.is_empty() {
                     doc.reloads.clear();
@@ -609,7 +556,6 @@ impl Actor {
         let doc = self.docs.get_mut(path).expect("found by its id");
         doc.saved = version;
         let reason = doc.reloads.pop_front();
-        // A save under way when the change came may have written over it.
         doc.force |= reason == Some(Reload::Revert);
         self.live_whole(path);
         match reason {
@@ -634,8 +580,6 @@ impl Actor {
         }
     }
 
-    // MARK: - Saving
-
     fn autosave(&mut self) {
         let mut ok = true;
         for path in self.dirty_paths() {
@@ -656,15 +600,10 @@ impl Actor {
         docs.map(|doc| doc.path.clone()).collect()
     }
 
-    /// On its way to the Trash, alone or in a folder.
     pub fn deleting(&self, path: &str) -> bool {
         self.deleting.iter().any(|entry| within(path, entry))
     }
 
-    /// Ok(false): not written, and not to be (a conflict, or a reload or deletion under way).
-    ///
-    /// The disk is looked at under the project's lock first: another app's write that the
-    /// watcher hasn't told of yet is taken as the watcher would take it, not written over.
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
         for _ in 0..2 {
             let deleting = self.deleting(path);
@@ -729,7 +668,6 @@ impl Actor {
         self.flush(None, reporting)
     }
 
-    /// Text typed while a save waits for the project's lock is saved by the next round.
     fn flush(&mut self, only: Option<&str>, reporting: bool) -> Result<bool, CoreError> {
         let mut failure = None;
         for _ in 0..3 {
@@ -769,8 +707,6 @@ impl Actor {
         }
         Ok(saved)
     }
-
-    // MARK: - Conflicts
 
     fn ask(&mut self, path: &str, kind: Conflict) {
         if let Some(doc) = self.docs.get_mut(path) {
@@ -820,8 +756,6 @@ impl Actor {
         }
     }
 
-    /// In place of the text as saved, or, for a Revert, as the user chose to drop it: keys typed
-    /// since then refuse it.
     fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
         if let Some(doc) = self.docs.get_mut(path) {
             let seen = match reason {
@@ -833,8 +767,6 @@ impl Actor {
             self.emit("document_reload", json!({ "path": path, "text": text }));
         }
     }
-
-    // MARK: - Changes on disk
 
     fn files_changed_on_disk(&mut self) {
         let changes = std::mem::take(&mut self.fs_pending);
@@ -855,7 +787,6 @@ impl Actor {
         if !others.is_empty() {
             self.emit("files_changed", json!({ "paths": others }));
         }
-        // Bibliographies, images and included files can change without ever being opened.
         if meaning.tree || !others.is_empty() {
             self.edits += 1;
             self.mark_outdated();
@@ -870,9 +801,6 @@ impl Actor {
         if meaning.tree {
             self.reload_tree();
         }
-        // Another app chose another main file: builds and Live Preview follow it as they follow
-        // the app's own choice. Each fold and folder opened writes the settings too, so the
-        // folder is walked again only for another mark.
         if meaning.settings {
             let chosen = settings::read_settings(&self.project.settings).main_file;
             let chosen = paths::fold_case(&chosen);
@@ -902,7 +830,6 @@ impl Actor {
         }
         let (disk, stamp) = match read_disk(&abs) {
             Ok(read) => read,
-            // An error that may pass, as a permission or another app's lock does, while saves wait.
             Err(err) => {
                 if doc.dirty() {
                     doc.error = Some(err.message);
@@ -957,10 +884,6 @@ impl Actor {
         self.live_files_changed();
     }
 
-    // MARK: - Symbols
-
-    /// Without the project's lock: every write replaces a file in one rename, so a scan reads
-    /// each file whole, old or new.
     fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.project.root.clone(), self.tx.clone());
@@ -1014,9 +937,6 @@ impl Actor {
         }
     }
 
-    // MARK: - Search and replace
-
-    /// Worked out beside the session: it reads every text file.
     fn search(&self, query: Query, reply: Reply) {
         let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
         tokio::task::spawn_blocking(move || {
@@ -1033,8 +953,6 @@ impl Actor {
         self.edit_project("Before Replace All", &open, &projects::is_text, &found, to)
     }
 
-    /// Where the project defines or uses the name at `offset` in the open document `path`, as
-    /// a search's hits: worked out beside the session, as a search is.
     fn usages(&self, path: &str, offset: u32, reply: Reply) {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(Value::Null));
@@ -1043,7 +961,6 @@ impl Actor {
         tokio::task::spawn_blocking(move || {
             let own = doc.facts();
             let symbol = doc.with(|source| source.symbol_at(&own, offset));
-            // A file by the project's name for it, which every input of it elsewhere resolves to.
             let named = symbol.and_then(|(kind, name, file)| match kind {
                 SymbolKind::File => Some((kind, file?)),
                 kind => Some((kind, name)),
@@ -1057,7 +974,6 @@ impl Actor {
                 syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
             };
             let hits = projects::search_project(&root, &texts(&docs), &tex, &found, usize::MAX);
-            // As the source writes it, for a host's heading: a command has its backslash already.
             let name = match kind {
                 SymbolKind::Label => format!("\\label{{{name}}}"),
                 SymbolKind::Citation => format!("\\cite{{{name}}}"),
@@ -1069,8 +985,6 @@ impl Actor {
         });
     }
 
-    /// A label's or citation's definitions and every `\ref` or `\cite` kin's key that names it,
-    /// one key of a list alone.
     fn rename_symbol(&self, noun: &str, from: &str, to: &str) -> Result<Value, CoreError> {
         let kind = match noun {
             "label" => SymbolKind::Label,
@@ -1112,8 +1026,6 @@ impl Actor {
         self.edit_project("Before Rename", &open, &tex, &found, to)
     }
 
-    /// An issue's fix by its id. An install takes minutes, so it runs beside the session, as an
-    /// analysis does; its password dialog cancelled answers null, nothing to do.
     fn fix(&mut self, id: &str, reply: Reply) {
         let edits = match Fix::parse(id) {
             Some(Fix::Install(file)) => {
@@ -1141,10 +1053,7 @@ impl Actor {
         reply.send(edits.map(|edits| fixed(edits, &self.project)));
     }
 
-    /// `\usepackage{name}` on a line of its own where `Facts::new_package` says, unless the main
-    /// file loads the package already.
     fn add_package(&self, name: &str) -> Result<Value, CoreError> {
-        // As the disk spells it, which the walk compares, however the settings do.
         let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
         let found = |_: &str, text: &str| {
@@ -1157,8 +1066,6 @@ impl Actor {
         self.edit_project("Before Adding a Package", &open, &main, &found, &line)
     }
 
-    /// The open documents' paths, text and versions, unless one has a change on disk still to
-    /// settle, when nothing is edited, as nothing is saved.
     pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
         let unsettled =
@@ -1176,12 +1083,6 @@ impl Actor {
         Ok(docs.map(text).collect())
     }
 
-    /// `to` in place of what `found` finds in each file `chosen` takes, given its text with line
-    /// feeds alone, after a snapshot taken for `reason`. An open document isn't written: its edits
-    /// are answered against its version, for the host to apply as one edit that the session saves
-    /// as any other, and the answer holds one document's. The other files are read again, written
-    /// and counted under the project's lock, but for those on their way to the Trash. The
-    /// snapshot's id is answered, for a host that can't apply the edits to put the others back.
     fn edit_project(
         &self,
         reason: &'static str,
@@ -1215,9 +1116,6 @@ impl Actor {
         Ok(json!({ "edits": edits.pop(), "written": written, "snapshot": snapshot }))
     }
 
-    // MARK: - Files
-
-    /// `name` renames the entry in its folder, `to` moves it.
     fn rename(
         &mut self,
         from: &str,
@@ -1239,8 +1137,6 @@ impl Actor {
         })?;
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
-        // Names compare without case, so a rename only in case leaves the entry itself at the
-        // new name: that one moves rather than closes.
         for path in self.docs_within(to) {
             if !within(&path, from) {
                 self.close_doc(&path, "gone");
@@ -1272,8 +1168,6 @@ impl Actor {
         Ok(answer)
     }
 
-    /// With `build`, an automatic build follows; after a fix the host builds, once it has applied
-    /// the fix's edits.
     fn set_settings(&mut self, patch: &Value, build: bool) -> Result<Value, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
@@ -1310,7 +1204,6 @@ impl Actor {
         }
     }
 
-    /// Saved first, so no autosave can make the file again, and held until `deleted`.
     fn prepare_delete(&mut self, path: &str) -> Result<Value, CoreError> {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
             return Ok(json!({ "ready": false }));
@@ -1324,17 +1217,14 @@ impl Actor {
     }
 }
 
-/// The settings always, so a host shows the engine and toggles as a fix leaves them.
 fn fixed(edits: Value, project: &Project) -> Value {
     json!({ "edits": edits, "settings": settings::shown(project) })
 }
 
-/// The files a symbol is defined and used in.
 fn tex(rel: &str) -> bool {
     matches!(file_kind(rel), "tex" | "bib")
 }
 
-/// The open documents' text as the editor has it, each taken without holding the others.
 fn texts(docs: &Mutex<HashMap<String, Document>>) -> HashMap<String, String> {
     let docs = lock(docs).clone();
     docs.into_iter()
@@ -1342,8 +1232,6 @@ fn texts(docs: &Mutex<HashMap<String, Document>>) -> HashMap<String, String> {
         .collect()
 }
 
-/// A volume that keeps whole seconds could give a same-length write in the same second
-/// that stamp: there the text tells.
 fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
     match (stamp, now) {
@@ -1356,9 +1244,6 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     }
 }
 
-/// The text with line feeds alone, as a document holds it, and the file's own line ending;
-/// None for a file that isn't UTF-8, whose bytes a save would change. The stamp is from before
-/// the read, so a write meanwhile reads again at the next look.
 fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError> {
     let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
     let disk = String::from_utf8(fs::read(path)?).ok().map(|text| {

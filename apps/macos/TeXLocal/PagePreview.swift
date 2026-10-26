@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Bars where the text would be, laid out like the template's first page, in points of the 120 pt page.
 struct PagePreview: View {
     let template: ProjectTemplate
 

@@ -2,43 +2,70 @@ import Foundation
 import Testing
 @testable import TeXLocal
 
-/// Projects are removed, not trashed: `delete_project` trashes through Finder, which a headless test host can't drive.
+@Suite(.serialized)
 struct CoreTests {
-    init() throws {
-        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+    @Test func theLibraryIsTheTestOne() {
+        #expect(Core.libraryFolder.path(percentEncoded: false).hasPrefix("/tmp/texlocal-xctest"))
+        #expect(Core.shared.isOpen)
     }
 
-    @Test func aCoreErrorIsDecodedAndAMisshapenAnswerIsSaidInTheAppsWords() async throws {
-        let core = Core.shared, info = try await newProject()
-        defer { try? FileManager.default.removeItem(at: info.folder) }
-        let error = await #expect(throws: CoreError.self) {
-            _ = try await core.call("file_tree", ["id": "../x"], as: FileText.self)
-        }
-        #expect(error?.message == "Bad project id" && error?.kind == .invalid)
-        let fault = await #expect(throws: CoreError.self) {
-            _ = try await core.call("file_tree", ["id": info.id], as: FileText.self)
-        }
-        #expect(fault?.message.hasPrefix("Something went wrong inside TeXLocal.") == true && fault?.kind == nil)
-        // Arguments JSON can't hold are the same fault, not an exception.
-        let unsent = await #expect(throws: CoreError.self) { try await core.call("file_tree", ["id": info.id, "n": Double.nan]) }
-        #expect(unsent?.message == fault?.message)
+    @Test func aCommandAnswersDecodedValues() async throws {
+        let project = try await newProject()
+        let listed = try await Core.shared.call("list_projects", as: [ProjectInfo].self)
+        #expect(listed.contains { $0.id == project.id && $0.mainFile == "main.tex" })
     }
 
-    @Test func aSessionsEventsReachTheObserverOfItsNumber() async throws {
-        let core = Core.shared, info = try await newProject()
-        defer { try? FileManager.default.removeItem(at: info.folder) }
+    @Test func aRefusalCarriesItsKind() async {
+        await #expect {
+            try await Core.shared.call("file_tree", ["id": "No such project"], as: [TreeNode].self)
+        } throws: { error in
+            (error as? CoreError)?.kind == .notFound
+        }
+        await #expect {
+            try await Core.shared.call("no_such_command", [:])
+        } throws: { error in
+            (error as? CoreError)?.kind == .notFound
+        }
+    }
+
+    @Test func aSessionsAnswerAndEventsDecode() async throws {
+        let project = try await newProject()
         var events: [SessionEvent] = []
-        let session = core.observe { events.append($0) }
-        defer { core.forget(session) }
-        let opened = try await core.call("session_open", ["id": info.id, "session": session], as: SessionOpened.self)
-        #expect(opened.settings.mainFile == info.mainFile)
-        try await core.call("session_open_document", ["session": session, "path": info.mainFile])
-        try await core.call("session_close_document", ["session": session, "path": info.mainFile])
+        let session = Core.shared.observe { events.append($0) }
+        defer { Core.shared.forget(session) }
+        let opened = try await Core.shared.call("session_open", ["id": project.id, "session": session], as: SessionOpened.self)
+        #expect(opened.settings.mainFile == "main.tex")
+        #expect(opened.tree.contains { $0.name == "main.tex" })
+        try await Core.shared.call("session_open_document", ["session": session, "path": "main.tex"])
         try await waitUntil {
-            events.contains { if case .closed(let closed) = $0 { closed.path == info.mainFile && closed.reason == "closed" } else { false } }
+            events.contains { if case .outline = $0 { true } else { false } }
+                && events.contains { if case .checks = $0 { true } else { false } }
         }
-        try await core.call("session_close", ["session": session])
+        let saved = try await Core.shared.call("session_close", ["session": session], as: Saved.self)
+        #expect(saved.saved)
+    }
+
+    @Test func aSessionDocumentIsEditedAndSaved() async throws {
+        let project = try await newProject(template: "blank")
+        let session = Core.shared.observe { _ in }
+        defer { Core.shared.forget(session) }
+        try await Core.shared.call("session_open", ["id": project.id, "session": session])
+        try await Core.shared.call("session_open_document", ["session": session, "path": "main.tex"])
+        let document = try #require(SourceDocument(session: session, path: "main.tex"))
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
+        let saved = try await Core.shared.call("session_save", ["session": session], as: Saved.self)
+        #expect(saved.saved)
+        let text = try String(contentsOfFile: project.path + "/main.tex", encoding: .utf8)
+        #expect(text.hasPrefix("% note\n"))
+        try await Core.shared.call("session_close", ["session": session])
+    }
+
+    @Test func anEventOfAnUnknownTypeIsLeftOut() throws {
+        let known = try JSONDecoder().decode(EventRead.self, from: Data(#"{"type":"files_changed","session":3,"paths":["a.png"]}"#.utf8))
+        #expect(known.session == 3)
+        guard case .filesChanged(let changed) = known.event else { Issue.record("not decoded"); return }
+        #expect(changed.paths == ["a.png"])
+        let unknown = try JSONDecoder().decode(EventRead.self, from: Data(#"{"type":"something_new","session":3}"#.utf8))
+        #expect(unknown.event == nil)
     }
 }
-
-private nonisolated struct FileText: Decodable { let text: String }

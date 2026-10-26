@@ -1,5 +1,3 @@
-# shotdiff.py <dir a> <dir b>: for each PNG in both, the count of pixels that differ by more than 2 in any channel
-# and the box that holds them.
 import sys, os
 from PIL import Image, ImageChops
 a, b = sys.argv[1], sys.argv[2]

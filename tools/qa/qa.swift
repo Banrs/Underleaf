@@ -1,16 +1,11 @@
-// qa: the on-screen QA driver for the Mac app (Accessibility, CGEvent, screencapture); tools/qa/README.md.
 import ApplicationServices
 import Cocoa
 
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ e: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
-// MARK: - basics
-
 let env = ProcessInfo.processInfo.environment
-// The scratchpad holds the lock, appearance.dylib, and the default app and library.
 let SCR = env["QA_SCRATCH"] ?? NSTemporaryDirectory() + "texlocal-qa"
-// QA_BG=1: the owner is using the Mac. Nothing fronts the app or posts an event, and the app opens behind.
 let BG = env["QA_BG"] == "1"
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -27,7 +22,6 @@ func sleepS(_ s: Double) { Thread.sleep(forTimeInterval: s) }
 
 var args = Array(CommandLine.arguments.dropFirst())
 
-/// Removes `name value` from the arguments and returns the value.
 func takeOpt(_ name: String) -> String? {
     guard let i = args.firstIndex(of: name) else { return nil }
     guard i + 1 < args.count else { fail("\(name) needs a value") }
@@ -49,9 +43,6 @@ guard !args.isEmpty else {
 }
 let cmd = args.removeFirst()
 
-// MARK: - lock
-
-// Every caller takes the lock, held until exit; `qa lock` holds it for its command, whose qa calls skip it.
 if env["QA_LOCK_HELD"] != "1" {
     let fd = open("\(SCR)/qa/lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
     if fd < 0 { fail("cannot open lock file") }
@@ -73,8 +64,6 @@ if cmd == "lock" {
     exit(p.terminationStatus)
 }
 
-// MARK: - permissions
-
 @discardableResult
 func run(_ path: String, _ a: [String]) -> Int32 {
     let p = Process()
@@ -93,15 +82,12 @@ func checkAX() {
 }
 func checkScreen() {
     if CGPreflightScreenCaptureAccess() { return }
-    // The preflight can be stale: a real capture decides.
     let t = "\(NSTemporaryDirectory())qa-perm-\(getpid()).png"
     defer { try? FileManager.default.removeItem(atPath: t) }
     if run("/usr/sbin/screencapture", ["-x", "-R0,0,8,8", t]) != 0 || !FileManager.default.fileExists(atPath: t) {
         fail("MISSING PERMISSION: Screen Recording is not granted to the hosting process", 2)
     }
 }
-
-// MARK: - Accessibility
 
 func axApp(_ pid: pid_t) -> AXUIElement {
     let a = AXUIElementCreateApplication(pid)
@@ -144,7 +130,6 @@ struct El {
 }
 let loadNames = ["AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXValue", "AXIdentifier",
                  "AXPosition", "AXSize", "AXEnabled", "AXFocused", "AXChildren", "AXHelp"] as CFArray
-/// One round trip for the attributes a walk reads.
 func load(_ e: AXUIElement) -> El {
     var el = El(ref: e)
     var out: CFArray?
@@ -165,7 +150,6 @@ func load(_ e: AXUIElement) -> El {
     return el
 }
 
-/// Depth first, at most 20,000 elements; `visit` returning false skips the element's children.
 func walk(_ root: AXUIElement, maxDepth: Int = 40, _ visit: (El, [Int], Int) -> Bool) {
     var count = 0
     func rec(_ e: AXUIElement, _ path: [Int], _ depth: Int) {
@@ -185,8 +169,6 @@ func first(in root: AXUIElement, maxDepth: Int = 40, _ match: (El) -> Bool) -> E
     }
     return found
 }
-
-// MARK: - the app and its windows
 
 func targetApp() -> NSRunningApplication? {
     NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
@@ -218,7 +200,6 @@ func bounds(_ w: [String: Any]) -> CGRect {
 func windowID(_ w: AXUIElement) -> CGWindowID? {
     var id: CGWindowID = 0
     if _AXUIElementGetWindow(w, &id) == .success && id != 0 { return id }
-    // 27.2: the private call can fail for a background app; the app's largest normal window by pid instead.
     let pid = needApp().processIdentifier
     let mine = windowList([.optionAll]).filter {
         ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
@@ -233,7 +214,6 @@ func pickWindow(_ named: String?) -> AXUIElement {
     }
     return w
 }
-/// The windows searched: `--all-windows`, or the one `--window` names, else the main one.
 func takeRoots() -> [AXUIElement] {
     let all = takeFlag("--all-windows")
     let title = takeOpt("--window")
@@ -274,9 +254,6 @@ func windows() -> [[String: Any]] {
     return [windowInfo(m, main: true)] + axWindows().filter { windowID($0) != mid }.map { windowInfo($0, main: false) }
 }
 
-// MARK: - events
-
-/// In the background a real event would reach the person's own windows, and their caret, so only Accessibility acts.
 func post(_ e: CGEvent?) {
     if BG { fail("refusing to post a mouse or key event in the background (QA_BG): use an Accessibility command") }
     e?.post(tap: .cghidEventTap)
@@ -313,7 +290,6 @@ func pressKey(_ chord: String) {
     var parts = chord.lowercased().components(separatedBy: "+")
     var key = parts.removeLast()
     var flags = modifiers(parts)
-    // "cmd++" is cmd+shift+=.
     if key.isEmpty { key = "="; flags.insert(.maskShift) }
     guard let code = keyCodes[key] else { fail("unknown key '\(key)'") }
     if fnKeys.contains(key) { flags.insert(.maskSecondaryFn) }
@@ -340,10 +316,9 @@ func typeText(_ t: String) {
     }
 }
 
-/// Never a click on anything but the target app, such as a system prompt over it.
 func guardPoint(_ p: CGPoint) {
     let pid = needApp().processIdentifier
-    for w in windowList([.optionOnScreenOnly]) where bounds(w).contains(p) {  // front to back
+    for w in windowList([.optionOnScreenOnly]) where bounds(w).contains(p) {
         if (w[kCGWindowAlpha as String] as? Double ?? 1) < 0.05 { continue }
         let owner = w[kCGWindowOwnerName as String] as? String ?? ""
         if (w[kCGWindowOwnerPID as String] as? Int32 ?? 0) == pid { return }
@@ -386,13 +361,10 @@ func nums(_ n: Int, _ usage: String) -> [Double] {
         return v
     }
 }
-/// A point from the window's top-left, or the screen's with `--screen`.
 func point(_ x: Double, _ y: Double, screen: Bool) -> CGPoint {
     let origin = screen ? .zero : (frameOf(mainWindow()) ?? .zero).origin
     return CGPoint(x: origin.x + x, y: origin.y + y)
 }
-
-// MARK: - menus
 
 func menuBarItems() -> [AXUIElement] {
     guard let m = attr(appEl(), "AXMenuBar") else { fail("no menu bar (is the app frontmost?)") }
@@ -408,7 +380,6 @@ func menuItemInfo(_ e: AXUIElement, depth: Int) -> [String: Any] {
     var d: [String: Any] = ["title": title(e), "enabled": enabled(e) ?? true]
     if let m = attrStr(e, "AXMenuItemMarkChar"), !m.isEmpty { d["checked"] = m }
     if let c = attrStr(e, "AXMenuItemCmdChar"), !c.isEmpty {
-        // Accessibility's modifier bits: 1 shift, 2 option, 4 control, 8 no command.
         let mods = (attr(e, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue ?? 0
         let names = [(4, "ctrl+"), (2, "opt+"), (1, "shift+")].filter { mods & $0.0 != 0 }.map(\.1)
         d["shortcut"] = names.joined() + (mods & 8 == 0 ? "cmd+" : "") + c.lowercased()
@@ -422,7 +393,6 @@ func menuItemInfo(_ e: AXUIElement, depth: Int) -> [String: Any] {
     }
     return d
 }
-/// By exact title, then without an ellipsis, then by prefix, ignoring case.
 func findMenuItem(in menu: AXUIElement, _ name: String) -> AXUIElement? {
     let items = attrEls(menu, "AXChildren")
     func norm(_ s: String) -> String {
@@ -434,19 +404,14 @@ func findMenuItem(in menu: AXUIElement, _ name: String) -> AXUIElement? {
         ?? items.first { norm(title($0)) == norm(name) }
         ?? items.first { title($0).lowercased().hasPrefix(t) }
 }
-/// A failed `menu` must not leave the menu open under the next command.
 func closeMenus() { pressKey("escape"); sleepS(0.1); pressKey("escape"); sleepS(0.2) }
-/// AXPress can block while a menu tracks, so it runs off this thread with a timeout.
 func pressAsync(_ e: AXUIElement, timeout: Double = 3) {
     let sem = DispatchSemaphore(value: 0)
     DispatchQueue.global().async { AXUIElementPerformAction(e, kAXPressAction as CFString); sem.signal() }
     _ = sem.wait(timeout: .now() + timeout)
 }
 
-// MARK: - element search
-
 struct Hit { let el: El; let path: [Int]; let rank: Int; let win: CGRect }
-/// Rank 4 an identifier, 3 an exact title, description, value or identifier, 2 a substring of one; ignoring case.
 func search(_ text: String, roots: [AXUIElement], role: String? = nil) -> [Hit] {
     var hits: [Hit] = []
     let t = text.lowercased()
@@ -474,7 +439,6 @@ func hitJSON(_ h: Hit, _ i: Int? = nil) -> [String: Any] {
     if let e = h.el.enabled { d["enabled"] = e }
     return d
 }
-/// The one best match, or `--index n` of the best; several are an error.
 func bestHit(_ text: String) -> Hit {
     let roots = takeRoots()
     let role = takeOpt("--role")
@@ -497,8 +461,6 @@ func bestHit(_ text: String) -> Hit {
     return best[0]
 }
 
-// MARK: - commands
-
 func launch() {
     let dataDir = takeOpt("--data") ?? "\(SCR)/qa-library"
     let dark = takeFlag("--dark"), light = takeFlag("--light")
@@ -506,13 +468,10 @@ func launch() {
     if let i = args.firstIndex(of: "--") { extra = Array(args[(i + 1)...]) }
     if targetApp() == nil {
         var envs = ["TEXLOCAL_DATA=\(dataDir)"]
-        // Launch arguments alone don't change the appearance on macOS 27: a dylib injected into this
-        // process alone sets NSApp.appearance.
         let dylib = "\(SCR)/qa/appearance.dylib"
         if dark || light, FileManager.default.fileExists(atPath: dylib) {
             envs = ["QA_APPEARANCE=\(dark ? "dark" : "light")", "DYLD_INSERT_LIBRARIES=\(dylib)"] + envs
         }
-        // QA_ENV="K=V;K2=V2": more environment, such as a scratch TEXLOCAL_TEXPRESSO.
         envs += (env["QA_ENV"] ?? "").split(separator: ";").filter { $0.contains("=") }.map(String.init)
         var oa = (BG ? ["-g"] : []) + ["-n"] + envs.flatMap { ["--env", $0] } + [appPath, "--args"]
         if light { oa += ["-NSRequiresAquaSystemAppearance", "YES"] }
@@ -568,7 +527,6 @@ func toolbarJSON() {
     var items: [[String: Any]] = []
     var overflow: [String: Any]?
     for el in tb.children.map(load) {
-        // A group holds its buttons.
         if el.role == "AXGroup" || el.role == "AXToolbar" {
             var g: [String: Any] = ["role": el.role, "name": el.name, "group": true]
             g["children"] = el.children.map { item(load($0)) }
@@ -596,8 +554,6 @@ func shotWindow(_ out: String, title: String?, noFront: Bool) {
     checkScreen()
     if !noFront { front(); sleepS(0.4) }
     let w = pickWindow(title)
-    // A window past the screen's edge is captured short: move it onto the visible area first
-    // (Accessibility's frames are top-left, the visible frame bottom-left).
     if let f = frameOf(w), let screen = NSScreen.screens.first {
         let visible = screen.visibleFrame
         let top = screen.frame.maxY - visible.maxY, foot = screen.frame.maxY - visible.minY
@@ -618,7 +574,6 @@ func shotWindow(_ out: String, title: String?, noFront: Bool) {
     emit(["file": out, "windowID": id])
 }
 
-/// The source editor through Accessibility alone, for a window that isn't frontmost.
 func editor() {
     guard let area = first(in: pickWindow(nil), { $0.role == "AXTextArea" })?.ref else {
         fail("no text area in the window")
@@ -634,7 +589,6 @@ func editor() {
     default:
         let start = takeFlag("--start")
         guard let n = args.first.flatMap({ Int($0) }), n >= 1 else { fail("usage: qa caret <line> [--start]") }
-        // The file's lines, not the wrapped ones AXRangeForLine counts.
         let text = (attrStr(area, "AXValue") ?? "") as NSString
         var line = NSRange(location: 0, length: 0), at = 0
         for _ in 1...n {
@@ -665,7 +619,6 @@ case "quit":
     checkAX()
     guard let app = targetApp() else { print("{\"running\": false}"); exit(0) }
     front()
-    // The app menu's Quit item; the app menu follows the Apple menu.
     var pressed = false
     if let bar = attr(axApp(app.processIdentifier), "AXMenuBar") {
         let tops = attrEls(bar as! AXUIElement, "AXChildren")
@@ -676,7 +629,6 @@ case "quit":
     }
     for _ in 0..<50 where targetApp() != nil { sleepS(0.1) }
     guard let a = targetApp() else { emit(["running": false]); break }
-    // A sheet may be in the way.
     if !pressed { a.terminate() }
     for _ in 0..<30 where targetApp() != nil { sleepS(0.1) }
     if let a = targetApp() { a.forceTerminate(); sleepS(0.3) }
@@ -714,7 +666,6 @@ case "shot":
 
 case "screen":
     checkScreen()
-    // --around: the main window and 60 pt round it, for popovers and menus.
     let around = takeFlag("--around")
     guard let out = args.first else { fail("usage: qa screen <out.png> [--around]") }
     var sa = ["-x"]
@@ -751,8 +702,6 @@ case "menu":
 
 case "key", "type":
     checkAX(); noEvents(cmd)
-    // --no-raise: into a window already fronted. Raising it again resigns and takes key round the keys,
-    // which closes what a key window keeps open (a popover, a menu, the completion list).
     let noRaise = takeFlag("--no-raise")
     guard let a = args.first else { fail("usage: qa \(cmd) <\(cmd == "key" ? "chord" : "text")> [--no-raise]") }
     if !noRaise { front(); sleepS(0.1) }
@@ -763,7 +712,6 @@ case "click":
     checkAX(); noEvents("click")
     let right = takeFlag("--right"), double = takeFlag("--double"), screen = takeFlag("--screen")
     let mods = modifiers((takeOpt("--mod") ?? "").lowercased().split(separator: ",").map(String.init))
-    // --no-raise: a click in a window already fronted, on something a passing loss of key would close.
     let noRaise = takeFlag("--no-raise")
     let n = nums(2, "qa click <x> <y>")
     if !noRaise { front(); sleepS(0.1) }
@@ -800,7 +748,6 @@ case "scroll":
     let n = nums(4, "qa scroll <x> <y> <dx> <dy>")
     front(); sleepS(0.1)
     post(mouse(.mouseMoved, point(n[0], n[1], screen: screen))); sleepS(0.05)
-    // Pixels, in the wheel's sense: a positive dy scrolls the content up.
     post(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                  wheel1: Int32(n[3]), wheel2: Int32(n[2]), wheel3: 0))
 
@@ -818,7 +765,6 @@ case "press":
     checkAX()
     guard let t = args.first else { fail("usage: qa press <text> [--index n]") }
     let double = takeFlag("--double")
-    // --row-control AXCheckBox: the control of that role on the label's row, as a form's switch, which has no title.
     if let role = takeOpt("--row-control") {
         let root = pickWindow(nil)
         guard let label = search(t, roots: [root], role: "AXStaticText").max(by: { $0.rank < $1.rank })?.el.frame else {
@@ -837,7 +783,6 @@ case "press":
         break
     }
     let h = bestHit(t)
-    // Pop-ups and menu buttons open only in an active app; this also makes the window key after a menu action.
     front(); sleepS(0.3)
     var actions: CFArray?
     AXUIElementCopyActionNames(h.el.ref, &actions)
@@ -882,10 +827,9 @@ case "toolbar":
     checkAX(); toolbarJSON()
 
 case "close":
-    // By the window's close button, so a stray Cmd-W never quits the app.
     checkAX()
     let w: AXUIElement
-    if takeFlag("--other") {  // a window other than the main one (About, Settings)
+    if takeFlag("--other") {
         let mid = windowID(mainWindow())
         guard let o = axWindows().first(where: { windowID($0) != mid }) else { fail("no secondary window") }
         w = o

@@ -1,9 +1,6 @@
 import PDFKit
 
-/// SyncTeX both ways: the source's place found on the pages, and the point a page shows or is clicked at for the core to
-/// find in the source.
 extension PDFController {
-    /// The word selected in the find bar's colour, unless the find bar is open with its own.
     func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
         if let selection, !find.isOpen {
             view.removeMark()
@@ -14,8 +11,6 @@ extension PDFController {
         }
     }
 
-    /// SyncTeX resolves only points on a glyph box, and the page centre is usually whitespace: the probe walks down to a
-    /// line of text.
     func sourcePoint() -> (page: Int, point: CGPoint)? {
         guard let document = view.document else { return nil }
         let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
@@ -33,8 +28,6 @@ extension PDFController {
         return (number, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
     }
 
-    /// The source's word, found by the core in the text round SyncTeX's boxes (`synctex_match`), is selected; where it
-    /// isn't found once, SyncTeX's box flashes.
     func reveal(_ loc: ForwardLoc, from source: SyncSource? = nil) {
         guard view.hasShownArea else {
             pendingReveal = (loc, source)
@@ -50,7 +43,6 @@ extension PDFController {
             let hit = try? await Core.shared.call("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
                                                                     "column": source.column, "pages": pages.map(\.args)],
                                                   as: PageHit?.self)
-            // The match is for the pages that were read, which a rebuild or a live page may have replaced.
             guard !Task.isCancelled, view.document === document, read.allSatisfy({ document.number(of: $0) != nil }),
                   !source.quietly || hit != nil else { return }
             showFound(loc, on: located, hit: hit)
@@ -70,7 +62,6 @@ extension PDFController {
         highlight(found?.selection, or: rect, on: page)
     }
 
-    /// A page either side of SyncTeX's boxes, as the line can wrap past the first and TeX be a page on.
     private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [(page: PDFPage, args: [String: any Sendable])] {
         let numbers = boxes.map { Int($0.page) }
         guard let lowest = numbers.min(), let highest = numbers.max() else { return [] }
@@ -92,9 +83,7 @@ extension PDFController {
     }
 }
 
-/// SyncTeX uses top-left PDF points; PDFKit uses bottom-left page-box points.
 enum SyncTeXGeometry {
-    /// A box SyncTeX gives no size has a line's height and a word's width.
     static func highlightRect(_ loc: ForwardLoc, pageBounds: CGRect) -> CGRect {
         CGRect(x: pageBounds.minX + (loc.h ?? 0), y: pageBounds.maxY - (loc.v ?? 0),
                width: max(24, CGFloat(loc.width ?? 0)), height: CGFloat(loc.height ?? 12))
@@ -107,10 +96,7 @@ enum SyncTeXGeometry {
 }
 
 extension PDFPage {
-    /// The page's text and the clicked letter's index in it, for the core to find in the source. `characterIndex` is a letter
-    /// behind for each line above, so each letter's selection is measured instead (`aClickSendsThePagesTextAndTheLetter`).
     func click(at point: CGPoint) -> PageClick? {
-        // PDFKit's word lookup crashes on a page whose document has gone.
         guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }
         let range = word.range(at: 0, on: self)
         guard range.location != NSNotFound else { return nil }

@@ -7,8 +7,6 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 
-# Pedantic lints that find real slips here; the rest of pedantic is noise for this code
-# (UTF-16 offsets cast by design, prose doc comments, an unpublished library).
 [workspace.lints.clippy]
 assigning_clones = "warn"
 borrow_as_ptr = "warn"
@@ -16,6 +14,7 @@ derive_partial_eq_without_eq = "warn"
 format_push_string = "warn"
 ignored_unit_patterns = "warn"
 map_unwrap_or = "warn"
+missing_safety_doc = "allow"
 needless_collect = "warn"
 redundant_closure_for_method_calls = "warn"
 semicolon_if_nothing_returned = "warn"
@@ -24,15 +23,10 @@ unchecked_time_subtraction = "warn"
 unused_self = "warn"
 use_self = "warn"
 
-# Measured in October 2026, LTO left a stripped binary linking texlocal-ffi
-# 1.5 MB smaller, and the editor's calls through the C ABI no faster.
 [profile.release]
 codegen-units = 1
 lto = true
 strip = true
 
-# Proc macros and build scripts run only on the build machine, and stripped by
-# the macOS 27 toolchain for the app's deployment target their dylibs fail to
-# load ("mis-aligned LINKEDIT string pool"), breaking the app's release build.
 [profile.release.build-override]
 strip = false

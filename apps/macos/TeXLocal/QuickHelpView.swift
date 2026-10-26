@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Xcode's Quick Help: the name in the editor's font, what it is beneath, and a way to where it is defined.
 struct QuickHelpView: View {
     let help: QuickHelp
     let font: NSFont

@@ -6,10 +6,7 @@ struct BuildPanel: View {
     var body: some View {
         BuildPanelPage(project: project)
         .background(.textSurface)
-        // The bar's own line is the edge, where SwiftUI draws none (an AppKit scroll view).
         .scrollEdgeEffectHidden(true, for: .bottom)
-        // Not a split item's accessory, which AppKit shows only once the pane has its height. In a safe-area bar a search
-        // field is a toolbar's filled capsule.
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -59,7 +56,6 @@ struct BuildPanelBar: View {
         .background(.textSurface)
     }
 
-    /// Regular: small, a search field is an outlined box.
     private func filter(_ text: Binding<String>) -> some View {
         SearchField(text: text, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
             .controlSize(.regular)
@@ -90,7 +86,6 @@ struct IssueList: View {
                     }
                 } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
-                // A hidden list scrolls by its rows' estimated heights, so again as it comes up.
                 .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
                     if let place = project.chosenIssue { proxy.scrollTo(place) }
@@ -103,7 +98,6 @@ struct IssueList: View {
     private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line, jump: true) } } }
 }
 
-/// A SwiftUI Text lays out megabyte logs whole on every change.
 struct LogTextView: NSViewRepresentable {
     let text: String
     var title = "Build Log"
@@ -121,7 +115,6 @@ struct LogTextView: NSViewRepresentable {
         return scroll
     }
 
-    /// An unchanged log compares the same storage, without passes over a megabyte log.
     final class Coordinator { var shown: String? }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -149,7 +142,6 @@ struct LogTextView: NSViewRepresentable {
         let origin = scroll.contentView.bounds.origin
         let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
             && (shown.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
-        // Appended without laying the whole log out again, unless a new build or the log's rollover replaced it.
         let previousLength = (shown as NSString).length, new = text as NSString
         if previousLength > 0, text.utf16.starts(with: shown.utf16) {
             view.textStorage?.replaceCharacters(in: .caret(previousLength), with: new.substring(from: previousLength))

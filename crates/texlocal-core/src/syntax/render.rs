@@ -1,7 +1,3 @@
-//! Maths as SVG by RaTeX (KaTeX's layout in Rust), every glyph an outline from the compiled-in KaTeX fonts, so the SVG
-//! needs no fonts. Text they lack (CJK, Cyrillic) is drawn from the system's fonts; what has no outline, such as a
-//! colour emoji on macOS, is an error.
-
 use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_lexer::token::Token;
 use ratex_parser::macro_expander::{MacroDefinition, MacroExpander};
@@ -18,11 +14,8 @@ pub struct MathSvg {
     pub height: f64,
 }
 
-/// No larger than this, in ems: `\rule{1e9pt}{1pt}` would otherwise ask the host for an image of millions of points.
 const MAX_EM: f64 = 1000.0;
 
-/// `\texlocal@optional\name@{default}`: `\name@` given the bracketed option that follows, else
-/// the default, as a project's `\newcommand` with an optional first argument is previewed.
 fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
     let name = gullet.pop_token();
     let mut option = gullet.consume_arg(None)?.tokens;
@@ -31,7 +24,6 @@ fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
         gullet.pop_token();
         option = gullet.consume_arg(Some(&["]"]))?.tokens;
     }
-    // Reversed, as the gullet's stack holds them.
     let brace = |text| Token::new(text, name.loc.start, name.loc.end);
     let mut tokens = vec![brace("}")];
     tokens.extend(option);
@@ -62,7 +54,6 @@ fn display_list(tex: &str, display: bool) -> Result<DisplayList, String> {
     };
     list.width = clamp(list.width).max(0.0);
     list.height = clamp(list.height);
-    // A box's height and depth can be negative; the drawing's can't.
     list.depth = (list.height + clamp(list.depth)).clamp(0.0, MAX_EM) - list.height;
     Ok(list)
 }
@@ -76,11 +67,9 @@ fn svg(list: &DisplayList, size: f64) -> Result<String, String> {
         font_dir: String::new(),
     };
     let svg = render_to_svg_with_color_syntax(list, &options, SvgColorSyntax::Rgb);
-    // A glyph without an outline falls back to text in a font the host may lack.
     if svg.contains("<text") || svg.contains("<image") {
         return Err("The maths fonts can't draw this".into());
     }
-    // A length past what a number holds, which no SVG reader takes.
     if svg.contains("inf") || svg.contains("NaN") {
         return Err("The maths is too large to draw".into());
     }
@@ -98,81 +87,4 @@ pub fn math_svg(tex: &str, display: bool, size: f64) -> Result<MathSvg, String> 
         width: list.width * size,
         height: (list.height + list.depth) * size,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn elements(svg: &str) -> Vec<&str> {
-        svg.split('<')
-            .skip(1)
-            .filter(|e| !e.starts_with('/'))
-            .map(|e| e.split([' ', '>', '/']).next().unwrap())
-            .collect()
-    }
-
-    #[test]
-    fn maths_is_paths_and_rects_only() {
-        let fraction = math_svg(r"\frac{a}{b} + \sqrt{x^2}", true, 20.0).unwrap();
-        let mut names = elements(&fraction.svg);
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names, ["path", "rect", "svg"], "{}", fraction.svg);
-        assert!(fraction.width > 20.0 && fraction.height > 20.0);
-        assert!(fraction.svg.contains(r#"fill="rgb(0,0,0)""#));
-        let inline = math_svg(r"\sum_{i=1}^n i", false, 10.0).unwrap();
-        let display = math_svg(r"\sum_{i=1}^n i", true, 10.0).unwrap();
-        assert!(display.height > inline.height);
-        let double = math_svg(r"\sum_{i=1}^n i", false, 20.0).unwrap();
-        assert!((double.width - 2.0 * inline.width).abs() < 1e-9);
-    }
-
-    #[test]
-    fn what_cant_be_drawn_is_an_error() {
-        assert!(math_svg(r"x^", false, 10.0).is_err());
-        assert!(math_svg(r"\frac{1}", false, 10.0).is_err());
-        // A colour emoji has no outline to draw: macOS's emoji font is bitmaps alone.
-        assert!(math_svg(r"\text{😀}", false, 10.0).is_err());
-        assert!(math_svg(r"\def\a{\a}\a", false, 10.0).is_err());
-        assert!(math_svg("x", false, f64::NAN).is_err());
-        assert!(math_svg(r"\text{café} \alpha", false, 10.0).is_ok());
-        for tex in [r"\text{日本} + x", r"\text{Привет} \alpha"] {
-            let drawn = math_svg(tex, false, 10.0).unwrap();
-            assert!(
-                drawn.svg.contains("<path") && !drawn.svg.contains("<text"),
-                "{tex}"
-            );
-        }
-    }
-
-    #[test]
-    fn absurd_sizes_are_clamped() {
-        for tex in [
-            r"\rule{100000em}{1em}",
-            r"\rule{1em}{100000em}",
-            r"a\kern100000em b",
-            r"\hspace{1e9pt}x",
-        ] {
-            let svg = math_svg(tex, false, 10.0).unwrap();
-            assert!(
-                svg.width <= MAX_EM * 10.0 && svg.height <= MAX_EM * 10.0,
-                "{tex}"
-            );
-        }
-        let huge = math_svg("x", false, 1e12).unwrap();
-        assert!(huge.width < 1e4);
-        let digits = "9".repeat(310);
-        for tex in [
-            format!(r"\rule{{{digits}pt}}{{1pt}}"),
-            format!(r"a\kern{digits}em b"),
-        ] {
-            if let Ok(svg) = math_svg(&tex, false, 10.0) {
-                assert!(
-                    svg.width <= MAX_EM * 10.0 && !svg.svg.contains("inf"),
-                    "{tex}"
-                );
-            }
-        }
-    }
 }

@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// Xcode's editor bar's measures, which the File Outline's folded header shares.
 enum BarMetrics {
     static let height: CGFloat = 36
     static let target: CGFloat = 20
 }
 
-/// Small views, each observing its own values: a key typed redraws the caret's place and the word count, not the bar.
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -18,7 +16,6 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: 14, trailing: 16.5)
-        // Clicks between its controls stay with the bar, not the text or pages scrolled beneath it.
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -46,7 +43,6 @@ struct StatusBar: View {
     }
 }
 
-/// A button: the panel's own toggle is the one place its open state shows.
 private struct BuildStatus: View {
     let project: ProjectModel
     let detail: StatusBar.Detail
@@ -62,7 +58,6 @@ private struct BuildStatus: View {
     private var label: some View {
         HStack {
             if project.compiling {
-                // The toolbar's Stop has the build's one spinner.
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {
@@ -83,11 +78,9 @@ private struct BuildStatus: View {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
-        // A crossfade, which the HIG keeps under Reduce Motion.
         .animation(.easeInOut(duration: 0.2), value: project.compiling)
     }
 
-    /// `spoken` names the badge "3 errors" to VoiceOver and Voice Control, not "3".
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
                        spoken: LocalizedStringKey? = nil) -> some View {
         Label {
@@ -102,7 +95,6 @@ private struct BuildStatus: View {
     }
 }
 
-/// As the build's time after its result: the engine whose breaks the pages show, when the PDF's differ.
 private struct LiveStatus: View {
     let project: ProjectModel
 
@@ -159,7 +151,6 @@ private struct CaretPlace: View {
     }
 }
 
-/// The selection's count, while there is one, once it rests: a drag through the text changes it on every move.
 private struct WordCount: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -187,7 +178,6 @@ private struct WordCount: View {
     }
 }
 
-/// Page uses PDFKit numbering, which can differ from LaTeX.
 private struct PagePlace: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -207,8 +197,6 @@ private struct PagePlace: View {
         }
     }
 
-    /// Automatic builds refresh the PDF within moments, so it is called out of date only without them; while Live Preview
-    /// holds them, its pages take the PDF's place.
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.panel.show(.issues) } label: {
@@ -233,7 +221,6 @@ private struct PanelToggle: View {
 
     var body: some View {
         Toggle(isOn: Bindable(project.panel).shown) {
-            // With Differentiate Without Colour, off is the plain square.
             Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)

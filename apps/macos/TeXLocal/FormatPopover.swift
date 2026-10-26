@@ -1,12 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa: a toolbar button has no SwiftUI popover.
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
     private let project: ProjectModel
-    /// The click on Aa that closed it isn't one to open it again; a click's press and release have one number.
     private var closingClick: Int?
     private var click: Int? { NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil } }
 
@@ -31,8 +29,6 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
 }
 
-/// Notes' Aa: the styles' toggles, lit while the selection has them, then the class's levels, each in its heading's
-/// weight, the caret's checked. A style toggles and the popover stays; a level is chosen and it closes, as a menu.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
@@ -54,10 +50,8 @@ struct FormatPanel: View {
             .padding(.vertical, 7)
             separator
                 .padding(.horizontal, 7)
-            // Notes' rows, measured: 10 pt in, 1 pt apart, their content 16 pt in, 8 pt corners.
             VStack(spacing: 1) {
                 ForEach(headings, id: \.command) { style in
-                    // Run in, apart, as Notes sets Block Quote apart from its styles.
                     if style.command == "paragraph" { separator.padding(.horizontal, -3).padding(.vertical, 6) }
                     row(style, checked: style.command == current)
                 }
@@ -71,10 +65,8 @@ struct FormatPanel: View {
         .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
-    /// Notes' half-point separator: a `Divider` framed to half a point still inks a whole one.
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
-    /// The accessory bar's toggles draw their own hover, press and on; one size for the three, which their symbols would vary.
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
         Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: project) })) {
             Label(command.title, systemImage: command.style!.symbol)
@@ -104,7 +96,6 @@ struct FormatPanel: View {
             }
             .padding(.horizontal, 6)
             .frame(minHeight: 28)
-            // A menu's highlight, on which the text turns as a selected row's does.
             .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
             .environment(\.backgroundProminence, lit ? .increased : .standard)
             .contentShape(.rect)
@@ -116,7 +107,6 @@ struct FormatPanel: View {
         .accessibilityAddTraits(checked ? .isSelected : [])
     }
 
-    /// Larger to smaller, as Notes' Title, Heading and Subheading: a class sets each its own way.
     private static let fonts: [String: Font] = ["part": .title.bold(), "chapter": .title.bold(), "section": .title2.bold(),
                                                 "subsection": .title3.bold(), "subsubsection": .headline, "paragraph": .headline]
 }

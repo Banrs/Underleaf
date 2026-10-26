@@ -5,20 +5,16 @@ struct FilesList: View {
     let project: ProjectModel
     @State private var selection: String?
     @State private var rename = InPlaceRename<String>()
-    /// A file just made, whose name once given goes on to its text, as Xcode's New File does.
     @State private var created: String?
     @FocusState private var listFocused: Bool
 
     var body: some View {
-        // The File Outline's header is the files' bottom bar, as high as the pane's bottom safe area.
         GeometryReader { geometry in
-            // Two lists: one diffed from the tree to grouped hits and back keeps stale rows.
             Group { if project.search.isSearching { SearchResults(project: project) } else { files } }
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
         .searching(project)
         .onChange(of: app.newEntry, initial: true) { _, entry in
-            // A project left for another still shows while the next loads, whose list takes the entry.
             guard let entry, !project.closed else { return }
             app.newEntry = nil
             create(entry)
@@ -54,7 +50,6 @@ struct FilesList: View {
                     }
                 }
             }
-            // None for no row: SwiftUI's would ask AppKit for row -1's view, which raises.
             .contextMenu(forSelectionType: String.self) { paths in
                 if let path = paths.first, let node = project.tree.node(at: path) {
                     if node.isDirectory {
@@ -90,7 +85,6 @@ struct FilesList: View {
                 selection = path
                 if let path { showRow(path) }
             }
-            // Return renames after the key event, through which the list keeps the keyboard from the field.
             .onKeyPress(.return) {
                 guard rename.id == nil, let node = selection.flatMap({ project.tree.node(at: $0) }) else { return .ignored }
                 Task { actions(node).rename?() }
@@ -98,7 +92,6 @@ struct FilesList: View {
             }
             .focused($listFocused)
             .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.tree.node(at: path).map(actions) }
-            // The list makes only the rows it shows.
             .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
         }
     }
@@ -170,7 +163,6 @@ struct FilesList: View {
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
-        // The field refuses a "/" as it is typed; one may get by.
         guard !name.contains("/") else {
             app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
             return
@@ -192,7 +184,6 @@ extension View {
             if !files.isEmpty { action(files) }
         }
         .dropConfiguration { _ in
-            // A drop session names none of its items until they're dropped.
             let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
                                                               options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
             var configuration = DropConfiguration(operation: urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy)
@@ -210,7 +201,6 @@ extension View {
     }
 }
 
-/// The main file's sections, under `OutlineHeader`, which folds them away. Takes no drops: files go into the list above.
 struct OutlineList: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -220,7 +210,6 @@ struct OutlineList: View {
     var body: some View {
         let outline = project.outline
         let current = project.currentHeading
-        // A list sends nothing for a click on the row already selected, so the rows tap for it.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
             guard let id, id != current, outline.indices.contains(id) else { return }
             chosen = id
@@ -232,7 +221,6 @@ struct OutlineList: View {
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
                     HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).tag(node.id)
-                        // A double-click's second click is the list's primary action, into the source.
                         .simultaneousGesture(TapGesture().onEnded {
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
                             chosen = node.id == current ? nil : node.id
@@ -242,11 +230,9 @@ struct OutlineList: View {
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
-            // The header above stands for a section's: the room over the first row goes.
             .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
             .padding(.top, -sidebarListRoom)
             .clipped()
-            // A step under the files' rows.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
             .overlay { if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") } }
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
@@ -263,8 +249,6 @@ struct OutlineList: View {
     }
 }
 
-/// A sidebar section's header at the files' foot, level with the status bar: its whole row folds and unfolds the outline,
-/// and its chevron shows under the pointer, as a sidebar section's does.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
     @State private var hovering = false
@@ -282,11 +266,8 @@ struct OutlineHeader: View {
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
-            // Level with the Files section's header above (measured), the chevron where AppKit puts a section's.
             .padding(.leading, 14)
             .padding(.trailing, 18)
-            // Open, as far over its first row as the Files header is over its own, 17 pt text to text (measured);
-            // folded, level with the status bar's text.
             .padding(.bottom, open ? 5 : 0)
             .frame(maxHeight: .infinity, alignment: open ? .bottom : .center)
             .animation(.default, value: open)
@@ -300,13 +281,10 @@ struct OutlineHeader: View {
     }
 }
 
-/// The room a sidebar list leaves over its first row, inside its table (measured), which `contentMargins` doesn't reach: the
-/// header above stands for it.
 private let sidebarListRoom: CGFloat = 10
 
 private struct HeadingRow: View {
     let item: OutlineItem
-    /// While the status bar counts the document's.
     let words: Int?
 
     var body: some View {
@@ -325,13 +303,10 @@ private struct HeadingRow: View {
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityValue(item.level)
-        // For scrollTo, inside the row: on it, the list would take it for the row's identity.
         .id(item.id)
     }
 }
 
-/// The header's hard edge on the files, in place of its accessory's, which would double it. SwiftUI draws the edge only
-/// under a bar that draws something, so the bar is a fill the eye can't see.
 struct HeaderEdge: ViewModifier {
     let height: CGFloat
 

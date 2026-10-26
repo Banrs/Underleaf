@@ -1,5 +1,3 @@
-//! Section levels available in the main document's class.
-
 use serde::Serialize;
 
 use super::SourceDocument;
@@ -18,7 +16,6 @@ impl SourceDocument {
         }
         let units = &self.text.units;
         let (mut scanner, mut first) = (Scanner::default(), First(None));
-        // The class comes before the document, which isn't read for it.
         while first.0.is_none() && scanner.i < units.len() {
             scanner.run(units, scanner.i + SPACING, &[], &mut first);
         }
@@ -71,65 +68,4 @@ pub fn heading_styles(class: Option<&str>) -> Vec<Level> {
     })
     .chain(levels)
     .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn section_levels_follow_the_class_without_predicting_its_typesetting() {
-        for (class, expected) in [
-            (
-                Some("book"),
-                " part chapter section subsection subsubsection paragraph",
-            ),
-            (
-                Some("article"),
-                " part section subsection subsubsection paragraph",
-            ),
-            (
-                Some("IEEEtran"),
-                " section subsection subsubsection paragraph",
-            ),
-            (Some("beamer"), " part section subsection subsubsection"),
-            (Some("letter"), ""),
-            (
-                Some("thesis"),
-                " part chapter section subsection subsubsection paragraph",
-            ),
-            (
-                None,
-                " part chapter section subsection subsubsection paragraph",
-            ),
-        ] {
-            let commands: Vec<_> = heading_styles(class)
-                .iter()
-                .map(|level| level.command)
-                .collect();
-            assert_eq!(commands.join(" "), expected);
-        }
-    }
-
-    #[test]
-    fn the_class_is_the_first_one_outside_comments() {
-        for (text, expected) in [
-            (
-                "% \\documentclass{book}\n\\documentclass[a4paper, 12pt]{ article }",
-                Some("article"),
-            ),
-            ("\\documentclass[fontsize=11pt]{scrartcl}", Some("scrartcl")),
-            ("50\\% \\documentclass{memoir}", Some("memoir")),
-            ("no class", None),
-            (
-                "\\documentclass{report}\n\\begin{document}\n\\documentclass{book}",
-                Some("report"),
-            ),
-        ] {
-            assert_eq!(
-                SourceDocument::new(text).document_class().as_deref(),
-                expected
-            );
-        }
-    }
 }

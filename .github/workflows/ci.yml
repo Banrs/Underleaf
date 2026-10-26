@@ -1,7 +1,5 @@
 name: CI
 
-# One workflow: the Rust core and the Mac app, each only when a path it builds from changed.
-# `ci-ok` is the one check to require.
 on:
   pull_request:
   push:
@@ -29,7 +27,6 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          # Everything runs when there is no usable base (manual runs, new branches).
           if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             files=$(git diff --name-only "$BASE" HEAD)
           else
@@ -49,11 +46,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
@@ -64,23 +61,20 @@ jobs:
     name: Mac app
     needs: changes
     if: needs.changes.outputs.mac == 'true'
-    # macOS 27 is GitHub's xcode-27 image (in preview); there is no macos-27 label.
     runs-on: xcode-27
     timeout-minutes: 30
     env:
-      # The app and its test host get a defaults domain of their own.
       APP_ID: com.texlocal.mac.ci${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable
       - name: Select the newest Xcode
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           xcodebuild -version
-      # Keyed on the deployment target: cargo doesn't rebuild when it changes.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           key: macos-app-27.0
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -91,13 +85,11 @@ jobs:
           -derivedDataPath "$RUNNER_TEMP/dd" -parallel-testing-enabled NO
           -resultBundlePath "$RUNNER_TEMP/TeXLocal.xcresult"
           TEXLOCAL_APP_IDENTIFIER="$APP_ID"
-      # A dylib would load from target/, which exists only where it was built.
       - name: Core linked statically, tests ran
         run: |
           if otool -L "$RUNNER_TEMP"/dd/Build/Products/Debug/TeXLocal.app/Contents/MacOS/TeXLocal | grep -q texlocal_ffi; then
             echo "::error::The app loads the Rust core as a dylib"; exit 1
           fi
-          # xcodebuild passes a run in which no test ran.
           xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/TeXLocal.xcresult" --compact \
             | jq -e '. as $r | "\(.totalTestCount) tests: \(.passedTests) passed, \(.skippedTests) skipped" | debug | $r.passedTests > 0'
       - if: failure()

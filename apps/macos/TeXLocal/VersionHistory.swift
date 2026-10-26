@@ -19,17 +19,13 @@ struct SaveVersionSheet: View {
     }
 }
 
-/// As the document apps' Browse All Versions, in a sheet over the workspace: the snapshots as a source list, the files the
-/// chosen one changed beneath them, and the chosen file then against now as a unified diff.
 struct VersionHistorySheet: View {
     let project: ProjectModel
     @Environment(\.dismiss) private var dismiss
-    /// Nil until the core answers, so the list isn't empty meanwhile.
     @State private var snapshots: [Snapshot]?
     @State private var chosen: Snapshot.ID?
     @State private var file: String?
     @State private var shown: Shown?
-    /// The snapshot has the file, and it differs now: a file added since is left alone by a restore.
     @State private var restorable = false
     @State private var restoring = false
     @State private var confirmingRestoreAll = false
@@ -37,7 +33,6 @@ struct VersionHistorySheet: View {
 
     private enum Shown { case diff([DiffLine]), same, failed(String) }
 
-    /// As Finder's lists date files: Today at 14:05, Yesterday at 09:30, then the date.
     private static let listDates = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -119,7 +114,6 @@ struct VersionHistorySheet: View {
                     Image(systemName: "document")
                 }
                 Spacer()
-                // Xcode's source control letters.
                 let (letter, spoken): (String, LocalizedStringKey) = switch change.change {
                 case .added: ("A", "Added")
                 case .deleted: ("D", "Deleted")
@@ -178,7 +172,6 @@ struct VersionHistorySheet: View {
             if !Task.isCancelled { shown = .failed(error.localizedDescription) }
             return
         }
-        // Another file chosen meanwhile.
         guard !Task.isCancelled else { return }
         restorable = !rows.isEmpty && snapshot?.changed.first(where: { $0.path == file })?.change != .deleted
         shown = rows.isEmpty ? .same : .diff(rows)
@@ -198,8 +191,6 @@ struct VersionHistorySheet: View {
     }
 }
 
-/// The removed lines on red and the added on green, as Xcode's comparison tints them, in the editor's font. Long lines
-/// wrap, so each row's tint spans the pane.
 private struct DiffView: View {
     let rows: [DiffLine]
     let font: NSFont
@@ -235,7 +226,6 @@ private struct DiffView: View {
     private func line(_ marker: String, _ text: String, tint: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(verbatim: marker).foregroundStyle(.secondary).accessibilityHidden(true)
-            // A blank line keeps its height.
             Text(verbatim: text.isEmpty ? " " : text)
         }
         .padding(.horizontal, 10)

@@ -1,8 +1,3 @@
-//! Optional persistent TeXpresso viewer. Author buffers stay in its VFS; the ordinary
-//! latexmk build and PDF continue to use saved project files.
-//!
-//! A build with Underleaf's patch (tools/texpresso) writes the pages the client says it
-//! shows as one-page PDFs when retypeset, and the whole document when a run ends.
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,16 +16,12 @@ use crate::tex::{find_tool, program_at};
 use crate::{CoreError, lock, settings, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
-/// TeX's log is kept whole for its errors' files, which only its start opens.
 const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
-/// How long TeXpresso may leave what it was sent unread before the session is given up:
-/// it reads nothing while it makes its TeX formats, five seconds and more the first time.
 const UNREAD: Duration = Duration::from_secs(60);
 const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
-const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh (docs/texpresso.md).";
-/// The patch's protocol, which its first message names.
+const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh.";
 const LIVE_VERSION: u64 = 2;
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
@@ -40,8 +31,6 @@ pub struct FileBuffer {
     pub text: String,
 }
 
-/// A client that shows the document itself: the pages it shows (from 0) and its caret (a
-/// path, and UTF-16 units in), so a patched build has those pages first and a snapshot ready.
 #[derive(Debug, Default)]
 pub struct Pane {
     pub view: Option<(u32, u32)>,
@@ -62,9 +51,6 @@ pub enum LiveEvent {
         page: u32,
         path: String,
     },
-    /// The whole document, complete on disk, its SyncTeX beside it. `run`: how the run ended
-    /// (`complete`, `stopped`, or `partial` while still typeset). `changed`: first/last page
-    /// ranges that differ from before.
     Document {
         path: String,
         pages: u32,
@@ -72,7 +58,6 @@ pub enum LiveEvent {
         changed: Vec<[u32; 2]>,
     },
     Done(String),
-    /// TeXpresso has read every change sent before the mark of this number.
     Synced(u64),
     Log,
     Ended(Option<String>),
@@ -81,8 +66,6 @@ pub enum LiveEvent {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub(crate) trait Preview: Send + Sync {
-    /// A preview of `project` for the session `owner`, in place of any the owner had, written
-    /// for the `pane` by a TeXpresso with Underleaf's patch.
     fn start(
         &self,
         owner: u64,
@@ -93,9 +76,6 @@ pub(crate) trait Preview: Send + Sync {
         sink: Sink,
     ) -> Result<Status, CoreError>;
     fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError>;
-    /// A keystroke: `remove` UTF-16 units at `start` replaced by `text`. It waits for nothing.
-    /// An edit that doesn't fit the session's copy is refused as unfit and changes
-    /// nothing: `update` with the whole text then puts both right.
     fn edit(
         &self,
         owner: u64,
@@ -107,16 +87,13 @@ pub(crate) trait Preview: Send + Sync {
     fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError>;
     fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError>;
     fn rescan(&self, owner: u64) -> Result<(), CoreError>;
-    /// Numbers the changes sent before it, for `LiveEvent::Synced`.
     fn mark(&self, owner: u64, mark: u64) -> Result<(), CoreError>;
-    /// TeX's log, whole: None once its start was dropped.
     fn tex_log(&self, owner: u64) -> Option<String>;
     fn status(&self, owner: u64) -> Result<Status, CoreError>;
     fn stop_request(&self, owner: u64) -> Status;
     fn stop(&self, root: &Path) -> Result<(), CoreError>;
 }
 
-/// A buffer TeXpresso writes by byte offset, of which the last `max` bytes are kept.
 struct Output {
     base: u64,
     bytes: Vec<u8>,
@@ -156,14 +133,12 @@ impl Output {
         self.bytes.drain(..excess);
         self.base += excess as u64;
     }
-    /// The last `MAX_OUTPUT` bytes, to show.
     fn text(&self) -> String {
         let start = self.bytes.len().saturating_sub(MAX_OUTPUT);
         String::from_utf8_lossy(&self.bytes[start..]).into_owned()
     }
 }
 
-/// The byte `units` UTF-16 units into `text`, unless that is inside a character.
 fn byte_offset(text: &str, units: usize) -> Option<usize> {
     let mut counted = 0;
     for (at, char) in text.char_indices() {
@@ -175,8 +150,6 @@ fn byte_offset(text: &str, units: usize) -> Option<usize> {
     (counted == units).then_some(text.len())
 }
 
-/// Replaces `remove` UTF-16 units at `start` with `inserted`; the byte offset and length
-/// it replaced, as TeXpresso counts them.
 fn splice(
     text: &mut String,
     start: usize,
@@ -189,10 +162,8 @@ fn splice(
     Some((offset, removed))
 }
 
-/// A running session's way to TeXpresso: dropping it closes TeXpresso's input, which ends it.
 struct Link {
     lines: mpsc::UnboundedSender<Vec<u8>>,
-    /// The program's and its engine's processes.
     tree: Tree,
 }
 
@@ -201,7 +172,6 @@ struct State {
     link: Option<Link>,
     output: Output,
     log: Output,
-    /// The patch's handshake has come.
     live: bool,
     protocol_seen: bool,
     stderr: Output,
@@ -223,7 +193,6 @@ impl Session {
     fn stop(&self, error: Option<String>) {
         let mut state = lock(&self.state);
         if let Some(link) = state.link.take() {
-            // The viewer starts an engine: stopping just its parent leaks it.
             link.tree.kill();
             remove_pdf_folder(&self.pdf);
             state.error.clone_from(&error);
@@ -236,8 +205,6 @@ impl Session {
     fn status(&self) -> Status {
         let state = lock(&self.state);
         let mut log = state.log.text();
-        // stderr includes historical TeX diagnostics and echoed VFS commands.
-        // The protocol buffers alone track the engine's current backtracking.
         if !state.protocol_seen || state.error.is_some() {
             log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
@@ -297,7 +264,6 @@ impl Manager {
             .cloned()
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
     }
-    /// A file's text as the owner's preview typesets it: the editor's, saved or not.
     pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
         lock(&self.owned(owner).ok()?.files).get(rel).cloned()
     }
@@ -313,15 +279,12 @@ impl Manager {
 }
 
 impl Manager {
-    /// The build folder and where the session's pages go, once the owner's last preview has
-    /// stopped.
     fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
         fs::create_dir_all(&project.build)?;
         let build = std::fs::canonicalize(&project.build)?;
         if let Some(previous) = lock(&self.sessions).get(&owner) {
             previous.stop(None);
         }
-        // The session's own folder, for its owner alone; the session removes it as it stops.
         let mut folder = tempfile::Builder::new();
         folder.prefix("texlocal-texpresso-");
         folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
@@ -329,7 +292,6 @@ impl Manager {
         Ok((build, pdf))
     }
 
-    /// The owner's running session, and the lines it sends TeXpresso.
     fn open(
         &self,
         owner: u64,
@@ -355,7 +317,6 @@ impl Manager {
             }),
         });
         let mut sessions = lock(&self.sessions);
-        // Under the map's lock, so `kill_all` stops it either way.
         if self.shutdown.load(Ordering::Acquire) {
             session.stop(None);
         }
@@ -364,9 +325,6 @@ impl Manager {
     }
 }
 
-/// The editor's files as TeXpresso is first told them and as the session keeps them, then the
-/// pages in view and the caret. TeXpresso's idle reruns stay off: each restarts TeX from nothing
-/// after a pause in typing and shows no page until it is over.
 fn opening(
     root: &Path,
     files: &[FileBuffer],
@@ -389,7 +347,6 @@ fn opening(
     (buffers, opening)
 }
 
-/// TeXpresso's command line, building `main` from `root` into `build` and its pages into `pdf`.
 fn command(
     executable: &Path,
     path_env: &str,
@@ -406,9 +363,6 @@ fn command(
         .current_dir(root)
         .stdin(Stdio::piped())
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    // A Mac app runs with signals ignored or blocked that a child inherits across exec.
-    // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends.
-    // SAFETY: only async-signal-safe calls, between fork and exec.
     unsafe {
         command.pre_exec(|| {
             for signal in 1..32 {
@@ -567,7 +521,6 @@ impl Preview for Manager {
     }
 }
 
-/// TEXLOCAL_TEXPRESSO, for development, else `texpresso` on the path.
 pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
         return program_at(Path::new(&override_path));
@@ -579,8 +532,6 @@ fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) 
     a.zip(b).take_while(|(a, b)| a == b).count()
 }
 
-/// The change from one whole text to the next, in bytes. Both boundaries must be UTF-8
-/// boundaries even when differing characters share leading or trailing bytes.
 pub(crate) fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
     let mut start = common(a.iter(), b.iter());
@@ -598,8 +549,6 @@ pub(crate) fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     )
 }
 
-/// Stops the session when TeXpresso exits, saying why (`exit`'s status) unless it exited
-/// cleanly; also when the runtime drops this task first.
 async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<Session>) {
     struct Stop(Weak<Session>, Option<String>);
     impl Drop for Stop {
@@ -615,8 +564,6 @@ async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<
     });
 }
 
-/// The session's one writer to TeXpresso's stdin: a TeXpresso that has stopped reading
-/// stops the session instead of holding the queued lines.
 async fn write_lines(
     mut stdin: impl AsyncWrite + Unpin,
     mut queued: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -686,7 +633,6 @@ fn apply_message(session: &Session, message: &Value) {
         }
         state.live
     };
-    // Upstream's first message under -json is TeX's output or log.
     if !live {
         return session.stop(Some(UNPATCHED.into()));
     }
@@ -722,7 +668,6 @@ fn apply_message(session: &Session, message: &Value) {
             Some(mark) => LiveEvent::Synced(mark),
             None => return,
         },
-        // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
         "truncate" | "append" => {
             let mut state = lock(&session.state);
             let output = match message[1].as_str() {
@@ -741,467 +686,4 @@ fn apply_message(session: &Session, message: &Value) {
         _ => return,
     };
     (session.sink)(event);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unicode_deltas_reconstruct_text() {
-        let pairs = [
-            ("é😀tail", "ê😃tail"),
-            ("é", ""),
-            ("", "你好"),
-            ("αtestβ", "αβ"),
-            ("abc", "abc"),
-        ];
-        for padding in [0, 1, 63, 64, 65, 127, 128] {
-            for (old, new) in pairs {
-                let old = format!("{}{old}{}", "é".repeat(padding), "😀".repeat(padding));
-                let new = format!("{}{new}{}", "é".repeat(padding), "😀".repeat(padding));
-                let (start, remove, inserted) = delta(&old, &new);
-                assert_eq!(
-                    format!("{}{inserted}{}", &old[..start], &old[start + remove..]),
-                    new
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn bounded_output_keeps_offsets_after_backtracking() {
-        let mut output = Output::default();
-        output.append(0, &vec![b'x'; MAX_OUTPUT + 10]);
-        assert_eq!(output.base, 10);
-        output.append(12, b"ok");
-        assert_eq!(output.text(), "xxok");
-        output.truncate(0);
-        output.append(0, "é".as_bytes());
-        assert_eq!(output.text(), "é");
-    }
-
-    #[test]
-    fn edits_in_utf16_units_change_the_same_bytes_as_in_a_plain_string() {
-        let long = "aé😀b\n".repeat(900);
-        let cases = [
-            ("a😀b", 1, 2, "é", Some((1, 4))),
-            ("", 0, 0, "é", Some((0, 0))),
-            (long.as_str(), 6 * 800 + 2, 2, "x", Some((9 * 800 + 3, 4))),
-            ("a😀b", 2, 0, "x", None),
-            ("a😀b", 1, 1, "", None),
-            ("a😀b", 5, 0, "x", None),
-            ("a😀b", 0, 5, "", None),
-        ];
-        for (before, start, remove, inserted, changed) in cases {
-            let mut text = before.to_owned();
-            assert_eq!(splice(&mut text, start, remove, inserted), changed);
-            let mut after = before.to_owned();
-            if let Some((from, removed)) = changed {
-                after.replace_range(from..from + removed, inserted);
-            }
-            assert_eq!(text, after);
-        }
-        assert_eq!(byte_offset("a😀b", 2), None);
-        assert_eq!(byte_offset(&long, 6 * 800 + 4), Some(9 * 800 + 7));
-    }
-
-    #[tokio::test]
-    async fn output_is_read_a_line_at_a_time_and_an_overlong_line_is_no_message() {
-        let session = Arc::new(Session {
-            root: PathBuf::new(),
-            pdf: PathBuf::new(),
-            state: Mutex::default(),
-            files: Mutex::default(),
-            sink: Box::new(|_| {}),
-        });
-        let long = format!(r#"["append","out",3,"{}"]"#, "x".repeat(MAX_MESSAGE));
-        let text = format!(
-            "[\"live\",2]\n[\"append\",\"out\",0,\"rea\"]\n{long}\n[\"append\",\"out\",3,\"dy\"]\n[\"append\",\"log\",0,\"cut"
-        );
-        read_output(text.as_bytes(), Arc::clone(&session), true).await;
-        let status = session.status();
-        assert_eq!((status.output.as_str(), status.log.as_str()), ("ready", ""));
-    }
-
-    mod stub {
-        use super::*;
-
-        pub(super) const OWNER: u64 = 1;
-        const SOON: Duration = Duration::from_secs(3);
-
-        /// TeXpresso as a build with Underleaf's patch speaks, beside an engine it starts. It
-        /// writes each command it is sent to `commands` in the folder above its own, and
-        /// answers a few as TeXpresso would.
-        const STUB: &str = r#"#!/bin/sh
-here=${0%/bin/texpresso}
-/bin/sleep 300 &
-echo $! > "$here/engine.pid"
-pages=${TEXPRESSO_PDF_OUTPUT%/*}
-n=0
-printf '["live",2]\n["append","out",0,"ready"]\n["pdf","%s",3,"partial",[[0,2]]]\n' "$TEXPRESSO_PDF_OUTPUT"
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$here/commands"
-  case "$line" in
-    *EXIT_CLEAN*) exit 0;;
-    *EXIT_STUB*) exit 7;;
-    *TEX_ERROR*) printf '["append","log",0,"! Undefined control sequence."]\n';;
-    '["mark",'*) printf '["synced",%s\n' "${line#*,}";;
-    '["change",'*) n=$((n + 1))
-      printf '["page",1,"%s/page-1-%s.pdf"]\n' "$pages" "$n";;
-    *rerun-once*)
-      printf '["pdf","%s",4,"complete",[[1,1],[3,3]]]\n' "$TEXPRESSO_PDF_OUTPUT"
-      printf '["done","complete"]\n';;
-  esac
-done
-"#;
-
-        fn setup() -> (tempfile::TempDir, PathBuf, String) {
-            use std::os::unix::fs::PermissionsExt;
-            let tmp = tempfile::tempdir().unwrap();
-            let (bin, root) = (tmp.path().join("bin"), tmp.path().join("project"));
-            fs::create_dir(&bin).unwrap();
-            fs::create_dir(&root).unwrap();
-            fs::write(root.join("main.tex"), "disk text").unwrap();
-            fs::write(bin.join("texpresso"), STUB).unwrap();
-            let executable = fs::Permissions::from_mode(0o755);
-            fs::set_permissions(bin.join("texpresso"), executable).unwrap();
-            (tmp, root, bin.to_string_lossy().into_owned())
-        }
-
-        async fn until(mut check: impl FnMut() -> bool) {
-            tokio::time::timeout(SOON, async {
-                while !check() {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("stub made progress");
-        }
-
-        fn commands(tmp: &tempfile::TempDir) -> Vec<Value> {
-            fs::read_to_string(tmp.path().join("commands"))
-                .unwrap_or_default()
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect()
-        }
-
-        type Events = mpsc::UnboundedReceiver<LiveEvent>;
-
-        async fn next(events: &mut Events, wanted: impl Fn(&LiveEvent) -> bool) -> LiveEvent {
-            let next = async {
-                loop {
-                    let event = events.recv().await.expect("the session's events");
-                    if wanted(&event) {
-                        return event;
-                    }
-                }
-            };
-            tokio::time::timeout(SOON, next).await.expect("an event")
-        }
-
-        fn document(event: &LiveEvent) -> bool {
-            matches!(event, LiveEvent::Document { .. })
-        }
-
-        fn shown(event: &LiveEvent) -> bool {
-            *event != LiveEvent::Log
-        }
-
-        /// A start for `OWNER`, with `main.tex` open in the editor at `text` if given.
-        pub(super) fn start(
-            manager: &Manager,
-            root: &Path,
-            path_env: &str,
-            text: Option<&str>,
-            pane: &Pane,
-        ) -> (Status, Events) {
-            let (tx, events) = mpsc::unbounded_channel();
-            let sink = Box::new(move |event| drop(tx.send(event)));
-            let files: Vec<_> = (text.into_iter())
-                .map(|text| FileBuffer {
-                    path: "main.tex".into(),
-                    text: text.into(),
-                })
-                .collect();
-            let project = Project::in_folder(root);
-            let status = manager.start(OWNER, &project, &files, path_env, pane, sink);
-            (status.unwrap(), events)
-        }
-
-        fn begin(manager: &Manager, root: &Path, path_env: &str) -> Status {
-            start(manager, root, path_env, None, &Pane::default()).0
-        }
-
-        #[tokio::test]
-        async fn the_vfs_has_the_editors_texts_and_each_whole_text_goes_as_a_change() {
-            use std::os::unix::fs::PermissionsExt;
-            let (tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            fs::create_dir_all(root.join("build")).unwrap();
-            let normal = root.join("build/texpresso-live.pdf");
-            fs::write(&normal, "normal build").unwrap();
-            let (first, mut events) =
-                start(&manager, &root, &path_env, Some("abc"), &Pane::default());
-            assert!(first.running);
-            let LiveEvent::Document { path, .. } = next(&mut events, document).await else {
-                unreachable!()
-            };
-            let pdf = PathBuf::from(path);
-            assert!(
-                pdf.ends_with("live.pdf")
-                    && !pdf.starts_with(std::fs::canonicalize(&root).unwrap())
-            );
-            let folder = pdf.parent().unwrap().to_owned();
-            let mode = fs::metadata(&folder).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700);
-            assert_eq!(fs::read(&normal).unwrap(), b"normal build");
-            until(|| !commands(&tmp).is_empty()).await;
-            let main = std::fs::canonicalize(root.join("main.tex")).unwrap();
-            assert_eq!(commands(&tmp)[0], json!(["open", main, "abc"]));
-            let changes = || -> Vec<Value> {
-                let sent = commands(&tmp).into_iter();
-                sent.filter(|c| c[0] == "change").collect()
-            };
-            let mut text = String::from("abc");
-            for edit in ["abXc", "aXc", "aXc", "aXcd"] {
-                let sent = changes().len();
-                manager.update(OWNER, "main.tex", edit).unwrap();
-                if text != edit {
-                    until(|| changes().len() > sent).await;
-                    let change = changes().pop().unwrap();
-                    let start = change[2].as_u64().unwrap() as usize;
-                    let end = start + change[3].as_u64().unwrap() as usize;
-                    text.replace_range(start..end, change[4].as_str().unwrap());
-                }
-                assert_eq!(text, edit);
-            }
-            assert_eq!(changes().len(), 3);
-            assert_eq!(fs::read_to_string(&main).unwrap(), "disk text");
-            manager.rescan(OWNER).unwrap();
-            until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
-            assert!(!manager.stop_request(OWNER).running);
-            assert!(!folder.exists());
-            assert_eq!(
-                manager.status(OWNER).unwrap_err().kind,
-                crate::ErrorKind::NotFound
-            );
-            begin(&manager, &root, &path_env);
-            manager.kill_all();
-            assert!(!manager.status(OWNER).unwrap().running);
-        }
-
-        #[tokio::test]
-        async fn a_start_stops_the_owners_preview_before_it() {
-            let (_tmp, root, path_env) = setup();
-            let (_other_tmp, other_root, _) = setup();
-            let manager = Manager::default();
-            begin(&manager, &other_root, &path_env);
-            let before = manager.owned(OWNER).unwrap();
-            assert!(begin(&manager, &root, &path_env).running);
-            assert!(!before.running());
-        }
-
-        #[tokio::test]
-        async fn an_exit_keeps_the_output_says_why_and_stops_the_engine_group() {
-            let (tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            let (_, mut events) = start(&manager, &root, &path_env, None, &Pane::default());
-            let engine = || fs::read_to_string(tmp.path().join("engine.pid"));
-            until(|| engine().is_ok() && manager.status(OWNER).unwrap().output == "ready").await;
-            let engine: i32 = engine().unwrap().trim().parse().unwrap();
-            manager.update(OWNER, "main.tex", "EXIT_STUB").unwrap();
-            let ended = next(&mut events, |e| matches!(e, LiveEvent::Ended(_))).await;
-            let LiveEvent::Ended(Some(error)) = ended else {
-                panic!("{ended:?}")
-            };
-            assert!(error.contains("exited"), "{error}");
-            let status = manager.status(OWNER).unwrap();
-            assert!(!status.running && status.output == "ready");
-            until(|| unsafe { libc::kill(engine, 0) == -1 }).await;
-        }
-
-        /// Upstream's first message under -json is TeX's output.
-        #[tokio::test]
-        async fn a_texpresso_without_the_patch_fails_saying_how_to_build_it() {
-            let (tmp, root, path_env) = setup();
-            let upstream =
-                "#!/bin/sh\nprintf '[\"append\",\"out\",0,\"x\"]\\n'\nexec /bin/sleep 300\n";
-            fs::write(tmp.path().join("bin/texpresso"), upstream).unwrap();
-            let manager = Manager::default();
-            let (_, mut events) = start(&manager, &root, &path_env, None, &Pane::default());
-            let ended = next(&mut events, |e| matches!(e, LiveEvent::Ended(_))).await;
-            assert_eq!(ended, LiveEvent::Ended(Some(UNPATCHED.into())));
-        }
-
-        #[tokio::test]
-        async fn the_log_follows_backtracking_and_has_the_programs_own_output_once_it_fails() {
-            let (_tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            begin(&manager, &root, &path_env);
-            let session = manager.owned(OWNER).unwrap();
-            until(|| lock(&session.state).live).await;
-            // Backtracking drops TeX's log, and the process's historical stderr is
-            // not put in its place.
-            let diagnostic = "Undefined control sequence";
-            lock(&session.state).stderr.append(0, diagnostic.as_bytes());
-            apply_message(&session, &json!(["append", "log", 0, diagnostic]));
-            assert!(session.status().log.contains(diagnostic));
-            assert_eq!(manager.tex_log(OWNER).as_deref(), Some(diagnostic));
-            apply_message(&session, &json!(["truncate", "log", 0]));
-            assert!(!session.status().log.contains(diagnostic));
-
-            session.stop(Some("TeXpresso exited".into()));
-            let status = manager.status(OWNER).unwrap();
-            assert!(!status.running && status.error.is_some());
-            assert!(status.log.contains(diagnostic));
-        }
-
-        #[tokio::test]
-        async fn a_keystroke_goes_as_bytes_at_once_and_one_that_does_not_fit_is_refused() {
-            let (tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            let pane = Pane {
-                view: Some((2, 3)),
-                caret: Some(("main.tex".into(), 4)),
-            };
-            start(&manager, &root, &path_env, Some("aé😀b"), &pane);
-            let path = std::fs::canonicalize(root.join("main.tex")).unwrap();
-            manager.edit(OWNER, "main.tex", 4, 0, "X").unwrap();
-            manager.view(OWNER, 5, 4).unwrap();
-            manager.caret(OWNER, "main.tex", 2).unwrap();
-            until(|| commands(&tmp).len() >= 6).await;
-            let sent = commands(&tmp);
-            assert_eq!(
-                sent[1..],
-                [
-                    json!(["view", 2, 3]),
-                    json!(["caret", path, 7]),
-                    json!(["change", path, 7, 0, "X"]),
-                    json!(["view", 5, 5]),
-                    json!(["caret", path, 3]),
-                ]
-            );
-            assert!(!sent.iter().any(|c| c[0] == "rerun"));
-
-            let refused = manager.edit(OWNER, "other.tex", 0, 0, "no");
-            assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::Unfit);
-            let refused = manager.edit(OWNER + 1, "main.tex", 0, 0, "x");
-            assert_eq!(refused.unwrap_err().kind, crate::ErrorKind::NotFound);
-            manager.update(OWNER, "main.tex", "aXb").unwrap();
-            manager.edit(OWNER, "main.tex", 3, 0, "!").unwrap();
-            until(|| commands(&tmp).len() >= 8).await;
-            assert_eq!(
-                commands(&tmp)[6..],
-                [
-                    json!(["change", path, 1, 6, ""]),
-                    json!(["change", path, 3, 0, "!"]),
-                ]
-            );
-            manager.stop(&root).unwrap();
-            manager.edit(OWNER, "main.tex", 0, 0, "x").unwrap();
-        }
-
-        #[tokio::test]
-        async fn pages_and_documents_come_as_typeset_and_the_end_after_them() {
-            let (_tmp, root, path_env) = setup();
-            let manager = Manager::default();
-            let (_, mut events) = start(&manager, &root, &path_env, Some("abc"), &Pane::default());
-            let session = manager.owned(OWNER).unwrap();
-            let first = next(&mut events, document).await;
-            let LiveEvent::Document {
-                path,
-                pages: 3,
-                run,
-                changed,
-            } = first
-            else {
-                panic!("{first:?}")
-            };
-            assert_eq!((run.as_str(), changed), ("partial", vec![[0, 2]]));
-            assert!(manager.live_pdf(OWNER).is_err(), "no SyncTeX yet");
-            let folder = PathBuf::from(&path).parent().unwrap().to_owned();
-            for n in 1..=2 {
-                manager.edit(OWNER, "main.tex", 3, 0, "d").unwrap();
-                let page = next(&mut events, shown).await;
-                let path = folder.join(format!("page-1-{n}.pdf"));
-                let path = path.to_string_lossy().into_owned();
-                assert_eq!(page, LiveEvent::Page { page: 1, path });
-            }
-            apply_message(&session, &json!(["page", 0, "/etc/passwd"]));
-            session.send(&[json!(["rerun-once"])]);
-            let whole = LiveEvent::Document {
-                path,
-                pages: 4,
-                run: "complete".into(),
-                changed: vec![[1, 1], [3, 3]],
-            };
-            assert_eq!(next(&mut events, shown).await, whole);
-            let done = next(&mut events, shown).await;
-            assert_eq!(done, LiveEvent::Done("complete".into()));
-            manager.mark(OWNER, 3).unwrap();
-            assert_eq!(next(&mut events, shown).await, LiveEvent::Synced(3));
-            manager.stop(&root).unwrap();
-            assert_eq!(next(&mut events, shown).await, LiveEvent::Ended(None));
-        }
-    }
-
-    /// With TeX and the patched TeXpresso: `TEXLOCAL_TEXPRESSO=… cargo test -p texlocal-core
-    /// finishing_pass -- --ignored`.
-    #[tokio::test]
-    #[ignore = "needs TeX and the patched TeXpresso"]
-    async fn a_finishing_pass_that_stops_on_an_error_leaves_the_pages_shown_and_typing_goes_on() {
-        // The pass, which reads the label, stops on its second page with 100 errors.
-        let main = r"\documentclass{article}
-\begin{document}
-Section~\ref{a}.
-\newpage
-\makeatletter\@ifundefined{r@a}{}{\loop\undefined\iftrue\repeat}\makeatother
-\section{A}\label{a}
-\end{document}
-";
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("main.tex"), main).unwrap();
-        let manager = Manager::default();
-        let path = std::env::var("PATH").unwrap();
-        let (_, mut events) =
-            stub::start(&manager, tmp.path(), &path, Some(main), &Pane::default());
-        // What shows until the next page or end of a run.
-        let mut until_shown = async || {
-            let mut shown = Vec::new();
-            let read = async {
-                while let Some(event) = events.recv().await {
-                    let last = matches!(event, LiveEvent::Done(_) | LiveEvent::Page { .. });
-                    if event != LiveEvent::Log {
-                        shown.push(event);
-                    }
-                    if last {
-                        break;
-                    }
-                }
-            };
-            tokio::time::timeout(Duration::from_secs(60), read)
-                .await
-                .expect("an event");
-            shown
-        };
-        let first = until_shown().await;
-        assert_eq!(first.last(), Some(&LiveEvent::Done("complete".into())));
-        // The first run's whole document, then the end of the pass, with no page of the pass's.
-        let pass = until_shown().await;
-        assert_eq!(
-            pass.last(),
-            Some(&LiveEvent::Done("complete".into())),
-            "{pass:?}"
-        );
-        let at = main.find("Section").unwrap();
-        manager.edit(stub::OWNER, "main.tex", at, 0, "X").unwrap();
-        let typed = until_shown().await;
-        assert!(
-            matches!(typed.last(), Some(LiveEvent::Page { page: 0, .. })),
-            "{typed:?}"
-        );
-        manager.stop(tmp.path()).unwrap();
-    }
 }

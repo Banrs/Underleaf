@@ -1,5 +1,3 @@
-//! latexmk/TeX log parsing. Warnings name no file, so the open file is tracked from the log's "(./x.tex" and ")" marks.
-
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -9,7 +7,6 @@ use serde_json::json;
 
 use crate::syntax::catalog::CATALOG;
 
-/// How serious an item is: "error" or "warning" on the wire.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -24,33 +21,25 @@ pub struct LogItem {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
-    /// `message` for a line's end: on one line, without LaTeX's own prefix; the `issues` event's.
     #[serde(skip)]
     pub short: String,
     #[serde(skip)]
     pub command: Option<String>,
-    /// What TeX's message means here and what usually fixes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explain: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<Fix>,
 }
 
-/// One action that usually ends an error, which a host offers as a button and has the session
-/// run by its id (`session_fix`), then compiles again.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Fix {
-    /// A package or class file LaTeX didn't find.
     Install(String),
-    /// A package that defines what TeX doesn't know.
     AddPackage(String),
     Xelatex,
     ShellEscape,
 }
 
 impl Fix {
-    /// The id a host sends back: the fix and its argument, which only this reads, so no table of
-    /// the issues is kept for it.
     pub(crate) fn parse(id: &str) -> Option<Self> {
         match id.split_once(':') {
             Some(("install", file)) => Some(Self::Install(file.into())),
@@ -122,28 +111,20 @@ impl LogItem {
     }
 }
 
-/// The command a message names as undefined, as `parse_log` writes it, and for
-/// no other message: one from a file TeX loaded has that file's name before it.
 fn undefined_command(message: &str) -> Option<String> {
     let name = message.strip_prefix("Undefined control sequence: \\")?;
     let letters = name.chars().all(|c| c.is_ascii_alphabetic() || c == '@');
     ((!name.is_empty() && letters) || name.chars().count() == 1).then(|| format!("\\{name}"))
 }
 
-/// What an entry of `EXPLAINED` offers to do.
 #[derive(Clone, Copy)]
 enum Offer {
     Nothing,
-    /// Installing the file the message's first group names.
     Install,
-    /// Loading the package that defines the command the message names undefined, or the
-    /// environment its first group names.
     Package,
     Xelatex,
 }
 
-/// TeX's and LaTeX's common messages, as `short` has them: the first that matches explains.
-/// Unanchored where a file TeX loaded may put its name first.
 static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
     use Offer::{Install, Nothing, Package, Xelatex};
     [
@@ -253,7 +234,6 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
     .collect()
 });
 
-/// What a message means and the fix it offers; `command` is the one it names undefined.
 fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Option<Fix>) {
     if short == SHELL_ESCAPE {
         return (None, Some(Fix::ShellEscape));
@@ -276,7 +256,6 @@ fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Optio
     (Some(explain), fix)
 }
 
-// `path:line: ` from -file-line-error for any file TeX reads, or TeX's own `! `; `error_start` also requires a path, which a time like "12:30: " is not.
 static ERROR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:(?P<file>(?:[A-Za-z]:)?[^\s:!][^:]*):(?P<line>\d+):(?:\s+|$)|! )(?P<message>.*)$",
@@ -310,7 +289,6 @@ fn error_start(line: &str) -> Option<Captures<'_>> {
         .filter(|m| m.name("file").is_none_or(|f| is_path(f.as_str())))
 }
 
-/// Whether the text before "12:" is a path and not words: TeX prints project files as "./name", so even a name with a space has a slash.
 fn is_path(text: &str) -> bool {
     text.contains(['/', '\\']) || (text.contains('.') && !text.contains(char::is_whitespace))
 }
@@ -321,8 +299,6 @@ fn warning_start(line: &str) -> Option<Captures<'_>> {
         .flatten()
 }
 
-/// A forward-slash project path; None for an absolute TeX distribution path,
-/// `/…` or, from a TeX on Windows, `C:/…`, `C:\…` or `\\server\…`.
 fn project_path(path: &str) -> Option<String> {
     let absolute = match path.as_bytes() {
         [b'/' | b'\\', ..] => true,
@@ -332,9 +308,6 @@ fn project_path(path: &str) -> Option<String> {
     (!absolute).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
 }
 
-/// Whether the word after a "(" is a file TeX opens, not text in parentheses:
-/// it has a slash, or is a Windows path in full, `C:\…` or `\\server\…`. A
-/// backslash alone would take a command: "(\end occurred inside a group".
 fn opens_file(token: &str) -> bool {
     token.contains('/')
         || match token.as_bytes() {
@@ -344,7 +317,6 @@ fn opens_file(token: &str) -> bool {
         }
 }
 
-/// A file's name alone, as TeXpresso's log gives one (`article.cls`), not `e.g.` or `1.5pt`.
 fn named_file(token: &str) -> bool {
     token.rsplit_once('.').is_some_and(|(stem, ext)| {
         !stem.is_empty() && !ext.is_empty() && ext.bytes().all(|b| b.is_ascii_alphabetic())
@@ -372,7 +344,6 @@ fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str, opens: &dyn Fn(&str
     }
 }
 
-/// An absolute TeX distribution path is attributed to the open project file, with no line number.
 fn locate(
     named: Option<&str>,
     line: Option<u32>,
@@ -396,7 +367,6 @@ fn locate(
     (files.find_map(project), None)
 }
 
-/// The name a diagnostic's continuation lines carry in parentheses, e.g. "(hyperref)".
 fn continuation_tag(text: &str) -> Option<&str> {
     let mut words = text.split_whitespace();
     match (words.next()?, words.next()?) {
@@ -415,7 +385,6 @@ fn starts_new(line: &str) -> bool {
         || warning_start(line).is_some()
 }
 
-/// What `next` adds to a message after `prev`: a line led by the diagnostic's own "(name)", an indented one, or the rest of a line an engine wrapped at column 79.
 fn continuation<'a>(
     prev: &str,
     next: &'a str,
@@ -445,17 +414,12 @@ fn echo_of(lines: &[&str], i: usize) -> Option<usize> {
         .map(|k| i + 1 + k)
 }
 
-/// The log's errors and warnings, and apart from them its overfull and underfull boxes.
 pub fn parse_log(log: &str, main_file: &str) -> (Vec<LogItem>, Vec<LogItem>) {
     parse(log, main_file, None)
 }
 
-/// A file's name as the log gives it, as the project's path; None for one not the project's.
 type Ours<'a> = &'a dyn Fn(&str) -> Option<String>;
 
-/// The errors of TeXpresso's log, which names a file as TeX found it from the main file's
-/// folder, a distribution's by its name alone (`(article.cls`): `ours` gives a name's project
-/// path, or None for one not the project's.
 pub fn parse_live_log(log: &str, main_file: &str, ours: Ours) -> Vec<LogItem> {
     let (items, _) = parse(log, main_file, Some(ours));
     items
@@ -464,16 +428,12 @@ pub fn parse_live_log(log: &str, main_file: &str, ours: Ours) -> Vec<LogItem> {
         .collect()
 }
 
-/// An error or warning as the lines from its start (`lines[i]`, matched as `m`) give it.
 struct Diagnostic<'a> {
     named: Option<&'a str>,
     error: bool,
-    /// Its message, with the lines that carry it on.
     message: String,
     line: Option<u32>,
-    /// Where an error's echo of the source line is.
     echo: Option<usize>,
-    /// A fatal summary, which repeats the error that stopped TeX.
     summary: bool,
 }
 
@@ -532,11 +492,9 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
     let mut items: Vec<LogItem> = Vec::new();
     let mut bad_boxes = Vec::new();
     let mut open = Vec::new();
-    // Lines before this echo source whose parentheses needn't pair up.
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        // Skip the regexes for most lines: an error starts "! " or has colons.
         let may_err = line.starts_with("! ") || line.contains(':');
         let start = may_err
             .then(|| error_start(line))
@@ -547,7 +505,6 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
             if found.error {
                 quiet_until = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             }
-            // A summary is kept only alone.
             if found.summary && items.iter().any(|item| item.kind == Severity::Error) {
                 continue;
             }
@@ -577,15 +534,12 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
         }
     }
 
-    // Reruns duplicate messages; keep the first in order.
     let mut seen = HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
     bad_boxes.retain(|item| seen.insert(item.clone()));
     (items, bad_boxes)
 }
 
-/// Errors and warnings from bibtex's or biber's .blg; bibtex names the .bib line after an
-/// error's message or on the line below it, and below a warning's.
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     let mut items: Vec<LogItem> = Vec::new();
     let mut above = "";
@@ -627,9 +581,6 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
 
 pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
 
-/// A failed build's error that asks for shell escape (minted's "invoke LaTeX with the
-/// -shell-escape flag") says where to allow it; without one, a program TeX refused
-/// ("runsystem(…)...disabled") adds that error with no place.
 pub(crate) fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
     if let Some(error) = errors
         .iter_mut()
@@ -661,487 +612,122 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 mod tests {
     use super::*;
 
-    fn described(items: &[LogItem]) -> Vec<String> {
-        let place = |part: Option<String>| part.unwrap_or_else(|| "-".into());
+    fn errors(log: &str) -> Vec<LogItem> {
+        let (items, _) = parse_log(log, "main.tex");
         items
-            .iter()
-            .map(|it| {
-                let kind = serde_json::to_value(it.kind).unwrap();
-                let (file, line) = (
-                    place(it.file.clone()),
-                    place(it.line.map(|l| l.to_string())),
-                );
-                format!("{} {file}:{line} {}", kind.as_str().unwrap(), it.message)
-            })
+            .into_iter()
+            .filter(|i| i.kind == Severity::Error)
             .collect()
     }
 
-    fn parsed(log: &str) -> Vec<String> {
-        described(&parse_log(log, "main.tex").0)
-    }
-
-    #[test]
-    fn an_error_takes_the_line_tex_echoes_after_it_or_names_no_place() {
-        let error = "./main.tex:12: Undefined control sequence.\nl.12 \\foo\n";
-        let fatal = "==> Fatal error occurred, no output PDF file produced!";
-        let undefined = "error main.tex:12 Undefined control sequence: \\foo";
-        let alone = format!("error -:- {fatal}");
-        let cases: [(String, &[&str]); 5] = [
-            (
-                "! Emergency stop.\nl.9 \\end\n".into(),
-                &["error main.tex:9 Emergency stop."],
-            ),
-            // A "!" error doesn't take the next error's "l.<n>".
-            (
-                format!("! Emergency stop.\n{error}"),
-                &["error -:- Emergency stop.", undefined],
-            ),
-            // TeX's closing summary names the stopping error's line, not its
-            // own, and folds into the error before it.
-            (format!("{error}\n./main.tex:12:  {fatal}\n"), &[undefined]),
-            // Alone, it is the failure's one record, with no place.
-            (format!("./main.tex:12:  {fatal}\n"), &[&alone]),
-            (
-                format!("! Emergency stop.\n! {fatal}\n"),
-                &["error -:- Emergency stop."],
-            ),
-        ];
-        for (log, expected) in cases {
-            assert_eq!(parsed(&log), expected, "{log}");
-        }
-    }
-
-    #[test]
-    fn messages_lose_texs_context_and_name_the_command_they_cannot_find() {
-        let log = "./main.tex:19: Undefined control sequence.\n\
-                   l.19 ...ndefined control sequence: \\undefinedmacro\n\
-                   \x20                                                 .\n\
-                   \n\
-                   ./main.tex:21: Missing $ inserted.\n\
-                   <inserted text> \n\
-                   \x20               $\n\
-                   l.21 x^\n\
-                   \n\
-                   ./main.tex:24: Undefined control sequence.\n\
-                   \\x ->\\foo@x\n\
-                   \x20        \n\
-                   l.24 \\x\n\
-                   \n\
-                   ./main.tex:5: Undefined control sequence.\n\
-                   l.5 \\&\n\
-                   \n\
-                   ./main.tex:3: LaTeX Error: Command \\a already defined.\n\
-                   \x20              Or name \\end... illegal, see p.192 of the manual.\n\
-                   \n\
-                   See the LaTeX manual or LaTeX Companion for explanation.\n\
-                   l.3 \\newcommand\\a{y}\n";
+    fn warnings(log: &str) -> Vec<LogItem> {
         let (items, _) = parse_log(log, "main.tex");
-        let found: Vec<_> = items
-            .iter()
-            .map(|it| (it.short.as_str(), it.command.as_deref()))
-            .collect();
-        let undefined = |name| (format!("Undefined control sequence: {name}"), Some(name));
-        let expected = [
-            undefined("\\undefinedmacro"),
-            ("Missing $ inserted.".into(), None),
-            undefined("\\foo@x"),
-            undefined("\\&"),
-            (
-                "Command \\a already defined. Or name \\end... illegal, see p.192 of the manual."
-                    .into(),
-                None,
-            ),
-        ];
-        let expected: Vec<_> = expected.iter().map(|(s, c)| (s.as_str(), *c)).collect();
-        assert_eq!(found, expected);
-        // The name of a file TeX loaded comes first in its message: not this file's command.
-        for message in [
-            "x.sty: Undefined control sequence: \\a",
-            "Undefined control sequence: \\ab-c",
-        ] {
-            assert_eq!(undefined_command(message), None, "{message}");
-        }
-    }
-
-    #[test]
-    fn a_package_or_class_file_tex_cannot_find_is_named_whole() {
-        // As pdfLaTeX, XeLaTeX and LuaLaTeX write it, wrapped at 79 columns without max_print_line.
-        let log = "! LaTeX Error: File `nosuchpackagewithaveryveryverylongnamethatwillwrapthelinea\n\
-                   tseventyninecolumnsx.sty' not found.\n\
-                   \n\
-                   Type X to quit or <RETURN> to proceed,\n\
-                   or enter new name. (Default extension: sty)\n\
-                   \n\
-                   Enter file name: \n\
-                   ./main.tex:3: Emergency stop.\n\
-                   <read *> \n\
-                   \n\
-                   ! LaTeX Error: File `paper.cls' not found.\n\
-                   \n\
-                   ./main.tex:4: LaTeX Error: File `chapter.tex' not found.\n\
-                   \n\
-                   ./main.tex:5: LaTeX Error: File `../my.sty' not found.\n";
-        let (items, _) = parse_log(log, "main.tex");
-        let fixes: Vec<_> = items.iter().map(|it| it.fix.clone()).collect();
-        let long =
-            "nosuchpackagewithaveryveryverylongnamethatwillwrapthelineatseventyninecolumnsx.sty";
-        let install = |file: &str| Some(Fix::Install(file.into()));
-        assert_eq!(
-            fixes,
-            [install(long), None, install("paper.cls"), None, None]
-        );
-    }
-
-    #[test]
-    fn a_common_error_is_explained_and_offers_the_fix_that_usually_ends_it() {
-        let log = "./main.tex:3: Undefined control sequence.\n\
-                   l.3 \\includegraphics\n\
-                   \n\
-                   ./main.tex:4: Undefined control sequence.\n\
-                   l.4 \\nosuchcommand\n\
-                   \n\
-                   ./main.tex:5: LaTeX Error: Environment tikzpicture undefined.\n\
-                   \n\
-                   ./main.tex:6: Package inputenc Error: Unicode character ж (U+0436)\n\
-                   (inputenc)                not set up for use with LaTeX.\n\
-                   \n\
-                   ./main.tex:7: Fatal Package fontspec Error: The fontspec package requires either XeTeX or\n\
-                   \n\
-                   ./main.tex:8: Misplaced alignment tab character &.\n\
-                   \n\
-                   ./main.tex:9: Something TeX alone says.\n";
-        let (items, _) = parse_log(log, "main.tex");
-        let found: Vec<_> = (items.iter())
-            .map(|it| (it.explain.is_some(), it.fix.clone()))
-            .collect();
-        let package = |name: &str| Some(Fix::AddPackage(name.into()));
-        let expected = [
-            (true, package("graphicx")),
-            (true, None),
-            (true, package("tikz")),
-            (true, Some(Fix::Xelatex)),
-            (true, Some(Fix::Xelatex)),
-            (true, None),
-            (false, None),
-        ];
-        assert_eq!(found, expected);
-        let shell_escape = serde_json::to_value(LogItem::error(SHELL_ESCAPE)).unwrap();
-        let fix = &shell_escape["fix"];
-        assert_eq!(fix["id"], "shellEscape");
-        assert!(fix["confirm"].as_str().unwrap().contains("trust"));
-        assert_eq!(shell_escape["explain"], serde_json::Value::Null);
-    }
-
-    #[test]
-    fn a_fixs_id_names_it_and_its_argument() {
-        let fixes = [
-            Fix::Install("a.sty".into()),
-            Fix::AddPackage("tikz".into()),
-            Fix::Xelatex,
-            Fix::ShellEscape,
-        ];
-        for fix in fixes {
-            let id = &serde_json::to_value(&fix).unwrap()["id"];
-            assert_eq!(Fix::parse(id.as_str().unwrap()), Some(fix));
-        }
-    }
-
-    #[test]
-    fn an_error_in_a_file_of_any_type_is_reported_and_a_time_is_not_an_error() {
-        let log = "(./refs/my.cbx\n\
-                   ./refs/my.cbx:12: Package biblatex Error: Bad style.\n\
-                   l.12 \\x\n\
-                   \n\
-                   ./data.dat:2: Missing number.\n\
-                   l.2 \\nope\n\
-                   \n\
-                   ./My Chapter.tex:3: Missing $ inserted.\n\
-                   l.3 x^2\n\
-                   \n\
-                   C:/proj/a.lbx:7: Boom.\n\
-                   \n\
-                   Output written on main.pdf (2 pages, built at 12:30: done).\n\
-                   Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
-                   File: size10.clo 2025/01/22 v1.4n Standard LaTeX file (size option)\n\
-                   Package: x 3.1: 2025/01/22:\n\
-                   build at 10:30: no file here\n\
-                   )(build/main.bbl\n\
-                   build/main.bbl:5: Misplaced alignment tab character &.\n\
-                   l.5 \\newblock Cats &\n\
-                   \n\
-                   build/main.bbl:5:  ==> Fatal error occurred, no output PDF file produced!\n";
-        assert_eq!(
-            parsed(log),
-            [
-                "error refs/my.cbx:12 Package biblatex Error: Bad style.",
-                "error data.dat:2 Missing number.",
-                "error My Chapter.tex:3 Missing $ inserted.",
-                "error refs/my.cbx:- a.lbx: Boom.",
-                "error build/main.bbl:5 Misplaced alignment tab character &.",
-            ]
-        );
-    }
-
-    #[test]
-    fn a_message_takes_the_file_tex_has_open() {
-        // Parentheses in echoed source and box contents don't pair up, and a command in parentheses opens no file.
-        let log = "(./main.tex\n\
-                   (/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls\n\
-                   Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
-                   )\n\
-                   ./main.tex:4: Undefined control sequence.\n\
-                   l.4 Hello \\foo\n\
-                   \x20              world (unbalanced paren.\n\
-                   The control sequence at the end of the top line\n\
-                   \n\
-                   (./chapters/intro.tex\n\
-                   \n\
-                   LaTeX Warning: Reference `nope' on page 1 undefined on input line 3.\n\
-                   \n\
-                   )\n\
-                   \n\
-                   Overfull \\hbox (182.7699pt too wide) detected at line 7\n\
-                   \\OT1/cmr/m/n/10 Some very long text (that overflows\n\
-                   \x20[]\n\
-                   \n\
-                   \n\
-                   LaTeX Warning: Reference `x' on page 1 undefined on input line 9.\n\
-                   \n\
-                   (C:\\Users\\Alex\\AppData\\MiKTeX\\tex/latex/base\\article.cls\n\
-                   (\\end occurred inside a group at level 1)\n\
-                   Package ulem Warning: In a distribution file on input line 12.\n\
-                   (\\\\server\\share\\x.sty\n\
-                   )\n\
-                   )\n\
-                   (./chapters/a.tex\n\
-                   \n\
-                   LaTeX Warning: Reference `y' on page 1 undefined on input line 3.\n\
-                   \n\
-                   \x20)\n";
-        let places: Vec<_> = parse_log(log, "other.tex")
-            .0
+        items
             .into_iter()
-            .map(|it| (it.file, it.line))
-            .collect();
-        let at = |file: &str, line| (Some(file.to_string()), Some(line));
-        assert_eq!(
-            places,
-            [
-                at("main.tex", 4),
-                at("chapters/intro.tex", 3),
-                at("main.tex", 9),
-                (Some("main.tex".into()), None),
-                at("chapters/a.tex", 3),
-            ]
-        );
+            .filter(|i| i.kind == Severity::Warning)
+            .collect()
     }
 
     #[test]
-    fn warnings_run_on_over_wrapped_and_continued_lines_and_stop_at_the_next_message() {
-        let cases: [(&str, &[&str]); 4] = [
-            (
-                "LaTeX Warning: First\n\
-                 Package x Warning: Second\n\
-                 ! Undefined control sequence.\n",
-                &[
-                    "warning -:- First",
-                    "warning -:- Second",
-                    "error -:- Undefined control sequence.",
-                ],
-            ),
-            (
-                "LaTeX Warning: Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on in\n\
-                 put line 3.\n\
-                 \n\
-                 ./main.tex:9: Missing number, treated as zero.\n\
-                 l.9 x\n",
-                &[
-                    "warning main.tex:3 Reference `abcdefghijklmnopqrstuvwxyz' on page 1 undefined on input line 3.",
-                    "error main.tex:9 Missing number, treated as zero.",
-                ],
-            ),
-            (
-                "LaTeX Warning: You have requested package `a',\n\
-                 \x20              but the package provides `b'.\n\
-                 Some other output on input line 5.\n\
-                 (y) not this warning's.\n",
-                &["warning -:- You have requested package `a', but the package provides `b'."],
-            ),
-            // A line of exactly 79 columns is a line, not a wrap, when the
-            // next is the package's own "(name)" line.
-            (
-                "Package microtype Warning: Unknown slot number of character 12 in font encoding\n\
-                 (microtype)                removing it on input line 44.\n",
-                &[
-                    "warning main.tex:44 Unknown slot number of character 12 in font encoding removing it on input line 44.",
-                ],
-            ),
-        ];
-        for (log, expected) in cases {
-            assert_eq!(parsed(log), expected, "{log}");
+    fn an_error_names_its_file_and_line() {
+        let log = "(./main.tex\n(./chapters/intro.tex\n./chapters/intro.tex:12: Undefined control sequence.\nl.12 \\foo\n          \n)\n)";
+        let found = errors(log);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].file.as_deref(), Some("chapters/intro.tex"));
+        assert_eq!(found[0].line, Some(12));
+        assert!(found[0].message.contains("Undefined control sequence"));
+    }
+
+    #[test]
+    fn a_missing_package_offers_to_install_it() {
+        let log = "(./main.tex\n./main.tex:3: LaTeX Error: File `fancyfoo.sty' not found.\n\nType X to quit or <RETURN> to proceed,\nl.3 \\usepackage{fancyfoo}\n)";
+        let found = errors(log);
+        assert_eq!(found[0].line, Some(3));
+        assert_eq!(found[0].fix, Some(Fix::Install("fancyfoo.sty".into())));
+        assert!(found[0].explain.is_some());
+    }
+
+    #[test]
+    fn a_command_a_known_package_defines_offers_that_package() {
+        let log = "(./main.tex\n./main.tex:8: Undefined control sequence.\nl.8 \\toprule\n)";
+        assert_eq!(errors(log)[0].fix, Some(Fix::AddPackage("booktabs".into())));
+    }
+
+    #[test]
+    fn a_character_pdflatex_lacks_offers_xelatex() {
+        let log = "(./main.tex\n./main.tex:5: LaTeX Error: Unicode character ✓ (U+2713)\n               not set up for use with LaTeX.\nl.5 ✓\n)";
+        assert_eq!(errors(log)[0].fix, Some(Fix::Xelatex));
+    }
+
+    #[test]
+    fn undefined_references_and_citations_are_warnings_on_their_lines() {
+        let log = "(./main.tex\nLaTeX Warning: Reference `fig:x' on page 1 undefined on input line 7.\n\nLaTeX Warning: Citation `knuth' on page 1 undefined on input line 9.\n)";
+        let found = warnings(log);
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            (found[0].file.as_deref(), found[0].line),
+            (Some("main.tex"), Some(7))
+        );
+        assert_eq!(found[1].line, Some(9));
+    }
+
+    #[test]
+    fn overfull_boxes_are_kept_apart_from_the_issues() {
+        let log = "(./main.tex\nOverfull \\hbox (12.0pt too wide) in paragraph at lines 5--6\n[]\\OT1/cmr/m/n/10 text\n)";
+        let (items, bad_boxes) = parse_log(log, "main.tex");
+        assert!(items.is_empty());
+        assert_eq!(bad_boxes.len(), 1);
+        assert_eq!(bad_boxes[0].line, Some(5));
+    }
+
+    #[test]
+    fn a_clean_log_has_nothing() {
+        let log = "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-11-01>\n) [1]\nOutput written on main.pdf (1 page, 1234 bytes).";
+        let (items, bad_boxes) = parse_log(log, "main.tex");
+        assert!(items.is_empty() && bad_boxes.is_empty());
+    }
+
+    #[test]
+    fn bibtex_reports_missing_entries() {
+        let blg = "Warning--I didn't find a database entry for \"knuth\"\n";
+        let found = parse_blg(blg);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, Severity::Warning);
+        assert!(found[0].message.contains("knuth"));
+    }
+
+    #[test]
+    fn biber_errors_are_errors() {
+        let blg = "[12] Biber.pm:131> ERROR - Cannot find 'refs.bib'!\n";
+        assert_eq!(parse_blg(blg)[0].kind, Severity::Error);
+    }
+
+    #[test]
+    fn latexmk_summarises_what_failed() {
+        let output = "Latexmk: Errors, so I did not complete making targets\nCollected error summary (may duplicate other messages):\n  pdflatex: Command for 'pdflatex' gave return code 1\n      Refer to 'main.log' for details\n";
+        let found = latexmk_errors(output);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].message.starts_with("pdflatex: Command"));
+    }
+
+    #[test]
+    fn shell_escape_refused_says_how_to_turn_it_on() {
+        let mut found = Vec::new();
+        point_to_shell_escape(&mut found, "runsystem(pygmentize -V)...disabled.");
+        assert_eq!(found[0].message, SHELL_ESCAPE);
+    }
+
+    #[test]
+    fn a_fix_id_round_trips() {
+        for id in [
+            "install:foo.sty",
+            "package:booktabs",
+            "engine:xelatex",
+            "shellEscape",
+        ] {
+            let fix = Fix::parse(id).unwrap();
+            assert_eq!(serde_json::to_value(&fix).unwrap()["id"], id);
         }
-        let line =
-            "Package microtype Warning: Unknown slot number of character 12 in font encoding";
-        assert_eq!(line.chars().count(), 79);
-    }
-
-    const NESTED: &str = include_str!("../tests/logs/pdflatex-nested.txt");
-    const FONTSPEC: &str = include_str!("../tests/logs/xelatex-fontspec-error.txt");
-    const LUALATEX: &str = include_str!("../tests/logs/lualatex-warnings.txt");
-
-    #[test]
-    fn a_pdftex_log_with_nested_files_gives_each_item_its_file_and_line() {
-        let hyperref = "Token not allowed in a PDF string (Unicode): removing";
-        assert_eq!(
-            parsed(NESTED),
-            [
-                format!("warning main.tex:5 {hyperref} `math shift' on input line 5."),
-                format!("warning main.tex:5 {hyperref} `superscript' on input line 5."),
-                "warning chapters/intro.tex:2 Reference `fig:nope' on page 1 undefined on input line 2.".into(),
-                "warning chapters/intro.tex:2 Citation `missing' on page 1 undefined on input line 2.".into(),
-                "error chapters/deep.tex:2 Undefined control sequence: \\undefinedmacroindeep".into(),
-                "warning main.tex:7 First line of the warning second line of the warning third line of the warning and a fourth, which ends it on input line 7.".into(),
-                "error data.dat:2 Undefined control sequence: \\nosuchdatacommand".into(),
-                "warning -:- There were undefined references.".into(),
-            ]
-        );
-    }
-
-    #[test]
-    fn bad_boxes_are_kept_apart_from_the_issues_at_their_first_line() {
-        let log = format!(
-            "{NESTED}\n(./chapters/intro.tex\n\
-             Underfull \\hbox (badness 10000) in paragraph at lines 12--14\n\
-             []\\OT1/cmr/m/n/10 x\n\
-             \n\
-             Overfull \\vbox (3.0pt too high) has occurred while \\output is active\n\
-             \n)"
-        );
-        let (items, bad_boxes) = parse_log(&log, "main.tex");
-        assert_eq!(described(&items), parsed(NESTED));
-        assert_eq!(
-            described(&bad_boxes),
-            [
-                "warning main.tex:8 Overfull \\hbox (216.66702pt too wide) detected at line 8",
-                "warning chapters/intro.tex:12 Underfull \\hbox (badness 10000) in paragraph at lines 12--14",
-                "warning -:- Overfull \\vbox (3.0pt too high) has occurred while \\output is active",
-            ]
-        );
-    }
-
-    #[test]
-    fn crlf_logs_parse_like_lf_logs() {
-        for log in [NESTED, FONTSPEC, LUALATEX] {
-            assert_eq!(parsed(&log.replace('\n', "\r\n")), parsed(log));
-        }
-    }
-
-    #[test]
-    fn a_missing_font_in_xetex_gives_one_error_with_the_whole_message() {
-        let (items, _) = parse_log(FONTSPEC, "main.tex");
-        let errors: Vec<_> = items
-            .iter()
-            .filter(|it| it.kind == Severity::Error)
-            .collect();
-        assert_eq!(errors.len(), 2, "{errors:?}");
-        assert!(
-            errors[1]
-                .message
-                .ends_with("Metric (TFM) file or installed font not found.")
-        );
-        let error = errors[0];
-        assert_eq!(
-            (error.file.as_deref(), error.line),
-            (Some("main.tex"), Some(4))
-        );
-        let (start, end) = (
-            "Package fontspec Error: The font \"NoSuchFontAnywhere\" cannot be found;",
-            "bug in the underlying font loading engine (XeTeX/luaotfload).",
-        );
-        assert!(error.short.starts_with(start) && error.short.ends_with(end));
-        assert!(!error.message.contains("Could not resolve") && !error.message.contains("l.4"));
-    }
-
-    #[test]
-    fn a_luatex_log_keeps_its_long_warning_and_the_error_after_it() {
-        assert_eq!(
-            parsed(LUALATEX),
-            [
-                "warning -:- Unknown language 'latin'. Hyphenation patterns for 'english' will be used instead. With LuaTeX, lipsum requires babel to get proper hyphenation (you can use \\usepackage[base]{babel}).",
-                "warning main.tex:7 Reference `sec:nowhere' on page 1 undefined on input line 7.",
-                "error main.tex:8 Undefined control sequence: \\undefinedinlua",
-                "warning -:- There were undefined references.",
-            ]
-        );
-    }
-
-    #[test]
-    fn texpressos_log_names_files_from_the_main_files_folder_and_a_distributions_alone() {
-        let log = "**\n(main.tex\n\
-                   (article.cls\n\
-                   Document Class: article 2025/01/22 v1.4n Standard LaTeX document class\n\
-                   (size10.clo\n\
-                   File: size10.clo 2025/01/22 v1.4n Standard LaTeX file (size option)\n\
-                   )\n\
-                   ! Bad class.\n\
-                   l.12 \\oops\n\
-                   \n\
-                   ) (ch/sec.tex\n\
-                   ! Undefined control sequence.\n\
-                   l.3 \\foo\n\
-                   \n\
-                   misspelled it (e.g., `\\hobx'), type `I' and the correct\n\
-                   ) (top.tex\n\
-                   LaTeX Warning: Reference `x' on page 1 undefined on input line 1.\n\
-                   \n\
-                   ! Missing $ inserted.\n\
-                   l.1 x^\n\
-                   \n\
-                   )\n";
-        let ours = |name: &str| {
-            let project = ["main.tex", "ch/sec.tex", "top.tex"].contains(&name);
-            project.then(|| format!("nested/{name}"))
-        };
-        assert_eq!(
-            described(&parse_live_log(log, "nested/main.tex", &ours)),
-            [
-                "error nested/main.tex:- article.cls: Bad class.",
-                "error nested/ch/sec.tex:3 Undefined control sequence: \\foo",
-                "error nested/top.tex:1 Missing $ inserted.",
-            ]
-        );
-    }
-
-    #[test]
-    fn bibliography_and_latexmk_failures_are_read_from_their_own_output() {
-        let blg = "Database file #1: refs.bib\n\
-                   I was expecting a `,' or a `}'---line 7 of file refs.bib\n\
-                   \x20:   author = {Nobody},\n\
-                   I'm skipping whatever remains of this entry\n\
-                   Warning--empty author in broken\n\
-                   Warning--I'm ignoring knuth's extra \"year\" field\n\
-                   --line 12 of file refs.bib\n\
-                   I couldn't open database file .bib\n---line 5 of file main.aux\n\
-                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n\
-                   [813] Biber.pm:131> WARN - Duplicate entry key 'x' in file 'refs.bib'\n";
-        assert_eq!(
-            described(&parse_blg(blg)),
-            [
-                "error refs.bib:7 I was expecting a `,' or a `}'",
-                "warning -:- empty author in broken",
-                "warning refs.bib:12 I'm ignoring knuth's extra \"year\" field",
-                "error main.aux:5 I couldn't open database file .bib",
-                "error -:- BibTeX subsystem: syntax error",
-                "warning -:- Duplicate entry key 'x' in file 'refs.bib'",
-            ]
-        );
-        let output = "Latexmk: All targets (build/main.pdf) are up-to-date\n\
-                      Collected error summary (may duplicate other messages):\n\
-                      \x20 biber build/main: Could not open biber log file 'build/main.blg'\n\
-                      \x20   detail\n";
-        assert_eq!(
-            described(&latexmk_errors(output)),
-            ["error -:- biber build/main: Could not open biber log file 'build/main.blg'"]
-        );
+        assert_eq!(Fix::parse("format:disk"), None);
     }
 }

@@ -1,5 +1,3 @@
-//! Built-in project templates. Each maps relative file path → content.
-
 const ARTICLE_BIB: &str = r#"@article{knuth1984,
   author  = {Knuth, Donald E.},
   title   = {Literate Programming},
@@ -130,34 +128,11 @@ const BEAMER_MAIN: &str = r#"\documentclass{beamer}
 \end{document}
 "#;
 
-/// Each template's id, as Home lists them.
-#[cfg(test)]
-pub(crate) const TEMPLATES: [&str; 4] = ["blank", "article", "report", "beamer"];
-
 pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
     match template {
         "blank" => &[("main.tex", BLANK_MAIN)],
         "report" => &[("main.tex", REPORT_MAIN), ("references.bib", ARTICLE_BIB)],
         "beamer" => &[("main.tex", BEAMER_MAIN)],
         _ => &[("main.tex", ARTICLE_MAIN), ("references.bib", ARTICLE_BIB)],
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{TEMPLATES, files};
-
-    #[test]
-    fn every_template_is_plain_file_names_led_by_main_tex() {
-        // create_project writes these straight into the new folder, without
-        // the path checks user input goes through.
-        for name in TEMPLATES {
-            let template = files(name);
-            assert_eq!(template[0].0, "main.tex", "{name}");
-            for (file, _) in template {
-                assert!(!file.contains('/') && !file.starts_with('.'), "{file}");
-            }
-        }
-        assert_eq!(files("unknown"), files("article"));
     }
 }

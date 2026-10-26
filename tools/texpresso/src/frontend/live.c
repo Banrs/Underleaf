@@ -1,29 +1,3 @@
-/*
- * MIT License
- *
- * TeXpresso without a window, for an editor that shows the pages in its own PDF
- * view: Underleaf's patches build the texpresso program from this file alone, with
- * no SDL and none of upstream's window (driver.c, main.c, renderer.c);
- * engine_tex.c gives it its engine. Run with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf
- * and [-I dir]... main.tex, it reads JSON commands from stdin until it closes and
- * writes JSON messages to stdout (editor.c), diagnostics to stderr.
- *
- * The editor says which pages it shows (["view", first, last]). A change is
- * typeset as far as the last of them, and each page in view whose content
- * differs from what the editor was last given is written at once as a one-page
- * PDF of its own (["page", index, path]). The rest of the document follows
- * once typing pauses, in slices that a change interrupts. The whole document,
- * with its SyncTeX, is written when a run has reached the end and differs from
- * the one written before (["pdf", path, pages, run, changed]). Every message is
- * JSON, its first ["live", 2], the version of these shapes.
- *
- * References and contents come from finishing passes once the document has been
- * left alone for a moment, and only when a file TeX reads back (.aux, .toc) was
- * written other than as read. A pass is TeX again from the start, reading what
- * the last run wrote (txp_tex_rerun): a second TeX that takes the first one's
- * place once over, and that a change drops.
- */
-
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
@@ -45,52 +19,49 @@
 
 #define LIVE_PASSES 4
 
-/* ms after a change: before the pages past the view are typeset, before the
- * whole document is written, and before a finishing pass starts. */
 static int live_tail_ms = 150, live_whole_ms = 300, live_rerun_ms = 1000;
 
 typedef struct
 {
-  uint64_t now;   // the page as typeset, by its bytes (pages below live.checked)
-  uint64_t shown; // as the editor was last given it, in a page of its own or the document
-  uint64_t whole; // as in the whole document last written
-  int file[2];    // its own PDFs, by serial: the latest, and the one before it
+  uint64_t now;
+  uint64_t shown;
+  uint64_t whole;
+  int file[2];
 } live_page;
 
 typedef struct
 {
   fz_context *ctx;
   txp_engine *eng;
-  const char *doc_path; // the document's folder
+  const char *doc_path;
   const char *pdf_output;
   bool paused;
 
-  /* What the editor has asked for. */
   struct {
-    int first, last;      // the pages it shows
-    int mark;             // its last ["mark", n]
-    bool touched;         // a command changed a file
-    bool rerun;           // it asked for a finishing pass
-    bool scan;            // it asked for the files on disk to be looked at again
+    int first, last;
+    int mark;
+    bool touched;
+    bool rerun;
+    bool scan;
     char caret_path[1024];
-    int caret_offset;     // where its caret settled, -1 once a checkpoint is there
+    int caret_offset;
   } wish;
 
   live_page *pages;
   int cap;
-  int checked;         // pages below this are compared since they were typeset
-  int serial;          // of the last page file
-  uint64_t salt;       // changes when a file on disk did: its pages are other pages
-  int whole_pages;     // pages in the whole document last written, -1 before the first
-  bool had_complete;   // a whole document of a run that reached the end was written
-  bool whole_complete; // and the one last written is such a one
-  bool dirty;          // a page differs from the whole document last written
-  int synced;          // the last mark told as shown
-  bool started;        // the first run is over
-  double changed_at;   // when a file last changed, once it is
-  int run;             // enum EDITOR_RUN: how the last run ended
-  bool aux;            // and whether it wrote the files it reads other than as read
-  int passes;          // finishing passes since the last change
+  int checked;
+  int serial;
+  uint64_t salt;
+  int whole_pages;
+  bool had_complete;
+  bool whole_complete;
+  bool dirty;
+  int synced;
+  bool started;
+  double changed_at;
+  int run;
+  bool aux;
+  int passes;
   char dir[4096];
 } live_state;
 
@@ -113,9 +84,6 @@ static bool poll_input(live_state *l)
   return poll(&fd, 1, 0) == 1 && (fd.revents & (POLLRDNORM | POLLHUP)) != 0;
 }
 
-/* Commands */
-
-/* `path` relative to `dir`, and how many folders up from it (then not usable). */
 static const char *relative_path(const char *path, const char *dir, int *go_up)
 {
   size_t n = strlen(dir);
@@ -153,7 +121,6 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
 
 #include "utf_mapping.h"
 
-/* Byte offset of `line` (0-based) in `b`, or -1. */
 static int line_offset(fz_buffer *b, int line)
 {
   int offset = 0;
@@ -321,12 +288,11 @@ static void interpret_command(live_state *l, vstack *stack, val command)
       l->wish.caret_offset = fz_maxi(cmd.caret.offset, 0);
       break;
 
-    default: // a window's: there is none
+    default:
       break;
   }
 }
 
-/* Runs the commands waiting. Whether the input has closed. */
 static bool read_commands(live_state *l, prot_parser *parser, vstack *stack)
 {
   char buffer[4096];
@@ -361,8 +327,6 @@ static bool read_commands(live_state *l, prot_parser *parser, vstack *stack)
   return n == 0;
 }
 
-/* Pages */
-
 static live_page *live_at(live_state *l, int index)
 {
   if (index >= l->cap)
@@ -381,9 +345,6 @@ static void live_page_path(live_state *l, char *path, size_t size, int index, in
   snprintf(path, size, "%s/page-%d-%d.pdf", l->dir, index, serial);
 }
 
-/* A page's own PDF is removed one step after another replaces it (`serial`, or 0
- * for the whole document): the editor may be about to read the one it was just
- * told of. */
 static void live_retire(live_state *l, live_page *page, int index, int serial)
 {
   char path[4200];
@@ -423,20 +384,15 @@ static bool live_write_page(live_state *l, int index)
   }
   live_retire(l, page, index, serial);
   page->shown = page->now;
-  // Complete on disk before the editor hears of it.
   editor_page(index, path);
   return true;
 }
 
-/* Compares the pages typeset since the last look, and writes those in view that
- * differ from what the editor has; with `view`, first the earlier ones that have
- * come into view. */
 static void live_scan(live_state *l, bool view)
 {
   int count = send(page_count, l->eng);
   if (l->checked > count)
     l->checked = count;
-  // Until the editor has a document, there is nothing for a page of its own to replace.
   bool pages = l->whole_pages >= 0;
   if (view && pages)
     for (int i = l->wish.first; i <= l->wish.last && i < l->checked; i++)
@@ -454,8 +410,6 @@ static void live_scan(live_state *l, bool view)
   }
 }
 
-/* Without one to write, the last one goes: it would place the new pages' text
- * where the old ones had it. */
 static void export_synctex(live_state *l)
 {
   size_t len = strlen(l->pdf_output);
@@ -481,8 +435,6 @@ static void export_synctex(live_state *l)
 
 enum live_written { LIVE_WRITTEN, LIVE_INTERRUPTED, LIVE_FAILED };
 
-/* The whole document as typeset so far, to the PDF output. `interruptible`, it
- * gives way to a command waiting: the next keystroke's page comes first. */
 static enum live_written live_write_whole(live_state *l, int run, bool interruptible)
 {
   fz_context *ctx = l->ctx;
@@ -519,8 +471,6 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
     remove(part);
     return LIVE_INTERRUPTED;
   }
-  // Its SyncTeX beside it, as live.synctex for live.pdf, for the editor's jumps
-  // between source and pages; written first, so a PDF never comes without its own.
   export_synctex(l);
   if (rename(part, l->pdf_output) != 0)
   {
@@ -556,9 +506,6 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
   return LIVE_WRITTEN;
 }
 
-/* Steps the engine until its page count leaves `count`, a few ms have passed, a
- * command waits, or it has nothing more to do yet: a worker's steps are short,
- * and the input is looked at every sixteenth. Whether it has more. */
 static bool live_step(live_state *l, int count)
 {
   double until = live_ms() + 4;
@@ -571,12 +518,6 @@ static bool live_step(live_state *l, int count)
   return false;
 }
 
-/* Where the editor's caret settled, a checkpoint is wanted just before it, so
- * that the first key typed there is as quick as the ones after it. A run that
- * hasn't read that far takes it on its way. One that is over is told of a change
- * there that changes nothing, and takes it as it does for a real change: the
- * pages typeset again are the same pages, and nothing is sent. A run in between
- * is left to end first. */
 static void live_caret(live_state *l)
 {
   int offset = l->wish.caret_offset, at;
@@ -607,21 +548,18 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
   l->changed_at = -1e9;
   l->wish.last = 1;
   l->wish.caret_offset = -1;
-  // For measuring.
   live_tail_ms = live_env("TEXPRESSO_LIVE_TAIL_MS", live_tail_ms);
   live_whole_ms = live_env("TEXPRESSO_LIVE_WHOLE_MS", live_whole_ms);
   live_rerun_ms = live_env("TEXPRESSO_LIVE_RERUN_MS", live_rerun_ms);
   editor_live(2);
 
-  /* The editor's opening commands before the first run: a file it says it will
-   * supply, or its own copy of one, must be there before TeX looks for it. */
   struct pollfd opening = {STDIN_FILENO, POLLRDNORM, 0};
   poll(&opening, 1, 100);
   if (read_commands(l, parser, stack))
     return;
   send(step, l->eng, ctx, true);
 
-  bool running = true; // a run whose end hasn't been told
+  bool running = true;
   for (;;)
   {
     int first = l->wish.first, last = l->wish.last;
@@ -647,7 +585,6 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     }
     if (l->wish.touched)
     {
-      // The files opened with the session aren't typing to wait out.
       if (l->started)
         l->changed_at = live_ms();
       l->passes = 0;
@@ -655,14 +592,12 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
 
     bool stepping = send(get_status, l->eng) == DOC_RUNNING && !l->paused;
     int count = send(page_count, l->eng);
-    // Pages in view first; the rest once typing has paused.
     bool wanted = stepping && (count <= l->wish.last ||
                                live_ms() - l->changed_at >= live_tail_ms);
     bool more = wanted && live_step(l, count);
     txp_engine *eng = txp_tex_successor(l->eng, ctx);
     if (eng != l->eng)
     {
-      // A pass's pages, all of them at once, which no look has seen.
       l->eng = eng;
       l->checked = 0;
       more = true;
@@ -690,7 +625,6 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     double now = live_ms(), wake = -1;
     if (stepping)
     {
-      // Something to show before a long document is done.
       if (l->whole_pages < 0 && count > l->wish.last &&
           live_write_whole(l, RUN_PARTIAL, false) == LIVE_FAILED)
         l->whole_pages = 0;
@@ -699,14 +633,9 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     }
     else if (!running)
     {
-      // The early document, or one of a run that stopped, is told as complete
-      // once it is, even with the same pages: the editor goes by what the last
-      // one said.
       bool completed = l->run == RUN_COMPLETE && !l->whole_complete;
-      // A run that stopped on an error doesn't replace a document that reached its end.
       bool differs = (l->dirty || count != l->whole_pages || completed) &&
                      !(l->run == RUN_STOPPED && l->had_complete);
-      // Other pages wait for typing to pause; another number of them is told at once.
       double due = l->run == RUN_COMPLETE && (count != l->whole_pages || completed)
                        ? now : l->changed_at + live_whole_ms;
       if (differs && now >= due)
@@ -735,12 +664,9 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       else if (l->aux && l->passes < LIVE_PASSES && (wake < 0 || pass_due < wake))
         wake = pass_due;
     }
-    // A caret that waited for the run to end.
     if (more || (!stepping && l->wish.caret_offset >= 0))
       continue;
 
-    // Nothing to do until a command comes, the worker has more, or one of the
-    // pauses is over.
     fflush(stderr);
     struct pollfd fds[2] = {{STDIN_FILENO, POLLRDNORM, 0},
                             {stepping && wanted ? txp_tex_worker_fd(l->eng) : -1, POLLRDNORM, 0}};
@@ -753,7 +679,6 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
   fz_free(ctx, l->pages);
 }
 
-/* MuPDF's messages, which it gives the process's stderr, to the session's log. */
 static void live_mupdf_message(void *kind, const char *message)
 {
   fprintf(stderr, "%s: %s\n", (const char *)kind, message);
@@ -765,7 +690,6 @@ static void usage(void)
                   "with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf\n");
 }
 
-/* The program beside which its TeX is, as a real file. */
 static bool executable_path(const char *argv0, char path[PATH_MAX])
 {
   char exe_path[PATH_MAX];
@@ -774,10 +698,6 @@ static bool executable_path(const char *argv0, char path[PATH_MAX])
          realpath(argv0, path);
 }
 
-/* stderr holds a keystroke's diagnostics until the loop waits, so the editor
-   reading them wakes once, not forty times. What was said before a crash is what
-   explains it: the buffer is written as it is, as fflush isn't safe in a signal
-   handler (Darwin's FILE). */
 static char diagnostics[1 << 15];
 
 static void crashed(int sig)
@@ -807,7 +727,7 @@ int main(int argc, const char **argv)
   {
     const char *arg = argv[i];
     if (!strcmp(arg, "-json") || !strcmp(arg, "-texlive"))
-      ; // what it speaks and reads either way
+      ;
     else if (!strcmp(arg, "-I") && i + 1 < argc)
     {
       size_t n = strlen(inputs);
@@ -866,7 +786,6 @@ int main(int argc, const char **argv)
     fprintf(stderr, "[fatal] %s\n", fz_caught_message(ctx));
     status = 1;
   }
-  // The editor has gone (its pipe closed, even unexpectedly), or the session failed.
   send(destroy, l.eng, ctx);
   dvi_page_fonts(ctx, false);
   vstack_free(ctx, stack);

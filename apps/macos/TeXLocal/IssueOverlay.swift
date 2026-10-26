@@ -1,9 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The build's issues and Live Preview's on the lines laid out: a band over each paragraph with one, a box at the end of
-/// its first line (`IssueBox`), the words the box doesn't show for a pointer resting on it, and the undefined command
-/// underlined.
 final class IssueOverlay {
     struct Row {
         let line: Int
@@ -18,15 +15,10 @@ final class IssueOverlay {
     init(in view: SourceTextView) { self.view = view }
 
     var lines: [Int: IssuesEvent.Line] = [:] { didSet { if lines != oldValue { changed() } } }
-    /// Live Preview's, drawn as the build's are, as Xcode draws its live issues: of a run a moment behind the text, and in
-    /// its log rather than the build panel's list.
     var live: [Int: IssuesEvent.Line] = [:] { didSet { if live != oldValue { changed() } } }
     var isEmpty: Bool { lines.isEmpty && live.isEmpty }
-    /// A box, or a line with an issue chosen in the gutter: the project opens the issue in the build panel.
     var clicked: (Int) -> Void = { _ in }
 
-    /// A line's one issue: the build's, which is of the text shown (an edit clears it) and listed, over Live Preview's,
-    /// which takes its place at the first edit.
     func issue(on number: Int) -> (issue: IssuesEvent.Line, live: Bool)? {
         lines[number].map { ($0, false) } ?? live[number].map { ($0, true) }
     }
@@ -40,7 +32,6 @@ final class IssueOverlay {
     private(set) var rows: [Row] = []
     private var labels: [Int: IssueLabel] = [:]
     private var font = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1)
-    /// A character's width of the text's font: the least room between a line's text and its box.
     private var gap: CGFloat = 0
     private var tips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
 
@@ -52,7 +43,6 @@ final class IssueOverlay {
 
     func place() {
         guard !isEmpty || !rows.isEmpty else { return }
-        // Each line keeps its box's view.
         var views = Dictionary(rows.compactMap { row in row.message.map { (row.line, $0.view) } }) { $1 }
         rows.forEach { view.setNeedsDisplay($0.band) }
         rows.removeAll()
@@ -89,7 +79,6 @@ final class IssueOverlay {
         let room = end - (left + first.typographicBounds.maxX) - gap
         let issues = said.count
         let fitted = label.text(in: room - Metrics.width(ofText: 0, font: font, issues: issues))
-        // A message cut short takes all the room there is, on whole points, as Xcode's does.
         let width = fitted?.cut == true ? room.rounded(.down) : Metrics.width(ofText: fitted?.width, font: font, issues: issues)
         if width <= room {
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
@@ -105,8 +94,6 @@ final class IssueOverlay {
             issue.message = (message, rect, fitted?.cut ?? true)
         }
         if issue.message?.cut != false || issues > 1 { issue.tip = said.joined(separator: "\n") }
-        // TextKit 2 draws no underline given as a rendering attribute: it is drawn under the text, in Xcode's red
-        // (`anIssuesMessageIsAtItsLinesEnd`).
         if !reported.tokens.isEmpty, let textFont = view.font {
             let thickness = max(1, view.onPixels(CTFontGetUnderlineThickness(textFont as CTFont)))
             for token in reported.tokens {
@@ -128,7 +115,6 @@ final class IssueOverlay {
         let wanted = rows.compactMap { row in row.tip.flatMap { tip in row.message.map { ($0.rect, tip) } } }
         guard !wanted.elementsEqual(tips, by: { $0.0 == $1.rect && $1.text.isEqual(to: $0.1) }) else { return }
         for tip in tips { view.removeToolTip(tip.tag) }
-        // The string is the tag's owner, which AppKit asks for its description and doesn't keep.
         tips = wanted.map { rect, tip in
             let text = tip as NSString
             return (view.addToolTip(rect, owner: text, userData: nil), rect, text)
@@ -139,7 +125,6 @@ final class IssueOverlay {
         view.visibleRect.contains(point) ? rows.first(where: { $0.message?.rect.contains(point) == true }) : nil
     }
 
-    /// The caret's line has the current line's fill, of the same shape, in place of its band.
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {
@@ -152,8 +137,6 @@ final class IssueOverlay {
     }
 }
 
-/// TextKit's selection view would cover a box drawn in the text view's background, so the box is a view above the text's,
-/// which takes no click.
 final class IssueMessageView: NSHostingView<IssueBox> {
     convenience init(_ box: IssueBox) {
         self.init(rootView: box)

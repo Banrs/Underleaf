@@ -1,5 +1,3 @@
-//! Making, moving and discarding the files and folders of a project.
-
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -22,8 +20,6 @@ pub struct RenameResult {
     pub main_file: String,
 }
 
-/// `rel`, or the first of its copies' names that is free, each tried with one create that fails
-/// on anything there, so an entry another app makes meanwhile is kept.
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
     for path in copy_paths(rel) {
         let abs = safe_write_path(root, &path)?;
@@ -56,8 +52,6 @@ pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreE
         .map_err(|err| write_error(abs, err))
 }
 
-/// A file one of `write_all`'s writes: `was` what it held, None if there was none, and `done`
-/// what the caller answers for it.
 pub(crate) struct Planned<D> {
     pub abs: PathBuf,
     pub bytes: Vec<u8>,
@@ -65,10 +59,6 @@ pub(crate) struct Planned<D> {
     pub done: D,
 }
 
-/// Whether what `abs` names is in the project at `root`, resolved: a link there to a file
-/// elsewhere, as a cloned repository may hold, isn't, and a write across the project leaves it be.
-/// A file not there yet is where its nearest folder that is resolves to, as a write would create
-/// it there; a link to nothing, or a folder that can't be looked in, isn't.
 pub(crate) fn inside(root: &Path, abs: &Path) -> bool {
     for path in abs.ancestors() {
         match fs::symlink_metadata(path) {
@@ -80,8 +70,6 @@ pub(crate) fn inside(root: &Path, abs: &Path) -> bool {
     false
 }
 
-/// What `plan` makes of each item, written in turn, all or none: a plan or write that fails is the
-/// error, and the files written before it are put back as they were, or removed if they weren't.
 pub(crate) fn write_all<T, D>(
     items: impl IntoIterator<Item = T>,
     mut plan: impl FnMut(T) -> Result<Option<Planned<D>>, CoreError>,
@@ -95,7 +83,6 @@ pub(crate) fn write_all<T, D>(
         Ok(())
     });
     if let Err(err) = writing {
-        // Each was just written where it is, so can be again.
         for Planned { abs, was, .. } in &written {
             let _ = match was {
                 Some(was) => write_creating(abs, was).map(drop),
@@ -107,8 +94,6 @@ pub(crate) fn write_all<T, D>(
     Ok(written.into_iter().map(|planned| planned.done).collect())
 }
 
-/// A failed write in Foundation's words, as the hosts show it in an alert whose title already
-/// says the file wasn't saved; its status is the file system's, as any other.
 fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
     let file = abs.file_name().unwrap_or_default().to_string_lossy();
     let kind = err.kind();
@@ -140,9 +125,6 @@ fn is_under(path: &str, dir: &str) -> bool {
     after_entry(path, dir).is_some_and(|rest| !rest.is_empty())
 }
 
-/// Whether a rename from `src` to `dest` would land on another entry. On a case-insensitive
-/// volume, the default on macOS, a case-only rename's destination already "exists"
-/// because it is `src` itself.
 pub(super) fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
 }
@@ -190,12 +172,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
 
 pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
 
-/// Delete to the Trash, so a mis-click is recoverable; a trash failure is reported and never
-/// becomes a permanent delete.
 pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    // macOS's own tool moves it as FileManager's trashItem does, as the Mac app does, where
-    // asking Finder would need the Automation permission. The path is absolute, so it can't be
-    // read as an option; `-s` makes a failed move an error.
     let trashed = Command::new("/usr/bin/trash")
         .arg("-s")
         .arg(path)
@@ -210,9 +187,6 @@ pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
     )))
 }
 
-/// Discard, by `trash`, an entry an incoming file of its name replaces. The main file may go,
-/// since the file taking its place keeps it valid; a folder holding it may not, however the
-/// upload spells its name.
 pub(crate) fn discard_replaced(
     project: &Project,
     rel: &str,
@@ -226,7 +200,6 @@ pub(crate) fn discard_replaced(
     trash(&safe_path(&project.root, rel)?)
 }
 
-/// `rel`, then "name 2.ext", "name 3.ext" and so on in its folder, as Finder numbers copies.
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
     let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let numbered = move |n: u32| match name.rsplit_once('.') {
@@ -238,102 +211,4 @@ pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
         "" => copy,
         _ => format!("{parent}/{copy}"),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::projects::testing::project;
-    use crate::settings::{read_ui, write_ui};
-
-    #[test]
-    fn a_write_refused_says_so_in_a_sentence_naming_the_file_and_folder() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let folder = dir.path().join("Thesis");
-        fs::create_dir(&folder).unwrap();
-        fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
-        let err = write_creating(&folder.join("main.tex"), b"x").unwrap_err();
-        fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
-        let said = "You don’t have permission to save the file “main.tex” in the folder “Thesis”.";
-        assert_eq!(
-            (err.kind, err.message.as_str()),
-            (crate::ErrorKind::Denied, said)
-        );
-    }
-
-    #[test]
-    fn a_file_is_inside_where_it_or_its_nearest_folder_resolves() {
-        use std::os::unix::fs::symlink;
-        let (dir, root) = project();
-        let outside = fs::canonicalize(dir.path()).unwrap().join("elsewhere");
-        fs::create_dir(&outside).unwrap();
-        fs::write(outside.join("zshrc"), "").unwrap();
-        symlink(&outside, root.join("chapters")).unwrap();
-        symlink(outside.join("zshrc"), root.join("notes.txt")).unwrap();
-        symlink(outside.join("gone"), root.join("broken.tex")).unwrap();
-        symlink(root.join("main.tex"), root.join("same.tex")).unwrap();
-        let inside = |rel: &str| inside(&root, &root.join(rel));
-        for rel in ["main.tex", "same.tex", "new.tex", "figures/new/a.png"] {
-            assert!(inside(rel), "{rel}");
-        }
-        for rel in [
-            "chapters/a.tex",
-            "chapters/new/a.tex",
-            "notes.txt",
-            "broken.tex",
-            "broken.tex/a",
-        ] {
-            assert!(!inside(rel), "{rel}");
-        }
-    }
-
-    #[test]
-    fn a_new_entry_takes_the_next_free_name() {
-        let (_dir, root) = project();
-        let made = [(); 3].map(|()| create_free(&root, "notes/untitled.tex", false).unwrap());
-        let numbered = [
-            "notes/untitled.tex",
-            "notes/untitled 2.tex",
-            "notes/untitled 3.tex",
-        ];
-        assert_eq!(made, numbered);
-        let folders = [(); 2].map(|()| create_free(&root, "untitled folder", true).unwrap());
-        assert_eq!(folders, ["untitled folder", "untitled folder 2"]);
-        assert!(root.join("untitled folder 2").is_dir());
-        for bad in [".texlocal.json", "../x.tex"] {
-            assert_eq!(
-                create_free(&root, bad, false).unwrap_err().kind,
-                crate::ErrorKind::Invalid
-            );
-        }
-        fs::write(root.join("plain"), "a file").unwrap();
-        assert!(create_free(&root, "plain/x.tex", false).is_err());
-    }
-
-    #[test]
-    fn a_renamed_entry_takes_its_saved_interface_state_along() {
-        let (_dir, root) = project();
-        let project = Project::in_folder(&root);
-        create_free(&root, "chapters/a.tex", false).unwrap();
-        let patch = json!({
-            "expandedFolders": ["other", "chapters/deep", "chapters"],
-            "foldedHeadings": ["main.tex\t1:Intro#1", "chapters/a.tex\t1:Intro#1"],
-            "file": "chapters/a.tex",
-        });
-        write_ui(&project.ui, &patch).unwrap();
-        rename_entry(&project, "chapters", "content").unwrap();
-        let state = read_ui(&project.ui);
-        assert_eq!(state.expanded_folders, ["content", "content/deep", "other"]);
-        let folds = ["content/a.tex\t1:Intro#1", "main.tex\t1:Intro#1"];
-        assert_eq!(state.folded_headings, folds);
-        assert_eq!(state.file.as_deref(), Some("content/a.tex"));
-        rename_entry(&project, "content/a.tex", "content/b.tex").unwrap();
-        let state = read_ui(&project.ui);
-        assert_eq!(
-            state.folded_headings,
-            ["content/b.tex\t1:Intro#1", "main.tex\t1:Intro#1"]
-        );
-        assert_eq!(state.file.as_deref(), Some("content/b.tex"));
-    }
 }

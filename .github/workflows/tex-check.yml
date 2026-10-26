@@ -1,9 +1,5 @@
 name: TeX check
 
-# Runs the core's ignored tests that need TeX Live, which ci.yml has none of: a thesis built through
-# latexmk, Live Preview end to end with the patched TeXpresso (docs/texpresso.md), SyncTeX read as
-# TeX Live's synctex program reads it, and TinyTeX installed into a temporary folder as the app
-# installs it. Nightly, by hand, or from a push to a claude/tex-check/<name> branch.
 on:
   schedule:
     - cron: '17 3 * * *'
@@ -25,15 +21,11 @@ jobs:
       TEXPRESSO: ${{ github.workspace }}/.texpresso
     steps:
       - uses: actions/checkout@v7
-      # The installed TeXpresso links these from Homebrew, so a cached one needs them too, at the
-      # versions it was built against. Its key has TinyTeX's too, for the formats it keeps.
       - name: TeXpresso's dependencies
         id: brew
         run: |
           brew install pkgconf mupdf icu4c harfbuzz graphite2
           echo "versions=$(brew list --versions mupdf icu4c harfbuzz graphite2 | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
-      # TinyTeX's latest monthly release, whose tlmgr installs what it lacks. The core's test reads
-      # it from here, as GitHub's API refuses the runners' shared addresses without a token.
       - name: TinyTeX release
         id: tinytex
         env:
@@ -63,13 +55,12 @@ jobs:
         run: |
           tools/texpresso/build.sh "$RUNNER_TEMP/texpresso-source"
           NO_LINK=1 tools/texpresso/install.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           key: tex-check
       - run: cargo test -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso
-          TEXLOCAL_TINYTEX_RELEASE: file://${{ runner.temp }}/tinytex-release.json

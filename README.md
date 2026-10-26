@@ -2,95 +2,53 @@
 
 # Underleaf
 
-TeXLocal is a LaTeX editor for the Mac that works offline. This repository, Underleaf, is its
-source. It does much of what Overleaf does, but on your own computer: you don't need an account or
-a connection, and each project is an ordinary folder on your disk.
+TeXLocal is a LaTeX editor for the Mac that works offline, and Underleaf is its source code. It
+does much of what Overleaf does without an account or a connection: each project is an ordinary
+folder on your disk, compiled by the TeX installation on your Mac.
 
-There were also iPad and Windows apps. They are parked while the Mac app is finished, and the
-`archived-multi-platform` branch holds them as they were.
+## Features
 
-## What it does
-
-You start a project from a template (blank, article, report or Beamer presentation), or open a
-folder, `.tex` file or `.zip` you already have. Choose Source Only, Source & PDF, or PDF Only from
-the toolbar's Editor Layout menu or the View menu. A project opens again where you left it, on the
-same file, line, page and zoom.
-
-The toolbar follows the source and PDF dividers. Formatting tools stay with the source, the
-zoom pill stays with the PDF, and Compile becomes a compact button when space is tight.
-Search Project lives above the file list; Command-F finds text in the focused source or PDF.
-
-A folder opens where it is, and so does the folder of a `.tex` file. TeXLocal keeps its settings
-and build files elsewhere, so a git repository stays as it is. A `.zip` is copied into your
-projects folder.
-
-The editor completes LaTeX commands, environments and the packages your TeX installation has,
-`\cite{}` keys from your `.bib` files by key, author or title, and `\ref{}` labels, each shown with
-the caption or heading it labels. It closes brackets, dollar signs and environments as you type and
-shows the maths under the cursor in a small preview. An environment, a section or a run of comments
-folds away from the gutter's arrows or the Edit menu, as code folds in Xcode. Its colours can follow
-Overleaf, TeXstudio or the system. Drop a PNG, JPEG or PDF on the source, from the project or from
-Finder, or paste a screenshot, and it goes in with `\includegraphics`, copied beside the file you're
-editing if it came from outside.
-
-Compiling uses latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, and reruns BibTeX or biber when they're
-needed. It also runs makeglossaries, bib2gls and makeindex for a glossary, list of acronyms or
-nomenclature, without the project's own latexmkrc. As on Overleaf, a build doesn't stop at the
-first error. You get the PDF along with every error and warning, each marked on its line in the
-source. If you'd rather it stopped, turn on Stop on First Error for that project. TeXLocal saves and
-compiles on its own when you pause typing; Settings can turn that off. Changes made outside the
-app, including to unopened images, bibliography files and included sources, also update the build.
-
-The errors new users meet most come with a sentence on what TeX means and what usually fixes it.
-Where one click can fix an error, such as a missing package to install with TeX Live's tlmgr or a
-`\usepackage` to add, a button beside it does so and compiles again. TeXLocal also checks the
-document as you write, without running TeX, for references and citations that point nowhere, labels
-defined twice, missing input files, and environments, braces or maths left open. What it finds is
-listed and marked on its line with the build's issues, even before you first compile.
-
-As on Overleaf, double-clicking a word in the PDF selects it and takes you to its place in the
-source, and double-clicking in the source shows its place in the PDF (SyncTeX), to the exact
-word, while the other pane is showing. Go to Source and Go to PDF in the context menus and the
-Go menu do the same. You can also search the PDF.
-
-Live Preview, still experimental, updates the PDF as you type, before you
-save. It runs [TeXpresso](https://github.com/let-def/texpresso) in the background. A Compile
-brings it new citations and references. It stays on for a project until you turn it off.
-
-There's also a file tree, a word count, an outline of the current file that counts each section's
-words, and search and replace across the project, optionally matching case or whole words. You can
-export the project to a ZIP, or to a ZIP ready for arXiv. That one holds the 00README.json arXiv
-reads and the index and glossary files arXiv can't make itself, and it is refused for a LuaLaTeX
-project or one with shell escape on, which arXiv compiles without. Deleted files go to the Trash.
-
-You can list every place a label, citation, command or file is used, rename a label or citation
-everywhere, and see what a citation, reference or command is without leaving the text. You can
-also open a file, section or label by typing a few letters of its name, and go back to where you
-jumped from.
-
-Each project keeps a history on your computer that you can compare files with and restore from.
-A version is kept as you save, at most every ten minutes, and before a change across files such as
-Replace All. It stays for 90 days, or for good once you name it, and an opened folder's history is
-kept outside the folder and its git repository.
+- Start from a template (blank, article, report or Beamer), or open a folder, a `.tex` file or a
+  `.zip`. A folder opens where it is, and TeXLocal keeps its own settings and build files
+  elsewhere, so a git repository is left as it was.
+- See the source and the PDF side by side, or either one alone. A project opens again on the same
+  file, line, page and zoom.
+- Completion for commands, environments, installed packages, `\cite` keys and `\ref` labels.
+  Brackets, dollar signs and environments close as you type, and the maths under the cursor shows
+  in a small preview.
+- Compiling with latexmk and pdfLaTeX, XeLaTeX or LuaLaTeX, including BibTeX or biber, glossaries
+  and indexes. As on Overleaf, a build carries on past errors and marks each error and warning on
+  its line. Common errors come with an explanation, and some with a one-click fix, such as
+  installing a missing package.
+- Checks as you type, before you compile: references and citations that point nowhere, labels
+  defined twice, missing files, and environments, braces or maths left open.
+- SyncTeX in both directions: double-click a word in the PDF to find it in the source, or in the
+  source to find it in the PDF.
+- Search and replace across the project, find every use of a label, citation or command, rename a
+  label or citation everywhere, open any file or section by typing part of its name, and see an
+  outline with word counts.
+- Export to a ZIP, or to a ZIP ready for arXiv.
+- A version history on your Mac. A version is saved as you work and before changes across files;
+  all of the last day's are kept, then one an hour for a week and one a day for 90 days. Versions
+  you name are kept for good.
+- Live Preview, which is experimental, updates the PDF as you type, using
+  [TeXpresso](https://github.com/let-def/texpresso).
 
 ## Requirements
 
-You need a TeX distribution that includes latexmk and pdflatex. If TeXLocal finds none,
-it offers to install [TinyTeX](https://yihui.org/tinytex/), a small TeX Live of about 260 MB that
-goes in your user folder without asking for a password, and adds the packages a document needs
-when you click Install beside the error. For the full distribution instead, install
-[MacTeX](https://tug.org/mactex/), or run `brew install --cask mactex-no-gui`.
+TeXLocal needs macOS 27 and a TeX distribution with latexmk. If it finds none, it offers to install
+[TinyTeX](https://yihui.org/tinytex/), about 260 MB, in your home folder without asking for a
+password. It then installs the packages a document needs when you click Install beside the error.
+For the full distribution, install [MacTeX](https://tug.org/mactex/) or run
+`brew install --cask mactex-no-gui`.
 
-TeXLocal looks for TeX on your `PATH` and in the places installers usually put it:
-`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>` and TinyTeX's. If yours is somewhere
-else, choose its folder in Settings › Compiling.
-
-On macOS 27, MacTeX 2026's biber fails with an error from `lipo`. Running
-`sudo tlmgr update biber` fixes it.
+TeXLocal looks for TeX on your `PATH` and in the usual places: `/Library/TeX/texbin`, Homebrew,
+`/usr/local/texlive/<year>` and TinyTeX's folder. If yours is somewhere else, choose its folder in
+Settings › Compiling.
 
 ## Installing
 
-There are no downloads yet, so you have to build TeXLocal yourself. Install Xcode 27 and
+There are no downloads yet, so you build TeXLocal yourself. Install Xcode 27 and
 [Rust](https://rustup.rs), then run:
 
 ```sh
@@ -99,53 +57,37 @@ cd Underleaf
 zsh tools/install-mac.sh
 ```
 
-The script builds the app, copies it to `/Applications/TeXLocal.app` and opens it. To update,
-pull and run it again; it quits TeXLocal first. If you'd rather work in Xcode, open
-`apps/macos/TeXLocal.xcodeproj` and press Run.
+The script builds TeXLocal, copies it to `/Applications` and opens it. To update, pull and run it
+again. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
 
-### Live Preview
+## Live Preview
 
 Live Preview needs TeXpresso built with Underleaf's patch. Install
 [TeXpresso's build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md) with
-Homebrew, then run:
+Homebrew (SDL isn't needed), then run:
 
 ```sh
 tools/texpresso/build.sh
 tools/texpresso/install.sh tools/texpresso/source/build
 ```
 
-Start it from the Compile menu or the project's inspector. [docs/texpresso.md](docs/texpresso.md)
-explains how it works.
+Turn it on from the Compile menu or the project's inspector. If you keep TeXpresso somewhere else,
+choose its folder in Settings › Live Preview.
 
-## Projects
+## Projects and security
 
-Projects live in a `TeXLocal` folder in your home folder, and Settings shows the path. The settings
-of a project there, like its main file and TeX engine, are kept in a `.texlocal.json` file next to
-your sources. A folder you opened keeps its settings outside it, as the first section says, unless
-it already has a `.texlocal.json`.
+New projects go in a `TeXLocal` folder in your home folder. A project's settings, such as its main
+file and engine, are kept in a `.texlocal.json` file beside its sources. A folder you open keeps its
+settings outside the folder, unless it already has a `.texlocal.json`.
 
-## Security
-
-Shell escape (`-shell-escape`) lets a document run programs on your computer, so it's off unless
-you turn it on for a project. Only do that for documents you trust. A project can't turn it on for
-itself: TeXLocal keeps your choice for that folder, not in the project's files, so a folder you
-download, clone or copy starts with it off.
-
-A `latexmkrc` file is Perl that runs on every build. TeXLocal lets latexmk read a project's own
-`latexmkrc` only when that project has shell escape on. Your personal one (`~/.latexmkrc` or
-`~/.config/latexmk/latexmkrc`) is always read.
-
-## How it's built
-
-Most of the work is done by a Rust library in `crates/texlocal-core`, which keeps no user
-interface, so other apps can be built on it again. The Mac app (`apps/macos`) is written with
-SwiftUI and AppKit. [docs/core-api.md](docs/core-api.md) describes how the app talks to the core.
-
-Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues). [AGENTS.md](AGENTS.md) holds
-the instructions for coding agents that work on the project.
+Shell escape lets a document run programs on your Mac, so it is off until you turn it on for a
+project. That choice is stored on your Mac, not in the project, so a project you download or clone
+starts with it off. A project's own `latexmkrc` is read only when shell escape is on for it; your
+personal `~/.latexmkrc` is always read.
 
 ## Licence
 
-MIT; see [LICENSE](LICENSE). Maths previews are drawn with
-[RaTeX](https://crates.io/crates/ratex-layout), and your documents are compiled by your own TeX
-distribution.
+MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under TeXpresso's own MIT
+licence, and the maths previews are drawn with [RaTeX](https://crates.io/crates/ratex-layout) and
+KaTeX's fonts, which are under the SIL Open Font License. Report bugs in
+[Issues](https://github.com/Banrs/Underleaf/issues).

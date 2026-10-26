@@ -1,5 +1,3 @@
-//! Moving about a project: Open Quickly's list and Quick Help's answer.
-
 use std::cmp::Reverse;
 use std::fs;
 use std::path::Path;
@@ -19,13 +17,10 @@ use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::closing_brace;
 use crate::{lf, lock, lossy_string};
 
-/// Open Quickly's items at most.
 const LISTED: usize = 50;
-/// What a character matched at a word's start scores, and one just after the last matched.
 const WORD_START: i64 = 8;
 const RUN: i64 = 4;
 
-/// One of Open Quickly's items.
 #[derive(Serialize)]
 struct Item {
     kind: &'static str,
@@ -36,8 +31,6 @@ struct Item {
 }
 
 impl Actor {
-    /// Worked out beside the session, as a search is, from the last symbol scan: headings and
-    /// labels of the files the main file reaches.
     pub fn quick_open(&self, query: String, reply: Reply) {
         let symbols = Arc::clone(&self.symbols.read().unwrap_or_else(PoisonError::into_inner));
         let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
@@ -88,7 +81,6 @@ impl Actor {
             let mut scored: Vec<(Reverse<i64>, usize, Item)> = items
                 .into_iter()
                 .filter_map(|item| {
-                    // A file by its path, so its folder's name finds it too.
                     let text = if item.kind == "file" {
                         &item.path
                     } else {
@@ -107,8 +99,6 @@ impl Actor {
         });
     }
 
-    /// What the name at `offset` in the open document `path` is, worked out beside the session,
-    /// as usages are: a definition may be in a file only the disk has.
     pub fn quick_help(&self, path: &str, offset: u32, reply: Reply) {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(Value::Null));
@@ -126,7 +116,6 @@ impl Actor {
             let Some((kind, name, defined)) = found else {
                 return reply.send(Ok(Value::Null));
             };
-            // The open document as edited, else the disk's.
             let text = |file: &str| {
                 let open = lock(&docs).get(file).cloned();
                 match open {
@@ -176,9 +165,6 @@ impl Actor {
     }
 }
 
-/// A label's number and page, `3 on page 2`, as a build's .aux has them
-/// (`\newlabel{label}{{3}{2}…}`), or as the .aux of a file it `\include`s has them: LaTeX writes
-/// that file's labels apart, and the main .aux reads them (`\@input{ch.aux}`).
 fn numbered(aux: &Path, label: &str) -> Option<String> {
     let key = format!("\\newlabel{{{label}}}{{{{");
     let find = |aux: &str| {
@@ -198,9 +184,6 @@ fn numbered(aux: &Path, label: &str) -> Option<String> {
     })
 }
 
-/// How well `query` matches `text`: its characters in order, in any case, each scoring more at
-/// a word's start (after / - _ : . or a space, or where lower case turns upper) and just after
-/// the last; None where they aren't all there.
 fn score(query: &str, text: &str) -> Option<i64> {
     let lower = |c: char| c.to_lowercase().next().unwrap_or(c);
     let text: Vec<char> = text.chars().collect();
@@ -209,7 +192,6 @@ fn score(query: &str, text: &str) -> Option<i64> {
             || "/-_:. ".contains(text[at - 1])
             || text[at - 1].is_lowercase() && text[at].is_uppercase()
     };
-    // The best score with the query so far matched and its last character at each place.
     let mut best: Vec<Option<i64>> = Vec::new();
     for (i, wanted) in query.chars().map(lower).enumerate() {
         let mut earlier = None;

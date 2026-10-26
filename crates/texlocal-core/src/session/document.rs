@@ -1,6 +1,3 @@
-//! An open file's text, the session's: the editor edits it once per change; syntax
-//! answers, saves and the live preview read it.
-
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use tokio::sync::mpsc;
@@ -14,7 +11,6 @@ use crate::syntax::{SourceDocument, TextEdit, TextRange};
 struct Text {
     source: SourceDocument,
     version: u64,
-    /// Typed in since the session asked for a reload, which would lose it.
     edited: bool,
 }
 
@@ -50,7 +46,6 @@ impl Document {
         }))
     }
 
-    /// `SourceDocument::apply_edit`, told to the session.
     pub fn edit(
         &self,
         start: u32,
@@ -71,14 +66,11 @@ impl Document {
         mirrors
     }
 
-    /// The session asks for a reload of the text it saw at `version`.
     pub(crate) fn expect_reload(&self, version: u64) {
         let mut held = lock(&self.0.text);
         held.edited = held.version != version;
     }
 
-    /// False, changing nothing, when keys were typed since the session asked for it: they would
-    /// be lost, so the session asks about the change instead.
     pub fn reload(&self, text: &str) -> bool {
         let mut held = lock(&self.0.text);
         if held.edited {
@@ -89,15 +81,12 @@ impl Document {
         true
     }
 
-    /// Sent under the lock, so the session has changes in the order made.
     fn changed(&self, held: &mut Text, edit: Option<TextEdit>) {
         held.version += 1;
         let (doc, version) = (self.0.id, held.version);
         let _ = self.0.tx.send(Msg::Changed { doc, version, edit });
     }
 
-    /// The editor is about to show the document again, and what an earlier visit left isn't
-    /// the new one's.
     pub fn reset_typing(&self) {
         lock(&self.0.text).source.reset_typing();
     }
@@ -122,7 +111,6 @@ impl Document {
         path.clone_into(&mut lock(&self.0.text).source.path);
     }
 
-    /// Read from a copy of the text, so the editor's keys don't wait on the parse.
     pub(crate) fn facts(&self) -> Facts {
         let (text, path) = {
             let held = lock(&self.0.text);

@@ -1,28 +1,22 @@
 import AppKit
 
-/// The text view's work with the core's document, over its selection and keys.
 extension SourceTextView {
-    /// `source` is the session's document holding `text`.
     func load(_ text: String, source: SourceDocument? = nil) {
-        // First: colours and line numbers read the storage against it.
         document = source ?? SourceDocument(text: text)
         show(text)
     }
 
-    /// The disk's text, from the session's `document_reload`: shown without an edit, unless the core kept the view's.
     func reload(_ text: String) -> Bool {
         guard document.reload(text) else { return false }
         show(text)
         return true
     }
 
-    /// The core's edits, and the selections after them. False for none.
     @discardableResult
     func apply(_ change: Change?, named name: String) -> Bool {
         apply(change?.edits ?? [], named: name, selecting: change?.selections.map(\.range))
     }
 
-    /// One undo step with the caret at the insertion's, then its snippet's first field selected. False for none.
     @discardableResult
     func insert(_ insertion: Insertion?, named name: String) -> Bool {
         guard let insertion else { return false }
@@ -30,8 +24,6 @@ extension SourceTextView {
         if let first = document.startSnippet(insertion.fields, at: insertion.edit.start) { selection = first }
         return true
     }
-
-    // MARK: the keyboard
 
     override func becomeFirstResponder() -> Bool {
         defer { Task { self.previewMath() } }
@@ -50,7 +42,6 @@ extension SourceTextView {
         return true
     }
 
-    /// As the window takes or gives up the keyboard.
     func keyChanged() {
         if !hasKeyboard { completions.close() }
         previewMath()
@@ -62,8 +53,6 @@ extension SourceTextView {
         lastMath = (caret, value)
         return value
     }
-
-    // MARK: offsets
 
     func offset(_ location: any NSTextLocation) -> Int {
         guard let storage = textLayoutManager?.textContentManager else { return 0 }

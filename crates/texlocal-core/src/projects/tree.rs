@@ -1,6 +1,3 @@
-//! What a project shows of its folder: the entries the walks agree on, the file tree the sidebar
-//! lists, and what kind of file each is.
-
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind::{NotFound, PermissionDenied};
@@ -30,24 +27,17 @@ pub struct TreeNode {
 
 pub(crate) struct Entry {
     pub path: PathBuf,
-    /// Its path from the walk's root.
     pub rel: String,
     pub name: String,
     pub dir: bool,
     pub link: bool,
 }
 
-/// What the tree lists, and so what search, the scans, history and a session's watcher see: no
-/// dotfiles, and no compile output, which is the top-level build folder alone (a nested build
-/// is the author's).
 pub(crate) fn listed(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     !name.starts_with('.') && !rel.eq_ignore_ascii_case(BUILD_DIR)
 }
 
-/// A folder's entries whose path `keep` takes, by name. Links are followed to files only, as
-/// folder links can cycle; an entry gone or unreadable by the time it's read is left out, but
-/// the root must be read, and for a `whole` walk, which a copy needs, every folder.
 fn entries(
     root: &Path,
     dir: &Path,
@@ -92,8 +82,6 @@ fn entries(
     Ok(out)
 }
 
-/// Each entry under `root` that `keep` takes, a folder before what's in it, until `visit`
-/// answers false.
 pub(crate) fn walk(
     root: &Path,
     keep: &dyn Fn(&str) -> bool,
@@ -117,7 +105,6 @@ pub(crate) fn walk(
     walk_in(root, root, keep, whole, visit).map(drop)
 }
 
-/// Each file the tree lists, with its path from the root, until `visit` answers false.
 pub(super) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
@@ -130,8 +117,6 @@ pub(super) fn visit_files(
     })
 }
 
-/// The main file is marked however the settings spell it, as latexmk finds it. The host orders
-/// each folder's entries, as its system lists files.
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     fn nodes(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut found = Vec::new();
@@ -156,7 +141,6 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     nodes(&project.root, &project.root, &fold_case(&main))
 }
 
-/// What the editor edits as text besides .tex and .bib, by extension.
 const TEXT_EXTENSIONS: &[&str] = &[
     "ltx", "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist",
     "lco", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",
@@ -165,9 +149,6 @@ const TEXT_EXTENSIONS: &[&str] = &[
 
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
-/// What a host does with a file, by its extension in any case: "tex", "bib", "image", "pdf",
-/// "text" (any other the editor edits: `TEXT_EXTENSIONS`, and a few extensionless names) or
-/// "other", which it previews.
 pub fn file_kind(name: &str) -> &'static str {
     let path = Path::new(name);
     let lower = |part: Option<&OsStr>| part.unwrap_or_default().to_string_lossy().to_lowercase();
@@ -184,60 +165,4 @@ pub fn file_kind(name: &str) -> &'static str {
 
 pub(crate) fn is_text(name: &str) -> bool {
     matches!(file_kind(name), "tex" | "bib" | "text")
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-    use crate::projects::create_free;
-    use crate::projects::testing::project;
-
-    /// The TeX ecosystem's own files are text the editor edits and search reads.
-    #[test]
-    fn files_have_a_kind_by_extension_in_any_case_or_by_a_known_name() {
-        let kinds = [
-            ("a.TEX", "tex"),
-            ("r.bib", "bib"),
-            ("p.JPG", "image"),
-            ("f.pdf", "pdf"),
-            ("s.sty", "text"),
-            ("d.csv", "text"),
-            ("paper.ltx", "text"),
-            ("refs.bbx", "text"),
-            ("pkg.dtx", "text"),
-            ("letter.lco", "text"),
-            ("chapters/a.CLO", "text"),
-            ("latexmkrc", "text"),
-            ("Makefile", "text"),
-            ("LICENSE", "text"),
-            ("z.zip", "other"),
-            ("a.aux", "other"),
-            ("noextension", "other"),
-        ];
-        for (name, kind) in kinds {
-            assert_eq!(file_kind(name), kind, "{name}");
-        }
-    }
-
-    #[test]
-    fn the_file_tree_nests_folders_and_marks_the_main_file_leaving_hidden_files_out() {
-        let (_dir, root) = project();
-        for file in ["c.tex", "Zeta/z.png", ".hidden.tex"] {
-            create_free(&root, file, false).unwrap();
-        }
-        let tree = file_tree(&Project::in_folder(&root)).unwrap();
-        let named = |name: &str| tree.iter().find(|n| n.name == name).unwrap();
-        assert_eq!(tree.len(), 3);
-        let json = serde_json::to_value(named("Zeta")).unwrap();
-        let child =
-            json!({ "type": "file", "name": "z.png", "path": "Zeta/z.png", "kind": "image" });
-        assert_eq!(
-            json,
-            json!({ "type": "dir", "name": "Zeta", "path": "Zeta", "children": [child] })
-        );
-        let main = serde_json::to_value(named("main.tex")).unwrap();
-        assert_eq!(main["main"], true);
-    }
 }

@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-# crops.py <out.png> <scale> (<label> <capture.png> <x> <width>)…: the toolbar strip of each capture from x for
-# width points (2x captures), enlarged and stacked with its label; and, between each pair in turn, how many
-# pixels differ and by how much at most.
 import sys
 from PIL import Image, ImageDraw, ImageChops
 out, scale, rest = sys.argv[1], int(sys.argv[2]), sys.argv[3:]

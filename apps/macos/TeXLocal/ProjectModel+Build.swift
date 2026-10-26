@@ -2,14 +2,11 @@ import Accessibility
 import AppKit
 import PDFKit
 
-/// Builds, their PDF and their issues, as the session's build events tell them (docs/core-api.md).
 extension ProjectModel {
-    /// A no-op build's PDF is already shown: reopening it would lose PDFKit's state. True too when a newer load took over.
     @discardableResult func showBuildPDF(_ path: String?, reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
         await restart(&pdfLoad) { [self] in
             guard let path, !closed else { return false }
             let url = URL(filePath: path)
-            // A live PDF stays while Live Preview runs.
             var live: Bool { texpresso.active && (replacingLive || livePDF) }
             if live {
                 buildPDF = FileManager.default.fileExists(atPath: path) ? url : nil
@@ -26,8 +23,6 @@ extension ProjectModel {
         }.value
     }
 
-    /// A build asked for shows at once, so the toolbar has Stop from the click on; an automatic one waits for the session's
-    /// events, as the session leaves one while Live Preview runs.
     func compile(auto: Bool = false) async {
         guard let session, !closed, app?.tex?.available == true else { return }
         if !auto, !compiling {
@@ -37,7 +32,6 @@ extension ProjectModel {
         let sent: Void? = await alerting(notSavedTitle()) {
             try await core.call("session_compile", ["session": session, "auto": auto])
         }
-        // The core has ended a build whose save failed.
         if sent == nil { compiling = false }
     }
 
@@ -56,7 +50,6 @@ extension ProjectModel {
     }
 
     func buildChanged(_ state: BuildState) {
-        // Not through `notices`, which would hold back a short build's result.
         if state.compiling, !compiling, !state.auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
         (compiling, outdated) = (state.compiling, state.outdated)
     }
@@ -65,7 +58,6 @@ extension ProjectModel {
         let result = finished.result
         if let pdf = result.pdf, !closed {
             await showBuildPDF(pdf, reloadIfUnchanged: result.pdfChanged)
-            // Not after typing through the build: the sync would save mid-word and start the next build at once.
             if result.ok, !finished.outdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
                 Task { await forwardSync(quietly: true) }
             }
@@ -90,7 +82,6 @@ extension ProjectModel {
         guard !closed else { return }
         pdfLoad?.cancel()
         buildPDF = nil
-        // A live PDF stays while Live Preview runs.
         if !livePDF || !texpresso.active {
             shown = .none
             pdf.clear()
@@ -114,8 +105,6 @@ extension ProjectModel {
         Task { await self.open(file, line: issues[place].line, focus: focus, jump: true) }
     }
 
-    /// The next or previous issue with a place, round the list's ends; in the source, as Xcode's Jump to Next Issue: a
-    /// panel shut stays so.
     func goToIssue(next: Bool) {
         let places = issues.indices.filter { issues[$0].file != nil }
         let after = next ? places.first { $0 > chosenIssue ?? -1 } : places.last { $0 < chosenIssue ?? .max }

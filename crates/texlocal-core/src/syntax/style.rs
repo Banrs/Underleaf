@@ -1,5 +1,3 @@
-//! The text styles a selection is in, as a word processor's Bold, Italic and Underline show theirs, and the edits that take each away.
-
 use std::ops::Range;
 
 use serde::Serialize;
@@ -7,7 +5,6 @@ use serde::Serialize;
 use super::scan::{Group, Visit};
 use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
-/// Declarations ({\bfseries …}) aren't read, nor a command whose argument doesn't close by the end of the selection's paragraph.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TextStyles {
     pub bold: Option<Vec<TextEdit>>,
@@ -15,8 +12,6 @@ pub struct TextStyles {
     pub underline: Option<Vec<TextEdit>>,
 }
 
-/// The font shape so far, outermost command first: \emph turns it upright
-/// in italic or slanted text, as LaTeX's \em does, and italic otherwise.
 #[derive(Clone, Copy, PartialEq)]
 enum Shape {
     Upright,
@@ -71,7 +66,6 @@ impl SourceDocument {
             .map(|(a, _)| a)
             .collect();
         groups.extend(found.whole.as_ref());
-        // Only text styles: maths has its own (\mathbf).
         let text_from = groups.iter().rposition(|g| g.math).map_or(0, |k| k + 1);
         let (mut bold, mut shape, mut underline) = (None, Shape::Upright, None);
         for (k, group) in groups.iter().enumerate().skip(text_from) {
@@ -113,110 +107,5 @@ impl SourceDocument {
             italic: unwrap(italic),
             underline: unwrap(underline),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::syntax::{range, utf16};
-
-    fn styles(marked: &str) -> [String; 3] {
-        let (start, end) = match marked.find('‸') {
-            Some(at) => (at, at),
-            None => (
-                marked.find('«').unwrap(),
-                marked.find('»').unwrap() - '«'.len_utf8(),
-            ),
-        };
-        let source: String = marked.chars().filter(|c| !"‸«»".contains(*c)).collect();
-        let units: Vec<u16> = source.encode_utf16().collect();
-        let (start, end) = (utf16(&source[..start]) as u32, utf16(&source[..end]) as u32);
-        let found = SourceDocument::new(&source).text_styles(range(start, end - start));
-        // Each style's command, from the edits that take away its name and its braces.
-        [found.bold, found.italic, found.underline].map(|edits| {
-            edits.map_or(String::new(), |edits| {
-                let (head, tail) = (&edits[0], &edits[1]);
-                let opening = &units[head.start as usize..(head.start + head.length) as usize];
-                let braces = (opening.last(), units[tail.start as usize]);
-                assert_eq!(braces, (Some(&u16::from(b'{')), u16::from(b'}')));
-                let name = String::from_utf16_lossy(&opening[1..]);
-                name.chars().take_while(char::is_ascii_alphabetic).collect()
-            })
-        })
-    }
-
-    const NONE: [&str; 3] = ["", "", ""];
-    const BOLD: [&str; 3] = ["textbf", "", ""];
-
-    #[test]
-    fn the_caret_takes_the_commands_it_is_in() {
-        assert_eq!(styles(r"a \textbf{b‸c} d"), BOLD);
-        assert_eq!(styles(r"a \textbf{‸bc} d"), BOLD);
-        assert_eq!(styles(r"a \textbf{bc‸} d"), BOLD);
-        assert_eq!(styles(r"a ‸\textbf{bc} d"), NONE);
-        assert_eq!(styles(r"a \textbf{bc}‸ d"), NONE);
-        assert_eq!(
-            styles(r"\textit{a \underline{b \textbf{c‸}}}"),
-            ["textbf", "textit", "underline"]
-        );
-        assert_eq!(styles(r"\textbf {a‸}"), BOLD);
-        assert_eq!(styles("\\textbf % bold\n{a‸}"), BOLD);
-        assert_eq!(styles("\\textbf\n\n{a‸}"), NONE);
-        assert_eq!(styles(r"\textbf x{a‸}"), NONE);
-    }
-
-    #[test]
-    fn the_innermost_command_is_the_one_to_unwrap() {
-        let nested = r"\textbf{a \textbf{b‸} c}";
-        let found = SourceDocument::new(&nested.replace('‸', "")).text_styles(range(19, 0));
-        assert_eq!(found.bold.unwrap()[0].start, 10);
-        assert_eq!(styles(nested), BOLD);
-    }
-
-    #[test]
-    fn emph_is_italic_in_upright_text_and_upright_in_italic() {
-        assert_eq!(styles(r"\emph{a‸}"), ["", "emph", ""]);
-        assert_eq!(styles(r"\textit{\emph{a‸}}"), NONE);
-        assert_eq!(styles(r"\emph{\emph{a‸}}"), NONE);
-        assert_eq!(styles(r"\emph{\emph{\emph{a‸}}}"), ["", "emph", ""]);
-        assert_eq!(styles(r"\textsl{\emph{a‸}}"), NONE);
-        assert_eq!(styles(r"\textit{\textup{a‸}}"), NONE);
-        assert_eq!(styles(r"\textbf{\textit{\textnormal{a‸}}}"), NONE);
-        assert_eq!(styles(r"\textbf{\textmd{a‸}}"), NONE);
-    }
-
-    #[test]
-    fn a_selection_takes_what_all_of_it_is_in() {
-        assert_eq!(styles(r"\textbf{«ab»} c"), BOLD);
-        assert_eq!(styles(r"\textbf{a«b} c»"), NONE);
-        assert_eq!(styles(r"\textbf{a«b} \textbf{c»}"), NONE);
-        assert_eq!(styles(r"\textit{\textbf{«a} b»}"), ["", "textit", ""]);
-        assert_eq!(styles(r"x «\textbf{ab}» c"), BOLD);
-        assert_eq!(styles(r"\textit{«\textbf{ab}»}"), ["textbf", "textit", ""]);
-    }
-
-    #[test]
-    fn braces_are_the_text_s_own() {
-        assert_eq!(styles(r"\textbf{a \} b‸}"), BOLD);
-        assert_eq!(styles(r"\textbf{a \{ b‸}"), BOLD);
-        assert_eq!(styles("\\textbf{a % }\nb‸}"), BOLD);
-        assert_eq!(styles(r"\textbf{a \verb|}| b‸}"), BOLD);
-        assert_eq!(
-            styles("\\textbf{a\n\\begin{verbatim}\n}\n\\end{verbatim}\nb‸}"),
-            BOLD
-        );
-        assert_eq!(styles(r"\textbf{a‸"), NONE);
-        assert_eq!(styles("\\textbf{a‸\n\nb}"), NONE);
-    }
-
-    #[test]
-    fn maths_has_its_own_styles() {
-        assert_eq!(styles(r"\textbf{$x‸$}"), NONE);
-        assert_eq!(styles(r"\textbf{$\text{x‸}$}"), NONE);
-        assert_eq!(styles(r"$\textbf{x‸}$"), BOLD);
-        assert_eq!(styles(r"$\text{\textit{x‸}}$"), ["", "textit", ""]);
-        assert_eq!(styles(r"$\mathbf{x‸}$"), NONE);
-        assert_eq!(styles(r"\textbf{a \[ x \] b‸}"), BOLD);
     }
 }

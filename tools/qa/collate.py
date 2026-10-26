@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""collate.py out.png cols img1 [img2 ...]: a contact sheet of captures at full resolution, never scaled.
-Tiles are laid out in rows of `cols` with an 8 px gap and the file name above each, in a lossless PNG."""
 import sys, os
 from PIL import Image, ImageDraw, ImageFont
 out, cols, paths = sys.argv[1], int(sys.argv[2]), sys.argv[3:]

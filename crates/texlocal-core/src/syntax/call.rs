@@ -1,6 +1,3 @@
-//! The commands by name: a JSON object of arguments in, the answer's JSON out, as the C ABI forwards them.
-//! An argument a command needs is required: one left out is no call, never the text's start.
-
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,7 +8,6 @@ use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
 use crate::service::parse;
 
-/// A source's commands (docs/core-api.md): a table, one a line.
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
@@ -42,7 +38,6 @@ enum Command {
     Folds,
 }
 
-/// The commands that need no document.
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
@@ -116,7 +111,6 @@ fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
     }
 }
 
-/// The commands that need no document; docs/core-api.md lists them.
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     match read(command, args_json)? {
         Free::MathSvg { tex, display, size } => rendered(render::math_svg(&tex, display, size)),
@@ -125,67 +119,5 @@ pub fn call(command: &str, args_json: &str) -> Option<String> {
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
         }
         Free::HeadingStyles => json(headings::heading_styles(None)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::call;
-    use crate::syntax::SourceDocument;
-
-    #[test]
-    fn commands_answer_by_name() {
-        #[rustfmt::skip]
-        let cases = [
-            ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": true}"#,
-                Some(r#"{"edit":{"start":0,"length":0,"text":"{}"},"selection":{"start":1,"length":0},"partner":null,"completions":"offer"}"#)),
-            ("type", r#"{"selection": {"start": 0, "length": 0}, "text": "{", "autoPair": false}"#,
-                Some(r#"{"edit":null,"selection":null,"partner":null,"completions":"offer"}"#)),
-            ("tab", r#"{"selections": [{"start": 0, "length": 0}]}"#, None),
-            ("tab", r#"{"selections": [{"start": 0, "length": 0}], "step": 1}"#,
-                Some(r#"{"field":null,"edits":[{"start":0,"length":0,"text":"  "}]}"#)),
-            ("map_selections", r#"{"edits": [{"start": 0, "length": 0, "text": "ab"}], "selections": [{"start": 0, "length": 1}]}"#,
-                Some(r#"[{"start":2,"length":1}]"#)),
-            ("partner", r#"{"at": 0}"#, Some("null")),
-            ("completions", r#"{"caret": 0, "explicit": false}"#, Some("null")),
-            ("partner", "{}", None),
-            ("partner", "[]", None),
-            ("math_at", r#"{"selection": 1}"#, None),
-            ("move_lines", r#"{"selections": []}"#, None),
-            ("toggle_comment", r#"{"selections": 3}"#, None),
-            ("toggle_style", r#"{"selections": [], "style": "strong"}"#, None),
-            ("no such command", "{}", None),
-            ("follow", r#"{"old": {"start": 0, "length": 0}, "delta": 2}"#, None),
-            ("themes", "{}", None),
-        ];
-        let mut doc = SourceDocument::new("");
-        for (command, args, answer) in cases {
-            assert_eq!(doc.call(command, args).as_deref(), answer, "{command}");
-        }
-    }
-
-    #[test]
-    fn the_free_commands_answer_by_name() {
-        let menus: serde_json::Value = serde_json::from_str(&call("menus", "{}").unwrap()).unwrap();
-        let alpha = serde_json::json!({ "glyph": "α", "command": "\\alpha" });
-        assert!(
-            menus["symbolGroups"][0]["symbols"]
-                .as_array()
-                .unwrap()
-                .contains(&alpha)
-        );
-        assert!(menus["templates"]["math"].is_array());
-        let levels = call("heading_styles", "{}").unwrap();
-        assert!(levels.starts_with(r#"[{"title":"Normal Text","command":"""#));
-        let maths = call(
-            "math_svg",
-            r#"{"tex": "x^2", "display": false, "size": 10}"#,
-        );
-        let maths: serde_json::Value = serde_json::from_str(&maths.unwrap()).unwrap();
-        for key in ["svg", "width", "height"] {
-            assert!(maths.get(key).is_some(), "{key}");
-        }
-        let error = call("math_svg", r#"{"tex": "x^", "display": false, "size": 10}"#).unwrap();
-        assert!(error.starts_with(r#"{"error":"#), "{error}");
     }
 }

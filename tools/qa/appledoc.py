@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Apple's documentation and HIG pages as Markdown, from the JSON the site itself loads.
-
-  appledoc.py design/human-interface-guidelines/toolbars
-  appledoc.py documentation/appkit/nssplitviewitem
-  appledoc.py https://developer.apple.com/documentation/swiftui/view/safeareabar(edge:alignment:spacing:content:)
-"""
 import json, sys, subprocess, urllib.parse
 
 def fetch(path):

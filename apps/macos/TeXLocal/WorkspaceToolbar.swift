@@ -56,7 +56,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
-        // Nested split controllers would otherwise receive these actions first.
         item.target = workspace
         item.visibilityPriority = .high
     }
@@ -74,7 +73,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.action = #selector(back)
             item.isNavigational = true
         case .format:
-            // A button beside the menus shares their glass; the overflow menu has Aa as a menu.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = "Format"
             item.toolTip = "Choose a style to apply to text"
@@ -159,7 +157,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.label = title
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
         item.menu = menu(id, content)
-        // Adjacent menus share AppKit's glass, as Notes' editing tools do.
         item.showsIndicator = false
         return item
     }
@@ -197,13 +194,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func configure(_ item: NSToolbarItem, _ state: State) {
-        // Setting an unchanged property can restart a toolbar layout during a split animation.
         func update<Root: AnyObject, Value: Equatable>(_ root: Root?, _ key: ReferenceWritableKeyPath<Root, Value>, _ value: Value) {
             if let root, root[keyPath: key] != value { root[keyPath: key] = value }
         }
         switch item.itemIdentifier {
         case .format, .math, .insert:
-            // Hidden with the source; dimmed for a file they don't apply to, where hiding would move their neighbours.
             update(item, \.isHidden, state.layout == .pdf)
             update(item, \.isEnabled, state.open && state.sourceTools)
         case .pdfSeparator:
@@ -286,7 +281,6 @@ struct WorkspaceLayoutPicker: View {
     }
 }
 
-/// The scale's segment keeps the widest label's width, in tabular digits: otherwise the capsule, and the items after it, move.
 private final class ZoomControl: NSSegmentedControl {
     var widestLabel = ""
     private var measuredSize: CGFloat?
@@ -298,8 +292,6 @@ private final class ZoomControl: NSSegmentedControl {
 
     override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
-    /// Inside the toolbar's own update the control's size lags each font change by one
-    /// (`theToolbarsControlsKeepTheirStateAndWidth`).
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
@@ -314,8 +306,6 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Stop in Compile's width, as its word and as its symbol, so the tools beside it stay put. It fills the item's glass,
-/// which passes no clicks to an undersized view, and changes form as AppKit's search item does.
 private struct CompileButton: View {
     let compiling, compact, enabled: Bool
     let action: () -> Void
@@ -326,13 +316,10 @@ private struct CompileButton: View {
         Button(action: action) {
             ZStack {
                 idle.opacity(compiling ? 0 : 1)
-                // A button to VoiceOver still; the status bar says Compiling.
                 busy.opacity(compiling ? 1 : 0).accessibilityHidden(true)
             }
-            // Faint in a window that isn't the active one, as AppKit's own items.
             .foregroundStyle(appearsActive ? .primary : .tertiary)
             .animation(reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
-            // The padding and height of AppKit's glass around an item's title, and its circle around a symbol.
             .padding(.horizontal, compact ? 0 : 12)
             .frame(minWidth: 36, minHeight: 36)
             .contentShape(.capsule)
@@ -342,7 +329,6 @@ private struct CompileButton: View {
         .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
     }
 
-    /// At the size AppKit draws an item's symbol.
     @ViewBuilder private var idle: some View {
         if compact {
             Image(systemName: "play.fill").font(.system(size: 17))
@@ -351,7 +337,6 @@ private struct CompileButton: View {
         }
     }
 
-    /// Round the symbol: the regular spinner touches the circle's edge, and the small one has no room inside.
     @ViewBuilder private var busy: some View {
         if compact {
             ZStack {

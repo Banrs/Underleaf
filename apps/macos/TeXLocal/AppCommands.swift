@@ -14,7 +14,6 @@ struct AppCommands: Commands {
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
                     Button(recent.name, systemImage: "text.document") { Task { await app.open(recent.id) } }
-                    // A menu item's image shows only where the label style shows it.
                     .labelStyle(.titleAndIcon)
                 }
                 Divider()
@@ -27,7 +26,6 @@ struct AppCommands: Commands {
         }
         CommandGroup(after: .saveItem) {
             items(.fileSave, .fileSaveVersion)
-            // As the document apps' Revert To, which lists Browse All Versions.
             Menu("Revert To") { items(.fileBrowseVersions) }
             Divider()
             items(.projectClose)
@@ -45,7 +43,6 @@ struct AppCommands: Commands {
             }
         }
         CommandGroup(replacing: .printItem) { items(.filePrint) }
-        // A replacement group would lose the spelling and substitution checkmarks.
         TextEditingCommands()
         CommandGroup(before: .textEditing) { items(.projectSearch, .findUsages, .pdfFind) }
         CommandGroup(after: .pasteboard) {
@@ -55,7 +52,6 @@ struct AppCommands: Commands {
             Divider()
             items(.editRename)
         }
-        // A submenu stays available while its items are dim (HIG Menus).
         CommandGroup(replacing: .textFormatting) {
             Menu("Font") { items(.editBold, .editItalic, .editUnderline) }
             Menu("Section Level") { SectionLevelItems(project: project) }
@@ -96,7 +92,6 @@ struct AppCommands: Commands {
             BuildOptionItems(app: app)
             SetMainFileItem(app: app)
         }
-        // No help book: the default item would only say so.
         CommandGroup(replacing: .help) {
             items(.quickHelp)
             Divider()
@@ -106,7 +101,6 @@ struct AppCommands: Commands {
     }
 }
 
-/// A menu item of its own, so a change to what it shows re-evaluates it and not the whole menu bar.
 private struct CommandItem: View {
     let app: AppModel
     let command: MenuCommand
@@ -115,11 +109,9 @@ private struct CommandItem: View {
         let project = app.commandProject
         Button { app.perform(command, on: project) } label: {
             let title = app.title(command, on: project)
-            // A menu item's image shows only with this style.
             if let symbol = command.style?.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
         .labelStyle(.titleAndIcon)
-        // ⌘N follows whether a project is open, not which window is key.
         .keyboardShortcut(app.shortcut(command, on: app.project))
         .disabled(!app.isEnabledInMenuBar(command, on: project))
     }
@@ -135,7 +127,6 @@ private struct LivePreviewItem: View {
     }
 }
 
-/// The inspector's switches, dim with no project as the Engine picker is.
 private struct BuildOptionItems: View {
     let app: AppModel
 

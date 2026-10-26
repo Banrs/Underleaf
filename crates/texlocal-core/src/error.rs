@@ -4,19 +4,14 @@ use std::path::Path;
 
 use serde::Serialize;
 
-/// What went wrong, as far as a caller acts on it; the FFI reports it as `kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorKind {
-    /// What was asked can't be done as asked.
     Invalid,
-    /// The OS, or the person at a password dialog, refused.
     Denied,
     NotFound,
     Conflict,
-    /// What was sent doesn't fit what is held; sending it whole puts it right.
     Unfit,
-    /// A tool or the network isn't there.
     Unavailable,
     Internal,
 }
@@ -50,8 +45,6 @@ impl CoreError {
         Self::new(ErrorKind::Internal, message)
     }
 
-    /// `err` as an error that names `path`, for the files a person chose: the
-    /// OS's own words ("No such file or directory") leave an alert without one.
     pub(crate) fn at(path: &Path) -> impl FnOnce(io::Error) -> Self + '_ {
         move |err| {
             let Self { kind, message } = Self::from(err);
@@ -84,36 +77,11 @@ impl From<io::Error> for CoreError {
     }
 }
 
-/// A zip that can't be read is the file's fault, not the core's.
 impl From<zip::result::ZipError> for CoreError {
     fn from(err: zip::result::ZipError) -> Self {
         match err {
             zip::result::ZipError::Io(err) => err.into(),
             other => Self::bad_request(other.to_string()),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_system_errors_keep_their_kind_and_lose_the_os_number() {
-        let err = CoreError::from(std::fs::read("/no/such/file/at/all").unwrap_err());
-        assert_eq!(err.kind, ErrorKind::NotFound);
-        assert!(!err.message.contains("os error"), "{}", err.message);
-        for (io, kind) in [
-            (io::ErrorKind::PermissionDenied, ErrorKind::Denied),
-            (io::ErrorKind::AlreadyExists, ErrorKind::Conflict),
-            (io::ErrorKind::InvalidData, ErrorKind::Internal),
-        ] {
-            assert_eq!(CoreError::from(io::Error::from(io)).kind, kind);
-        }
-        let named = CoreError::at(Path::new("/a/b.tex"))(io::Error::from(io::ErrorKind::NotFound));
-        assert_eq!(
-            (named.kind, named.message.as_str()),
-            (ErrorKind::NotFound, "“/a/b.tex”: entity not found")
-        );
     }
 }

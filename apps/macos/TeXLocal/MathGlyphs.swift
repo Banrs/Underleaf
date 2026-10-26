@@ -1,11 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The symbols as the system font draws them, as the Character Viewer does: each glyph centred in a square.
 enum MathGlyphs {
     private static var images: [String: NSImage] = [:]
 
-    /// A template, so the menu tints it.
     static func icon(_ glyph: String, _ command: String) -> Image {
         if let image = images[command] { return Image(nsImage: image) }
         let text = NSAttributedString(string: glyph, attributes: [.font: NSFont.systemFont(ofSize: 17)])

@@ -1,6 +1,4 @@
 #!/bin/zsh
-# build.sh [repo root]: builds the QA copy (bundle com.texlocal.mac.qa, Debug) into $QA_SCRATCH/dd-frontend and signs it
-# ad hoc. The repo defaults to the one this script is in, so a worktree builds its own sources.
 S=${QA_SCRATCH:?export QA_SCRATCH=<scratchpad>, set up by tools/qa/setup.sh}; R=${1:-${0:A:h:h:h}}
 mkdir -p $S/logs
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug -destination platform=macOS \

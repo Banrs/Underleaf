@@ -1,10 +1,8 @@
 import Foundation
 
-/// The session moves and holds documents as they are renamed or trashed; the Trash and undo are the app's.
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        // Answered after the tree that lists it, for the sidebar's rename that follows.
         guard let session, let made = await alerting("Couldn’t Create “\(name)”", {
             try await core.call("session_create_entry", ["session": session, "folder": folder, "name": name, "dir": directory],
                                 as: PathEvent.self).path
@@ -25,8 +23,6 @@ extension ProjectModel {
         })
     }
 
-    /// The session saves first and moves its documents and the sidebar's state, written first; the editor keeps its text
-    /// and undo under the new name.
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
@@ -64,7 +60,6 @@ extension ProjectModel {
         await item.moveToTrash()
     }
 
-    /// The session saves and holds its saves under `path`, so no autosave makes the file again, and refuses the main file.
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
         guard let session, !closed else { return false }
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
@@ -88,7 +83,6 @@ extension ProjectModel {
         let gone = { (file: String) in file == path || file.hasPrefix(path + "/") }
         if let shown = openPath, gone(shown) {
             clearOpenFile()
-            // As Overleaf: the main file in its place, not an empty pane.
             if let main = settings?.mainFile, !gone(main) { await open(main, focus: false) }
         }
         return true
@@ -114,14 +108,9 @@ extension ProjectModel {
         } catch {
             app?.report(error, "Couldn’t Add the Files")
         }
-        // After a failure too: files copied before it are there.
         await tree.reload()
     }
 
-    // MARK: - Export
-
-    /// The core archives the files on disk, so the edits are saved first. For arXiv, it refuses a project arXiv couldn't
-    /// build, in a sentence saying what to do.
     func exportZip(forArxiv: Bool = false) async throws -> URL {
         guard await save() else {
             let name = openPath?.fileName ?? self.name

@@ -1,6 +1,5 @@
 import Foundation
 
-/// The core's catalogue of what the menus and toolbar put in, which every host's menus are made from.
 nonisolated struct Menus: Decodable, Sendable {
     nonisolated struct Templates: Decodable, Sendable {
         let math, insert, list, references: [Template]
@@ -19,8 +18,6 @@ nonisolated struct Menus: Decodable, Sendable {
     static let shared: Menus = Syntax.call("menus", [:])!
 }
 
-/// A block of the core's by its id, or with `inline` a command whose "$0" is where the selection goes; one with a
-/// `symbol` is a toolbar button.
 nonisolated struct Template: Decodable, Sendable {
     let title: String
     let body: String

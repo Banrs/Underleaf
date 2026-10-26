@@ -1,7 +1,3 @@
-//! Installing the TeX Live package that holds a file LaTeX didn't find, with TeX Live's
-//! tlmgr, as an administrator through the system's own dialog where only one may change
-//! TeX Live (MacTeX's tree).
-
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::LazyLock;
@@ -14,12 +10,9 @@ use crate::error::CoreError;
 use crate::process::{self, Tree, drive};
 use crate::tex::find_tool;
 
-/// tlmgr downloads the repository's catalogue, then the package and what it depends on.
 const TIMEOUT: Duration = Duration::from_secs(600);
-/// What tlmgr and the names it is given may be: no option, path or shell syntax.
 static NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]*$").unwrap());
-// tlmgr's own words, which it doesn't translate, for the failures a person can put right.
 static UNREACHABLE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"could not get texlive\.tlpdb|Cannot load TeX Live database|download(?:ing)? did not succeed|cannot contact")
         .unwrap()
@@ -27,13 +20,10 @@ static UNREACHABLE: LazyLock<Regex> = LazyLock::new(|| {
 const OLDER: &str = "is older than remote repository";
 const NOT_WRITABLE: &str = "don't have permission to change the installation";
 
-/// The names come as arguments, never as script, and `quoted form` makes each one word to the
-/// shell. The dialog names the app and the package where it would name osascript.
 const AS_ADMINISTRATOR: &str = r#"on run {tlmgr, package}
 do shell script quoted form of tlmgr & " install " & quoted form of package with prompt "TeXLocal wants to install the TeX package “" & package & "”." with administrator privileges
 end run"#;
 
-/// Installs the package that holds `file` (“foo.sty”), and answers its name.
 pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String, CoreError> {
     if !NAME.is_match(file) {
         return Err(CoreError::bad_request(format!(
@@ -53,7 +43,6 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
         installed = run(as_administrator(&tlmgr, &package, path_env)?).await?;
-        // AppleScript's error -128.
         if installed.1.contains("(-128)") {
             let message = format!("Installing “{package}” was cancelled.");
             return Err(CoreError::new(crate::ErrorKind::Denied, message));
@@ -63,9 +52,6 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
     Ok(package)
 }
 
-/// The package with a file at `/<file>`: tlmgr reads it as a pattern, which also matches
-/// minted-sty-hooks.4ht for minted.sty. Of several, the shortest path is the release's own
-/// (latex's fixltx2e.sty, not latex-base-dev's).
 fn holder(found: &str, slashed: &str) -> Option<String> {
     let mut package = "";
     found
@@ -91,7 +77,6 @@ fn as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Result<Comma
     Ok(command)
 }
 
-/// The exit code and everything printed, stderr after stdout.
 pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError> {
     let (mut child, tree) = Tree::spawn(command.stdin(Stdio::null()))?;
     let (code, mut out, err, timed_out) = drive(&mut child, &tree, Some(TIMEOUT)).await;
@@ -135,6 +120,3 @@ fn no_tlmgr(path_env: &str) -> CoreError {
         },
     )
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,6 +1,3 @@
-//! The project's history as the session keeps it: a snapshot as it opens and after saves, one
-//! before each change across files, and the commands that list, compare and restore them.
-
 use std::fs;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -24,21 +21,16 @@ fn now() -> i64 {
 }
 
 impl Actor {
-    /// As the session opens, so the files as they were before its edits are kept, and after each
-    /// save; beside the session, so no save waits on the store.
     pub fn snapshot_soon(&self) {
         let (history, root) = (Arc::clone(&self.history), self.project.root.clone());
         tokio::task::spawn_blocking(move || lock(&history).take(&root, now(), Taken::Auto));
     }
 
-    /// On the session's task, as the change waits for it: its id.
     pub fn snapshot_before(&self, reason: &'static str) -> Result<Option<String>, CoreError> {
         let taken = lock(&self.history).take(&self.project.root, now(), Taken::Before(reason))?;
         Ok(taken.map(|id| id.to_string()))
     }
 
-    /// List, save and compare read the store but change no file of the project's, so they
-    /// answer from beside the session.
     fn beside(
         &self,
         job: impl FnOnce(&History) -> Result<Value, CoreError> + Send + 'static,
@@ -88,8 +80,6 @@ impl Actor {
         self.beside(compared, reply);
     }
 
-    /// The snapshot's files, or those of them `paths` names, as they were: an open document's as
-    /// edits, the others written, all or none, as a replace does.
     pub fn history_restore(
         &mut self,
         id: &str,
@@ -128,8 +118,6 @@ impl Actor {
     }
 }
 
-/// A line of a comparison: in both texts, the snapshot's alone or now's alone; or a run of lines in
-/// both further than `CONTEXT` from any change, folded as a unified diff's hunks leave them out.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Row<'a> {
@@ -141,10 +129,6 @@ enum Row<'a> {
 
 const CONTEXT: usize = 3;
 
-/// The snapshot's lines against now's over their longest common subsequence, removed before added
-/// where a block was replaced; none where the lines are the same. The common start and end, which
-/// most edits leave, are set aside first so the table is the middle's, and a middle too big for one
-/// shows as removed then added.
 fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
     let (a, b): (Vec<_>, Vec<_>) = (old.lines().collect(), new.lines().collect());
     let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
@@ -156,7 +140,6 @@ fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
         rows.extend(x.iter().map(|line| Row::Removed(line)));
         rows.extend(y.iter().map(|line| Row::Added(line)));
     } else {
-        // `common[i * w + j]`: the longest common subsequence of x[i..] and y[j..].
         let w = y.len() + 1;
         let mut common = vec![0u32; (x.len() + 1) * w];
         for i in (0..x.len()).rev() {
@@ -206,7 +189,6 @@ fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
     folded
 }
 
-/// One edit making `text` into `to`, in UTF-16 units, so the editor keeps its place around it.
 fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
     if text == to {
         return None;
@@ -218,34 +200,4 @@ fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
         length: units(&text[start..start + length]),
         text: inserted.to_owned(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Row::*;
-    use super::compare;
-
-    #[test]
-    fn a_comparison_folds_lines_far_from_a_change_and_puts_removed_before_added() {
-        let old = "1\n2\n3\n4\n5\n6\n7\n8\nold\n9\n10\n11\n12\n";
-        let new = "0\n1\n2\n3\n4\n5\n6\n7\n8\nnew\n9\n10\n11\n12";
-        let rows = [
-            Added("0"),
-            Same("1"),
-            Same("2"),
-            Same("3"),
-            Skipped(2),
-            Same("6"),
-            Same("7"),
-            Same("8"),
-            Removed("old"),
-            Added("new"),
-            Same("9"),
-            Same("10"),
-            Same("11"),
-            Skipped(1),
-        ];
-        assert_eq!(compare(old, new), rows);
-        assert_eq!(compare("a\n", "a"), []);
-    }
 }

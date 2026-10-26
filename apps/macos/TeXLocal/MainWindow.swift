@@ -2,15 +2,12 @@ import AppKit
 import PDFKit
 import SwiftUI
 
-/// The one main window: Home, or the open project's workspace once it has loaded (`AppModel.workspaceProject`).
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation {
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
     private let app: AppModel
-    /// Made each time the projects show, so one screen's alerts and sheets never wait in another's views.
     private var home: NSViewController?
     private(set) var workspace: WorkspaceController?
-    /// The project the window showed as the app last quit.
     private var restored: String?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
@@ -32,7 +29,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         findEditor.isFieldEditor = true
         showHome()
         window.center()
-        // After centring: a frame saved by an earlier launch wins.
         window.setFrameAutosaveName("Main Window")
         watches = [
             track({ [app, weak self] in app.workspaceProject(after: self?.workspace?.project).map { ObjectIdentifier($0) } }) {
@@ -49,7 +45,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         showWindow(nil)
         guard Core.shared.isOpen else { return }
         Task {
-            // Beside the listing, and before a project opens: its first build needs to know of TeX.
             async let tex: Void = app.refreshTeXStatus()
             await app.refresh()
             await tex
@@ -57,8 +52,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             if let id = app.launchProject.take() ?? restored, app.project == nil, !app.isOpening { await app.open(id) }
         }
     }
-
-    // MARK: - Content
 
     private func showProject() {
         guard let project = app.workspaceProject(after: workspace?.project) else { return showHome() }
@@ -69,7 +62,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         setContent(workspace)
         window.toolbar = workspace.toolbar.toolbar
         window.contentMinSize = ColumnMetrics.contentMinimum
-        // The toolbar's ground over the source is the editor's surface.
         window.backgroundColor = .untintedTextBackground
         self.workspace = workspace
         home = nil
@@ -91,7 +83,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.backgroundColor = .windowBackgroundColor
         window.subtitle = ""
         window.representedURL = nil
-        // SwiftUI sets the window's minimum from its content's: the workspace's narrowest.
         let home = NSHostingController(rootView: HomeView()
             .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
             .environment(app)
@@ -101,21 +92,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// A new content view controller would reset the window's frame.
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         window.contentViewController = controller
     }
 
-    // MARK: - Window
-
     func windowDidBecomeKey(_ notification: Notification) { app.mainWindowIsKey = true }
     func windowDidResignKey(_ notification: Notification) { app.mainWindowIsKey = false }
 
-    // MARK: - Find
-
-    /// The PDF find bar's field passes Find on to here (`FindPassingTextView`).
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, field === workspace?.pdf.find.field.field else { return nil }
         return findEditor
@@ -127,8 +112,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         item.action != #selector(performFindPanelAction(_:)) || findAction(for: item) != nil
     }
 
-    /// ⌘F, ⌘G and ⌘E go to the editor or to the PDF, by which has the keyboard or shows alone. On Home ⌘F is its search
-    /// field's, as Finder's and Music's.
     private func findAction(for sender: Any?) -> (() -> Void)? {
         guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag)
         else { return nil }
@@ -170,14 +153,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         return (window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true
     }
 
-    // MARK: - Restoration
-
     static func restoreWindow(withIdentifier identifier: NSUserInterfaceItemIdentifier, state: NSCoder,
                               completionHandler: @escaping (NSWindow?, (any Error)?) -> Void) {
         completionHandler(identifier == Self.identifier ? AppDelegate.shared?.mainWindow.window : nil, nil)
     }
 
-    /// Only with the window's state: with "Close windows when quitting an app" on, the next launch shows the projects.
     func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
         if let id = app.project?.id { state.encode(id as NSString, forKey: Self.projectKey) }
     }
@@ -198,7 +178,6 @@ struct WindowModals: View {
         Group {
             if let project { Color.clear.modifier(WorkspaceModals(project: project)) } else { Color.clear }
         }
-        // On a view of its own: a file dialog's labels reach every dialog presented from the view they're set on.
         .background {
             Color.clear
                 .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
@@ -218,7 +197,6 @@ struct WindowModals: View {
 
 extension View {
     func alert(_ alert: Binding<AppAlert?>) -> some View {
-        // No actions: the system adds its own OK.
         self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in } message: { alert in
             Text(alert.message)
         }

@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The project's sheets and alerts: files to add or a place to export to, files added over others of their names, and a
-/// file with unsaved edits changed, moved or deleted by another app.
 struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -11,10 +9,8 @@ struct WorkspaceModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            // Each file dialog in a host of its own, which keeps its labels.
             .background {
                 Color.clear
-                    // Not from a project left for another, still showing while the next loads.
                     .fileImporter(isPresented: Binding(get: { app.addingFiles && !project.closed }, set: { app.addingFiles = $0 }),
                                   allowedContentTypes: [.item, .folder],
                                   allowsMultipleSelection: true) { result in
@@ -37,7 +33,6 @@ struct WorkspaceModals: ViewModifier {
                     .fileDialogConfirmationLabel("Export")
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                // Keep Both, which loses nothing, is the default, as in Finder's.
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
                 Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
                 Button("Cancel", role: .cancel) {}
@@ -46,7 +41,6 @@ struct WorkspaceModals: ViewModifier {
             }
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { path in
-                // Return saves: the button that discards the edits is never the default.
                 Button("Save Again") { project.answer(path, "save") }
                 Button("Discard Changes", role: .destructive) { project.answer(path, "close") }
                 Button("Cancel", role: .cancel) {
@@ -62,7 +56,6 @@ struct WorkspaceModals: ViewModifier {
                         app.requestPDF(.goToPage($0))
                     }
                 case .gotoLine:
-                    // A jump, as Xcode's, which Go Back returns from.
                     GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) { line in
                         if let path = project.openPath { Task { await project.open(path, line: line, jump: true) } }
                     }
@@ -77,12 +70,10 @@ struct WorkspaceModals: ViewModifier {
             .onChange(of: project.diskConflict) { _, path in if let path { askWhichVersion(of: path) } }
     }
 
-    /// No default button, as either answer loses a version (HIG, Alerts): AppKit's, as SwiftUI's alert always has one.
     private func askWhichVersion(of path: String) {
         let alert = NSAlert()
         alert.messageText = String(localized: "“\(path.fileName)” Changed on Disk")
         alert.informativeText = String(localized: "Another app changed “\(path)” while it has unsaved changes here.")
-        // The first button has Return until it gives it up; Cancel has Escape.
         alert.addButton(withTitle: String(localized: "Save Anyway")).keyEquivalent = ""
         alert.addButton(withTitle: String(localized: "Revert")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
@@ -101,7 +92,6 @@ struct WorkspaceModals: ViewModifier {
     }
 }
 
-/// `limit` is read as the sheet draws, so a build finishing meanwhile counts.
 private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?
@@ -109,7 +99,6 @@ private struct GoToSheet: View {
     @State private var text = ""
     @FocusState private var focused: Bool
 
-    /// From the text as typed: a number field tells its binding only as editing ends.
     private var number: Int? {
         guard let number = try? Int(text.trimmingCharacters(in: .whitespaces), format: .number.grouping(.never)),
               number >= 1 else { return nil }
@@ -127,7 +116,6 @@ private struct GoToSheet: View {
     }
 }
 
-/// As Xcode's Refactor ▸ Rename, for a label or a citation in every file. The field's text is selected as it takes the focus.
 private struct RenameSheet: View {
     let name: String
     let rename: (String) async throws -> Void
