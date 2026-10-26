@@ -280,6 +280,24 @@ struct PDFFindTests {
         } state: { "selection \(String(describing: controller.view.currentSelection?.range(at: 0, on: page)))" }
     }
 
+    /// A double-click's search, quiet, shows nothing for a word the PDF hasn't; the menu's flashes SyncTeX's box.
+    @Test func aQuietForwardSearchShowsOnlyAWordFound() async throws {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let line = "Bold words here, unprinted."
+        let info = try await newProject()
+        defer { try? FileManager.default.removeItem(at: info.folder) }
+        try info.write(line, to: info.mainFile)
+        let pdf = try textPDF(["Bold words here."], width: 180), page = try #require(pdf.page(at: 0))
+        let controller = showing(pdf)
+        let loc = ForwardLoc(page: 1, h: 10, v: page.bounds(for: .cropBox).height - 20, width: 60, height: 12)
+        for quietly in [true, false] {
+            controller.reveal(loc, from: SyncSource(id: info.id, file: info.mainFile, line: 1, column: 18, quietly: quietly))
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(controller.view.currentSelection == nil)
+            #expect((controller.view.mark != nil) == !quietly)
+        }
+    }
+
     /// PDFKit searches off the main thread and posts what it finds to the main queue: found once each match is on a page showing.
     private func found(_ controller: PDFController) async throws {
         try await waitUntil(timeout: .seconds(5)) {

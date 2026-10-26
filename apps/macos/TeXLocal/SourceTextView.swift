@@ -527,7 +527,14 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
         }
         super.mouseDown(with: event)
-        if isDoubleClick(event) { forwardSync(true)?() }
+        // A command's name has no place in the PDF.
+        if isDoubleClick(event), !selectsCommandName { forwardSync(true)?() }
+    }
+
+    private var selectsCommandName: Bool {
+        let selection = selectedRange(), text = string as NSString
+        return selection.location > 0 && text.character(at: selection.location - 1) == 0x5C
+            || selection.length > 0 && text.character(at: selection.location) == 0x5C
     }
 
     /// A single click's release; nil for a drag, reposted, and a double-click, which are the text view's.

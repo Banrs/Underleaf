@@ -484,6 +484,12 @@ struct SourceEditorTests {
         #expect(went.isEmpty && text.selectedRange() == .caret(4))
         try click(at: point, in: window, clicks: 2)
         #expect(went == [true] && text.selectedRange() == NSRange(location: 4, length: 3))
+        // A command's name has no place in the PDF.
+        open("\\textbf{x}", caret: 0)
+        text.layoutSubtreeIfNeeded()
+        let name = text.firstRect(forCharacterRange: NSRange(location: 3, length: 1), actualRange: nil)
+        try click(at: window.convertPoint(fromScreen: NSPoint(x: name.minX + 1, y: name.midY)), in: window, clicks: 2)
+        #expect(went == [true] && text.selectedRange().length > 0)
     }
 
     @Test func aClickInTheGutterSelectsTheLine() throws {

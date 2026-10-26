@@ -185,10 +185,12 @@ nonisolated struct QuickHelp: Decodable {
     let place: Definition.Place?
 }
 
-/// Where a forward search began, for `synctex_match`; the column in UTF-16.
+/// Where a forward search began, for `synctex_match`; the column in UTF-16. Quietly, a double-click's, it shows only its
+/// word found, as the PDF's double-click goes only to its word found in the source: a command or the preamble has none.
 nonisolated struct SyncSource: Sendable {
     let id, file: String
     let line, column: Int
+    var quietly = false
 }
 
 nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }

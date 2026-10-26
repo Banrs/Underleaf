@@ -92,7 +92,7 @@ extension ProjectModel {
             do {
                 let loc = try await core.call("synctex_forward", args, as: ForwardLoc.self)
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
-                app?.requestPDF(.reveal(loc, SyncSource(id: id, file: path, line: line, column: column)))
+                app?.requestPDF(.reveal(loc, SyncSource(id: id, file: path, line: line, column: column, quietly: quietly)))
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }
             }
@@ -110,7 +110,7 @@ extension ProjectModel {
             do {
                 let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "text": click?.text, "at": click?.at])
                 let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
-                guard !Task.isCancelled, !closed else { return }
+                guard !Task.isCancelled, !closed, !quietly || loc.column != nil else { return }
                 await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Spot in the Source") }
