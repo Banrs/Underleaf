@@ -109,21 +109,18 @@ extension ProjectModel {
 
     func chooseIssue(_ place: Int?, focus: Bool, open: Bool = true) {
         chosenIssue = place
-        if let session { core.send("session_choose_issue", ["session": session, "index": place]) }
         let issues = listed
         guard open, let place, issues.indices.contains(place), let file = issues[place].file else { return }
         Task { await self.open(file, line: issues[place].line, focus: focus, jump: true) }
     }
 
+    /// The next or previous issue with a place, round the list's ends; in the source, as Xcode's Jump to Next Issue: a
+    /// panel shut stays so.
     func goToIssue(next: Bool) {
-        guard let session else { return }
-        Task {
-            guard let chosen = try? await core.call("session_issue", ["session": session, "next": next], as: ChosenIssue?.self),
-                  !closed else { return }
-            // In the source, as Xcode's Jump to Next Issue: a panel shut stays so.
-            if panel.shown { panel.tab = .issues }
-            chosenIssue = chosen.index
-            if let file = chosen.issue.file { await open(file, line: chosen.issue.line, focus: true, jump: true) }
-        }
+        let places = issues.indices.filter { issues[$0].file != nil }
+        let after = next ? places.first { $0 > chosenIssue ?? -1 } : places.last { $0 < chosenIssue ?? .max }
+        guard let place = after ?? (next ? places.first : places.last) else { return }
+        if panel.shown { panel.tab = .issues }
+        chooseIssue(place, focus: true)
     }
 }

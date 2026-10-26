@@ -462,11 +462,6 @@ async fn issues_mark_unedited_documents_and_go_with_an_edit() {
     assert_eq!(lines[0]["others"], json!(["Again"]));
     let indices: Vec<&Value> = lines.iter().map(|line| &line["index"]).collect();
     assert_eq!(indices, [0, 2]);
-    let next = rig.ok("issue", json!({ "next": true })).await;
-    assert_eq!(next["index"], 0);
-    rig.ok("choose_issue", json!({ "index": 2 })).await;
-    assert_eq!(rig.ok("issue", json!({ "next": true })).await["index"], 0);
-    assert_eq!(rig.ok("issue", json!({ "next": false })).await["index"], 2);
     doc.edit(0, 0, "x", None, false);
     let cleared = rig.of_type("issues").await;
     let none = json!({ "type": "issues", "session": rig.session, "path": "main.tex", "lines": [] });
@@ -603,14 +598,6 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
         (&line["message"], &line["others"]),
         (&json!("Undefined"), &json!([undefined]))
     );
-    for (index, file) in [
-        (0, json!("main.tex")),
-        (1, json!("a.tex")),
-        (2, Value::Null),
-    ] {
-        let chosen = rig.ok("choose_issue", json!({ "index": index })).await;
-        assert_eq!(chosen["issue"]["file"], file);
-    }
     doc.edit(24, 0, "x", None, false);
     assert_eq!(rig.of_type("issues").await[0]["lines"], json!([]));
     wait(850).await;

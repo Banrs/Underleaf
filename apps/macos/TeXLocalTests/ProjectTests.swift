@@ -482,6 +482,21 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Jump to Next and Previous Issue skip an issue with no place and go round the list's ends.
+    @Test func issuesAreSteppedThroughRoundTheEnds() async throws {
+        let project = try await opened("a\nb\n").project
+        let items = #"[{"type":"warning","file":"main.tex","line":1,"message":"a"},{"type":"warning","message":"b"},"# +
+            #"{"type":"warning","file":"main.tex","line":2,"message":"c"}]"#
+        project.checks = try JSONDecoder().decode([LogItem].self, from: Data(items.utf8))
+        var went: [Int?] = []
+        for next in [true, true, true, false] {
+            project.goToIssue(next: next)
+            went.append(project.chosenIssue)
+        }
+        #expect(went == [0, 2, 0, 2])
+        await app.close()
+    }
+
     @Test func cleanBuildFolderRemovesTheBuildFolder() async throws {
         let (project, folder) = try await opened(with: ["build/main.aux": "x"])
         await project.cleanBuildFolder()

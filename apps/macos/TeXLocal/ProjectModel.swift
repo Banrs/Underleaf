@@ -62,7 +62,7 @@ final class ProjectModel {
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
-    /// In the session's order, which `session_choose_issue` numbers.
+    /// In the session's order, which an `issues` line's `index` numbers.
     var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) + checks }
     /// The bad boxes after the issues, as Overleaf lists its typesetting warnings: numbered on from them, which the session
     /// numbers alone.

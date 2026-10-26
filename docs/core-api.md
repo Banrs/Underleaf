@@ -47,7 +47,7 @@ the call.
 ## Lifecycle
 
 ```
-session_open {id, session, autoCompile} -> {name, root, pdf, tree, settings, ui}
+session_open {id, session, autoCompile} -> {name, root, tree, settings, ui}
   session_open_document {session, path} -> null
   tl_session_source(h, session, path)   -> TlSource     tl_source_text: load into the editor verbatim
                                                         every editor edit: tl_source_edit
@@ -65,7 +65,7 @@ All take `session` (except `session_open`). Results are the `ok` value.
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
-| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, pdf, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `pdf`: the last build's, as an absolute path, if it is on disk. `settings`: `{mainFile, engine, shellEscape, stopOnFirstError}`, where `shellEscape` is the user's grant, kept with the ui state for the folder it was given to (by its volume and file number), never read from a project's files: a downloaded or copied folder, whatever its `.texlocal.json` says, starts without it; `ui`: the ui state (below). All a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
+| `session_open` | `id`, `session`, `autoCompile?` | `{name, root, tree, settings, ui}` | `session` is the host's number for it: 409 if a session of that number is open. `name`: the project's, for titles (an opened folder's id isn't). `settings`: `{mainFile, engine, shellEscape, stopOnFirstError}`, where `shellEscape` is the user's grant, kept with the ui state for the folder it was given to (by its volume and file number), never read from a project's files: a downloaded or copied folder, whatever its `.texlocal.json` says, starts without it; `ui`: the ui state (below). All a host shows as the project opens. With `autoCompile` and no PDF, a build starts (once TeX is found, as for any automatic build). |
 | `session_close` | | `{saved}` | Saves before closing. A conflict returns `saved: false`; a write error fails the command. Either keeps the session and its documents open. After a successful save, stops build, preview and watching. |
 | `session_set_options` | `autoCompile` | null | The preference alone: automatic builds also wait for TeX, which the last `status` found or not. |
 | `session_open_document` | `path` | null | Text files only, in UTF-8: another encoding is refused (400), as a save would change its bytes. The editor reads the text from the document's source (`tl_source_text`) once it shows it. A `document_reload` reaches the source only through the host, so the host applies each to its document's source, shown or not. |
@@ -90,8 +90,6 @@ All take `session` (except `session_open`). Results are the `ok` value.
 | `session_history_save` | `name` | an entry, as listed | A snapshot of the files as they are, named; when nothing changed since the last, that one is named instead. A `name` empty once trimmed is 400. |
 | `session_history_compare` | `id`, `path` | `[row]` | The file's lines in that snapshot against now's (the open document's as edited, else the disk's; none where there is no such file), as a unified diff: each row `{same}`, `{removed}` or `{added}` with the line's text, removed before added where a block was replaced, and lines further than 3 from a change folded into `{skipped: n}`. Empty where the lines are the same. Text files only (`tex`, `bib` and `text` kinds): another is 400. |
 | `session_history_restore` | `id`, `paths?` | `{edits}` | Takes a `Before Restore` snapshot, then puts the snapshot's files back as they were, or those of them `paths` names, making those deleted since; files added since are left alone, and so is a file now over 20 MB, which no snapshot keeps. `edits`: the open document's, as `session_replace`'s (one edit, around what differs), to apply the same way; the core writes the other files. All or none, as `session_replace`, and 409 as for it. A snapshot no longer kept is 404. |
-| `session_issue` | `next` | `{index, issue}` or null | The next or previous issue with a place, round the ends; the host opens `issue.file` at `issue.line`. The session's issues are the last build's errors, then its warnings, then the `checks` items: a host numbers its list's rows the same way. |
-| `session_choose_issue` | `index` (or null) | `{index, issue}` or null | A click in the issue list or the gutter (its `issues` line's `index`); `index` as `session_issue` numbers them. |
 | `session_rename` | `from`, `to` or `name` | `{from, to, mainFile, ui}` or null | `name` renames the entry in its folder, `to` moves it. Saves first (null if it couldn't); moves open documents (`document_renamed`). `ui`: the project's ui state (as `set_ui_state` answers it) with the entry's paths moved; a host sends its `set_ui_state` first. Answered after the `tree` event it makes, so the host's tree has the entry's row. |
 | `session_create_entry` | `folder?` (the project's own), `name`, `dir?` (false) | `{path}` | Makes an empty file, or with `dir` a folder, named `name` in `folder`; a name taken is numbered past (“untitled 2.tex”), and `path` says which. A path outside the project, or the project's `.texlocal.json`, is 400. Answered after the `tree` event it makes. |
 | `session_set_settings` | `patch` | settings | The keys of `patch` replace the project's; the answer is the settings, as `session_open` gives them. A new main file stops the build, restarts the preview, builds. |
@@ -239,7 +237,7 @@ Each is `{"type", "session", …}`.
 | `document_closed` | `path`, `reason` (`gone`/`closed`/`deleted`) | Clear the editor if it shows `path`. |
 | `document_renamed` | `from`, `to` | Re-key the editor's per-file state. |
 | `conflict` | `path`, `kind` | `changed`: alert with Save Anyway, Revert, Cancel and no default button; `gone`: alert whose default saves again, Close, Cancel. Answer with `session_resolve`. |
-| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others, index}]` | The gutter and line-end boxes, of the last build's issues and then the `checks`: a build's issue wins its line and a check's message joins its `others`. `index`: the first of the line's issues in the session's list, which a click on the line sends to `session_choose_issue`. `[]` clears them (an edit does; the checks come back after its save). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), “Needs Shell Escape” for a build that needed it, else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
+| `issues` | `path`, `lines: [{line, error, message, short, compact, tokens, others, index}]` | The gutter and line-end boxes, of the last build's issues and then the `checks`: a build's issue wins its line and a check's message joins its `others`. `index`: the first of the line's issues in the session's list (the last build's errors, then its warnings, then the `checks`), for the host's list to choose. `[]` clears them (an edit does; the checks come back after its save). `short`: the message on one line; `compact`: for an undefined command, fewer words that keep its name (“Undefined: \\foo”), “Needs Shell Escape” for a build that needed it, else null; `tokens`: where the line has that command, `[{start, length}]` in UTF-16 units from the line's start (an edit clears the issues, so they hold). |
 | `build` | `compiling`, `auto`, `outdated` | Compile/Stop button, spinner, “Preview out of date”. Announce “Compiling” for a manual start. |
 | `build_finished` | `auto`, `announce`, `outdated`, `result` (compile result) | Show `result.pdf`, an absolute path; open the panel on a failed manual build; announce when `announce` (a build asked for, or an automatic one whose errors changed; never one Stop ended); sync after compile if `ok` and not `outdated`. `result.badBoxes`: the overfull and underfull boxes, items as `errors` and `warnings` are, kept apart from them (not issues). Items of `errors` and `warnings` may have an `explain` and a `fix` (Explanations and fixes). |
 | `build_cleaned` | | Clear the PDF unless live. |
@@ -254,8 +252,7 @@ Each is `{"type", "session", …}`.
 
 ### Explanations and fixes
 
-A build's items (`errors`, `warnings`, and the issue `session_issue` and `session_choose_issue`
-answer) carry `explain`: one or two sentences on what TeX's message means here and what usually
+A build's items (`errors` and `warnings`) carry `explain`: one or two sentences on what TeX's message means here and what usually
 fixes it, for the build panel under the message, when there is one. And `fix`, when there is one:
 `{id, title, help, confirm?}`, which a host shows as a button titled `title`, with `help` as its
 tooltip. `id` names the fix and its argument for the core alone to read, so it stays good however

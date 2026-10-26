@@ -64,7 +64,6 @@ pub(crate) struct Builds {
     checks_shown: Value,
     /// The session's count of edits as the checks' scan began.
     checked: u64,
-    chosen: Option<usize>,
     result_edits: u64,
     pub cleaners: Vec<Reply>,
     /// Whether live preview ran as the clean began, and the Start it ran for.
@@ -160,7 +159,6 @@ impl Actor {
             .collect();
         builds.error_count = result.errors.len();
         builds.result_edits = builds.built;
-        builds.chosen = None;
         let auto = builds.auto;
         let announce = !result.stopped && (!auto || builds.error_count != before);
         let outdated = builds.outdated;
@@ -238,7 +236,7 @@ impl Actor {
             }
             let builds = &mut self.builds;
             (builds.pdf, builds.outdated) = (false, false);
-            (builds.issues, builds.error_count, builds.chosen) = (Vec::new(), 0, None);
+            (builds.issues, builds.error_count) = (Vec::new(), 0);
             self.mark_issues();
             self.publish_checks();
             self.publish_build();
@@ -307,36 +305,6 @@ impl Actor {
         }
         for issues in changed {
             self.emit("issues", issues);
-        }
-    }
-
-    pub fn choose_issue(&mut self, index: Option<usize>) -> Value {
-        self.builds.chosen = index;
-        let issue = index.and_then(|index| self.builds.listed().nth(index));
-        match (index, issue) {
-            (Some(index), Some(issue)) => json!({ "index": index, "issue": issue }),
-            _ => Value::Null,
-        }
-    }
-
-    /// The next or previous issue with a place, round the list's ends.
-    pub fn next_issue(&mut self, next: bool) -> Value {
-        let issues = self.builds.listed().enumerate();
-        let places: Vec<usize> = issues
-            .filter(|(_, issue)| issue.file.is_some())
-            .map(|(i, _)| i)
-            .collect();
-        let chosen = self.builds.chosen;
-        let place = if next {
-            let after = places.iter().find(|&&p| chosen.is_none_or(|c| p > c));
-            after.or(places.first())
-        } else {
-            let before = places.iter().rev().find(|&&p| chosen.is_none_or(|c| p < c));
-            before.or(places.last())
-        };
-        match place {
-            Some(&place) => self.choose_issue(Some(place)),
-            None => Value::Null,
         }
     }
 }

@@ -189,20 +189,17 @@ impl Actor {
             .watch
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let pdf = settings::read_settings(&project.settings)
-            .output(&project.build, "pdf")
-            .ok();
-        let pdf = pdf.filter(|pdf| pdf.is_file());
         let opened = json!({
             "name": project.name(),
             "root": project.root.to_string_lossy(),
-            "pdf": pdf.as_ref().map(|pdf| pdf.to_string_lossy()),
             "tree": out(&tree)?,
             "settings": settings::shown(&project),
             "ui": settings::read_ui(&project.ui),
         });
         let mut builds = Builds::default();
-        builds.pdf = pdf.is_some();
+        builds.pdf = settings::read_settings(&project.settings)
+            .output(&project.build, "pdf")
+            .is_ok_and(|pdf| pdf.is_file());
         let mut later = VecDeque::new();
         if auto_compile && !builds.pdf {
             later.push_back(Later::Compile(true));
@@ -424,8 +421,6 @@ impl Actor {
             Command::Resolve { path, answer } => self.resolve(&path.0, &answer),
             Command::Compile { auto } => self.compile(auto).and_then(out),
             Command::StopCompile => out(self.stop_compile()),
-            Command::Issue { next } => Ok(self.next_issue(next)),
-            Command::ChooseIssue { index } => Ok(self.choose_issue(index)),
             Command::Navigate { from } => Ok(self.navigate(from)),
             Command::Back { at } => Ok(self.step(at, true)),
             Command::Forward { at } => Ok(self.step(at, false)),
