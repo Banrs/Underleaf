@@ -69,8 +69,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: tex-check
-      # Not import.rs's ignored test, which leaves a file in the user's Trash.
-      - run: cargo test -p texlocal-core -- --ignored --nocapture --skip a_replaced_file_goes_to_the_trash
+      - run: cargo test -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso
           TEXLOCAL_TINYTEX_RELEASE: file://${{ runner.temp }}/tinytex-release.json

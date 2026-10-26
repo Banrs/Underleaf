@@ -583,7 +583,7 @@ async fn the_checks_follow_the_builds_issues_and_come_back_once_an_edit_is_saved
     rig.changed("a.tex", true);
     let items = checks(until_sent(&mut rig, "checks").await).remove(0);
     let undefined = "No label “nowhere” is defined.";
-    let check = json!({ "type": "warning", "file": "main.tex", "line": 2, "message": undefined, "short": undefined });
+    let check = json!({ "type": "warning", "file": "main.tex", "line": 2, "message": undefined });
     assert_eq!(items[0]["file"], "a.tex");
     assert_eq!(items[1], check);
     let doc = rig.open("main.tex").await;

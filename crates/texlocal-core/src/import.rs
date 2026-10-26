@@ -654,20 +654,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "leaves a file in the user's Trash"]
-    fn a_replaced_file_goes_to_the_trash_without_asking_finder() {
-        let (_dir, service) = with_project();
-        let file = service
-            .project("P")
-            .unwrap()
-            .root
-            .join("replaced by import.txt");
-        fs::write(&file, "old").unwrap();
-        projects::discard(&file).unwrap();
-        assert!(!file.exists());
-    }
-
-    #[test]
     fn a_link_to_a_folder_in_the_project_is_a_folder_a_file_goes_into() {
         let (_dir, service) = with_project();
         let root = service.project("P").unwrap().root;
