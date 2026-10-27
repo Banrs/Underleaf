@@ -117,9 +117,7 @@ final class WorkspaceController: ThinSplitViewController {
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = 100
-        let header = hostingView(OutlineHeader())
-        header.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
-        outlineBar = accessory(header, edge: .soft)
+        outlineBar = accessory(hostingView(OutlineHeader()), edge: .soft)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
         outlineItem.minimumThickness = 80

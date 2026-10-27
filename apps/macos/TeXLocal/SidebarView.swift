@@ -252,6 +252,7 @@ struct OutlineList: View {
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
     @State private var hovering = false
+    @State private var line: CGFloat = 0
 
     var body: some View {
         let open = app.outlineOpen(of: app.project)
@@ -261,16 +262,17 @@ struct OutlineHeader: View {
                 Spacer()
                 Image(systemName: "chevron.right")
                     .rotationEffect(.degrees(open ? 90 : 0))
+                    .animation(.default, value: open)
                     .opacity(hovering ? 1 : 0)
                     .accessibilityHidden(true)
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { line = $0 }
             .padding(.leading, 14)
             .padding(.trailing, 18)
-            .padding(.bottom, open ? 5 : 0)
-            .frame(maxHeight: .infinity, alignment: open ? .bottom : .center)
-            .animation(.default, value: open)
+            .frame(height: BarMetrics.height)
+            .frame(height: open ? ((BarMetrics.height + line) / 2 + 5).rounded() : BarMetrics.height, alignment: .top)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
