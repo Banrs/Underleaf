@@ -153,8 +153,8 @@ nonisolated enum Syntax {
     }
 
     nonisolated struct Drawing: Decodable, Sendable {
-        var svg: String?
-        var width, height: Double?
+        let svg: String
+        let width, height: Double
     }
 }
 

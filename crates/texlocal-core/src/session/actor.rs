@@ -70,7 +70,7 @@ pub(crate) struct Doc {
 }
 
 impl Doc {
-    pub fn dirty(&self) -> bool {
+    fn dirty(&self) -> bool {
         self.force || self.doc.version() != self.saved
     }
 
@@ -371,8 +371,8 @@ impl Actor {
             Command::HistoryList => return self.history_list(reply),
             Command::HistorySave { name } => return self.history_save(name, reply),
             Command::HistoryCompare { id, path } => return self.history_compare(id, path.0, reply),
-            Command::Rename { from, to, name } => {
-                let answer = self.rename(&from.0, to, name);
+            Command::Rename { from, to } => {
+                let answer = self.rename(&from.0, &to);
                 return self.after_events(answer, reply);
             }
             Command::CreateEntry { folder, name, dir } => {
@@ -569,7 +569,7 @@ impl Actor {
         }
     }
 
-    pub fn publish_doc(&mut self, path: &str) {
+    fn publish_doc(&mut self, path: &str) {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
@@ -649,7 +649,6 @@ impl Actor {
                     (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
                     self.after(Timer::Symbols);
                     self.snapshot_soon();
-                    self.emit("saved", json!({ "path": path }));
                     Ok(true)
                 }
                 Err(err) => {
@@ -1116,22 +1115,13 @@ impl Actor {
         Ok(json!({ "edits": edits.pop(), "written": written, "snapshot": snapshot }))
     }
 
-    fn rename(
-        &mut self,
-        from: &str,
-        to: Option<String>,
-        name: Option<String>,
-    ) -> Result<Value, CoreError> {
-        let to = match name {
-            Some(name) => paths::in_folder(from.rsplit_once('/').map_or("", |(f, _)| f), &name),
-            None => to.ok_or_else(|| CoreError::bad_request("A rename needs `to` or `name`"))?,
-        };
+    fn rename(&mut self, from: &str, to: &str) -> Result<Value, CoreError> {
         if !self.save_edits(true)? {
             return Ok(Value::Null);
         }
         let (renamed, main) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
-            let renamed = projects::rename_entry(project, from, &to)?;
+            let renamed = projects::rename_entry(project, from, to)?;
             self.preview.stop(&project.root)?;
             Ok((renamed, main))
         })?;

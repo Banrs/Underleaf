@@ -79,7 +79,7 @@ impl Builds {
 }
 
 impl Actor {
-    pub fn has_pdf(&self) -> bool {
+    fn has_pdf(&self) -> bool {
         self.builds.pdf || self.live.document_seen
     }
 
@@ -167,7 +167,7 @@ impl Actor {
         self.publish_build();
     }
 
-    pub fn build_state(&self) -> Value {
+    fn build_state(&self) -> Value {
         let builds = &self.builds;
         json!({
             "compiling": builds.compiling,
@@ -176,7 +176,7 @@ impl Actor {
         })
     }
 
-    pub fn publish_build(&mut self) {
+    fn publish_build(&mut self) {
         let state = self.build_state();
         if state != self.builds.shown {
             self.builds.shown = state.clone();

@@ -95,7 +95,6 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     rig.call("session_live_view", json!({ "first": 0, "last": 0 }))
         .await;
     let whole = rig.event("live_document", |e| e["complete"] == true);
-    assert_eq!(whole["pages"], 1);
     assert!(Path::new(whole["path"].as_str().unwrap()).is_file());
     rig.forget();
     doc.edit(40, 0, "More words. ", None, false);

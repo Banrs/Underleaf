@@ -3,7 +3,7 @@ mod atomic;
 mod checks;
 mod compile;
 mod error;
-pub mod events;
+mod events;
 mod import;
 mod logparse;
 mod packages;

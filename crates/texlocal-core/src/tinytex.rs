@@ -57,8 +57,7 @@ async fn install_into(root: &Path, path_env: &str) -> Result<(), CoreError> {
 
 async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
     let release = temp.join("release.json");
-    let asked = std::env::var("TEXLOCAL_TINYTEX_RELEASE").unwrap_or_else(|_| RELEASE.into());
-    fetch(&asked, &release, path_env).await?;
+    fetch(RELEASE, &release, path_env).await?;
     let release = serde_json::from_slice(&std::fs::read(&release)?)
         .map_err(|err| CoreError::internal(err.to_string()))?;
     let (url, digest) = bundle(&release).ok_or_else(|| {

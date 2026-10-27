@@ -104,16 +104,9 @@ impl SourceDocument {
     }
 }
 
-fn rendered(result: Result<render::MathSvg, String>) -> Option<String> {
-    match result {
-        Ok(svg) => json(svg),
-        Err(error) => json(json!({ "error": error })),
-    }
-}
-
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     match read(command, args_json)? {
-        Free::MathSvg { tex, display, size } => rendered(render::math_svg(&tex, display, size)),
+        Free::MathSvg { tex, display, size } => json(render::math_svg(&tex, display, size)),
         Free::Menus => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))

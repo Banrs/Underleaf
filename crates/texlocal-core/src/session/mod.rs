@@ -73,7 +73,7 @@ pub(crate) enum Command {
     HistorySave { name: String },
     HistoryCompare { id: String, path: RelPath },
     HistoryRestore { id: String, paths: Option<Vec<RelPath>> },
-    Rename { from: RelPath, to: Option<String>, name: Option<String> },
+    Rename { from: RelPath, to: String },
     CreateEntry { #[serde(default)] folder: String, name: String, #[serde(default)] dir: bool },
     SetSettings { patch: Value },
     PrepareDelete { path: RelPath },

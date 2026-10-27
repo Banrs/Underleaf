@@ -31,6 +31,7 @@ static CROSSREF: LazyLock<Regex> =
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Heading {
+    #[serde(skip)]
     pub depth: usize,
     pub command: &'static str,
     pub level: &'static str,

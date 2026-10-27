@@ -76,7 +76,7 @@ impl Live {
 }
 
 impl Actor {
-    pub fn live_state(&self) -> Value {
+    fn live_state(&self) -> Value {
         let live = &self.live;
         let errors = live.errors();
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
@@ -430,7 +430,6 @@ impl Actor {
                     let complete = !matches!(run.as_str(), "stopped" | "partial");
                     let document = json!({
                         "path": path,
-                        "pages": pages,
                         "changed": changed,
                         "complete": complete,
                     });

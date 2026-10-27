@@ -22,9 +22,9 @@ const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
 
 pub struct Service {
-    pub data_dir: PathBuf,
-    pub compile: CompileManager,
-    pub texpresso: Arc<texpresso::Manager>,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) compile: CompileManager,
+    pub(crate) texpresso: Arc<texpresso::Manager>,
     pub(crate) edits: Mutex<()>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
@@ -85,7 +85,7 @@ impl Service {
         Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
     }
 
-    pub fn kill_all(&self) {
+    fn kill_all(&self) {
         self.compile.kill_all();
         self.texpresso.kill_all();
     }

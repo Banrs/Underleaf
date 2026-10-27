@@ -56,8 +56,7 @@ final class MathPopover {
 
 extension NSImage {
     convenience init?(drawing: Syntax.Drawing) {
-        guard let svg = drawing.svg, let width = drawing.width, let height = drawing.height else { return nil }
-        self.init(data: Data(svg.utf8))
-        size = NSSize(width: width, height: height)
+        self.init(data: Data(drawing.svg.utf8))
+        size = NSSize(width: drawing.width, height: drawing.height)
     }
 }

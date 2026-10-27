@@ -31,13 +31,13 @@ fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
     Ok(tokens)
 }
 
-fn display_list(tex: &str, display: bool) -> Result<DisplayList, String> {
+fn display_list(tex: &str, display: bool) -> Option<DisplayList> {
     let mut parser = Parser::new(tex);
     let optional = MacroDefinition::Function(optional);
     parser
         .gullet
         .set_macro("\\texlocal@optional".into(), optional);
-    let nodes = parser.parse().map_err(|e| e.to_string())?;
+    let nodes = parser.parse().ok()?;
     let style = if display {
         MathStyle::Display
     } else {
@@ -55,10 +55,10 @@ fn display_list(tex: &str, display: bool) -> Result<DisplayList, String> {
     list.width = clamp(list.width).max(0.0);
     list.height = clamp(list.height);
     list.depth = (list.height + clamp(list.depth)).clamp(0.0, MAX_EM) - list.height;
-    Ok(list)
+    Some(list)
 }
 
-fn svg(list: &DisplayList, size: f64) -> Result<String, String> {
+fn svg(list: &DisplayList, size: f64) -> Option<String> {
     let options = SvgOptions {
         font_size: size,
         padding: 0.0,
@@ -67,22 +67,17 @@ fn svg(list: &DisplayList, size: f64) -> Result<String, String> {
         font_dir: String::new(),
     };
     let svg = render_to_svg_with_color_syntax(list, &options, SvgColorSyntax::Rgb);
-    if svg.contains("<text") || svg.contains("<image") {
-        return Err("The maths fonts can't draw this".into());
-    }
-    if svg.contains("inf") || svg.contains("NaN") {
-        return Err("The maths is too large to draw".into());
-    }
-    Ok(svg)
+    let undrawable = ["<text", "<image", "inf", "NaN"];
+    (!undrawable.iter().any(|bad| svg.contains(bad))).then_some(svg)
 }
 
-pub fn math_svg(tex: &str, display: bool, size: f64) -> Result<MathSvg, String> {
+pub fn math_svg(tex: &str, display: bool, size: f64) -> Option<MathSvg> {
     if !size.is_finite() {
-        return Err("No such size".into());
+        return None;
     }
     let size = size.clamp(1.0, 512.0);
     let list = display_list(tex, display)?;
-    Ok(MathSvg {
+    Some(MathSvg {
         svg: svg(&list, size)?,
         width: list.width * size,
         height: (list.height + list.depth) * size,

@@ -303,7 +303,7 @@ async fn renaming_the_main_file_keeps_it_the_main_file() {
     let renamed = rig
         .call(
             "session_rename",
-            json!({ "from": "main.tex", "name": "thesis.tex" }),
+            json!({ "from": "main.tex", "to": "thesis.tex" }),
         )
         .await;
     assert_eq!(renamed["to"], "thesis.tex");

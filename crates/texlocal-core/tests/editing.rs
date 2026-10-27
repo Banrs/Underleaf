@@ -318,18 +318,15 @@ fn unknown_commands_and_bad_arguments_answer_nothing() {
 }
 
 #[test]
-fn maths_renders_as_svg_or_says_why_not() {
+fn maths_renders_as_svg_or_nothing() {
     let svg: Value = serde_json::from_str(
         &syntax::call("math_svg", r#"{"tex":"x^2","display":false,"size":13}"#).unwrap(),
     )
     .unwrap();
     assert!(svg["svg"].as_str().unwrap().starts_with("<svg"));
     assert!(svg["width"].as_f64().unwrap() > 0.0);
-    let broken: Value = serde_json::from_str(
-        &syntax::call("math_svg", r#"{"tex":"\\frac{","display":false,"size":13}"#).unwrap(),
-    )
-    .unwrap();
-    assert!(broken["error"].is_string());
+    let broken = syntax::call("math_svg", r#"{"tex":"\\frac{","display":false,"size":13}"#);
+    assert_eq!(broken.as_deref(), Some("null"));
 }
 
 #[test]

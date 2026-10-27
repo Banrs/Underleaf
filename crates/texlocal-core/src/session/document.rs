@@ -98,7 +98,7 @@ impl Document {
         body(&mut held.source)
     }
 
-    pub fn symbols(&self) -> Arc<Symbols> {
+    pub(crate) fn symbols(&self) -> Arc<Symbols> {
         let symbols = self.0.symbols.read();
         Arc::clone(&symbols.unwrap_or_else(PoisonError::into_inner))
     }

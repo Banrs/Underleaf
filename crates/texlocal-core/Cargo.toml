@@ -24,7 +24,7 @@ ratex-types = "=0.1.14"
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [lints]
 workspace = true
