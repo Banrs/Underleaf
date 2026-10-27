@@ -1,9 +1,13 @@
 mod actor;
 mod build;
 mod document;
+mod documents;
+mod edits;
+mod files;
 mod history;
 mod live;
 mod navigate;
+mod scans;
 mod watch;
 
 use std::collections::HashMap;

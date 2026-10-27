@@ -105,7 +105,7 @@ impl Actor {
             }
         }
         if edits.len() > 1 {
-            return Err(CoreError::conflict(super::actor::ONE_DOCUMENT));
+            return Err(CoreError::conflict(super::edits::ONE_DOCUMENT));
         }
         self.snapshot_before("Before Restore")?;
         let written = self.service.with_project(&self.project_id, |project| {
