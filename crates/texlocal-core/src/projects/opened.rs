@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use texlocal_latex::file_kind;
+use texlocal_latex::{FileKind, file_kind};
 
 use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
@@ -104,7 +104,7 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
     let name = real.file_name().unwrap_or_default().to_string_lossy();
     let (project, file) = if meta.is_dir() {
         (open_folder(service, &real, None)?, None)
-    } else if file_kind(&name) != "tex" {
+    } else if file_kind(&name) != FileKind::Tex {
         (import::import_project(service, path)?, None)
     } else {
         let folder = real.parent().expect("a file's folder");
@@ -135,7 +135,7 @@ fn open_folder(
     let (mut files, mut tex) = (0, false);
     visit_files(root, &mut |_, rel| {
         files += 1;
-        tex |= file_kind(rel) == "tex";
+        tex |= file_kind(rel) == FileKind::Tex;
         Ok(files <= MAX_FILES)
     })?;
     if files > MAX_FILES {

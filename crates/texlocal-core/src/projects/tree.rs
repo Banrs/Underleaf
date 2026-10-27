@@ -3,7 +3,7 @@ use std::io::ErrorKind::{NotFound, PermissionDenied};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use texlocal_latex::file_kind;
+use texlocal_latex::{FileKind, file_kind};
 
 use super::skip_unreadable;
 use crate::BUILD_DIR;
@@ -18,7 +18,7 @@ pub struct TreeNode {
     pub name: String,
     pub path: String,
     #[serde(rename = "kind", skip_serializing_if = "Option::is_none")]
-    pub file_kind: Option<&'static str>,
+    pub file_kind: Option<FileKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<Self>>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]

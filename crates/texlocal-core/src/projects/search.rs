@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 use texlocal_latex::analyze::Place;
-use texlocal_latex::file_kind;
+use texlocal_latex::{FileKind, file_kind};
 
 use super::files::{Planned, inside, write_all};
 use super::history::MAX_KEPT;
@@ -122,7 +122,7 @@ fn utf16(chars: &[char]) -> u32 {
 
 fn cap(rel: &str) -> u64 {
     match file_kind(rel) {
-        "tex" | "bib" => u64::MAX,
+        FileKind::Tex | FileKind::Bib => u64::MAX,
         _ => SEARCH_FILE_MAX,
     }
 }

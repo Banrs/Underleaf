@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
-use texlocal_latex::file_kind;
+use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::{Actor, Later, Timer};
+use super::documents::CloseReason;
 use super::watch::{self, TreeIndex};
 use crate::paths::{self, within};
 use crate::projects;
@@ -16,7 +17,7 @@ impl Actor {
         self.deleting.remove(path);
         if trashed.unwrap_or(true) {
             for doc in self.docs_within(path) {
-                self.close_doc(&doc, "deleted");
+                self.close_doc(&doc, CloseReason::Deleted);
             }
             self.reload_tree();
         }
@@ -52,7 +53,7 @@ impl Actor {
             .iter()
             .filter(|p| !self.docs.contains_key(*p))
             .collect();
-        let scan = |path: &&String| matches!(file_kind(path), "tex" | "bib");
+        let scan = |path: &&String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
         }
@@ -114,7 +115,7 @@ impl Actor {
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
             if !within(&path, from) {
-                self.close_doc(&path, "gone");
+                self.close_doc(&path, CloseReason::Gone);
             }
         }
         for old in self.docs_within(from) {

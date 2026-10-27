@@ -9,6 +9,8 @@ pub mod wordmatch;
 use std::ffi::OsStr;
 use std::path::{Component, Path};
 
+use serde::Serialize;
+
 pub fn segments(rel: &str) -> Option<Vec<&str>> {
     let mut segments = Vec::new();
     for component in Path::new(rel).components() {
@@ -36,22 +38,36 @@ const TEXT_EXTENSIONS: &[&str] = &[
 
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
-pub fn file_kind(name: &str) -> &'static str {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    Tex,
+    Bib,
+    Image,
+    Pdf,
+    Text,
+    Other,
+}
+
+pub fn file_kind(name: &str) -> FileKind {
     let path = Path::new(name);
     let lower = |part: Option<&OsStr>| part.unwrap_or_default().to_string_lossy().to_lowercase();
     match lower(path.extension()).as_str() {
-        "tex" => "tex",
-        "bib" => "bib",
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" => "image",
-        "pdf" => "pdf",
-        ext if TEXT_EXTENSIONS.contains(&ext) => "text",
-        "" if TEXT_NAMES.contains(&lower(path.file_name()).as_str()) => "text",
-        _ => "other",
+        "tex" => FileKind::Tex,
+        "bib" => FileKind::Bib,
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" => FileKind::Image,
+        "pdf" => FileKind::Pdf,
+        ext if TEXT_EXTENSIONS.contains(&ext) => FileKind::Text,
+        "" if TEXT_NAMES.contains(&lower(path.file_name()).as_str()) => FileKind::Text,
+        _ => FileKind::Other,
     }
 }
 
 pub fn is_text(name: &str) -> bool {
-    matches!(file_kind(name), "tex" | "bib" | "text")
+    matches!(
+        file_kind(name),
+        FileKind::Tex | FileKind::Bib | FileKind::Text
+    )
 }
 
 pub(crate) fn utf16_lossy(units: &[u16]) -> String {

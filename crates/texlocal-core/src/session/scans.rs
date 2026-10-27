@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
 use texlocal_latex::checks;
-use texlocal_latex::file_kind;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::syntax::{self, SymbolKind};
+use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::Actor;
 use super::{Document, Msg, Reply};
@@ -113,7 +113,7 @@ impl Actor {
 }
 
 pub(super) fn tex(rel: &str) -> bool {
-    matches!(file_kind(rel), "tex" | "bib")
+    matches!(file_kind(rel), FileKind::Tex | FileKind::Bib)
 }
 
 pub(super) fn texts(docs: &Mutex<HashMap<String, Document>>) -> HashMap<String, String> {

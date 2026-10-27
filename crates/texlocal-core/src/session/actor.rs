@@ -303,7 +303,7 @@ impl Actor {
     fn command(&mut self, command: Command, reply: Reply) {
         let answer = match command {
             Command::Clean => return self.clean(reply),
-            Command::Fix { id } => return self.fix(&id, reply),
+            Command::Fix { id } => return self.fix(id, reply),
             Command::Search {
                 query,
                 match_case,
@@ -333,7 +333,7 @@ impl Actor {
             Command::Save { reporting } => self
                 .save_edits(reporting.unwrap_or(true))
                 .map(|saved| json!({ "saved": saved })),
-            Command::Resolve { path, answer } => self.resolve(&path.0, &answer),
+            Command::Resolve { path, answer } => self.resolve(&path.0, answer),
             Command::Compile { auto } => self.compile(auto).and_then(out),
             Command::StopCompile => out(self.stop_compile()),
             Command::Replace {
@@ -342,7 +342,7 @@ impl Actor {
                 match_case,
                 whole_word,
             } => self.replace(&Query::new(&query, match_case, whole_word), &replacement),
-            Command::RenameSymbol { kind, from, to } => self.rename_symbol(&kind, &from, &to),
+            Command::RenameSymbol { kind, from, to } => self.rename_symbol(kind, &from, &to),
             Command::HistoryRestore { id, paths } => self.history_restore(&id, paths),
             Command::SetSettings { patch } => self.set_settings(&patch, true),
             Command::PrepareDelete { path } => self.prepare_delete(&path.0),

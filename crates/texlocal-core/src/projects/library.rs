@@ -7,9 +7,9 @@ use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use serde_json::json;
-use texlocal_latex::file_kind;
 use texlocal_latex::syntax::SourceDocument;
 use texlocal_latex::templates;
+use texlocal_latex::{FileKind, file_kind};
 
 use super::files::occupied;
 use super::opened::{self, is_opened};
@@ -149,7 +149,10 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.file_type()?.is_file() && file_kind(&name) == "tex" && !name.starts_with('-') {
+        if entry.file_type()?.is_file()
+            && file_kind(&name) == FileKind::Tex
+            && !name.starts_with('-')
+        {
             tex.push(name);
         }
     }

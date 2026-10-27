@@ -5,7 +5,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use texlocal_latex::syntax::TextEdit;
 
@@ -25,6 +25,23 @@ pub(super) const MAX_EDITED: u64 = 64 << 20;
 pub(crate) enum Conflict {
     Changed,
     Gone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Resolution {
+    Save,
+    Revert,
+    Cancel,
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CloseReason {
+    Closed,
+    Gone,
+    Deleted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,12 +146,12 @@ impl Actor {
     pub fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
         let closed = self.flush(Some(path), true)?;
         if closed {
-            self.close_doc(path, "closed");
+            self.close_doc(path, CloseReason::Closed);
         }
         Ok(json!({ "closed": closed }))
     }
 
-    pub fn close_doc(&mut self, path: &str, reason: &str) {
+    pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
         if self.docs.remove(path).is_some() {
             lock(&self.shared).remove(path);
             self.emit("document_closed", json!({ "path": path, "reason": reason }));
@@ -326,7 +343,7 @@ impl Actor {
         }
     }
 
-    pub fn resolve(&mut self, path: &str, answer: &str) -> Result<Value, CoreError> {
+    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<Value, CoreError> {
         let doc = self
             .docs
             .get_mut(path)
@@ -335,30 +352,30 @@ impl Actor {
             return Ok(Value::Null);
         };
         match (kind, answer) {
-            (_, "cancel") => (doc.asking, doc.held) = (None, true),
-            (Conflict::Changed, "save") => {
+            (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, true),
+            (Conflict::Changed, Resolution::Save) => {
                 (doc.asking, doc.conflict, doc.force) = (None, None, true);
             }
-            (Conflict::Changed, "revert") | (Conflict::Gone, "save") => {
+            (Conflict::Changed, Resolution::Revert) | (Conflict::Gone, Resolution::Save) => {
                 (doc.asking, doc.conflict) = (None, None);
             }
-            (Conflict::Gone, "close") => {
-                self.close_doc(path, "closed");
+            (Conflict::Gone, Resolution::Close) => {
+                self.close_doc(path, CloseReason::Closed);
                 return Ok(Value::Null);
             }
             _ => {
-                return Err(CoreError::bad_request(format!(
-                    "Can't answer “{answer}” here"
-                )));
+                return Err(CoreError::bad_request(
+                    "That answer doesn't fit this conflict",
+                ));
             }
         }
         self.publish_doc(path);
         match answer {
-            "save" => Ok(json!({ "saved": self.save_edits(true)? })),
-            "revert" => {
+            Resolution::Save => Ok(json!({ "saved": self.save_edits(true)? })),
+            Resolution::Revert => {
                 match self.docs[path].disk_text.clone() {
                     Some(text) => self.request_reload(path, &text, Reload::Revert),
-                    None => self.close_doc(path, "gone"),
+                    None => self.close_doc(path, CloseReason::Gone),
                 }
                 Ok(Value::Null)
             }
@@ -417,7 +434,7 @@ impl Actor {
                 }
             }
             (Some(text), false) => self.request_reload(path, &text, Reload::Disk),
-            (None, false) => self.close_doc(path, "gone"),
+            (None, false) => self.close_doc(path, CloseReason::Gone),
         }
     }
 
@@ -426,7 +443,7 @@ impl Actor {
             return;
         };
         if !doc.dirty() {
-            return self.close_doc(path, "gone");
+            return self.close_doc(path, CloseReason::Gone);
         }
         doc.disk_stamp = None;
         if doc.conflict.replace(Conflict::Gone) != Some(Conflict::Gone) {

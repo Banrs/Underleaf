@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
+use crate::FileKind;
 use crate::checks::{Slip, Structure, Walk};
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::{Group, Scanner, Visit};
@@ -149,10 +150,10 @@ impl Input {
 }
 
 impl Facts {
-    pub fn read(source: &str, kind: &str) -> Self {
+    pub fn read(source: &str, kind: FileKind) -> Self {
         let text = Text::new(source);
         let mut facts = Self::default();
-        if kind == "bib" {
+        if kind == FileKind::Bib {
             let (mut byte, mut unit) = (0, 0);
             let mut cited = |at: Range<usize>| {
                 unit += source[byte..at.start].encode_utf16().count();

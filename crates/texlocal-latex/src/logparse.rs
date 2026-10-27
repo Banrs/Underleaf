@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 
 use crate::syntax::catalog::CATALOG;
@@ -28,10 +28,11 @@ pub struct LogItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) explain: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) fix: Option<Fix>,
+    pub fix: Option<Fix>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
 pub enum Fix {
     Install(String),
     AddPackage(String),
@@ -39,14 +40,16 @@ pub enum Fix {
     ShellEscape,
 }
 
-impl Fix {
-    pub fn parse(id: &str) -> Option<Self> {
+impl TryFrom<String> for Fix {
+    type Error = &'static str;
+
+    fn try_from(id: String) -> Result<Self, Self::Error> {
         match id.split_once(':') {
-            Some(("install", file)) => Some(Self::Install(file.into())),
-            Some(("package", name)) => Some(Self::AddPackage(name.into())),
-            Some(("engine", "xelatex")) => Some(Self::Xelatex),
-            None if id == "shellEscape" => Some(Self::ShellEscape),
-            _ => None,
+            Some(("install", file)) => Ok(Self::Install(file.into())),
+            Some(("package", name)) => Ok(Self::AddPackage(name.into())),
+            Some(("engine", "xelatex")) => Ok(Self::Xelatex),
+            None if id == "shellEscape" => Ok(Self::ShellEscape),
+            _ => Err("There's no such fix."),
         }
     }
 }
@@ -108,6 +111,15 @@ impl LogItem {
 
     pub fn error(message: impl Into<String>) -> Self {
         Self::new(Severity::Error, None, None, message.into())
+    }
+
+    fn shell_escape(file: Option<String>, line: Option<u32>) -> Self {
+        let message = SHELL_ESCAPE.into();
+        let fix = Some(Fix::ShellEscape);
+        Self {
+            fix,
+            ..Self::new(Severity::Error, file, line, message)
+        }
     }
 }
 
@@ -235,9 +247,6 @@ static EXPLAINED: LazyLock<Vec<(Regex, Offer, &str)>> = LazyLock::new(|| {
 });
 
 fn explained(short: &str, command: Option<&str>) -> (Option<&'static str>, Option<Fix>) {
-    if short == SHELL_ESCAPE {
-        return (None, Some(Fix::ShellEscape));
-    }
     let Some((found, offer, explain)) = EXPLAINED
         .iter()
         .find_map(|(pattern, offer, explain)| Some((pattern.captures(short)?, *offer, *explain)))
@@ -579,21 +588,16 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     items
 }
 
-pub const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
+const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
 
 pub fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
     if let Some(error) = errors
         .iter_mut()
         .find(|e| SHELL_ESCAPE_ASKED.is_match(&e.short))
     {
-        *error = LogItem::new(
-            Severity::Error,
-            error.file.take(),
-            error.line,
-            SHELL_ESCAPE.into(),
-        );
+        *error = LogItem::shell_escape(error.file.take(), error.line);
     } else if RUNSYSTEM_REFUSED.is_match(log) {
-        errors.insert(0, LogItem::error(SHELL_ESCAPE));
+        errors.insert(0, LogItem::shell_escape(None, None));
     }
 }
 
@@ -725,9 +729,9 @@ mod tests {
             "engine:xelatex",
             "shellEscape",
         ] {
-            let fix = Fix::parse(id).unwrap();
+            let fix = Fix::try_from(id.to_owned()).unwrap();
             assert_eq!(serde_json::to_value(&fix).unwrap()["id"], id);
         }
-        assert_eq!(Fix::parse("format:disk"), None);
+        assert!(Fix::try_from("format:disk".to_owned()).is_err());
     }
 }

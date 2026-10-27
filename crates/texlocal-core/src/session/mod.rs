@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::Value;
-use texlocal_latex::logparse::LogItem;
-use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::logparse::{Fix, LogItem};
+use texlocal_latex::syntax::{SymbolKind, TextEdit};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
@@ -32,6 +32,7 @@ use crate::{CoreError, lock, paths};
 
 pub(crate) use build::Engine;
 pub use document::Document;
+use documents::Resolution;
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -62,7 +63,7 @@ pub(crate) enum Command {
     CloseDocument { path: RelPath },
     Composing { path: RelPath, composing: bool },
     Save { reporting: Option<bool> },
-    Resolve { path: RelPath, answer: String },
+    Resolve { path: RelPath, answer: Resolution },
     Compile { #[serde(default)] auto: bool },
     StopCompile,
     Clean,
@@ -72,8 +73,8 @@ pub(crate) enum Command {
     QuickOpen { query: String },
     Replace { query: String, replacement: String, #[serde(default)] match_case: bool,
         #[serde(default)] whole_word: bool },
-    RenameSymbol { kind: String, from: String, to: String },
-    Fix { id: String },
+    RenameSymbol { kind: SymbolKind, from: String, to: String },
+    Fix { id: Fix },
     HistoryList,
     HistorySave { name: String },
     HistoryCompare { id: String, path: RelPath },

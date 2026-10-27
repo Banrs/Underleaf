@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{SourceDocument, Text, catalog, indentation, utf16};
 use crate::analyze::{Defined, Facts, Input, Named, Place};
-use crate::{file_kind, fold_case, segments};
+use crate::{FileKind, file_kind, fold_case, segments};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SnippetField {
@@ -25,7 +25,7 @@ pub(crate) struct Completion {
     pub(crate) detail: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SymbolKind {
     Command,
@@ -125,11 +125,11 @@ impl SourceDocument {
                 "documentclass" => (&installed.classes, SymbolKind::File),
                 "bibliographystyle" => (&installed.styles, SymbolKind::File),
                 command => {
-                    let (kinds, bare): (&[&str], _) = match command {
-                        "input" | "include" | "subfile" => (&["tex"], true),
-                        "includegraphics" => (&["image", "pdf"], false),
-                        "bibliography" => (&["bib"], true),
-                        "addbibresource" => (&["bib"], false),
+                    let (kinds, bare): (&[FileKind], _) = match command {
+                        "input" | "include" | "subfile" => (&[FileKind::Tex], true),
+                        "includegraphics" => (&[FileKind::Image, FileKind::Pdf], false),
+                        "bibliography" => (&[FileKind::Bib], true),
+                        "addbibresource" => (&[FileKind::Bib], false),
                         _ => return None,
                     };
                     listed = self

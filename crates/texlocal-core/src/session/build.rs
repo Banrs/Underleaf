@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use texlocal_latex::logparse::{LogItem, SHELL_ESCAPE, Severity};
+use texlocal_latex::logparse::{Fix, LogItem, Severity};
 
 use super::actor::{Actor, Later, Timer};
 use super::{Document, Msg, Reply};
@@ -309,7 +309,7 @@ pub(super) fn issue_lines<'a>(
         let command = item.command.as_deref();
         let compact = match command {
             Some(command) => Some(format!("Undefined: {command}")),
-            None => (item.message == SHELL_ESCAPE).then(|| "Needs Shell Escape".to_owned()),
+            None => (item.fix == Some(Fix::ShellEscape)).then(|| "Needs Shell Escape".to_owned()),
         };
         let tokens = command.map_or_else(Vec::new, |command| {
             doc.with(|source| source.command_ranges(line, command))

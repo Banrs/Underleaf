@@ -5,7 +5,7 @@ use std::{fs, io};
 
 use texlocal_latex::analyze::Facts;
 pub use texlocal_latex::syntax::Symbols;
-use texlocal_latex::{file_kind, fold_case};
+use texlocal_latex::{FileKind, file_kind, fold_case};
 
 use super::skip_unreadable;
 use super::tree::visit_files;
@@ -21,7 +21,7 @@ pub fn scan_symbols(
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
         let kind = file_kind(rel);
-        if !matches!(kind, "tex" | "bib") {
+        if !matches!(kind, FileKind::Tex | FileKind::Bib) {
             return Ok(true);
         }
         let found = match open.get(rel) {

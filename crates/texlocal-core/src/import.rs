@@ -8,7 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use texlocal_latex::analyze::Facts;
-use texlocal_latex::templates;
+use texlocal_latex::{FileKind, file_kind, templates};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
@@ -268,7 +268,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         return Opened::of_zip(stem, zip);
     }
     let path = file_name(src);
-    if texlocal_latex::file_kind(&path) != "tex" {
+    if file_kind(&path) != FileKind::Tex {
         return Err(CoreError::bad_request(format!(
             "“{path}” isn’t a project: TeXLocal opens a folder, a .tex file or a .zip of a project."
         )));
@@ -335,7 +335,7 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
         .into_iter()
         .find(|engine| program.contains(engine));
     let engine = named.or_else(|| {
-        let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, "tex");
+        let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, FileKind::Tex);
         let loads = |names: &[&str]| facts.packages.iter().any(|p| names.contains(&p.as_str()));
         let needed = ENGINE_PACKAGES.into_iter().find(|(_, names)| loads(names));
         needed.map(|(engine, _)| engine)
@@ -360,7 +360,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     files.retain(|(path, _)| !left_out(path));
     if !files
         .iter()
-        .any(|(path, _)| texlocal_latex::file_kind(path) == "tex")
+        .any(|(path, _)| file_kind(path) == FileKind::Tex)
     {
         return Err(no_tex(&file_name(src)));
     }

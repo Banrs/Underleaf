@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use texlocal_latex::analyze::{Facts, Place};
-use texlocal_latex::file_kind;
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
+use texlocal_latex::{FileKind, file_kind};
 
 use super::Reply;
 use super::actor::Actor;
@@ -31,10 +31,15 @@ impl Actor {
         )
     }
 
-    pub fn rename_symbol(&self, noun: &str, from: &str, to: &str) -> Result<Value, CoreError> {
-        let kind = match noun {
-            "label" => SymbolKind::Label,
-            "citation" => SymbolKind::Citation,
+    pub fn rename_symbol(
+        &self,
+        kind: SymbolKind,
+        from: &str,
+        to: &str,
+    ) -> Result<Value, CoreError> {
+        let noun = match kind {
+            SymbolKind::Label => "label",
+            SymbolKind::Citation => "citation",
             _ => {
                 return Err(CoreError::bad_request(
                     "Only a label or a citation is renamed",
@@ -72,9 +77,9 @@ impl Actor {
         self.edit_project("Before Rename", &open, &tex, &found, to)
     }
 
-    pub fn fix(&mut self, id: &str, reply: Reply) {
-        let edits = match Fix::parse(id) {
-            Some(Fix::Install(file)) => {
+    pub fn fix(&mut self, fix: Fix, reply: Reply) {
+        let edits = match fix {
+            Fix::Install(file) => {
                 let (service, project) = (Arc::clone(&self.service), self.project.clone());
                 tokio::spawn(async move {
                     let installed = packages::install_package(&file, &service.tool_paths().0).await;
@@ -85,16 +90,15 @@ impl Actor {
                 });
                 return;
             }
-            Some(Fix::AddPackage(name)) => self
+            Fix::AddPackage(name) => self
                 .add_package(&name)
                 .map(|mut added| added["edits"].take()),
-            Some(Fix::Xelatex) => self
+            Fix::Xelatex => self
                 .set_settings(&json!({ "engine": "xelatex" }), false)
                 .map(|_| Value::Null),
-            Some(Fix::ShellEscape) => self
+            Fix::ShellEscape => self
                 .set_settings(&json!({ "shellEscape": true }), false)
                 .map(|_| Value::Null),
-            None => Err(CoreError::bad_request("There's no such fix.")),
         };
         reply.send(edits.map(|edits| fixed(edits, &self.project)));
     }
@@ -103,7 +107,7 @@ impl Actor {
         let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
         let found = |_: &str, text: &str| {
-            let facts = Facts::read(text, "tex");
+            let facts = Facts::read(text, FileKind::Tex);
             let loaded = facts.packages.iter().any(|package| package == name);
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
