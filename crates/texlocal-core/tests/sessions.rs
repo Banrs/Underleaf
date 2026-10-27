@@ -119,6 +119,42 @@ async fn an_edit_is_saved_to_disk() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn two_sessions_save_at_once() {
+    let rig = project().await;
+    let other = rig.library.create("Q", "blank").await;
+    let call = |command: &str, args: Value| rig.sessions.call(command, args);
+    call("session_open", json!({ "id": other, "session": 2 }))
+        .await
+        .unwrap();
+    call(
+        "session_open_document",
+        json!({ "session": 2, "path": "main.tex" }),
+    )
+    .await
+    .unwrap();
+    let docs = [
+        rig.open_document("main.tex").await,
+        rig.sessions.document(2, "main.tex").unwrap(),
+    ];
+    for doc in &docs {
+        doc.edit(0, 0, "% both\n", None, false);
+    }
+    let (one, two) = tokio::join!(
+        call("session_save", json!({ "session": SESSION })),
+        call("session_save", json!({ "session": 2 }))
+    );
+    assert_eq!(one.unwrap()["saved"], true);
+    assert_eq!(two.unwrap()["saved"], true);
+    for root in [rig.root(), rig.library.project_root(&other)] {
+        assert!(
+            fs::read_to_string(root.join("main.tex"))
+                .unwrap()
+                .starts_with("% both")
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn closing_saves_and_ends_the_session() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex").await;

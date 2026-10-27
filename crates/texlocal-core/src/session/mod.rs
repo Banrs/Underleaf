@@ -8,6 +8,7 @@ mod watch;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -208,17 +209,20 @@ impl Sessions {
             Entry::Occupied(_) => return Err(taken()),
             Entry::Vacant(entry) => entry.insert(open),
         };
-        let sessions = Arc::clone(&self.open);
-        tokio::spawn(async move {
-            actor.run(rx).await;
-            let mut open = lock(&sessions);
-            if open
-                .get(&session)
-                .is_some_and(|open| open.tx.same_channel(&tx))
-            {
-                open.remove(&session);
-            }
-        });
+        let (sessions, runtime) = (Arc::clone(&self.open), tokio::runtime::Handle::current());
+        std::thread::Builder::new()
+            .name(format!("texlocal-session-{session}"))
+            .spawn(move || {
+                let _ = catch_unwind(AssertUnwindSafe(|| runtime.block_on(actor.run(rx))));
+                let mut open = lock(&sessions);
+                if open
+                    .get(&session)
+                    .is_some_and(|open| open.tx.same_channel(&tx))
+                {
+                    open.remove(&session);
+                }
+            })
+            .expect("the session's thread starts");
         Ok(opened)
     }
 
