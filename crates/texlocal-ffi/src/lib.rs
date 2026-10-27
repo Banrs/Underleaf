@@ -274,14 +274,12 @@ pub unsafe extern "C" fn tl_source_restore(source: *mut TlSource, text: *const u
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_version(source: *mut TlSource, version: *mut u64) -> bool {
-    let Some(version) = (unsafe { version.as_mut() }) else {
-        return false;
-    };
     let read = |source: &mut TlSource| match source {
         TlSource::Own(_) => None,
         TlSource::Session(document) => Some(document.version()),
     };
-    let Some(read) = (unsafe { on_source(source, read) }) else {
+    let (Some(version), Some(read)) = (unsafe { (version.as_mut(), on_source(source, read)) })
+    else {
         return false;
     };
     *version = read;

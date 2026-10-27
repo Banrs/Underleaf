@@ -154,7 +154,7 @@ fn each_reply_arrives_exactly_once() {
 }
 
 #[test]
-fn a_session_document_is_edited_and_saved_through_the_abi() {
+fn a_session_document_is_edited_restored_and_saved_through_the_abi() {
     let core = Core::open();
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
@@ -171,39 +171,22 @@ fn a_session_document_is_edited_and_saved_through_the_abi() {
         json!({ "ok": [] }),
         "an edit outside a snippet mirrors nothing"
     );
-    assert_eq!(source_text(source), format!("{note}{before}"));
-    assert_eq!(version(source), Some(opened + 1));
+    let edited = format!("{note}{before}");
+    assert_eq!(source_text(source), edited);
+    unsafe { tl_source_restore(source, edited.as_ptr(), edited.len()) };
+    assert_eq!(
+        version(source),
+        Some(opened + 1),
+        "the same text changes nothing"
+    );
+    let text = "restored\n";
+    unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
+    assert_eq!(version(source), Some(opened + 2));
     unsafe { tl_source_free(source) };
     assert_eq!(
         core.ask(7, "Save", json!({ "reporting": true }))["ok"],
         true
     );
-    let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
-    assert!(saved.starts_with(note));
-}
-
-#[test]
-fn a_session_document_is_restored_from_the_editors_text() {
-    let core = Core::open();
-    core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
-    core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
-    core.ask(7, "OpenDocument", json!({ "path": "main.tex" }));
-    let path = c("main.tex");
-    let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
-    let opened = version(source).unwrap();
-    let before = source_text(source);
-    unsafe { tl_source_restore(source, before.as_ptr(), before.len()) };
-    assert_eq!(
-        version(source),
-        Some(opened),
-        "the same text changes nothing"
-    );
-    let text = "restored\n";
-    unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
-    assert_eq!(source_text(source), text);
-    assert_eq!(version(source), Some(opened + 1));
-    unsafe { tl_source_free(source) };
-    core.ask(7, "Save", json!({ "reporting": true }));
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
     assert_eq!(saved, text);
 }
