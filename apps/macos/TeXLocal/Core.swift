@@ -31,7 +31,16 @@ final class Core {
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
     private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
-    private init() { Task { for await (session, event) in Self.events.stream { observers[session]?(event) } } }
+    private init() {
+        Task {
+            for await (said, json) in Self.heard.stream {
+                switch said {
+                case .reply(let id): pending.removeValue(forKey: id)?(json)
+                case .event(let read): if let event = read.event { observers[read.session]?(event) }
+                }
+            }
+        }
+    }
 
     private static func open() -> OpaquePointer? {
         libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0, listener, nil) }
@@ -45,22 +54,13 @@ final class Core {
         return (handle, String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self))
     }
 
-    private nonisolated final class Answer: Sendable {
-        let take: @Sendable (Data) -> Void
-        init(_ take: @escaping @Sendable (Data) -> Void) { self.take = take }
-    }
+    private var pending: [UInt64: (Data) -> Void] = [:]
+    private var asked: UInt64 = 0
 
-    private nonisolated static func start(_ handle: OpaquePointer, _ command: String, _ json: String,
-                                          _ answered: @escaping @Sendable (Data) -> Void) {
-        let context = Unmanaged.passRetained(Answer(answered)).toOpaque()
-        command.withCString { command in
-            json.withCString { json in
-                tl_call_async(handle, command, json, { context, envelope in
-                    guard let context else { return }
-                    Unmanaged<Answer>.fromOpaque(context).takeRetainedValue().take(Data(bytes: envelope, count: strlen(envelope)))
-                }, context)
-            }
-        }
+    private func ask(_ handle: OpaquePointer, _ command: String, _ json: String, _ answered: @escaping (Data) -> Void) {
+        asked += 1
+        pending[asked] = answered
+        tl_send(handle, asked, command, json)
     }
 
     private nonisolated struct Envelope<T: Decodable>: Decodable {
@@ -100,7 +100,7 @@ final class Core {
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
         let (handle, json) = try prepared(command, args)
         return try await withCheckedThrowingContinuation { done in
-            Self.start(handle, command, json) { envelope in
+            ask(handle, command, json) { envelope in
                 done.resume(with: Result { try Self.decoded(command, envelope) })
             }
         }
@@ -111,12 +111,12 @@ final class Core {
     }
 
     func send(_ command: String, _ args: [String: any Sendable]) {
-        let logged = { @Sendable (error: any Error) in
+        let logged = { (error: any Error) in
             Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
         do {
             let (handle, json) = try prepared(command, args)
-            Self.start(handle, command, json) { envelope in
+            ask(handle, command, json) { envelope in
                 do { let _: Ignored? = try Self.decoded(command, envelope) } catch { logged(error) }
             }
         } catch {
@@ -126,15 +126,29 @@ final class Core {
 
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
-    private nonisolated static let events = AsyncStream.makeStream(of: (UInt64, SessionEvent).self)
+    private nonisolated enum Said: Decodable {
+        case reply(UInt64)
+        case event(EventRead)
+
+        private enum Keys: CodingKey { case reply }
+
+        init(from decoder: any Decoder) throws {
+            if let id = try decoder.container(keyedBy: Keys.self).decodeIfPresent(UInt64.self, forKey: .reply) {
+                self = .reply(id)
+            } else {
+                self = .event(try EventRead(from: decoder))
+            }
+        }
+    }
+
+    private nonisolated static let heard = AsyncStream.makeStream(of: (Said, Data).self)
 
     private nonisolated static let listener: TlCallback = { _, json in
-        let event = Data(bytes: json, count: strlen(json))
+        let said = Data(bytes: json, count: strlen(json))
         do {
-            let read = try JSONDecoder().decode(EventRead.self, from: event)
-            if let said = read.event { Core.events.continuation.yield((read.session, said)) }
+            Core.heard.continuation.yield((try JSONDecoder().decode(Said.self, from: said), said))
         } catch {
-            Core.log.error("An event the app can't read: \(String(describing: error), privacy: .public)")
+            Core.log.error("Something from the core the app can't read: \(String(describing: error), privacy: .public)")
         }
     }
 

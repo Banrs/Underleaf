@@ -26,7 +26,6 @@ struct Callback {
 }
 
 unsafe impl Send for Callback {}
-unsafe impl Sync for Callback {}
 
 impl Callback {
     fn send(self, value: &Value) {
@@ -64,10 +63,6 @@ pub unsafe extern "C" fn tl_open(
     .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
-fn panicked() -> CoreError {
-    CoreError::internal("The command panicked")
-}
-
 unsafe fn command_args<'a>(
     command: *const c_char,
     args_json: *const c_char,
@@ -83,54 +78,21 @@ unsafe fn command_args<'a>(
     Ok((command, args))
 }
 
-fn envelope(result: Result<Value, CoreError>) -> Value {
-    match result {
-        Ok(value) => json!({ "ok": value }),
-        Err(err) => json!({ "error": err.message, "kind": err.kind }),
-    }
-}
-
-struct Done(Option<Callback>);
-
-impl Done {
-    fn send(mut self, result: Result<Value, CoreError>) {
-        if let Some(done) = self.0.take() {
-            done.send(&envelope(result));
-        }
-    }
-}
-
-impl Drop for Done {
-    fn drop(&mut self) {
-        if let Some(done) = self.0.take() {
-            done.send(&envelope(Err(panicked())));
-        }
-    }
-}
-
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_call_async(
+pub unsafe extern "C" fn tl_send(
     handle: *const TlHandle,
+    id: u64,
     command: *const c_char,
     args_json: *const c_char,
-    done: Option<extern "C" fn(*mut c_void, *const c_char)>,
-    ctx: *mut c_void,
 ) {
-    let done = Done(done.map(|call| Callback { call, ctx }));
     let Some(handle) = (unsafe { handle.as_ref() }) else {
-        return done.send(Err(CoreError::bad_request("No handle")));
+        return;
     };
-    let (command, args) = match unsafe { command_args(command, args_json) } {
-        Ok(parsed) => parsed,
-        Err(err) => return done.send(Err(err)),
-    };
-    let Some(answer) = caught(|| handle.sessions.call(command, args)) else {
-        return done.send(Err(panicked()));
-    };
-    let runtime = handle.runtime.handle().clone();
-    handle
-        .runtime
-        .spawn_blocking(move || done.send(runtime.block_on(answer)));
+    let _entered = handle.runtime.enter();
+    caught(|| match unsafe { command_args(command, args_json) } {
+        Ok((command, args)) => handle.sessions.send(id, command, args),
+        Err(err) => handle.sessions.refuse(id, err),
+    });
 }
 
 #[unsafe(no_mangle)]

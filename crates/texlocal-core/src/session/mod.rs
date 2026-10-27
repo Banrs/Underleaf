@@ -13,17 +13,16 @@ mod watch;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::Value;
 use texlocal_latex::logparse::{Fix, LogItem};
 use texlocal_latex::syntax::{SymbolKind, TextEdit};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use crate::compile::CompileResult;
-use crate::events::{Hub, Listener};
+use crate::events::{Hub, Listener, Queued};
 use crate::paths::RelPath;
 use crate::projects::Symbols;
 use crate::service::{Service, parse};
@@ -32,7 +31,7 @@ use crate::{CoreError, lock, paths};
 
 pub(crate) use build::Compiler;
 pub use document::Document;
-use documents::{Resolution, Shared};
+use documents::{Docs, Resolution, Shared};
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -109,23 +108,27 @@ struct Opening {
     auto_compile: bool,
 }
 
-pub(crate) struct Reply(Option<oneshot::Sender<Result<Value, CoreError>>>);
+pub(crate) struct Reply(Option<(u64, std::sync::mpsc::Sender<Queued>)>);
 
 impl Reply {
     pub fn send(mut self, answer: Result<Value, CoreError>) {
-        if let Some(reply) = self.0.take() {
-            let _ = reply.send(answer);
+        self.answer(answer);
+    }
+
+    fn answer(&mut self, answer: Result<Value, CoreError>) {
+        if let Some((id, queue)) = self.0.take() {
+            let _ = queue.send(Queued::Reply { id, answer });
         }
     }
 }
 
 impl Drop for Reply {
     fn drop(&mut self) {
-        if std::thread::panicking()
-            && let Some(reply) = self.0.take()
-        {
-            let _ = reply.send(Err(stopped()));
-        }
+        self.answer(Err(if std::thread::panicking() {
+            stopped()
+        } else {
+            gone()
+        }));
     }
 }
 
@@ -142,15 +145,13 @@ struct Open {
     docs: Shared,
 }
 
-pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>;
-
 pub struct Sessions {
     service: Arc<Service>,
     hub: Hub,
     compiler: Arc<dyn Compiler>,
     preview: Arc<dyn Preview>,
     watch: bool,
-    open: Arc<Mutex<HashMap<u64, Open>>>,
+    open: Mutex<HashMap<u64, Open>>,
 }
 
 impl Sessions {
@@ -173,7 +174,7 @@ impl Sessions {
             compiler,
             preview,
             watch,
-            open: Arc::default(),
+            open: Mutex::default(),
         }
     }
 
@@ -183,43 +184,74 @@ impl Sessions {
         lock(&docs).get(&path).cloned()
     }
 
-    pub fn call(self: &Arc<Self>, command: &str, args: Value) -> Answer {
-        let (name, sessions) = (command.to_owned(), Arc::clone(self));
+    pub fn send(self: &Arc<Self>, id: u64, command: &str, args: Value) {
+        let reply = self.reply(id);
         match command.strip_prefix("session_") {
-            Some("open") => Box::pin(async move { sessions.open(parse(&name, args)?) }),
-            Some(command) => Box::pin(self.send(command, args)),
-            None => Box::pin(async move { sessions.service.call(&name, args).await }),
+            Some("open") => match parse(command, args) {
+                Ok(opening) => self.open(opening, reply),
+                Err(err) => reply.send(Err(err)),
+            },
+            Some(name) => match parse(name, args) {
+                Ok(Call { session, command }) => match lock(&self.open).get(&session) {
+                    Some(open) => {
+                        let _ = open.tx.send(Msg::Command(command, reply));
+                    }
+                    None => reply.send(Err(gone())),
+                },
+                Err(err) => reply.send(Err(err)),
+            },
+            None => {
+                let (service, name) = (Arc::clone(&self.service), command.to_owned());
+                let runtime = tokio::runtime::Handle::current();
+                tokio::task::spawn_blocking(move || {
+                    reply.send(runtime.block_on(service.call(&name, args)));
+                });
+            }
         }
     }
 
-    fn open(&self, opening: Opening) -> Result<Value, CoreError> {
+    pub fn refuse(&self, id: u64, error: CoreError) {
+        self.reply(id).send(Err(error));
+    }
+
+    fn reply(&self, id: u64) -> Reply {
+        Reply(Some((id, self.hub.queue.clone())))
+    }
+
+    fn open(self: &Arc<Self>, opening: Opening, reply: Reply) {
         let Opening {
             id,
             session,
             auto_compile,
         } = opening;
-        let taken = || CoreError::conflict("That session is open already");
-        if lock(&self.open).contains_key(&session) {
-            return Err(taken());
-        }
-        let project = self.service.project(&id)?;
         let (tx, rx) = mpsc::unbounded_channel();
-        let new = actor::Actor::new(self, session, id, project, tx.clone(), auto_compile);
-        let (actor, opened) = new?;
+        let docs = Docs::default();
         let open = Open {
             tx: tx.clone(),
-            docs: actor.docs.shared(),
+            docs: docs.shared(),
         };
         match lock(&self.open).entry(session) {
-            Entry::Occupied(_) => return Err(taken()),
+            Entry::Occupied(_) => {
+                return reply.send(Err(CoreError::conflict("That session is open already")));
+            }
             Entry::Vacant(entry) => entry.insert(open),
         };
-        let (sessions, runtime) = (Arc::clone(&self.open), tokio::runtime::Handle::current());
+        let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
         std::thread::Builder::new()
             .name(format!("texlocal-session-{session}"))
             .spawn(move || {
-                let _ = catch_unwind(AssertUnwindSafe(|| runtime.block_on(actor.run(rx))));
-                let mut open = lock(&sessions);
+                let _ = catch_unwind(AssertUnwindSafe(|| {
+                    let _entered = runtime.enter();
+                    match actor::Actor::new(&sessions, session, id, docs, tx.clone(), auto_compile)
+                    {
+                        Ok((actor, opened)) => {
+                            reply.send(Ok(opened));
+                            runtime.block_on(actor.run(rx));
+                        }
+                        Err(err) => reply.send(Err(err)),
+                    }
+                }));
+                let mut open = lock(&sessions.open);
                 if open
                     .get(&session)
                     .is_some_and(|open| open.tx.same_channel(&tx))
@@ -228,31 +260,73 @@ impl Sessions {
                 }
             })
             .expect("the session's thread starts");
-        Ok(opened)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use super::build::Fut;
+    use super::*;
+    use crate::paths::Project;
+
+    struct Panics;
+
+    impl Compiler for Panics {
+        fn compile(&self, _: Project, _: bool) -> Fut<Result<CompileResult, CoreError>> {
+            panic!("the test compiler panics")
+        }
+
+        fn stop_compile(&self, _: &Path) {}
+
+        fn clean(&self, _: PathBuf) -> Fut<Result<(), CoreError>> {
+            panic!("the test compiler panics")
+        }
     }
 
-    fn send(
-        &self,
-        name: &str,
-        args: Value,
-    ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
-        let (reply, answer) = oneshot::channel();
-        let queued = parse(name, args).and_then(|Call { session, command }| {
-            let closing = matches!(command, SessionCommand::Close);
-            let message = Msg::Command(command, Reply(Some(reply)));
-            let open = lock(&self.open);
-            let open = open.get(&session).ok_or_else(gone)?;
-            open.tx.send(message).map_err(|_| gone())?;
-            Ok((session, closing))
-        });
-        let open = Arc::clone(&self.open);
-        async move {
-            let (session, closing) = queued?;
-            let answer = answer.await.unwrap_or_else(|_| Err(gone()));
-            if closing && answer.as_ref().is_ok_and(|answer| answer["saved"] == true) {
-                lock(&open).remove(&session);
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panicking_compiler_fails_every_pending_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = Arc::new(Service::new(dir.path().into()));
+        let made = json!({ "name": "P", "template": "blank" });
+        service.call("create_project", made).await.unwrap();
+        let (tx, heard) = channel();
+        let tx = Mutex::new(tx);
+        let listener = Box::new(move |said: &Value| drop(lock(&tx).send(said.clone())));
+        let preview = Arc::clone(&service.texpresso);
+        let sessions = Arc::new(Sessions::with_compiler(
+            service,
+            Arc::new(Panics),
+            preview,
+            false,
+            listener,
+        ));
+        sessions.send(0, "session_open", json!({ "id": "P", "session": 1 }));
+        let pending = [
+            "session_compile",
+            "session_save",
+            "session_search",
+            "session_clean",
+        ];
+        for (id, command) in (1..).zip(pending) {
+            sessions.send(id, command, json!({ "session": 1, "query": "x" }));
+        }
+        let mut replies = BTreeMap::new();
+        while replies.len() <= pending.len() {
+            let said = heard.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(id) = said["reply"].as_u64() {
+                replies.insert(id, said);
             }
-            answer
+        }
+        assert!(replies[&0]["ok"].is_object());
+        for id in 1..=4 {
+            assert_eq!(replies[&id]["kind"], "internal", "{}", replies[&id]);
         }
     }
 }

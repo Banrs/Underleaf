@@ -102,10 +102,11 @@ impl Actor {
         sessions: &Sessions,
         id: u64,
         project_id: String,
-        project: Project,
+        docs: Docs,
         tx: mpsc::UnboundedSender<Msg>,
         auto_compile: bool,
     ) -> Result<(Self, Value), CoreError> {
+        let project = sessions.service.project(&project_id)?;
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch
@@ -136,7 +137,7 @@ impl Actor {
             preview: Arc::clone(&sessions.preview),
             events: sessions.hub.queue.clone(),
             tx,
-            docs: Docs::default(),
+            docs,
             next_doc: 1,
             shown: 0,
             symbols: Arc::default(),
@@ -318,14 +319,6 @@ impl Actor {
             SessionCommand::HistoryCompare { id, path } => {
                 return self.history_compare(id, path.0, reply);
             }
-            SessionCommand::Rename { from, to } => {
-                let answer = self.rename(&from.0, &to);
-                return self.after_events(answer, reply);
-            }
-            SessionCommand::CreateEntry { folder, name, dir } => {
-                let answer = self.create_entry(&folder, &name, dir);
-                return self.after_events(answer, reply);
-            }
             SessionCommand::Close => self.close(),
             SessionCommand::SetOptions { auto_compile } => {
                 out(auto_compile.map(|auto| self.auto_compile = auto))
@@ -348,6 +341,10 @@ impl Actor {
                 whole_word,
             } => self.replace(&Query::new(&query, match_case, whole_word), &replacement),
             SessionCommand::RenameSymbol { kind, from, to } => self.rename_symbol(kind, &from, &to),
+            SessionCommand::Rename { from, to } => self.rename(&from.0, &to),
+            SessionCommand::CreateEntry { folder, name, dir } => {
+                self.create_entry(&folder, &name, dir)
+            }
             SessionCommand::HistoryRestore { id, paths } => self.history_restore(&id, paths),
             SessionCommand::SetSettings { patch } => self.set_settings(&patch, true),
             SessionCommand::PrepareDelete { path } => self.prepare_delete(&path.0),
@@ -360,11 +357,6 @@ impl Actor {
             SessionCommand::Unknown => Err(unknown()),
         };
         reply.send(answer);
-    }
-
-    fn after_events(&self, answer: Result<Value, CoreError>, reply: Reply) {
-        let then = Queued::Then(Box::new(move || reply.send(answer)));
-        let _ = self.events.send(then);
     }
 
     fn close(&mut self) -> Result<Value, CoreError> {
