@@ -4,25 +4,25 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use texlocal_latex::logparse::{Fix, LogItem, Severity};
 
 use super::actor::{Actor, Later, Timer};
 use super::{Document, Msg, Reply};
 use crate::CoreError;
-use crate::analyze::disk_spelling;
 use crate::compile::{CompileManager, CompileResult};
-use crate::logparse::{LogItem, SHELL_ESCAPE, Severity};
 use crate::paths::Project;
+use crate::paths::disk_spelling;
 use crate::service::Service;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
-pub(crate) trait Engine: Send + Sync {
+pub(crate) trait Compiler: Send + Sync {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>>;
     fn stop_compile(&self, root: &Path);
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
-impl Engine for Arc<Service> {
+impl Compiler for Arc<Service> {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         let service = Self::clone(self);
         Box::pin(async move {
@@ -79,7 +79,7 @@ impl Builds {
 }
 
 impl Actor {
-    pub fn has_pdf(&self) -> bool {
+    fn has_pdf(&self) -> bool {
         self.builds.pdf || self.live.document_seen
     }
 
@@ -102,7 +102,7 @@ impl Actor {
         self.builds.built = self.edits;
         self.publish_build();
         let (build, tx) = (
-            self.engine.compile(self.project.clone(), auto),
+            self.compiler.compile(self.project.clone(), auto),
             self.tx.clone(),
         );
         tokio::spawn(async move {
@@ -114,7 +114,7 @@ impl Actor {
     pub fn stop_compile(&mut self) {
         self.builds.queued = None;
         if self.builds.compiling {
-            self.engine.stop_compile(&self.project.root);
+            self.compiler.stop_compile(&self.project.root);
         }
     }
 
@@ -167,7 +167,7 @@ impl Actor {
         self.publish_build();
     }
 
-    pub fn build_state(&self) -> Value {
+    fn build_state(&self) -> Value {
         let builds = &self.builds;
         json!({
             "compiling": builds.compiling,
@@ -176,7 +176,7 @@ impl Actor {
         })
     }
 
-    pub fn publish_build(&mut self) {
+    fn publish_build(&mut self) {
         let state = self.build_state();
         if state != self.builds.shown {
             self.builds.shown = state.clone();
@@ -202,7 +202,7 @@ impl Actor {
     fn start_clean(&mut self) {
         self.builds.cleaning = Some((self.live.active(), self.live.intent));
         let (clean, tx) = (
-            self.engine.clean(self.project.build.clone()),
+            self.compiler.clean(self.project.build.clone()),
             self.tx.clone(),
         );
         tokio::spawn(async move {
@@ -264,7 +264,7 @@ impl Actor {
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         let builds = &self.builds;
-        for (path, doc) in &mut self.docs {
+        for (path, doc) in self.docs.iter_mut() {
             let edits = self.last_edits.get(path).copied().unwrap_or(0);
             let built = builds
                 .issues
@@ -309,7 +309,7 @@ pub(super) fn issue_lines<'a>(
         let command = item.command.as_deref();
         let compact = match command {
             Some(command) => Some(format!("Undefined: {command}")),
-            None => (item.message == SHELL_ESCAPE).then(|| "Needs Shell Escape".to_owned()),
+            None => (item.fix == Some(Fix::ShellEscape)).then(|| "Needs Shell Escape".to_owned()),
         };
         let tokens = command.map_or_else(Vec::new, |command| {
             doc.with(|source| source.command_ranges(line, command))

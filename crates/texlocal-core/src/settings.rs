@@ -12,13 +12,13 @@ use crate::paths::{Project, identity, safe_rel_file};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct Settings {
+pub struct ProjectSettings {
     pub main_file: String,
     pub engine: Engine,
     pub stop_on_first_error: bool,
 }
 
-impl Default for Settings {
+impl Default for ProjectSettings {
     fn default() -> Self {
         Self {
             main_file: "main.tex".into(),
@@ -28,7 +28,7 @@ impl Default for Settings {
     }
 }
 
-impl Settings {
+impl ProjectSettings {
     pub fn output(&self, build: &Path, ext: &str) -> Result<PathBuf, CoreError> {
         let main = safe_rel_file(&self.main_file)?;
         let base = Path::new(&main).file_stem().unwrap_or_default();
@@ -60,7 +60,7 @@ impl Engine {
 #[serde(default)]
 struct ProjectFile {
     #[serde(flatten)]
-    settings: Settings,
+    settings: ProjectSettings,
     ui: UiState,
     #[serde(rename = "shellEscapeFor", skip_serializing_if = "Option::is_none")]
     shell_escape_for: Option<(u64, u64)>,
@@ -106,11 +106,11 @@ fn read_project(file: &Path) -> ProjectFile {
     load(file).unwrap_or_default()
 }
 
-pub fn read_settings(file: &Path) -> Settings {
+pub fn read_settings(file: &Path) -> ProjectSettings {
     read_project(file).settings
 }
 
-pub fn write_settings(file: &Path, patch: &Value) -> Result<Settings, CoreError> {
+pub fn write_settings(file: &Path, patch: &Value) -> Result<ProjectSettings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
         let mut settings = merged(&file.settings, patch, "settings")?;
         settings.main_file = safe_rel_file(&settings.main_file)?;

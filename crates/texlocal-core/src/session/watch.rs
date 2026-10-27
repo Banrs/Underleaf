@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use super::Msg;
 use crate::SETTINGS_FILE;
-use crate::analyze::disk_spelling;
+use crate::paths::disk_spelling;
 use crate::paths::{fold_case, within};
 use crate::projects::{TreeNode, listed};
 

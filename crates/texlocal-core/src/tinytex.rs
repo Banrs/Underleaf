@@ -5,24 +5,16 @@ use sha2::{Digest, Sha256};
 
 use crate::error::CoreError;
 use crate::packages::{checked, run};
-use crate::process;
 use crate::tex::{find_tool, join_path};
+use crate::{process, sys};
 
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
-const BUNDLE: (&str, &str) = ("TinyTeX-1-darwin-", ".tar.xz");
 const PACKAGES: [&str; 2] = ["beamer", "makeindex"];
 const UNFINISHED: &str = ".texlocal-tinytex-";
 
-pub(crate) fn root() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/TinyTeX"))
-}
-
-pub(crate) fn bin(root: &Path) -> PathBuf {
-    root.join("bin/universal-darwin")
-}
-
 pub(crate) async fn install(path_env: &str) -> Result<(), CoreError> {
-    let root = root().ok_or_else(|| CoreError::internal("The user's folder isn't known."))?;
+    let root =
+        sys::tinytex_root().ok_or_else(|| CoreError::internal("The user's folder isn't known."))?;
     install_into(&root, path_env).await
 }
 
@@ -57,8 +49,7 @@ async fn install_into(root: &Path, path_env: &str) -> Result<(), CoreError> {
 
 async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
     let release = temp.join("release.json");
-    let asked = std::env::var("TEXLOCAL_TINYTEX_RELEASE").unwrap_or_else(|_| RELEASE.into());
-    fetch(&asked, &release, path_env).await?;
+    fetch(RELEASE, &release, path_env).await?;
     let release = serde_json::from_slice(&std::fs::read(&release)?)
         .map_err(|err| CoreError::internal(err.to_string()))?;
     let (url, digest) = bundle(&release).ok_or_else(|| {
@@ -72,9 +63,7 @@ async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
             "TinyTeX's download wasn't what GitHub says it is. Try again.",
         ));
     }
-    let mut command = process::command("tar", None, path_env)?;
-    command.arg("-xf").arg(&archive).arg("-C").arg(temp);
-    match run(command).await? {
+    match run(sys::unpack(&archive, temp, path_env)?).await? {
         (0, _) => Ok(temp.join("TinyTeX")),
         (_, out) => Err(CoreError::internal(format!(
             "TinyTeX couldn't be unpacked:\n{}",
@@ -96,7 +85,7 @@ struct Asset {
 }
 
 fn bundle(release: &Release) -> Option<(&str, &str)> {
-    let (start, end) = BUNDLE;
+    let (start, end) = sys::TINYTEX_BUNDLE;
     let asset =
         (release.assets.iter()).find(|a| a.name.starts_with(start) && a.name.ends_with(end))?;
     let digest = asset.digest.as_deref()?.strip_prefix("sha256:")?;
@@ -104,21 +93,7 @@ fn bundle(release: &Release) -> Option<(&str, &str)> {
 }
 
 async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
-    let mut command = process::command("curl", None, path_env)?;
-    command
-        .args(["--fail", "--location", "--silent", "--show-error"])
-        .args([
-            "--connect-timeout",
-            "30",
-            "--speed-limit",
-            "1000",
-            "--speed-time",
-            "60",
-        ])
-        .arg("--output")
-        .arg(to)
-        .arg(url);
-    match run(command).await? {
+    match run(sys::download(url, to, path_env)?).await? {
         (0, _) => Ok(()),
         (6 | 7, _) => Err(CoreError::new(
             crate::ErrorKind::Unavailable,
@@ -136,7 +111,8 @@ async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
 }
 
 async fn tlmgr(root: &Path, path_env: &str, args: &[&str]) -> Result<(), CoreError> {
-    let path = join_path(std::iter::once(bin(root)).chain(std::env::split_paths(path_env)));
+    let path =
+        join_path(std::iter::once(sys::tinytex_bin(root)).chain(std::env::split_paths(path_env)));
     let tlmgr = find_tool("tlmgr", &path)
         .ok_or_else(|| CoreError::internal("TinyTeX's package manager, tlmgr, wasn't found."))?;
     let mut command = process::tool(&tlmgr, &path);

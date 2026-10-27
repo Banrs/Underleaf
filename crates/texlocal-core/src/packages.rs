@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -8,6 +7,7 @@ use tokio::process::Command;
 
 use crate::error::CoreError;
 use crate::process::{self, Tree, drive};
+use crate::sys;
 use crate::tex::find_tool;
 
 const TIMEOUT: Duration = Duration::from_secs(600);
@@ -19,10 +19,6 @@ static UNREACHABLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 const OLDER: &str = "is older than remote repository";
 const NOT_WRITABLE: &str = "don't have permission to change the installation";
-
-const AS_ADMINISTRATOR: &str = r#"on run {tlmgr, package}
-do shell script quoted form of tlmgr & " install " & quoted form of package with prompt "TeXLocal wants to install the TeX package “" & package & "”." with administrator privileges
-end run"#;
 
 pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String, CoreError> {
     if !NAME.is_match(file) {
@@ -42,8 +38,8 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
         .ok_or_else(|| CoreError::not_found(format!("No TeX Live package has “{file}”.")))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
-        installed = run(as_administrator(&tlmgr, &package, path_env)?).await?;
-        if installed.1.contains("(-128)") {
+        installed = run(sys::install_as_administrator(&tlmgr, &package, path_env)?).await?;
+        if installed.1.contains(sys::ADMIN_CANCELLED) {
             let message = format!("Installing “{package}” was cancelled.");
             return Err(CoreError::new(crate::ErrorKind::Denied, message));
         }
@@ -66,15 +62,6 @@ fn holder(found: &str, slashed: &str) -> Option<String> {
         .filter(|(path, package)| path.ends_with(slashed) && NAME.is_match(package))
         .min_by_key(|(path, _)| path.len())
         .map(|(_, package)| package.to_owned())
-}
-
-fn as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Result<Command, CoreError> {
-    let mut command = process::command("osascript", None, path_env)?;
-    command
-        .args(["-e", AS_ADMINISTRATOR])
-        .arg(tlmgr)
-        .arg(package);
-    Ok(command)
 }
 
 pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError> {

@@ -1,17 +1,15 @@
-mod parser;
-
+use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
+use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
-use crate::analyze::disk_spelling;
 use crate::error::CoreError;
-use crate::paths::{Project, safe_path, safe_rel_file, source_rel};
+use crate::paths::{Project, disk_spelling, safe_path, safe_rel_file, source_rel};
 use crate::settings::read_settings;
-use crate::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
-
-use parser::SyncTex;
+use crate::stamp::Kept;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ForwardLoc {
@@ -40,8 +38,22 @@ fn pdf_for(project: &Project, live: Option<&Path>) -> Result<PathBuf, CoreError>
 }
 
 fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
-    SyncTex::beside(&pdf_for(project, live)?)
+    beside(&pdf_for(project, live)?)
         .map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
+}
+
+fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
+    static PARSED: Kept<SyncTex> = Kept::new();
+    let plain = pdf.with_extension("synctex");
+    let file = if plain.is_file() {
+        plain
+    } else {
+        plain.with_extension("synctex.gz")
+    };
+    PARSED.get(&file, |file| {
+        let bytes = std::fs::read(file)?;
+        SyncTex::read(bytes).ok_or_else(|| Error::new(ErrorKind::InvalidData, "not a SyncTeX file"))
+    })
 }
 
 fn source_file(root: &Path, name: &str) -> Option<String> {

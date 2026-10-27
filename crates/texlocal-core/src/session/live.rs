@@ -3,14 +3,15 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::logparse::{LogItem, parse_live_log};
+use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::{is_text, utf16};
 
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
-use crate::logparse::{LogItem, parse_live_log};
-use crate::projects::{is_text, read_capped};
+use crate::projects::read_capped;
 use crate::settings::{self, Engine};
-use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
 
@@ -76,7 +77,7 @@ impl Live {
 }
 
 impl Actor {
-    pub fn live_state(&self) -> Value {
+    fn live_state(&self) -> Value {
         let live = &self.live;
         let errors = live.errors();
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
@@ -198,7 +199,7 @@ impl Actor {
         self.live_reset();
         self.publish_live(false);
         let (mut files, mut versions) = (Vec::new(), HashMap::new());
-        for (path, doc) in &self.docs {
+        for (path, doc) in self.docs.iter() {
             let (text, version) = doc.doc.snapshot();
             versions.insert(path.clone(), version);
             let path = path.clone();
@@ -268,7 +269,7 @@ impl Actor {
         if !self.live.active() {
             return;
         }
-        let end = edit.start as usize + edit.text.encode_utf16().count();
+        let end = edit.start as usize + utf16::len(&edit.text);
         self.live.caret = Some((path.to_owned(), end));
         let live = &self.live;
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
@@ -430,7 +431,6 @@ impl Actor {
                     let complete = !matches!(run.as_str(), "stopped" | "partial");
                     let document = json!({
                         "path": path,
-                        "pages": pages,
                         "changed": changed,
                         "complete": complete,
                     });
@@ -517,7 +517,7 @@ impl Actor {
 
     pub fn live_issues_edited(&mut self, path: &str, edit: Option<&TextEdit>) {
         let doc = &self.docs[path].doc;
-        let inserted = edit.map_or(0, |edit| edit.text.encode_utf16().count() as u32);
+        let inserted = edit.map_or(0, |edit| utf16::len(&edit.text) as u32);
         self.live.issues.retain_mut(|issue| {
             if issue.item.file.as_deref() != Some(path) {
                 return true;

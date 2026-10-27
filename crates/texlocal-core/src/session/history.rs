@@ -3,16 +3,14 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::diff::{compare, edit_to};
 
 use super::Reply;
 use super::actor::Actor;
 use crate::paths::RelPath;
 use crate::projects::{self, History, Taken};
 use crate::service::out;
-use crate::syntax::TextEdit;
-use crate::texpresso::delta;
 use crate::{CoreError, lf, lock, lossy_string};
 
 fn now() -> i64 {
@@ -58,7 +56,7 @@ impl Actor {
     }
 
     pub fn history_compare(&self, id: String, path: String, reply: Reply) {
-        if !projects::is_text(&path) {
+        if !texlocal_latex::is_text(&path) {
             let refused = CoreError::bad_request("Only a text file can be compared.");
             return reply.send(Err(refused));
         }
@@ -105,7 +103,7 @@ impl Actor {
             }
         }
         if edits.len() > 1 {
-            return Err(CoreError::conflict(super::actor::ONE_DOCUMENT));
+            return Err(CoreError::conflict(super::edits::ONE_DOCUMENT));
         }
         self.snapshot_before("Before Restore")?;
         let written = self.service.with_project(&self.project_id, |project| {
@@ -116,88 +114,4 @@ impl Actor {
         }
         Ok(json!({ "edits": edits.pop() }))
     }
-}
-
-#[derive(Debug, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Row<'a> {
-    Same(&'a str),
-    Removed(&'a str),
-    Added(&'a str),
-    Skipped(usize),
-}
-
-const CONTEXT: usize = 3;
-
-fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
-    let (a, b): (Vec<_>, Vec<_>) = (old.lines().collect(), new.lines().collect());
-    let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let ends = a[head..].iter().rev().zip(b[head..].iter().rev());
-    let tail = ends.take_while(|(x, y)| x == y).count();
-    let (x, y) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
-    let mut rows: Vec<Row> = a[..head].iter().map(|line| Row::Same(line)).collect();
-    if x.len() * y.len() > 4_000_000 {
-        rows.extend(x.iter().map(|line| Row::Removed(line)));
-        rows.extend(y.iter().map(|line| Row::Added(line)));
-    } else {
-        let w = y.len() + 1;
-        let mut common = vec![0u32; (x.len() + 1) * w];
-        for i in (0..x.len()).rev() {
-            for j in (0..y.len()).rev() {
-                common[i * w + j] = if x[i] == y[j] {
-                    common[(i + 1) * w + j + 1] + 1
-                } else {
-                    common[(i + 1) * w + j].max(common[i * w + j + 1])
-                };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < x.len() || j < y.len() {
-            if i < x.len() && j < y.len() && x[i] == y[j] {
-                rows.push(Row::Same(x[i]));
-                (i, j) = (i + 1, j + 1);
-            } else if j == y.len()
-                || i < x.len() && common[(i + 1) * w + j] >= common[i * w + j + 1]
-            {
-                rows.push(Row::Removed(x[i]));
-                i += 1;
-            } else {
-                rows.push(Row::Added(y[j]));
-                j += 1;
-            }
-        }
-    }
-    rows.extend(a[a.len() - tail..].iter().map(|line| Row::Same(line)));
-
-    let mut shown = vec![false; rows.len()];
-    for (i, row) in rows.iter().enumerate() {
-        if !matches!(row, Row::Same(_)) {
-            shown[i.saturating_sub(CONTEXT)..rows.len().min(i + CONTEXT + 1)].fill(true);
-        }
-    }
-    if !shown.contains(&true) {
-        return vec![];
-    }
-    let mut folded = Vec::new();
-    for (row, shown) in rows.into_iter().zip(shown) {
-        match (shown, folded.last_mut()) {
-            (true, _) => folded.push(row),
-            (false, Some(Row::Skipped(count))) => *count += 1,
-            (false, _) => folded.push(Row::Skipped(1)),
-        }
-    }
-    folded
-}
-
-fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
-    if text == to {
-        return None;
-    }
-    let (start, length, inserted) = delta(text, to);
-    let units = |s: &str| s.encode_utf16().count() as u32;
-    Some(TextEdit {
-        start: units(&text[..start]),
-        length: units(&text[start..start + length]),
-        text: inserted.to_owned(),
-    })
 }

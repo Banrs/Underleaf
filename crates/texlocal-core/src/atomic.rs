@@ -1,48 +1,23 @@
-use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
+
 use tempfile::TempPath;
 
 use crate::stamp::Stamp;
+use crate::sys::{self, copy_xattrs};
+
+pub(crate) use sys::rename_exclusive;
 
 pub(crate) fn temp_builder(mode: u32) -> tempfile::Builder<'static, 'static> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
-    use std::os::unix::fs::PermissionsExt;
-    builder.permissions(fs::Permissions::from_mode(mode));
+    builder.permissions(sys::permissions(mode));
     builder
 }
 
 pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
     Ok(temp_builder(0o666).tempfile_in(dir)?.into_parts())
-}
-
-fn copy_xattrs(from: &Path, to: &File) {
-    use std::os::fd::AsRawFd;
-    if let Ok(from) = File::open(from) {
-        unsafe {
-            libc::fcopyfile(
-                from.as_raw_fd(),
-                to.as_raw_fd(),
-                std::ptr::null_mut(),
-                libc::COPYFILE_XATTR,
-            );
-        }
-    }
-}
-
-pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
-    let c_path = |path: &Path| {
-        CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
-    };
-    let (from, to) = (c_path(from)?, c_path(to)?);
-    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
 }
 
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {

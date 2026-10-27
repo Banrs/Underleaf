@@ -1,32 +1,38 @@
 mod actor;
 mod build;
 mod document;
+mod documents;
+mod edits;
+mod files;
 mod history;
 mod live;
 mod navigate;
+mod scans;
 mod watch;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::Value;
+use texlocal_latex::logparse::{Fix, LogItem};
+use texlocal_latex::syntax::{SymbolKind, TextEdit};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
-use crate::logparse::LogItem;
 use crate::paths::RelPath;
 use crate::projects::Symbols;
 use crate::service::{Service, parse};
-use crate::syntax::TextEdit;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
-pub(crate) use build::Engine;
+pub(crate) use build::Compiler;
 pub use document::Document;
+use documents::{Resolution, Shared};
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -35,7 +41,7 @@ pub(crate) enum Msg {
         version: u64,
         edit: Option<TextEdit>,
     },
-    Command(Command, Reply),
+    Command(SessionCommand, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
     Symbols {
@@ -50,14 +56,14 @@ pub(crate) enum Msg {
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
-pub(crate) enum Command {
+pub(crate) enum SessionCommand {
     Close,
     SetOptions { auto_compile: Option<bool> },
     OpenDocument { path: RelPath },
     CloseDocument { path: RelPath },
     Composing { path: RelPath, composing: bool },
     Save { reporting: Option<bool> },
-    Resolve { path: RelPath, answer: String },
+    Resolve { path: RelPath, answer: Resolution },
     Compile { #[serde(default)] auto: bool },
     StopCompile,
     Clean,
@@ -67,13 +73,13 @@ pub(crate) enum Command {
     QuickOpen { query: String },
     Replace { query: String, replacement: String, #[serde(default)] match_case: bool,
         #[serde(default)] whole_word: bool },
-    RenameSymbol { kind: String, from: String, to: String },
-    Fix { id: String },
+    RenameSymbol { kind: SymbolKind, from: String, to: String },
+    Fix { id: Fix },
     HistoryList,
     HistorySave { name: String },
     HistoryCompare { id: String, path: RelPath },
     HistoryRestore { id: String, paths: Option<Vec<RelPath>> },
-    Rename { from: RelPath, to: Option<String>, name: Option<String> },
+    Rename { from: RelPath, to: String },
     CreateEntry { #[serde(default)] folder: String, name: String, #[serde(default)] dir: bool },
     SetSettings { patch: Value },
     PrepareDelete { path: RelPath },
@@ -91,7 +97,7 @@ pub(crate) enum Command {
 struct Call {
     session: u64,
     #[serde(flatten)]
-    command: Command,
+    command: SessionCommand,
 }
 
 #[derive(Deserialize)]
@@ -133,7 +139,7 @@ fn gone() -> CoreError {
 
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
-    docs: Arc<Mutex<HashMap<String, Document>>>,
+    docs: Shared,
 }
 
 pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>;
@@ -141,7 +147,7 @@ pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>
 pub struct Sessions {
     service: Arc<Service>,
     hub: Hub,
-    engine: Arc<dyn Engine>,
+    compiler: Arc<dyn Compiler>,
     preview: Arc<dyn Preview>,
     watch: bool,
     open: Arc<Mutex<HashMap<u64, Open>>>,
@@ -149,14 +155,14 @@ pub struct Sessions {
 
 impl Sessions {
     pub fn new(service: Arc<Service>, listener: Listener) -> Self {
-        let engine = Arc::new(Arc::clone(&service));
+        let compiler = Arc::new(Arc::clone(&service));
         let preview = Arc::clone(&service.texpresso);
-        Self::with_engine(service, engine, preview, true, listener)
+        Self::with_compiler(service, compiler, preview, true, listener)
     }
 
-    pub(crate) fn with_engine(
+    pub(crate) fn with_compiler(
         service: Arc<Service>,
-        engine: Arc<dyn Engine>,
+        compiler: Arc<dyn Compiler>,
         preview: Arc<dyn Preview>,
         watch: bool,
         listener: Listener,
@@ -164,7 +170,7 @@ impl Sessions {
         Self {
             service,
             hub: Hub::new(listener),
-            engine,
+            compiler,
             preview,
             watch,
             open: Arc::default(),
@@ -202,23 +208,26 @@ impl Sessions {
         let (actor, opened) = new?;
         let open = Open {
             tx: tx.clone(),
-            docs: Arc::clone(&actor.shared),
+            docs: actor.docs.shared(),
         };
         match lock(&self.open).entry(session) {
             Entry::Occupied(_) => return Err(taken()),
             Entry::Vacant(entry) => entry.insert(open),
         };
-        let sessions = Arc::clone(&self.open);
-        tokio::spawn(async move {
-            actor.run(rx).await;
-            let mut open = lock(&sessions);
-            if open
-                .get(&session)
-                .is_some_and(|open| open.tx.same_channel(&tx))
-            {
-                open.remove(&session);
-            }
-        });
+        let (sessions, runtime) = (Arc::clone(&self.open), tokio::runtime::Handle::current());
+        std::thread::Builder::new()
+            .name(format!("texlocal-session-{session}"))
+            .spawn(move || {
+                let _ = catch_unwind(AssertUnwindSafe(|| runtime.block_on(actor.run(rx))));
+                let mut open = lock(&sessions);
+                if open
+                    .get(&session)
+                    .is_some_and(|open| open.tx.same_channel(&tx))
+                {
+                    open.remove(&session);
+                }
+            })
+            .expect("the session's thread starts");
         Ok(opened)
     }
 
@@ -229,7 +238,7 @@ impl Sessions {
     ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
         let (reply, answer) = oneshot::channel();
         let queued = parse(name, args).and_then(|Call { session, command }| {
-            let closing = matches!(command, Command::Close);
+            let closing = matches!(command, SessionCommand::Close);
             let message = Msg::Command(command, Reply(Some(reply)));
             let open = lock(&self.open);
             let open = open.get(&session).ok_or_else(gone)?;

@@ -1,30 +1,18 @@
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+pub(crate) use texlocal_latex::fold_case;
 
 use crate::error::CoreError;
 use crate::projects::{self, is_opened};
-use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE};
+use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, sys};
 
 pub(crate) fn normalize_segments<'a>(
     rel: &'a str,
     escape_err: &str,
 ) -> Result<Vec<&'a str>, CoreError> {
-    let mut segments = Vec::new();
-    for component in Path::new(rel).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if segments.pop().is_none() {
-                    return Err(CoreError::bad_request(escape_err));
-                }
-            }
-            Component::Normal(segment) => segments.push(segment.to_str().unwrap()),
-            _ => return Err(CoreError::bad_request(escape_err)),
-        }
-    }
-    Ok(segments)
+    texlocal_latex::segments(rel).ok_or_else(|| CoreError::bad_request(escape_err))
 }
 
 #[derive(Debug, Clone)]
@@ -69,9 +57,7 @@ impl Project {
 }
 
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = fs::metadata(path).ok()?;
-    Some((meta.dev(), meta.ino()))
+    fs::metadata(path).ok().map(|meta| sys::identity(&meta))
 }
 
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
@@ -114,10 +100,6 @@ pub(crate) fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
-pub(crate) fn fold_case(path: &str) -> String {
-    path.to_uppercase().to_lowercase()
-}
-
 pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
     let mut rest = path;
     for (i, name) in entry.split('/').enumerate() {
@@ -138,9 +120,8 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 }
 
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
     matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
-        (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
+        (Ok(a), Ok(b)) if sys::identity(&a) == sys::identity(&b))
 }
 
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
@@ -198,4 +179,21 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
     };
     let rel = safe_rel_file(rel).ok()?;
     (!in_build_dir(&rel) && root.join(&rel).is_file()).then_some(rel)
+}
+
+pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
+    let mut path = root.to_path_buf();
+    let mut spelt = Vec::new();
+    for name in rel.split('/') {
+        let folded = fold_case(name);
+        let found = fs::read_dir(&path)
+            .ok()?
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|entry| fold_case(entry) == folded)
+            .max_by_key(|entry| entry == name)?;
+        path.push(&found);
+        spelt.push(found);
+    }
+    path.is_file().then(|| spelt.join("/"))
 }

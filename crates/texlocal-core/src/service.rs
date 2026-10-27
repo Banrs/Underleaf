@@ -5,26 +5,25 @@ use std::sync::{Arc, Mutex};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use texlocal_latex::wordmatch::PdfPage;
 
 use crate::compile::CompileManager;
-use crate::import::Conflict;
+use crate::import::ImportConflict;
 use crate::paths::Project;
 use crate::projects::{self, History};
 use crate::settings::{self, AppSettings};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::wordmatch::PdfPage;
-use crate::{CoreError, import, lock, tinytex, zipexport};
+use crate::{CoreError, import, lock, sys, tinytex, zipexport};
 
-const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
 
 pub struct Service {
-    pub data_dir: PathBuf,
-    pub compile: CompileManager,
-    pub texpresso: Arc<texpresso::Manager>,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) compile: CompileManager,
+    pub(crate) texpresso: Arc<texpresso::Manager>,
     pub(crate) edits: Mutex<()>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
@@ -33,7 +32,7 @@ pub struct Service {
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
-enum Command {
+enum LibraryCommand {
     Status,
     SetTexpressoDir { dir: Option<PathBuf> },
     SetTexDir { dir: Option<PathBuf> },
@@ -52,7 +51,7 @@ enum Command {
     KillAll,
     InstallTex,
     ImportFiles { id: String, #[serde(default)] dir: String, #[serde(default)] paths: Vec<PathBuf>,
-        conflict: Option<Conflict> },
+        conflict: Option<ImportConflict> },
     OpenPath { path: PathBuf },
     ForgetFolder { id: String },
     SetUiState { id: String, patch: Value },
@@ -85,7 +84,7 @@ impl Service {
         Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
     }
 
-    pub fn kill_all(&self) {
+    fn kill_all(&self) {
         self.compile.kill_all();
         self.texpresso.kill_all();
     }
@@ -135,8 +134,8 @@ impl Service {
             self.texpresso.stop(root)
         };
         match parse(name, args)? {
-            Command::Status => out(self.status().await),
-            Command::SetTexpressoDir { dir } => {
+            LibraryCommand::Status => out(self.status().await),
+            LibraryCommand::SetTexpressoDir { dir } => {
                 let texpresso = dir
                     .as_ref()
                     .map(|dir| tex::program_at(&dir.join("texpresso")));
@@ -146,16 +145,16 @@ impl Service {
                 AppSettings::update(&self.data_dir, |app| app.texpresso_dir = dir)?;
                 out(self.status().await)
             }
-            Command::SetTexDir { dir } => {
+            LibraryCommand::SetTexDir { dir } => {
                 let bin = dir.map(|dir| tex::tex_bin_dir(&dir).ok_or(()));
                 let bin = bin
                     .transpose()
-                    .map_err(|()| CoreError::bad_request(NO_LATEXMK))?;
+                    .map_err(|()| CoreError::bad_request(sys::NO_LATEXMK))?;
                 AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
                 out(self.status().await)
             }
-            Command::ListProjects => projects::list_projects(&self.data_dir).and_then(out),
-            Command::CreateProject {
+            LibraryCommand::ListProjects => projects::list_projects(&self.data_dir).and_then(out),
+            LibraryCommand::CreateProject {
                 name,
                 template,
                 engine,
@@ -164,19 +163,21 @@ impl Service {
                 projects::create_project(&self.data_dir, &name, template, engine.as_deref())
                     .and_then(out)
             }
-            Command::DuplicateProject { id, name } => {
+            LibraryCommand::DuplicateProject { id, name } => {
                 import::duplicate_project(self, &id, &name).and_then(out)
             }
-            Command::FreeProjectName => {
+            LibraryCommand::FreeProjectName => {
                 Ok(json!({ "name": projects::free_project_name(&self.data_dir)? }))
             }
-            Command::RenameProject { id, name } => self
+            LibraryCommand::RenameProject { id, name } => self
                 .with_project(&id, |_| {
                     projects::rename_project(&self.data_dir, &id, &name, stop)
                 })
                 .and_then(out),
-            Command::FileTree { id } => projects::file_tree(&self.project(&id)?).and_then(out),
-            Command::SynctexForward {
+            LibraryCommand::FileTree { id } => {
+                projects::file_tree(&self.project(&id)?).and_then(out)
+            }
+            LibraryCommand::SynctexForward {
                 id,
                 file,
                 line,
@@ -186,7 +187,7 @@ impl Service {
                 synctex::synctex_forward_at(&self.project(&id)?, &file, line, pdf.as_deref())
                     .and_then(out)
             }
-            Command::SynctexInverse {
+            LibraryCommand::SynctexInverse {
                 id,
                 page,
                 x,
@@ -202,7 +203,7 @@ impl Service {
                 let project = self.project(&id)?;
                 synctex::synctex_inverse(&project, page, x, y, click, pdf, &typeset).and_then(out)
             }
-            Command::SynctexMatch {
+            LibraryCommand::SynctexMatch {
                 id,
                 file,
                 line,
@@ -210,12 +211,12 @@ impl Service {
                 pages,
             } => synctex::match_forward(&self.project(&id)?.root, &file, line, column, &pages)
                 .and_then(out),
-            Command::PdfPath { id } => {
+            LibraryCommand::PdfPath { id } => {
                 let project = self.project(&id)?;
                 let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
                 Ok(json!(pdf?.to_string_lossy()))
             }
-            Command::ExportZip {
+            LibraryCommand::ExportZip {
                 id,
                 dest,
                 for_arxiv,
@@ -227,27 +228,28 @@ impl Service {
                 };
                 zipexport::export_zip(&project.root, &dest, &added).and_then(out)
             }
-            Command::KillAll => {
+            LibraryCommand::KillAll => {
                 self.kill_all();
                 Ok(Value::Null)
             }
-            Command::InstallTex => {
+            LibraryCommand::InstallTex => {
                 tinytex::install(&self.tool_paths().0).await?;
                 out(self.status().await)
             }
-            Command::ImportFiles {
+            LibraryCommand::ImportFiles {
                 id,
                 dir,
                 paths,
                 conflict,
-            } => import::import_files(self, &id, &dir, &paths, conflict, projects::discard)
-                .and_then(out),
-            Command::OpenPath { path } => projects::open_path(self, &path).and_then(out),
-            Command::ForgetFolder { id } => projects::forget_folder(self, &id, stop).and_then(out),
-            Command::SetUiState { id, patch } => self
+            } => import::import_files(self, &id, &dir, &paths, conflict, sys::trash).and_then(out),
+            LibraryCommand::OpenPath { path } => projects::open_path(self, &path).and_then(out),
+            LibraryCommand::ForgetFolder { id } => {
+                projects::forget_folder(self, &id, stop).and_then(out)
+            }
+            LibraryCommand::SetUiState { id, patch } => self
                 .with_project(&id, |project| settings::write_ui(&project.ui, &patch))
                 .and_then(out),
-            Command::Unknown => Err(unknown()),
+            LibraryCommand::Unknown => Err(unknown()),
         }
     }
 }

@@ -64,7 +64,6 @@ extension ProjectModel {
         }
         guard !closed else { return }
         (self.result, outdated, chosenIssue) = (result, finished.outdated, nil)
-        finishedBuilds += 1
         if !finished.auto {
             if result.failed {
                 panel.openForFailedBuild()

@@ -3,25 +3,24 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
-use crate::lock;
+use crate::{lock, sys};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stamp {
-    pub inode: Option<u64>,
+    pub identity: (u64, u64),
     pub size: u64,
     pub modified: i128,
 }
 
 impl Stamp {
     pub fn of(meta: &Metadata) -> Self {
-        let inode = Some(std::os::unix::fs::MetadataExt::ino(meta));
         let modified = match meta.modified().map(|time| time.duration_since(UNIX_EPOCH)) {
             Ok(Ok(after)) => after.as_nanos() as i128,
             Ok(Err(before)) => -(before.duration().as_nanos() as i128),
             Err(_) => 0,
         };
         Self {
-            inode,
+            identity: sys::identity(meta),
             size: meta.len(),
             modified,
         }

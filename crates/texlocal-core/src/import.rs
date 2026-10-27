@@ -2,25 +2,24 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use texlocal_latex::analyze::{self, Facts};
+use texlocal_latex::{FileKind, file_kind, templates};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
-use crate::analyze::Facts;
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, Trash, is_litter, walk};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
-use crate::{CoreError, SETTINGS_FILE, atomic, templates};
+use crate::{CoreError, SETTINGS_FILE, atomic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Conflict {
+pub enum ImportConflict {
     Replace,
     KeepBoth,
 }
@@ -41,10 +40,6 @@ enum Source {
     File(PathBuf),
     Zip(usize),
 }
-
-static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
-});
 
 const MAX_UNZIPPED: u64 = 1 << 30;
 const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
@@ -68,7 +63,7 @@ pub fn import_files(
     id: &str,
     dir: &str,
     paths: &[PathBuf],
-    conflict: Option<Conflict>,
+    conflict: Option<ImportConflict>,
     trash: Trash,
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
@@ -97,10 +92,10 @@ pub fn import_files(
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
     }
-    let replace = (conflict == Some(Conflict::Replace)).then_some(trash);
+    let replace = (conflict == Some(ImportConflict::Replace)).then_some(trash);
     for (path, source) in files {
         let path = match conflict {
-            Some(Conflict::KeepBoth) => keep_both(&path, &existing),
+            Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
             _ => path,
         };
         save(service, id, &in_folder(dir, &path), &source, replace)?;
@@ -252,9 +247,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let ext = src
-        .extension()
-        .map(|ext| ext.to_string_lossy().to_lowercase());
+    let ext = src.extension().map(|ext| fold_case(&ext.to_string_lossy()));
     if ext.as_deref() == Some("zip") {
         let file = File::open(src).map_err(CoreError::at(src))?;
         let zip = ZipArchive::new(file).map_err(|err| match err {
@@ -267,7 +260,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         return Opened::of_zip(stem, zip);
     }
     let path = file_name(src);
-    if projects::file_kind(&path) != "tex" {
+    if file_kind(&path) != FileKind::Tex {
         return Err(CoreError::bad_request(format!(
             "“{path}” isn’t a project: TeXLocal opens a folder, a .tex file or a .zip of a project."
         )));
@@ -294,25 +287,11 @@ fn file_name(path: &Path) -> String {
 }
 
 fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
-    let mut found = (None, None);
     let Ok(file) = File::open(file) else {
-        return found;
+        return (None, None);
     };
-    for line in io::BufReader::new(file)
-        .lines()
-        .take(20)
-        .map_while(Result::ok)
-    {
-        if let Some(m) = MAGIC_COMMENT.captures(&line) {
-            let slot = if m[1].eq_ignore_ascii_case("root") {
-                &mut found.0
-            } else {
-                &mut found.1
-            };
-            slot.get_or_insert_with(|| m[2].to_string());
-        }
-    }
-    found
+    let lines = io::BufReader::new(file).lines().take(analyze::MAGIC_LINES);
+    analyze::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
 }
 
 pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
@@ -334,7 +313,7 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
         .into_iter()
         .find(|engine| program.contains(engine));
     let engine = named.or_else(|| {
-        let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, "tex");
+        let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, FileKind::Tex);
         let loads = |names: &[&str]| facts.packages.iter().any(|p| names.contains(&p.as_str()));
         let needed = ENGINE_PACKAGES.into_iter().find(|(_, names)| loads(names));
         needed.map(|(engine, _)| engine)
@@ -359,7 +338,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     files.retain(|(path, _)| !left_out(path));
     if !files
         .iter()
-        .any(|(path, _)| projects::file_kind(path) == "tex")
+        .any(|(path, _)| file_kind(path) == FileKind::Tex)
     {
         return Err(no_tex(&file_name(src)));
     }

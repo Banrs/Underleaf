@@ -7,16 +7,17 @@ use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use serde_json::json;
+use texlocal_latex::syntax::SourceDocument;
+use texlocal_latex::templates;
+use texlocal_latex::{FileKind, file_kind};
 
 use super::files::occupied;
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
-use super::tree::{file_kind, listed, walk};
+use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{read_settings, write_settings};
-use crate::syntax::SourceDocument;
-use crate::templates;
 use crate::{SETTINGS_FILE, atomic};
 
 #[derive(Debug, Serialize)]
@@ -148,7 +149,10 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.file_type()?.is_file() && file_kind(&name) == "tex" && !name.starts_with('-') {
+        if entry.file_type()?.is_file()
+            && file_kind(&name) == FileKind::Tex
+            && !name.starts_with('-')
+        {
             tex.push(name);
         }
     }
@@ -162,7 +166,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     };
     Ok(tex
         .iter()
-        .find(|name| name.eq_ignore_ascii_case("main.tex"))
+        .find(|name| fold_case(name) == "main.tex")
         .or_else(|| tex.iter().find(starts_document))
         .or(tex.first())
         .cloned())

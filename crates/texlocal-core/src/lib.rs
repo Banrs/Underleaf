@@ -1,11 +1,8 @@
-mod analyze;
 mod atomic;
-mod checks;
 mod compile;
 mod error;
-pub mod events;
+mod events;
 mod import;
-mod logparse;
 mod packages;
 mod paths;
 mod process;
@@ -15,12 +12,10 @@ pub mod session;
 mod settings;
 mod stamp;
 mod synctex;
-pub mod syntax;
-mod templates;
+mod sys;
 mod tex;
 mod texpresso;
 mod tinytex;
-mod wordmatch;
 mod zipexport;
 
 pub use error::{CoreError, ErrorKind};
@@ -61,22 +56,4 @@ pub(crate) fn newline(text: &str) -> &'static str {
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes)
         .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
-}
-
-pub(crate) fn utf16_lossy(units: &[u16]) -> String {
-    let mut bytes = Vec::with_capacity(units.len());
-    let mut rest = units;
-    while !rest.is_empty() {
-        let ascii = rest.iter().position(|&u| u >= 0x80).unwrap_or(rest.len());
-        bytes.extend(rest[..ascii].iter().map(|&u| u as u8));
-        rest = &rest[ascii..];
-        let other = rest.iter().position(|&u| u < 0x80).unwrap_or(rest.len());
-        let mut buf = [0; 4];
-        for c in char::decode_utf16(rest[..other].iter().copied()) {
-            let c = c.unwrap_or(char::REPLACEMENT_CHARACTER);
-            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-        }
-        rest = &rest[other..];
-    }
-    String::from_utf8(bytes).expect("ASCII and encoded chars are UTF-8")
 }

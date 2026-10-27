@@ -40,7 +40,6 @@ final class ProjectModel {
     var fixing: LogItem.Fix?
     var result: CompileResult?
     var checks: [LogItem] = []
-    @ObservationIgnored var finishedBuilds = 0
     var chosenIssue: Int?
     nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
     var shown = ShownPDF.none

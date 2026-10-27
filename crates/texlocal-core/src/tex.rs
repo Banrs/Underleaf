@@ -1,16 +1,15 @@
 use std::ffi::OsStr;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use serde::Serialize;
+use texlocal_latex::syntax::Installed;
 
 use crate::process::run;
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
-use crate::syntax::Installed;
-use crate::tinytex;
+use crate::sys;
 
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
     std::fs::read_dir(dir)
@@ -21,7 +20,7 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
 }
 
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let mut years: Vec<_> = children("/usr/local/texlive")
+    let mut years: Vec<_> = children(sys::TEXLIVE)
         .filter(|year| {
             year.file_name()
                 .and_then(|name| name.to_str())
@@ -45,10 +44,8 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
 }
 
 fn usual_tex_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"]
-        .map(PathBuf::from)
-        .into();
-    dirs.extend(tinytex::root().map(|root| tinytex::bin(&root)));
+    let mut dirs: Vec<PathBuf> = sys::TEX_DIRS.map(PathBuf::from).into();
+    dirs.extend(sys::tinytex_root().map(|root| sys::tinytex_bin(&root)));
     dirs
 }
 
@@ -76,7 +73,7 @@ pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
 }
 
 fn executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+    std::fs::metadata(path).is_ok_and(|meta| sys::executable(&meta))
 }
 
 pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
@@ -130,32 +127,7 @@ fn ls_r_above(program: &Path) -> Option<PathBuf> {
 }
 
 fn read_installed(ls_r: &Path) -> std::io::Result<Installed> {
-    let ls_r = crate::lossy_string(std::fs::read(ls_r)?);
-    let mut installed = Installed::default();
-    let mut loaded = false;
-    for line in ls_r.lines() {
-        if let Some(folder) = line.strip_suffix(':') {
-            loaded = folder.starts_with("./tex/") || folder.starts_with("./bibtex/");
-            continue;
-        }
-        let (name, list) = match line.rsplit_once('.') {
-            _ if !loaded => continue,
-            Some((name, "sty")) => (name, &mut installed.packages),
-            Some((name, "cls")) => (name, &mut installed.classes),
-            Some((name, "bst")) => (name, &mut installed.styles),
-            Some((name, "tex")) => (name, &mut installed.inputs),
-            _ => continue,
-        };
-        list.push(name.to_owned());
-    }
-    for list in [
-        &mut installed.packages,
-        &mut installed.classes,
-        &mut installed.styles,
-        &mut installed.inputs,
-    ] {
-        list.sort_unstable();
-        list.dedup();
-    }
-    Ok(installed)
+    Ok(Installed::from_ls_r(&crate::lossy_string(std::fs::read(
+        ls_r,
+    )?)))
 }
