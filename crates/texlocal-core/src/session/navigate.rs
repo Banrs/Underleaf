@@ -185,13 +185,11 @@ impl Actor {
     }
 
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
-        let live = match self.live_pdf() {
-            Ok(live) => live,
-            Err(err) => return reply.send(Err(err)),
-        };
-        let project = self.project.clone();
+        let (live, project) = (self.live_pdf(), self.project.clone());
         tokio::task::spawn_blocking(move || {
-            reply.send(synctex::forward(&project, &file, line, live.as_deref()));
+            reply.send(
+                live.and_then(|live| synctex::forward(&project, &file, line, live.as_deref())),
+            );
         });
     }
 
@@ -203,15 +201,13 @@ impl Actor {
         click: Option<PageClick>,
         reply: Pending<InverseLoc>,
     ) {
-        let live = match self.live_pdf() {
-            Ok(live) => live,
-            Err(err) => return reply.send(Err(err)),
-        };
-        let (project, preview, id) = (self.project.clone(), Arc::clone(&self.preview), self.id);
+        let (live, project) = (self.live_pdf(), self.project.clone());
+        let (preview, id) = (Arc::clone(&self.preview), self.id);
         tokio::task::spawn_blocking(move || {
-            let typeset = |rel: &str| live.as_ref().and_then(|_| preview.live_text(id, rel));
-            let pdf = live.as_deref();
-            reply.send(synctex::inverse(&project, page, x, y, click, pdf, &typeset));
+            reply.send(live.and_then(|live| {
+                let typeset = |rel: &str| live.as_ref().and_then(|_| preview.live_text(id, rel));
+                synctex::inverse(&project, page, x, y, click, live.as_deref(), &typeset)
+            }));
         });
     }
 

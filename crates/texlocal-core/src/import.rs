@@ -13,7 +13,7 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
-use crate::projects::{self, ProjectInfo, Trash, is_litter, walk};
+use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
@@ -66,7 +66,6 @@ pub(crate) fn import_files(
     dir: &str,
     paths: &[PathBuf],
     conflict: Option<ImportConflict>,
-    trash: Trash,
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
     for abs in paths {
@@ -94,7 +93,7 @@ pub(crate) fn import_files(
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
     }
-    let replace = (conflict == Some(ImportConflict::Replace)).then_some(trash);
+    let replace = conflict == Some(ImportConflict::Replace);
     for (path, source) in files {
         let path = match conflict {
             Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
@@ -176,7 +175,7 @@ fn save(
     root: &Path,
     rel: &str,
     source: &Path,
-    replace: Option<Trash>,
+    replace: bool,
 ) -> Result<(), CoreError> {
     let abs = paths::safe_write_path(root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
@@ -189,10 +188,10 @@ fn save(
         let root = &project.root;
         let abs = paths::safe_write_path(root, rel)?;
         if let Some(taken) = occupant(root, &rel_key(rel)?) {
-            let Some(trash) = replace else {
+            if !replace {
                 return Err(CoreError::conflict(format!("“{taken}” already exists")));
-            };
-            projects::discard_replaced(project, &taken, trash)?;
+            }
+            projects::discard_replaced(project, &taken)?;
         }
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
         atomic::rename_exclusive(&temp, &abs)?;

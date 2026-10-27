@@ -565,7 +565,6 @@ final class ProjectModel {
             trashed = []
             removeExport()
             notices.cancel()
-            tree.close()
             syncTask?.cancel()
             pdfLoad?.cancel()
             liveLogWatch?.cancel()

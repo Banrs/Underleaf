@@ -6,11 +6,11 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
+use crate::{atomic, sys};
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -170,19 +170,13 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     })
 }
 
-pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
-
-pub(crate) fn discard_replaced(
-    project: &Project,
-    rel: &str,
-    trash: Trash,
-) -> Result<(), CoreError> {
+pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreError> {
     if is_under(&read_settings(&project.settings).main_file, rel) {
         return Err(CoreError::conflict(
             "Choose a different main file before replacing this folder",
         ));
     }
-    trash(&safe_path(&project.root, rel)?)
+    sys::trash(&safe_path(&project.root, rel)?)
 }
 
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {

@@ -11,7 +11,7 @@ use crate::import::{self, ImportConflict, Imported};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, RenameResult};
 use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch};
-use crate::{CoreError, sys, zipexport};
+use crate::{CoreError, zipexport};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
@@ -110,14 +110,7 @@ impl Actor {
         paths: &[PathBuf],
         conflict: Option<ImportConflict>,
     ) -> Result<Imported, CoreError> {
-        let imported = import::import_files(
-            &self.service,
-            &self.project_id,
-            dir,
-            paths,
-            conflict,
-            sys::trash,
-        )?;
+        let imported = import::import_files(&self.service, &self.project_id, dir, paths, conflict)?;
         self.reload_tree();
         Ok(imported)
     }

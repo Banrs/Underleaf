@@ -5,7 +5,6 @@ import Observation
 final class FileTree {
     private(set) var nodes: [TreeNode] = []
     @ObservationIgnored var onChange: () -> Void = {}
-    @ObservationIgnored private var closed = false
 
     func node(at path: String) -> TreeNode? {
         var level = nodes
@@ -18,7 +17,7 @@ final class FileTree {
 
     func show(_ files: [TreeNode]) {
         let files = Self.ordered(files)
-        guard files != nodes, !closed else { return }
+        guard files != nodes else { return }
         nodes = files
         onChange()
     }
@@ -31,6 +30,4 @@ final class FileTree {
         }
         .sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
-
-    func close() { closed = true }
 }

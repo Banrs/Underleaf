@@ -486,16 +486,11 @@ async fn a_reloaded_tree_marks_the_main_file_and_hides_dotfiles() {
     rig.call("ReloadTree", json!({}));
     assert!(rig.heard("tree"));
     let tree = &rig.event("tree", |e| e["tree"].to_string().contains("figs"))["tree"];
-    let listed = names(tree, "name");
-    assert!(listed.contains(&"figs".to_owned()) && !listed.iter().any(|n| n.starts_with('.')));
-    let main = tree
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["name"] == "main.tex");
+    assert_eq!(names(tree, "name"), ["ch.tex", "figs", "main.tex"]);
+    let main = &tree[2];
     assert_eq!(
-        (main.unwrap()["main"].clone(), main.unwrap()["kind"].clone()),
-        (json!(true), json!("tex"))
+        (&main["main"], &main["kind"]),
+        (&json!(true), &json!("tex"))
     );
 }
 
@@ -521,8 +516,13 @@ async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_export_holds_the_sources_and_opens_as_a_new_project() {
-    let built = [("build/main.pdf", "pdf"), (".git/HEAD", "x")];
-    let rig = Rig::open(&[("main.tex", MAIN), ("ch.tex", CHAPTER), built[0], built[1]]).await;
+    let rig = Rig::open(&[
+        ("main.tex", MAIN),
+        ("ch.tex", CHAPTER),
+        ("build/main.pdf", "pdf"),
+        (".git/HEAD", "x"),
+    ])
+    .await;
     let dest = rig.library.path("Shared.zip");
     rig.call("ExportZip", json!({ "dest": dest, "forArxiv": false }));
     assert_eq!(zip_names(&dest), ["ch.tex", "main.tex"]);
@@ -556,13 +556,10 @@ async fn ui_state_is_written_before_the_close_and_keeps_what_it_is_not_given() {
     .await;
     let zoom = json!({ "type": "scale", "value": 1.5 });
     let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom, "panel": true });
-    rig.send(
-        SESSION,
-        "SetUiState",
-        json!({ "patch": { "place": place } }),
-    );
+    let patch = |patch| json!({ "patch": patch });
+    rig.send(SESSION, "SetUiState", patch(json!({ "place": place })));
     let folders = json!({ "expandedFolders": ["figs"] });
-    rig.send(SESSION, "SetUiState", json!({ "patch": folders }));
+    rig.send(SESSION, "SetUiState", patch(folders));
     assert_eq!(rig.call("CloseProject", json!({})), true);
     let file = fs::read(rig.root().join(".texlocal.json")).unwrap();
     let ui = &serde_json::from_slice::<Value>(&file).unwrap()["ui"];

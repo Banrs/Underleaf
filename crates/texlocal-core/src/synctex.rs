@@ -1,5 +1,5 @@
 use std::io::{Error, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -8,7 +8,7 @@ use texlocal_latex::synctex::SyncTex;
 use texlocal_latex::wordmatch::find_in_source;
 
 use crate::error::CoreError;
-use crate::paths::{Project, disk_spelling, safe_rel_file, source_rel};
+use crate::paths::{Project, disk_spelling, source_rel};
 use crate::settings::read_settings;
 use crate::stamp::Kept;
 
@@ -36,18 +36,14 @@ pub struct InverseLoc {
     pub column: Option<u32>,
 }
 
-fn pdf_for(project: &Project, live: Option<&Path>) -> Result<PathBuf, CoreError> {
-    if let Some(live) = live {
-        return Ok(live.to_path_buf());
-    }
-    Some(read_settings(&project.settings).output(&project.build, "pdf")?)
-        .filter(|pdf| pdf.exists())
-        .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))
-}
-
 fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
-    beside(&pdf_for(project, live)?)
-        .map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
+    let pdf = match live {
+        Some(live) => live.to_path_buf(),
+        None => Some(read_settings(&project.settings).output(&project.build, "pdf")?)
+            .filter(|pdf| pdf.exists())
+            .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))?,
+    };
+    beside(&pdf).map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
 }
 
 fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
@@ -74,14 +70,13 @@ pub(crate) fn forward(
     line: u32,
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    let rel = safe_rel_file(file)?;
     if line < 1 {
         return Err(CoreError::bad_request("Invalid source line"));
     }
     let sync = sync_for(project, live)?;
     let tag = sync
         .inputs()
-        .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(rel.as_str()))
+        .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(file))
         .map(|(tag, _)| tag);
     let line = i32::try_from(line).unwrap_or(i32::MAX);
     let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
