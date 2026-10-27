@@ -190,16 +190,19 @@ impl Session {
         lock(&self.state).link.is_some()
     }
     fn stop(&self, error: Option<String>) {
-        let mut state = lock(&self.state);
-        if let Some(link) = state.link.take() {
-            link.tree.kill();
-            remove_pdf_folder(&self.pdf);
-            state.error.clone_from(&error);
-            if let Ok(mut files) = self.files.try_lock() {
-                files.clear();
+        let link = {
+            let mut state = lock(&self.state);
+            let link = state.link.take();
+            if link.is_some() {
+                state.error.clone_from(&error);
             }
-            (self.sink)(LiveEvent::Ended(error));
-        }
+            link
+        };
+        let Some(link) = link else { return };
+        link.tree.kill();
+        remove_pdf_folder(&self.pdf);
+        lock(&self.files).clear();
+        (self.sink)(LiveEvent::Ended(error));
     }
     fn status(&self) -> Status {
         let state = lock(&self.state);
@@ -605,6 +608,7 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
             let mut state = lock(&session.state);
             let end = state.stderr.end();
             state.stderr.append(end, chunk);
+            drop(state);
             (session.sink)(LiveEvent::Log);
         }
         reader.consume(count);
