@@ -3,6 +3,7 @@ use std::ops::Range;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::checks::{Slip, Structure, Walk};
@@ -92,6 +93,28 @@ impl Place {
             length: range.len() as u32,
         }
     }
+
+    pub fn in_file(self, file: String) -> FilePlace {
+        let Self {
+            line,
+            column,
+            length,
+        } = self;
+        FilePlace {
+            file,
+            line,
+            column,
+            length,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct FilePlace {
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub length: u32,
 }
 
 #[derive(Clone)]

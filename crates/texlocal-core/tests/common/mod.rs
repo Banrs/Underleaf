@@ -105,7 +105,7 @@ impl Rig {
             seen: Mutex::default(),
             asked: AtomicU64::default(),
         };
-        rig.call("session_open", json!({ "id": rig.id, "session": SESSION }));
+        rig.call("OpenProject", json!({ "id": rig.id, "autoCompile": false }));
         rig
     }
 
@@ -114,20 +114,20 @@ impl Rig {
     }
 
     pub fn call(&self, command: &str, args: Value) -> Value {
-        answer(command, self.try_call(command, args))
+        self.call_to(SESSION, command, args)
+    }
+
+    pub fn call_to(&self, session: u64, command: &str, args: Value) -> Value {
+        answer(command, self.reply(self.send(session, command, args)))
     }
 
     pub fn try_call(&self, command: &str, args: Value) -> Result<Value, CoreError> {
-        self.reply(self.send(command, args))
+        self.reply(self.send(SESSION, command, args))
     }
 
-    pub fn send(&self, command: &str, mut args: Value) -> u64 {
-        if command.starts_with("session_") {
-            let args = args.as_object_mut().unwrap();
-            args.entry("session").or_insert(json!(SESSION));
-        }
+    pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
-        self.sessions.send(id, command, args);
+        self.sessions.send_to(id, session, command, args);
         id
     }
 
@@ -140,7 +140,7 @@ impl Rig {
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
-        self.call("session_open_document", json!({ "path": path }));
+        self.call("OpenDocument", json!({ "path": path }));
         self.sessions.document(SESSION, path).unwrap()
     }
 

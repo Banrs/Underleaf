@@ -4,23 +4,77 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use notify::RecommendedWatcher;
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::Serialize;
+use serde_json::Value;
+use texlocal_latex::diff::DiffLine;
+use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
+use texlocal_latex::syntax::SymbolKind;
 use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
 use super::build::Builds;
-use super::documents::Docs;
-use super::live::Live;
+use super::documents::{Docs, Resolution};
+use super::edits::{DocumentEdits, Fixed, ProjectEdits};
+use super::live::{Live, LiveState};
+use super::navigate::{QuickHelp, QuickOpenItem};
+use super::scans::Usages;
 use super::watch::{self, Change, TreeIndex};
-use super::{Compiler, Msg, Preview, Reply, SessionCommand, Sessions};
+use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
 use crate::CoreError;
 use crate::events::Queued;
-use crate::paths::Project;
-use crate::projects::{self, History, Symbols};
-use crate::protocol::unknown;
-use crate::service::{Service, out};
-use crate::settings;
+use crate::paths::{Project, RelPath};
+use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols, TreeNode};
+use crate::protocol::requests;
+use crate::service::Service;
+use crate::settings::{self, ProjectSettings, SettingsPatch, UiState};
+
+requests! {
+    Session {
+        OpenProject { id: String, auto_compile: bool } -> SessionOpened,
+        CloseProject {} -> bool,
+        SetOptions { auto_compile: bool } -> (),
+        OpenDocument { path: RelPath } -> (),
+        CloseDocument { path: RelPath } -> bool,
+        Composing { path: RelPath, composing: bool } -> (),
+        Save { reporting: bool } -> bool,
+        Resolve { path: RelPath, answer: Resolution } -> (),
+        Compile { auto: bool } -> (),
+        StopCompile {} -> (),
+        Clean {} -> (),
+        Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>,
+        FindUsages { path: RelPath, offset: u32 } -> Option<Usages>,
+        LookUp { path: RelPath, offset: u32 } -> Option<QuickHelp>,
+        QuickOpen { query: String } -> Vec<QuickOpenItem>,
+        Replace { query: String, replacement: String, match_case: bool, whole_word: bool } -> ProjectEdits,
+        RenameSymbol { kind: SymbolKind, from: String, to: String } -> ProjectEdits,
+        ApplyFix { #[schemars(with = "String")] id: Fix } -> Option<Fixed>,
+        ListVersions {} -> Vec<Snapshot>,
+        SaveVersion { name: String } -> Option<Snapshot>,
+        CompareVersion { id: String, path: RelPath } -> Vec<DiffLine>,
+        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> Option<DocumentEdits>,
+        Rename { from: RelPath, to: String } -> Option<RenameResult>,
+        CreateEntry { folder: String, name: String, dir: bool } -> String,
+        SetSettings { patch: SettingsPatch } -> ProjectSettings,
+        PrepareDelete { path: RelPath } -> bool,
+        Deleted { path: RelPath, trashed: bool } -> (),
+        StartLive {} -> LiveState,
+        StopLive {} -> LiveState,
+        LiveView { first: u32, last: u32 } -> (),
+        LiveCaret { path: RelPath, offset: usize } -> (),
+        LiveLog { shown: bool } -> (),
+    }
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct SessionOpened {
+    name: String,
+    root: String,
+    tree: Vec<TreeNode>,
+    settings: ProjectSettings,
+    ui: UiState,
+}
 
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
 const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
@@ -102,24 +156,28 @@ impl Actor {
     pub fn new(
         sessions: &Sessions,
         id: u64,
-        project_id: String,
+        opening: OpenProject,
         docs: Docs,
         tx: mpsc::UnboundedSender<Msg>,
-        auto_compile: bool,
-    ) -> Result<(Self, Value), CoreError> {
+    ) -> Result<(Self, SessionOpened), CoreError> {
+        let OpenProject {
+            id: project_id,
+            auto_compile,
+        } = opening;
         let project = sessions.service.project(&project_id)?;
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let opened = json!({
-            "name": project.name(),
-            "root": project.root.to_string_lossy(),
-            "tree": out(&tree)?,
-            "settings": settings::shown(&project),
-            "ui": settings::read_ui(&project.ui),
-        });
+        let index = TreeIndex::of(&tree);
+        let opened = SessionOpened {
+            name: project.name(),
+            root: project.root.to_string_lossy().into_owned(),
+            tree,
+            settings: settings::shown(&project),
+            ui: settings::read_ui(&project.ui),
+        };
         let mut builds = Builds::default();
         builds.pdf = settings::read_settings(&project.settings)
             .output(&project.build, "pdf")
@@ -152,7 +210,7 @@ impl Actor {
             tex: sessions.service.tex_found.subscribe(),
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
-            tree: TreeIndex::of(&tree),
+            tree: index,
             _watcher: watcher,
             deleting: BTreeSet::new(),
             live: Live::default(),
@@ -301,73 +359,112 @@ impl Actor {
     }
 
     #[expect(clippy::unit_arg)]
-    fn command(&mut self, command: SessionCommand, reply: Reply) {
+    fn command(&mut self, command: Session, reply: Reply) {
         let answer = match command {
-            SessionCommand::Clean => return self.clean(reply),
-            SessionCommand::Fix { id } => return self.fix(id, reply),
-            SessionCommand::Search {
-                query,
-                match_case,
-                whole_word,
-            } => return self.search(Query::new(&query, match_case, whole_word), reply),
-            SessionCommand::Usages { path, offset } => return self.usages(&path.0, offset, reply),
-            SessionCommand::QuickHelp { path, offset } => {
-                return self.quick_help(&path.0, offset, reply);
+            Session::OpenProject(_, answer) => {
+                answer(Err(CoreError::conflict("That session is open already")))
             }
-            SessionCommand::QuickOpen { query } => return self.quick_open(query, reply),
-            SessionCommand::HistoryList => return self.history_list(reply),
-            SessionCommand::HistorySave { name } => return self.history_save(name, reply),
-            SessionCommand::HistoryCompare { id, path } => {
-                return self.history_compare(id, path.0, reply);
+            Session::CloseProject(CloseProject {}, answer) => answer(self.close()),
+            Session::SetOptions(SetOptions { auto_compile }, answer) => {
+                answer(Ok(self.auto_compile = auto_compile))
             }
-            SessionCommand::Close => self.close(),
-            SessionCommand::SetOptions { auto_compile } => {
-                out(auto_compile.map(|auto| self.auto_compile = auto))
+            Session::OpenDocument(OpenDocument { path }, answer) => {
+                answer(self.open_document(&path.0))
             }
-            SessionCommand::OpenDocument { path } => self.open_document(&path.0).and_then(out),
-            SessionCommand::CloseDocument { path } => self.close_document(&path.0),
-            SessionCommand::Composing { path, composing } => {
-                out(self.composing(&path.0, composing))
+            Session::CloseDocument(CloseDocument { path }, answer) => {
+                answer(self.close_document(&path.0))
             }
-            SessionCommand::Save { reporting } => self
-                .save_edits(reporting.unwrap_or(true))
-                .map(|saved| json!({ "saved": saved })),
-            SessionCommand::Resolve { path, answer } => self.resolve(&path.0, answer),
-            SessionCommand::Compile { auto } => self.compile(auto).and_then(out),
-            SessionCommand::StopCompile => out(self.stop_compile()),
-            SessionCommand::Replace {
-                query,
-                replacement,
-                match_case,
-                whole_word,
-            } => self.replace(&Query::new(&query, match_case, whole_word), &replacement),
-            SessionCommand::RenameSymbol { kind, from, to } => self.rename_symbol(kind, &from, &to),
-            SessionCommand::Rename { from, to } => self.rename(&from.0, &to),
-            SessionCommand::CreateEntry { folder, name, dir } => {
-                self.create_entry(&folder, &name, dir)
+            Session::Composing(Composing { path, composing }, answer) => {
+                answer(Ok(self.composing(&path.0, composing)))
             }
-            SessionCommand::HistoryRestore { id, paths } => self.history_restore(&id, paths),
-            SessionCommand::SetSettings { patch } => self.set_settings(&patch, true),
-            SessionCommand::PrepareDelete { path } => self.prepare_delete(&path.0),
-            SessionCommand::Deleted { path, trashed } => out(self.deleted(&path.0, trashed)),
-            SessionCommand::LiveStart => Ok(self.live_start_asked()),
-            SessionCommand::LiveStop => Ok(self.live_stop_asked()),
-            SessionCommand::LiveLog { shown } => out(self.show_live_log(shown)),
-            SessionCommand::LiveView { first, last } => out(self.live_view(first, last)),
-            SessionCommand::LiveCaret { path, offset } => out(self.live_caret(path.0, offset)),
-            SessionCommand::Unknown => Err(unknown()),
+            Session::Save(Save { reporting }, answer) => answer(self.save_edits(reporting)),
+            Session::Resolve(Resolve { path, answer: to }, answer) => {
+                answer(self.resolve(&path.0, to))
+            }
+            Session::Compile(Compile { auto }, answer) => answer(self.compile(auto)),
+            Session::StopCompile(StopCompile {}, answer) => answer(Ok(self.stop_compile())),
+            Session::Clean(Clean {}, answer) => return self.clean(Pending { reply, answer }),
+            Session::Search(
+                Search {
+                    query,
+                    match_case,
+                    whole_word,
+                },
+                answer,
+            ) => {
+                let query = Query::new(&query, match_case, whole_word);
+                return self.search(query, Pending { reply, answer });
+            }
+            Session::FindUsages(FindUsages { path, offset }, answer) => {
+                return self.usages(&path.0, offset, Pending { reply, answer });
+            }
+            Session::LookUp(LookUp { path, offset }, answer) => {
+                return self.quick_help(&path.0, offset, Pending { reply, answer });
+            }
+            Session::QuickOpen(QuickOpen { query }, answer) => {
+                return self.quick_open(query, Pending { reply, answer });
+            }
+            Session::Replace(
+                Replace {
+                    query,
+                    replacement,
+                    match_case,
+                    whole_word,
+                },
+                answer,
+            ) => answer(self.replace(&Query::new(&query, match_case, whole_word), &replacement)),
+            Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
+                answer(self.rename_symbol(kind, &from, &to))
+            }
+            Session::ApplyFix(ApplyFix { id }, answer) => {
+                return self.fix(id, Pending { reply, answer });
+            }
+            Session::ListVersions(ListVersions {}, answer) => {
+                return self.history_list(Pending { reply, answer });
+            }
+            Session::SaveVersion(SaveVersion { name }, answer) => {
+                return self.history_save(name, Pending { reply, answer });
+            }
+            Session::CompareVersion(CompareVersion { id, path }, answer) => {
+                return self.history_compare(id, path.0, Pending { reply, answer });
+            }
+            Session::RestoreVersion(RestoreVersion { id, paths }, answer) => {
+                answer(self.history_restore(&id, paths))
+            }
+            Session::Rename(Rename { from, to }, answer) => answer(self.rename(&from.0, &to)),
+            Session::CreateEntry(CreateEntry { folder, name, dir }, answer) => {
+                answer(self.create_entry(&folder, &name, dir))
+            }
+            Session::SetSettings(SetSettings { patch }, answer) => {
+                answer(self.set_settings(&patch, true))
+            }
+            Session::PrepareDelete(PrepareDelete { path }, answer) => {
+                answer(self.prepare_delete(&path.0))
+            }
+            Session::Deleted(Deleted { path, trashed }, answer) => {
+                answer(Ok(self.deleted(&path.0, trashed)))
+            }
+            Session::StartLive(StartLive {}, answer) => answer(Ok(self.live_start_asked())),
+            Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),
+            Session::LiveView(LiveView { first, last }, answer) => {
+                answer(Ok(self.live_view(first, last)))
+            }
+            Session::LiveCaret(LiveCaret { path, offset }, answer) => {
+                answer(Ok(self.live_caret(path.0, offset)))
+            }
+            Session::LiveLog(LiveLog { shown }, answer) => answer(Ok(self.show_live_log(shown))),
         };
         reply.send(answer);
     }
 
-    fn close(&mut self) -> Result<Value, CoreError> {
+    fn close(&mut self) -> Result<bool, CoreError> {
         if !self.flush_all(true)? {
-            return Ok(json!({ "saved": false }));
+            return Ok(false);
         }
         self.stop_compile();
         self.closed = true;
         self.live_stop();
         self.docs.clear();
-        Ok(json!({ "saved": true }))
+        Ok(true)
     }
 }

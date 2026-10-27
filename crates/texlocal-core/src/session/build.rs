@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use texlocal_latex::logparse::{Fix, LogItem, Severity};
 
 use super::actor::{Actor, Later, Timer};
-use super::{Document, Msg, Reply};
+use super::{Document, Msg, Pending};
 use crate::CoreError;
 use crate::compile::{CompileManager, CompileResult};
 use crate::paths::Project;
@@ -59,7 +59,7 @@ pub(crate) struct Builds {
     checks_shown: Value,
     checked: u64,
     result_edits: u64,
-    pub cleaners: Vec<Reply>,
+    pub cleaners: Vec<Pending<()>>,
     cleaning: Option<(bool, u64)>,
     shown: Value,
 }
@@ -191,7 +191,7 @@ impl Actor {
         }
     }
 
-    pub fn clean(&mut self, reply: Reply) {
+    pub fn clean(&mut self, reply: Pending<()>) {
         self.stop_compile();
         self.builds.cleaners.push(reply);
         if !self.builds.compiling && self.builds.cleaning.is_none() {
@@ -231,7 +231,7 @@ impl Actor {
             self.later.push_back(Later::Compile(auto));
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
-            reply.send(result.clone().map(|()| Value::Null));
+            reply.send(result.clone());
         }
     }
 

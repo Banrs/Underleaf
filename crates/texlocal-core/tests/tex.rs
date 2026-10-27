@@ -10,7 +10,7 @@ const REFS: &str = "@book{knuth, author = {Donald Knuth}, title = {The TeXbook},
 
 async fn built(files: &[(&str, &str)]) -> (Rig, serde_json::Value) {
     let rig = Rig::open(files).await;
-    rig.call("session_compile", json!({}));
+    rig.call("Compile", json!({ "auto": false }));
     let finished = rig.event("build_finished", |_| true);
     (rig, finished["result"].clone())
 }
@@ -36,20 +36,26 @@ async fn latexmk_builds_a_pdf_with_its_bibliography() {
 async fn synctex_goes_from_a_line_to_the_pdf_and_back() {
     let (rig, result) = built(&[("main.tex", ARTICLE), ("refs.bib", REFS)]).await;
     assert_eq!(result["ok"], true);
-    let forward = rig.call(
-        "SynctexForward",
-        json!({ "id": rig.id, "file": "main.tex", "line": 4 }),
-    );
+    let forward = rig
+        .library
+        .call(
+            "SynctexForward",
+            json!({ "id": rig.id, "file": "main.tex", "line": 4 }),
+        )
+        .await;
     assert_eq!(forward["page"].as_f64(), Some(1.0));
     let (h, v) = (
         forward["h"].as_f64().unwrap(),
         forward["v"].as_f64().unwrap(),
     );
     let height = forward["height"].as_f64().unwrap_or(0.0);
-    let back = rig.call(
-        "SynctexInverse",
-        json!({ "id": rig.id, "page": 1, "x": h + 5.0, "y": v - height / 2.0 }),
-    );
+    let back = rig
+        .library
+        .call(
+            "SynctexInverse",
+            json!({ "id": rig.id, "page": 1, "x": h + 5.0, "y": v - height / 2.0 }),
+        )
+        .await;
     assert_eq!(back["file"], "main.tex");
     assert_eq!(back["line"], 4);
 }
@@ -87,14 +93,14 @@ async fn live_preview_writes_pages_as_the_text_changes() {
         "\\documentclass{article}\n\\begin{document}\nHello live preview.\n\\end{document}\n";
     let rig = Rig::open(&[("main.tex", main)]).await;
     let doc = rig.open_document("main.tex");
-    rig.call("session_live_start", json!({}));
-    rig.call("session_live_view", json!({ "first": 0, "last": 0 }));
+    rig.call("StartLive", json!({}));
+    rig.call("LiveView", json!({ "first": 0, "last": 0 }));
     let whole = rig.event("live_document", |e| e["complete"] == true);
     assert!(Path::new(whole["path"].as_str().unwrap()).is_file());
     rig.forget();
     doc.edit(40, 0, "More words. ", None, false);
     let typed = rig.find(|e| e["type"] == "live_page" || e["type"] == "live_document");
     assert!(Path::new(typed["path"].as_str().unwrap()).is_file());
-    rig.call("session_live_stop", json!({}));
-    rig.event("live", |e| e["phase"] == "stopped");
+    rig.call("StopLive", json!({}));
+    rig.event("live", |e| e["state"]["phase"] == "stopped");
 }

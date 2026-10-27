@@ -4,8 +4,7 @@ extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
         guard let session, let made = await alerting("Couldn’t Create “\(name)”", {
-            try await core.call("session_create_entry", ["session": session, "folder": folder, "name": name, "dir": directory],
-                                as: PathEvent.self).path
+            try await session.call(CreateEntry(folder: folder, name: name, dir: directory))
         }), !closed else { return nil }
         if !directory { await open(made, focus: false) }
         return made
@@ -28,7 +27,7 @@ extension ProjectModel {
         let (before, wasText) = (openPath, editsText)
         await uiStateWrites?.value
         guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
-            try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
+            try await session.call(Rename(from: from, to: to))
         }), let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
         trail.moved(result.from, to: result.to)
@@ -64,8 +63,7 @@ extension ProjectModel {
         guard let session, !closed else { return false }
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
         do {
-            guard try await core.call("session_prepare_delete", ["session": session, "path": path], as: Ready.self).ready,
-                  !closed else { return false }
+            guard try await session.call(PrepareDelete(path: path)), !closed else { return false }
         } catch {
             guard !closed else { return false }
             app?.report(error, title)
@@ -74,11 +72,11 @@ extension ProjectModel {
         do {
             try item.recycle()
         } catch {
-            core.send("session_deleted", ["session": session, "path": path, "trashed": false])
+            session.send(Deleted(path: path, trashed: false))
             app?.report(error, title)
             return false
         }
-        core.send("session_deleted", ["session": session, "path": path])
+        session.send(Deleted(path: path, trashed: true))
         editor.forget(path: path)
         let gone = { (file: String) in file == path || file.hasPrefix(path + "/") }
         if let shown = openPath, gone(shown) {

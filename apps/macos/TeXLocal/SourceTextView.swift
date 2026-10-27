@@ -25,7 +25,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
     enum FileDrop { case open(() -> Void), insert(String), copy(() async -> String?) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
-    var openDefinition: (Definition.Place) -> Void = { _ in }
+    var openDefinition: (FilePlace) -> Void = { _ in }
     var quickHelp: (Int) -> Void = { _ in }
     private(set) var loading = false
 

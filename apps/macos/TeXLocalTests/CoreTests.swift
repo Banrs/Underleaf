@@ -22,53 +22,53 @@ struct CoreTests {
             (error as? CoreError)?.kind == .notFound
         }
         await #expect {
-            try await Core.shared.call("no_such_command", [:])
+            try await Core.shared.call(NoSuchCommand())
         } throws: { error in
             (error as? CoreError)?.kind == .notFound
         }
     }
 
+    private struct NoSuchCommand: LibraryRequest {
+        typealias Reply = Done
+        static let command = "NoSuchCommand"
+    }
+
     @Test func aSessionsAnswerAndEventsDecode() async throws {
         let project = try await newProject()
         var events: [SessionEvent] = []
-        let session = Core.shared.observe { events.append($0) }
-        defer { Core.shared.forget(session) }
-        let opened = try await Core.shared.call("session_open", ["id": project.id, "session": session], as: SessionOpened.self)
+        let session = SessionClient { events.append($0) }
+        let opened = try await session.call(OpenProject(id: project.id, autoCompile: false))
         #expect(opened.settings.mainFile == "main.tex")
         #expect(opened.tree.contains { $0.name == "main.tex" })
-        try await Core.shared.call("session_open_document", ["session": session, "path": "main.tex"])
+        try await session.call(OpenDocument(path: "main.tex"))
         try await waitUntil {
             events.contains { if case .outline = $0 { true } else { false } }
                 && events.contains { if case .checks = $0 { true } else { false } }
         }
-        let saved = try await Core.shared.call("session_close", ["session": session], as: Saved.self)
-        #expect(saved.saved)
+        #expect(try await session.close())
     }
 
     @Test func aSessionDocumentIsEditedAndSaved() async throws {
         let project = try await newProject(template: .blank)
-        let session = Core.shared.observe { _ in }
-        defer { Core.shared.forget(session) }
-        try await Core.shared.call("session_open", ["id": project.id, "session": session])
-        try await Core.shared.call("session_open_document", ["session": session, "path": "main.tex"])
-        let document = try #require(SourceDocument(session: session, path: "main.tex"))
+        let session = SessionClient { _ in }
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
+        try await session.call(OpenDocument(path: "main.tex"))
+        let document = try #require(SourceDocument(session: session.id, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
-        let saved = try await Core.shared.call("session_save", ["session": session], as: Saved.self)
-        #expect(saved.saved)
+        #expect(try await session.call(Save(reporting: true)))
         let text = try String(contentsOfFile: project.path + "/main.tex", encoding: .utf8)
         #expect(text.hasPrefix("% note\n"))
-        try await Core.shared.call("session_close", ["session": session])
+        #expect(try await session.close())
     }
 
     @Test func aReplyComesAfterTheEventsBeforeIt() async throws {
         let project = try await newProject(template: .blank)
         var trees = 0
-        let session = Core.shared.observe { if case .tree = $0 { trees += 1 } }
-        defer { Core.shared.forget(session) }
-        try await Core.shared.call("session_open", ["id": project.id, "session": session])
-        try await Core.shared.call("session_create_entry", ["session": session, "name": "new.tex"])
+        let session = SessionClient { if case .tree = $0 { trees += 1 } }
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
+        try await session.call(CreateEntry(folder: "", name: "new.tex", dir: false))
         #expect(trees > 0)
-        try await Core.shared.call("session_close", ["session": session])
+        #expect(try await session.close())
     }
 
     @Test func theWireFixturesRoundTripAndItsRejectsAreRefused() throws {

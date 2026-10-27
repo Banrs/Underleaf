@@ -3,6 +3,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -25,25 +26,33 @@ pub(crate) enum Taken {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Snapshot {
+struct Version {
     name: Option<String>,
     reason: Option<String>,
     files: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct Entry {
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Snapshot {
     id: String,
     time: i64,
     name: Option<String>,
     reason: Option<String>,
-    changed: Vec<Changed>,
+    changed: Vec<ChangedFile>,
 }
 
-#[derive(Debug, Serialize)]
-struct Changed {
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ChangedFile {
     path: String,
-    change: &'static str,
+    change: ChangeKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeKind {
+    Added,
+    Deleted,
+    Changed,
 }
 
 pub(crate) struct History {
@@ -79,13 +88,13 @@ impl History {
         Ok(ids)
     }
 
-    fn read(&self, id: i64) -> Result<Snapshot, CoreError> {
+    fn read(&self, id: i64) -> Result<Version, CoreError> {
         let gone = || CoreError::not_found("That version is no longer in the history.");
         let bytes = skip_unreadable(fs::read(self.record(id)))?.ok_or_else(gone)?;
         serde_json::from_slice(&bytes).map_err(|err| CoreError::internal(err.to_string()))
     }
 
-    fn write(&self, id: i64, snapshot: &Snapshot) -> Result<(), CoreError> {
+    fn write(&self, id: i64, snapshot: &Version) -> Result<(), CoreError> {
         let record = self.record(id);
         fs::create_dir_all(record.parent().expect("in the snapshots folder"))?;
         let bytes = serde_json::to_vec(snapshot);
@@ -119,7 +128,7 @@ impl History {
     pub fn take(&self, root: &Path, now: i64, taken: Taken) -> Result<Option<i64>, CoreError> {
         let ids = self.ids()?;
         let latest = ids.iter().find_map(|&id| Some((id, self.read(id).ok()?)));
-        let recent = |(id, _): &(i64, Snapshot)| (0..=10 * MINUTE).contains(&(now - id));
+        let recent = |(id, _): &(i64, Version)| (0..=10 * MINUTE).contains(&(now - id));
         if matches!(taken, Taken::Auto) && latest.as_ref().is_some_and(recent) {
             return Ok(None);
         }
@@ -130,7 +139,7 @@ impl History {
             (Taken::Auto, Some(_)) => return Ok(None),
             (Taken::Named(name), Some((id, last))) => (
                 id,
-                Snapshot {
+                Version {
                     name: Some(name),
                     ..last
                 },
@@ -141,7 +150,7 @@ impl History {
                     Taken::Before(reason) => (None, Some(reason.to_owned())),
                     Taken::Named(name) => (Some(name), None),
                 };
-                let snapshot = Snapshot {
+                let snapshot = Version {
                     name,
                     reason,
                     files,
@@ -186,14 +195,14 @@ impl History {
         }
     }
 
-    pub fn list(&self) -> Result<Vec<Entry>, CoreError> {
+    pub fn list(&self) -> Result<Vec<Snapshot>, CoreError> {
         let mut entries = Vec::new();
         let mut before = BTreeMap::new();
         for id in self.ids()?.into_iter().rev() {
             let Ok(snapshot) = self.read(id) else {
                 continue;
             };
-            entries.push(Entry {
+            entries.push(Snapshot {
                 id: id.to_string(),
                 time: id,
                 name: snapshot.name,
@@ -223,16 +232,19 @@ impl History {
     }
 }
 
-fn changes(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> Vec<Changed> {
+fn changes(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Vec<ChangedFile> {
     let paths: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
     let change = |path: &String| match (before.get(path), after.get(path)) {
-        (None, _) => Some("added"),
-        (_, None) => Some("deleted"),
-        (was, now) => (was != now).then_some("changed"),
+        (None, _) => Some(ChangeKind::Added),
+        (_, None) => Some(ChangeKind::Deleted),
+        (was, now) => (was != now).then_some(ChangeKind::Changed),
     };
     let changed = paths.into_iter().filter_map(|path| {
         let change = change(path)?;
-        Some(Changed {
+        Some(ChangedFile {
             path: path.clone(),
             change,
         })
@@ -288,7 +300,7 @@ mod tests {
         for (object, id, name) in versions {
             fs::write(history.objects().join(object), "").unwrap();
             let files = BTreeMap::from([("main.tex".to_owned(), object.to_owned())]);
-            let snapshot = Snapshot {
+            let snapshot = Version {
                 name: name.map(str::to_owned),
                 reason: None,
                 files,

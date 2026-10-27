@@ -44,12 +44,6 @@ final class Core {
 
     func reopen() { if handle == nil { handle = Self.open() } }
 
-    private func prepared(_ command: String, _ args: [String: any Sendable]) throws -> (OpaquePointer, String) {
-        guard let handle else { throw Self.unavailable }
-        guard JSONSerialization.isValidJSONObject(args) else { throw Self.fault(command, "Arguments that aren't JSON") }
-        return (handle, String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self))
-    }
-
     private func prepared<R: WireRequest>(_ request: R) throws -> (OpaquePointer, String) {
         guard let handle else { throw Self.unavailable }
         return (handle, String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
@@ -58,10 +52,10 @@ final class Core {
     private var pending: [UInt64: (Data) -> Void] = [:]
     private var asked: UInt64 = 0
 
-    private func ask(_ handle: OpaquePointer, _ command: String, _ json: String, _ answered: @escaping (Data) -> Void) {
+    private func ask(_ sent: (UInt64) -> Void, _ answered: @escaping (Data) -> Void) {
         asked += 1
         pending[asked] = answered
-        tl_send(handle, asked, command, json)
+        sent(asked)
     }
 
     private nonisolated struct Envelope<T: Decodable>: Decodable {
@@ -78,8 +72,6 @@ final class Core {
             }
         }
     }
-
-    private nonisolated struct Ignored: Decodable, Sendable { init(from decoder: any Decoder) {} }
 
     private nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
         let answer: Result<T, CoreError>
@@ -101,34 +93,31 @@ final class Core {
     @discardableResult
     func call<R: LibraryRequest>(_ request: R) async throws -> R.Reply {
         let (handle, json) = try prepared(request)
-        return try await answer(handle, R.command, json)
+        return try await answer(R.self) { tl_send(handle, $0, R.command, json) }
     }
 
-    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
-        let (handle, json) = try prepared(command, args)
-        return try await answer(handle, command, json)
+    @discardableResult
+    func call<R: SessionRequest>(_ request: R, in session: UInt64) async throws -> R.Reply {
+        let (handle, json) = try prepared(request)
+        return try await answer(R.self) { tl_session_send(handle, $0, session, R.command, json) }
     }
 
-    private func answer<T: Decodable & Sendable>(_ handle: OpaquePointer, _ command: String, _ json: String) async throws -> T {
+    private func answer<R: WireRequest>(_: R.Type, _ sent: (UInt64) -> Void) async throws -> R.Reply {
         try await withCheckedThrowingContinuation { done in
-            ask(handle, command, json) { envelope in
-                done.resume(with: Result { try Self.decoded(command, envelope) })
+            ask(sent) { envelope in
+                done.resume(with: Result { try Self.decoded(R.command, envelope) })
             }
         }
     }
 
-    func call(_ command: String, _ args: [String: any Sendable]) async throws {
-        _ = try await call(command, args, as: Ignored?.self)
-    }
-
-    func send(_ command: String, _ args: [String: any Sendable]) {
+    func send<R: SessionRequest>(_ request: R, in session: UInt64) {
         let logged = { (error: any Error) in
-            Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            Self.log.error("\(R.command, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
         do {
-            let (handle, json) = try prepared(command, args)
-            ask(handle, command, json) { envelope in
-                do { let _: Ignored? = try Self.decoded(command, envelope) } catch { logged(error) }
+            let (handle, json) = try prepared(request)
+            ask({ tl_session_send(handle, $0, session, R.command, json) }) { envelope in
+                do { let _: R.Reply = try Self.decoded(R.command, envelope) } catch { logged(error) }
             }
         } catch {
             logged(error)
@@ -173,6 +162,29 @@ final class Core {
     }
 
     func forget(_ session: UInt64) { observers[session] = nil }
+}
+
+final class SessionClient {
+    let id: UInt64
+    private let core = Core.shared
+
+    init(_ observer: @escaping (SessionEvent) -> Void) { id = core.observe(observer) }
+
+    @discardableResult
+    func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
+
+    func send<R: SessionRequest>(_ request: R) { core.send(request, in: id) }
+
+    func close() async throws -> Bool {
+        guard try await call(CloseProject()) else { return false }
+        core.forget(id)
+        return true
+    }
+
+    func discard() {
+        core.forget(id)
+        send(CloseProject())
+    }
 }
 
 nonisolated struct EventRead: Decodable {

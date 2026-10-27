@@ -75,8 +75,7 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         let query = field.stringValue
         searching?.cancel()
         searching = Task {
-            guard let items = try? await project.core.call("session_quick_open", ["session": session, "query": query],
-                                                           as: [QuickOpenItem].self), !Task.isCancelled else { return }
+            guard let items = try? await session.call(QuickOpen(query: query)), !Task.isCancelled else { return }
             rows.items = items
             var frame = self.frame
             let height = Self.fieldHeight + (items.isEmpty ? 0 : CGFloat(min(items.count, Self.shownRows)) * Self.rowHeight
@@ -90,13 +89,8 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         guard rows.items.indices.contains(row) else { return }
         let item = rows.items[row]
         close()
-        Task { [project] in await project.open(item.path, line: item.line, atTop: item.kind == "heading", jump: true) }
+        Task { [project] in await project.open(item.path, line: item.line, atTop: item.kind == .heading, jump: true) }
     }
-}
-
-nonisolated struct QuickOpenItem: Decodable {
-    let kind, title, detail, path: String
-    let line: Int?
 }
 
 private struct QuickOpenView: View {
@@ -133,9 +127,9 @@ private struct QuickOpenView: View {
     private func row(_ index: Int) -> some View {
         let item = rows.items[index], chosen = index == rows.selection
         let symbol = switch item.kind {
-        case "heading": "list.bullet.indent"
-        case "label": "tag"
-        default: tree.node(at: item.path)?.symbol ?? "document"
+        case .heading: "list.bullet.indent"
+        case .label: "tag"
+        case .file: tree.node(at: item.path)?.symbol ?? "document"
         }
         return HStack(spacing: 10) {
             Image(systemName: symbol).frame(width: 20)

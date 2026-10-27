@@ -153,7 +153,7 @@ struct VersionHistorySheet: View {
     private func list() async {
         guard let session = project.session else { return }
         do {
-            let listed = try await project.core.call("session_history_list", ["session": session], as: [Snapshot].self)
+            let listed = try await session.call(ListVersions())
             snapshots = listed
             chosen = listed.first?.id
         } catch {
@@ -166,8 +166,7 @@ struct VersionHistorySheet: View {
         guard let session = project.session, let chosen, let file else { return }
         let rows: [DiffLine]
         do {
-            rows = try await project.core.call("session_history_compare", ["session": session, "id": chosen, "path": file],
-                                               as: [DiffLine].self)
+            rows = try await session.call(CompareVersion(id: chosen, path: file))
         } catch {
             if !Task.isCancelled { shown = .failed(error.localizedDescription) }
             return
@@ -207,19 +206,17 @@ private struct DiffView: View {
     }
 
     @ViewBuilder private func row(_ row: DiffLine) -> some View {
-        if let text = row.removed {
-            line("−", text, tint: .red).accessibilityLabel("Removed: \(text)")
-        } else if let text = row.added {
-            line("+", text, tint: .green).accessibilityLabel("Added: \(text)")
-        } else if let count = row.skipped {
+        switch row {
+        case .removed(let text): line("−", text, tint: .red).accessibilityLabel("Removed: \(text)")
+        case .added(let text): line("+", text, tint: .green).accessibilityLabel("Added: \(text)")
+        case .skipped(let count):
             Text("^[\(count) unchanged line](inflect: true)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 2)
                 .background(.quinary)
-        } else {
-            line(" ", row.same ?? "", tint: .clear)
+        case .same(let text): line(" ", text, tint: .clear)
         }
     }
 

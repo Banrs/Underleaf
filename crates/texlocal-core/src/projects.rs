@@ -16,15 +16,15 @@ use crate::paths::fold_case;
 
 pub(crate) const MAX_FILES: usize = 20_000;
 
+pub use files::{RenameResult, create_free, rename_entry};
 pub(crate) use files::{Trash, copy_paths, discard_replaced, write_creating};
-pub use files::{create_free, rename_entry};
-pub(crate) use history::{History, Taken, put_back};
+pub(crate) use history::{History, Snapshot, Taken, put_back};
 pub use library::{ProjectInfo, create_project, free_project_name, list_projects, rename_project};
 pub(crate) use library::{guess_main_file, new_project};
 pub use opened::{Opening, forget_folder, open_path};
 pub(crate) use opened::{find as find_opened, is_opened};
 pub(crate) use search::replace_in_files;
-pub use search::{search_groups, search_project};
+pub use search::{SearchGroup, Written, search_groups, search_project};
 pub use symbols::{Files, Symbols, scan_symbols};
 pub use tree::{TreeNode, file_tree};
 pub(crate) use tree::{listed, walk};

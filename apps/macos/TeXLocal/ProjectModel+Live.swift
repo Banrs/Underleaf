@@ -10,9 +10,7 @@ extension ProjectModel {
     var canSwitchLivePreview: Bool { app?.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
 
     var liveEngine: String? {
-        texpresso.engine.flatMap { engine in
-            livePDF && engine != settings?.engine ? Engine(rawValue: engine)?.title ?? engine : nil
-        }
+        texpresso.engine.flatMap { engine in livePDF && engine != settings?.engine ? engine.title : nil }
     }
 
     func startTeXpresso() {
@@ -20,14 +18,14 @@ extension ProjectModel {
         texpresso.starting()
         if let pages = pdf.visiblePages { liveView(pages) }
         liveCaret()
-        core.send("session_live_start", ["session": session])
+        session.send(StartLive())
     }
 
     func stopTeXpresso() {
         guard let session else { return }
         texpresso.stopping()
         Task {
-            if let state = try? await core.call("session_live_stop", ["session": session], as: LiveState.self), state.phase == .stopped,
+            if let state = try? await session.call(StopLive()), state.phase == .stopped,
                texpresso.phase == .stopping { liveChanged(state) }
         }
         Task { await endLivePDF() }
@@ -35,12 +33,12 @@ extension ProjectModel {
 
     func liveView(_ pages: ClosedRange<Int>) {
         guard texpresso.active, let session else { return }
-        core.send("session_live_view", ["session": session, "first": pages.lowerBound, "last": pages.upperBound])
+        session.send(LiveView(first: pages.lowerBound, last: pages.upperBound))
     }
 
     func liveCaret() {
         guard texpresso.active, let session, let path = editor.path else { return }
-        core.send("session_live_caret", ["session": session, "path": path, "offset": editor.caret])
+        session.send(LiveCaret(path: path, offset: editor.caret))
     }
 
     func endLivePDF() async {
@@ -50,10 +48,10 @@ extension ProjectModel {
         pdf.clear()
     }
 
-    func liveChanged(_ state: LiveState) {
+    func liveChanged(_ state: LiveState, alert: Bool = false) {
         let was = texpresso.phase
-        texpresso.receive(state)
-        if state.alert == true { panel.show(.texpresso) }
+        texpresso.receive(state, alert: alert)
+        if alert { panel.show(.texpresso) }
         if state.phase == .stopped, was != .stopped { Task { await endLivePDF() } }
         if state.phase != .running { pdf.endLiveRun() }
     }
@@ -84,7 +82,7 @@ extension ProjectModel {
         }.value
     }
 
-    private var liveSession: UInt64? { livePDF ? session : nil }
+    private var liveSession: UInt64? { livePDF ? session?.id : nil }
 
     func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil, quietly: Bool = false) async {
         await restart(&syncTask) { [self] in

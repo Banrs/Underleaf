@@ -6,6 +6,7 @@ use serde_json::{Map, Value, json};
 
 use crate::CoreError;
 use crate::service::Library;
+use crate::session::Session;
 
 pub(crate) type Answer<T> = fn(Result<T, CoreError>) -> Result<Value, CoreError>;
 
@@ -42,7 +43,8 @@ pub fn protocol() -> Protocol {
     let mut outbound = SchemaSettings::draft2020_12()
         .for_serialize()
         .into_generator();
-    let requests = Library::describe(&mut inbound, &mut outbound);
+    let mut requests = Library::describe(&mut inbound, &mut outbound);
+    requests.extend(Session::describe(&mut inbound, &mut outbound));
     outbound.subschema_for::<CoreError>();
     Protocol {
         requests,
@@ -66,11 +68,11 @@ pub(crate) fn describe<Request: JsonSchema, Reply: JsonSchema>(
 }
 
 macro_rules! requests {
-    ($group:ident { $($request:ident { $($field:ident: $type:ty),* $(,)? } -> $reply:ty,)* }) => {
+    ($group:ident { $($request:ident { $($(#[$attr:meta])* $field:ident: $type:ty),* $(,)? } -> $reply:ty,)* }) => {
         $(
             #[derive(serde::Deserialize, schemars::JsonSchema)]
             #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            pub(crate) struct $request { $($field: $type),* }
+            pub(crate) struct $request { $($(#[$attr])* $field: $type),* }
         )*
 
         pub(crate) enum $group {

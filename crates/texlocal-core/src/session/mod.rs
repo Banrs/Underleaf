@@ -11,27 +11,28 @@ mod scans;
 mod watch;
 
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
+use std::collections::hash_map::{Entry, VacantEntry};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 
-use serde::Deserialize;
 use serde_json::Value;
-use texlocal_latex::logparse::{Fix, LogItem};
-use texlocal_latex::syntax::{SymbolKind, TextEdit};
+use texlocal_latex::logparse::LogItem;
+use texlocal_latex::syntax::TextEdit;
 use tokio::sync::mpsc;
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener, Queued};
-use crate::paths::RelPath;
 use crate::projects::Symbols;
-use crate::service::{Service, parse};
+use crate::protocol::Answer;
+use crate::service::Service;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
+pub(crate) use actor::Session;
+use actor::{OpenProject, SessionOpened};
 pub(crate) use build::Compiler;
 pub use document::Document;
-use documents::{Docs, Resolution, Shared};
+use documents::{Docs, Shared};
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -40,7 +41,7 @@ pub(crate) enum Msg {
         version: u64,
         edit: Option<TextEdit>,
     },
-    Command(SessionCommand, Reply),
+    Command(Session, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
     Symbols {
@@ -50,62 +51,6 @@ pub(crate) enum Msg {
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
-#[rustfmt::skip]
-pub(crate) enum SessionCommand {
-    Close,
-    SetOptions { auto_compile: Option<bool> },
-    OpenDocument { path: RelPath },
-    CloseDocument { path: RelPath },
-    Composing { path: RelPath, composing: bool },
-    Save { reporting: Option<bool> },
-    Resolve { path: RelPath, answer: Resolution },
-    Compile { #[serde(default)] auto: bool },
-    StopCompile,
-    Clean,
-    Search { query: String, #[serde(default)] match_case: bool, #[serde(default)] whole_word: bool },
-    Usages { path: RelPath, offset: u32 },
-    QuickHelp { path: RelPath, offset: u32 },
-    QuickOpen { query: String },
-    Replace { query: String, replacement: String, #[serde(default)] match_case: bool,
-        #[serde(default)] whole_word: bool },
-    RenameSymbol { kind: SymbolKind, from: String, to: String },
-    Fix { id: Fix },
-    HistoryList,
-    HistorySave { name: String },
-    HistoryCompare { id: String, path: RelPath },
-    HistoryRestore { id: String, paths: Option<Vec<RelPath>> },
-    Rename { from: RelPath, to: String },
-    CreateEntry { #[serde(default)] folder: String, name: String, #[serde(default)] dir: bool },
-    SetSettings { patch: Value },
-    PrepareDelete { path: RelPath },
-    Deleted { path: RelPath, trashed: Option<bool> },
-    LiveStart,
-    LiveStop,
-    LiveView { first: u32, last: u32 },
-    LiveCaret { path: RelPath, offset: usize },
-    LiveLog { shown: bool },
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Deserialize)]
-struct Call {
-    session: u64,
-    #[serde(flatten)]
-    command: SessionCommand,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Opening {
-    id: String,
-    session: u64,
-    #[serde(default)]
-    auto_compile: bool,
 }
 
 pub(crate) struct Reply(Option<(u64, std::sync::mpsc::Sender<Queued>)>);
@@ -129,6 +74,17 @@ impl Drop for Reply {
         } else {
             gone()
         }));
+    }
+}
+
+pub(crate) struct Pending<T> {
+    reply: Reply,
+    answer: Answer<T>,
+}
+
+impl<T> Pending<T> {
+    pub fn send(self, result: Result<T, CoreError>) {
+        self.reply.send((self.answer)(result));
     }
 }
 
@@ -184,29 +140,32 @@ impl Sessions {
         lock(&docs).get(&path).cloned()
     }
 
-    pub fn send(self: &Arc<Self>, id: u64, command: &str, args: Value) {
+    pub fn send(&self, id: u64, command: &str, args: Value) {
+        let (service, name, reply) = (
+            Arc::clone(&self.service),
+            command.to_owned(),
+            self.reply(id),
+        );
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            reply.send(runtime.block_on(service.call(&name, args)));
+        });
+    }
+
+    pub fn send_to(self: &Arc<Self>, id: u64, session: u64, command: &str, args: Value) {
         let reply = self.reply(id);
-        match command.strip_prefix("session_") {
-            Some("open") => match parse(command, args) {
-                Ok(opening) => self.open(opening, reply),
-                Err(err) => reply.send(Err(err)),
+        let request = match Session::parse(command, args) {
+            Ok(request) => request,
+            Err(err) => return reply.send(Err(err)),
+        };
+        match lock(&self.open).entry(session) {
+            Entry::Occupied(open) => drop(open.get().tx.send(Msg::Command(request, reply))),
+            Entry::Vacant(entry) => match request {
+                Session::OpenProject(opening, answer) => {
+                    self.open(entry, opening, Pending { reply, answer });
+                }
+                _ => reply.send(Err(gone())),
             },
-            Some(name) => match parse(name, args) {
-                Ok(Call { session, command }) => match lock(&self.open).get(&session) {
-                    Some(open) => {
-                        let _ = open.tx.send(Msg::Command(command, reply));
-                    }
-                    None => reply.send(Err(gone())),
-                },
-                Err(err) => reply.send(Err(err)),
-            },
-            None => {
-                let (service, name) = (Arc::clone(&self.service), command.to_owned());
-                let runtime = tokio::runtime::Handle::current();
-                tokio::task::spawn_blocking(move || {
-                    reply.send(runtime.block_on(service.call(&name, args)));
-                });
-            }
         }
     }
 
@@ -218,32 +177,26 @@ impl Sessions {
         Reply(Some((id, self.hub.queue.clone())))
     }
 
-    fn open(self: &Arc<Self>, opening: Opening, reply: Reply) {
-        let Opening {
-            id,
-            session,
-            auto_compile,
-        } = opening;
+    fn open(
+        self: &Arc<Self>,
+        entry: VacantEntry<'_, u64, Open>,
+        opening: OpenProject,
+        reply: Pending<SessionOpened>,
+    ) {
+        let session = *entry.key();
         let (tx, rx) = mpsc::unbounded_channel();
         let docs = Docs::default();
-        let open = Open {
+        entry.insert(Open {
             tx: tx.clone(),
             docs: docs.shared(),
-        };
-        match lock(&self.open).entry(session) {
-            Entry::Occupied(_) => {
-                return reply.send(Err(CoreError::conflict("That session is open already")));
-            }
-            Entry::Vacant(entry) => entry.insert(open),
-        };
+        });
         let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
         std::thread::Builder::new()
             .name(format!("texlocal-session-{session}"))
             .spawn(move || {
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
-                    match actor::Actor::new(&sessions, session, id, docs, tx.clone(), auto_compile)
-                    {
+                    match actor::Actor::new(&sessions, session, opening, docs, tx.clone()) {
                         Ok((actor, opened)) => {
                             reply.send(Ok(opened));
                             runtime.block_on(actor.run(rx));
@@ -307,18 +260,22 @@ mod tests {
             false,
             listener,
         ));
-        sessions.send(0, "session_open", json!({ "id": "P", "session": 1 }));
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
         let pending = [
-            "session_compile",
-            "session_save",
-            "session_search",
-            "session_clean",
+            ("Compile", json!({ "auto": false })),
+            ("Save", json!({ "reporting": true })),
+            (
+                "Search",
+                json!({ "query": "x", "matchCase": false, "wholeWord": false }),
+            ),
+            ("Clean", json!({})),
         ];
-        for (id, command) in (1..).zip(pending) {
-            sessions.send(id, command, json!({ "session": 1, "query": "x" }));
+        for (id, (command, args)) in (1..).zip(pending) {
+            sessions.send_to(id, 1, command, args);
         }
         let mut replies = BTreeMap::new();
-        while replies.len() <= pending.len() {
+        while replies.len() <= 4 {
             let said = heard.recv_timeout(Duration::from_secs(10)).unwrap();
             if let Some(id) = said["reply"].as_u64() {
                 replies.insert(id, said);

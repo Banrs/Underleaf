@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
@@ -271,14 +270,6 @@ impl Service {
             }
         }
     }
-}
-
-pub(crate) fn parse<T: DeserializeOwned>(name: &str, mut args: Value) -> Result<T, CoreError> {
-    let object = args
-        .as_object_mut()
-        .ok_or_else(|| CoreError::bad_request("The arguments aren't a JSON object"))?;
-    object.insert("call".into(), name.into());
-    T::deserialize(args).map_err(|err| CoreError::bad_request(format!("Invalid arguments: {err}")))
 }
 
 pub(crate) fn out(value: impl Serialize) -> Result<Value, CoreError> {

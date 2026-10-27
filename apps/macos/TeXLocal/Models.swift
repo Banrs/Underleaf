@@ -42,20 +42,12 @@ nonisolated extension NSRange {
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
 }
 
-nonisolated struct ProjectSettings: Decodable {
-    var mainFile, engine: String
-    var shellEscape, stopOnFirstError: Bool
-}
-
-nonisolated struct SettingsChange {
-    let patch: [String: any Sendable]
-    let apply: (inout ProjectSettings) -> Void
-
-    static func mainFile(_ path: String) -> Self { Self(patch: ["mainFile": path]) { $0.mainFile = path } }
-    static func engine(_ name: String) -> Self { Self(patch: ["engine": name]) { $0.engine = name } }
-    static func shellEscape(_ on: Bool) -> Self { Self(patch: ["shellEscape": on]) { $0.shellEscape = on } }
-    static func stopOnFirstError(_ on: Bool) -> Self {
-        Self(patch: ["stopOnFirstError": on]) { $0.stopOnFirstError = on }
+nonisolated extension ProjectSettings {
+    mutating func apply(_ patch: SettingsPatch) {
+        mainFile = patch.mainFile ?? mainFile
+        engine = patch.engine ?? engine
+        stopOnFirstError = patch.stopOnFirstError ?? stopOnFirstError
+        shellEscape = patch.shellEscape ?? shellEscape
     }
 }
 
@@ -91,24 +83,12 @@ nonisolated struct CompileResult: Decodable {
     }
 }
 
-nonisolated struct SearchHit: Decodable, Identifiable {
-    let file: String
-    let line, column, length: Int
-    let before, match, after: String
-
+nonisolated extension SearchHit: Identifiable {
     var id: String { "\(file):\(line):\(before.count)" }
 }
 
-nonisolated struct SearchGroup: Decodable, Identifiable {
-    let file: String
-    let hits: [SearchHit]
-
+nonisolated extension SearchGroup: Identifiable {
     var id: String { file }
-}
-
-nonisolated struct Usages: Decodable {
-    let name: String
-    let groups: [SearchGroup]
 }
 
 struct Place: Equatable {
@@ -146,40 +126,16 @@ struct Trail {
     }
 }
 
-nonisolated struct QuickHelp: Decodable {
-    let title, detail: String
-    let place: Definition.Place?
-}
-
 nonisolated struct SyncSource: Sendable {
     let id, file: String
     let line, column: Int
     var quietly = false
 }
 
-nonisolated struct RenameResult: Decodable {
-    let from, to, mainFile: String
-    let ui: UIState
-}
-
-nonisolated struct Snapshot: Decodable, Identifiable {
-    nonisolated struct Change: Decodable {
-        nonisolated enum Kind: String, Decodable { case added, deleted, changed }
-
-        let path: String
-        let change: Kind
-    }
-
-    let id: String
-    private let time: Double
-    let name, reason: String?
-    let changed: [Change]
-
-    var date: Date { Date(timeIntervalSince1970: time / 1000) }
+nonisolated extension Snapshot: Identifiable {
+    var date: Date { Date(timeIntervalSince1970: Double(time) / 1000) }
     var title: String { name ?? reason ?? String(localized: "Automatic") }
 }
-
-nonisolated struct DiffLine: Decodable { let same, removed, added: String?; let skipped: Int? }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }

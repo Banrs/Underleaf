@@ -7,8 +7,6 @@ final class ProjectSearch {
 
     nonisolated struct Asked: Hashable {
         var query = "", matchCase = false, wholeWords = false
-
-        var arguments: [String: any Sendable] { ["query": query, "matchCase": matchCase, "wholeWord": wholeWords] }
     }
 
     var asked = Asked()
@@ -31,14 +29,13 @@ final class ProjectSearch {
         (searched.query, query) = (found.name, found.name)
     }
 
-    func run(in session: UInt64?) async {
+    func run(in session: SessionClient?) async {
         let asked = asked
         guard asked.query != usages?.name else { return }
         var found: [SearchGroup]?, why: String?
         if isSearching, let session {
             do {
-                found = try await core.call("session_search", asked.arguments.merging(["session": session]) { $1 },
-                                            as: [SearchGroup].self)
+                found = try await session.call(Search(query: asked.query, matchCase: asked.matchCase, wholeWord: asked.wholeWords))
             } catch {
                 (found, why) = ([], error.localizedDescription)
             }

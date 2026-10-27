@@ -15,7 +15,7 @@ nonisolated enum SessionEvent: Sendable {
     case buildCleaned
     case tree(TreeEvent)
     case filesChanged(PathsEvent)
-    case live(LiveState)
+    case live(LiveEvent)
     case livePDF(LiveRead)
 
     init?(_ type: String, _ decoder: any Decoder) throws {
@@ -43,27 +43,9 @@ nonisolated enum SessionEvent: Sendable {
     }
 }
 
-nonisolated struct SessionOpened: Decodable, Sendable {
-    let name, root: String
-    let tree: [TreeNode]
-    let settings: ProjectSettings
-    let ui: UIState
-}
-
-nonisolated struct UIState: Decodable, Sendable {
-    let expandedFolders, foldedHeadings: [String]
-    let file: String?
-    let line, page: Int?
-    let zoom: PDFController.Zoom?
-    let panel, livePreview: Bool
-}
-nonisolated struct Saved: Decodable, Sendable { let saved: Bool }
-nonisolated struct Ready: Decodable, Sendable { let ready: Bool }
-
 nonisolated struct DocumentState: Decodable, Equatable { let path: String, error: String?, held: Bool }
 
 nonisolated struct ReloadEvent: Decodable { let path, text: String }
-nonisolated struct PathEvent: Decodable, Sendable { let path: String }
 nonisolated struct ClosedEvent: Decodable { let path, reason: String }
 nonisolated struct RenamedEvent: Decodable { let from, to: String }
 nonisolated struct ConflictEvent: Decodable {
@@ -73,6 +55,7 @@ nonisolated struct ConflictEvent: Decodable {
 nonisolated struct TreeEvent: Decodable { let tree: [TreeNode] }
 nonisolated struct PathsEvent: Decodable { let paths: [String] }
 nonisolated struct BuildState: Decodable { let compiling, auto, outdated: Bool }
+nonisolated struct LiveEvent: Decodable { let state: LiveState, alert: Bool }
 
 nonisolated struct BuildFinished: Decodable { let auto, announce, outdated: Bool, result: CompileResult }
 nonisolated struct ChecksEvent: Decodable { let items: [LogItem] }

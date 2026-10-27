@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{SourceDocument, Text, catalog, indentation};
-use crate::analyze::{Defined, Facts, Input, Named, Place};
+use crate::analyze::{Defined, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
 
@@ -26,7 +27,7 @@ pub(crate) struct Completion {
     pub(crate) detail: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SymbolKind {
     Command,
@@ -228,11 +229,9 @@ impl SourceDocument {
             }
             kind => self.defined(&own, kind, &name),
         };
-        let places: Vec<Value> = places
+        let places: Vec<FilePlace> = places
             .into_iter()
-            .map(|(file, at)| {
-                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
-            })
+            .map(|(file, at)| at.in_file(file))
             .collect();
         (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
     }

@@ -6,6 +6,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use texlocal_latex::syntax::TextEdit;
@@ -28,7 +29,7 @@ pub(crate) enum DiskConflict {
     Gone,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Resolution {
     Save,
@@ -187,12 +188,12 @@ impl Actor {
         Ok(())
     }
 
-    pub fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
+    pub fn close_document(&mut self, path: &str) -> Result<bool, CoreError> {
         let closed = self.flush(Some(path), true)?;
         if closed {
             self.close_doc(path, CloseReason::Closed);
         }
-        Ok(json!({ "closed": closed }))
+        Ok(closed)
     }
 
     pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
@@ -386,13 +387,13 @@ impl Actor {
         }
     }
 
-    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<Value, CoreError> {
+    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<(), CoreError> {
         let doc = self
             .docs
             .get_mut(path)
             .ok_or_else(|| CoreError::not_found("The document isn't open"))?;
         let Some(kind) = doc.asking.or(doc.conflict) else {
-            return Ok(Value::Null);
+            return Ok(());
         };
         match (kind, answer) {
             (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, true),
@@ -405,7 +406,7 @@ impl Actor {
             }
             (DiskConflict::Gone, Resolution::Close) => {
                 self.close_doc(path, CloseReason::Closed);
-                return Ok(Value::Null);
+                return Ok(());
             }
             _ => {
                 return Err(CoreError::bad_request(
@@ -415,15 +416,15 @@ impl Actor {
         }
         self.publish_doc(path);
         match answer {
-            Resolution::Save => Ok(json!({ "saved": self.save_edits(true)? })),
+            Resolution::Save => self.save_edits(true).map(drop),
             Resolution::Revert => {
                 match self.docs[path].disk_text.clone() {
                     Some(text) => self.request_reload(path, &text, Reload::Revert),
                     None => self.close_doc(path, CloseReason::Gone),
                 }
-                Ok(Value::Null)
+                Ok(())
             }
-            _ => Ok(Value::Null),
+            _ => Ok(()),
         }
     }
 

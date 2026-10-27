@@ -36,7 +36,7 @@ pub struct TextRange {
     pub length: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TextEdit {
     pub start: u32,
     pub length: u32,

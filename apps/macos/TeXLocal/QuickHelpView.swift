@@ -3,7 +3,7 @@ import SwiftUI
 struct QuickHelpView: View {
     let help: QuickHelp
     let font: NSFont
-    let jump: (Definition.Place) -> Void
+    let jump: (FilePlace) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

@@ -108,18 +108,18 @@ struct ScaleMenuItems: View {
 
     var body: some View {
         Picker("Zoom", selection: Binding(get: { shown }, set: pdf.apply)) {
-            Text("Fit Width").tag(PDFController.Zoom.fitWidth)
-            Text("Fit Page").tag(PDFController.Zoom.fitPage)
+            Text("Fit Width").tag(Zoom.fitWidth)
+            Text("Fit Page").tag(Zoom.fitPage)
             Divider()
             ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { scale in
-                Text(scale.formatted(.percent)).tag(PDFController.Zoom.scale(scale))
+                Text(scale.formatted(.percent)).tag(Zoom.scale(scale))
             }
         }
         .pickerStyle(.inline)
         .labelsHidden()
     }
 
-    private var shown: PDFController.Zoom {
+    private var shown: Zoom {
         guard case .scale(let scale) = pdf.zoom else { return pdf.zoom }
         return .scale((scale * 100).rounded() / 100)
     }

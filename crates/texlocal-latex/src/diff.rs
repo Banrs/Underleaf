@@ -1,29 +1,33 @@
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::syntax::TextEdit;
 use crate::utf16;
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Row<'a> {
-    Same(&'a str),
-    Removed(&'a str),
-    Added(&'a str),
+#[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub enum DiffLine {
+    Same(String),
+    Removed(String),
+    Added(String),
     Skipped(usize),
 }
 
 const CONTEXT: usize = 3;
 
-pub fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
+pub fn compare(old: &str, new: &str) -> Vec<DiffLine> {
     let (a, b): (Vec<_>, Vec<_>) = (old.lines().collect(), new.lines().collect());
     let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
     let ends = a[head..].iter().rev().zip(b[head..].iter().rev());
     let tail = ends.take_while(|(x, y)| x == y).count();
     let (x, y) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
-    let mut rows: Vec<Row> = a[..head].iter().map(|line| Row::Same(line)).collect();
+    let mut rows: Vec<DiffLine> = a[..head]
+        .iter()
+        .map(|&line| DiffLine::Same(line.into()))
+        .collect();
     if x.len() * y.len() > 4_000_000 {
-        rows.extend(x.iter().map(|line| Row::Removed(line)));
-        rows.extend(y.iter().map(|line| Row::Added(line)));
+        rows.extend(x.iter().map(|&line| DiffLine::Removed(line.into())));
+        rows.extend(y.iter().map(|&line| DiffLine::Added(line.into())));
     } else {
         let w = y.len() + 1;
         let mut common = vec![0u32; (x.len() + 1) * w];
@@ -39,24 +43,28 @@ pub fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
         let (mut i, mut j) = (0, 0);
         while i < x.len() || j < y.len() {
             if i < x.len() && j < y.len() && x[i] == y[j] {
-                rows.push(Row::Same(x[i]));
+                rows.push(DiffLine::Same(x[i].into()));
                 (i, j) = (i + 1, j + 1);
             } else if j == y.len()
                 || i < x.len() && common[(i + 1) * w + j] >= common[i * w + j + 1]
             {
-                rows.push(Row::Removed(x[i]));
+                rows.push(DiffLine::Removed(x[i].into()));
                 i += 1;
             } else {
-                rows.push(Row::Added(y[j]));
+                rows.push(DiffLine::Added(y[j].into()));
                 j += 1;
             }
         }
     }
-    rows.extend(a[a.len() - tail..].iter().map(|line| Row::Same(line)));
+    rows.extend(
+        a[a.len() - tail..]
+            .iter()
+            .map(|&line| DiffLine::Same(line.into())),
+    );
 
     let mut shown = vec![false; rows.len()];
     for (i, row) in rows.iter().enumerate() {
-        if !matches!(row, Row::Same(_)) {
+        if !matches!(row, DiffLine::Same(_)) {
             shown[i.saturating_sub(CONTEXT)..rows.len().min(i + CONTEXT + 1)].fill(true);
         }
     }
@@ -67,8 +75,8 @@ pub fn compare<'a>(old: &'a str, new: &'a str) -> Vec<Row<'a>> {
     for (row, shown) in rows.into_iter().zip(shown) {
         match (shown, folded.last_mut()) {
             (true, _) => folded.push(row),
-            (false, Some(Row::Skipped(count))) => *count += 1,
-            (false, _) => folded.push(Row::Skipped(1)),
+            (false, Some(DiffLine::Skipped(count))) => *count += 1,
+            (false, _) => folded.push(DiffLine::Skipped(1)),
         }
     }
     folded

@@ -41,11 +41,15 @@ impl Core {
     }
 
     fn call(&self, command: &str, args: Value) -> Value {
-        self.call_raw(Some(command), Some(&args.to_string()))
+        self.call_raw(None, Some(command), Some(&args.to_string()))
     }
 
-    fn call_raw(&self, command: Option<&str>, args: Option<&str>) -> Value {
-        let id = self.send(command, args);
+    fn ask(&self, session: u64, command: &str, args: Value) -> Value {
+        self.call_raw(Some(session), Some(command), Some(&args.to_string()))
+    }
+
+    fn call_raw(&self, session: Option<u64>, command: Option<&str>, args: Option<&str>) -> Value {
+        let id = self.send(session, command, args);
         loop {
             let said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
             if said["reply"] == id {
@@ -54,11 +58,15 @@ impl Core {
         }
     }
 
-    fn send(&self, command: Option<&str>, args: Option<&str>) -> u64 {
+    fn send(&self, session: Option<u64>, command: Option<&str>, args: Option<&str>) -> u64 {
         let id = self.asked.replace(self.asked.get() + 1);
         let (command, args) = (command.map(c), args.map(c));
         let pointer = |text: &Option<CString>| text.as_ref().map_or(ptr::null(), |t| t.as_ptr());
-        unsafe { tl_send(self.handle, id, pointer(&command), pointer(&args)) };
+        let (command, args) = (pointer(&command), pointer(&args));
+        match session {
+            Some(session) => unsafe { tl_session_send(self.handle, id, session, command, args) },
+            None => unsafe { tl_send(self.handle, id, command, args) },
+        }
         id
     }
 }
@@ -103,29 +111,38 @@ fn a_command_answers_ok_or_an_error_kind() {
     let core = Core::open();
     assert_eq!(core.call("ListProjects", json!({}))["ok"], json!([]));
     assert_eq!(core.call("nope", json!({}))["error"]["kind"], "notFound");
-    let bad = core.call_raw(Some("ListProjects"), Some("{not json"));
+    let bad = core.call_raw(None, Some("ListProjects"), Some("{not json"));
     assert_eq!(bad["error"]["kind"], "invalid");
-    assert_eq!(core.call_raw(None, None)["error"]["kind"], "invalid");
+    assert_eq!(core.call_raw(None, None, None)["error"]["kind"], "invalid");
+    assert_eq!(
+        core.ask(1, "ListProjects", json!({}))["error"]["kind"],
+        "notFound"
+    );
     unsafe { tl_send(ptr::null(), 0, ptr::null(), ptr::null()) };
+    unsafe { tl_session_send(ptr::null(), 0, 1, ptr::null(), ptr::null()) };
 }
 
 #[test]
 fn each_reply_arrives_exactly_once() {
     let core = Core::open();
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
+    let (open, save) = (r#"{"id":"P","autoCompile":false}"#, r#"{"reporting":true}"#);
     let sent = [
-        (Some("ListProjects"), Some("{}")),
-        (Some("nope"), Some("{}")),
-        (Some("ListProjects"), Some("{not json")),
-        (None, None),
-        (Some("session_open"), Some(r#"{"id":"P","session":1}"#)),
-        (Some("session_open"), Some(r#"{"id":"P","session":1}"#)),
-        (Some("session_save"), Some(r#"{"session":1}"#)),
-        (Some("session_save"), Some(r#"{"session":2}"#)),
-        (Some("session_close"), Some(r#"{"session":1}"#)),
-        (Some("session_save"), Some(r#"{"session":1}"#)),
+        (None, Some("ListProjects"), Some("{}")),
+        (None, Some("nope"), Some("{}")),
+        (None, Some("ListProjects"), Some("{not json")),
+        (None, None, None),
+        (Some(1), Some("OpenProject"), Some(open)),
+        (Some(1), Some("OpenProject"), Some(open)),
+        (Some(1), Some("Save"), Some(save)),
+        (Some(2), Some("Save"), Some(save)),
+        (Some(1), None, None),
+        (Some(1), Some("CloseProject"), Some("{}")),
+        (Some(1), Some("Save"), Some(save)),
     ];
-    let ids: Vec<u64> = sent.map(|(command, args)| core.send(command, args)).into();
+    let ids: Vec<u64> = sent
+        .map(|(session, command, args)| core.send(session, command, args))
+        .into();
     let mut replies = Vec::new();
     while let Ok(said) = core.events.recv_timeout(Duration::from_secs(1)) {
         replies.extend(said["reply"].as_u64());
@@ -138,11 +155,8 @@ fn each_reply_arrives_exactly_once() {
 fn a_session_document_is_edited_and_saved_through_the_abi() {
     let core = Core::open();
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
-    core.call("session_open", json!({ "id": "P", "session": 7 }));
-    core.call(
-        "session_open_document",
-        json!({ "session": 7, "path": "main.tex" }),
-    );
+    core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
+    core.ask(7, "OpenDocument", json!({ "path": "main.tex" }));
     let path = c("main.tex");
     let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
     assert!(!source.is_null());
@@ -158,7 +172,7 @@ fn a_session_document_is_edited_and_saved_through_the_abi() {
     assert_eq!(source_text(source), format!("{note}{before}"));
     unsafe { tl_source_free(source) };
     assert_eq!(
-        core.call("session_save", json!({ "session": 7 }))["ok"]["saved"],
+        core.ask(7, "Save", json!({ "reporting": true }))["ok"],
         true
     );
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
@@ -172,7 +186,8 @@ fn session_events_reach_the_listener() {
         "CreateProject",
         json!({ "name": "P", "template": "article" }),
     );
-    core.send(Some("session_open"), Some(r#"{"id":"P","session":1}"#));
+    let open = r#"{"id":"P","autoCompile":false}"#;
+    core.send(Some(1), Some("OpenProject"), Some(open));
     let found = (0..50)
         .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
         .find(|event| event["type"] == "outline");

@@ -96,6 +96,24 @@ pub unsafe extern "C" fn tl_send(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_session_send(
+    handle: *const TlHandle,
+    id: u64,
+    session: u64,
+    command: *const c_char,
+    args_json: *const c_char,
+) {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return;
+    };
+    let _entered = handle.runtime.enter();
+    caught(|| match unsafe { command_args(command, args_json) } {
+        Ok((command, args)) => handle.sessions.send_to(id, session, command, args),
+        Err(err) => handle.sessions.refuse(id, err),
+    });
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     if !text.is_null() {
         drop(unsafe { CString::from_raw(text) });

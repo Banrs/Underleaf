@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::Serialize;
+use serde_json::Value;
 use texlocal_latex::analyze::{self, Facts};
 use texlocal_latex::checks;
 use texlocal_latex::logparse::LogItem;
@@ -11,10 +13,16 @@ use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::Actor;
 use super::documents::Shared;
-use super::{Msg, Reply};
-use crate::projects::{self, Symbols};
+use super::{Msg, Pending};
+use crate::projects::{self, SearchGroup, Symbols};
 use crate::service::out;
 use crate::{CoreError, lock, tex};
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct Usages {
+    name: String,
+    groups: Vec<SearchGroup>,
+}
 
 impl Actor {
     pub fn scan_symbols(&mut self) {
@@ -70,20 +78,20 @@ impl Actor {
         }
     }
 
-    pub fn search(&self, query: Query, reply: Reply) {
+    pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
         let (root, docs) = (self.project.root.clone(), self.docs.shared());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
             let hits =
                 projects::search_project(&root, &open, &texlocal_latex::is_text, &found, 100);
-            reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
+            reply.send(hits.map(projects::search_groups));
         });
     }
 
-    pub fn usages(&self, path: &str, offset: u32, reply: Reply) {
+    pub fn usages(&self, path: &str, offset: u32, reply: Pending<Option<Usages>>) {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
-            return reply.send(Ok(Value::Null));
+            return reply.send(Ok(None));
         };
         let (root, docs) = (self.project.root.clone(), self.docs.shared());
         tokio::task::spawn_blocking(move || {
@@ -94,7 +102,7 @@ impl Actor {
                 kind => Some((kind, name)),
             });
             let Some((kind, name)) = named else {
-                return reply.send(Ok(Value::Null));
+                return reply.send(Ok(None));
             };
             let symbols = doc.symbols();
             let found = |rel: &str, text: &str| {
@@ -109,7 +117,7 @@ impl Actor {
                 _ => name,
             };
             let groups = hits.map(projects::search_groups);
-            reply.send(groups.map(|groups| json!({ "name": name, "groups": groups })));
+            reply.send(groups.map(|groups| Some(Usages { name, groups })));
         });
     }
 }

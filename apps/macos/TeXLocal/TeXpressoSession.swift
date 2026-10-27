@@ -1,15 +1,6 @@
 import Observation
 import PDFKit
 
-nonisolated struct LiveState: Decodable, Sendable {
-    let phase: TeXpressoSession.Phase
-    let engine: String
-    let halted: Bool
-    let failure, error: String?
-    let log: String?
-    let alert: Bool?
-}
-
 nonisolated struct LiveDocumentEvent: Decodable, Sendable {
     let path: String
     var changed: [[Int]]?
@@ -50,14 +41,12 @@ nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage
 
 @Observable
 final class TeXpressoSession {
-    nonisolated enum Phase: String, Decodable, Sendable { case stopped, starting, running, stopping }
-
-    private(set) var phase = Phase.stopped {
+    private(set) var phase = LivePhase.stopped {
         didSet { if phase != .stopped { used = true } }
     }
     private var failed = false
     private(set) var halted = false
-    private(set) var engine: String?
+    private(set) var engine: Engine?
     private(set) var log = ""
     private(set) var used = false
     private var acknowledged = false
@@ -82,8 +71,8 @@ final class TeXpressoSession {
 
     func logClosed() { if phase == .stopped { acknowledged = true } }
 
-    func receive(_ state: LiveState) {
-        if state.alert == true || state.phase == .starting && phase == .stopped { acknowledged = false }
+    func receive(_ state: LiveState, alert: Bool) {
+        if alert || state.phase == .starting && phase == .stopped { acknowledged = false }
         (phase, engine, halted, failed) = (state.phase, state.engine, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
     }

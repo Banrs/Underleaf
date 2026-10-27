@@ -6,16 +6,15 @@ use super::documents::CloseReason;
 use super::watch::{self, TreeIndex};
 use crate::CoreError;
 use crate::paths::{self, within};
-use crate::projects;
-use crate::service::out;
-use crate::settings;
+use crate::projects::{self, RenameResult};
+use crate::settings::{self, ProjectSettings, SettingsPatch};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
 impl Actor {
-    pub fn deleted(&mut self, path: &str, trashed: Option<bool>) {
+    pub fn deleted(&mut self, path: &str, trashed: bool) {
         self.deleting.remove(path);
-        if trashed.unwrap_or(true) {
+        if trashed {
             for doc in self.docs_within(path) {
                 self.close_doc(&doc, CloseReason::Deleted);
             }
@@ -28,13 +27,13 @@ impl Actor {
         folder: &str,
         name: &str,
         dir: bool,
-    ) -> Result<Value, CoreError> {
+    ) -> Result<String, CoreError> {
         let path = paths::in_folder(folder, name);
         let made = self.service.with_project(&self.project_id, |project| {
             projects::create_free(&project.root, &path, dir)
         })?;
         self.reload_tree();
-        Ok(json!({ "path": made }))
+        Ok(made)
     }
 
     pub fn deleting(&self, path: &str) -> bool {
@@ -101,9 +100,9 @@ impl Actor {
         self.live_files_changed();
     }
 
-    pub fn rename(&mut self, from: &str, to: &str) -> Result<Value, CoreError> {
+    pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
         if !self.save_edits(true)? {
-            return Ok(Value::Null);
+            return Ok(None);
         }
         let (renamed, main) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
@@ -135,21 +134,18 @@ impl Actor {
         if renamed.main_file != main {
             self.main_file_changed();
         }
-        let mut answer = out(renamed)?;
-        answer["ui"] = out(settings::read_ui(&self.project.ui))?;
-        Ok(answer)
+        Ok(Some(renamed))
     }
 
-    pub fn set_settings(&mut self, patch: &Value, build: bool) -> Result<Value, CoreError> {
+    pub fn set_settings(
+        &mut self,
+        patch: &SettingsPatch,
+        build: bool,
+    ) -> Result<ProjectSettings, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
-            let grant = patch.get("shellEscape").map(|on| {
-                on.as_bool()
-                    .ok_or_else(|| CoreError::bad_request("Invalid settings: shellEscape"))
-            });
-            let grant = grant.transpose()?;
-            let updated = settings::write_settings(&project.settings, patch)?;
-            if let Some(on) = grant {
+            let updated = settings::write_settings(&project.settings, &json!(patch))?;
+            if let Some(on) = patch.shell_escape {
                 settings::grant(project, on)?;
             }
             let main_changed = updated.main_file != main;
@@ -176,15 +172,15 @@ impl Actor {
         }
     }
 
-    pub fn prepare_delete(&mut self, path: &str) -> Result<Value, CoreError> {
+    pub fn prepare_delete(&mut self, path: &str) -> Result<bool, CoreError> {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
-            return Ok(json!({ "ready": false }));
+            return Ok(false);
         }
         let main = settings::read_settings(&self.project.settings).main_file;
         if paths::after_entry(&main, path).is_some() {
             return Err(CoreError::conflict(MAIN_FILE_TRASH));
         }
         self.deleting.insert(path.to_owned());
-        Ok(json!({ "ready": true }))
+        Ok(true)
     }
 }

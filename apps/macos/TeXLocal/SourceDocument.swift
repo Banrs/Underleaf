@@ -168,11 +168,8 @@ nonisolated struct SourceRange: Decodable, Equatable {
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
-nonisolated struct TextEdit: Decodable, Equatable {
-    var start, length: Int
-    var text: String
-
-    init(_ range: NSRange, _ text: String) { (start, length, self.text) = (range.location, range.length, text) }
+nonisolated extension TextEdit {
+    init(_ range: NSRange, _ text: String) { self.init(start: range.location, length: range.length, text: text) }
 
     var range: NSRange { NSRange(location: start, length: length) }
 }
@@ -234,14 +231,9 @@ nonisolated struct Completion: Decodable {
 }
 
 nonisolated struct Definition: Decodable, Hashable {
-    nonisolated struct Place: Decodable, Hashable {
-        var file: String
-        var line, column, length: Int
-    }
-
     var kind: String
     var name: String
-    var places: [Place]
+    var places: [FilePlace]
 }
 
 private nonisolated struct WordCount: Decodable { var words: Int }
