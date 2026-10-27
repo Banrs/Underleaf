@@ -1,13 +1,18 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::CoreError;
 
 pub type Listener = Box<dyn Fn(&Value) + Send>;
 
 pub(crate) enum Queued {
     Event(Value),
-    Then(Box<dyn FnOnce() + Send>),
+    Reply {
+        id: u64,
+        answer: Result<Value, CoreError>,
+    },
 }
 
 pub struct Hub {
@@ -21,12 +26,16 @@ impl Hub {
             .name("texlocal-events".into())
             .spawn(move || {
                 for queued in events {
-                    match queued {
-                        Queued::Event(event) => {
-                            let _ = catch_unwind(AssertUnwindSafe(|| listen(&event)));
-                        }
-                        Queued::Then(then) => then(),
-                    }
+                    let said = match queued {
+                        Queued::Event(event) => event,
+                        Queued::Reply { id, answer } => match answer {
+                            Ok(ok) => json!({ "reply": id, "ok": ok }),
+                            Err(err) => {
+                                json!({ "reply": id, "error": err.message, "kind": err.kind })
+                            }
+                        },
+                    };
+                    let _ = catch_unwind(AssertUnwindSafe(|| listen(&said)));
                 }
             })
             .expect("the event thread starts");

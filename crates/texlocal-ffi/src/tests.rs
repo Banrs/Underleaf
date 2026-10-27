@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -16,6 +17,7 @@ extern "C" fn collect(ctx: *mut c_void, json: *const c_char) {
 struct Core {
     handle: *mut TlHandle,
     events: Receiver<Value>,
+    asked: Cell<u64>,
     _dir: tempfile::TempDir,
     _sender: Box<Sender<Value>>,
 }
@@ -32,13 +34,32 @@ impl Core {
         Self {
             handle,
             events,
+            asked: Cell::default(),
             _dir: dir,
             _sender: sender,
         }
     }
 
     fn call(&self, command: &str, args: Value) -> Value {
-        call_raw(self.handle, Some(command), Some(&args.to_string()))
+        self.call_raw(Some(command), Some(&args.to_string()))
+    }
+
+    fn call_raw(&self, command: Option<&str>, args: Option<&str>) -> Value {
+        let id = self.send(command, args);
+        loop {
+            let said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
+            if said["reply"] == id {
+                return said;
+            }
+        }
+    }
+
+    fn send(&self, command: Option<&str>, args: Option<&str>) -> u64 {
+        let id = self.asked.replace(self.asked.get() + 1);
+        let (command, args) = (command.map(c), args.map(c));
+        let pointer = |text: &Option<CString>| text.as_ref().map_or(ptr::null(), |t| t.as_ptr());
+        unsafe { tl_send(self.handle, id, pointer(&command), pointer(&args)) };
+        id
     }
 }
 
@@ -50,22 +71,6 @@ impl Drop for Core {
 
 fn c(text: &str) -> CString {
     CString::new(text).unwrap()
-}
-
-fn call_raw(handle: *const TlHandle, command: Option<&str>, args: Option<&str>) -> Value {
-    let (sender, answers) = channel::<Value>();
-    let command = command.map(c);
-    let args = args.map(c);
-    unsafe {
-        tl_call_async(
-            handle,
-            command.as_ref().map_or(ptr::null(), |c| c.as_ptr()),
-            args.as_ref().map_or(ptr::null(), |a| a.as_ptr()),
-            Some(collect),
-            (&raw const sender).cast_mut().cast::<c_void>(),
-        );
-    }
-    answers.recv_timeout(Duration::from_secs(10)).unwrap()
 }
 
 fn source_text(source: *mut TlSource) -> String {
@@ -96,17 +101,40 @@ fn opening_needs_a_folder_and_a_listener() {
 #[test]
 fn a_command_answers_ok_or_an_error_kind() {
     let core = Core::open();
-    assert_eq!(core.call("list_projects", json!({})), json!({ "ok": [] }));
+    assert_eq!(core.call("list_projects", json!({}))["ok"], json!([]));
     assert_eq!(core.call("nope", json!({}))["kind"], "notFound");
-    assert_eq!(
-        call_raw(core.handle, Some("list_projects"), Some("{not json"))["kind"],
-        "invalid"
+    let bad = core.call_raw(Some("list_projects"), Some("{not json"));
+    assert_eq!(bad["kind"], "invalid");
+    assert_eq!(core.call_raw(None, None)["kind"], "invalid");
+    unsafe { tl_send(ptr::null(), 0, ptr::null(), ptr::null()) };
+}
+
+#[test]
+fn each_reply_arrives_exactly_once() {
+    let core = Core::open();
+    core.call(
+        "create_project",
+        json!({ "name": "P", "template": "blank" }),
     );
-    assert_eq!(call_raw(core.handle, None, None)["kind"], "invalid");
-    assert_eq!(
-        call_raw(ptr::null(), Some("list_projects"), None)["kind"],
-        "invalid"
-    );
+    let sent = [
+        (Some("list_projects"), Some("{}")),
+        (Some("nope"), Some("{}")),
+        (Some("list_projects"), Some("{not json")),
+        (None, None),
+        (Some("session_open"), Some(r#"{"id":"P","session":1}"#)),
+        (Some("session_open"), Some(r#"{"id":"P","session":1}"#)),
+        (Some("session_save"), Some(r#"{"session":1}"#)),
+        (Some("session_save"), Some(r#"{"session":2}"#)),
+        (Some("session_close"), Some(r#"{"session":1}"#)),
+        (Some("session_save"), Some(r#"{"session":1}"#)),
+    ];
+    let ids: Vec<u64> = sent.map(|(command, args)| core.send(command, args)).into();
+    let mut replies = Vec::new();
+    while let Ok(said) = core.events.recv_timeout(Duration::from_secs(1)) {
+        replies.extend(said["reply"].as_u64());
+    }
+    replies.sort_unstable();
+    assert_eq!(replies, ids);
 }
 
 #[test]
@@ -150,7 +178,7 @@ fn session_events_reach_the_listener() {
         "create_project",
         json!({ "name": "P", "template": "article" }),
     );
-    core.call("session_open", json!({ "id": "P", "session": 1 }));
+    core.send(Some("session_open"), Some(r#"{"id":"P","session":1}"#));
     let found = (0..50)
         .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
         .find(|event| event["type"] == "outline");

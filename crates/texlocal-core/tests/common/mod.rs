@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -72,6 +73,7 @@ pub struct Rig {
     pub id: String,
     events: Receiver<Value>,
     seen: Mutex<Vec<Value>>,
+    asked: AtomicU64,
 }
 
 pub const SESSION: u64 = 1;
@@ -100,6 +102,7 @@ impl Rig {
             id,
             events,
             seen: Mutex::default(),
+            asked: AtomicU64::default(),
         };
         rig.call("session_open", json!({ "id": rig.id, "session": SESSION }))
             .await;
@@ -114,11 +117,29 @@ impl Rig {
         answer(command, self.try_call(command, args).await)
     }
 
-    pub async fn try_call(&self, command: &str, mut args: Value) -> Result<Value, CoreError> {
-        if command.starts_with("session_") && command != "session_open" {
-            args["session"] = json!(SESSION);
+    pub async fn try_call(&self, command: &str, args: Value) -> Result<Value, CoreError> {
+        self.reply(self.send(command, args))
+    }
+
+    pub fn send(&self, command: &str, mut args: Value) -> u64 {
+        if command.starts_with("session_") {
+            let args = args.as_object_mut().unwrap();
+            args.entry("session").or_insert(json!(SESSION));
         }
-        self.sessions.call(command, args).await
+        let id = self.asked.fetch_add(1, Ordering::Relaxed);
+        self.sessions.send(id, command, args);
+        id
+    }
+
+    pub fn reply(&self, id: u64) -> Result<Value, CoreError> {
+        let mut reply = self.find(|e| e["reply"] == id);
+        match reply.get_mut("ok") {
+            Some(ok) => Ok(ok.take()),
+            None => Err(CoreError {
+                kind: serde_json::from_value(reply["kind"].take()).unwrap(),
+                message: reply["error"].as_str().unwrap().to_owned(),
+            }),
+        }
     }
 
     pub async fn open_document(&self, path: &str) -> texlocal_core::session::Document {
@@ -147,6 +168,10 @@ impl Rig {
                 return event;
             }
         }
+    }
+
+    pub fn heard(&self, kind: &str) -> bool {
+        self.seen.lock().unwrap().iter().any(|e| e["type"] == kind)
     }
 
     pub fn forget(&self) {

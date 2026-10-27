@@ -122,16 +122,13 @@ async fn an_edit_is_saved_to_disk() {
 async fn two_sessions_save_at_once() {
     let rig = project().await;
     let other = rig.library.create("Q", "blank").await;
-    let call = |command: &str, args: Value| rig.sessions.call(command, args);
-    call("session_open", json!({ "id": other, "session": 2 }))
-        .await
-        .unwrap();
-    call(
+    rig.call("session_open", json!({ "id": other, "session": 2 }))
+        .await;
+    rig.call(
         "session_open_document",
         json!({ "session": 2, "path": "main.tex" }),
     )
-    .await
-    .unwrap();
+    .await;
     let docs = [
         rig.open_document("main.tex").await,
         rig.sessions.document(2, "main.tex").unwrap(),
@@ -139,12 +136,10 @@ async fn two_sessions_save_at_once() {
     for doc in &docs {
         doc.edit(0, 0, "% both\n", None, false);
     }
-    let (one, two) = tokio::join!(
-        call("session_save", json!({ "session": SESSION })),
-        call("session_save", json!({ "session": 2 }))
-    );
-    assert_eq!(one.unwrap()["saved"], true);
-    assert_eq!(two.unwrap()["saved"], true);
+    let saves = [SESSION, 2].map(|session| rig.send("session_save", json!({ "session": session })));
+    for save in saves {
+        assert_eq!(rig.reply(save).unwrap()["saved"], true);
+    }
     for root in [rig.root(), rig.library.project_root(&other)] {
         assert!(
             fs::read_to_string(root.join("main.tex"))
@@ -152,6 +147,40 @@ async fn two_sessions_save_at_once() {
                 .starts_with("% both")
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replies_follow_the_events_sent_before_them() {
+    let rig = project().await;
+    let answered_after = |kind: &str, command: &str, args: Value| {
+        rig.forget();
+        rig.reply(rig.send(command, args)).unwrap();
+        assert!(
+            rig.heard(kind),
+            "{command} answered before its {kind} event"
+        );
+    };
+    let draft = rig
+        .call("session_history_save", json!({ "name": "Draft" }))
+        .await;
+    std::thread::sleep(Duration::from_millis(300));
+    fs::remove_file(rig.root().join("main.tex")).unwrap();
+    rig.event("tree", |e| !e["tree"].to_string().contains("main.tex"));
+    answered_after("live", "session_live_start", json!({}));
+    let restore = json!({ "id": draft["id"], "paths": ["main.tex"] });
+    answered_after("tree", "session_history_restore", restore);
+    let main = json!({ "patch": { "mainFile": "ch.tex" } });
+    answered_after("tree", "session_set_settings", main);
+    answered_after("tree", "session_create_entry", json!({ "name": "new.tex" }));
+    let rename = json!({ "from": "new.tex", "to": "old.tex" });
+    answered_after("tree", "session_rename", rename);
+    let doc = rig.open_document("ch.tex").await;
+    doc.edit(0, 0, "mine ", None, false);
+    std::thread::sleep(Duration::from_millis(300));
+    fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
+    answered_after("conflict", "session_save", json!({}));
+    let revert = json!({ "path": "ch.tex", "answer": "revert" });
+    answered_after("document_reload", "session_resolve", revert);
 }
 
 #[tokio::test(flavor = "multi_thread")]

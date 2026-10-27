@@ -60,6 +60,17 @@ struct CoreTests {
         try await Core.shared.call("session_close", ["session": session])
     }
 
+    @Test func aReplyComesAfterTheEventsBeforeIt() async throws {
+        let project = try await newProject(template: "blank")
+        var trees = 0
+        let session = Core.shared.observe { if case .tree = $0 { trees += 1 } }
+        defer { Core.shared.forget(session) }
+        try await Core.shared.call("session_open", ["id": project.id, "session": session])
+        try await Core.shared.call("session_create_entry", ["session": session, "name": "new.tex"])
+        #expect(trees > 0)
+        try await Core.shared.call("session_close", ["session": session])
+    }
+
     @Test func anEventOfAnUnknownTypeIsLeftOut() throws {
         let known = try JSONDecoder().decode(EventRead.self, from: Data(#"{"type":"files_changed","session":3,"paths":["a.png"]}"#.utf8))
         #expect(known.session == 3)
