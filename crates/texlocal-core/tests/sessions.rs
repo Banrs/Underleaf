@@ -64,13 +64,9 @@ fn names(list: &Value, key: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread")]
 async fn opening_answers_the_project_and_its_number_is_taken() {
     let rig = project().await;
-    let again = rig
-        .try_call("session_open", json!({ "id": rig.id, "session": SESSION }))
-        .await;
+    let again = rig.try_call("session_open", json!({ "id": rig.id, "session": SESSION }));
     assert_eq!(again.unwrap_err().kind, ErrorKind::Conflict);
-    let second = rig
-        .call("session_open", json!({ "id": rig.id, "session": 2 }))
-        .await;
+    let second = rig.call("session_open", json!({ "id": rig.id, "session": 2 }));
     assert_eq!(second["name"], "P");
     assert_eq!(second["settings"]["mainFile"], "main.tex");
     assert_eq!(second["settings"]["shellEscape"], false);
@@ -110,10 +106,10 @@ async fn the_outline_follows_inputs_and_counts_words() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_edit_is_saved_to_disk() {
     let rig = project().await;
-    let doc = rig.open_document("main.tex").await;
+    let doc = rig.open_document("main.tex");
     assert_eq!(doc.with(|d| d.text()), MAIN);
     doc.edit(0, 0, "% note\n", None, false);
-    assert_eq!(rig.call("session_save", json!({})).await["saved"], true);
+    assert_eq!(rig.call("session_save", json!({}))["saved"], true);
     let disk = fs::read_to_string(rig.root().join("main.tex")).unwrap();
     assert_eq!(disk, format!("% note\n{MAIN}"));
 }
@@ -122,15 +118,13 @@ async fn an_edit_is_saved_to_disk() {
 async fn two_sessions_save_at_once() {
     let rig = project().await;
     let other = rig.library.create("Q", "blank").await;
-    rig.call("session_open", json!({ "id": other, "session": 2 }))
-        .await;
+    rig.call("session_open", json!({ "id": other, "session": 2 }));
     rig.call(
         "session_open_document",
         json!({ "session": 2, "path": "main.tex" }),
-    )
-    .await;
+    );
     let docs = [
-        rig.open_document("main.tex").await,
+        rig.open_document("main.tex"),
         rig.sessions.document(2, "main.tex").unwrap(),
     ];
     for doc in &docs {
@@ -154,15 +148,13 @@ async fn replies_follow_the_events_sent_before_them() {
     let rig = project().await;
     let answered_after = |kind: &str, command: &str, args: Value| {
         rig.forget();
-        rig.reply(rig.send(command, args)).unwrap();
+        rig.call(command, args);
         assert!(
             rig.heard(kind),
             "{command} answered before its {kind} event"
         );
     };
-    let draft = rig
-        .call("session_history_save", json!({ "name": "Draft" }))
-        .await;
+    let draft = rig.call("session_history_save", json!({ "name": "Draft" }));
     std::thread::sleep(Duration::from_millis(300));
     fs::remove_file(rig.root().join("main.tex")).unwrap();
     rig.event("tree", |e| !e["tree"].to_string().contains("main.tex"));
@@ -174,7 +166,7 @@ async fn replies_follow_the_events_sent_before_them() {
     answered_after("tree", "session_create_entry", json!({ "name": "new.tex" }));
     let rename = json!({ "from": "new.tex", "to": "old.tex" });
     answered_after("tree", "session_rename", rename);
-    let doc = rig.open_document("ch.tex").await;
+    let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
@@ -186,15 +178,15 @@ async fn replies_follow_the_events_sent_before_them() {
 #[tokio::test(flavor = "multi_thread")]
 async fn closing_saves_and_ends_the_session() {
     let rig = project().await;
-    let doc = rig.open_document("ch.tex").await;
+    let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "% last\n", None, false);
-    assert_eq!(rig.call("session_close", json!({})).await["saved"], true);
+    assert_eq!(rig.call("session_close", json!({}))["saved"], true);
     assert!(
         fs::read_to_string(rig.root().join("ch.tex"))
             .unwrap()
             .starts_with("% last")
     );
-    let after = rig.try_call("session_save", json!({})).await;
+    let after = rig.try_call("session_save", json!({}));
     assert_eq!(after.unwrap_err().kind, ErrorKind::NotFound);
 }
 
@@ -202,43 +194,37 @@ async fn closing_saves_and_ends_the_session() {
 async fn a_file_not_in_utf8_is_refused() {
     let rig = project().await;
     fs::write(rig.root().join("latin.tex"), b"caf\xe9").unwrap();
-    let refused = rig
-        .try_call("session_open_document", json!({ "path": "latin.tex" }))
-        .await;
+    let refused = rig.try_call("session_open_document", json!({ "path": "latin.tex" }));
     assert_eq!(refused.unwrap_err().kind, ErrorKind::Invalid);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn search_reads_unsaved_text() {
     let rig = project().await;
-    let doc = rig.open_document("main.tex").await;
+    let doc = rig.open_document("main.tex");
     doc.edit(0, 0, "a cat\n", None, false);
-    let found = rig.call("session_search", json!({ "query": "cat" })).await;
+    let found = rig.call("session_search", json!({ "query": "cat" }));
     assert_eq!(names(&found, "file"), ["ch.tex", "main.tex"]);
     let hit = &found[1]["hits"][0];
     assert_eq!(
         (hit["line"].clone(), hit["column"].clone()),
         (json!(1), json!(2))
     );
-    let whole = rig
-        .call(
-            "session_search",
-            json!({ "query": "ca", "wholeWord": true }),
-        )
-        .await;
+    let whole = rig.call(
+        "session_search",
+        json!({ "query": "ca", "wholeWord": true }),
+    );
     assert_eq!(whole, json!([]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
     let rig = Rig::open(&[("main.tex", "cat\n"), ("ch.tex", "cat cat\n")]).await;
-    rig.open_document("main.tex").await;
-    let replaced = rig
-        .call(
-            "session_replace",
-            json!({ "query": "cat", "replacement": "dog" }),
-        )
-        .await;
+    rig.open_document("main.tex");
+    let replaced = rig.call(
+        "session_replace",
+        json!({ "query": "cat", "replacement": "dog" }),
+    );
     assert_eq!(
         replaced["written"],
         json!([{ "file": "ch.tex", "count": 2 }])
@@ -259,24 +245,20 @@ async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
 #[tokio::test(flavor = "multi_thread")]
 async fn renaming_a_label_changes_every_reference() {
     let rig = Rig::open(&[("main.tex", MAIN), ("ch.tex", "\\ref{sec:intro}\n")]).await;
-    rig.open_document("main.tex").await;
-    let renamed = rig
-        .call(
-            "session_rename_symbol",
-            json!({ "kind": "label", "from": "sec:intro", "to": "sec:start" }),
-        )
-        .await;
+    rig.open_document("main.tex");
+    let renamed = rig.call(
+        "session_rename_symbol",
+        json!({ "kind": "label", "from": "sec:intro", "to": "sec:start" }),
+    );
     assert_eq!(renamed["edits"]["edits"].as_array().unwrap().len(), 2);
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
         "\\ref{sec:start}\n"
     );
-    let taken = rig
-        .try_call(
-            "session_rename_symbol",
-            json!({ "kind": "label", "from": "nothing", "to": "x" }),
-        )
-        .await;
+    let taken = rig.try_call(
+        "session_rename_symbol",
+        json!({ "kind": "label", "from": "nothing", "to": "x" }),
+    );
     assert_eq!(taken.unwrap_err().kind, ErrorKind::NotFound);
 }
 
@@ -286,34 +268,28 @@ async fn open_quickly_finds_files_headings_and_labels() {
     rig.event("outline", |e| {
         e["tree"].as_array().is_some_and(|t| t.len() == 2)
     });
-    let found = rig
-        .call("session_quick_open", json!({ "query": "intro" }))
-        .await;
+    let found = rig.call("session_quick_open", json!({ "query": "intro" }));
     assert_eq!(names(&found, "kind"), ["heading", "label"]);
-    let files = rig.call("session_quick_open", json!({ "query": "" })).await;
+    let files = rig.call("session_quick_open", json!({ "query": "" }));
     assert_eq!(names(&files, "title"), ["ch.tex", "main.tex"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn usages_and_quick_help_describe_a_label() {
     let rig = project().await;
-    rig.open_document("main.tex").await;
+    rig.open_document("main.tex");
     rig.event("outline", |_| true);
     let offset = MAIN.find("\\ref{sec").unwrap() + 6;
-    let usages = rig
-        .call(
-            "session_usages",
-            json!({ "path": "main.tex", "offset": offset }),
-        )
-        .await;
+    let usages = rig.call(
+        "session_usages",
+        json!({ "path": "main.tex", "offset": offset }),
+    );
     assert_eq!(usages["name"], "\\label{sec:intro}");
     assert_eq!(usages["groups"][0]["hits"].as_array().unwrap().len(), 2);
-    let help = rig
-        .call(
-            "session_quick_help",
-            json!({ "path": "main.tex", "offset": offset }),
-        )
-        .await;
+    let help = rig.call(
+        "session_quick_help",
+        json!({ "path": "main.tex", "offset": offset }),
+    );
     assert_eq!(help["title"], "sec:intro");
     assert_eq!(help["place"]["line"], 3);
 }
@@ -325,7 +301,7 @@ async fn a_reference_completes_with_the_projects_labels() {
         ("ch.tex", "\\label{fig:plot}\n"),
     ])
     .await;
-    let doc = rig.open_document("main.tex").await;
+    let doc = rig.open_document("main.tex");
     rig.event("outline", |_| true);
     std::thread::sleep(Duration::from_millis(500));
     let answer = doc
@@ -337,27 +313,19 @@ async fn a_reference_completes_with_the_projects_labels() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_entry_is_numbered_past_a_taken_name() {
     let rig = project().await;
-    let first = rig
-        .call("session_create_entry", json!({ "name": "untitled.tex" }))
-        .await;
-    let second = rig
-        .call("session_create_entry", json!({ "name": "untitled.tex" }))
-        .await;
+    let first = rig.call("session_create_entry", json!({ "name": "untitled.tex" }));
+    let second = rig.call("session_create_entry", json!({ "name": "untitled.tex" }));
     assert_eq!(
         (first["path"].clone(), second["path"].clone()),
         (json!("untitled.tex"), json!("untitled 2.tex"))
     );
-    let folder = rig
-        .call(
-            "session_create_entry",
-            json!({ "name": "figs", "dir": true }),
-        )
-        .await;
+    let folder = rig.call(
+        "session_create_entry",
+        json!({ "name": "figs", "dir": true }),
+    );
     assert!(rig.root().join(folder["path"].as_str().unwrap()).is_dir());
     for name in [".texlocal.json", "../outside.tex"] {
-        let refused = rig
-            .try_call("session_create_entry", json!({ "name": name }))
-            .await;
+        let refused = rig.try_call("session_create_entry", json!({ "name": name }));
         assert_eq!(refused.unwrap_err().kind, ErrorKind::Invalid, "{name}");
     }
 }
@@ -365,21 +333,17 @@ async fn a_new_entry_is_numbered_past_a_taken_name() {
 #[tokio::test(flavor = "multi_thread")]
 async fn renaming_the_main_file_keeps_it_the_main_file() {
     let rig = project().await;
-    let renamed = rig
-        .call(
-            "session_rename",
-            json!({ "from": "main.tex", "to": "thesis.tex" }),
-        )
-        .await;
+    let renamed = rig.call(
+        "session_rename",
+        json!({ "from": "main.tex", "to": "thesis.tex" }),
+    );
     assert_eq!(renamed["to"], "thesis.tex");
     assert_eq!(renamed["mainFile"], "thesis.tex");
     assert!(rig.root().join("thesis.tex").is_file());
-    let moved = rig
-        .call(
-            "session_rename",
-            json!({ "from": "ch.tex", "to": "chapters/ch.tex" }),
-        )
-        .await;
+    let moved = rig.call(
+        "session_rename",
+        json!({ "from": "ch.tex", "to": "chapters/ch.tex" }),
+    );
     assert_eq!(moved["mainFile"], "thesis.tex");
     assert!(rig.root().join("chapters/ch.tex").is_file());
 }
@@ -387,37 +351,28 @@ async fn renaming_the_main_file_keeps_it_the_main_file() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_main_file_is_never_prepared_for_deletion() {
     let rig = project().await;
-    let refused = rig
-        .try_call("session_prepare_delete", json!({ "path": "main.tex" }))
-        .await;
+    let refused = rig.try_call("session_prepare_delete", json!({ "path": "main.tex" }));
     assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
-    let ready = rig
-        .call("session_prepare_delete", json!({ "path": "ch.tex" }))
-        .await;
+    let ready = rig.call("session_prepare_delete", json!({ "path": "ch.tex" }));
     assert_eq!(ready["ready"], true);
     fs::remove_file(rig.root().join("ch.tex")).unwrap();
-    rig.call("session_deleted", json!({ "path": "ch.tex" }))
-        .await;
+    rig.call("session_deleted", json!({ "path": "ch.tex" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_named_version_is_listed_compared_and_restored() {
     let rig = project().await;
-    let saved = rig
-        .call("session_history_save", json!({ "name": "Draft" }))
-        .await;
+    let saved = rig.call("session_history_save", json!({ "name": "Draft" }));
     assert_eq!(
-        rig.call("session_history_list", json!({})).await[0]["name"],
+        rig.call("session_history_list", json!({}))[0]["name"],
         "Draft"
     );
     fs::write(rig.root().join("ch.tex"), "changed\n").unwrap();
     let id = saved["id"].clone();
-    let rows = rig
-        .call(
-            "session_history_compare",
-            json!({ "id": id, "path": "ch.tex" }),
-        )
-        .await;
+    let rows = rig.call(
+        "session_history_compare",
+        json!({ "id": id, "path": "ch.tex" }),
+    );
     assert!(
         rows.as_array()
             .unwrap()
@@ -433,34 +388,27 @@ async fn a_named_version_is_listed_compared_and_restored() {
     rig.call(
         "session_history_restore",
         json!({ "id": id, "paths": ["ch.tex"] }),
-    )
-    .await;
+    );
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
         CHAPTER
     );
-    let empty = rig
-        .try_call("session_history_save", json!({ "name": " " }))
-        .await;
+    let empty = rig.try_call("session_history_save", json!({ "name": " " }));
     assert_eq!(empty.unwrap_err().kind, ErrorKind::Invalid);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_change_and_bad_ones_are_refused() {
     let rig = project().await;
-    let settings = rig
-        .call(
-            "session_set_settings",
-            json!({ "patch": { "engine": "xelatex" } }),
-        )
-        .await;
+    let settings = rig.call(
+        "session_set_settings",
+        json!({ "patch": { "engine": "xelatex" } }),
+    );
     assert_eq!(settings["engine"], "xelatex");
-    let refused = rig
-        .try_call(
-            "session_set_settings",
-            json!({ "patch": { "engine": "word" } }),
-        )
-        .await;
+    let refused = rig.try_call(
+        "session_set_settings",
+        json!({ "patch": { "engine": "word" } }),
+    );
     assert_eq!(refused.unwrap_err().kind, ErrorKind::Invalid);
     let stored = fs::read_to_string(rig.root().join(".texlocal.json")).unwrap();
     assert!(stored.contains("xelatex"));
@@ -473,16 +421,14 @@ async fn shell_escape_in_a_projects_own_settings_is_not_granted() {
         fs::write(root.join(".texlocal.json"), r#"{"shellEscape": true}"#).unwrap();
     })
     .await;
-    let opened = rig
-        .call("session_open", json!({ "id": rig.id, "session": 2 }))
-        .await;
+    let opened = rig.call("session_open", json!({ "id": rig.id, "session": 2 }));
     assert_eq!(opened["settings"]["shellEscape"], false);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_on_disk_reaches_a_document_without_edits() {
     let rig = project().await;
-    let doc = rig.open_document("ch.tex").await;
+    let doc = rig.open_document("ch.tex");
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     let reload = rig.event("document_reload", |e| e["path"] == "ch.tex");
@@ -494,31 +440,29 @@ async fn a_change_on_disk_reaches_a_document_without_edits() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_on_disk_under_edits_is_asked_about_and_save_keeps_the_edits() {
     let rig = project().await;
-    let doc = rig.open_document("ch.tex").await;
+    let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     let conflict = rig.event("conflict", |e| e["path"] == "ch.tex");
     assert_eq!(conflict["kind"], "changed");
-    assert_eq!(rig.call("session_close", json!({})).await["saved"], false);
-    let resolved = rig
-        .call(
-            "session_resolve",
-            json!({ "path": "ch.tex", "answer": "save" }),
-        )
-        .await;
+    assert_eq!(rig.call("session_close", json!({}))["saved"], false);
+    let resolved = rig.call(
+        "session_resolve",
+        json!({ "path": "ch.tex", "answer": "save" }),
+    );
     assert_eq!(resolved["saved"], true);
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
         format!("mine {CHAPTER}")
     );
-    assert_eq!(rig.call("session_close", json!({})).await["saved"], true);
+    assert_eq!(rig.call("session_close", json!({}))["saved"], true);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn revert_takes_the_disks_text() {
     let rig = project().await;
-    let doc = rig.open_document("ch.tex").await;
+    let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
@@ -526,8 +470,7 @@ async fn revert_takes_the_disks_text() {
     rig.call(
         "session_resolve",
         json!({ "path": "ch.tex", "answer": "revert" }),
-    )
-    .await;
+    );
     let reload = rig.event("document_reload", |e| e["path"] == "ch.tex");
     assert_eq!(reload["text"], "theirs\n");
     assert_eq!(
@@ -556,8 +499,8 @@ async fn another_apps_files_reach_the_tree() {
 async fn a_build_shows_its_pdf_and_marks_its_errors() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    rig.open_document("main.tex").await;
-    rig.call("session_compile", json!({})).await;
+    rig.open_document("main.tex");
+    rig.call("session_compile", json!({}));
     let finished = rig.event("build_finished", |_| true);
     let result = &finished["result"];
     assert_eq!(result["ok"], false);
@@ -575,13 +518,13 @@ async fn a_build_shows_its_pdf_and_marks_its_errors() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_clean_build_has_no_errors() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
-    rig.call("session_compile", json!({})).await;
+    rig.call("session_compile", json!({}));
     let started = rig.event("build", |e| e["compiling"] == true);
     assert_eq!(started["auto"], false);
     let finished = rig.event("build_finished", |_| true);
     assert_eq!(finished["result"]["ok"], true);
     assert_eq!(finished["result"]["errors"], json!([]));
-    rig.call("session_clean", json!({})).await;
+    rig.call("session_clean", json!({}));
     assert!(!rig.root().join("build").exists());
 }
 
@@ -589,7 +532,7 @@ async fn a_clean_build_has_no_errors() {
 async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
     let args = || fs::read_to_string(rig.root().join("build/args")).unwrap();
-    rig.call("session_compile", json!({})).await;
+    rig.call("session_compile", json!({}));
     rig.event("build_finished", |_| true);
     assert!(args().lines().any(|a| a == "-norc"));
     assert!(!args().contains("-shell-escape"));
@@ -597,9 +540,8 @@ async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     rig.call(
         "session_set_settings",
         json!({ "patch": { "shellEscape": true } }),
-    )
-    .await;
-    rig.call("session_compile", json!({})).await;
+    );
+    rig.call("session_compile", json!({}));
     rig.event("build_finished", |_| true);
     assert!(args().lines().any(|a| a == "-shell-escape"));
     assert!(!args().lines().any(|a| a == "-norc"));
@@ -609,16 +551,12 @@ async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
 async fn a_fix_adds_the_package_a_command_needs() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\toprule\n\\end{document}\n";
     let rig = Rig::open(&[("main.tex", main)]).await;
-    rig.open_document("main.tex").await;
-    let fixed = rig
-        .call("session_fix", json!({ "id": "package:booktabs" }))
-        .await;
+    rig.open_document("main.tex");
+    let fixed = rig.call("session_fix", json!({ "id": "package:booktabs" }));
     let edit = &fixed["edits"]["edits"][0];
     assert_eq!(edit["text"], "\n\\usepackage{booktabs}");
     assert_eq!(edit["start"], "\\documentclass{article}".len());
-    let unknown = rig
-        .try_call("session_fix", json!({ "id": "format:disk" }))
-        .await;
+    let unknown = rig.try_call("session_fix", json!({ "id": "format:disk" }));
     assert_eq!(unknown.unwrap_err().kind, ErrorKind::Invalid);
 }
 

@@ -104,8 +104,7 @@ impl Rig {
             seen: Mutex::default(),
             asked: AtomicU64::default(),
         };
-        rig.call("session_open", json!({ "id": rig.id, "session": SESSION }))
-            .await;
+        rig.call("session_open", json!({ "id": rig.id, "session": SESSION }));
         rig
     }
 
@@ -113,11 +112,11 @@ impl Rig {
         self.library.project_root(&self.id)
     }
 
-    pub async fn call(&self, command: &str, args: Value) -> Value {
-        answer(command, self.try_call(command, args).await)
+    pub fn call(&self, command: &str, args: Value) -> Value {
+        answer(command, self.try_call(command, args))
     }
 
-    pub async fn try_call(&self, command: &str, args: Value) -> Result<Value, CoreError> {
+    pub fn try_call(&self, command: &str, args: Value) -> Result<Value, CoreError> {
         self.reply(self.send(command, args))
     }
 
@@ -142,9 +141,8 @@ impl Rig {
         }
     }
 
-    pub async fn open_document(&self, path: &str) -> texlocal_core::session::Document {
-        self.call("session_open_document", json!({ "path": path }))
-            .await;
+    pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
+        self.call("session_open_document", json!({ "path": path }));
         self.sessions.document(SESSION, path).unwrap()
     }
 

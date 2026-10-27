@@ -26,7 +26,6 @@ struct Callback {
 }
 
 unsafe impl Send for Callback {}
-unsafe impl Sync for Callback {}
 
 impl Callback {
     fn send(self, value: &Value) {
