@@ -10,7 +10,7 @@ use super::{catalog, headings, render};
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
-enum Command {
+enum SourceCommand {
     Completions { caret: u32, explicit: bool },
     ToggleComment { selections: Vec<TextRange> },
     SetHeading { caret: u32, command: String },
@@ -40,7 +40,7 @@ enum Command {
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
-enum Free {
+enum SyntaxCommand {
     MathSvg { tex: String, display: bool, size: f64 },
     Menus,
     HeadingStyles,
@@ -59,59 +59,63 @@ fn read<T: DeserializeOwned>(command: &str, args_json: &str) -> Option<T> {
 impl SourceDocument {
     pub fn call(&mut self, command: &str, args_json: &str) -> Option<String> {
         match read(command, args_json)? {
-            Command::Completions { caret, explicit } => json(self.completions(caret, explicit)),
-            Command::ToggleComment { selections } => json(self.toggle_comment(&selections)),
-            Command::SetHeading { caret, command } => json(self.set_heading(caret, &command)),
-            Command::InsertBlock { id, selection } => json(self.insert_block(&id, selection)),
-            Command::InsertSymbol { command, selection } => {
+            SourceCommand::Completions { caret, explicit } => {
+                json(self.completions(caret, explicit))
+            }
+            SourceCommand::ToggleComment { selections } => json(self.toggle_comment(&selections)),
+            SourceCommand::SetHeading { caret, command } => json(self.set_heading(caret, &command)),
+            SourceCommand::InsertBlock { id, selection } => json(self.insert_block(&id, selection)),
+            SourceCommand::InsertSymbol { command, selection } => {
                 json(self.insert_symbol(&command, selection))
             }
-            Command::MathAt { caret } => json(self.math_at(caret)),
-            Command::TextStyles { selection } => json(self.text_styles(selection)),
-            Command::CodeRanges { selection, checker } => {
+            SourceCommand::MathAt { caret } => json(self.math_at(caret)),
+            SourceCommand::TextStyles { selection } => json(self.text_styles(selection)),
+            SourceCommand::CodeRanges { selection, checker } => {
                 json(self.code_ranges(selection, checker))
             }
-            Command::Words { range } => json(json!({ "words": self.words(range) })),
-            Command::Type {
+            SourceCommand::Words { range } => json(json!({ "words": self.words(range) })),
+            SourceCommand::Type {
                 selection,
                 text,
                 auto_pair,
             } => json(self.type_text(selection, &text, auto_pair)),
-            Command::DeleteBackward {
+            SourceCommand::DeleteBackward {
                 selection,
                 auto_pair,
             } => json(self.delete_backward(selection, auto_pair)),
-            Command::InsertNewline { selection } => json(self.insert_newline(selection)),
-            Command::Partner { at } => json(self.partner(at)),
-            Command::Definition { at } => json(self.definition(at)),
-            Command::StartSnippet { fields, at } => json(self.start_snippet(&fields, at)),
-            Command::EndSnippet => json(self.end_snippet()),
-            Command::Tab { selections, step } => json(self.tab(&selections, step)),
-            Command::MoveLines { selections, up } => json(self.move_lines(&selections, up)),
-            Command::DuplicateLines { selections } => json(self.duplicate_lines(&selections)),
-            Command::DeleteLines { selections } => json(self.delete_lines(&selections)),
-            Command::ToggleStyle { selections, style } => {
+            SourceCommand::InsertNewline { selection } => json(self.insert_newline(selection)),
+            SourceCommand::Partner { at } => json(self.partner(at)),
+            SourceCommand::Definition { at } => json(self.definition(at)),
+            SourceCommand::StartSnippet { fields, at } => json(self.start_snippet(&fields, at)),
+            SourceCommand::EndSnippet => json(self.end_snippet()),
+            SourceCommand::Tab { selections, step } => json(self.tab(&selections, step)),
+            SourceCommand::MoveLines { selections, up } => json(self.move_lines(&selections, up)),
+            SourceCommand::DuplicateLines { selections } => json(self.duplicate_lines(&selections)),
+            SourceCommand::DeleteLines { selections } => json(self.delete_lines(&selections)),
+            SourceCommand::ToggleStyle { selections, style } => {
                 json(self.toggle_style(&selections, style))
             }
-            Command::Wrap {
+            SourceCommand::Wrap {
                 selections,
                 template,
             } => json(self.wrap(&selections, &template)),
-            Command::MapSelections { edits, selections } => {
+            SourceCommand::MapSelections { edits, selections } => {
                 json(map_selections(&edits, &selections))
             }
-            Command::Folds => json(self.folds()),
+            SourceCommand::Folds => json(self.folds()),
         }
     }
 }
 
 pub fn call(command: &str, args_json: &str) -> Option<String> {
     match read(command, args_json)? {
-        Free::MathSvg { tex, display, size } => json(render::math_svg(&tex, display, size)),
-        Free::Menus => {
+        SyntaxCommand::MathSvg { tex, display, size } => {
+            json(render::math_svg(&tex, display, size))
+        }
+        SyntaxCommand::Menus => {
             let catalog = &*catalog::CATALOG;
             json(json!({ "templates": catalog.templates, "symbolGroups": catalog.symbol_groups }))
         }
-        Free::HeadingStyles => json(headings::heading_styles(None)),
+        SyntaxCommand::HeadingStyles => json(headings::heading_styles(None)),
     }
 }

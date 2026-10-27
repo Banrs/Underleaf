@@ -22,7 +22,7 @@ pub(super) const MAX_EDITED: u64 = 64 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Conflict {
+pub(crate) enum DiskConflict {
     Changed,
     Gone,
 }
@@ -58,8 +58,8 @@ pub(crate) struct Doc {
     disk_text: Option<String>,
     newline: &'static str,
     disk_stamp: Option<Stamp>,
-    pub conflict: Option<Conflict>,
-    pub asking: Option<Conflict>,
+    pub conflict: Option<DiskConflict>,
+    pub asking: Option<DiskConflict>,
     held: bool,
     error: Option<String>,
     pub reloads: VecDeque<Reload>,
@@ -175,8 +175,8 @@ impl Actor {
                 let doc = self.docs.get_mut(&path).expect("found by its id");
                 if !doc.reloads.is_empty() {
                     doc.reloads.clear();
-                    doc.conflict = Some(Conflict::Changed);
-                    self.ask(&path, Conflict::Changed);
+                    doc.conflict = Some(DiskConflict::Changed);
+                    self.ask(&path, DiskConflict::Changed);
                 }
             }
             None => self.reloaded(&path, version),
@@ -335,7 +335,7 @@ impl Actor {
         Ok(saved)
     }
 
-    fn ask(&mut self, path: &str, kind: Conflict) {
+    fn ask(&mut self, path: &str, kind: DiskConflict) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.asking = Some(kind);
             self.emit("conflict", json!({ "path": path, "kind": kind }));
@@ -353,13 +353,14 @@ impl Actor {
         };
         match (kind, answer) {
             (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, true),
-            (Conflict::Changed, Resolution::Save) => {
+            (DiskConflict::Changed, Resolution::Save) => {
                 (doc.asking, doc.conflict, doc.force) = (None, None, true);
             }
-            (Conflict::Changed, Resolution::Revert) | (Conflict::Gone, Resolution::Save) => {
+            (DiskConflict::Changed, Resolution::Revert)
+            | (DiskConflict::Gone, Resolution::Save) => {
                 (doc.asking, doc.conflict) = (None, None);
             }
-            (Conflict::Gone, Resolution::Close) => {
+            (DiskConflict::Gone, Resolution::Close) => {
                 self.close_doc(path, CloseReason::Closed);
                 return Ok(Value::Null);
             }
@@ -403,7 +404,7 @@ impl Actor {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
-        if doc.conflict == Some(Conflict::Gone) {
+        if doc.conflict == Some(DiskConflict::Gone) {
             doc.conflict = None;
         }
         if as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
@@ -429,8 +430,8 @@ impl Actor {
         doc.disk_text = disk.map(|(text, _)| text);
         match (doc.disk_text.clone(), doc.dirty()) {
             (_, true) => {
-                if doc.conflict.replace(Conflict::Changed).is_none() {
-                    self.ask(path, Conflict::Changed);
+                if doc.conflict.replace(DiskConflict::Changed).is_none() {
+                    self.ask(path, DiskConflict::Changed);
                 }
             }
             (Some(text), false) => self.request_reload(path, &text, Reload::Disk),
@@ -446,8 +447,8 @@ impl Actor {
             return self.close_doc(path, CloseReason::Gone);
         }
         doc.disk_stamp = None;
-        if doc.conflict.replace(Conflict::Gone) != Some(Conflict::Gone) {
-            self.ask(path, Conflict::Gone);
+        if doc.conflict.replace(DiskConflict::Gone) != Some(DiskConflict::Gone) {
+            self.ask(path, DiskConflict::Gone);
         }
     }
 }

@@ -21,7 +21,7 @@ use crate::{CoreError, SETTINGS_FILE, atomic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Conflict {
+pub enum ImportConflict {
     Replace,
     KeepBoth,
 }
@@ -69,7 +69,7 @@ pub fn import_files(
     id: &str,
     dir: &str,
     paths: &[PathBuf],
-    conflict: Option<Conflict>,
+    conflict: Option<ImportConflict>,
     trash: Trash,
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
@@ -98,10 +98,10 @@ pub fn import_files(
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
     }
-    let replace = (conflict == Some(Conflict::Replace)).then_some(trash);
+    let replace = (conflict == Some(ImportConflict::Replace)).then_some(trash);
     for (path, source) in files {
         let path = match conflict {
-            Some(Conflict::KeepBoth) => keep_both(&path, &existing),
+            Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
             _ => path,
         };
         save(service, id, &in_folder(dir, &path), &source, replace)?;

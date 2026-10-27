@@ -16,13 +16,13 @@ use crate::service::Service;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
-pub(crate) trait Engine: Send + Sync {
+pub(crate) trait Compiler: Send + Sync {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>>;
     fn stop_compile(&self, root: &Path);
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
-impl Engine for Arc<Service> {
+impl Compiler for Arc<Service> {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         let service = Self::clone(self);
         Box::pin(async move {
@@ -102,7 +102,7 @@ impl Actor {
         self.builds.built = self.edits;
         self.publish_build();
         let (build, tx) = (
-            self.engine.compile(self.project.clone(), auto),
+            self.compiler.compile(self.project.clone(), auto),
             self.tx.clone(),
         );
         tokio::spawn(async move {
@@ -114,7 +114,7 @@ impl Actor {
     pub fn stop_compile(&mut self) {
         self.builds.queued = None;
         if self.builds.compiling {
-            self.engine.stop_compile(&self.project.root);
+            self.compiler.stop_compile(&self.project.root);
         }
     }
 
@@ -202,7 +202,7 @@ impl Actor {
     fn start_clean(&mut self) {
         self.builds.cleaning = Some((self.live.active(), self.live.intent));
         let (clean, tx) = (
-            self.engine.clean(self.project.build.clone()),
+            self.compiler.clean(self.project.build.clone()),
             self.tx.clone(),
         );
         tokio::spawn(async move {

@@ -12,7 +12,7 @@ use super::build::Builds;
 use super::documents::Doc;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Command, Document, Engine, Msg, Preview, Reply, Sessions};
+use super::{Compiler, Document, Msg, Preview, Reply, SessionCommand, Sessions};
 use crate::events::Queued;
 use crate::paths::Project;
 use crate::projects::{self, History, Query, Symbols};
@@ -69,7 +69,7 @@ pub(crate) struct Actor {
     pub project_id: String,
     pub project: Project,
     pub service: Arc<Service>,
-    pub engine: Arc<dyn Engine>,
+    pub compiler: Arc<dyn Compiler>,
     pub preview: Arc<dyn Preview>,
     events: std::sync::mpsc::Sender<Queued>,
     pub tx: mpsc::UnboundedSender<Msg>,
@@ -132,7 +132,7 @@ impl Actor {
             project_id,
             project,
             service: Arc::clone(&sessions.service),
-            engine: Arc::clone(&sessions.engine),
+            compiler: Arc::clone(&sessions.compiler),
             preview: Arc::clone(&sessions.preview),
             events: sessions.hub.queue.clone(),
             tx,
@@ -300,59 +300,65 @@ impl Actor {
     }
 
     #[expect(clippy::unit_arg)]
-    fn command(&mut self, command: Command, reply: Reply) {
+    fn command(&mut self, command: SessionCommand, reply: Reply) {
         let answer = match command {
-            Command::Clean => return self.clean(reply),
-            Command::Fix { id } => return self.fix(id, reply),
-            Command::Search {
+            SessionCommand::Clean => return self.clean(reply),
+            SessionCommand::Fix { id } => return self.fix(id, reply),
+            SessionCommand::Search {
                 query,
                 match_case,
                 whole_word,
             } => return self.search(Query::new(&query, match_case, whole_word), reply),
-            Command::Usages { path, offset } => return self.usages(&path.0, offset, reply),
-            Command::QuickHelp { path, offset } => return self.quick_help(&path.0, offset, reply),
-            Command::QuickOpen { query } => return self.quick_open(query, reply),
-            Command::HistoryList => return self.history_list(reply),
-            Command::HistorySave { name } => return self.history_save(name, reply),
-            Command::HistoryCompare { id, path } => return self.history_compare(id, path.0, reply),
-            Command::Rename { from, to } => {
+            SessionCommand::Usages { path, offset } => return self.usages(&path.0, offset, reply),
+            SessionCommand::QuickHelp { path, offset } => {
+                return self.quick_help(&path.0, offset, reply);
+            }
+            SessionCommand::QuickOpen { query } => return self.quick_open(query, reply),
+            SessionCommand::HistoryList => return self.history_list(reply),
+            SessionCommand::HistorySave { name } => return self.history_save(name, reply),
+            SessionCommand::HistoryCompare { id, path } => {
+                return self.history_compare(id, path.0, reply);
+            }
+            SessionCommand::Rename { from, to } => {
                 let answer = self.rename(&from.0, &to);
                 return self.after_events(answer, reply);
             }
-            Command::CreateEntry { folder, name, dir } => {
+            SessionCommand::CreateEntry { folder, name, dir } => {
                 let answer = self.create_entry(&folder, &name, dir);
                 return self.after_events(answer, reply);
             }
-            Command::Close => self.close(),
-            Command::SetOptions { auto_compile } => {
+            SessionCommand::Close => self.close(),
+            SessionCommand::SetOptions { auto_compile } => {
                 out(auto_compile.map(|auto| self.auto_compile = auto))
             }
-            Command::OpenDocument { path } => self.open_document(&path.0).and_then(out),
-            Command::CloseDocument { path } => self.close_document(&path.0),
-            Command::Composing { path, composing } => out(self.composing(&path.0, composing)),
-            Command::Save { reporting } => self
+            SessionCommand::OpenDocument { path } => self.open_document(&path.0).and_then(out),
+            SessionCommand::CloseDocument { path } => self.close_document(&path.0),
+            SessionCommand::Composing { path, composing } => {
+                out(self.composing(&path.0, composing))
+            }
+            SessionCommand::Save { reporting } => self
                 .save_edits(reporting.unwrap_or(true))
                 .map(|saved| json!({ "saved": saved })),
-            Command::Resolve { path, answer } => self.resolve(&path.0, answer),
-            Command::Compile { auto } => self.compile(auto).and_then(out),
-            Command::StopCompile => out(self.stop_compile()),
-            Command::Replace {
+            SessionCommand::Resolve { path, answer } => self.resolve(&path.0, answer),
+            SessionCommand::Compile { auto } => self.compile(auto).and_then(out),
+            SessionCommand::StopCompile => out(self.stop_compile()),
+            SessionCommand::Replace {
                 query,
                 replacement,
                 match_case,
                 whole_word,
             } => self.replace(&Query::new(&query, match_case, whole_word), &replacement),
-            Command::RenameSymbol { kind, from, to } => self.rename_symbol(kind, &from, &to),
-            Command::HistoryRestore { id, paths } => self.history_restore(&id, paths),
-            Command::SetSettings { patch } => self.set_settings(&patch, true),
-            Command::PrepareDelete { path } => self.prepare_delete(&path.0),
-            Command::Deleted { path, trashed } => out(self.deleted(&path.0, trashed)),
-            Command::LiveStart => Ok(self.live_start_asked()),
-            Command::LiveStop => Ok(self.live_stop_asked()),
-            Command::LiveLog { shown } => out(self.show_live_log(shown)),
-            Command::LiveView { first, last } => out(self.live_view(first, last)),
-            Command::LiveCaret { path, offset } => out(self.live_caret(path.0, offset)),
-            Command::Unknown => Err(unknown()),
+            SessionCommand::RenameSymbol { kind, from, to } => self.rename_symbol(kind, &from, &to),
+            SessionCommand::HistoryRestore { id, paths } => self.history_restore(&id, paths),
+            SessionCommand::SetSettings { patch } => self.set_settings(&patch, true),
+            SessionCommand::PrepareDelete { path } => self.prepare_delete(&path.0),
+            SessionCommand::Deleted { path, trashed } => out(self.deleted(&path.0, trashed)),
+            SessionCommand::LiveStart => Ok(self.live_start_asked()),
+            SessionCommand::LiveStop => Ok(self.live_stop_asked()),
+            SessionCommand::LiveLog { shown } => out(self.show_live_log(shown)),
+            SessionCommand::LiveView { first, last } => out(self.live_view(first, last)),
+            SessionCommand::LiveCaret { path, offset } => out(self.live_caret(path.0, offset)),
+            SessionCommand::Unknown => Err(unknown()),
         };
         reply.send(answer);
     }

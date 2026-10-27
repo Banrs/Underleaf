@@ -30,7 +30,7 @@ use crate::service::{Service, parse};
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
-pub(crate) use build::Engine;
+pub(crate) use build::Compiler;
 pub use document::Document;
 use documents::Resolution;
 use watch::Change;
@@ -41,7 +41,7 @@ pub(crate) enum Msg {
         version: u64,
         edit: Option<TextEdit>,
     },
-    Command(Command, Reply),
+    Command(SessionCommand, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),
     Symbols {
@@ -56,7 +56,7 @@ pub(crate) enum Msg {
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[rustfmt::skip]
-pub(crate) enum Command {
+pub(crate) enum SessionCommand {
     Close,
     SetOptions { auto_compile: Option<bool> },
     OpenDocument { path: RelPath },
@@ -97,7 +97,7 @@ pub(crate) enum Command {
 struct Call {
     session: u64,
     #[serde(flatten)]
-    command: Command,
+    command: SessionCommand,
 }
 
 #[derive(Deserialize)]
@@ -147,7 +147,7 @@ pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>
 pub struct Sessions {
     service: Arc<Service>,
     hub: Hub,
-    engine: Arc<dyn Engine>,
+    compiler: Arc<dyn Compiler>,
     preview: Arc<dyn Preview>,
     watch: bool,
     open: Arc<Mutex<HashMap<u64, Open>>>,
@@ -155,14 +155,14 @@ pub struct Sessions {
 
 impl Sessions {
     pub fn new(service: Arc<Service>, listener: Listener) -> Self {
-        let engine = Arc::new(Arc::clone(&service));
+        let compiler = Arc::new(Arc::clone(&service));
         let preview = Arc::clone(&service.texpresso);
-        Self::with_engine(service, engine, preview, true, listener)
+        Self::with_compiler(service, compiler, preview, true, listener)
     }
 
-    pub(crate) fn with_engine(
+    pub(crate) fn with_compiler(
         service: Arc<Service>,
-        engine: Arc<dyn Engine>,
+        compiler: Arc<dyn Compiler>,
         preview: Arc<dyn Preview>,
         watch: bool,
         listener: Listener,
@@ -170,7 +170,7 @@ impl Sessions {
         Self {
             service,
             hub: Hub::new(listener),
-            engine,
+            compiler,
             preview,
             watch,
             open: Arc::default(),
@@ -238,7 +238,7 @@ impl Sessions {
     ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
         let (reply, answer) = oneshot::channel();
         let queued = parse(name, args).and_then(|Call { session, command }| {
-            let closing = matches!(command, Command::Close);
+            let closing = matches!(command, SessionCommand::Close);
             let message = Msg::Command(command, Reply(Some(reply)));
             let open = lock(&self.open);
             let open = open.get(&session).ok_or_else(gone)?;
