@@ -19,7 +19,7 @@ pub struct Highlight {
     pub kind: HighlightKind,
 }
 
-pub struct Cache(Vec<State>);
+pub(crate) struct Cache(Vec<State>);
 
 impl Default for Cache {
     fn default() -> Self {
@@ -28,11 +28,11 @@ impl Default for Cache {
 }
 
 impl Cache {
-    pub fn forget_from(&mut self, line: usize) {
+    pub(crate) fn forget_from(&mut self, line: usize) {
         self.0.truncate(line.max(1));
     }
 
-    pub fn highlights(&mut self, text: &Text, start: u32, end: u32) -> Vec<Highlight> {
+    pub(crate) fn highlights(&mut self, text: &Text, start: u32, end: u32) -> Vec<Highlight> {
         let (first, last) = (text.line_index(start), text.line_index(end));
         let from = first.min(self.0.len() - 1);
         let mut runs = Vec::new();

@@ -5,16 +5,16 @@ use std::sync::{Arc, PoisonError};
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::analyze;
+use texlocal_latex::syntax::SymbolKind;
+use texlocal_latex::syntax::catalog::CATALOG;
+use texlocal_latex::syntax::scan::closing_brace;
 
 use super::Reply;
 use super::actor::Actor;
-use crate::analyze;
 use crate::paths;
 use crate::service::out;
 use crate::settings;
-use crate::syntax::SymbolKind;
-use crate::syntax::catalog::CATALOG;
-use crate::syntax::scan::closing_brace;
 use crate::{lf, lock, lossy_string};
 
 const LISTED: usize = 50;

@@ -7,16 +7,17 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use texlocal_latex::analyze::Facts;
+use texlocal_latex::templates;
 use zip::ZipArchive;
 use zip::result::ZipError;
 
-use crate::analyze::Facts;
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, Trash, is_litter, walk};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::zipexport::left_out;
-use crate::{CoreError, SETTINGS_FILE, atomic, templates};
+use crate::{CoreError, SETTINGS_FILE, atomic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -267,7 +268,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         return Opened::of_zip(stem, zip);
     }
     let path = file_name(src);
-    if projects::file_kind(&path) != "tex" {
+    if texlocal_latex::file_kind(&path) != "tex" {
         return Err(CoreError::bad_request(format!(
             "“{path}” isn’t a project: TeXLocal opens a folder, a .tex file or a .zip of a project."
         )));
@@ -359,7 +360,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     files.retain(|(path, _)| !left_out(path));
     if !files
         .iter()
-        .any(|(path, _)| projects::file_kind(path) == "tex")
+        .any(|(path, _)| texlocal_latex::file_kind(path) == "tex")
     {
         return Err(no_tex(&file_name(src)));
     }

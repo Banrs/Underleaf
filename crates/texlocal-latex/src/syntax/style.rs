@@ -6,10 +6,10 @@ use super::scan::{Group, Visit};
 use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct TextStyles {
-    pub bold: Option<Vec<TextEdit>>,
-    pub italic: Option<Vec<TextEdit>>,
-    pub underline: Option<Vec<TextEdit>>,
+pub(crate) struct TextStyles {
+    pub(crate) bold: Option<Vec<TextEdit>>,
+    pub(crate) italic: Option<Vec<TextEdit>>,
+    pub(crate) underline: Option<Vec<TextEdit>>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -46,7 +46,7 @@ impl Visit for Found {
 }
 
 impl SourceDocument {
-    pub fn text_styles(&mut self, selection: TextRange) -> TextStyles {
+    pub(crate) fn text_styles(&mut self, selection: TextRange) -> TextStyles {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let src = &self.text.units;
         let mut found = Found {

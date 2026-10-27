@@ -21,22 +21,22 @@ impl<T> Default for Stack<T> {
 }
 
 impl<T> Stack<T> {
-    pub fn push(&mut self, item: T) {
+    pub(crate) fn push(&mut self, item: T) {
         let below = std::mem::take(self);
         *self = Self(Some(Arc::new(Frame { item, below })));
     }
 
-    pub fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         if let Some(frame) = self.0.take() {
             *self = frame.below.clone();
         }
     }
 
-    pub fn top(&self) -> Option<&T> {
+    pub(crate) fn top(&self) -> Option<&T> {
         self.0.as_deref().map(|frame| &frame.item)
     }
 
-    pub fn top_mut(&mut self) -> Option<&mut T>
+    pub(crate) fn top_mut(&mut self) -> Option<&mut T>
     where
         T: Clone,
     {
@@ -47,11 +47,16 @@ impl<T> Stack<T> {
         std::iter::successors(self.0.as_deref(), |frame| frame.below.0.as_deref())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {
         self.frames().map(|frame| &frame.item)
     }
 
-    pub fn pop_to(&mut self, outermost: bool, pick: impl Fn(&T) -> bool, taken: impl FnOnce(&T)) {
+    pub(crate) fn pop_to(
+        &mut self,
+        outermost: bool,
+        pick: impl Fn(&T) -> bool,
+        taken: impl FnOnce(&T),
+    ) {
         let mut found = None;
         for frame in self.frames() {
             if pick(&frame.item) {

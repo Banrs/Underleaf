@@ -2,10 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use texlocal_latex::file_kind;
 
 use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
-use super::tree::{file_kind, visit_files};
+use super::tree::visit_files;
 use crate::error::CoreError;
 use crate::paths::{Project, identity};
 use crate::service::Service;

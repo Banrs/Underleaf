@@ -6,9 +6,9 @@ use super::scan::{Group, Scanner, Visit, tex_space};
 use super::{SourceDocument, headings, is};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct Fold {
-    pub line: u32,
-    pub end: u32,
+pub(crate) struct Fold {
+    pub(crate) line: u32,
+    pub(crate) end: u32,
 }
 
 #[derive(Default)]
@@ -44,7 +44,7 @@ impl Visit for Found {
 }
 
 impl SourceDocument {
-    pub fn folds(&self) -> Vec<Fold> {
+    pub(crate) fn folds(&self) -> Vec<Fold> {
         let units = &self.text.units;
         let mut found = Found::default();
         Scanner::default().run(units, units.len(), &[], &mut found);

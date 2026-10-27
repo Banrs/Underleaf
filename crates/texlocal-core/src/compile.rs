@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use texlocal_latex::logparse::{
+    LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
+};
 
 use crate::error::CoreError;
 use crate::lock;
-use crate::logparse::{
-    LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
-};
 use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
 use crate::settings::{granted, read_settings};

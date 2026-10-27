@@ -7,23 +7,22 @@ use serde_json::{Value, json};
 
 use super::{SourceDocument, Text, catalog, indentation, utf16};
 use crate::analyze::{Defined, Facts, Input, Named, Place};
-use crate::paths;
-use crate::projects::file_kind;
+use crate::{file_kind, fold_case, segments};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnippetField {
-    pub start: u32,
-    pub length: u32,
-    pub index: u32,
+pub(crate) struct SnippetField {
+    pub(crate) start: u32,
+    pub(crate) length: u32,
+    pub(crate) index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Completion {
-    pub label: String,
-    pub text: String,
-    pub fields: Vec<SnippetField>,
+pub(crate) struct Completion {
+    pub(crate) label: String,
+    pub(crate) text: String,
+    pub(crate) fields: Vec<SnippetField>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub(crate) detail: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -49,10 +48,10 @@ pub struct Symbols {
 }
 
 impl Symbols {
-    pub(crate) fn spelt(&self, rel: &str) -> Option<String> {
-        let rel = paths::fold_case(&paths::rel_key(rel).ok()?);
+    pub fn spelt(&self, rel: &str) -> Option<String> {
+        let rel = fold_case(&segments(rel)?.join("/"));
         let mut files = self.files.iter();
-        files.find(|file| paths::fold_case(file) == rel).cloned()
+        files.find(|file| fold_case(file) == rel).cloned()
     }
 }
 
@@ -65,10 +64,10 @@ pub struct Installed {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Completions {
-    pub start: u32,
-    pub kind: SymbolKind,
-    pub items: Vec<Completion>,
+pub(crate) struct Completions {
+    pub(crate) start: u32,
+    pub(crate) kind: SymbolKind,
+    pub(crate) items: Vec<Completion>,
 }
 
 static ARGUMENT: LazyLock<Regex> =
@@ -79,7 +78,7 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    pub fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
+    pub(crate) fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         let from = text.lines[line].max(caret.saturating_sub(250));
@@ -182,7 +181,7 @@ impl SourceDocument {
         offer(m.start(), SymbolKind::Command, items)
     }
 
-    pub fn definition(&self, at: u32) -> Option<Value> {
+    pub(crate) fn definition(&self, at: u32) -> Option<Value> {
         let own = Facts::read(&self.text(), file_kind(&self.path));
         let (kind, name, file) = self.symbol_at(&own, at)?;
         let places = match kind {
@@ -205,11 +204,7 @@ impl SourceDocument {
         (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
     }
 
-    pub(crate) fn symbol_at(
-        &self,
-        own: &Facts,
-        at: u32,
-    ) -> Option<(SymbolKind, String, Option<String>)> {
+    pub fn symbol_at(&self, own: &Facts, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
         let (text, at) = (&self.text, at.min(self.text.len()));
         let line = text.line_index(at);
         let column = at - text.lines[line];
@@ -231,12 +226,7 @@ impl SourceDocument {
         Some((named.kind, named.name.clone(), file))
     }
 
-    pub(crate) fn defined(
-        &self,
-        own: &Facts,
-        kind: SymbolKind,
-        name: &str,
-    ) -> Vec<(String, Place)> {
+    pub fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
         let others = self.symbols.by_file.iter();
         let others = others.filter(|(file, _)| **file != self.path);
         let mut files: Vec<(&str, &Facts)> =
@@ -251,7 +241,7 @@ impl SourceDocument {
     }
 }
 
-pub(crate) fn definitions(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
+pub fn definitions(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
     let named = |list: &[Named]| -> Vec<Place> {
         let list = list.iter().filter(|named| named.name == name);
         list.map(|named| named.place).collect()
@@ -267,7 +257,7 @@ pub(crate) fn definitions(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Pl
     }
 }
 
-pub(crate) fn usages(
+pub fn usages(
     facts: &Facts,
     file: &str,
     kind: SymbolKind,

@@ -1,20 +1,14 @@
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io;
+use std::collections::HashMap;
 use std::ops::Range;
-use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Serialize;
 
 use crate::checks::{Slip, Structure, Walk};
-use crate::projects::file_kind;
-use crate::stamp::Stamp;
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::{Group, Scanner, Visit};
 use crate::syntax::{SymbolKind, Symbols, Text, headings, prose, scan};
-use crate::{lock, paths};
 
 static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\(?:texorpdfstring|label|index|footnote|begin|end)\s*\{").unwrap()
@@ -32,16 +26,16 @@ static CROSSREF: LazyLock<Regex> =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Heading {
     #[serde(skip)]
-    pub depth: usize,
-    pub command: &'static str,
+    pub(crate) depth: usize,
+    pub(crate) command: &'static str,
     pub level: &'static str,
     pub title: String,
-    pub untitled: bool,
+    pub(crate) untitled: bool,
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     #[serde(skip)]
-    pub words: usize,
+    pub(crate) words: usize,
 }
 
 impl Heading {
@@ -62,20 +56,20 @@ impl Heading {
 
 #[derive(Default)]
 pub struct Facts {
-    pub headings: Vec<Heading>,
-    pub inputs: Vec<Input>,
+    pub(crate) headings: Vec<Heading>,
+    pub(crate) inputs: Vec<Input>,
     pub words: usize,
     pub labels: Vec<Named>,
     pub citations: Vec<Named>,
     pub commands: Vec<Defined>,
     pub environments: Vec<Named>,
-    pub uses: Vec<Named>,
-    pub class: Option<String>,
+    pub(crate) uses: Vec<Named>,
+    pub(crate) class: Option<String>,
     pub packages: Vec<String>,
     pub new_package: Option<Place>,
-    pub bibliographies: Vec<String>,
-    pub slips: Vec<Slip>,
-    pub end: Option<Place>,
+    pub(crate) bibliographies: Vec<String>,
+    pub(crate) slips: Vec<Slip>,
+    pub(crate) end: Option<Place>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -98,7 +92,7 @@ impl Place {
 
 #[derive(Clone)]
 pub struct Named {
-    pub kind: SymbolKind,
+    pub(crate) kind: SymbolKind,
     pub name: String,
     pub place: Place,
     pub detail: Option<String>,
@@ -107,12 +101,12 @@ pub struct Named {
 #[derive(Clone)]
 pub struct Defined {
     pub name: String,
-    pub arguments: usize,
-    pub place: Place,
-    pub tex: Option<String>,
+    pub(crate) arguments: usize,
+    pub(crate) place: Place,
+    pub(crate) tex: Option<String>,
 }
 
-pub struct Input {
+pub(crate) struct Input {
     pub(crate) before: usize,
     pub(crate) name: String,
     folder: Folder,
@@ -155,7 +149,7 @@ impl Input {
 }
 
 impl Facts {
-    pub(crate) fn read(source: &str, kind: &str) -> Self {
+    pub fn read(source: &str, kind: &str) -> Self {
         let text = Text::new(source);
         let mut facts = Self::default();
         if kind == "bib" {
@@ -431,7 +425,7 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-pub(crate) fn bib_entry(source: &str, key: &str) -> Option<String> {
+pub fn bib_entry(source: &str, key: &str) -> Option<String> {
     let (_, body) = entries(source).find(|(entry, _)| &entry[2] == key)?;
     let fields = fields(body);
     let field = |name| field(&fields, name);
@@ -478,44 +472,19 @@ fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
     parts
 }
 
-#[derive(Default)]
-pub struct Files(Mutex<HashMap<String, (Stamp, Arc<Facts>)>>);
-
-impl Files {
-    pub fn facts(&self, abs: &Path, rel: &str) -> io::Result<Arc<Facts>> {
-        let stamp = Stamp::of(&fs::metadata(abs)?);
-        let key = paths::fold_case(rel);
-        if let Some((read, facts)) = lock(&self.0).get(&key)
-            && *read == stamp
-            && stamp.modified % 1_000_000_000 != 0
-        {
-            return Ok(Arc::clone(facts));
-        }
-        let text = crate::lf(crate::lossy_string(fs::read(abs)?));
-        let facts = Arc::new(Facts::read(&text, file_kind(rel)));
-        lock(&self.0).insert(key, (stamp, Arc::clone(&facts)));
-        Ok(facts)
-    }
-
-    pub fn keep<'a>(&self, rels: impl Iterator<Item = &'a String>) {
-        let kept: HashSet<String> = rels.map(|rel| paths::fold_case(rel)).collect();
-        lock(&self.0).retain(|key, _| kept.contains(key));
-    }
-}
-
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OutlineNode {
-    pub index: usize,
+pub(crate) struct OutlineNode {
+    pub(crate) index: usize,
     #[serde(flatten)]
-    pub heading: Heading,
-    pub fold_key: String,
-    pub words: usize,
+    pub(crate) heading: Heading,
+    pub(crate) fold_key: String,
+    pub(crate) words: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<Self>,
+    pub(crate) children: Vec<Self>,
 }
 
-pub fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
+pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     fn nest(
         outline: &[Heading],
         next: &mut usize,
@@ -559,9 +528,9 @@ pub struct Analysis {
     pub outline: Vec<Heading>,
     #[serde(skip)]
     pub files: Vec<String>,
-    pub tree: Vec<OutlineNode>,
-    pub words: usize,
-    pub heading_styles: Vec<headings::Level>,
+    pub(crate) tree: Vec<OutlineNode>,
+    pub(crate) words: usize,
+    pub(crate) heading_styles: Vec<headings::Level>,
 }
 
 pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {
@@ -583,23 +552,6 @@ pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str
             .collect(),
         outline: walk.outline,
     }
-}
-
-pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
-    let mut path = root.to_path_buf();
-    let mut spelt = Vec::new();
-    for name in rel.split('/') {
-        let folded = paths::fold_case(name);
-        let found = fs::read_dir(&path)
-            .ok()?
-            .flatten()
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|entry| paths::fold_case(entry) == folded)
-            .max_by_key(|entry| entry == name)?;
-        path.push(&found);
-        spelt.push(found);
-    }
-    path.is_file().then(|| spelt.join("/"))
 }
 
 pub(crate) const INPUT_DEPTH: usize = 15;

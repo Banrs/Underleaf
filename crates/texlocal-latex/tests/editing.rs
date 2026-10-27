@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use texlocal_core::syntax::{self, SourceDocument};
+use texlocal_latex::syntax::{self, SourceDocument};
 
 fn run(doc: &mut SourceDocument, command: &str, args: Value) -> Value {
     let answer = doc.call(command, &args.to_string()).expect(command);

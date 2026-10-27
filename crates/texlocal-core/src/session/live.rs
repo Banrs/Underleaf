@@ -3,14 +3,15 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::is_text;
+use texlocal_latex::logparse::{LogItem, parse_live_log};
+use texlocal_latex::syntax::TextEdit;
 
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
-use crate::logparse::{LogItem, parse_live_log};
-use crate::projects::{is_text, read_capped};
+use crate::projects::read_capped;
 use crate::settings::{self, Engine};
-use crate::syntax::TextEdit;
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
 

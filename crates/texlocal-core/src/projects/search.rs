@@ -5,12 +5,13 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::analyze::Place;
+use texlocal_latex::file_kind;
 
 use super::files::{Planned, inside, write_all};
 use super::history::MAX_KEPT;
 use super::read_capped;
-use super::tree::{file_kind, visit_files};
-use crate::analyze::Place;
+use super::tree::visit_files;
 use crate::error::CoreError;
 use crate::{lf, lossy_string, newline};
 

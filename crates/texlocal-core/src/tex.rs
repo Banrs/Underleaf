@@ -5,11 +5,11 @@ use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use serde::Serialize;
+use texlocal_latex::syntax::Installed;
 
 use crate::process::run;
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
-use crate::syntax::Installed;
 use crate::tinytex;
 
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {

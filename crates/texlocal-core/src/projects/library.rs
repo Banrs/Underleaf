@@ -7,16 +7,17 @@ use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use serde_json::json;
+use texlocal_latex::file_kind;
+use texlocal_latex::syntax::SourceDocument;
+use texlocal_latex::templates;
 
 use super::files::occupied;
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
-use super::tree::{file_kind, listed, walk};
+use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{read_settings, write_settings};
-use crate::syntax::SourceDocument;
-use crate::templates;
 use crate::{SETTINGS_FILE, atomic};
 
 #[derive(Debug, Serialize)]

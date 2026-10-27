@@ -1,5 +1,5 @@
 mod call;
-pub(crate) mod catalog;
+pub mod catalog;
 mod complete;
 mod edit;
 mod folds;
@@ -8,7 +8,7 @@ mod highlight;
 mod preview;
 pub(crate) mod prose;
 pub(crate) mod render;
-pub(crate) mod scan;
+pub mod scan;
 mod scans;
 mod snippet;
 mod stack;
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 pub use call::call;
 use complete::SnippetField;
 pub use complete::{Installed, SymbolKind, Symbols};
-pub(crate) use complete::{definitions, usages};
+pub use complete::{definitions, usages};
 use highlight::Highlight;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,16 +68,16 @@ fn splice(start: usize, length: usize, text: impl Into<String>) -> TextEdit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Checker {
+pub(crate) enum Checker {
     Spelling,
     WritingTools,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Insertion {
-    pub edit: TextEdit,
-    pub caret: u32,
-    pub fields: Vec<SnippetField>,
+pub(crate) struct Insertion {
+    pub(crate) edit: TextEdit,
+    pub(crate) caret: u32,
+    pub(crate) fields: Vec<SnippetField>,
 }
 
 const NEWLINE: u16 = b'\n' as u16;
@@ -85,13 +85,13 @@ const CARRIAGE_RETURN: u16 = b'\r' as u16;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Line {
-    pub start: usize,
-    pub end: usize,
-    pub next: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) next: usize,
 }
 
-pub(crate) struct Text {
-    pub units: Vec<u16>,
+pub struct Text {
+    pub(crate) units: Vec<u16>,
     pub lines: Vec<u32>,
 }
 
@@ -104,7 +104,7 @@ fn line_starts(units: &[u16], at: u32) -> impl Iterator<Item = u32> + '_ {
 }
 
 impl Text {
-    pub(crate) fn new(text: &str) -> Self {
+    pub fn new(text: &str) -> Self {
         let units: Vec<u16> = text.encode_utf16().collect();
         let lines = std::iter::once(0).chain(line_starts(&units, 0)).collect();
         Self { units, lines }
@@ -114,11 +114,11 @@ impl Text {
         self.units.len() as u32
     }
 
-    pub fn line_index(&self, offset: u32) -> usize {
+    pub(crate) fn line_index(&self, offset: u32) -> usize {
         self.lines.partition_point(|&start| start <= offset) - 1
     }
 
-    pub fn bounds(&self, index: usize) -> Line {
+    pub(crate) fn bounds(&self, index: usize) -> Line {
         let start = self.lines[index] as usize;
         let last = index + 1 == self.lines.len();
         let next = self
@@ -132,11 +132,11 @@ impl Text {
         Line { start, end, next }
     }
 
-    pub fn around(&self, offset: usize) -> Line {
+    pub(crate) fn around(&self, offset: usize) -> Line {
         self.bounds(self.line_index(offset as u32))
     }
 
-    pub fn line(&self, index: usize) -> &[u16] {
+    pub(crate) fn line(&self, index: usize) -> &[u16] {
         let Line { start, end, .. } = self.bounds(index);
         &self.units[start..end]
     }
@@ -162,7 +162,7 @@ pub struct SourceDocument {
     scans: scans::Scans,
     symbols: Arc<Symbols>,
     typing: typing::Typing,
-    pub(crate) path: String,
+    pub path: String,
 }
 
 impl SourceDocument {
@@ -177,7 +177,7 @@ impl SourceDocument {
         }
     }
 
-    pub(crate) fn named(text: &str, path: &str) -> Self {
+    pub fn named(text: &str, path: &str) -> Self {
         Self {
             path: path.to_owned(),
             ..Self::new(text)

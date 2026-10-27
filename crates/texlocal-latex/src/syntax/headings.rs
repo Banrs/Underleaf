@@ -43,12 +43,12 @@ pub(crate) const LEVELS: [(&str, &str); 6] = [
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Level {
-    pub title: &'static str,
-    pub command: &'static str,
+pub(crate) struct Level {
+    pub(crate) title: &'static str,
+    pub(crate) command: &'static str,
 }
 
-pub fn heading_styles(class: Option<&str>) -> Vec<Level> {
+pub(crate) fn heading_styles(class: Option<&str>) -> Vec<Level> {
     let allowed = |command: &&str| match class {
         Some("letter" | "minimal") => false,
         Some("IEEEtran") => !matches!(*command, "part" | "chapter"),

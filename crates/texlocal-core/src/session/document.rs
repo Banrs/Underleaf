@@ -1,12 +1,13 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
+use texlocal_latex::analyze::Facts;
+use texlocal_latex::file_kind;
+use texlocal_latex::syntax::{SourceDocument, TextEdit, TextRange};
 use tokio::sync::mpsc;
 
 use super::Msg;
-use crate::analyze::Facts;
 use crate::lock;
-use crate::projects::{Symbols, file_kind};
-use crate::syntax::{SourceDocument, TextEdit, TextRange};
+use crate::projects::Symbols;
 
 struct Text {
     source: SourceDocument,

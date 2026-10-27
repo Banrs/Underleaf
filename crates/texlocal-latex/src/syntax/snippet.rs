@@ -8,9 +8,9 @@ use super::{
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Tab {
-    pub field: Option<TextRange>,
-    pub edits: Vec<TextEdit>,
+pub(crate) struct Tab {
+    pub(crate) field: Option<TextRange>,
+    pub(crate) edits: Vec<TextEdit>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +124,7 @@ fn name_field(units: &[u16], at: usize) -> Option<Field> {
 }
 
 impl SourceDocument {
-    pub fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
+    pub(crate) fn start_snippet(&mut self, fields: &[SnippetField], at: u32) -> Option<TextRange> {
         let snippet = Snippet::new(fields, at as usize);
         let first = snippet.place(0)?;
         for field in snippet.fields.iter().filter(|f| f.length == 0) {
@@ -138,11 +138,11 @@ impl SourceDocument {
         Some(span(first.start, first.length))
     }
 
-    pub fn end_snippet(&mut self) -> bool {
+    pub(crate) fn end_snippet(&mut self) -> bool {
         self.typing.snippet.take_if(|s| s.tabs()).is_some()
     }
 
-    pub fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
+    pub(crate) fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
         let snippet = self.typing.snippet.as_mut().filter(|s| s.tabs());
         let moved = snippet.map(|snippet| snippet.go(step));
         let edits = match moved {

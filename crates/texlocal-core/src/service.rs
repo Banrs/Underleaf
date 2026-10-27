@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use texlocal_latex::wordmatch::PdfPage;
 
 use crate::compile::CompileManager;
 use crate::import::Conflict;
@@ -14,7 +15,6 @@ use crate::settings::{self, AppSettings};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::wordmatch::PdfPage;
 use crate::{CoreError, import, lock, tinytex, zipexport};
 
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";

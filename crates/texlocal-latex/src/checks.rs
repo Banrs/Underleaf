@@ -6,7 +6,7 @@ use crate::logparse::{LogItem, Severity};
 use crate::syntax::scan::{self, Group};
 use crate::syntax::{SymbolKind, Symbols, Text};
 
-pub struct Slip {
+pub(crate) struct Slip {
     place: Place,
     message: String,
     kind: Kind,
@@ -29,7 +29,7 @@ pub(crate) struct Structure {
 }
 
 impl Structure {
-    pub fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
+    pub(crate) fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
         if !matches!(name, "begin" | "end") || !self.braces.is_empty() || !self.read(start) {
             return;
         }
@@ -62,7 +62,7 @@ impl Structure {
         self.environments.truncate(begun);
     }
 
-    pub fn brace(&mut self, text: &Text, at: usize, open: bool) {
+    pub(crate) fn brace(&mut self, text: &Text, at: usize, open: bool) {
         if !self.read(at) {
             return;
         }
@@ -74,7 +74,7 @@ impl Structure {
         }
     }
 
-    pub fn unclosed(&mut self, text: &Text, group: &Group) {
+    pub(crate) fn unclosed(&mut self, text: &Text, group: &Group) {
         if !self.read(group.open) {
             return;
         }
@@ -86,7 +86,7 @@ impl Structure {
         self.slip(text, group.open, message, Kind::Unbalanced);
     }
 
-    pub fn finish(mut self, text: &Text, open: &[Group]) -> (Vec<Slip>, Option<Place>) {
+    pub(crate) fn finish(mut self, text: &Text, open: &[Group]) -> (Vec<Slip>, Option<Place>) {
         for group in open.iter().filter(|group| group.delimited()) {
             self.unclosed(text, group);
         }
@@ -133,16 +133,16 @@ fn read<'a>(facts: &'a Facts, names: &'a [Named]) -> impl Iterator<Item = &'a Na
 
 pub(crate) struct Walk<'a> {
     symbols: &'a Symbols,
-    pub files: Vec<(&'a str, &'a Facts)>,
+    pub(crate) files: Vec<(&'a str, &'a Facts)>,
     labels: Vec<(&'a str, &'a Named)>,
     slips: Vec<(&'a str, &'a Slip)>,
     missing: Vec<(&'a str, &'a Input)>,
-    pub outline: Vec<Heading>,
-    pub words: usize,
+    pub(crate) outline: Vec<Heading>,
+    pub(crate) words: usize,
 }
 
 impl<'a> Walk<'a> {
-    pub fn from(symbols: &'a Symbols, file: &str) -> Self {
+    pub(crate) fn from(symbols: &'a Symbols, file: &str) -> Self {
         let mut walk = Self {
             symbols,
             files: Vec::new(),
@@ -254,7 +254,7 @@ fn warning(file: &str, line: u32, message: String) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
-pub(crate) fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
+pub fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     let walk = Walk::from(symbols, main);
     let reached = || walk.files.iter().copied();
     let undefined = |kind, noun: &str, defined: &HashSet<&str>| -> Vec<LogItem> {

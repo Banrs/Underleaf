@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use texlocal_core::CoreError;
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
-use texlocal_core::syntax::{self, SourceDocument, TextRange};
+use texlocal_latex::syntax::{self, SourceDocument, TextRange};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,

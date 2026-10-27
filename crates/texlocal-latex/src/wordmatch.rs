@@ -5,17 +5,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct PdfPage {
-    pub page: u32,
-    pub text: String,
+    pub(crate) page: u32,
+    pub(crate) text: String,
     #[serde(default)]
-    pub near: Vec<(usize, usize)>,
+    pub(crate) near: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct PdfHit {
-    pub page: u32,
-    pub start: usize,
-    pub end: usize,
+    pub(crate) page: u32,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 const LIGATURES: [(char, &str); 5] = [
@@ -153,7 +153,7 @@ fn unique<K: Ord, T>(mut ranked: Vec<(K, T)>) -> Option<T> {
         .then_some(found)
 }
 
-pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHit> {
+pub fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHit> {
     let mut source = Letters::default();
     source.push(line, 0, true);
     let word = source.run(source.at(column)?);
@@ -192,12 +192,7 @@ pub(crate) fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Optio
     })
 }
 
-pub(crate) fn find_in_source(
-    source: &str,
-    line: u32,
-    page_text: &str,
-    at: usize,
-) -> Option<(u32, u32)> {
+pub fn find_in_source(source: &str, line: u32, page_text: &str, at: usize) -> Option<(u32, u32)> {
     if at >= page_text.encode_utf16().count() {
         return None;
     }

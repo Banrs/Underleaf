@@ -5,13 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::syntax::TextEdit;
 
 use super::Reply;
 use super::actor::Actor;
 use crate::paths::RelPath;
 use crate::projects::{self, History, Taken};
 use crate::service::out;
-use crate::syntax::TextEdit;
 use crate::texpresso::delta;
 use crate::{CoreError, lf, lock, lossy_string};
 
@@ -58,7 +58,7 @@ impl Actor {
     }
 
     pub fn history_compare(&self, id: String, path: String, reply: Reply) {
-        if !projects::is_text(&path) {
+        if !texlocal_latex::is_text(&path) {
             let refused = CoreError::bad_request("Only a text file can be compared.");
             return reply.send(Err(refused));
         }

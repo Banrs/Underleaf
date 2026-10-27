@@ -1,9 +1,5 @@
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::Path;
-use std::sync::Arc;
-
-use crate::stamp::Kept;
 
 const FAR: i64 = i32::MAX as i64;
 const LISTS: usize = 1024;
@@ -64,7 +60,7 @@ struct Node {
     sibling: Option<u32>,
 }
 
-pub(super) struct Shown {
+pub struct Shown {
     pub page: i32,
     pub h: f32,
     pub v: f32,
@@ -84,7 +80,7 @@ struct Input {
     last_line: i32,
 }
 
-pub(super) struct SyncTex {
+pub struct SyncTex {
     nodes: Vec<Node>,
     sheets: Vec<Sheet>,
     inputs: BTreeMap<i32, Input>,
@@ -96,29 +92,15 @@ pub(super) struct SyncTex {
 }
 
 impl SyncTex {
-    pub fn beside(pdf: &Path) -> std::io::Result<Arc<Self>> {
-        static PARSED: Kept<SyncTex> = Kept::new();
-        let plain = pdf.with_extension("synctex");
-        let file = if plain.is_file() {
-            plain
-        } else {
-            plain.with_extension("synctex.gz")
-        };
-        PARSED.get(&file, Self::read)
-    }
-
-    fn read(file: &Path) -> std::io::Result<Self> {
-        let bytes = std::fs::read(file)?;
+    pub fn read(bytes: Vec<u8>) -> Option<Self> {
         let bytes = if bytes.starts_with(&[0x1f, 0x8b]) {
             let mut unzipped = Vec::new();
-            flate2::read::MultiGzDecoder::new(&bytes[..]).read_to_end(&mut unzipped)?;
-            unzipped
+            let gz = flate2::read::MultiGzDecoder::new(&bytes[..]).read_to_end(&mut unzipped);
+            gz.ok().map(|_| unzipped)?
         } else {
             bytes
         };
-        Self::parse(&bytes).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "not a SyncTeX file")
-        })
+        Self::parse(&bytes)
     }
 
     pub fn inputs(&self) -> impl Iterator<Item = (i32, &str)> {

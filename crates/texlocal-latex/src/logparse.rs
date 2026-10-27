@@ -26,9 +26,9 @@ pub struct LogItem {
     #[serde(skip)]
     pub command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub explain: Option<&'static str>,
+    pub(crate) explain: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fix: Option<Fix>,
+    pub(crate) fix: Option<Fix>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,7 +40,7 @@ pub enum Fix {
 }
 
 impl Fix {
-    pub(crate) fn parse(id: &str) -> Option<Self> {
+    pub fn parse(id: &str) -> Option<Self> {
         match id.split_once(':') {
             Some(("install", file)) => Some(Self::Install(file.into())),
             Some(("package", name)) => Some(Self::AddPackage(name.into())),
@@ -106,7 +106,7 @@ impl LogItem {
         }
     }
 
-    pub(crate) fn error(message: impl Into<String>) -> Self {
+    pub fn error(message: impl Into<String>) -> Self {
         Self::new(Severity::Error, None, None, message.into())
     }
 }
@@ -579,9 +579,9 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     items
 }
 
-pub(crate) const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
+pub const SHELL_ESCAPE: &str = "A package here runs programs as it builds, which needs Shell Escape. Turn on Shell Escape in the project's settings if you trust the project.";
 
-pub(crate) fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
+pub fn point_to_shell_escape(errors: &mut Vec<LogItem>, log: &str) {
     if let Some(error) = errors
         .iter_mut()
         .find(|e| SHELL_ESCAPE_ASKED.is_match(&e.short))

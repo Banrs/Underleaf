@@ -8,10 +8,10 @@ use ratex_types::math_style::MathStyle;
 use serde::Serialize;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct MathSvg {
-    pub svg: String,
-    pub width: f64,
-    pub height: f64,
+pub(crate) struct MathSvg {
+    pub(crate) svg: String,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
 }
 
 const MAX_EM: f64 = 1000.0;
@@ -71,7 +71,7 @@ fn svg(list: &DisplayList, size: f64) -> Option<String> {
     (!undrawable.iter().any(|bad| svg.contains(bad))).then_some(svg)
 }
 
-pub fn math_svg(tex: &str, display: bool, size: f64) -> Option<MathSvg> {
+pub(crate) fn math_svg(tex: &str, display: bool, size: f64) -> Option<MathSvg> {
     if !size.is_finite() {
         return None;
     }

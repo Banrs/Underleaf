@@ -13,15 +13,15 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::Value;
+use texlocal_latex::logparse::LogItem;
+use texlocal_latex::syntax::TextEdit;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener};
-use crate::logparse::LogItem;
 use crate::paths::RelPath;
 use crate::projects::Symbols;
 use crate::service::{Service, parse};
-use crate::syntax::TextEdit;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 

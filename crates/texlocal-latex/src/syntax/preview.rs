@@ -10,10 +10,10 @@ use super::catalog::CATALOG;
 use super::scan::{Group, Visit, environment_name};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct MathPreview {
-    pub start: u32,
-    pub tex: String,
-    pub display: bool,
+pub(crate) struct MathPreview {
+    pub(crate) start: u32,
+    pub(crate) tex: String,
+    pub(crate) display: bool,
 }
 
 static LABELS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:label|tag)\{[^}]*\}").unwrap());
@@ -56,7 +56,7 @@ impl Visit for Close {
 }
 
 impl SourceDocument {
-    pub fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
+    pub(crate) fn math_at(&mut self, caret: u32) -> Option<MathPreview> {
         let (units, caret) = (&self.text.units, caret.min(self.text.len()) as usize);
         let ahead = (caret + AHEAD).min(units.len());
         let mut scanner = self.scans.resume(&self.text, caret, ahead).scanner;

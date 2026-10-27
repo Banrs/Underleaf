@@ -10,6 +10,11 @@ use std::time::Duration;
 use notify::RecommendedWatcher;
 use serde::Serialize;
 use serde_json::{Value, json};
+use texlocal_latex::analyze::{self, Facts, Place};
+use texlocal_latex::checks;
+use texlocal_latex::file_kind;
+use texlocal_latex::logparse::{Fix, LogItem};
+use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
 use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
@@ -17,16 +22,13 @@ use super::build::Builds;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
 use super::{Command, Document, Engine, Msg, Preview, Reply, Sessions};
-use crate::analyze::{self, Facts, Place};
 use crate::events::Queued;
-use crate::logparse::{Fix, LogItem};
 use crate::paths::{self, Project, within};
-use crate::projects::{self, History, Query, Symbols, file_kind};
+use crate::projects::{self, History, Query, Symbols};
 use crate::service::{Service, out, unknown};
 use crate::settings;
 use crate::stamp::Stamp;
-use crate::syntax::{self, SymbolKind, Text, TextEdit};
-use crate::{CoreError, checks, lf, lock, newline, packages, tex};
+use crate::{CoreError, lf, lock, newline, packages, tex};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -136,7 +138,7 @@ pub(crate) struct Actor {
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     symbols_seq: u64,
     outline: Value,
-    pub facts: Arc<analyze::Files>,
+    pub facts: Arc<projects::Files>,
     pub edits: u64,
     pub last_edits: HashMap<String, u64>,
     pub auto_compile: bool,
@@ -459,7 +461,7 @@ impl Actor {
 
     fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
         let path =
-            &analyze::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
+            &paths::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
         if let Some(doc) = self.docs.get(path) {
             let id = doc.doc.id();
             if id != self.shown {
@@ -941,7 +943,8 @@ impl Actor {
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
-            let hits = projects::search_project(&root, &open, &projects::is_text, &found, 100);
+            let hits =
+                projects::search_project(&root, &open, &texlocal_latex::is_text, &found, 100);
             reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
         });
     }
@@ -949,7 +952,13 @@ impl Actor {
     fn replace(&self, query: &Query, to: &str) -> Result<Value, CoreError> {
         let open = self.texts_to_edit("replaced")?;
         let found = |_: &str, text: &str| query.places(text);
-        self.edit_project("Before Replace All", &open, &projects::is_text, &found, to)
+        self.edit_project(
+            "Before Replace All",
+            &open,
+            &texlocal_latex::is_text,
+            &found,
+            to,
+        )
     }
 
     fn usages(&self, path: &str, offset: u32, reply: Reply) {

@@ -4,12 +4,12 @@ use super::scan::{Scanner, Visit, arguments};
 use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
 impl SourceDocument {
-    pub fn words(&self, selection: TextRange) -> usize {
+    pub(crate) fn words(&self, selection: TextRange) -> usize {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         prose(&self.text, |_, _, _| {}).words(start..end)
     }
 
-    pub fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
+    pub(crate) fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let (text, mut point) = (&self.text, self.scans.resume(&self.text, start, end));
         let mut reading = Reading::new(text, end, point.names, checker, |_: &Text, _: &str, _| {});
@@ -60,7 +60,7 @@ pub(crate) struct Names {
 }
 
 impl Names {
-    pub fn command(
+    pub(crate) fn command(
         &mut self,
         text: &Text,
         (name, command_start, name_end): (&str, usize, usize),
@@ -79,7 +79,7 @@ impl Names {
         }
     }
 
-    pub fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
+    pub(crate) fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
         if let Some(from) = self.from {
             self.parsed_until = arguments(&text.units[..end], from, |r, _| {
                 ranges.push(span(r.start, r.len()));
@@ -153,7 +153,7 @@ pub(crate) fn prose<'a>(text: &'a Text, command: impl FnMut(&Text, &str, usize))
 }
 
 impl Prose<'_> {
-    pub fn words(&self, range: Range<usize>) -> usize {
+    pub(crate) fn words(&self, range: Range<usize>) -> usize {
         let end = |r: &TextRange| (r.start + r.length) as usize;
         let first = self.skipped.partition_point(|r| end(r) <= range.start);
         let mut at = first.checked_sub(1).map_or(0, |i| end(&self.skipped[i]));

@@ -4,7 +4,7 @@ use std::ops::Range;
 use super::stack::Stack;
 use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter};
 
-pub(crate) fn closing_brace(body: &str) -> Option<usize> {
+pub fn closing_brace(body: &str) -> Option<usize> {
     let (mut depth, mut slashes) = (1, 0);
     body.find(|c| {
         if slashes % 2 == 0 {
@@ -97,10 +97,10 @@ pub(crate) fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usiz
 
 #[derive(Clone, Debug)]
 pub(crate) struct Group {
-    pub math: bool,
-    pub end: Cow<'static, str>,
-    pub open: usize,
-    pub command: Option<(usize, usize)>,
+    pub(crate) math: bool,
+    pub(crate) end: Cow<'static, str>,
+    pub(crate) open: usize,
+    pub(crate) command: Option<(usize, usize)>,
 }
 
 impl Group {
@@ -113,7 +113,7 @@ impl Group {
         }
     }
 
-    pub fn delimited(&self) -> bool {
+    pub(crate) fn delimited(&self) -> bool {
         matches!(self.end.as_ref(), "$" | "$$" | "\\)" | "\\]")
     }
 }
@@ -143,17 +143,23 @@ pub(crate) struct Scanner {
 }
 
 impl Scanner {
-    pub fn in_math(&self) -> bool {
+    pub(crate) fn in_math(&self) -> bool {
         self.stack.top().is_some_and(|g| g.math)
     }
 
-    pub fn groups(&self) -> Vec<Group> {
+    pub(crate) fn groups(&self) -> Vec<Group> {
         let mut groups: Vec<Group> = self.stack.iter().cloned().collect();
         groups.reverse();
         groups
     }
 
-    pub fn run(&mut self, src: &[u16], until: usize, probes: &[usize], visit: &mut impl Visit) {
+    pub(crate) fn run(
+        &mut self,
+        src: &[u16],
+        until: usize,
+        probes: &[usize],
+        visit: &mut impl Visit,
+    ) {
         let (mut probe, mut paragraph_ended) = (0, false);
         while self.i < src.len().min(until) {
             let start = self.i;

@@ -1,9 +1,9 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind::{NotFound, PermissionDenied};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use texlocal_latex::file_kind;
 
 use super::skip_unreadable;
 use crate::BUILD_DIR;
@@ -139,30 +139,4 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     }
     let main = read_settings(&project.settings).main_file;
     nodes(&project.root, &project.root, &fold_case(&main))
-}
-
-const TEXT_EXTENSIONS: &[&str] = &[
-    "ltx", "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist",
-    "lco", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",
-    "json", "yaml", "yml", "toml", "ini", "xml", "lua", "py", "r", "sh",
-];
-
-const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
-
-pub fn file_kind(name: &str) -> &'static str {
-    let path = Path::new(name);
-    let lower = |part: Option<&OsStr>| part.unwrap_or_default().to_string_lossy().to_lowercase();
-    match lower(path.extension()).as_str() {
-        "tex" => "tex",
-        "bib" => "bib",
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" => "image",
-        "pdf" => "pdf",
-        ext if TEXT_EXTENSIONS.contains(&ext) => "text",
-        "" if TEXT_NAMES.contains(&lower(path.file_name()).as_str()) => "text",
-        _ => "other",
-    }
-}
-
-pub(crate) fn is_text(name: &str) -> bool {
-    matches!(file_kind(name), "tex" | "bib" | "text")
 }

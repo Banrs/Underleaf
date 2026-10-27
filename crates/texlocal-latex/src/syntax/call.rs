@@ -1,12 +1,11 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::complete::SnippetField;
 use super::edit::{Style, map_selections};
 use super::{Checker, SourceDocument, TextEdit, TextRange};
 use super::{catalog, headings, render};
-use crate::service::parse;
 
 #[derive(Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case", rename_all_fields = "camelCase")]
@@ -52,7 +51,9 @@ fn json(value: impl Serialize) -> Option<String> {
 }
 
 fn read<T: DeserializeOwned>(command: &str, args_json: &str) -> Option<T> {
-    parse(command, serde_json::from_str(args_json).ok()?).ok()
+    let mut args: Value = serde_json::from_str(args_json).ok()?;
+    args.as_object_mut()?.insert("call".into(), command.into());
+    T::deserialize(args).ok()
 }
 
 impl SourceDocument {

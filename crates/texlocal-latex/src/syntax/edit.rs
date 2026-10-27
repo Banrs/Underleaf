@@ -11,14 +11,14 @@ use super::{
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Change {
-    pub edits: Vec<TextEdit>,
-    pub selections: Vec<TextRange>,
+pub(crate) struct Change {
+    pub(crate) edits: Vec<TextEdit>,
+    pub(crate) selections: Vec<TextRange>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum Style {
+pub(crate) enum Style {
     Bold,
     Italic,
     Underline,
@@ -57,7 +57,7 @@ static HEADING: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 impl SourceDocument {
-    pub fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
+    pub(crate) fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
         let text = &self.text;
         let lines = touched_lines(text, selections);
         let commented = |line: &[u16]| line.get(indentation(line)).is_some_and(|&u| is(u, '%'));
@@ -78,7 +78,7 @@ impl SourceDocument {
             .collect()
     }
 
-    pub fn indent(&self, selections: &[TextRange], more: bool) -> Vec<TextEdit> {
+    pub(crate) fn indent(&self, selections: &[TextRange], more: bool) -> Vec<TextEdit> {
         let text = &self.text;
         touched_lines(text, selections)
             .into_iter()
@@ -114,7 +114,7 @@ impl SourceDocument {
             .collect()
     }
 
-    pub fn set_heading(&self, caret: u32, command: &str) -> Insertion {
+    pub(crate) fn set_heading(&self, caret: u32, command: &str) -> Insertion {
         let text = &self.text;
         let caret = caret.min(text.len());
         let index = text.line_index(caret);
@@ -162,7 +162,7 @@ impl SourceDocument {
         }
     }
 
-    pub fn insert_block(&self, id: &str, selection: TextRange) -> Option<Insertion> {
+    pub(crate) fn insert_block(&self, id: &str, selection: TextRange) -> Option<Insertion> {
         let (text, selection) = (&self.text, clamp(selection, self.text.len()));
         let template = catalog::CATALOG.blocks.get(id)?;
         let line = text.line_index(selection.start);
@@ -187,7 +187,7 @@ impl SourceDocument {
         })
     }
 
-    pub fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
+    pub(crate) fn insert_symbol(&mut self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
         let at = selection.start as usize;
         let text = if self.scanned_to(at).in_math() {
@@ -203,7 +203,7 @@ impl SourceDocument {
         }
     }
 
-    pub fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
+    pub(crate) fn move_lines(&self, selections: &[TextRange], up: bool) -> Option<Change> {
         let text = &self.text;
         let (units, len) = (&text.units[..], text.units.len());
         let mut edits = Vec::new();
@@ -258,7 +258,7 @@ impl SourceDocument {
         Some(Change { edits, selections })
     }
 
-    pub fn duplicate_lines(&self, selections: &[TextRange]) -> Change {
+    pub(crate) fn duplicate_lines(&self, selections: &[TextRange]) -> Change {
         let text = &self.text;
         let edits: Vec<TextEdit> = runs(text, selections)
             .into_iter()
@@ -279,7 +279,7 @@ impl SourceDocument {
         }
     }
 
-    pub fn delete_lines(&self, selections: &[TextRange]) -> Change {
+    pub(crate) fn delete_lines(&self, selections: &[TextRange]) -> Change {
         let text = &self.text;
         let edits: Vec<TextEdit> = runs(text, selections)
             .into_iter()
@@ -296,7 +296,7 @@ impl SourceDocument {
         Change { edits, selections }
     }
 
-    pub fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
+    pub(crate) fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
         let (prefix, suffix) = template.split_once("$0").unwrap_or((template, ""));
         let first = selections.first().copied().unwrap_or_default();
         let (start, end) = clamp(first, self.text.len()).bounds();
@@ -311,7 +311,7 @@ impl SourceDocument {
         }
     }
 
-    pub fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
+    pub(crate) fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
         let styles = self.text_styles(selections.first().copied().unwrap_or_default());
         let (unwrap, template) = match style {
             Style::Bold => (styles.bold, "\\textbf{$0}"),
@@ -328,7 +328,7 @@ impl SourceDocument {
     }
 }
 
-pub fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Vec<TextRange> {
+pub(crate) fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Vec<TextRange> {
     let map = |position: usize| {
         let (mut added, mut removed) = (0, 0);
         for e in edits {

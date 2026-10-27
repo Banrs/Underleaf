@@ -1,6 +1,6 @@
 [package]
 name = "texlocal-ffi"
-description = "C ABI over texlocal-core's commands, sessions and editor logic, for the Mac app"
+description = "C ABI over texlocal-core's commands and sessions and texlocal-latex's editor, for the Mac app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,6 +12,7 @@ crate-type = ["staticlib"]
 [dependencies]
 serde_json = "1"
 texlocal-core = { path = "../texlocal-core" }
+texlocal-latex = { path = "../texlocal-latex" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]

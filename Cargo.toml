@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/texlocal-core", "crates/texlocal-ffi"]
+members = ["crates/texlocal-core", "crates/texlocal-ffi", "crates/texlocal-latex"]
 
 [workspace.package]
 version = "0.2.0"

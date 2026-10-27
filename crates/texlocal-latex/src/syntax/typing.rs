@@ -11,16 +11,16 @@ use super::{
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Keystroke {
-    pub edit: Option<TextEdit>,
-    pub selection: Option<TextRange>,
-    pub partner: Option<u32>,
-    pub completions: Completing,
+pub(crate) struct Keystroke {
+    pub(crate) edit: Option<TextEdit>,
+    pub(crate) selection: Option<TextRange>,
+    pub(crate) partner: Option<u32>,
+    pub(crate) completions: Completing,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Completing {
+pub(crate) enum Completing {
     #[default]
     Keep,
     Offer,
@@ -59,7 +59,12 @@ fn closer_after(units: &[u16], caret: usize) -> Option<usize> {
 }
 
 impl SourceDocument {
-    pub fn type_text(&mut self, selection: TextRange, typed: &str, auto_pair: bool) -> Keystroke {
+    pub(crate) fn type_text(
+        &mut self,
+        selection: TextRange,
+        typed: &str,
+        auto_pair: bool,
+    ) -> Keystroke {
         self.typing.pending = None;
         let Some(key) = typed
             .encode_utf16()
@@ -141,7 +146,7 @@ impl SourceDocument {
         }
     }
 
-    pub fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
+    pub(crate) fn delete_backward(&mut self, selection: TextRange, auto_pair: bool) -> Keystroke {
         self.typing.pending = None;
         let units = &self.text.units[..];
         let (caret, end) = clamp(selection, self.text.len()).bounds();
@@ -168,7 +173,7 @@ impl SourceDocument {
         Keystroke::default()
     }
 
-    pub fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
+    pub(crate) fn insert_newline(&mut self, selection: TextRange) -> Keystroke {
         self.typing.pending = None;
         let (mut start, end) = clamp(selection, self.text.len()).bounds();
         let mut length = end - start;
@@ -334,7 +339,7 @@ impl SourceDocument {
         partner.found
     }
 
-    pub fn partner(&self, at: u32) -> Option<u32> {
+    pub(crate) fn partner(&self, at: u32) -> Option<u32> {
         let at = at as usize;
         let units = &self.text.units[..];
         let start = *units.get(at)?;

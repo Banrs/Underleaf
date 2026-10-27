@@ -6,9 +6,9 @@ pub(crate) struct Scans(Vec<Point>);
 
 #[derive(Clone, Default)]
 pub(crate) struct Point {
-    pub scanner: Scanner,
-    pub run: Option<(usize, usize)>,
-    pub names: Names,
+    pub(crate) scanner: Scanner,
+    pub(crate) run: Option<(usize, usize)>,
+    pub(crate) names: Names,
 }
 
 struct Keeping<'a> {
@@ -44,12 +44,12 @@ impl Default for Scans {
 }
 
 impl Scans {
-    pub fn forget_from(&mut self, at: usize) {
+    pub(crate) fn forget_from(&mut self, at: usize) {
         let kept = self.0.partition_point(|p| p.scanner.reach <= at);
         self.0.truncate(kept);
     }
 
-    pub fn resume(&mut self, text: &Text, before: usize, end: usize) -> Point {
+    pub(crate) fn resume(&mut self, text: &Text, before: usize, end: usize) -> Point {
         let mut point = self.0[self.0.len() - 1].clone();
         point.names.resume(text, text.units.len(), &mut Vec::new());
         while point.scanner.i + SPACING <= before && point.scanner.i < text.units.len() {

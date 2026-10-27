@@ -4,14 +4,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use texlocal_latex::logparse::{LogItem, SHELL_ESCAPE, Severity};
 
 use super::actor::{Actor, Later, Timer};
 use super::{Document, Msg, Reply};
 use crate::CoreError;
-use crate::analyze::disk_spelling;
 use crate::compile::{CompileManager, CompileResult};
-use crate::logparse::{LogItem, SHELL_ESCAPE, Severity};
 use crate::paths::Project;
+use crate::paths::disk_spelling;
 use crate::service::Service;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;

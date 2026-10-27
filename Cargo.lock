@@ -937,20 +937,14 @@ dependencies = [
 name = "texlocal-core"
 version = "0.2.0"
 dependencies = [
- "flate2",
  "libc",
  "notify",
- "ratex-layout",
- "ratex-lexer",
- "ratex-parser",
- "ratex-svg",
- "ratex-types",
  "regex",
- "rust-embed",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "texlocal-latex",
  "tokio",
  "zip",
 ]
@@ -962,7 +956,24 @@ dependencies = [
  "serde_json",
  "tempfile",
  "texlocal-core",
+ "texlocal-latex",
  "tokio",
+]
+
+[[package]]
+name = "texlocal-latex"
+version = "0.2.0"
+dependencies = [
+ "flate2",
+ "ratex-layout",
+ "ratex-lexer",
+ "ratex-parser",
+ "ratex-svg",
+ "ratex-types",
+ "regex",
+ "rust-embed",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
