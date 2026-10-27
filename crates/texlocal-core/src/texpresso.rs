@@ -67,7 +67,7 @@ pub enum LiveEvent {
     Ended(Option<String>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PageRange {
     pub first: u32,
     pub last: u32,

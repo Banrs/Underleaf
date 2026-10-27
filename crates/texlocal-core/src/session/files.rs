@@ -52,21 +52,20 @@ impl Actor {
         for path in &meaning.docs {
             self.check_disk(path);
         }
-        let others: Vec<String> = meaning
+        let others: Vec<&String> = meaning
             .listed
             .iter()
             .filter(|p| !self.docs.contains_key(*p))
-            .cloned()
             .collect();
-        let scan = |path: &String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
+        let scan = |path: &&String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
         }
-        let listed = !others.is_empty();
-        if listed {
-            self.emit(Event::FilesChanged(others));
+        if !others.is_empty() {
+            let paths = others.iter().map(|&path| path.clone()).collect();
+            self.emit(Event::FilesChanged(paths));
         }
-        if meaning.tree || listed {
+        if meaning.tree || !others.is_empty() {
             self.edits += 1;
             self.mark_outdated();
             if self.auto_compile {

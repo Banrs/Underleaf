@@ -373,8 +373,8 @@ fn fields(name: &str, schema: &Map<String, Value>, way: Way) -> Shape {
         };
         assert!(field.ty != Ty::Done, "{name}.{} is always null", field.name);
         assert!(
-            way == Way::Out || field.required || matches!(field.ty, Ty::Optional(_)),
-            "{name}.{} has a default but isn't optional",
+            field.required || matches!(field.ty, Ty::Optional(_)),
+            "{name}.{} can be left out but isn't optional",
             field.name
         );
         field

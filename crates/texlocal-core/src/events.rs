@@ -83,7 +83,7 @@ pub(crate) struct Conflict {
     pub kind: DiskConflict,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Serialize, JsonSchema)]
 pub(crate) struct BuildState {
     pub compiling: bool,
     pub auto: bool,
@@ -104,7 +104,7 @@ pub(crate) struct FileIssues {
     pub lines: Vec<IssueLine>,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, PartialEq, Serialize, JsonSchema)]
 pub(crate) struct IssueLine {
     pub line: u32,
     pub error: bool,

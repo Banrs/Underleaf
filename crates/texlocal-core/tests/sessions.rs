@@ -110,14 +110,9 @@ async fn the_outline_follows_inputs_and_counts_words() {
     let outline = rig.event("outline", |e| {
         e["tree"].as_array().is_some_and(|t| t.len() == 2)
     });
-    let headings: Value = outline["tree"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|node| node["heading"].clone())
-        .collect();
-    assert_eq!(names(&headings, "title"), ["Intro", "Chapter"]);
-    assert_eq!(names(&headings, "file"), ["main.tex", "ch.tex"]);
+    let heading = |key: &str| [0, 1].map(|i| outline["tree"][i]["heading"][key].clone());
+    assert_eq!(heading("title"), ["Intro", "Chapter"]);
+    assert_eq!(heading("file"), ["main.tex", "ch.tex"]);
     assert_eq!(outline["tree"][1]["words"], 5);
     let levels = names(&outline["headingStyles"], "command");
     assert!(

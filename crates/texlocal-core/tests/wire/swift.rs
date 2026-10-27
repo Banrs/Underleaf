@@ -160,7 +160,6 @@ fn keys<'a>(out: &mut String, names: impl IntoIterator<Item = &'a str>) {
 }
 
 fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request: Option<&Request>) {
-    let optional = |field: &Field| !field.required && !matches!(field.ty, Ty::Optional(_));
     match request {
         Some(request) => {
             writeln!(
@@ -178,14 +177,7 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
         None => writeln!(out, "nonisolated struct {name}: {} {{", conformances(def)).unwrap(),
     }
     for field in fields {
-        let mark = if optional(field) { "?" } else { "" };
-        writeln!(
-            out,
-            "    var {}: {}{mark}",
-            ident(&field.name),
-            swift(&field.ty)
-        )
-        .unwrap();
+        writeln!(out, "    var {}: {}", ident(&field.name), swift(&field.ty)).unwrap();
     }
     if !def.decoded {
         out.push_str("}\n");
@@ -198,10 +190,9 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
     out.push_str("    init(from decoder: any Decoder) throws {\n");
     out.push_str("        let wire = try decoder.strict(CodingKeys.self)\n");
     for field in fields {
-        let (decode, ty) = match (optional(field), &field.ty) {
-            (true, ty) => ("decodeIfPresent", swift(ty)),
-            (false, Ty::Optional(ty)) if !field.required => ("decodeIfPresent", swift(ty)),
-            (false, ty) => ("decode", swift(ty)),
+        let (decode, ty) = match &field.ty {
+            Ty::Optional(ty) if !field.required => ("decodeIfPresent", swift(ty)),
+            ty => ("decode", swift(ty)),
         };
         let field = &field.name;
         writeln!(

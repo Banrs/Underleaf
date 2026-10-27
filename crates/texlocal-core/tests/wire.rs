@@ -278,6 +278,11 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         #[serde(default)]
         count: u32,
     }
+    #[derive(JsonSchema)]
+    struct Skipped {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        items: Vec<u32>,
+    }
     let cases = [
         (refused::<Loose>(), "untyped"),
         (refused::<Pair>(), "isn't written for"),
@@ -288,7 +293,8 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         (refused::<Text>(), "SwiftUI"),
         (refused::<Both>(), "two types are named Same"),
         (refused::<Open>(), "deny_unknown_fields"),
-        (refused::<Defaulted>(), "default"),
+        (refused::<Defaulted>(), "left out"),
+        (refused::<Skipped>(), "left out"),
     ];
     for (panic, expected) in cases {
         assert!(

@@ -65,29 +65,30 @@ struct Shown {
 
 impl From<Fix> for Shown {
     fn from(fix: Fix) -> Self {
-        let confirm = (fix == Fix::ShellEscape).then_some(
-            "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.",
-        );
-        let (id, title, help) = match fix {
+        let (id, title, help, confirm) = match fix {
             Fix::Install(file) => (
                 format!("install:{file}"),
                 "Install".into(),
                 format!("Installs the TeX Live package that has {file}, then compiles again."),
+                None,
             ),
             Fix::AddPackage(name) => (
                 format!("package:{name}"),
                 format!("Add \\usepackage{{{name}}}"),
                 format!("Loads {name} in the main file's preamble, then compiles again."),
+                None,
             ),
             Fix::Xelatex => (
                 "engine:xelatex".into(),
                 "Use XeLaTeX".into(),
                 "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.".into(),
+                None,
             ),
             Fix::ShellEscape => (
                 "shellEscape".into(),
                 "Turn On Shell Escape".into(),
                 "Lets the project's packages run programs as it compiles, then compiles again.".into(),
+                Some("Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust."),
             ),
         };
         Self {
