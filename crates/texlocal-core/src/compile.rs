@@ -16,6 +16,7 @@ use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
 use crate::settings::{granted, read_settings};
 use crate::stamp::Stamp;
+use crate::sys;
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 const LOG_TAIL: usize = 200_000;
@@ -104,19 +105,6 @@ impl CompileRun {
     }
 }
 
-fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
-    let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
-    let home = dir("HOME")?;
-    let config = dir("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
-    [
-        config.join("latexmk").join("latexmkrc"),
-        home.join(".latexmkrc"),
-    ]
-    .into_iter()
-    .find(|rc| rc.is_file())
-    .map(|rc| rc.to_string_lossy().into_owned())
-}
-
 impl CompileManager {
     pub fn kill_all(&self) {
         let running = lock(&self.running);
@@ -177,7 +165,7 @@ impl CompileManager {
                 command.arg("-shell-escape");
             } else {
                 command.arg("-norc");
-                if let Some(rc) = user_latexmkrc(|key| std::env::var_os(key)) {
+                if let Some(rc) = sys::latexmkrc(|key| std::env::var_os(key)) {
                     command.arg("-r").arg(rc);
                 }
             }

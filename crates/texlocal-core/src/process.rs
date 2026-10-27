@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 
+use crate::sys;
 use crate::tex::find_tool;
 
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -14,44 +15,29 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub(crate) struct Tree {
-    group: std::sync::Arc<std::sync::Mutex<Option<i32>>>,
+    group: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
 }
 
 impl Tree {
     pub(crate) fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
-        let child = command.process_group(0).spawn()?;
-        let group = child.id().expect("a child just spawned has its pid") as i32;
+        let (child, group) = sys::spawn_group(command)?;
         let group = std::sync::Arc::new(std::sync::Mutex::new(Some(group)));
         Ok((child, Self { group }))
     }
 
     pub(crate) fn kill(&self) {
         if let Some(group) = *crate::lock(&self.group) {
-            unsafe {
-                libc::killpg(group, libc::SIGKILL);
-            }
+            sys::kill_group(group);
         }
     }
 
     pub(crate) async fn ended(&self, child: &mut Child) -> io::Result<ExitStatus> {
-        let pid = child.id().expect("not reaped yet") as libc::id_t;
-        let _ = tokio::task::spawn_blocking(move || exited(pid)).await;
+        let pid = child.id().expect("not reaped yet");
+        let _ = tokio::task::spawn_blocking(move || sys::wait_exited(pid)).await;
         if let Some(group) = crate::lock(&self.group).take() {
-            unsafe {
-                libc::killpg(group, libc::SIGKILL);
-            }
+            sys::kill_group(group);
         }
         child.wait().await
-    }
-}
-
-fn exited(pid: libc::id_t) {
-    unsafe {
-        let mut info: libc::siginfo_t = std::mem::zeroed();
-        let flags = libc::WEXITED | libc::WNOWAIT;
-        while libc::waitid(libc::P_PID, pid, &raw mut info, flags) == -1
-            && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
-        {}
     }
 }
 

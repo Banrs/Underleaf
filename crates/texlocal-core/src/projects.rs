@@ -15,7 +15,7 @@ use crate::error::CoreError;
 
 pub(crate) const MAX_FILES: usize = 20_000;
 
-pub(crate) use files::{Trash, copy_paths, discard, discard_replaced, write_creating};
+pub(crate) use files::{Trash, copy_paths, discard_replaced, write_creating};
 pub use files::{create_free, rename_entry};
 pub(crate) use history::{History, Taken, put_back};
 pub use library::{ProjectInfo, create_project, free_project_name, list_projects, rename_project};

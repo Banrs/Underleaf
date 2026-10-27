@@ -6,7 +6,7 @@ pub(crate) use texlocal_latex::fold_case;
 
 use crate::error::CoreError;
 use crate::projects::{self, is_opened};
-use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE};
+use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, sys};
 
 pub(crate) fn normalize_segments<'a>(
     rel: &'a str,
@@ -57,9 +57,7 @@ impl Project {
 }
 
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = fs::metadata(path).ok()?;
-    Some((meta.dev(), meta.ino()))
+    fs::metadata(path).ok().map(|meta| sys::identity(&meta))
 }
 
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
@@ -122,9 +120,8 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 }
 
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
     matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
-        (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
+        (Ok(a), Ok(b)) if sys::identity(&a) == sys::identity(&b))
 }
 
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {

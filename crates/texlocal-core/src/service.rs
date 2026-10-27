@@ -15,9 +15,8 @@ use crate::settings::{self, AppSettings};
 use crate::synctex;
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, lock, tinytex, zipexport};
+use crate::{CoreError, import, lock, sys, tinytex, zipexport};
 
-const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
 
@@ -150,7 +149,7 @@ impl Service {
                 let bin = dir.map(|dir| tex::tex_bin_dir(&dir).ok_or(()));
                 let bin = bin
                     .transpose()
-                    .map_err(|()| CoreError::bad_request(NO_LATEXMK))?;
+                    .map_err(|()| CoreError::bad_request(sys::NO_LATEXMK))?;
                 AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
                 out(self.status().await)
             }
@@ -240,8 +239,7 @@ impl Service {
                 dir,
                 paths,
                 conflict,
-            } => import::import_files(self, &id, &dir, &paths, conflict, projects::discard)
-                .and_then(out),
+            } => import::import_files(self, &id, &dir, &paths, conflict, sys::trash).and_then(out),
             Command::OpenPath { path } => projects::open_path(self, &path).and_then(out),
             Command::ForgetFolder { id } => projects::forget_folder(self, &id, stop).and_then(out),
             Command::SetUiState { id, patch } => self

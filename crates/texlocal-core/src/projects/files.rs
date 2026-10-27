@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::Serialize;
 use serde_json::json;
@@ -171,21 +170,6 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
 }
 
 pub(crate) type Trash = fn(&Path) -> Result<(), CoreError>;
-
-pub(crate) fn discard(path: &Path) -> Result<(), CoreError> {
-    let trashed = Command::new("/usr/bin/trash")
-        .arg("-s")
-        .arg(path)
-        .output()?;
-    if trashed.status.success() {
-        return Ok(());
-    }
-    let said = String::from_utf8_lossy(&trashed.stderr);
-    Err(CoreError::internal(format!(
-        "Could not move the item to Trash: {}",
-        said.trim()
-    )))
-}
 
 pub(crate) fn discard_replaced(
     project: &Project,

@@ -3,7 +3,7 @@
 The Mac app TeXLocal: a Rust core in `crates/` and the SwiftUI and AppKit app in `apps/macos`.
 
 - `texlocal-latex`: the editor and LaTeX logic. No files, processes, threads or clock, so it builds for the web.
-- `texlocal-core`: projects, sessions, compiling and the live preview.
+- `texlocal-core`: projects, sessions, compiling and the live preview. Platform calls stay in `sys.rs`.
 - `texlocal-ffi`: the C ABI the app links.
 
 ## Where code goes

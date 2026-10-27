@@ -13,13 +13,12 @@ use tokio::sync::mpsc;
 use crate::paths::{self, Project};
 use crate::process::{self, Tree};
 use crate::tex::{find_tool, program_at};
-use crate::{CoreError, lock, settings, tail};
+use crate::{CoreError, lock, settings, sys, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
-const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const NOT_RUNNING: &str = "Live Preview isn't running.";
 const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh.";
 const LIVE_VERSION: u64 = 2;
@@ -287,7 +286,7 @@ impl Manager {
         }
         let mut folder = tempfile::Builder::new();
         folder.prefix("texlocal-texpresso-");
-        folder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        folder.permissions(sys::permissions(0o700));
         let pdf = std::fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         Ok((build, pdf))
     }
@@ -363,17 +362,7 @@ fn command(
         .current_dir(root)
         .stdin(Stdio::piped())
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    unsafe {
-        command.pre_exec(|| {
-            for signal in 1..32 {
-                libc::signal(signal, libc::SIG_DFL);
-            }
-            let mut none: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&raw mut none);
-            libc::sigprocmask(libc::SIG_SETMASK, &raw const none, std::ptr::null_mut());
-            Ok(())
-        });
-    }
+    sys::default_signals(&mut command);
     command
 }
 
@@ -401,7 +390,7 @@ impl Preview for Manager {
             })
         };
         let Some(executable) = discover(path_env) else {
-            return failed(MISSING.into());
+            return failed(sys::NO_TEXPRESSO.into());
         };
         let (build, pdf) = self.prepare(owner, project)?;
         let mut command = command(&executable, path_env, &build, &main, &root, &pdf);

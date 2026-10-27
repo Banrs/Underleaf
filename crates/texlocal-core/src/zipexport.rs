@@ -1,17 +1,17 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use serde_json::json;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::SETTINGS_FILE;
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, in_build_dir, safe_rel_file};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
+use crate::{SETTINGS_FILE, sys};
 
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
     let file = File::create(dest).map_err(CoreError::at(dest))?;
@@ -90,16 +90,7 @@ pub(crate) fn left_out(rel: &str) -> bool {
 
 fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {
     fn local(modified: SystemTime) -> Option<zip::DateTime> {
-        let secs = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
-        let secs = libc::time_t::try_from(secs).ok()?;
-        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
-            return None;
-        }
-        let field = |value: libc::c_int| u8::try_from(value).ok();
-        let year = u16::try_from(tm.tm_year + 1900).ok()?;
-        let (month, day) = (field(tm.tm_mon + 1)?, field(tm.tm_mday)?);
-        let (hour, minute, second) = (field(tm.tm_hour)?, field(tm.tm_min)?, field(tm.tm_sec)?);
+        let (year, month, day, hour, minute, second) = sys::local_time(modified)?;
         zip::DateTime::from_date_and_time(year, month, day, hour, minute, second).ok()
     }
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);

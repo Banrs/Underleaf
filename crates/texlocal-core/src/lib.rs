@@ -12,6 +12,7 @@ pub mod session;
 mod settings;
 mod stamp;
 mod synctex;
+mod sys;
 mod tex;
 mod texpresso;
 mod tinytex;
