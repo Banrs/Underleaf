@@ -32,7 +32,7 @@ use crate::{CoreError, lock, paths};
 
 pub(crate) use build::Compiler;
 pub use document::Document;
-use documents::Resolution;
+use documents::{Resolution, Shared};
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -139,7 +139,7 @@ fn gone() -> CoreError {
 
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
-    docs: Arc<Mutex<HashMap<String, Document>>>,
+    docs: Shared,
 }
 
 pub type Answer = Pin<Box<dyn Future<Output = Result<Value, CoreError>> + Send>>;
@@ -208,7 +208,7 @@ impl Sessions {
         let (actor, opened) = new?;
         let open = Open {
             tx: tx.clone(),
-            docs: Arc::clone(&actor.shared),
+            docs: actor.docs.shared(),
         };
         match lock(&self.open).entry(session) {
             Entry::Occupied(_) => return Err(taken()),

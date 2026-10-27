@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, PoisonError};
 
 use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
@@ -9,7 +9,8 @@ use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::Actor;
-use super::{Document, Msg, Reply};
+use super::documents::Shared;
+use super::{Msg, Reply};
 use crate::projects::{self, Query, Symbols};
 use crate::service::out;
 use crate::{CoreError, lock, tex};
@@ -18,7 +19,7 @@ impl Actor {
     pub fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.project.root.clone(), self.tx.clone());
-        let (facts, docs) = (Arc::clone(&self.facts), Arc::clone(&self.shared));
+        let (facts, docs) = (Arc::clone(&self.facts), self.docs.shared());
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
         let (service, main, edits) = (
@@ -69,7 +70,7 @@ impl Actor {
     }
 
     pub fn search(&self, query: Query, reply: Reply) {
-        let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
+        let (root, docs) = (self.project.root.clone(), self.docs.shared());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
@@ -83,7 +84,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(Value::Null));
         };
-        let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
+        let (root, docs) = (self.project.root.clone(), self.docs.shared());
         tokio::task::spawn_blocking(move || {
             let own = doc.facts();
             let symbol = doc.with(|source| source.symbol_at(&own, offset));
@@ -116,7 +117,7 @@ pub(super) fn tex(rel: &str) -> bool {
     matches!(file_kind(rel), FileKind::Tex | FileKind::Bib)
 }
 
-pub(super) fn texts(docs: &Mutex<HashMap<String, Document>>) -> HashMap<String, String> {
+pub(super) fn texts(docs: &Shared) -> HashMap<String, String> {
     let docs = lock(docs).clone();
     docs.into_iter()
         .map(|(path, doc)| (path, doc.snapshot().0))

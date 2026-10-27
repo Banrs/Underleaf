@@ -9,16 +9,16 @@ use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
 use super::build::Builds;
-use super::documents::Doc;
+use super::documents::Docs;
 use super::live::Live;
 use super::watch::{self, Change, TreeIndex};
-use super::{Compiler, Document, Msg, Preview, Reply, SessionCommand, Sessions};
+use super::{Compiler, Msg, Preview, Reply, SessionCommand, Sessions};
+use crate::CoreError;
 use crate::events::Queued;
 use crate::paths::Project;
 use crate::projects::{self, History, Query, Symbols};
 use crate::service::{Service, out, unknown};
 use crate::settings;
-use crate::{CoreError, lock};
 
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
 const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
@@ -73,8 +73,7 @@ pub(crate) struct Actor {
     pub preview: Arc<dyn Preview>,
     events: std::sync::mpsc::Sender<Queued>,
     pub tx: mpsc::UnboundedSender<Msg>,
-    pub shared: Arc<Mutex<HashMap<String, Document>>>,
-    pub docs: BTreeMap<String, Doc>,
+    pub docs: Docs,
     pub next_doc: u64,
     pub shown: u64,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
@@ -136,8 +135,7 @@ impl Actor {
             preview: Arc::clone(&sessions.preview),
             events: sessions.hub.queue.clone(),
             tx,
-            shared: Arc::default(),
-            docs: BTreeMap::new(),
+            docs: Docs::default(),
             next_doc: 1,
             shown: 0,
             symbols: Arc::default(),
@@ -375,7 +373,7 @@ impl Actor {
         self.stop_compile();
         self.closed = true;
         self.live_stop();
-        lock(&self.shared).clear();
+        self.docs.clear();
         Ok(json!({ "saved": true }))
     }
 }

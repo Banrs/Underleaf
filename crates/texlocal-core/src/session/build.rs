@@ -264,7 +264,7 @@ impl Actor {
     pub fn mark_issues(&mut self) {
         let mut changed = Vec::new();
         let builds = &self.builds;
-        for (path, doc) in &mut self.docs {
+        for (path, doc) in self.docs.iter_mut() {
             let edits = self.last_edits.get(path).copied().unwrap_or(0);
             let built = builds
                 .issues

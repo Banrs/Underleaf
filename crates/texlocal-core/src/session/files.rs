@@ -4,11 +4,11 @@ use texlocal_latex::{FileKind, file_kind};
 use super::actor::{Actor, Later, Timer};
 use super::documents::CloseReason;
 use super::watch::{self, TreeIndex};
+use crate::CoreError;
 use crate::paths::{self, within};
 use crate::projects;
 use crate::service::out;
 use crate::settings;
-use crate::{CoreError, lock};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
@@ -124,10 +124,6 @@ impl Actor {
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
             doc.shown = Value::Null;
-            let mut shared = lock(&self.shared);
-            shared.remove(&old);
-            shared.insert(new.clone(), doc.doc.clone());
-            drop(shared);
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
                 self.last_edits.insert(new.clone(), edit);

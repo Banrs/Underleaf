@@ -103,7 +103,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(Value::Null));
         };
-        let (root, docs) = (self.project.root.clone(), Arc::clone(&self.shared));
+        let (root, docs) = (self.project.root.clone(), self.docs.shared());
         let settings = settings::read_settings(&self.project.settings);
         let aux = settings.output(&self.project.build, "aux");
         tokio::task::spawn_blocking(move || {

@@ -199,7 +199,7 @@ impl Actor {
         self.live_reset();
         self.publish_live(false);
         let (mut files, mut versions) = (Vec::new(), HashMap::new());
-        for (path, doc) in &self.docs {
+        for (path, doc) in self.docs.iter() {
             let (text, version) = doc.doc.snapshot();
             versions.insert(path.clone(), version);
             let path = path.clone();

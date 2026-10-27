@@ -1,9 +1,10 @@
 use std::borrow::Cow;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::io::ErrorKind;
+use std::ops::Deref;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -79,6 +80,51 @@ impl Doc {
     }
 }
 
+pub(crate) type Shared = Arc<Mutex<HashMap<String, Document>>>;
+
+#[derive(Default)]
+pub(crate) struct Docs {
+    docs: BTreeMap<String, Doc>,
+    shared: Shared,
+}
+
+impl Deref for Docs {
+    type Target = BTreeMap<String, Doc>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.docs
+    }
+}
+
+impl Docs {
+    pub fn shared(&self) -> Shared {
+        Arc::clone(&self.shared)
+    }
+
+    pub fn get_mut(&mut self, path: &str) -> Option<&mut Doc> {
+        self.docs.get_mut(path)
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut Doc)> {
+        self.docs.iter_mut()
+    }
+
+    pub fn insert(&mut self, path: String, doc: Doc) {
+        lock(&self.shared).insert(path.clone(), doc.doc.clone());
+        self.docs.insert(path, doc);
+    }
+
+    pub fn remove(&mut self, path: &str) -> Option<Doc> {
+        lock(&self.shared).remove(path);
+        self.docs.remove(path)
+    }
+
+    pub fn clear(&mut self) {
+        lock(&self.shared).clear();
+        self.docs.clear();
+    }
+}
+
 impl Actor {
     pub fn composing(&mut self, path: &str, composing: bool) {
         if let Some(doc) = self.docs.get_mut(path) {
@@ -114,9 +160,8 @@ impl Actor {
         self.next_doc += 1;
         self.shown = id;
         let symbols = Arc::clone(&self.symbols);
-        let document = Document::new(id, path, &text, self.tx.clone(), symbols);
         let doc = Doc {
-            doc: document.clone(),
+            doc: Document::new(id, path, &text, self.tx.clone(), symbols),
             path: path.to_owned(),
             saved: 0,
             force: false,
@@ -134,7 +179,6 @@ impl Actor {
             shown: Value::Null,
         };
         self.docs.insert(path.to_owned(), doc);
-        lock(&self.shared).insert(path.to_owned(), document);
         self.after(Timer::Symbols);
         self.publish_doc(path);
         self.mark_issues();
@@ -153,7 +197,6 @@ impl Actor {
 
     pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
         if self.docs.remove(path).is_some() {
-            lock(&self.shared).remove(path);
             self.emit("document_closed", json!({ "path": path, "reason": reason }));
         }
     }
