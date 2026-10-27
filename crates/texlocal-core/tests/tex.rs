@@ -36,26 +36,15 @@ async fn latexmk_builds_a_pdf_with_its_bibliography() {
 async fn synctex_goes_from_a_line_to_the_pdf_and_back() {
     let (rig, result) = built(&[("main.tex", ARTICLE), ("refs.bib", REFS)]).await;
     assert_eq!(result["ok"], true);
-    let forward = rig
-        .library
-        .call(
-            "SynctexForward",
-            json!({ "id": rig.id, "file": "main.tex", "line": 4 }),
-        )
-        .await;
+    let forward = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 4 }));
     assert_eq!(forward["page"].as_f64(), Some(1.0));
     let (h, v) = (
         forward["h"].as_f64().unwrap(),
         forward["v"].as_f64().unwrap(),
     );
     let height = forward["height"].as_f64().unwrap_or(0.0);
-    let back = rig
-        .library
-        .call(
-            "SynctexInverse",
-            json!({ "id": rig.id, "page": 1, "x": h + 5.0, "y": v - height / 2.0 }),
-        )
-        .await;
+    let at = json!({ "page": 1, "x": h + 5.0, "y": v - height / 2.0 });
+    let back = rig.call("SynctexInverse", at);
     assert_eq!(back["file"], "main.tex");
     assert_eq!(back["line"], 4);
 }

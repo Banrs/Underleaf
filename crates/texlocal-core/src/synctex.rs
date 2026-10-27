@@ -5,10 +5,10 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
-use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
+use texlocal_latex::wordmatch::find_in_source;
 
 use crate::error::CoreError;
-use crate::paths::{Project, disk_spelling, safe_path, safe_rel_file, source_rel};
+use crate::paths::{Project, disk_spelling, safe_rel_file, source_rel};
 use crate::settings::read_settings;
 use crate::stamp::Kept;
 
@@ -68,7 +68,7 @@ fn source_file(root: &Path, name: &str) -> Option<String> {
     source_rel(root, name).and_then(|rel| disk_spelling(root, &rel))
 }
 
-pub fn synctex_forward_at(
+pub(crate) fn forward(
     project: &Project,
     file: &str,
     line: u32,
@@ -114,7 +114,7 @@ pub fn synctex_forward_at(
     Ok(first)
 }
 
-pub fn synctex_inverse(
+pub(crate) fn inverse(
     project: &Project,
     page: f64,
     x: f64,
@@ -144,18 +144,4 @@ pub fn synctex_inverse(
         line: found.map_or(line, |(line, _)| line),
         column: found.map(|(_, column)| column),
     })
-}
-
-pub fn match_forward(
-    root: &Path,
-    file: &str,
-    line: u32,
-    column: usize,
-    pages: &[PdfPage],
-) -> Result<Option<PdfHit>, CoreError> {
-    let text = crate::lossy_string(std::fs::read(safe_path(root, file)?)?);
-    let line = line
-        .checked_sub(1)
-        .and_then(|n| text.lines().nth(n as usize));
-    Ok(line.and_then(|line| find_in_pdf(line, column, pages)))
 }

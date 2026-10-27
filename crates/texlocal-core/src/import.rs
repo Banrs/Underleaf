@@ -60,7 +60,7 @@ const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
     ("lualatex", &["luacode", "luatexja", "luaotfload"]),
 ];
 
-pub fn import_files(
+pub(crate) fn import_files(
     service: &Service,
     id: &str,
     dir: &str,
@@ -100,7 +100,7 @@ pub fn import_files(
             Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
             _ => path,
         };
-        save(service, id, &in_folder(dir, &path), &source, replace)?;
+        save(service, id, &root, &in_folder(dir, &path), &source, replace)?;
     }
     Ok(Imported { existing })
 }
@@ -173,14 +173,14 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
 fn save(
     service: &Service,
     id: &str,
+    root: &Path,
     rel: &str,
     source: &Path,
     replace: Option<Trash>,
 ) -> Result<(), CoreError> {
-    let root = service.project(id)?.root;
-    let abs = paths::safe_write_path(&root, rel)?;
+    let abs = paths::safe_write_path(root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
-    let (mut file, temp) = atomic::create_temp(folder.unwrap_or(&root))?;
+    let (mut file, temp) = atomic::create_temp(folder.unwrap_or(root))?;
     let mut origin = File::open(source).map_err(CoreError::at(source))?;
     io::copy(&mut origin, &mut file)?;
     file.sync_all()?;

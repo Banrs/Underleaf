@@ -227,11 +227,10 @@ nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable 
     case invalid, denied, notFound, conflict, unfit, unavailable, `internal`
 }
 
-nonisolated struct ExportZip: LibraryRequest {
+nonisolated struct ExportZip: SessionRequest {
     typealias Reply = Done
     static let command = "ExportZip"
 
-    var id: String
     var dest: String
     var forArxiv: Bool
 }
@@ -321,11 +320,10 @@ nonisolated enum ImportConflict: String, Encodable, CaseIterable, Hashable, Send
     case replace, keepBoth
 }
 
-nonisolated struct ImportFiles: LibraryRequest {
+nonisolated struct ImportFiles: SessionRequest {
     typealias Reply = Imported
     static let command = "ImportFiles"
 
-    var id: String
     var dir: String
     var paths: [String]
     var conflict: ImportConflict?
@@ -504,11 +502,9 @@ nonisolated struct PdfPage: Encodable, Hashable, Sendable {
     var near: [TextRange]
 }
 
-nonisolated struct PdfPath: LibraryRequest {
+nonisolated struct PdfPath: SessionRequest {
     typealias Reply = String
     static let command = "PdfPath"
-
-    var id: String
 }
 
 nonisolated struct PrepareDelete: SessionRequest {
@@ -641,11 +637,9 @@ nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Senda
     case file, heading, label
 }
 
-nonisolated struct ReadTree: LibraryRequest {
-    typealias Reply = [TreeNode]
-    static let command = "ReadTree"
-
-    var id: String
+nonisolated struct ReloadTree: SessionRequest {
+    typealias Reply = Done
+    static let command = "ReloadTree"
 }
 
 nonisolated struct Rename: SessionRequest {
@@ -668,9 +662,8 @@ nonisolated struct RenameResult: Decodable, Hashable, Sendable {
     var from: String
     var to: String
     var mainFile: String
-    var ui: UiState
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case from, to, mainFile, ui }
+    enum CodingKeys: String, CodingKey, CaseIterable { case from, to, mainFile }
 }
 
 nonisolated extension RenameResult {
@@ -679,7 +672,6 @@ nonisolated extension RenameResult {
         from = try wire.decode(String.self, forKey: .from)
         to = try wire.decode(String.self, forKey: .to)
         mainFile = try wire.decode(String.self, forKey: .mainFile)
-        ui = try wire.decode(UiState.self, forKey: .ui)
     }
 }
 
@@ -834,11 +826,10 @@ nonisolated struct SetTexpressoDir: LibraryRequest {
     var dir: String?
 }
 
-nonisolated struct SetUiState: LibraryRequest {
+nonisolated struct SetUiState: SessionRequest {
     typealias Reply = Done
     static let command = "SetUiState"
 
-    var id: String
     var patch: UiPatch
 }
 
@@ -889,33 +880,28 @@ nonisolated enum SymbolKind: String, Encodable, CaseIterable, Hashable, Sendable
     case command, environment, label, citation, entryType, file
 }
 
-nonisolated struct SynctexForward: LibraryRequest {
+nonisolated struct SynctexForward: SessionRequest {
     typealias Reply = ForwardLoc
     static let command = "SynctexForward"
 
-    var id: String
     var file: String
     var line: Int
-    var live: UInt64?
 }
 
-nonisolated struct SynctexInverse: LibraryRequest {
+nonisolated struct SynctexInverse: SessionRequest {
     typealias Reply = InverseLoc
     static let command = "SynctexInverse"
 
-    var id: String
     var page: Double
     var x: Double
     var y: Double
     var click: PageClick?
-    var live: UInt64?
 }
 
-nonisolated struct SynctexMatch: LibraryRequest {
+nonisolated struct SynctexMatch: SessionRequest {
     typealias Reply = PdfHit?
     static let command = "SynctexMatch"
 
-    var id: String
     var file: String
     var line: Int
     var column: Int

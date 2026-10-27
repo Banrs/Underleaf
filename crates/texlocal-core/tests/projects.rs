@@ -1,7 +1,6 @@
 mod common;
 
 use std::fs;
-use std::io::Read;
 
 use common::{Library, kind, write};
 use serde_json::{Value, json};
@@ -13,14 +12,6 @@ fn ids(list: &Value) -> Vec<&str> {
         .iter()
         .map(|p| p["id"].as_str().unwrap())
         .collect()
-}
-
-fn zip_names(path: &std::path::Path) -> Vec<String> {
-    let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
-    let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
-    names.sort();
-    let _ = archive.by_index(0).unwrap().read(&mut [0; 1]);
-    names
 }
 
 #[tokio::test]
@@ -124,33 +115,6 @@ async fn a_duplicate_copies_the_sources_but_not_the_build() {
 }
 
 #[tokio::test]
-async fn the_tree_marks_the_main_file_and_hides_dotfiles() {
-    let library = Library::new();
-    library.create("Paper", "article").await;
-    write(
-        &library.project_root("Paper"),
-        &[(".latexmkrc", ""), ("figs/a.png", "png")],
-    );
-    let tree = library.call("ReadTree", json!({ "id": "Paper" })).await;
-    let names: Vec<&str> = tree
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|n| n["name"].as_str().unwrap())
-        .collect();
-    assert!(names.contains(&"figs") && names.contains(&"main.tex"));
-    assert!(!names.iter().any(|n| n.starts_with('.')));
-    let main = tree
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["name"] == "main.tex")
-        .unwrap();
-    assert_eq!(main["main"], true);
-    assert_eq!(main["kind"], "tex");
-}
-
-#[tokio::test]
 async fn a_folder_opens_where_it_is() {
     let library = Library::new();
     let folder = library.path("Thesis");
@@ -234,132 +198,19 @@ async fn a_folder_no_longer_where_it_was_is_missing() {
 }
 
 #[tokio::test]
-async fn the_ui_state_keeps_what_it_is_given_and_what_it_is_not() {
-    let library = Library::new();
-    library.create("Paper", "blank").await;
-    let file = library.project_root("Paper").join(".texlocal.json");
-    fs::write(&file, r#"{"ui": {"openFile": "main.tex"}}"#).unwrap();
-    let zoom = json!({ "type": "scale", "value": 1.5 });
-    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom, "panel": true });
-    let patch = |patch| json!({ "id": "Paper", "patch": patch });
-    library
-        .call("SetUiState", patch(json!({ "place": place })))
-        .await;
-    let folders = json!({ "expandedFolders": ["figs"] });
-    library.call("SetUiState", patch(folders)).await;
-    let ui = &serde_json::from_slice::<Value>(&fs::read(&file).unwrap()).unwrap()["ui"];
-    assert_eq!(
-        (&ui["openFile"], &ui["line"], &ui["zoom"]),
-        (&json!("main.tex"), &json!(12), &json!(1.5))
-    );
-    assert_eq!(ui["expandedFolders"], json!(["figs"]));
-}
-
-#[tokio::test]
-async fn an_export_holds_the_sources_without_build_or_settings() {
-    let library = Library::new();
-    library.create("Paper", "article").await;
-    write(
-        &library.project_root("Paper"),
-        &[("build/main.pdf", "pdf"), (".git/HEAD", "x")],
-    );
-    let dest = library.path("out.zip");
-    library
-        .call(
-            "ExportZip",
-            json!({ "id": "Paper", "dest": dest, "forArxiv": false }),
-        )
-        .await;
-    assert_eq!(zip_names(&dest), ["main.tex", "references.bib"]);
-}
-
-#[tokio::test]
-async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
-    let library = Library::new();
-    library.create("Paper", "article").await;
-    let dest = library.path("arxiv.zip");
-    library
-        .call(
-            "ExportZip",
-            json!({ "id": "Paper", "dest": dest, "forArxiv": true }),
-        )
-        .await;
-    assert!(zip_names(&dest).contains(&"00README.json".to_owned()));
-    let root = library.project_root("Paper");
-    fs::write(root.join(".texlocal.json"), r#"{"engine": "lualatex"}"#).unwrap();
-    let refused = library
-        .service
-        .call(
-            "ExportZip",
-            json!({ "id": "Paper", "dest": library.path("b.zip"), "forArxiv": true }),
-        )
-        .await;
-    assert_eq!(kind(refused), ErrorKind::Conflict);
-}
-
-#[tokio::test]
-async fn a_zip_opens_as_a_new_project() {
-    let library = Library::new();
-    library.create("Paper", "article").await;
-    let dest = library.path("Shared.zip");
-    library
-        .call(
-            "ExportZip",
-            json!({ "id": "Paper", "dest": dest, "forArxiv": false }),
-        )
-        .await;
-    let opened = library.call("OpenPath", json!({ "path": dest })).await;
-    assert_eq!(opened["project"]["name"], "Shared");
-    assert_eq!(opened["project"]["opened"], false);
-    assert!(library.project_root("Shared").join("main.tex").is_file());
-}
-
-#[tokio::test]
-async fn files_are_imported_and_a_name_taken_is_asked_about() {
-    let library = Library::new();
-    library.create("Paper", "blank").await;
-    let image = library.path("plot.png");
-    fs::write(&image, "png").unwrap();
-    let args = json!({ "id": "Paper", "dir": "figs", "paths": [image] });
-    let first = library.call("ImportFiles", args.clone()).await;
-    assert_eq!(first["existing"], json!([]));
-    let root = library.project_root("Paper");
-    assert_eq!(fs::read(root.join("figs/plot.png")).unwrap(), b"png");
-    let second = library.call("ImportFiles", args.clone()).await;
-    assert_eq!(
-        second["existing"],
-        json!([{ "path": "plot.png", "keepBoth": "plot 2.png" }])
-    );
-    let mut keep = args;
-    keep["conflict"] = json!("keepBoth");
-    library.call("ImportFiles", keep).await;
-    assert!(root.join("figs/plot 2.png").is_file());
-}
-
-#[tokio::test]
 async fn unknown_commands_and_bad_arguments_are_refused() {
     let library = Library::new();
     assert_eq!(
         kind(library.service.call("no_such_command", json!({})).await),
         ErrorKind::NotFound
     );
-    assert_eq!(
-        kind(library.service.call("ReadTree", json!({})).await),
-        ErrorKind::Invalid
-    );
-    assert_eq!(
-        kind(library.service.call("ReadTree", json!([])).await),
-        ErrorKind::Invalid
-    );
-    assert_eq!(
-        kind(
-            library
-                .service
-                .call("ReadTree", json!({ "id": "Nope" }))
-                .await
-        ),
-        ErrorKind::NotFound
-    );
+    for args in [json!({}), json!([])] {
+        let refused = library.service.call("DuplicateProject", args).await;
+        assert_eq!(kind(refused), ErrorKind::Invalid);
+    }
+    let missing = json!({ "id": "Nope", "name": "Copy" });
+    let refused = library.service.call("DuplicateProject", missing).await;
+    assert_eq!(kind(refused), ErrorKind::NotFound);
 }
 
 #[tokio::test]

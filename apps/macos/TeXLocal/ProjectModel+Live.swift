@@ -66,28 +66,27 @@ extension ProjectModel {
     }
 
     func forwardSync(quietly: Bool = false) async {
-        guard let path = openPath else { return }
+        guard let session, let path = openPath else { return }
         let (line, column) = (editor.currentLine, editor.currentColumn)
-        let live = livePDF, request = SynctexForward(id: id, file: path, line: line, live: liveSession)
+        let live = livePDF, request = SynctexForward(file: path, line: line)
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             let shown = pdf.shownVersion
             do {
-                let loc = try await core.call(request)
+                let loc = try await session.call(request)
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
-                app?.requestPDF(.reveal(loc, SyncSource(id: id, file: path, line: line, column: column, quietly: quietly)))
+                app?.requestPDF(.reveal(loc, SyncSource(session: session.id, file: path, line: line, column: column, quietly: quietly)))
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }
             }
         }.value
     }
 
-    private var liveSession: UInt64? { livePDF ? session?.id : nil }
-
     func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil, quietly: Bool = false) async {
+        guard let session else { return }
         await restart(&syncTask) { [self] in
             do {
-                let loc = try await core.call(SynctexInverse(id: id, page: Double(page), x: x, y: y, click: click, live: liveSession))
+                let loc = try await session.call(SynctexInverse(page: Double(page), x: x, y: y, click: click))
                 guard !Task.isCancelled, !closed, !quietly || loc.column != nil else { return }
                 await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {

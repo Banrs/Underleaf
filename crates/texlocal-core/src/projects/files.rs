@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
-use crate::settings::{UiState, move_ui, read_settings, read_ui, write_settings};
+use crate::settings::{move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
 
 #[derive(Serialize, JsonSchema)]
@@ -18,7 +18,6 @@ pub struct RenameResult {
     pub from: String,
     pub to: String,
     pub main_file: String,
-    ui: UiState,
 }
 
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
@@ -168,7 +167,6 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
         from,
         to,
         main_file: moved_main.unwrap_or(main_file),
-        ui: read_ui(&project.ui),
     })
 }
 

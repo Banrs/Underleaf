@@ -93,6 +93,8 @@ pub(crate) trait Preview: Send + Sync {
     fn tex_log(&self, owner: u64) -> Option<String>;
     fn status(&self, owner: u64) -> Result<Status, CoreError>;
     fn stop_request(&self, owner: u64) -> Status;
+    fn live_text(&self, owner: u64, rel: &str) -> Option<String>;
+    fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError>;
     fn stop(&self, root: &Path) -> Result<(), CoreError>;
 }
 
@@ -257,18 +259,6 @@ impl Manager {
             .get(&owner)
             .cloned()
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
-    }
-    pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
-        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
-    }
-    pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
-        let pdf = self.owned(owner)?.pdf.clone();
-        if !pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(
-                "TeXpresso hasn't written a document to sync with yet",
-            ));
-        }
-        Ok(pdf)
     }
 }
 
@@ -495,6 +485,18 @@ impl Preview for Manager {
             session.stop(None);
             session.status()
         })
+    }
+    fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
+        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
+    }
+    fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
+        let pdf = self.owned(owner)?.pdf.clone();
+        if !pdf.with_extension("synctex").is_file() {
+            return Err(CoreError::not_found(
+                "TeXpresso hasn't written a document to sync with yet",
+            ));
+        }
+        Ok(pdf)
     }
     fn stop(&self, root: &Path) -> Result<(), CoreError> {
         let root = std::fs::canonicalize(root)?;

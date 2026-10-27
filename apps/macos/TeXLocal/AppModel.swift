@@ -422,8 +422,7 @@ final class AppModel {
         guard let project else { return true }
         if !project.closed && !project.isClosing {
             guard await project.save(), generation == openGeneration else { return false }
-            await project.savePlace()
-            guard generation == openGeneration else { return false }
+            project.savePlace()
         }
         return await project.close().value && generation == openGeneration
     }

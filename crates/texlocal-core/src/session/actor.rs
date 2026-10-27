@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -11,6 +12,7 @@ use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
+use texlocal_latex::wordmatch::{PdfHit, PdfPage};
 use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
@@ -24,11 +26,13 @@ use super::watch::{self, Change, TreeIndex};
 use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
 use crate::CoreError;
 use crate::events::Queued;
+use crate::import::{ImportConflict, Imported};
 use crate::paths::{Project, RelPath};
 use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols, TreeNode};
 use crate::protocol::requests;
 use crate::service::Service;
-use crate::settings::{self, ProjectSettings, SettingsPatch, UiState};
+use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch, UiState};
+use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
 
 requests! {
     Session {
@@ -64,6 +68,14 @@ requests! {
         LiveView { first: u32, last: u32 } -> (),
         LiveCaret { path: RelPath, offset: usize } -> (),
         LiveLog { shown: bool } -> (),
+        ReloadTree {} -> (),
+        ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
+        ExportZip { dest: PathBuf, for_arxiv: bool } -> (),
+        SetUiState { patch: UiPatch } -> (),
+        PdfPath {} -> String,
+        SynctexForward { file: RelPath, line: u32 } -> ForwardLoc,
+        SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc,
+        SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
     }
 }
 
@@ -453,6 +465,35 @@ impl Actor {
                 answer(Ok(self.live_caret(path.0, offset)))
             }
             Session::LiveLog(LiveLog { shown }, answer) => answer(Ok(self.show_live_log(shown))),
+            Session::ReloadTree(ReloadTree {}, answer) => answer(Ok(self.reload_tree())),
+            Session::ImportFiles(
+                ImportFiles {
+                    dir,
+                    paths,
+                    conflict,
+                },
+                answer,
+            ) => answer(self.import(&dir, &paths, conflict)),
+            Session::ExportZip(ExportZip { dest, for_arxiv }, answer) => {
+                return self.export(dest, for_arxiv, Pending { reply, answer });
+            }
+            Session::SetUiState(SetUiState { patch }, answer) => answer(self.write_ui(patch)),
+            Session::PdfPath(PdfPath {}, answer) => answer(self.pdf_path()),
+            Session::SynctexForward(SynctexForward { file, line }, answer) => {
+                return self.synctex_forward(file.0, line, Pending { reply, answer });
+            }
+            Session::SynctexInverse(SynctexInverse { page, x, y, click }, answer) => {
+                return self.synctex_inverse(page, x, y, click, Pending { reply, answer });
+            }
+            Session::SynctexMatch(
+                SynctexMatch {
+                    file,
+                    line,
+                    column,
+                    pages,
+                },
+                answer,
+            ) => answer(self.synctex_match(&file.0, line, column, &pages)),
         };
         reply.send(answer);
     }

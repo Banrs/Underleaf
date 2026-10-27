@@ -1,13 +1,17 @@
+use std::path::PathBuf;
+
 use serde_json::{Value, json};
 use texlocal_latex::{FileKind, file_kind};
 
+use super::Pending;
 use super::actor::{Actor, Later, Timer};
 use super::documents::CloseReason;
 use super::watch::{self, TreeIndex};
-use crate::CoreError;
-use crate::paths::{self, within};
+use crate::import::{self, ImportConflict, Imported};
+use crate::paths::{self, Project, within};
 use crate::projects::{self, RenameResult};
-use crate::settings::{self, ProjectSettings, SettingsPatch};
+use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch};
+use crate::{CoreError, sys, zipexport};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
@@ -98,6 +102,42 @@ impl Actor {
         self.after(Timer::Symbols);
         self.emit("tree", json!({ "tree": tree }));
         self.live_files_changed();
+    }
+
+    pub fn import(
+        &mut self,
+        dir: &str,
+        paths: &[PathBuf],
+        conflict: Option<ImportConflict>,
+    ) -> Result<Imported, CoreError> {
+        let imported = import::import_files(
+            &self.service,
+            &self.project_id,
+            dir,
+            paths,
+            conflict,
+            sys::trash,
+        )?;
+        self.reload_tree();
+        Ok(imported)
+    }
+
+    pub fn export(&self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
+        let project = self.project.clone();
+        tokio::task::spawn_blocking(move || {
+            reply.send(zipexport::export_zip(&project, &dest, for_arxiv));
+        });
+    }
+
+    pub fn write_ui(&self, patch: UiPatch) -> Result<(), CoreError> {
+        let write = |project: &Project| settings::write_ui(&project.ui, patch);
+        self.service.with_project(&self.project_id, write)
+    }
+
+    pub fn pdf_path(&self) -> Result<String, CoreError> {
+        let settings = settings::read_settings(&self.project.settings);
+        let pdf = settings.output(&self.project.build, "pdf")?;
+        Ok(pdf.to_string_lossy().into_owned())
     }
 
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {

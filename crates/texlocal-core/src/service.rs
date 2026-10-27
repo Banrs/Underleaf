@@ -4,18 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use texlocal_latex::templates::ProjectTemplate;
-use texlocal_latex::wordmatch::{PdfHit, PdfPage};
 
 use crate::compile::CompileManager;
-use crate::import::{ImportConflict, Imported};
 use crate::paths::Project;
-use crate::projects::{self, History, Opening, ProjectInfo, TreeNode};
+use crate::projects::{self, History, Opening, ProjectInfo};
 use crate::protocol::requests;
-use crate::settings::{self, AppSettings, Engine, UiPatch};
-use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
+use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
 use crate::texpresso::{self, Preview};
-use crate::{CoreError, import, lock, sys, tinytex, zipexport};
+use crate::{CoreError, import, lock, sys, tinytex};
 
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
@@ -40,17 +37,9 @@ requests! {
         DuplicateProject { id: String, name: String } -> ProjectInfo,
         FreeProjectName {} -> String,
         RenameProject { id: String, name: String } -> ProjectInfo,
-        ReadTree { id: String } -> Vec<TreeNode>,
-        SynctexForward { id: String, file: String, line: u32, live: Option<u64> } -> ForwardLoc,
-        SynctexInverse { id: String, page: f64, x: f64, y: f64, click: Option<PageClick>, live: Option<u64> } -> InverseLoc,
-        SynctexMatch { id: String, file: String, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
-        PdfPath { id: String } -> String,
-        ExportZip { id: String, dest: PathBuf, for_arxiv: bool } -> (),
         KillAll {} -> (),
-        ImportFiles { id: String, dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
         OpenPath { path: PathBuf } -> Opening,
         ForgetFolder { id: String } -> (),
-        SetUiState { id: String, patch: UiPatch } -> (),
     }
 }
 
@@ -79,11 +68,6 @@ impl Service {
 
     pub fn project(&self, id: &str) -> Result<Project, CoreError> {
         Project::find(&self.data_dir, id)
-    }
-
-    fn live(&self, session: Option<u64>) -> Result<Option<(u64, PathBuf)>, CoreError> {
-        let live = |session| Ok((session, self.texpresso.live_pdf(session)?));
-        session.map(live).transpose()
     }
 
     pub(crate) fn with_project<T>(
@@ -168,104 +152,12 @@ impl Service {
                     projects::rename_project(&self.data_dir, &id, &name, stop)
                 }))
             }
-            Library::ReadTree(ReadTree { id }, answer) => {
-                answer(projects::file_tree(&self.project(&id)?))
-            }
-            Library::SynctexForward(
-                SynctexForward {
-                    id,
-                    file,
-                    line,
-                    live,
-                },
-                answer,
-            ) => {
-                let pdf = self.live(live)?.map(|(_, pdf)| pdf);
-                let project = self.project(&id)?;
-                answer(synctex::synctex_forward_at(
-                    &project,
-                    &file,
-                    line,
-                    pdf.as_deref(),
-                ))
-            }
-            Library::SynctexInverse(
-                SynctexInverse {
-                    id,
-                    page,
-                    x,
-                    y,
-                    click,
-                    live,
-                },
-                answer,
-            ) => {
-                let live = self.live(live)?;
-                let typeset = |rel: &str| self.texpresso.live_text(live.as_ref()?.0, rel);
-                let pdf = live.as_ref().map(|(_, pdf)| pdf.as_path());
-                let project = self.project(&id)?;
-                answer(synctex::synctex_inverse(
-                    &project, page, x, y, click, pdf, &typeset,
-                ))
-            }
-            Library::SynctexMatch(
-                SynctexMatch {
-                    id,
-                    file,
-                    line,
-                    column,
-                    pages,
-                },
-                answer,
-            ) => {
-                let root = self.project(&id)?.root;
-                answer(synctex::match_forward(&root, &file, line, column, &pages))
-            }
-            Library::PdfPath(PdfPath { id }, answer) => {
-                let project = self.project(&id)?;
-                let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
-                answer(pdf.map(|pdf| pdf.to_string_lossy().into_owned()))
-            }
-            Library::ExportZip(
-                ExportZip {
-                    id,
-                    dest,
-                    for_arxiv,
-                },
-                answer,
-            ) => {
-                let project = self.project(&id)?;
-                let added = match for_arxiv {
-                    true => zipexport::for_arxiv(&project)?,
-                    false => Vec::new(),
-                };
-                answer(zipexport::export_zip(&project.root, &dest, &added))
-            }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
-            Library::ImportFiles(
-                ImportFiles {
-                    id,
-                    dir,
-                    paths,
-                    conflict,
-                },
-                answer,
-            ) => answer(import::import_files(
-                self,
-                &id,
-                &dir,
-                &paths,
-                conflict,
-                sys::trash,
-            )),
             Library::OpenPath(OpenPath { path }, answer) => {
                 answer(projects::open_path(self, &path))
             }
             Library::ForgetFolder(ForgetFolder { id }, answer) => {
                 answer(projects::forget_folder(self, &id, stop))
-            }
-            Library::SetUiState(SetUiState { id, patch }, answer) => {
-                answer(self.with_project(&id, |project| settings::write_ui(&project.ui, patch)))
             }
         }
     }

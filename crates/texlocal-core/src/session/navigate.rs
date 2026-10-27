@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
@@ -10,12 +10,12 @@ use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::syntax::catalog::CATALOG;
+use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 
 use super::Pending;
 use super::actor::Actor;
-use crate::paths;
-use crate::settings;
-use crate::{lf, lock, lossy_string};
+use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
+use crate::{CoreError, lf, lock, lossy_string, paths, settings};
 
 const LISTED: usize = 50;
 
@@ -175,6 +175,61 @@ impl Actor {
                 place,
             })));
         });
+    }
+}
+
+impl Actor {
+    fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
+        let shown = self.live.active() && self.live.document_seen;
+        shown.then(|| self.preview.live_pdf(self.id)).transpose()
+    }
+
+    pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
+        let live = match self.live_pdf() {
+            Ok(live) => live,
+            Err(err) => return reply.send(Err(err)),
+        };
+        let project = self.project.clone();
+        tokio::task::spawn_blocking(move || {
+            reply.send(synctex::forward(&project, &file, line, live.as_deref()));
+        });
+    }
+
+    pub fn synctex_inverse(
+        &self,
+        page: f64,
+        x: f64,
+        y: f64,
+        click: Option<PageClick>,
+        reply: Pending<InverseLoc>,
+    ) {
+        let live = match self.live_pdf() {
+            Ok(live) => live,
+            Err(err) => return reply.send(Err(err)),
+        };
+        let (project, preview, id) = (self.project.clone(), Arc::clone(&self.preview), self.id);
+        tokio::task::spawn_blocking(move || {
+            let typeset = |rel: &str| live.as_ref().and_then(|_| preview.live_text(id, rel));
+            let pdf = live.as_deref();
+            reply.send(synctex::inverse(&project, page, x, y, click, pdf, &typeset));
+        });
+    }
+
+    pub fn synctex_match(
+        &self,
+        file: &str,
+        line: u32,
+        column: usize,
+        pages: &[PdfPage],
+    ) -> Result<Option<PdfHit>, CoreError> {
+        let text = match self.docs.get(file) {
+            Some(doc) => doc.doc.snapshot().0,
+            None => lossy_string(fs::read(paths::safe_path(&self.project.root, file)?)?),
+        };
+        let line = line
+            .checked_sub(1)
+            .and_then(|n| text.lines().nth(n as usize));
+        Ok(line.and_then(|line| find_in_pdf(line, column, pages)))
     }
 }
 

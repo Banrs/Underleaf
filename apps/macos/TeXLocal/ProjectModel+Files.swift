@@ -25,7 +25,6 @@ extension ProjectModel {
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
-        await uiStateWrites?.value
         guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
             try await session.call(Rename(from: from, to: to))
         }), let result = renamed, !closed else { return nil }
@@ -36,7 +35,9 @@ extension ProjectModel {
         if moved { openPath = now }
         let mainChanged = result.mainFile != settings?.mainFile
         settings?.mainFile = result.mainFile
-        showUIState(result.ui)
+        let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
+        expandedFolders = Set(expandedFolders.map(remap))
+        foldedHeadings = Set(foldedHeadings.map { key in key.firstIndex(of: "\t").map { remap(String(key[..<$0])) + key[$0...] } ?? key })
         if moved, let now, openPath == now, !closed {
             if isText(now) != wasText {
                 if wasText { await closeDocument(now) }
@@ -53,7 +54,7 @@ extension ProjectModel {
         let item = UndoableTrash(
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in await self?.tree.reload() },
+            changed: { [weak self] in _ = try? await self?.session?.call(ReloadTree()) },
             failed: { [weak self] title, error in self?.app?.report(error, title) })
         trashed.append(item)
         await item.moveToTrash()
@@ -99,17 +100,18 @@ extension ProjectModel {
     }
 
     func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
-        let request = ImportFiles(id: id, dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
+        guard let session else { return }
+        let request = ImportFiles(dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
         do {
-            let clashes = try await core.call(request).existing.map(\.path)
+            let clashes = try await session.call(request).existing.map(\.path)
             if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
         } catch {
             app?.report(error, "Couldn’t Add the Files")
         }
-        await tree.reload()
     }
 
     func exportZip(forArxiv: Bool = false) async throws -> URL {
+        guard let session else { throw CancellationError() }
         guard await save() else {
             let name = openPath?.fileName ?? self.name
             throw CocoaError(.fileWriteUnknown, userInfo: [
@@ -121,7 +123,7 @@ extension ProjectModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
         let url = folder.appending(path: "\(name).zip")
-        try await core.call(ExportZip(id: id, dest: url.path(percentEncoded: false), forArxiv: forArxiv))
+        try await session.call(ExportZip(dest: url.path(percentEncoded: false), forArxiv: forArxiv))
         return url
     }
 

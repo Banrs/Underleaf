@@ -127,7 +127,8 @@ struct Trail {
 }
 
 nonisolated struct SyncSource: Sendable {
-    let id, file: String
+    let session: UInt64
+    let file: String
     let line, column: Int
     var quietly = false
 }

@@ -3,16 +3,9 @@ import Observation
 
 @Observable
 final class FileTree {
-    private let id: String
-    private let core = Core.shared
-
     private(set) var nodes: [TreeNode] = []
     @ObservationIgnored var onChange: () -> Void = {}
-    @ObservationIgnored private var reads = 0
-    @ObservationIgnored private var taken = 0
     @ObservationIgnored private var closed = false
-
-    init(id: String) { self.id = id }
 
     func node(at path: String) -> TreeNode? {
         var level = nodes
@@ -23,20 +16,7 @@ final class FileTree {
         return nil
     }
 
-    func reload() async {
-        reads += 1
-        let read = reads
-        guard let files = try? await core.call(ReadTree(id: id)), read > taken else { return }
-        taken = read
-        if !Task.isCancelled { take(files) }
-    }
-
     func show(_ files: [TreeNode]) {
-        taken = reads
-        take(files)
-    }
-
-    private func take(_ files: [TreeNode]) {
         let files = Self.ordered(files)
         guard files != nodes, !closed else { return }
         nodes = files

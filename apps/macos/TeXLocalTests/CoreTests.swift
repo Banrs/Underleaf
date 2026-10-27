@@ -17,7 +17,7 @@ struct CoreTests {
 
     @Test func aRefusalCarriesItsKind() async {
         await #expect {
-            try await Core.shared.call(ReadTree(id: "No such project"))
+            try await Core.shared.call(DuplicateProject(id: "No such project", name: "Copy"))
         } throws: { error in
             (error as? CoreError)?.kind == .notFound
         }

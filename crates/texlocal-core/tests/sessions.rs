@@ -1,10 +1,12 @@
 mod common;
 
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-use common::{Library, Rig, SESSION};
+use common::{Library, Rig, SESSION, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
 
@@ -60,6 +62,14 @@ fn wait_until(why: &str, done: impl Fn() -> bool) {
         assert!(Instant::now() < deadline, "{why}");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn zip_names(path: &Path) -> Vec<String> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    names.sort();
+    let _ = archive.by_index(0).unwrap().read(&mut [0; 1]);
+    names
 }
 
 fn names(list: &Value, key: &str) -> Vec<String> {
@@ -470,6 +480,115 @@ async fn another_apps_files_reach_the_tree() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_reloaded_tree_marks_the_main_file_and_hides_dotfiles() {
+    let rig = project().await;
+    write(&rig.root(), &[(".latexmkrc", ""), ("figs/a.png", "png")]);
+    rig.call("ReloadTree", json!({}));
+    assert!(rig.heard("tree"));
+    let tree = &rig.event("tree", |e| e["tree"].to_string().contains("figs"))["tree"];
+    let listed = names(tree, "name");
+    assert!(listed.contains(&"figs".to_owned()) && !listed.iter().any(|n| n.starts_with('.')));
+    let main = tree
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["name"] == "main.tex");
+    assert_eq!(
+        (main.unwrap()["main"].clone(), main.unwrap()["kind"].clone()),
+        (json!(true), json!("tex"))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
+    let rig = project().await;
+    let image = rig.library.path("plot.png");
+    fs::write(&image, "png").unwrap();
+    let args = json!({ "dir": "figs", "paths": [image] });
+    assert_eq!(rig.call("ImportFiles", args.clone())["existing"], json!([]));
+    assert_eq!(fs::read(rig.root().join("figs/plot.png")).unwrap(), b"png");
+    assert!(rig.heard("tree"));
+    let second = rig.call("ImportFiles", args.clone());
+    assert_eq!(
+        second["existing"],
+        json!([{ "path": "plot.png", "keepBoth": "plot 2.png" }])
+    );
+    let mut keep = args;
+    keep["conflict"] = json!("keepBoth");
+    rig.call("ImportFiles", keep);
+    assert!(rig.root().join("figs/plot 2.png").is_file());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_export_holds_the_sources_and_opens_as_a_new_project() {
+    let built = [("build/main.pdf", "pdf"), (".git/HEAD", "x")];
+    let rig = Rig::open(&[("main.tex", MAIN), ("ch.tex", CHAPTER), built[0], built[1]]).await;
+    let dest = rig.library.path("Shared.zip");
+    rig.call("ExportZip", json!({ "dest": dest, "forArxiv": false }));
+    assert_eq!(zip_names(&dest), ["ch.tex", "main.tex"]);
+    let opened = rig.library.call("OpenPath", json!({ "path": dest })).await;
+    assert_eq!(opened["project"]["name"], "Shared");
+    assert!(rig.library.project_root("Shared").join("ch.tex").is_file());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
+    let rig = project().await;
+    let dest = rig.library.path("arxiv.zip");
+    rig.call("ExportZip", json!({ "dest": dest, "forArxiv": true }));
+    assert!(zip_names(&dest).contains(&"00README.json".to_owned()));
+    rig.call("SetSettings", json!({ "patch": { "engine": "lualatex" } }));
+    let again = json!({ "dest": rig.library.path("b.zip"), "forArxiv": true });
+    let refused = rig.try_call("ExportZip", again);
+    assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ui_state_is_written_before_the_close_and_keeps_what_it_is_not_given() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        let file = library.project_root("P").join(".texlocal.json");
+        fs::write(
+            file,
+            r#"{"mainFile": "main.tex", "ui": {"openFile": "main.tex"}}"#,
+        )
+        .unwrap();
+    })
+    .await;
+    let zoom = json!({ "type": "scale", "value": 1.5 });
+    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom, "panel": true });
+    rig.send(
+        SESSION,
+        "SetUiState",
+        json!({ "patch": { "place": place } }),
+    );
+    let folders = json!({ "expandedFolders": ["figs"] });
+    rig.send(SESSION, "SetUiState", json!({ "patch": folders }));
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    let file = fs::read(rig.root().join(".texlocal.json")).unwrap();
+    let ui = &serde_json::from_slice::<Value>(&file).unwrap()["ui"];
+    assert_eq!(
+        (&ui["openFile"], &ui["line"], &ui["zoom"]),
+        (&json!("main.tex"), &json!(12), &json!(1.5))
+    );
+    assert_eq!(ui["expandedFolders"], json!(["figs"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forward_match_reads_the_open_documents_text() {
+    let rig = Rig::open(&[("main.tex", "the \\emph{world} turns\n")]).await;
+    let pages = json!([{ "page": 3, "text": "the world and the world turns", "near": [] }]);
+    let at = |line| json!({ "file": "main.tex", "line": line, "column": 11, "pages": pages });
+    let hit = json!({ "page": 3, "start": 18, "end": 23 });
+    assert_eq!(rig.call("SynctexMatch", at(1)), hit);
+    rig.open_document("main.tex")
+        .edit(0, 0, "\\section{Intro}\n", None, false);
+    assert_eq!(rig.call("SynctexMatch", at(2)), hit);
+    let forward = json!({ "file": "main.tex", "line": 2 });
+    let unbuilt = rig.try_call("SynctexForward", forward);
+    assert_eq!(unbuilt.unwrap_err().kind, ErrorKind::NotFound);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_build_shows_its_pdf_and_marks_its_errors() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
@@ -479,6 +598,7 @@ async fn a_build_shows_its_pdf_and_marks_its_errors() {
     let result = &finished["result"];
     assert_eq!(result["ok"], false);
     assert!(result["pdf"].as_str().unwrap().ends_with("main.pdf"));
+    assert_eq!(rig.call("PdfPath", json!({})), result["pdf"]);
     assert_eq!(result["errors"][0]["line"], 3);
     assert_eq!(result["errors"][0]["file"], "main.tex");
     let issues = rig.event("issues", |e| {
