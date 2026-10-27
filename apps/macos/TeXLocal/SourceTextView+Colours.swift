@@ -7,12 +7,12 @@ extension SourceTextView {
             let range = fragment.rangeInElement
             let start = offset(range.location), end = offset(range.endLocation)
             manager.setRenderingAttributes([.foregroundColor: NSColor.textColor], for: range)
-            var runs: [Int] = []
+            var runs: [Any] = []
             for run in document.highlights(in: NSRange(location: start, length: end - start)) {
                 let clipped = NSIntersectionRange(run.range, NSRange(location: start, length: end - start))
                 if clipped.length > 0, let range = textRange(clipped) {
                     manager.setRenderingAttributes([.foregroundColor: syntaxTheme.color(run.kind)], for: range)
-                    runs += [clipped.location - start, clipped.length, Int(run.kind.rawValue)]
+                    runs += [clipped.location - start, clipped.length, run.kind.rawValue]
                 }
             }
             fragmentColours.setObject(runs as NSArray, forKey: fragment)

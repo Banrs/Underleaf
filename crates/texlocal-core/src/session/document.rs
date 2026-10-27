@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use texlocal_latex::analyze::Facts;
 use texlocal_latex::file_kind;
 use texlocal_latex::syntax::{SourceDocument, TextEdit, TextRange};
+use texlocal_latex::utf16;
 use tokio::sync::mpsc;
 
 use super::Msg;
@@ -80,6 +81,21 @@ impl Document {
         held.source = SourceDocument::named(text, &held.source.path);
         self.changed(&mut held, None);
         true
+    }
+
+    pub fn restore(&self, text: &str) {
+        let mut held = lock(&self.0.text);
+        let had = held.source.text();
+        held.source = SourceDocument::named(text, &held.source.path);
+        if had != text {
+            held.edited = true;
+            let edit = TextEdit {
+                start: 0,
+                length: utf16::len(&had) as u32,
+                text: text.to_owned(),
+            };
+            self.changed(&mut held, Some(edit));
+        }
     }
 
     fn changed(&self, held: &mut Text, edit: Option<TextEdit>) {

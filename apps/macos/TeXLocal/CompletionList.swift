@@ -24,7 +24,7 @@ final class CompletionList {
 
     init(for editor: SourceTextView) {
         self.editor = editor
-        rows = ChoiceRows { [look] in [$0.label, $0.detail, look.kind.name] }
+        rows = ChoiceRows { [look] in [$0.label, $0.detail, look.kind.title] }
     }
 
     func offer() { if editor.autoComplete || offered != nil { complete(explicit: false) } }
@@ -155,7 +155,7 @@ final class CompletionList {
 
 @Observable final class CompletionLook {
     var typed = 0
-    var kind = CompletionKind.command
+    var kind = SymbolKind.command
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     var boldFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .bold)
     var detailFont: NSFont { .systemFont(ofSize: font.pointSize) }

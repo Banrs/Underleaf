@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -22,7 +23,7 @@ pub struct Catalog {
     pub(crate) symbol_groups: Vec<SymbolGroup>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Templates {
     pub(crate) math: Vec<Template>,
     pub(crate) insert: Vec<Template>,
@@ -30,7 +31,7 @@ pub(crate) struct Templates {
     pub(crate) references: Vec<Template>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Template {
     pub(crate) title: String,
     pub(crate) body: String,
@@ -40,16 +41,30 @@ pub(crate) struct Template {
     pub(crate) inline: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SymbolGroup {
     pub(crate) title: String,
     pub(crate) symbols: Vec<Symbol>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Symbol {
     pub(crate) glyph: String,
     pub(crate) command: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Menus {
+    templates: &'static Templates,
+    symbol_groups: &'static [SymbolGroup],
+}
+
+pub(crate) fn menus() -> Menus {
+    Menus {
+        templates: &CATALOG.templates,
+        symbol_groups: &CATALOG.symbol_groups,
+    }
 }
 
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {

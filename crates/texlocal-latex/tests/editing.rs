@@ -1,9 +1,12 @@
 use serde_json::{Value, json};
-use texlocal_latex::syntax::{self, SourceDocument};
+use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
 
 fn run(doc: &mut SourceDocument, command: &str, args: Value) -> Value {
-    let answer = doc.call(command, &args.to_string()).expect(command);
-    serde_json::from_str(&answer).unwrap()
+    Source::call(doc, command, args).expect(command)
+}
+
+fn free(command: &str, args: Value) -> Value {
+    Syntax::call(command, args).expect(command)
 }
 
 fn caret(at: u32) -> Value {
@@ -62,7 +65,7 @@ fn a_command_completes_with_its_argument() {
     let mut doc = SourceDocument::new("\\sec");
     let answer = run(
         &mut doc,
-        "completions",
+        "Complete",
         json!({ "caret": 4, "explicit": false }),
     );
     assert_eq!(answer["kind"], "command");
@@ -81,14 +84,14 @@ fn toggling_a_comment_adds_and_removes_it() {
     let mut doc = SourceDocument::new("text");
     let added = run(
         &mut doc,
-        "toggle_comment",
+        "ToggleComment",
         json!({ "selections": [caret(0)] }),
     );
     apply(&mut doc, &added[0]);
     assert_eq!(doc.text(), "% text");
     let removed = run(
         &mut doc,
-        "toggle_comment",
+        "ToggleComment",
         json!({ "selections": [caret(3)] }),
     );
     for edit in removed.as_array().unwrap() {
@@ -102,15 +105,11 @@ fn a_heading_changes_level_or_becomes_text() {
     let mut doc = SourceDocument::new("\\section{Intro}");
     let deeper = run(
         &mut doc,
-        "set_heading",
+        "SetHeading",
         json!({ "caret": 3, "command": "subsection" }),
     );
     assert_eq!(deeper["edit"]["text"], "\\subsection{Intro}");
-    let plain = run(
-        &mut doc,
-        "set_heading",
-        json!({ "caret": 3, "command": "" }),
-    );
+    let plain = run(&mut doc, "SetHeading", json!({ "caret": 3, "command": "" }));
     assert_eq!(plain["edit"]["text"], "Intro");
 }
 
@@ -120,7 +119,7 @@ fn typing_an_opener_inserts_its_closer() {
         let mut doc = SourceDocument::new("a b");
         let answer = run(
             &mut doc,
-            "type",
+            "TypeText",
             json!({ "selection": caret(1), "text": typed, "autoPair": true }),
         );
         assert_eq!(answer["edit"]["text"], inserted, "{typed}");
@@ -133,13 +132,13 @@ fn deleting_an_inserted_opener_deletes_its_closer() {
     let mut doc = SourceDocument::new("a");
     let typed = run(
         &mut doc,
-        "type",
+        "TypeText",
         json!({ "selection": caret(1), "text": "{", "autoPair": true }),
     );
     apply(&mut doc, &typed["edit"]);
     let deleted = run(
         &mut doc,
-        "delete_backward",
+        "DeleteBackward",
         json!({ "selection": caret(2), "autoPair": true }),
     );
     apply(&mut doc, &deleted["edit"]);
@@ -149,11 +148,7 @@ fn deleting_an_inserted_opener_deletes_its_closer() {
 #[test]
 fn return_after_begin_closes_the_environment() {
     let mut doc = SourceDocument::new("\\begin{itemize}");
-    let answer = run(
-        &mut doc,
-        "insert_newline",
-        json!({ "selection": caret(15) }),
-    );
+    let answer = run(&mut doc, "InsertNewline", json!({ "selection": caret(15) }));
     apply(&mut doc, &answer["edit"]);
     assert!(doc.text().ends_with("\n\\end{itemize}"), "{}", doc.text());
 }
@@ -161,33 +156,30 @@ fn return_after_begin_closes_the_environment() {
 #[test]
 fn return_after_an_item_starts_another() {
     let mut doc = SourceDocument::new("\\begin{itemize}\n\\item one");
-    let answer = run(
-        &mut doc,
-        "insert_newline",
-        json!({ "selection": caret(25) }),
-    );
+    let answer = run(&mut doc, "InsertNewline", json!({ "selection": caret(25) }));
     assert_eq!(answer["edit"]["text"], "\n\\item ");
 }
 
 #[test]
 fn prose_words_leave_out_commands_maths_and_comments() {
     let mut doc = SourceDocument::new("\\section{Intro}\nSome $x^2$ text % a note\n");
-    let answer = run(&mut doc, "words", json!({ "start": 0, "length": 40 }));
-    assert_eq!(answer["words"], 3);
+    let answer = run(
+        &mut doc,
+        "Words",
+        json!({ "selection": { "start": 0, "length": 40 } }),
+    );
+    assert_eq!(answer, 3);
 }
 
 #[test]
 fn the_maths_under_the_caret_is_found() {
     let mut doc = SourceDocument::new("Some $x^2$ text");
-    let answer = run(&mut doc, "math_at", json!({ "caret": 7 }));
+    let answer = run(&mut doc, "MathAt", json!({ "caret": 7 }));
     assert_eq!(
         answer,
         json!({ "start": 5, "tex": "x^2", "display": false })
     );
-    assert_eq!(
-        run(&mut doc, "math_at", json!({ "caret": 12 })),
-        Value::Null
-    );
+    assert_eq!(run(&mut doc, "MathAt", json!({ "caret": 12 })), Value::Null);
 }
 
 #[test]
@@ -195,14 +187,14 @@ fn bold_wraps_a_selection_and_reports_how_to_take_it_off() {
     let mut doc = SourceDocument::new("bold word");
     let wrapped = run(
         &mut doc,
-        "toggle_style",
+        "ToggleStyle",
         json!({ "selections": [{ "start": 0, "length": 4 }], "style": "bold" }),
     );
     apply(&mut doc, &wrapped["edits"][0]);
     assert_eq!(doc.text(), "\\textbf{bold} word");
     let styles = run(
         &mut doc,
-        "text_styles",
+        "StylesAt",
         json!({ "selection": { "start": 9, "length": 2 } }),
     );
     assert!(styles["bold"].is_array());
@@ -212,7 +204,7 @@ fn bold_wraps_a_selection_and_reports_how_to_take_it_off() {
 #[test]
 fn a_brace_finds_its_partner() {
     let mut doc = SourceDocument::new("\\textbf{a{b}c}");
-    assert_eq!(run(&mut doc, "partner", json!({ "at": 7 })), 13);
+    assert_eq!(run(&mut doc, "Partner", json!({ "at": 7 })), 13);
 }
 
 #[test]
@@ -220,22 +212,18 @@ fn lines_move_duplicate_and_delete() {
     let mut doc = SourceDocument::new("one\ntwo");
     let moved = run(
         &mut doc,
-        "move_lines",
+        "MoveLines",
         json!({ "selections": [caret(5)], "up": true }),
     );
     assert_eq!(moved["edits"][0]["text"], "two\none");
     let duplicated = run(
         &mut doc,
-        "duplicate_lines",
+        "DuplicateLines",
         json!({ "selections": [caret(0)] }),
     );
     apply(&mut doc, &duplicated["edits"][0]);
     assert_eq!(doc.text(), "one\none\ntwo");
-    let deleted = run(
-        &mut doc,
-        "delete_lines",
-        json!({ "selections": [caret(0)] }),
-    );
+    let deleted = run(&mut doc, "DeleteLines", json!({ "selections": [caret(0)] }));
     apply(&mut doc, &deleted["edits"][0]);
     assert_eq!(doc.text(), "one\ntwo");
 }
@@ -245,7 +233,7 @@ fn tab_indents_every_selected_line() {
     let mut doc = SourceDocument::new("a\nb");
     let answer = run(
         &mut doc,
-        "tab",
+        "InsertTab",
         json!({ "selections": [{ "start": 0, "length": 3 }], "step": 1 }),
     );
     assert_eq!(answer["edits"].as_array().unwrap().len(), 2);
@@ -256,8 +244,8 @@ fn spelling_leaves_out_commands_and_maths() {
     let mut doc = SourceDocument::new("\\emph{word} and $x$");
     let ranges = run(
         &mut doc,
-        "code_ranges",
-        json!({ "selection": { "start": 0, "length": 19 }, "for": "spelling" }),
+        "CodeRanges",
+        json!({ "selection": { "start": 0, "length": 19 }, "checker": "spelling" }),
     );
     assert_eq!(
         ranges,
@@ -269,7 +257,7 @@ fn spelling_leaves_out_commands_and_maths() {
 fn a_section_folds_to_the_next_heading() {
     let mut doc = SourceDocument::new("\\section{A}\ntext\n\\section{B}\nmore\n");
     assert_eq!(
-        run(&mut doc, "folds", json!({})),
+        run(&mut doc, "Folds", json!({})),
         json!([{ "line": 1, "end": 2 }, { "line": 3, "end": 4 }])
     );
 }
@@ -279,7 +267,7 @@ fn a_symbol_outside_maths_goes_in_dollars() {
     let mut doc = SourceDocument::new("");
     let answer = run(
         &mut doc,
-        "insert_symbol",
+        "InsertSymbol",
         json!({ "command": "\\alpha", "selection": caret(0) }),
     );
     assert_eq!(answer["edit"]["text"], "$\\alpha$");
@@ -290,7 +278,7 @@ fn a_figure_block_leaves_fields_to_fill() {
     let mut doc = SourceDocument::new("");
     let answer = run(
         &mut doc,
-        "insert_block",
+        "InsertBlock",
         json!({ "id": "figure", "selection": caret(0) }),
     );
     assert!(
@@ -305,37 +293,113 @@ fn a_figure_block_leaves_fields_to_fill() {
 #[test]
 fn a_reference_leads_to_its_label() {
     let mut doc = SourceDocument::new("\\label{a} \\ref{a}");
-    let answer = run(&mut doc, "definition", json!({ "at": 15 }));
+    let answer = run(&mut doc, "DefinitionAt", json!({ "at": 15 }));
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
 }
 
 #[test]
-fn unknown_commands_and_bad_arguments_answer_nothing() {
+fn a_snippet_tabs_from_field_to_field_until_it_ends() {
     let mut doc = SourceDocument::new("");
-    assert_eq!(doc.call("no_such_command", "{}"), None);
-    assert_eq!(doc.call("partner", r#"{"at": "x"}"#), None);
+    let block = run(
+        &mut doc,
+        "InsertBlock",
+        json!({ "id": "figure", "selection": caret(0) }),
+    );
+    apply(&mut doc, &block["edit"]);
+    let fields = &block["fields"];
+    let place = |i: usize| json!({ "start": fields[i]["start"], "length": fields[i]["length"] });
+    let first = run(
+        &mut doc,
+        "StartSnippet",
+        json!({ "fields": fields, "at": 0 }),
+    );
+    assert_eq!(first, place(0));
+    let tab = |doc: &mut SourceDocument, step: i64| {
+        run(
+            doc,
+            "InsertTab",
+            json!({ "selections": [first], "step": step }),
+        )
+    };
+    assert_eq!(tab(&mut doc, 1)["field"], place(1));
+    assert_eq!(tab(&mut doc, -1)["field"], place(0));
+    assert_eq!(run(&mut doc, "EndSnippet", json!({})), true);
+    assert_eq!(run(&mut doc, "EndSnippet", json!({})), false);
+    assert_eq!(tab(&mut doc, 1)["field"], Value::Null);
+}
+
+#[test]
+fn selections_move_with_the_edits_before_them() {
+    let mut doc = SourceDocument::new("");
+    let mapped = run(
+        &mut doc,
+        "MapSelections",
+        json!({
+            "edits": [{ "start": 0, "length": 1, "text": "abc" }, { "start": 4, "length": 2, "text": "" }],
+            "selections": [caret(2), { "start": 3, "length": 4 }, caret(5), caret(8)],
+        }),
+    );
+    assert_eq!(
+        mapped,
+        json!([caret(4), { "start": 5, "length": 2 }, caret(6), caret(8)])
+    );
+}
+
+#[test]
+fn unknown_commands_and_bad_arguments_are_refused() {
+    let mut doc = SourceDocument::new("");
+    assert!(Source::call(&mut doc, "NoSuchCommand", json!({})).is_err());
+    assert!(Source::call(&mut doc, "Partner", json!({ "at": "x" })).is_err());
+    assert!(Source::call(&mut doc, "Partner", json!({ "at": 0, "more": 1 })).is_err());
 }
 
 #[test]
 fn maths_renders_as_svg_or_nothing() {
-    let svg: Value = serde_json::from_str(
-        &syntax::call("math_svg", r#"{"tex":"x^2","display":false,"size":13}"#).unwrap(),
-    )
-    .unwrap();
+    let svg = free(
+        "RenderMath",
+        json!({ "tex": "x^2", "display": false, "size": 13 }),
+    );
     assert!(svg["svg"].as_str().unwrap().starts_with("<svg"));
     assert!(svg["width"].as_f64().unwrap() > 0.0);
-    let broken = syntax::call("math_svg", r#"{"tex":"\\frac{","display":false,"size":13}"#);
-    assert_eq!(broken.as_deref(), Some("null"));
+    let broken = free(
+        "RenderMath",
+        json!({ "tex": "\\frac{", "display": false, "size": 13 }),
+    );
+    assert_eq!(broken, Value::Null);
 }
 
 #[test]
 fn the_menus_and_heading_levels_are_listed() {
-    let menus: Value = serde_json::from_str(&syntax::call("menus", "{}").unwrap()).unwrap();
+    let menus = free("ListMenus", json!({}));
     assert!(menus["templates"]["insert"].is_array());
     assert!(menus["symbolGroups"].is_array());
-    let levels: Value =
-        serde_json::from_str(&syntax::call("heading_styles", "{}").unwrap()).unwrap();
+    let levels = free("HeadingStyles", json!({}));
     assert_eq!(levels[0], json!({ "title": "Normal Text", "command": "" }));
     assert_eq!(levels[3]["command"], "section");
+}
+
+#[test]
+fn a_dropped_figure_is_included_only_where_tex_reads_it() {
+    let include =
+        |path: &str, into: &str| free("IncludeGraphics", json!({ "path": path, "into": into }));
+    assert_eq!(
+        include("figs/plot.png", "main.tex"),
+        "\\includegraphics{figs/plot.png}"
+    );
+    assert_eq!(
+        include("Shot.JPG", "ch/intro.tex"),
+        "\\includegraphics{Shot.JPG}"
+    );
+    assert_eq!(include("a.pdf", "main.tex"), "\\includegraphics{a.pdf}");
+    assert_eq!(
+        include("a b_{c}.png", "main.tex"),
+        "\\includegraphics{a b_{c}.png}"
+    );
+    assert_eq!(include("a.pdf", "refs.bib"), Value::Null);
+    for path in [
+        "logo.svg", "ch1.tex", "png", "50%.png", "a#1.png", "a\\b.png", "a}{.png", "a{.png",
+    ] {
+        assert_eq!(include(path, "main.tex"), Value::Null, "{path}");
+    }
 }

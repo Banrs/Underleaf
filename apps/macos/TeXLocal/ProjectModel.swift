@@ -1,6 +1,5 @@
 import AppKit
 import Observation
-import UniformTypeIdentifiers
 
 @Observable
 final class ProjectModel {
@@ -359,15 +358,11 @@ final class ProjectModel {
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        let into = openKind?.rawValue ?? ""
         guard let path = projectPath(url) else {
-            let type = UTType(filenameExtension: url.pathExtension)
-            let kind = type?.conforms(to: .pdf) == true ? "pdf" : type?.conforms(to: .image) == true ? "image" : ""
-            return Self.includeGraphics(url.lastPathComponent, kind: kind, into: into) == nil ? nil
-                : .copy { [weak self] in await self?.copyFigure(url) }
+            return includeGraphics(url.lastPathComponent) == nil ? nil : .copy { [weak self] in await self?.copyFigure(url) }
         }
-        guard let kind = tree.node(at: path)?.kind else { return nil }
-        if let insert = Self.includeGraphics(path, kind: kind.rawValue, into: into) { return .insert(insert) }
+        guard tree.node(at: path) != nil else { return nil }
+        if let insert = includeGraphics(path) { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
     }
 
@@ -377,24 +372,11 @@ final class ProjectModel {
         guard let session, let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
         else { return nil }
         let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
-        guard let kind = tree.node(at: path)?.kind else { return nil }
-        return Self.includeGraphics(path, kind: kind.rawValue)
+        guard tree.node(at: path) != nil else { return nil }
+        return includeGraphics(path)
     }
 
-    static func includeGraphics(_ path: String, kind: String, into: String = "tex") -> String? {
-        guard into == "tex", ["image", "pdf"].contains(kind),
-              ["png", "jpg", "jpeg", "pdf"].contains((path as NSString).pathExtension.lowercased()) else { return nil }
-        var depth = 0
-        for character in path {
-            switch character {
-            case "%", "#", "\\": return nil
-            case "{": depth += 1
-            case "}": depth -= 1; if depth < 0 { return nil }
-            default: break
-            }
-        }
-        return depth == 0 ? "\\includegraphics{\(path)}" : nil
-    }
+    private func includeGraphics(_ path: String) -> String? { Syntax.call(IncludeGraphics(path: path, into: openPath ?? "")) ?? nil }
 
     @discardableResult
     func save(reporting: Bool = true) async -> Bool {
@@ -483,8 +465,8 @@ final class ProjectModel {
     }
 
     func renameSymbol(_ symbol: Definition, to name: String) async throws {
-        guard let session, let kind = SymbolKind(rawValue: symbol.kind) else { return }
-        try await editProject(RenameSymbol(kind: kind, from: symbol.name, to: name), in: session, named: String(localized: "Rename"))
+        guard let session else { return }
+        try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), in: session, named: String(localized: "Rename"))
     }
 
     func saveVersion(named name: String) async throws {
@@ -511,7 +493,7 @@ final class ProjectModel {
     @discardableResult
     private func apply(_ edits: DocumentEdits?, named name: String) -> Bool {
         guard let edits else { return true }
-        guard edits.path == editor.path, editor.textView.document.version.map(UInt64.init) == edits.version else { return false }
+        guard edits.path == editor.path, editor.textView.document.version == edits.version else { return false }
         editor.textView.apply(edits.edits, named: name)
         return true
     }

@@ -49,13 +49,13 @@ final class MathPopover {
         }
     }
 
-    @concurrent private nonisolated static func draw(_ tex: String, display: Bool, size: Double) async -> Syntax.Drawing? {
-        Syntax.call("math_svg", ["tex": tex, "display": display, "size": size])
+    @concurrent private nonisolated static func draw(_ tex: String, display: Bool, size: Double) async -> MathSvg? {
+        Syntax.call(RenderMath(tex: tex, display: display, size: size)) ?? nil
     }
 }
 
 extension NSImage {
-    convenience init?(drawing: Syntax.Drawing) {
+    convenience init?(drawing: MathSvg) {
         self.init(data: Data(drawing.svg.utf8))
         size = NSSize(width: drawing.width, height: drawing.height)
     }

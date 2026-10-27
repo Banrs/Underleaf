@@ -36,7 +36,9 @@ struct CoreTests {
                 && events.contains { if case .checks = $0 { true } else { false } }
         }
         let document = try #require(SourceDocument(session: session.id, path: "main.tex"))
+        let version = try #require(document.version)
         _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
+        #expect(document.version == version + 1)
         #expect(try await session.call(Save(reporting: true)))
         let text = try String(contentsOfFile: project.path + "/main.tex", encoding: .utf8)
         #expect(text.hasPrefix("% note\n"))

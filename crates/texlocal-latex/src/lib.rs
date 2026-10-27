@@ -2,6 +2,7 @@ pub mod analyze;
 pub mod checks;
 pub mod diff;
 pub mod logparse;
+pub mod protocol;
 pub mod search;
 pub mod synctex;
 pub mod syntax;

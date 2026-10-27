@@ -90,13 +90,15 @@ fn source_text(source: *mut TlSource) -> String {
     text
 }
 
-fn take(text: *mut c_char) -> Option<Value> {
-    if text.is_null() {
-        return None;
-    }
+fn take(text: *mut c_char) -> Value {
     let value = serde_json::from_str(unsafe { CStr::from_ptr(text) }.to_str().unwrap()).unwrap();
     unsafe { tl_free(text) };
-    Some(value)
+    value
+}
+
+fn version(source: *mut TlSource) -> Option<u64> {
+    let mut version = 0;
+    unsafe { tl_source_version(source, &raw mut version) }.then_some(version)
 }
 
 #[test]
@@ -160,16 +162,17 @@ fn a_session_document_is_edited_and_saved_through_the_abi() {
     let path = c("main.tex");
     let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
     assert!(!source.is_null());
-    let before = source_text(source);
+    let (before, opened) = (source_text(source), version(source).unwrap());
     let note = "% note\n";
     let mirrored =
         unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
     assert_eq!(
         take(mirrored),
-        None,
+        json!({ "ok": [] }),
         "an edit outside a snippet mirrors nothing"
     );
     assert_eq!(source_text(source), format!("{note}{before}"));
+    assert_eq!(version(source), Some(opened + 1));
     unsafe { tl_source_free(source) };
     assert_eq!(
         core.ask(7, "Save", json!({ "reporting": true }))["ok"],
@@ -177,6 +180,32 @@ fn a_session_document_is_edited_and_saved_through_the_abi() {
     );
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
     assert!(saved.starts_with(note));
+}
+
+#[test]
+fn a_session_document_is_restored_from_the_editors_text() {
+    let core = Core::open();
+    core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
+    core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
+    core.ask(7, "OpenDocument", json!({ "path": "main.tex" }));
+    let path = c("main.tex");
+    let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
+    let opened = version(source).unwrap();
+    let before = source_text(source);
+    unsafe { tl_source_restore(source, before.as_ptr(), before.len()) };
+    assert_eq!(
+        version(source),
+        Some(opened),
+        "the same text changes nothing"
+    );
+    let text = "restored\n";
+    unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
+    assert_eq!(source_text(source), text);
+    assert_eq!(version(source), Some(opened + 1));
+    unsafe { tl_source_free(source) };
+    core.ask(7, "Save", json!({ "reporting": true }));
+    let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
+    assert_eq!(saved, text);
 }
 
 #[test]
@@ -204,20 +233,35 @@ fn a_source_of_the_hosts_own_highlights_and_answers_commands() {
     unsafe { tl_source_free_runs(runs, count) };
     assert_eq!(&triples[..3], [0, 5, 0]);
     assert_eq!(unsafe { tl_source_line_count(source) }, 1);
-    let command = c("toggle_comment");
+    assert_eq!(version(source), None);
+    let command = c("ToggleComment");
     let args = c(r#"{"selections":[{"start":0,"length":0}]}"#);
-    let answer = take(unsafe { tl_source_call(source, command.as_ptr(), args.as_ptr()) }).unwrap();
-    assert!(answer.is_array());
+    let answer = take(unsafe { tl_source_call(source, command.as_ptr(), args.as_ptr()) });
+    assert!(answer["ok"].is_array());
     let unknown = c("nope");
-    assert!(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) }.is_null());
+    let refused = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
+    assert_eq!(refused["error"]["kind"], "invalid");
     unsafe { tl_source_free(source) };
 }
 
 #[test]
 fn syntax_commands_need_no_source() {
-    let menus = c("menus");
+    let menus = c("ListMenus");
     let empty = c("{}");
-    let answer = take(unsafe { tl_syntax_call(menus.as_ptr(), empty.as_ptr()) }).unwrap();
-    assert!(answer["templates"].is_object());
-    assert!(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) }.is_null());
+    let answer = take(unsafe { tl_syntax_call(menus.as_ptr(), empty.as_ptr()) });
+    assert!(answer["ok"]["templates"].is_object());
+    let refused = take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) });
+    assert_eq!(refused["error"]["kind"], "invalid");
+}
+
+#[test]
+fn a_panic_answers_an_error_and_a_new_source_survives_one() {
+    let source = own(|| panic!("a broken editor"));
+    assert_eq!(source_text(source), "");
+    let answer = take(unsafe { answer_on(source, |_| panic!("a broken edit")) });
+    assert_eq!(answer["error"]["kind"], "internal");
+    let text = "kept";
+    unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
+    assert_eq!(source_text(source), text);
+    unsafe { tl_source_free(source) };
 }

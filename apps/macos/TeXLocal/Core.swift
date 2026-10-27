@@ -73,7 +73,7 @@ final class Core {
         }
     }
 
-    private nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
+    nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
         let answer: Result<T, CoreError>
         do {
             answer = try JSONDecoder().decode(Envelope<T>.self, from: envelope).answer

@@ -37,6 +37,10 @@ nonisolated protocol LibraryRequest: WireRequest {}
 
 nonisolated protocol SessionRequest: WireRequest {}
 
+nonisolated protocol SourceRequest: WireRequest {}
+
+nonisolated protocol SyntaxRequest: WireRequest {}
+
 nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
@@ -97,6 +101,21 @@ nonisolated extension BuildState {
     }
 }
 
+nonisolated struct Change: Decodable, Hashable, Sendable {
+    var edits: [TextEdit]
+    var selections: [TextRange]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case edits, selections }
+}
+
+nonisolated extension Change {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        edits = try wire.decode([TextEdit].self, forKey: .edits)
+        selections = try wire.decode([TextRange].self, forKey: .selections)
+    }
+}
+
 nonisolated enum ChangeKind: String, Decodable, CaseIterable, Hashable, Sendable {
     case added, deleted, changed
 }
@@ -119,6 +138,10 @@ nonisolated extension ChangedFile {
 nonisolated struct CheckTex: LibraryRequest {
     typealias Reply = TexStatus
     static let command = "CheckTex"
+}
+
+nonisolated enum Checker: String, Encodable, CaseIterable, Hashable, Sendable {
+    case spelling, writingTools
 }
 
 nonisolated struct Clash: Decodable, Hashable, Sendable {
@@ -155,6 +178,14 @@ nonisolated struct CloseProject: SessionRequest {
 
 nonisolated enum CloseReason: String, Decodable, CaseIterable, Hashable, Sendable {
     case closed, gone, deleted
+}
+
+nonisolated struct CodeRanges: SourceRequest {
+    typealias Reply = [TextRange]
+    static let command = "CodeRanges"
+
+    var selection: TextRange
+    var checker: Checker
 }
 
 nonisolated struct CompareVersion: SessionRequest {
@@ -198,6 +229,54 @@ nonisolated extension CompileResult {
         warnings = try wire.decode([LogItem].self, forKey: .warnings)
         badBoxes = try wire.decode([LogItem].self, forKey: .badBoxes)
         log = try wire.decode(String.self, forKey: .log)
+    }
+}
+
+nonisolated struct Complete: SourceRequest {
+    typealias Reply = Completions?
+    static let command = "Complete"
+
+    var caret: Int
+    var explicit: Bool
+}
+
+nonisolated enum Completing: String, Decodable, CaseIterable, Hashable, Sendable {
+    case keep, offer, close
+}
+
+nonisolated struct Completion: Decodable, Hashable, Sendable {
+    var label: String
+    var text: String
+    var fields: [SnippetField]
+    var detail: String?
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case label, text, fields, detail }
+}
+
+nonisolated extension Completion {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        label = try wire.decode(String.self, forKey: .label)
+        text = try wire.decode(String.self, forKey: .text)
+        fields = try wire.decode([SnippetField].self, forKey: .fields)
+        detail = try wire.decodeIfPresent(String.self, forKey: .detail)
+    }
+}
+
+nonisolated struct Completions: Decodable, Hashable, Sendable {
+    var start: Int
+    var kind: SymbolKind
+    var items: [Completion]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case start, kind, items }
+}
+
+nonisolated extension Completions {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        start = try wire.decode(Int.self, forKey: .start)
+        kind = try wire.decode(SymbolKind.self, forKey: .kind)
+        items = try wire.decode([Completion].self, forKey: .items)
     }
 }
 
@@ -255,6 +334,45 @@ nonisolated struct CreateProject: LibraryRequest {
     var name: String
     var template: ProjectTemplate
     var engine: Engine?
+}
+
+nonisolated struct Definition: Decodable, Hashable, Sendable {
+    var kind: SymbolKind
+    var name: String
+    var places: [FilePlace]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case kind, name, places }
+}
+
+nonisolated extension Definition {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        kind = try wire.decode(SymbolKind.self, forKey: .kind)
+        name = try wire.decode(String.self, forKey: .name)
+        places = try wire.decode([FilePlace].self, forKey: .places)
+    }
+}
+
+nonisolated struct DefinitionAt: SourceRequest {
+    typealias Reply = Definition?
+    static let command = "DefinitionAt"
+
+    var at: Int
+}
+
+nonisolated struct DeleteBackward: SourceRequest {
+    typealias Reply = Keystroke
+    static let command = "DeleteBackward"
+
+    var selection: TextRange
+    var autoPair: Bool
+}
+
+nonisolated struct DeleteLines: SourceRequest {
+    typealias Reply = Change
+    static let command = "DeleteLines"
+
+    var selections: [TextRange]
 }
 
 nonisolated struct Deleted: SessionRequest {
@@ -370,12 +488,24 @@ nonisolated extension DocumentState {
     }
 }
 
+nonisolated struct DuplicateLines: SourceRequest {
+    typealias Reply = Change
+    static let command = "DuplicateLines"
+
+    var selections: [TextRange]
+}
+
 nonisolated struct DuplicateProject: LibraryRequest {
     typealias Reply = ProjectInfo
     static let command = "DuplicateProject"
 
     var id: String
     var name: String
+}
+
+nonisolated struct EndSnippet: SourceRequest {
+    typealias Reply = Bool
+    static let command = "EndSnippet"
 }
 
 nonisolated enum Engine: String, Codable, CaseIterable, Hashable, Sendable {
@@ -530,6 +660,26 @@ nonisolated extension Fixed {
     }
 }
 
+nonisolated struct Fold: Decodable, Hashable, Sendable {
+    var line: Int
+    var end: Int
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case line, end }
+}
+
+nonisolated extension Fold {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        line = try wire.decode(Int.self, forKey: .line)
+        end = try wire.decode(Int.self, forKey: .end)
+    }
+}
+
+nonisolated struct Folds: SourceRequest {
+    typealias Reply = [Fold]
+    static let command = "Folds"
+}
+
 nonisolated struct ForgetFolder: LibraryRequest {
     typealias Reply = Done
     static let command = "ForgetFolder"
@@ -603,6 +753,15 @@ nonisolated extension HeadingStyle {
     }
 }
 
+nonisolated struct HeadingStyles: SyntaxRequest {
+    typealias Reply = [HeadingStyle]
+    static let command = "HeadingStyles"
+}
+
+nonisolated enum HighlightKind: String, Decodable, CaseIterable, Hashable, Sendable {
+    case command, argument, maths, comment, invalid
+}
+
 nonisolated enum ImportConflict: String, Encodable, CaseIterable, Hashable, Sendable {
     case replace, keepBoth
 }
@@ -626,6 +785,62 @@ nonisolated extension Imported {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         existing = try wire.decode([Clash].self, forKey: .existing)
+    }
+}
+
+nonisolated struct IncludeGraphics: SyntaxRequest {
+    typealias Reply = String?
+    static let command = "IncludeGraphics"
+
+    var path: String
+    var into: String
+}
+
+nonisolated struct InsertBlock: SourceRequest {
+    typealias Reply = Insertion?
+    static let command = "InsertBlock"
+
+    var id: String
+    var selection: TextRange
+}
+
+nonisolated struct InsertNewline: SourceRequest {
+    typealias Reply = Keystroke
+    static let command = "InsertNewline"
+
+    var selection: TextRange
+}
+
+nonisolated struct InsertSymbol: SourceRequest {
+    typealias Reply = Insertion
+    static let command = "InsertSymbol"
+
+    var command: String
+    var selection: TextRange
+}
+
+nonisolated struct InsertTab: SourceRequest {
+    typealias Reply = Tabbing
+    static let command = "InsertTab"
+
+    var selections: [TextRange]
+    var step: Int
+}
+
+nonisolated struct Insertion: Decodable, Hashable, Sendable {
+    var edit: TextEdit
+    var caret: Int
+    var fields: [SnippetField]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case edit, caret, fields }
+}
+
+nonisolated extension Insertion {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        edit = try wire.decode(TextEdit.self, forKey: .edit)
+        caret = try wire.decode(Int.self, forKey: .caret)
+        fields = try wire.decode([SnippetField].self, forKey: .fields)
     }
 }
 
@@ -678,9 +893,33 @@ nonisolated extension IssueLine {
     }
 }
 
+nonisolated struct Keystroke: Decodable, Hashable, Sendable {
+    var edit: TextEdit?
+    var selection: TextRange?
+    var partner: Int?
+    var completions: Completing
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case edit, selection, partner, completions }
+}
+
+nonisolated extension Keystroke {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        edit = try wire.decode(TextEdit?.self, forKey: .edit)
+        selection = try wire.decode(TextRange?.self, forKey: .selection)
+        partner = try wire.decode(Int?.self, forKey: .partner)
+        completions = try wire.decode(Completing.self, forKey: .completions)
+    }
+}
+
 nonisolated struct KillAll: LibraryRequest {
     typealias Reply = Done
     static let command = "KillAll"
+}
+
+nonisolated struct ListMenus: SyntaxRequest {
+    typealias Reply = Menus
+    static let command = "ListMenus"
 }
 
 nonisolated struct ListProjects: LibraryRequest {
@@ -821,6 +1060,78 @@ nonisolated struct LookUp: SessionRequest {
     var offset: Int
 }
 
+nonisolated struct MapSelections: SourceRequest {
+    typealias Reply = [TextRange]
+    static let command = "MapSelections"
+
+    var edits: [TextEdit]
+    var selections: [TextRange]
+}
+
+nonisolated struct MathAt: SourceRequest {
+    typealias Reply = MathPreview?
+    static let command = "MathAt"
+
+    var caret: Int
+}
+
+nonisolated struct MathPreview: Decodable, Hashable, Sendable {
+    var start: Int
+    var tex: String
+    var display: Bool
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case start, tex, display }
+}
+
+nonisolated extension MathPreview {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        start = try wire.decode(Int.self, forKey: .start)
+        tex = try wire.decode(String.self, forKey: .tex)
+        display = try wire.decode(Bool.self, forKey: .display)
+    }
+}
+
+nonisolated struct MathSvg: Decodable, Hashable, Sendable {
+    var svg: String
+    var width: Double
+    var height: Double
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case svg, width, height }
+}
+
+nonisolated extension MathSvg {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        svg = try wire.decode(String.self, forKey: .svg)
+        width = try wire.decode(Double.self, forKey: .width)
+        height = try wire.decode(Double.self, forKey: .height)
+    }
+}
+
+nonisolated struct Menus: Decodable, Hashable, Sendable {
+    var templates: Templates
+    var symbolGroups: [SymbolGroup]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case templates, symbolGroups }
+}
+
+nonisolated extension Menus {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        templates = try wire.decode(Templates.self, forKey: .templates)
+        symbolGroups = try wire.decode([SymbolGroup].self, forKey: .symbolGroups)
+    }
+}
+
+nonisolated struct MoveLines: SourceRequest {
+    typealias Reply = Change?
+    static let command = "MoveLines"
+
+    var selections: [TextRange]
+    var up: Bool
+}
+
 nonisolated struct OpenDocument: SessionRequest {
     typealias Reply = Done
     static let command = "OpenDocument"
@@ -897,6 +1208,13 @@ nonisolated extension PageRange {
         first = try wire.decode(Int.self, forKey: .first)
         last = try wire.decode(Int.self, forKey: .last)
     }
+}
+
+nonisolated struct Partner: SourceRequest {
+    typealias Reply = Int?
+    static let command = "Partner"
+
+    var at: Int
 }
 
 nonisolated struct PdfHit: Decodable, Hashable, Sendable {
@@ -1104,6 +1422,15 @@ nonisolated struct RenameSymbol: SessionRequest {
     var to: String
 }
 
+nonisolated struct RenderMath: SyntaxRequest {
+    typealias Reply = MathSvg?
+    static let command = "RenderMath"
+
+    var tex: String
+    var display: Bool
+    var size: Double
+}
+
 nonisolated struct Replace: SessionRequest {
     typealias Reply = ProjectEdits
     static let command = "Replace"
@@ -1233,6 +1560,14 @@ nonisolated extension SessionOpened {
     }
 }
 
+nonisolated struct SetHeading: SourceRequest {
+    typealias Reply = Insertion
+    static let command = "SetHeading"
+
+    var caret: Int
+    var command: String
+}
+
 nonisolated struct SetOptions: SessionRequest {
     typealias Reply = Done
     static let command = "SetOptions"
@@ -1300,9 +1635,41 @@ nonisolated extension Snapshot {
     }
 }
 
+nonisolated struct SnippetField: Codable, Hashable, Sendable {
+    var start: Int
+    var length: Int
+    var index: Int
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case start, length, index }
+}
+
+nonisolated extension SnippetField {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        start = try wire.decode(Int.self, forKey: .start)
+        length = try wire.decode(Int.self, forKey: .length)
+        index = try wire.decode(Int.self, forKey: .index)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var wire = encoder.container(keyedBy: CodingKeys.self)
+        try wire.encode(start, forKey: .start)
+        try wire.encode(length, forKey: .length)
+        try wire.encode(index, forKey: .index)
+    }
+}
+
 nonisolated struct StartLive: SessionRequest {
     typealias Reply = LiveState
     static let command = "StartLive"
+}
+
+nonisolated struct StartSnippet: SourceRequest {
+    typealias Reply = TextRange?
+    static let command = "StartSnippet"
+
+    var fields: [SnippetField]
+    var at: Int
 }
 
 nonisolated struct StopCompile: SessionRequest {
@@ -1315,8 +1682,56 @@ nonisolated struct StopLive: SessionRequest {
     static let command = "StopLive"
 }
 
-nonisolated enum SymbolKind: String, Encodable, CaseIterable, Hashable, Sendable {
+nonisolated struct StylesAt: SourceRequest {
+    typealias Reply = TextStyles
+    static let command = "StylesAt"
+
+    var selection: TextRange
+}
+
+nonisolated struct Symbol: Decodable, Hashable, Sendable {
+    var glyph: String
+    var command: String
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case glyph, command }
+}
+
+nonisolated extension Symbol {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        glyph = try wire.decode(String.self, forKey: .glyph)
+        command = try wire.decode(String.self, forKey: .command)
+    }
+}
+
+nonisolated struct SymbolGroup: Decodable, Hashable, Sendable {
+    var title: String
+    var symbols: [Symbol]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case title, symbols }
+}
+
+nonisolated extension SymbolGroup {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        title = try wire.decode(String.self, forKey: .title)
+        symbols = try wire.decode([Symbol].self, forKey: .symbols)
+    }
+}
+
+nonisolated enum SymbolKind: String, Codable, CaseIterable, Hashable, Sendable {
     case command, environment, label, citation, entryType, file
+
+    var title: String {
+        switch self {
+        case .command: "Command"
+        case .environment: "Environment"
+        case .label: "Label"
+        case .citation: "Citation"
+        case .entryType: "Entry Type"
+        case .file: "File"
+        }
+    }
 }
 
 nonisolated struct SynctexForward: SessionRequest {
@@ -1347,6 +1762,59 @@ nonisolated struct SynctexMatch: SessionRequest {
     var pages: [PdfPage]
 }
 
+nonisolated struct Tabbing: Decodable, Hashable, Sendable {
+    var field: TextRange?
+    var edits: [TextEdit]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case field, edits }
+}
+
+nonisolated extension Tabbing {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        field = try wire.decode(TextRange?.self, forKey: .field)
+        edits = try wire.decode([TextEdit].self, forKey: .edits)
+    }
+}
+
+nonisolated struct Template: Decodable, Hashable, Sendable {
+    var title: String
+    var body: String
+    var symbol: String?
+    var inline: Bool
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case title, body, symbol, inline }
+}
+
+nonisolated extension Template {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        title = try wire.decode(String.self, forKey: .title)
+        body = try wire.decode(String.self, forKey: .body)
+        symbol = try wire.decodeIfPresent(String.self, forKey: .symbol)
+        inline = try wire.decode(Bool.self, forKey: .inline)
+    }
+}
+
+nonisolated struct Templates: Decodable, Hashable, Sendable {
+    var math: [Template]
+    var insert: [Template]
+    var list: [Template]
+    var references: [Template]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case math, insert, list, references }
+}
+
+nonisolated extension Templates {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        math = try wire.decode([Template].self, forKey: .math)
+        insert = try wire.decode([Template].self, forKey: .insert)
+        list = try wire.decode([Template].self, forKey: .list)
+        references = try wire.decode([Template].self, forKey: .references)
+    }
+}
+
 nonisolated struct TexStatus: Decodable, Hashable, Sendable {
     var available: Bool
     var latexmkVersion: String?
@@ -1370,7 +1838,7 @@ nonisolated extension TexStatus {
     }
 }
 
-nonisolated struct TextEdit: Decodable, Hashable, Sendable {
+nonisolated struct TextEdit: Codable, Hashable, Sendable {
     var start: Int
     var length: Int
     var text: String
@@ -1384,6 +1852,13 @@ nonisolated extension TextEdit {
         start = try wire.decode(Int.self, forKey: .start)
         length = try wire.decode(Int.self, forKey: .length)
         text = try wire.decode(String.self, forKey: .text)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var wire = encoder.container(keyedBy: CodingKeys.self)
+        try wire.encode(start, forKey: .start)
+        try wire.encode(length, forKey: .length)
+        try wire.encode(text, forKey: .text)
     }
 }
 
@@ -1408,6 +1883,42 @@ nonisolated extension TextRange {
     }
 }
 
+nonisolated enum TextStyle: String, Encodable, CaseIterable, Hashable, Sendable {
+    case bold, italic, underline
+}
+
+nonisolated struct TextStyles: Decodable, Hashable, Sendable {
+    var bold: [TextEdit]?
+    var italic: [TextEdit]?
+    var underline: [TextEdit]?
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case bold, italic, underline }
+}
+
+nonisolated extension TextStyles {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        bold = try wire.decode([TextEdit]?.self, forKey: .bold)
+        italic = try wire.decode([TextEdit]?.self, forKey: .italic)
+        underline = try wire.decode([TextEdit]?.self, forKey: .underline)
+    }
+}
+
+nonisolated struct ToggleComment: SourceRequest {
+    typealias Reply = [TextEdit]
+    static let command = "ToggleComment"
+
+    var selections: [TextRange]
+}
+
+nonisolated struct ToggleStyle: SourceRequest {
+    typealias Reply = Change
+    static let command = "ToggleStyle"
+
+    var selections: [TextRange]
+    var style: TextStyle
+}
+
 nonisolated struct TreeNode: Decodable, Hashable, Sendable {
     var name: String
     var path: String
@@ -1427,6 +1938,15 @@ nonisolated extension TreeNode {
         children = try wire.decodeIfPresent([TreeNode].self, forKey: .children)
         main = try wire.decode(Bool.self, forKey: .main)
     }
+}
+
+nonisolated struct TypeText: SourceRequest {
+    typealias Reply = Keystroke
+    static let command = "TypeText"
+
+    var selection: TextRange
+    var text: String
+    var autoPair: Bool
 }
 
 nonisolated struct UiPatch: Encodable, Hashable, Sendable {
@@ -1483,6 +2003,21 @@ nonisolated extension Usages {
         name = try wire.decode(String.self, forKey: .name)
         groups = try wire.decode([SearchGroup].self, forKey: .groups)
     }
+}
+
+nonisolated struct Words: SourceRequest {
+    typealias Reply = Int
+    static let command = "Words"
+
+    var selection: TextRange
+}
+
+nonisolated struct Wrap: SourceRequest {
+    typealias Reply = Change
+    static let command = "Wrap"
+
+    var selections: [TextRange]
+    var template: String
 }
 
 nonisolated struct Written: Decodable, Hashable, Sendable {

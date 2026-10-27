@@ -5,9 +5,10 @@ use ratex_parser::{ParseResult, Parser};
 use ratex_svg::{SvgColorSyntax, SvgOptions, render_to_svg_with_color_syntax};
 use ratex_types::display_item::DisplayList;
 use ratex_types::math_style::MathStyle;
+use schemars::JsonSchema;
 use serde::Serialize;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub(crate) struct MathSvg {
     pub(crate) svg: String,
     pub(crate) width: f64,

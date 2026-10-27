@@ -140,7 +140,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var partnerMark: NSRange?
     var partnerDrawn: NSRect?
     var folded: [NSRange] = []
-    var foldCache: [Int: SourceDocument.Fold]?
+    var foldCache: [Int: Fold]?
     var foldMarks: [(rect: CGRect, range: NSRange)] = []
     var gutterHovered = false
     var stepping = false

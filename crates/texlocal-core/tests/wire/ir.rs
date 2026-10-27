@@ -104,6 +104,7 @@ const TAKEN: &[&str] = &[
     "Shape",
     "State",
     "String",
+    "Tab",
     "Table",
     "Task",
     "Text",

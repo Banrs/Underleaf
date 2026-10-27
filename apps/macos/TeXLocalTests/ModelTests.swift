@@ -56,19 +56,6 @@ struct PathTests {
         #expect(remapPath("ch/one.tex", from: "ch", to: "parts") == "parts/one.tex")
         #expect(remapPath("chapter.tex", from: "ch", to: "parts") == "chapter.tex")
     }
-
-    @Test func aDroppedFigureIsIncludedOnlyWhereTeXReadsIt() {
-        #expect(ProjectModel.includeGraphics("figs/plot.png", kind: "image") == "\\includegraphics{figs/plot.png}")
-        #expect(ProjectModel.includeGraphics("Shot.JPG", kind: "image") == "\\includegraphics{Shot.JPG}")
-        #expect(ProjectModel.includeGraphics("a.pdf", kind: "pdf") == "\\includegraphics{a.pdf}")
-        #expect(ProjectModel.includeGraphics("a b_{c}.png", kind: "image") == "\\includegraphics{a b_{c}.png}")
-        #expect(ProjectModel.includeGraphics("logo.svg", kind: "image") == nil)
-        #expect(ProjectModel.includeGraphics("a.pdf", kind: "pdf", into: "bib") == nil)
-        #expect(ProjectModel.includeGraphics("ch1.tex", kind: "tex") == nil)
-        for path in ["50%.png", "a#1.png", "a\\b.png", "a}{.png", "a{.png"] {
-            #expect(ProjectModel.includeGraphics(path, kind: "image") == nil, "\(path)")
-        }
-    }
 }
 
 struct LayoutTests {

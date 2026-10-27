@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::scan::{Group, Visit, arguments, blank_line};
@@ -11,7 +12,7 @@ use super::{
 };
 use crate::utf16;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct Keystroke {
     pub(crate) edit: Option<TextEdit>,
     pub(crate) selection: Option<TextRange>,
@@ -19,7 +20,7 @@ pub(crate) struct Keystroke {
     pub(crate) completions: Completing,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Completing {
     #[default]

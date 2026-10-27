@@ -1,11 +1,12 @@
 use std::ops::Range;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::scan::{Group, Visit};
 use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct TextStyles {
     pub(crate) bold: Option<Vec<TextEdit>>,
     pub(crate) italic: Option<Vec<TextEdit>>,

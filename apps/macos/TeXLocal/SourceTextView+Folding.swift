@@ -8,14 +8,14 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return !folded.contains { $0.contains(start) }
     }
 
-    var foldable: [Int: SourceDocument.Fold] {
+    var foldable: [Int: Fold] {
         if let foldCache { return foldCache }
         let found = Dictionary(document.folds().map { ($0.line, $0) }) { first, _ in first }
         foldCache = found
         return found
     }
 
-    func hidden(_ fold: SourceDocument.Fold) -> NSRange {
+    func hidden(_ fold: Fold) -> NSRange {
         let start = document.lineStart(fold.line + 1)
         let end = fold.end < document.lineCount ? document.lineStart(fold.end + 1) : length
         return NSRange(location: start, length: end - start)

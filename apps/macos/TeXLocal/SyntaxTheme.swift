@@ -16,15 +16,15 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
     }
 
     func color(_ kind: HighlightKind) -> NSColor {
-        let shown = Self.made[self] ?? palette.map { color in
+        let shown = Self.made[self] ?? Dictionary(uniqueKeysWithValues: zip(HighlightKind.allCases, palette.map { color in
             NSColor.adapting(Dictionary(uniqueKeysWithValues: NSColor.textAppearances.map { ($0, color.legibleAsText(in: $0)) }),
                              fallback: .textColor)
-        }
+        }))
         Self.made[self] = shown
-        return shown[Int(kind.rawValue)]
+        return shown[kind] ?? .textColor
     }
 
-    private static var made: [SyntaxTheme: [NSColor]] = [:]
+    private static var made: [SyntaxTheme: [HighlightKind: NSColor]] = [:]
 
     private var palette: [NSColor] {
         func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {

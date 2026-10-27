@@ -1,11 +1,12 @@
 use std::ops::Range;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::scan::{Group, Scanner, Visit, tex_space};
 use super::{SourceDocument, headings, is};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct Fold {
     pub(crate) line: u32,
     pub(crate) end: u32,

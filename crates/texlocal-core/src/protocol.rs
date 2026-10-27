@@ -1,8 +1,9 @@
 use schemars::generate::SchemaSettings;
-use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+pub use texlocal_latex::protocol::Described;
+use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 
 use crate::CoreError;
 use crate::events::SessionEvent;
@@ -24,13 +25,6 @@ pub(crate) fn unknown() -> CoreError {
     CoreError::not_found("Unknown command")
 }
 
-pub struct Described {
-    pub name: &'static str,
-    pub group: &'static str,
-    pub request: Schema,
-    pub reply: Schema,
-}
-
 pub struct Protocol {
     pub requests: Vec<Described>,
     pub inbound: Map<String, Value>,
@@ -46,26 +40,15 @@ pub fn protocol() -> Protocol {
         .into_generator();
     let mut requests = Library::describe(&mut inbound, &mut outbound);
     requests.extend(Session::describe(&mut inbound, &mut outbound));
+    requests.extend(Source::describe(&mut inbound, &mut outbound));
+    requests.extend(Syntax::describe(&mut inbound, &mut outbound));
     outbound.subschema_for::<CoreError>();
+    outbound.subschema_for::<HighlightKind>();
     outbound.subschema_for::<SessionEvent>();
     Protocol {
         requests,
         inbound: inbound.take_definitions(true),
         outbound: outbound.take_definitions(true),
-    }
-}
-
-pub(crate) fn describe<Request: JsonSchema, Reply: JsonSchema>(
-    name: &'static str,
-    group: &'static str,
-    inbound: &mut SchemaGenerator,
-    outbound: &mut SchemaGenerator,
-) -> Described {
-    Described {
-        name,
-        group,
-        request: inbound.subschema_for::<Request>(),
-        reply: outbound.subschema_for::<Reply>(),
     }
 }
 
@@ -96,7 +79,7 @@ macro_rules! requests {
                 inbound: &mut schemars::SchemaGenerator,
                 outbound: &mut schemars::SchemaGenerator,
             ) -> Vec<$crate::protocol::Described> {
-                vec![$($crate::protocol::describe::<$request, $reply>(
+                vec![$(texlocal_latex::protocol::describe::<$request, $reply>(
                     stringify!($request),
                     stringify!($group),
                     inbound,

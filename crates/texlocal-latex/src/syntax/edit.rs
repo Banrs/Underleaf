@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::scan::{blank_line, closing_brace};
@@ -9,17 +10,17 @@ use super::{
     INDENT, Insertion, Line, NEWLINE, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
     comment_start, complete, edit, indentation, is, span, splice,
 };
-use crate::utf16;
+use crate::{FileKind, file_kind, utf16};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct Change {
     pub(crate) edits: Vec<TextEdit>,
     pub(crate) selections: Vec<TextRange>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum Style {
+pub(crate) enum TextStyle {
     Bold,
     Italic,
     Underline,
@@ -315,12 +316,12 @@ impl SourceDocument {
         }
     }
 
-    pub(crate) fn toggle_style(&mut self, selections: &[TextRange], style: Style) -> Change {
+    pub(crate) fn toggle_style(&mut self, selections: &[TextRange], style: TextStyle) -> Change {
         let styles = self.text_styles(selections.first().copied().unwrap_or_default());
         let (unwrap, template) = match style {
-            Style::Bold => (styles.bold, "\\textbf{$0}"),
-            Style::Italic => (styles.italic, "\\textit{$0}"),
-            Style::Underline => (styles.underline, "\\underline{$0}"),
+            TextStyle::Bold => (styles.bold, "\\textbf{$0}"),
+            TextStyle::Italic => (styles.italic, "\\textit{$0}"),
+            TextStyle::Underline => (styles.underline, "\\underline{$0}"),
         };
         match unwrap {
             Some(edits) => Change {
@@ -330,6 +331,24 @@ impl SourceDocument {
             None => self.wrap(selections, template),
         }
     }
+}
+
+pub(crate) fn include_graphics(path: &str, into: &str) -> Option<String> {
+    let (_, extension) = path.rsplit_once('.')?;
+    let figure = ["png", "jpg", "jpeg", "pdf"].contains(&extension.to_ascii_lowercase().as_str());
+    if !figure || file_kind(into) != FileKind::Tex {
+        return None;
+    }
+    let mut depth = 0_u32;
+    for c in path.chars() {
+        match c {
+            '%' | '#' | '\\' => return None,
+            '{' => depth += 1,
+            '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth == 0).then(|| format!("\\includegraphics{{{path}}}"))
 }
 
 pub(crate) fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Vec<TextRange> {

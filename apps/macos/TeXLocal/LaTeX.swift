@@ -1,28 +1,7 @@
 import Foundation
 
-nonisolated struct Menus: Decodable, Sendable {
-    nonisolated struct Templates: Decodable, Sendable {
-        let math, insert, list, references: [Template]
-    }
-
-    nonisolated struct Symbol: Decodable, Sendable { let glyph, command: String }
-
-    nonisolated struct SymbolGroup: Decodable, Sendable {
-        let title: String
-        let symbols: [Symbol]
-    }
-
-    let templates: Templates
-    let symbolGroups: [SymbolGroup]
-
-    static let shared: Menus = Syntax.call("menus", [:])!
-}
-
-nonisolated struct Template: Decodable, Sendable {
-    let title: String
-    let body: String
-    var symbol: String?
-    let inline: Bool
+nonisolated extension Menus {
+    static let shared = Syntax.call(ListMenus()) ?? Menus(templates: Templates(math: [], insert: [], list: [], references: []), symbolGroups: [])
 }
 
 extension ProjectModel {
@@ -33,5 +12,5 @@ extension ProjectModel {
 }
 
 nonisolated extension HeadingStyle {
-    static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])!
+    static let standard = Syntax.call(HeadingStyles()) ?? []
 }

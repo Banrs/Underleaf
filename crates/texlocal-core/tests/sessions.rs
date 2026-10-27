@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use common::{Library, Rig, SESSION, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
+use texlocal_latex::syntax::Source;
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
 const CHAPTER: &str = "\\section{Chapter}\nwords about a cat\n";
@@ -319,10 +320,9 @@ async fn a_reference_completes_with_the_projects_labels() {
     let doc = rig.open_document("main.tex");
     rig.event("outline", |_| true);
     std::thread::sleep(Duration::from_millis(500));
-    let answer = doc
-        .with(|d| d.call("completions", r#"{"caret": 16, "explicit": true}"#))
-        .unwrap();
-    assert!(answer.contains("fig:plot"), "{answer}");
+    let complete = json!({ "caret": 16, "explicit": true });
+    let answer = doc.with(|d| Source::call(d, "Complete", complete)).unwrap();
+    assert_eq!(answer["items"][0]["label"], "fig:plot", "{answer}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
