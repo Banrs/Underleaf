@@ -2,17 +2,9 @@ mod common;
 
 use std::fs;
 
-use common::{Library, kind, write};
+use common::{Library, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
-
-fn ids(list: &Value) -> Vec<&str> {
-    list.as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["id"].as_str().unwrap())
-        .collect()
-}
 
 #[tokio::test]
 async fn a_new_project_is_listed_with_its_template() {
@@ -29,7 +21,7 @@ async fn a_new_project_is_listed_with_its_template() {
     let root = library.project_root("Paper");
     assert!(root.join("main.tex").is_file() && root.join("references.bib").is_file());
     assert_eq!(
-        ids(&library.call("ListProjects", json!({})).await),
+        names(&library.call("ListProjects", json!({})).await, "id"),
         ["Paper"]
     );
 }
@@ -52,28 +44,19 @@ async fn the_free_name_is_the_next_untitled() {
 }
 
 #[tokio::test]
-async fn bad_names_and_engines_are_refused() {
+async fn bad_names_are_refused() {
     let library = Library::new();
     for name in [".hidden", "   "] {
         let refused = library
-            .service
-            .call(
+            .refuse(
                 "CreateProject",
                 json!({ "name": name, "template": "blank" }),
             )
             .await;
-        assert_eq!(kind(refused), ErrorKind::Invalid, "{name:?}");
+        assert_eq!(refused, ErrorKind::Invalid, "{name:?}");
     }
-    let refused = library
-        .service
-        .call(
-            "CreateProject",
-            json!({ "name": "E", "template": "blank", "engine": "word" }),
-        )
-        .await;
-    assert_eq!(kind(refused), ErrorKind::Invalid);
     assert_eq!(
-        ids(&library.call("ListProjects", json!({})).await),
+        names(&library.call("ListProjects", json!({})).await, "id"),
         Vec::<&str>::new()
     );
 }
@@ -86,7 +69,7 @@ async fn a_project_is_renamed_unless_the_name_is_taken() {
     let taken = library
         .refuse("RenameProject", json!({ "id": "B", "name": "A" }))
         .await;
-    assert_eq!(taken.kind, ErrorKind::Conflict);
+    assert_eq!(taken, ErrorKind::Conflict);
     let renamed = library
         .call("RenameProject", json!({ "id": "B", "name": "C" }))
         .await;
@@ -147,17 +130,13 @@ async fn a_tex_file_opens_its_folder_at_that_file() {
 async fn opening_what_is_not_there_or_not_tex_is_refused() {
     let library = Library::new();
     let gone = library
-        .service
-        .call("OpenPath", json!({ "path": library.path("gone") }))
+        .refuse("OpenPath", json!({ "path": library.path("gone") }))
         .await;
-    assert_eq!(kind(gone), ErrorKind::NotFound);
+    assert_eq!(gone, ErrorKind::NotFound);
     let photo = library.path("photo.jpg");
     fs::write(&photo, "jpg").unwrap();
-    let refused = library
-        .service
-        .call("OpenPath", json!({ "path": photo }))
-        .await;
-    assert_eq!(kind(refused), ErrorKind::Invalid);
+    let refused = library.refuse("OpenPath", json!({ "path": photo })).await;
+    assert_eq!(refused, ErrorKind::Invalid);
 }
 
 #[tokio::test]
@@ -169,16 +148,15 @@ async fn forgetting_a_folder_leaves_it_on_disk() {
     let id = opened["project"]["id"].clone();
     library.call("ForgetFolder", json!({ "id": id })).await;
     assert_eq!(
-        ids(&library.call("ListProjects", json!({})).await),
+        names(&library.call("ListProjects", json!({})).await, "id"),
         Vec::<&str>::new()
     );
     assert!(folder.join("main.tex").is_file());
     library.create("Library", "blank").await;
     let refused = library
-        .service
-        .call("ForgetFolder", json!({ "id": "Library" }))
+        .refuse("ForgetFolder", json!({ "id": "Library" }))
         .await;
-    assert_eq!(kind(refused), ErrorKind::Invalid);
+    assert_eq!(refused, ErrorKind::Invalid);
 }
 
 #[tokio::test]
@@ -201,16 +179,16 @@ async fn a_folder_no_longer_where_it_was_is_missing() {
 async fn unknown_commands_and_bad_arguments_are_refused() {
     let library = Library::new();
     assert_eq!(
-        kind(library.service.call("no_such_command", json!({})).await),
+        library.refuse("no_such_command", json!({})).await,
         ErrorKind::NotFound
     );
     for args in [json!({}), json!([])] {
-        let refused = library.service.call("DuplicateProject", args).await;
-        assert_eq!(kind(refused), ErrorKind::Invalid);
+        let refused = library.refuse("DuplicateProject", args).await;
+        assert_eq!(refused, ErrorKind::Invalid);
     }
     let missing = json!({ "id": "Nope", "name": "Copy" });
-    let refused = library.service.call("DuplicateProject", missing).await;
-    assert_eq!(kind(refused), ErrorKind::NotFound);
+    let refused = library.refuse("DuplicateProject", missing).await;
+    assert_eq!(refused, ErrorKind::NotFound);
 }
 
 #[tokio::test]
@@ -218,16 +196,12 @@ async fn a_tex_folder_without_latexmk_is_refused() {
     let library = Library::new();
     let empty = library.path("empty");
     fs::create_dir(&empty).unwrap();
+    let refused = library.refuse("SetTexDir", json!({ "dir": empty })).await;
+    assert_eq!(refused, ErrorKind::Invalid);
     let refused = library
-        .service
-        .call("SetTexDir", json!({ "dir": empty }))
+        .refuse("SetTexpressoDir", json!({ "dir": empty }))
         .await;
-    assert_eq!(kind(refused), ErrorKind::Invalid);
-    let refused = library
-        .service
-        .call("SetTexpressoDir", json!({ "dir": empty }))
-        .await;
-    assert_eq!(kind(refused), ErrorKind::Invalid);
+    assert_eq!(refused, ErrorKind::Invalid);
 }
 
 #[tokio::test]

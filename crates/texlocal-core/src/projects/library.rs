@@ -7,7 +7,6 @@ use std::time::UNIX_EPOCH;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::json;
 use texlocal_latex::syntax::SourceDocument;
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
@@ -18,7 +17,7 @@ use super::skip_unreadable;
 use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::paths::{Project, fold_case, sanitize_name};
-use crate::settings::{Engine, read_settings, write_settings};
+use crate::settings::{Engine, SettingsPatch, read_settings, write_settings};
 use crate::{SETTINGS_FILE, atomic};
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -102,7 +101,10 @@ pub fn create_project(
         for (file, content) in template.files() {
             fs::write(root.join(file), content)?;
         }
-        let settings = engine.map_or_else(|| json!({}), |engine| json!({ "engine": engine }));
+        let settings = SettingsPatch {
+            engine,
+            ..SettingsPatch::default()
+        };
         write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())
     })

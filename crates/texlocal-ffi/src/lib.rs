@@ -69,12 +69,10 @@ unsafe fn command_args<'a>(
 ) -> Result<(&'a str, Value), CoreError> {
     let command =
         unsafe { str_arg(command) }.ok_or_else(|| CoreError::bad_request("Invalid command"))?;
-    let args: Value = match unsafe { str_arg(args_json) } {
-        Some(text) => serde_json::from_str(text)
-            .map_err(|e| CoreError::bad_request(format!("Invalid JSON: {e}")))?,
-        None if args_json.is_null() => json!({}),
-        None => return Err(CoreError::bad_request("Arguments are not UTF-8")),
-    };
+    let args =
+        unsafe { str_arg(args_json) }.ok_or_else(|| CoreError::bad_request("Invalid arguments"))?;
+    let args = serde_json::from_str(args)
+        .map_err(|e| CoreError::bad_request(format!("Invalid JSON: {e}")))?;
     Ok((command, args))
 }
 

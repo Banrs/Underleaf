@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use serde_json::json;
 use texlocal_latex::{FileKind, file_kind};
 
 use super::Pending;
@@ -183,7 +182,7 @@ impl Actor {
     ) -> Result<ProjectSettings, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
-            let updated = settings::write_settings(&project.settings, &json!(patch))?;
+            let updated = settings::write_settings(&project.settings, patch)?;
             if let Some(on) = patch.shell_escape {
                 settings::grant(project, on)?;
             }

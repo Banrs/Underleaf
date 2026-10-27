@@ -33,8 +33,8 @@ impl Library {
         answer(command, self.service.call(command, args).await)
     }
 
-    pub async fn refuse(&self, command: &str, args: Value) -> CoreError {
-        self.service.call(command, args).await.unwrap_err()
+    pub async fn refuse(&self, command: &str, args: Value) -> ErrorKind {
+        self.service.call(command, args).await.unwrap_err().kind
     }
 
     pub async fn create(&self, name: &str, template: &str) -> String {
@@ -56,8 +56,12 @@ fn answer(command: &str, result: Result<Value, CoreError>) -> Value {
     result.unwrap_or_else(|err| panic!("{command}: {:?} {}", err.kind, err.message))
 }
 
-pub fn kind(result: Result<Value, CoreError>) -> ErrorKind {
-    result.unwrap_err().kind
+pub fn names(list: &Value, key: &str) -> Vec<String> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item[key].as_str().unwrap().to_owned())
+        .collect()
 }
 
 pub fn write(root: &Path, files: &[(&str, &str)]) {
@@ -121,8 +125,10 @@ impl Rig {
         answer(command, self.reply(self.send(session, command, args)))
     }
 
-    pub fn try_call(&self, command: &str, args: Value) -> Result<Value, CoreError> {
+    pub fn refuse(&self, command: &str, args: Value) -> ErrorKind {
         self.reply(self.send(SESSION, command, args))
+            .unwrap_err()
+            .kind
     }
 
     pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
@@ -15,7 +14,7 @@ use zip::result::ZipError;
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
-use crate::settings::write_settings;
+use crate::settings::{Engine, SettingsPatch, write_settings};
 use crate::zipexport::left_out;
 use crate::{CoreError, SETTINGS_FILE, atomic};
 
@@ -46,9 +45,9 @@ enum Source {
 const MAX_UNZIPPED: u64 = 1 << 30;
 const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
 
-const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
+const ENGINE_PACKAGES: [(Engine, &[&str]); 2] = [
     (
-        "xelatex",
+        Engine::Xelatex,
         &[
             "fontspec",
             "unicode-math",
@@ -57,7 +56,7 @@ const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
             "mathspec",
         ],
     ),
-    ("lualatex", &["luacode", "luatexja", "luaotfload"]),
+    (Engine::Lualatex, &["luacode", "luatexja", "luaotfload"]),
 ];
 
 pub(crate) fn import_files(
@@ -295,7 +294,10 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
     analyze::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
 }
 
-pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
+pub(crate) fn guessed_settings(
+    root: &Path,
+    chosen: Option<&str>,
+) -> Result<SettingsPatch, CoreError> {
     let chosen = chosen.filter(|main| !main.starts_with('-'));
     let (named_root, program) = chosen
         .map(|chosen| magic_comments(&root.join(chosen)))
@@ -310,23 +312,24 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
     let main_path = main.as_ref().map(|main| root.join(main));
     let program = program.or_else(|| magic_comments(main_path.as_ref()?).1);
     let program = program.unwrap_or_default().to_lowercase();
-    let named = ["xelatex", "lualatex", "pdflatex"]
-        .into_iter()
-        .find(|engine| program.contains(engine));
+    let named = [
+        ("xelatex", Engine::Xelatex),
+        ("lualatex", Engine::Lualatex),
+        ("pdflatex", Engine::Pdflatex),
+    ]
+    .into_iter()
+    .find_map(|(name, engine)| program.contains(name).then_some(engine));
     let engine = named.or_else(|| {
         let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, FileKind::Tex);
         let loads = |names: &[&str]| facts.packages.iter().any(|p| names.contains(&p.as_str()));
         let needed = ENGINE_PACKAGES.into_iter().find(|(_, names)| loads(names));
         needed.map(|(engine, _)| engine)
     });
-    let mut settings = json!({});
-    if let Some(main) = main {
-        settings["mainFile"] = main.into();
-    }
-    if let Some(engine) = engine {
-        settings["engine"] = engine.into();
-    }
-    Ok(settings)
+    Ok(SettingsPatch {
+        main_file: main,
+        engine,
+        ..SettingsPatch::default()
+    })
 }
 
 pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
@@ -347,10 +350,10 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     projects::new_project(&service.data_dir, &base, |root| {
         write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
-        if settings.get("mainFile").is_none() {
+        if settings.main_file.is_none() {
             let (file, content) = ProjectTemplate::Blank.files()[0];
             fs::write(root.join(file), content)?;
-            settings["mainFile"] = file.into();
+            settings.main_file = Some(file.into());
         }
         write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())

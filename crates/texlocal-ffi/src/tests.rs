@@ -109,48 +109,49 @@ fn opening_needs_a_folder_and_a_listener() {
 }
 
 #[test]
-fn a_command_answers_ok_or_an_error_kind() {
-    let core = Core::open();
-    assert_eq!(core.call("ListProjects", json!({}))["ok"], json!([]));
-    assert_eq!(core.call("nope", json!({}))["error"]["kind"], "notFound");
-    let bad = core.call_raw(None, Some("ListProjects"), Some("{not json"));
-    assert_eq!(bad["error"]["kind"], "invalid");
-    assert_eq!(core.call_raw(None, None, None)["error"]["kind"], "invalid");
-    assert_eq!(
-        core.ask(1, "ListProjects", json!({}))["error"]["kind"],
-        "notFound"
-    );
-    unsafe { tl_send(ptr::null(), 0, ptr::null(), ptr::null()) };
-    unsafe { tl_session_send(ptr::null(), 0, 1, ptr::null(), ptr::null()) };
-}
-
-#[test]
-fn each_reply_arrives_exactly_once() {
+fn each_command_answers_once_with_ok_or_an_error_kind() {
     let core = Core::open();
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     let (open, save) = (r#"{"id":"P","autoCompile":false}"#, r#"{"reporting":true}"#);
     let sent = [
-        (None, Some("ListProjects"), Some("{}")),
-        (None, Some("nope"), Some("{}")),
-        (None, Some("ListProjects"), Some("{not json")),
-        (None, None, None),
-        (Some(1), Some("OpenProject"), Some(open)),
-        (Some(1), Some("OpenProject"), Some(open)),
-        (Some(1), Some("Save"), Some(save)),
-        (Some(2), Some("Save"), Some(save)),
-        (Some(1), None, None),
-        (Some(1), Some("CloseProject"), Some("{}")),
-        (Some(1), Some("Save"), Some(save)),
+        (None, Some("ListProjects"), Some("{}"), Some("ok")),
+        (None, Some("nope"), Some("{}"), Some("notFound")),
+        (
+            None,
+            Some("ListProjects"),
+            Some("{not json"),
+            Some("invalid"),
+        ),
+        (None, None, None, Some("invalid")),
+        (Some(1), Some("ListProjects"), Some("{}"), Some("notFound")),
+        (Some(1), Some("OpenProject"), Some(open), Some("ok")),
+        (Some(1), Some("OpenProject"), Some(open), Some("conflict")),
+        (Some(1), Some("Save"), Some(save), Some("ok")),
+        (Some(2), Some("Save"), Some(save), Some("notFound")),
+        (Some(1), None, None, Some("invalid")),
+        (Some(1), Some("CloseProject"), Some("{}"), Some("ok")),
+        (Some(1), Some("Save"), Some(save), None),
     ];
-    let ids: Vec<u64> = sent
-        .map(|(session, command, args)| core.send(session, command, args))
+    let expected: Vec<(u64, Option<&str>)> = sent
+        .map(|(session, command, args, kind)| (core.send(session, command, args), kind))
         .into();
     let mut replies = Vec::new();
     while let Ok(said) = core.events.recv_timeout(Duration::from_secs(1)) {
-        replies.extend(said["reply"].as_u64());
+        if let Some(id) = said["reply"].as_u64() {
+            let kind = said["error"]["kind"].as_str().unwrap_or("ok").to_owned();
+            replies.push((id, kind));
+        }
     }
     replies.sort_unstable();
-    assert_eq!(replies, ids);
+    let ids: Vec<u64> = replies.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, expected.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+    for ((id, kind), (_, expected)) in replies.iter().zip(&expected) {
+        if let Some(expected) = expected {
+            assert_eq!(kind, expected, "reply {id}");
+        }
+    }
+    unsafe { tl_send(ptr::null(), 0, ptr::null(), ptr::null()) };
+    unsafe { tl_session_send(ptr::null(), 0, 1, ptr::null(), ptr::null()) };
 }
 
 #[test]

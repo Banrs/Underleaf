@@ -114,11 +114,16 @@ pub fn read_settings(file: &Path) -> StoredSettings {
     read_project(file).settings
 }
 
-pub fn write_settings(file: &Path, patch: &Value) -> Result<StoredSettings, CoreError> {
+pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
-        let mut settings = merged(&file.settings, patch, "settings")?;
-        settings.main_file = safe_rel_file(&settings.main_file)?;
-        file.settings = settings;
+        let settings = &mut file.settings;
+        if let Some(main_file) = &patch.main_file {
+            settings.main_file = safe_rel_file(main_file)?;
+        }
+        settings.engine = patch.engine.unwrap_or(settings.engine);
+        settings.stop_on_first_error = patch
+            .stop_on_first_error
+            .unwrap_or(settings.stop_on_first_error);
         file.rest.remove("shellEscape");
         Ok(())
     })?;
@@ -161,33 +166,13 @@ pub fn shown(project: &Project) -> ProjectSettings {
     }
 }
 
-#[derive(Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettingsPatch {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub main_file: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<Engine>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_on_first_error: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_escape: Option<bool>,
-}
-
-fn merged<T: Serialize + DeserializeOwned>(
-    value: &T,
-    patch: &Value,
-    what: &str,
-) -> Result<T, CoreError> {
-    let Value::Object(patch) = patch else {
-        return Err(CoreError::bad_request(format!("Invalid {what}")));
-    };
-    let Ok(Value::Object(mut merged)) = serde_json::to_value(value) else {
-        unreachable!("{what} serialize as an object");
-    };
-    merged.extend(patch.clone());
-    T::deserialize(Value::Object(merged))
-        .map_err(|err| CoreError::bad_request(format!("Invalid {what}: {err}")))
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

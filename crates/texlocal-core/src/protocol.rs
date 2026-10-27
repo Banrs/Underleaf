@@ -2,7 +2,7 @@ use schemars::generate::SchemaSettings;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
-pub use texlocal_latex::protocol::Described;
+use texlocal_latex::protocol::Described;
 use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 
 use crate::CoreError;
@@ -78,7 +78,7 @@ macro_rules! requests {
             pub(crate) fn describe(
                 inbound: &mut schemars::SchemaGenerator,
                 outbound: &mut schemars::SchemaGenerator,
-            ) -> Vec<$crate::protocol::Described> {
+            ) -> Vec<texlocal_latex::protocol::Described> {
                 vec![$(texlocal_latex::protocol::describe::<$request, $reply>(
                     stringify!($request),
                     stringify!($group),

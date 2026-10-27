@@ -19,9 +19,9 @@ TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable
 
 void tl_free(char *_Nullable text);
 
-void tl_send(const TlHandle *handle, uint64_t id, const char *command, const char *_Nullable args_json);
+void tl_send(const TlHandle *handle, uint64_t id, const char *command, const char *args_json);
 void tl_session_send(const TlHandle *handle, uint64_t id, uint64_t session, const char *command,
-                     const char *_Nullable args_json);
+                     const char *args_json);
 
 typedef struct TlSource TlSource;
 

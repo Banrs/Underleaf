@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use common::{Library, Rig, SESSION, write};
+use common::{Library, Rig, SESSION, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
 use texlocal_latex::syntax::Source;
@@ -73,20 +73,12 @@ fn zip_names(path: &Path) -> Vec<String> {
     names
 }
 
-fn names(list: &Value, key: &str) -> Vec<String> {
-    list.as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item[key].as_str().unwrap().to_owned())
-        .collect()
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn opening_answers_the_project_and_its_number_is_taken() {
     let rig = project().await;
     let open = json!({ "id": rig.id, "autoCompile": false });
-    let again = rig.try_call("OpenProject", open.clone());
-    assert_eq!(again.unwrap_err().kind, ErrorKind::Conflict);
+    let again = rig.refuse("OpenProject", open.clone());
+    assert_eq!(again, ErrorKind::Conflict);
     let second = rig.call_to(2, "OpenProject", open);
     assert_eq!(second["name"], "P");
     assert_eq!(second["settings"]["mainFile"], "main.tex");
@@ -123,17 +115,6 @@ async fn the_outline_follows_inputs_and_counts_words() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_edit_is_saved_to_disk() {
-    let rig = project().await;
-    let doc = rig.open_document("main.tex");
-    assert_eq!(doc.with(|d| d.text()), MAIN);
-    doc.edit(0, 0, "% note\n", None, false);
-    assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
-    let disk = fs::read_to_string(rig.root().join("main.tex")).unwrap();
-    assert_eq!(disk, format!("% note\n{MAIN}"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn two_sessions_save_at_once() {
     let rig = project().await;
     let other = rig.library.create("Q", "blank").await;
@@ -154,13 +135,9 @@ async fn two_sessions_save_at_once() {
     for save in saves {
         assert_eq!(rig.reply(save).unwrap(), true);
     }
-    for root in [rig.root(), rig.library.project_root(&other)] {
-        assert!(
-            fs::read_to_string(root.join("main.tex"))
-                .unwrap()
-                .starts_with("% both")
-        );
-    }
+    let saved = |root: &Path| fs::read_to_string(root.join("main.tex")).unwrap();
+    assert_eq!(saved(&rig.root()), format!("% both\n{MAIN}"));
+    assert!(saved(&rig.library.project_root(&other)).starts_with("% both\n"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -207,16 +184,16 @@ async fn closing_saves_and_ends_the_session() {
             .unwrap()
             .starts_with("% last")
     );
-    let after = rig.try_call("Save", json!({ "reporting": true }));
-    assert_eq!(after.unwrap_err().kind, ErrorKind::NotFound);
+    let after = rig.refuse("Save", json!({ "reporting": true }));
+    assert_eq!(after, ErrorKind::NotFound);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_file_not_in_utf8_is_refused() {
     let rig = project().await;
     fs::write(rig.root().join("latin.tex"), b"caf\xe9").unwrap();
-    let refused = rig.try_call("OpenDocument", json!({ "path": "latin.tex" }));
-    assert_eq!(refused.unwrap_err().kind, ErrorKind::Invalid);
+    let refused = rig.refuse("OpenDocument", json!({ "path": "latin.tex" }));
+    assert_eq!(refused, ErrorKind::Invalid);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -276,11 +253,11 @@ async fn renaming_a_label_changes_every_reference() {
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
         "\\ref{sec:start}\n"
     );
-    let taken = rig.try_call(
+    let taken = rig.refuse(
         "RenameSymbol",
         json!({ "kind": "label", "from": "nothing", "to": "x" }),
     );
-    assert_eq!(taken.unwrap_err().kind, ErrorKind::NotFound);
+    assert_eq!(taken, ErrorKind::NotFound);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -338,8 +315,8 @@ async fn a_new_entry_is_numbered_past_a_taken_name() {
     let folder = rig.call("CreateEntry", entry("figs", true));
     assert!(rig.root().join(folder.as_str().unwrap()).is_dir());
     for name in [".texlocal.json", "../outside.tex"] {
-        let refused = rig.try_call("CreateEntry", entry(name, false));
-        assert_eq!(refused.unwrap_err().kind, ErrorKind::Invalid, "{name}");
+        let refused = rig.refuse("CreateEntry", entry(name, false));
+        assert_eq!(refused, ErrorKind::Invalid, "{name}");
     }
 }
 
@@ -361,8 +338,8 @@ async fn renaming_the_main_file_keeps_it_the_main_file() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_main_file_is_never_prepared_for_deletion() {
     let rig = project().await;
-    let refused = rig.try_call("PrepareDelete", json!({ "path": "main.tex" }));
-    assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
+    let refused = rig.refuse("PrepareDelete", json!({ "path": "main.tex" }));
+    assert_eq!(refused, ErrorKind::Conflict);
     assert_eq!(rig.call("PrepareDelete", json!({ "path": "ch.tex" })), true);
     fs::remove_file(rig.root().join("ch.tex")).unwrap();
     rig.call("Deleted", json!({ "path": "ch.tex", "trashed": true }));
@@ -384,8 +361,8 @@ async fn a_named_version_is_listed_compared_and_restored() {
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
         CHAPTER
     );
-    let empty = rig.try_call("SaveVersion", json!({ "name": " " }));
-    assert_eq!(empty.unwrap_err().kind, ErrorKind::Invalid);
+    let empty = rig.refuse("SaveVersion", json!({ "name": " " }));
+    assert_eq!(empty, ErrorKind::Invalid);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -393,8 +370,8 @@ async fn settings_change_and_bad_ones_are_refused() {
     let rig = project().await;
     let settings = rig.call("SetSettings", json!({ "patch": { "engine": "xelatex" } }));
     assert_eq!(settings["engine"], "xelatex");
-    let refused = rig.try_call("SetSettings", json!({ "patch": { "engine": "word" } }));
-    assert_eq!(refused.unwrap_err().kind, ErrorKind::Invalid);
+    let refused = rig.refuse("SetSettings", json!({ "patch": { "engine": "word" } }));
+    assert_eq!(refused, ErrorKind::Invalid);
     let stored = fs::read_to_string(rig.root().join(".texlocal.json")).unwrap();
     assert!(stored.contains("xelatex"));
 }
@@ -534,8 +511,8 @@ async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
     assert!(zip_names(&dest).contains(&"00README.json".to_owned()));
     rig.call("SetSettings", json!({ "patch": { "engine": "lualatex" } }));
     let again = json!({ "dest": rig.library.path("b.zip"), "forArxiv": true });
-    let refused = rig.try_call("ExportZip", again);
-    assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
+    let refused = rig.refuse("ExportZip", again);
+    assert_eq!(refused, ErrorKind::Conflict);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -576,8 +553,8 @@ async fn a_forward_match_reads_the_open_documents_text() {
         .edit(0, 0, "\\section{Intro}\n", None, false);
     assert_eq!(rig.call("SynctexMatch", at(2)), hit);
     let forward = json!({ "file": "main.tex", "line": 2 });
-    let unbuilt = rig.try_call("SynctexForward", forward);
-    assert_eq!(unbuilt.unwrap_err().kind, ErrorKind::NotFound);
+    let unbuilt = rig.refuse("SynctexForward", forward);
+    assert_eq!(unbuilt, ErrorKind::NotFound);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -692,8 +669,8 @@ async fn a_fix_adds_the_package_a_command_needs() {
     let edit = &fixed["edits"]["edits"][0];
     assert_eq!(edit["text"], "\n\\usepackage{booktabs}");
     assert_eq!(edit["start"], "\\documentclass{article}".len());
-    let unknown = rig.try_call("ApplyFix", json!({ "id": "format:disk" }));
-    assert_eq!(unknown.unwrap_err().kind, ErrorKind::Invalid);
+    let unknown = rig.refuse("ApplyFix", json!({ "id": "format:disk" }));
+    assert_eq!(unknown, ErrorKind::Invalid);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -4,11 +4,10 @@ use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::json;
 
 use crate::error::CoreError;
 use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
-use crate::settings::{move_ui, read_settings, write_settings};
+use crate::settings::{SettingsPatch, move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
 use crate::{atomic, sys};
 
@@ -152,7 +151,13 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     let moved_main = moved(&main_file);
     atomic::rename_exclusive(&src, &dest)?;
     if let Some(main_file) = &moved_main
-        && let Err(err) = write_settings(&project.settings, &json!({ "mainFile": main_file }))
+        && let Err(err) = write_settings(
+            &project.settings,
+            &SettingsPatch {
+                main_file: Some(main_file.clone()),
+                ..SettingsPatch::default()
+            },
+        )
     {
         return Err(match atomic::rename_exclusive(&dest, &src) {
             Ok(()) => err,
