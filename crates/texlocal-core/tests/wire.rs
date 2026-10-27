@@ -32,8 +32,8 @@ fn current(rel: &str, text: &str) {
 
 fn read<T: JsonSchema>(ir: &mut Ir) {
     for (way, settings) in [
-        (Way::In, SchemaSettings::draft2020_12().for_deserialize()),
         (Way::Out, SchemaSettings::draft2020_12().for_serialize()),
+        (Way::In, SchemaSettings::draft2020_12().for_deserialize()),
     ] {
         let mut generator = settings.into_generator();
         generator.subschema_for::<T>();
@@ -212,19 +212,8 @@ fn the_fixtures_round_trip_and_their_swift_is_current() {
     current("apps/macos/TeXLocalTests/WireFixtures.swift", &text);
 }
 
-fn refused<T: JsonSchema>(way: Way) -> String {
-    let read = move || {
-        let settings = SchemaSettings::draft2020_12();
-        let settings = if way == Way::In {
-            settings.for_deserialize()
-        } else {
-            settings.for_serialize()
-        };
-        let mut generator = settings.into_generator();
-        generator.subschema_for::<T>();
-        Ir::default().add(generator.definitions(), way);
-    };
-    let panic = catch_unwind(read).expect_err("the shape was refused");
+fn refused<T: JsonSchema>() -> String {
+    let panic = catch_unwind(|| read::<T>(&mut Ir::default())).expect_err("the shape was refused");
     panic.downcast_ref::<String>().cloned().unwrap_or_default()
 }
 
@@ -290,16 +279,16 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         count: u32,
     }
     let cases = [
-        (refused::<Loose>(Way::Out), "untyped"),
-        (refused::<Pair>(Way::Out), "isn't written for"),
-        (refused::<Typed>(Way::Out), "named type"),
-        (refused::<Snake>(Way::Out), "camelCase"),
-        (refused::<Internal>(Way::Out), "adjacently tagged"),
-        (refused::<Untagged>(Way::Out), "untagged"),
-        (refused::<Text>(Way::Out), "SwiftUI"),
-        (refused::<Both>(Way::Out), "two types are named Same"),
-        (refused::<Open>(Way::In), "deny_unknown_fields"),
-        (refused::<Defaulted>(Way::In), "default"),
+        (refused::<Loose>(), "untyped"),
+        (refused::<Pair>(), "isn't written for"),
+        (refused::<Typed>(), "named type"),
+        (refused::<Snake>(), "camelCase"),
+        (refused::<Internal>(), "adjacently tagged"),
+        (refused::<Untagged>(), "untagged"),
+        (refused::<Text>(), "SwiftUI"),
+        (refused::<Both>(), "two types are named Same"),
+        (refused::<Open>(), "deny_unknown_fields"),
+        (refused::<Defaulted>(), "default"),
     ];
     for (panic, expected) in cases {
         assert!(

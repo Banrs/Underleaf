@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
 
@@ -270,8 +269,4 @@ impl Service {
             }
         }
     }
-}
-
-pub(crate) fn out(value: impl Serialize) -> Result<Value, CoreError> {
-    Ok(json!(value))
 }

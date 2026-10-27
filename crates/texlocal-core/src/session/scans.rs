@@ -3,7 +3,7 @@ use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
 use texlocal_latex::checks;
 use texlocal_latex::logparse::LogItem;
@@ -15,7 +15,6 @@ use super::actor::Actor;
 use super::documents::Shared;
 use super::{Msg, Pending};
 use crate::projects::{self, SearchGroup, Symbols};
-use crate::service::out;
 use crate::{CoreError, lock, tex};
 
 #[derive(Serialize, JsonSchema)]
@@ -41,7 +40,7 @@ impl Actor {
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
-            let result = symbols.and_then(|symbols| {
+            let result = symbols.map(|symbols| {
                 let symbols = Symbols {
                     files,
                     installed,
@@ -52,8 +51,7 @@ impl Actor {
                     .map_or_else(Vec::new, |main| checks::check(&symbols, main));
                 let analysis =
                     analyze::analyze_project(&symbols, main.as_deref(), shown.as_deref());
-                let outline = out(&analysis)?;
-                Ok(Box::new((symbols, checks, outline)))
+                Box::new((symbols, checks, json!(analysis)))
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
         });

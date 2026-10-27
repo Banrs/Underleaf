@@ -28,7 +28,7 @@ pub(crate) struct QuickOpenItem {
     line: Option<u32>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum QuickOpenKind {
     File,

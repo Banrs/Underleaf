@@ -149,8 +149,8 @@ fn conformances(def: &Def) -> &'static str {
     }
 }
 
-fn keys(out: &mut String, names: impl Iterator<Item = String>) {
-    let names: Vec<String> = names.map(|name| ident(&name)).collect();
+fn keys<'a>(out: &mut String, names: impl IntoIterator<Item = &'a str>) {
+    let names: Vec<String> = names.into_iter().map(ident).collect();
     let names = names.join(", ");
     writeln!(
         out,
@@ -192,7 +192,7 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
         return;
     }
     assert!(!fields.is_empty(), "{name} has no fields to read");
-    keys(out, fields.iter().map(|field| field.name.clone()));
+    keys(out, fields.iter().map(|field| field.name.as_str()));
     out.push_str("}\n");
     writeln!(out, "\nnonisolated extension {name} {{").unwrap();
     out.push_str("    init(from decoder: any Decoder) throws {\n");
@@ -259,7 +259,7 @@ fn union(out: &mut String, name: &str, def: &Def, cases: &[(String, Option<Ty>)]
             .unwrap_or_default();
         writeln!(out, "    case {}{value}", ident(case)).unwrap();
     }
-    keys(out, ["type", "value"].map(String::from).into_iter());
+    keys(out, ["type", "value"]);
     out.push_str("}\n");
     writeln!(out, "\nnonisolated extension {name} {{").unwrap();
     if def.decoded {

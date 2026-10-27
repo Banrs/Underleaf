@@ -18,7 +18,7 @@ pub struct RenameResult {
     pub from: String,
     pub to: String,
     pub main_file: String,
-    pub ui: UiState,
+    ui: UiState,
 }
 
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
