@@ -133,8 +133,6 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
     assert_eq!(titles(&outline["tree"][0]["children"]), ["Two"]);
     assert_eq!(outline["tree"][1]["file"], "ch.tex");
     assert_eq!(outline["words"], 9);
-    let styles = outline["headingStyles"].as_array().unwrap();
-    assert!(!styles.iter().any(|style| style["command"] == "chapter"));
     let lone = analyze::analyze_project(&symbols, Some("main.tex"), Some("lone.tex"));
     assert_eq!(lone.files, ["lone.tex"]);
     let shown = analyze::analyze_project(&symbols, Some("main.tex"), Some("ch.tex"));

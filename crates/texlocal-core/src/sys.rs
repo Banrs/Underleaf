@@ -96,10 +96,6 @@ pub(crate) fn permissions(mode: u32) -> Permissions {
     Permissions::from_mode(mode)
 }
 
-pub(crate) fn inode(meta: &Metadata) -> Option<u64> {
-    Some(meta.ino())
-}
-
 pub(crate) fn identity(meta: &Metadata) -> (u64, u64) {
     (meta.dev(), meta.ino())
 }
