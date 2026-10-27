@@ -32,7 +32,7 @@ final class Core {
             for await (said, json) in Self.heard.stream {
                 switch said {
                 case .reply(let id): pending.removeValue(forKey: id)?(json)
-                case .event(let read): if let event = read.event { observers[read.session]?(event) }
+                case .event(let session, let heard): observers[session]?(heard)
                 }
             }
         }
@@ -128,7 +128,7 @@ final class Core {
 
     private nonisolated enum Said: Decodable {
         case reply(UInt64)
-        case event(EventRead)
+        case event(UInt64, Heard)
 
         private enum Keys: CodingKey { case reply }
 
@@ -136,7 +136,8 @@ final class Core {
             if let id = try decoder.container(keyedBy: Keys.self).decodeIfPresent(UInt64.self, forKey: .reply) {
                 self = .reply(id)
             } else {
-                self = .event(try EventRead(from: decoder))
+                let said = try SessionEvent(from: decoder)
+                self = .event(said.session, Heard(said.event))
             }
         }
     }
@@ -152,10 +153,10 @@ final class Core {
         }
     }
 
-    private var observers: [UInt64: (SessionEvent) -> Void] = [:]
+    private var observers: [UInt64: (Heard) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    func observe(_ observer: @escaping (SessionEvent) -> Void) -> UInt64 {
+    func observe(_ observer: @escaping (Heard) -> Void) -> UInt64 {
         numbered += 1
         observers[numbered] = observer
         return numbered
@@ -168,7 +169,7 @@ final class SessionClient {
     let id: UInt64
     private let core = Core.shared
 
-    init(_ observer: @escaping (SessionEvent) -> Void) { id = core.observe(observer) }
+    init(_ observer: @escaping (Heard) -> Void) { id = core.observe(observer) }
 
     @discardableResult
     func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
@@ -187,15 +188,15 @@ final class SessionClient {
     }
 }
 
-nonisolated struct EventRead: Decodable {
-    let session: UInt64
-    let event: SessionEvent?
+nonisolated enum Heard: Sendable {
+    case event(Event)
+    case live(LiveRead)
 
-    private enum Keys: CodingKey { case type, session }
-
-    init(from decoder: any Decoder) throws {
-        let head = try decoder.container(keyedBy: Keys.self)
-        session = try head.decode(UInt64.self, forKey: .session)
-        event = try SessionEvent(head.decode(String.self, forKey: .type), decoder)
+    init(_ event: Event) {
+        switch event {
+        case .liveDocument(let live): self = .live(LiveRead(live))
+        case .livePage(let live): self = .live(LiveRead(live))
+        default: self = .event(event)
+        }
     }
 }

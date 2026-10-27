@@ -2,22 +2,21 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
-use serde::{Deserialize, Serialize, Serializer};
-use serde_json::json;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::closing_brace;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq, Hash)]
 pub struct LogItem {
-    #[serde(rename = "type")]
     pub kind: Severity,
     pub file: Option<String>,
     pub line: Option<u32>,
@@ -32,8 +31,8 @@ pub struct LogItem {
     pub fix: Option<Fix>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
-#[serde(try_from = "String")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "String", into = "Shown")]
 pub enum Fix {
     Install(String),
     AddPackage(String),
@@ -55,32 +54,48 @@ impl TryFrom<String> for Fix {
     }
 }
 
-impl Serialize for Fix {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Install(file) => json!({
-                "id": format!("install:{file}"),
-                "title": "Install",
-                "help": format!("Installs the TeX Live package that has {file}, then compiles again."),
-            }),
-            Self::AddPackage(name) => json!({
-                "id": format!("package:{name}"),
-                "title": format!("Add \\usepackage{{{name}}}"),
-                "help": format!("Loads {name} in the main file's preamble, then compiles again."),
-            }),
-            Self::Xelatex => json!({
-                "id": "engine:xelatex",
-                "title": "Use XeLaTeX",
-                "help": "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.",
-            }),
-            Self::ShellEscape => json!({
-                "id": "shellEscape",
-                "title": "Turn On Shell Escape",
-                "help": "Lets the project's packages run programs as it compiles, then compiles again.",
-                "confirm": "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.",
-            }),
+#[derive(Serialize, JsonSchema)]
+struct Shown {
+    id: String,
+    title: String,
+    help: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirm: Option<&'static str>,
+}
+
+impl From<Fix> for Shown {
+    fn from(fix: Fix) -> Self {
+        let confirm = (fix == Fix::ShellEscape).then_some(
+            "Shell Escape lets this document run programs on your computer as it compiles. Turn it on only for documents you trust.",
+        );
+        let (id, title, help) = match fix {
+            Fix::Install(file) => (
+                format!("install:{file}"),
+                "Install".into(),
+                format!("Installs the TeX Live package that has {file}, then compiles again."),
+            ),
+            Fix::AddPackage(name) => (
+                format!("package:{name}"),
+                format!("Add \\usepackage{{{name}}}"),
+                format!("Loads {name} in the main file's preamble, then compiles again."),
+            ),
+            Fix::Xelatex => (
+                "engine:xelatex".into(),
+                "Use XeLaTeX".into(),
+                "Compiles the project with XeLaTeX from now on, which takes any Unicode character and the computer's own fonts.".into(),
+            ),
+            Fix::ShellEscape => (
+                "shellEscape".into(),
+                "Turn On Shell Escape".into(),
+                "Lets the project's packages run programs as it compiles, then compiles again.".into(),
+            ),
+        };
+        Self {
+            id,
+            title,
+            help,
+            confirm,
         }
-        .serialize(serializer)
     }
 }
 

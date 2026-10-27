@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::json;
 use texlocal_latex::{FileKind, file_kind};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
 use super::documents::CloseReason;
 use super::watch::{self, TreeIndex};
+use crate::events::{DocumentRenamed, Event};
 use crate::import::{self, ImportConflict, Imported};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, RenameResult};
@@ -51,19 +52,21 @@ impl Actor {
         for path in &meaning.docs {
             self.check_disk(path);
         }
-        let others: Vec<&String> = meaning
+        let others: Vec<String> = meaning
             .listed
             .iter()
             .filter(|p| !self.docs.contains_key(*p))
+            .cloned()
             .collect();
-        let scan = |path: &&String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
+        let scan = |path: &String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
         if meaning.tree || others.iter().any(scan) {
             self.after(Timer::Symbols);
         }
-        if !others.is_empty() {
-            self.emit("files_changed", json!({ "paths": others }));
+        let listed = !others.is_empty();
+        if listed {
+            self.emit(Event::FilesChanged(others));
         }
-        if meaning.tree || !others.is_empty() {
+        if meaning.tree || listed {
             self.edits += 1;
             self.mark_outdated();
             if self.auto_compile {
@@ -100,7 +103,7 @@ impl Actor {
         }
         self.tree = index;
         self.after(Timer::Symbols);
-        self.emit("tree", json!({ "tree": tree }));
+        self.emit(Event::Tree(tree));
         self.live_files_changed();
     }
 
@@ -155,12 +158,16 @@ impl Actor {
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
-            doc.shown = Value::Null;
+            doc.shown = None;
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
                 self.last_edits.insert(new.clone(), edit);
             }
-            self.emit("document_renamed", json!({ "from": old, "to": new }));
+            let moved = DocumentRenamed {
+                from: old,
+                to: new.clone(),
+            };
+            self.emit(Event::DocumentRenamed(moved));
             self.publish_doc(&new);
         }
         self.reload_tree();

@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::SourceDocument;
@@ -42,13 +43,13 @@ pub(crate) const LEVELS: [(&str, &str); 6] = [
     ("paragraph", "Paragraph"),
 ];
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Level {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct HeadingStyle {
     pub(crate) title: &'static str,
     pub(crate) command: &'static str,
 }
 
-pub(crate) fn heading_styles(class: Option<&str>) -> Vec<Level> {
+pub(crate) fn heading_styles(class: Option<&str>) -> Vec<HeadingStyle> {
     let allowed = |command: &&str| match class {
         Some("letter" | "minimal") => false,
         Some("IEEEtran") => !matches!(*command, "part" | "chapter"),
@@ -61,8 +62,8 @@ pub(crate) fn heading_styles(class: Option<&str>) -> Vec<Level> {
     let levels = LEVELS
         .iter()
         .filter(|(command, _)| allowed(command))
-        .map(|&(command, title)| Level { title, command });
-    std::iter::once(Level {
+        .map(|&(command, title)| HeadingStyle { title, command });
+    std::iter::once(HeadingStyle {
         title: "Normal Text",
         command: "",
     })

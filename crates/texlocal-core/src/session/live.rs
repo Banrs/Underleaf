@@ -3,7 +3,6 @@ use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::json;
 use texlocal_latex::logparse::{LogItem, parse_live_log};
 use texlocal_latex::syntax::TextEdit;
 use texlocal_latex::{is_text, utf16};
@@ -11,6 +10,7 @@ use texlocal_latex::{is_text, utf16};
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
+use crate::events::{Event, FileIssues, LiveDocument, LivePage, LiveUpdate};
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
@@ -121,7 +121,7 @@ impl Actor {
             if alert && !self.live.log_shown {
                 state.log = Some(self.live_log(state.failure.as_deref()));
             }
-            self.emit("live", json!({ "state": state, "alert": alert }));
+            self.emit(Event::Live(LiveUpdate { state, alert }));
         }
     }
 
@@ -427,9 +427,7 @@ impl Actor {
             return;
         }
         match event {
-            LiveEvent::Page { page, path } => {
-                self.emit("live_page", json!({ "page": page, "path": path }));
-            }
+            LiveEvent::Page { page, path } => self.emit(Event::LivePage(LivePage { page, path })),
             LiveEvent::Document {
                 path,
                 pages,
@@ -439,12 +437,11 @@ impl Actor {
                 if pages > 0 {
                     self.live.document_seen = true;
                     let complete = !matches!(run.as_str(), "stopped" | "partial");
-                    let document = json!({
-                        "path": path,
-                        "changed": changed,
-                        "complete": complete,
-                    });
-                    self.emit("live_document", document);
+                    self.emit(Event::LiveDocument(LiveDocument {
+                        path,
+                        changed,
+                        complete,
+                    }));
                 }
                 self.run_ended(&run);
             }
@@ -571,7 +568,8 @@ impl Actor {
         let lines = issue_lines(items, path, &doc.doc, |_| None);
         if lines != doc.live_issues {
             doc.live_issues.clone_from(&lines);
-            self.emit("live_issues", json!({ "path": path, "lines": lines }));
+            let path = path.to_owned();
+            self.emit(Event::LiveIssues(FileIssues { path, lines }));
         }
     }
 }

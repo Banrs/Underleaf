@@ -69,7 +69,7 @@ impl Actor {
             if let Some(main) = main {
                 let analysis = analyze::analyze_project(&symbols, Some(&main), None);
                 items.extend(analysis.outline.into_iter().map(|heading| {
-                    let path = heading.file.unwrap_or_default();
+                    let path = heading.file;
                     QuickOpenItem {
                         kind: QuickOpenKind::Heading,
                         detail: format!("{} · {path}", heading.level),

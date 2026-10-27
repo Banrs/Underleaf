@@ -177,7 +177,7 @@ impl<'a> Walk<'a> {
             .take_while(|h| facts.end.is_none_or(|end| h.line as u32 <= end.line))
             .count();
         let placed = |heading: &Heading| Heading {
-            file: Some(file.to_owned()),
+            file: file.to_owned(),
             ..heading.clone()
         };
         let headed: usize = headings.iter().map(|h| h.words).sum();

@@ -77,7 +77,7 @@ struct IssueRow: View {
         .accessibilityValue([item.explain, location(line: ", line ")].compactMap(\.self).joined(separator: " "))
     }
 
-    @ViewBuilder private func offer(_ fix: LogItem.Fix) -> some View {
+    @ViewBuilder private func offer(_ fix: Fix) -> some View {
         Spacer()
         if project.fixing == fix {
             ProgressView().controlSize(.small).accessibilityLabel(fix.title)
@@ -89,9 +89,9 @@ struct IssueRow: View {
         }
     }
 
-    private func run(_ fix: LogItem.Fix) { Task { if await confirmed(fix) { await project.run(fix) } } }
+    private func run(_ fix: Fix) { Task { if await confirmed(fix) { await project.run(fix) } } }
 
-    private func confirmed(_ fix: LogItem.Fix) async -> Bool {
+    private func confirmed(_ fix: Fix) async -> Bool {
         guard let confirm = fix.confirm else { return true }
         let alert = NSAlert()
         alert.messageText = "\(fix.title)?"

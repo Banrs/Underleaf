@@ -16,6 +16,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
+use texlocal_latex::analyze::Analysis;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::syntax::TextEdit;
 use tokio::sync::mpsc;
@@ -32,7 +33,9 @@ pub(crate) use actor::Session;
 use actor::{OpenProject, SessionOpened};
 pub(crate) use build::Compiler;
 pub use document::Document;
+pub(crate) use documents::{CloseReason, DiskConflict};
 use documents::{Docs, Shared};
+pub(crate) use live::LiveState;
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -47,7 +50,7 @@ pub(crate) enum Msg {
     Symbols {
         seq: u64,
         edits: u64,
-        result: Result<Box<(Symbols, Vec<LogItem>, Value)>, CoreError>,
+        result: Result<Box<(Symbols, Vec<LogItem>, Analysis)>, CoreError>,
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),

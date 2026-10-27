@@ -32,7 +32,6 @@ extension ProjectModel {
     }
 }
 
-nonisolated struct HeadingStyle: Decodable, Sendable {
-    let title, command: String
+nonisolated extension HeadingStyle {
     static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])!
 }

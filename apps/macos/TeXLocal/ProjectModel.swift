@@ -11,7 +11,7 @@ final class ProjectModel {
     private(set) var initialLoadComplete = false
     var openPath: String? { didSet { if openPath != oldValue { openKindChanged() } } }
     private(set) var openKind: FileKind?
-    private(set) var outline: [OutlineItem] = []
+    private(set) var outline: [Heading] = []
     private(set) var outlineTree: [OutlineNode] = []
     private(set) var headingStyles = HeadingStyle.standard
     var words: Int?
@@ -30,14 +30,14 @@ final class ProjectModel {
     private struct Doc {
         var state: DocumentState?
         var heldReason: String?
-        var lineIssues: [Int: IssuesEvent.Line] = [:], liveIssues: [Int: IssuesEvent.Line] = [:]
+        var lineIssues: [Int: IssueLine] = [:], liveIssues: [Int: IssueLine] = [:]
     }
     @ObservationIgnored private var composingPath: String?
     @ObservationIgnored private var treeChanged = false
 
     var compiling = false
     var outdated = false
-    var fixing: LogItem.Fix?
+    var fixing: Fix?
     var result: CompileResult?
     var checks: [LogItem] = []
     var chosenIssue: Int?
@@ -227,18 +227,25 @@ final class ProjectModel {
         session?.send(SetUiState(patch: patch))
     }
 
-    func handle(_ event: SessionEvent) {
+    func handle(_ heard: Heard) {
         guard !closed else { return }
+        switch heard {
+        case .event(let event): handle(event)
+        case .live(let read): showLive(read)
+        }
+    }
+
+    private func handle(_ event: Event) {
         switch event {
         case .document(let state): documentChanged(state)
         case .outline(let analysis):
             self.analysis = analysis
             showOutline()
-        case .reload(let reloaded): reload(reloaded)
-        case .closed(let gone):
+        case .documentReload(let reloaded): reload(reloaded)
+        case .documentClosed(let gone):
             documents[gone.path] = nil
-            if openPath == gone.path, gone.reason != "closed" { clearOpenFile() }
-        case .renamed(let renamed):
+            if openPath == gone.path, gone.reason != .closed { clearOpenFile() }
+        case .documentRenamed(let renamed):
             documents[renamed.to] = documents.removeValue(forKey: renamed.from)
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
@@ -248,22 +255,22 @@ final class ProjectModel {
         case .liveIssues(let marked):
             documents[marked.path, default: Doc()].liveIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
-        case .checks(let found): inOrder { self.checks = found.items }
+        case .checks(let items): inOrder { self.checks = items }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
-        case .tree(let listed):
+        case .tree(let nodes):
             treeChanged = true
-            tree.show(listed.tree)
+            tree.show(nodes)
             if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
-            if let main = Self.mainMarked(in: listed.tree), let current = settings?.mainFile, main != current {
+            if let main = Self.mainMarked(in: nodes), let current = settings?.mainFile, main != current {
                 settings?.mainFile = main
                 mainFileChanged()
             }
-        case .filesChanged(let changed):
-            if let openPath, !editsText, changed.paths.contains(openPath) { previewVersion += 1 }
+        case .filesChanged(let paths):
+            if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
         case .live(let live): liveChanged(live.state, alert: live.alert)
-        case .livePDF(let read): showLive(read)
+        case .livePage, .liveDocument: break
         }
     }
 
@@ -281,7 +288,7 @@ final class ProjectModel {
         }
     }
 
-    private func reload(_ event: ReloadEvent) {
+    private func reload(_ event: DocumentReload) {
         if editor.path == event.path {
             editor.reload(text: event.text)
         } else if let session, let source = SourceDocument(session: session.id, path: event.path) {
@@ -421,7 +428,7 @@ final class ProjectModel {
 
     private func heading(at line: Int) -> Int? {
         guard let openPath else { return nil }
-        return outline.last { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }?.id
+        return outline.lastIndex { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }
     }
 
     func replaceAll() async {
@@ -509,7 +516,7 @@ final class ProjectModel {
         return true
     }
 
-    func run(_ fix: LogItem.Fix) async {
+    func run(_ fix: Fix) async {
         guard let session else { return }
         fixing = fix
         defer { fixing = nil }
@@ -599,8 +606,8 @@ final class ProjectModel {
         Task { if let path = try? await session?.call(PdfPath()) { await showBuildPDF(path) } }
     }
 
-    func reveal(_ item: OutlineItem) {
-        guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
-        Task { await open(item.file, line: item.line, atTop: true, focus: false, jump: true) }
+    func reveal(_ heading: Heading) {
+        guard heading.file != openPath || cursorLine != heading.line || topLine != heading.line else { return }
+        Task { await open(heading.file, line: heading.line, atTop: true, focus: false, jump: true) }
     }
 }

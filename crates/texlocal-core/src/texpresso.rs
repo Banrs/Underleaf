@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -57,12 +59,18 @@ pub enum LiveEvent {
         path: String,
         pages: u32,
         run: String,
-        changed: Vec<[u32; 2]>,
+        changed: Vec<PageRange>,
     },
     Done(String),
     Synced(u64),
     Log,
     Ended(Option<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PageRange {
+    pub first: u32,
+    pub last: u32,
 }
 
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
@@ -623,7 +631,13 @@ fn apply_message(session: &Session, message: &Value) {
                 path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
                 run: run.to_owned(),
-                changed: ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect(),
+                changed: ranges
+                    .iter()
+                    .map(|r| PageRange {
+                        first: page(r, 0),
+                        last: page(r, 1),
+                    })
+                    .collect(),
             }
         }
         "done" => match message[1].as_str() {

@@ -3,8 +3,7 @@ use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::{Value, json};
-use texlocal_latex::analyze::{self, Facts};
+use texlocal_latex::analyze::{self, Analysis, Facts};
 use texlocal_latex::checks;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::search::Query;
@@ -14,6 +13,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::actor::Actor;
 use super::documents::Shared;
 use super::{Msg, Pending};
+use crate::events::Event;
 use crate::projects::{self, SearchGroup, Symbols};
 use crate::{CoreError, lock, tex};
 
@@ -51,7 +51,7 @@ impl Actor {
                     .map_or_else(Vec::new, |main| checks::check(&symbols, main));
                 let analysis =
                     analyze::analyze_project(&symbols, main.as_deref(), shown.as_deref());
-                Box::new((symbols, checks, json!(analysis)))
+                Box::new((symbols, checks, analysis))
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
         });
@@ -61,7 +61,7 @@ impl Actor {
         &mut self,
         seq: u64,
         edits: u64,
-        result: Result<Box<(Symbols, Vec<LogItem>, Value)>, CoreError>,
+        result: Result<Box<(Symbols, Vec<LogItem>, Analysis)>, CoreError>,
     ) {
         if let Ok(scanned) = result
             && seq == self.symbols_seq
@@ -69,9 +69,9 @@ impl Actor {
             let (symbols, checks, outline) = *scanned;
             *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
             self.checks_done(checks, edits);
-            if outline != self.outline {
-                self.emit("outline", outline.clone());
-                self.outline = outline;
+            if self.outline.as_ref() != Some(&outline) {
+                self.outline = Some(outline.clone());
+                self.emit(Event::Outline(outline));
             }
         }
     }

@@ -174,6 +174,10 @@ nonisolated extension TextEdit {
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
+nonisolated extension TextRange {
+    var range: NSRange { NSRange(location: start, length: length) }
+}
+
 nonisolated struct Change: Decodable {
     var edits: [TextEdit]
     var selections: [SourceRange]

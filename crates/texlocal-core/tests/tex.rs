@@ -11,7 +11,7 @@ const REFS: &str = "@book{knuth, author = {Donald Knuth}, title = {The TeXbook},
 async fn built(files: &[(&str, &str)]) -> (Rig, serde_json::Value) {
     let rig = Rig::open(files).await;
     rig.call("Compile", json!({ "auto": false }));
-    let finished = rig.event("build_finished", |_| true);
+    let finished = rig.event("buildFinished", |_| true);
     (rig, finished["result"].clone())
 }
 
@@ -84,12 +84,17 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    let whole = rig.event("live_document", |e| e["complete"] == true);
+    let whole = rig.event("liveDocument", |e| e["complete"] == true);
     assert!(Path::new(whole["path"].as_str().unwrap()).is_file());
     rig.forget();
     doc.edit(40, 0, "More words. ", None, false);
-    let typed = rig.find(|e| e["type"] == "live_page" || e["type"] == "live_document");
-    assert!(Path::new(typed["path"].as_str().unwrap()).is_file());
+    let typed = rig.find(|e| {
+        matches!(
+            e["event"]["type"].as_str(),
+            Some("livePage" | "liveDocument")
+        )
+    });
+    assert!(Path::new(typed["event"]["value"]["path"].as_str().unwrap()).is_file());
     rig.call("StopLive", json!({}));
     rig.event("live", |e| e["state"]["phase"] == "stopped");
 }

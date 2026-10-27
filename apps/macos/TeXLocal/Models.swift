@@ -51,36 +51,21 @@ nonisolated extension ProjectSettings {
     }
 }
 
-nonisolated struct LogItem: Decodable {
-    let type: String
-    let file: String?
-    let line: Int?
-    let message: String
-    let explain: String?
-    let fix: Fix?
-
-    var isError: Bool { type == "error" }
-
-    nonisolated struct Fix: Decodable, Equatable {
-        let id, title, help: String
-        let confirm: String?
-    }
+nonisolated extension LogItem {
+    var isError: Bool { kind == .error }
 }
 
-nonisolated struct CompileResult: Decodable {
-    let ok, stopped: Bool
-    let pdf: String?
-    let pdfChanged: Bool
-    let durationMs: Int
-    let errors, warnings, badBoxes: [LogItem]
-    let log: String
-
+nonisolated extension CompileResult {
     var failed: Bool { !ok && !stopped }
 
     var durationText: String {
         Duration.milliseconds(durationMs)
             .formatted(.units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 1)))
     }
+}
+
+nonisolated extension FileIssues {
+    var byLine: [Int: IssueLine] { Dictionary(lines.map { ($0.line, $0) }) { $1 } }
 }
 
 nonisolated extension SearchHit: Identifiable {

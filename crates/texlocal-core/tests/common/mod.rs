@@ -145,7 +145,8 @@ impl Rig {
     }
 
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        self.find(|e| e["type"] == kind && matching(e))
+        let event = |e: &Value| e["event"]["type"] == kind && matching(&e["event"]["value"]);
+        self.find(event)["event"]["value"].take()
     }
 
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
@@ -167,26 +168,12 @@ impl Rig {
     }
 
     pub fn heard(&self, kind: &str) -> bool {
-        self.seen.lock().unwrap().iter().any(|e| e["type"] == kind)
+        let seen = self.seen.lock().unwrap();
+        seen.iter().any(|e| e["event"]["type"] == kind)
     }
 
     pub fn forget(&self) {
         self.seen.lock().unwrap().clear();
         while self.events.try_recv().is_ok() {}
-    }
-
-    pub fn latest(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        self.event(kind, &matching);
-        while let Ok(event) = self.events.recv_timeout(Duration::from_millis(300)) {
-            self.seen.lock().unwrap().push(event);
-        }
-        self.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|e| e["type"] == kind && matching(e))
-            .cloned()
-            .unwrap()
     }
 }

@@ -7,7 +7,7 @@ use std::time::Duration;
 use notify::RecommendedWatcher;
 use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::Value;
+use texlocal_latex::analyze::Analysis;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
@@ -25,7 +25,7 @@ use super::scans::Usages;
 use super::watch::{self, Change, TreeIndex};
 use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
 use crate::CoreError;
-use crate::events::Queued;
+use crate::events::{DocumentState, Event, Queued, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::paths::{Project, RelPath};
 use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols, TreeNode};
@@ -146,7 +146,7 @@ pub(crate) struct Actor {
     pub shown: u64,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     pub symbols_seq: u64,
-    pub outline: Value,
+    pub outline: Option<Analysis>,
     pub facts: Arc<projects::Files>,
     pub edits: u64,
     pub last_edits: HashMap<String, u64>,
@@ -213,7 +213,7 @@ impl Actor {
             shown: 0,
             symbols: Arc::default(),
             symbols_seq: 0,
-            outline: Value::Null,
+            outline: None,
             facts: Arc::default(),
             edits: 0,
             last_edits: HashMap::new(),
@@ -288,9 +288,11 @@ impl Actor {
             } else {
                 STOPPED_SAVED
             };
-            let mut state = doc.state();
-            state["error"] = error.into();
-            self.emit("document", state);
+            let error = Some(error.to_owned());
+            self.emit(Event::Document(DocumentState {
+                error,
+                ..doc.state()
+            }));
         }
         rx.close();
         while let Ok(message) = rx.try_recv() {
@@ -303,10 +305,11 @@ impl Actor {
         }
     }
 
-    pub fn emit(&self, kind: &str, mut fields: Value) {
-        fields["type"] = kind.into();
-        fields["session"] = self.id.into();
-        let _ = self.events.send(Queued::Event(fields));
+    pub fn emit(&self, event: Event) {
+        let session = self.id;
+        let _ = self
+            .events
+            .send(Queued::Event(SessionEvent { session, event }));
     }
 
     fn handle(&mut self, message: Msg) {

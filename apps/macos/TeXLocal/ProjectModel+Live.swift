@@ -58,7 +58,7 @@ extension ProjectModel {
 
     func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
-        if case .document(_?) = read {
+        if case .document(_?, _, _) = read {
             if !livePDF, app?.showPDF == false { app?.showPDF = true }
             shown = .live
         }

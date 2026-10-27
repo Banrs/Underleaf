@@ -5,6 +5,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use crate::CoreError;
+use crate::events::SessionEvent;
 use crate::service::Library;
 use crate::session::Session;
 
@@ -46,6 +47,7 @@ pub fn protocol() -> Protocol {
     let mut requests = Library::describe(&mut inbound, &mut outbound);
     requests.extend(Session::describe(&mut inbound, &mut outbound));
     outbound.subschema_for::<CoreError>();
+    outbound.subschema_for::<SessionEvent>();
     Protocol {
         requests,
         inbound: inbound.take_definitions(true),

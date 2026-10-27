@@ -25,8 +25,8 @@ struct CoreTests {
 
     @Test func aSessionsDocumentIsEditedAndSavedAndItsEventsDecode() async throws {
         let project = try await newProject()
-        var events: [SessionEvent] = []
-        let session = SessionClient { events.append($0) }
+        var events: [Event] = []
+        let session = SessionClient { if case .event(let event) = $0 { events.append(event) } }
         let opened = try await session.call(OpenProject(id: project.id, autoCompile: false))
         #expect(opened.settings.mainFile == "main.tex")
         #expect(opened.tree.contains { $0.name == "main.tex" })
@@ -46,7 +46,7 @@ struct CoreTests {
     @Test func aReplyComesAfterTheEventsBeforeIt() async throws {
         let project = try await newProject(template: .blank)
         var trees = 0
-        let session = SessionClient { if case .tree = $0 { trees += 1 } }
+        let session = SessionClient { if case .event(.tree) = $0 { trees += 1 } }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         try await session.call(CreateEntry(folder: "", name: "new.tex", dir: false))
         #expect(trees > 0)
@@ -63,14 +63,5 @@ struct CoreTests {
             #expect(throws: DecodingError.self, "\(json)") { try JSONDecoder().decode(type, from: Data(json.utf8)) }
         }
         #expect(FixtureUnit.highContrast.title == "High Contrast")
-    }
-
-    @Test func anEventOfAnUnknownTypeIsLeftOut() throws {
-        let known = try JSONDecoder().decode(EventRead.self, from: Data(#"{"type":"files_changed","session":3,"paths":["a.png"]}"#.utf8))
-        #expect(known.session == 3)
-        guard case .filesChanged(let changed) = known.event else { Issue.record("not decoded"); return }
-        #expect(changed.paths == ["a.png"])
-        let unknown = try JSONDecoder().decode(EventRead.self, from: Data(#"{"type":"something_new","session":3}"#.utf8))
-        #expect(unknown.event == nil)
     }
 }

@@ -97,13 +97,10 @@ async fn opening_answers_the_project_and_its_number_is_taken() {
 async fn checks_find_undefined_labels_and_unclosed_environments() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\begin{itemize}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    let checks = rig.event("checks", |e| {
-        e["items"].as_array().is_some_and(|i| i.len() == 2)
-    });
-    let items = &checks["items"];
-    assert_eq!(items[0]["type"], "warning");
+    let items = rig.event("checks", |e| e.as_array().is_some_and(|i| i.len() == 2));
+    assert_eq!(items[0]["kind"], "warning");
     assert_eq!(items[0]["line"], 3);
-    assert_eq!(items[1]["type"], "error");
+    assert_eq!(items[1]["kind"], "error");
     assert_eq!(items[1]["line"], 5);
 }
 
@@ -113,8 +110,14 @@ async fn the_outline_follows_inputs_and_counts_words() {
     let outline = rig.event("outline", |e| {
         e["tree"].as_array().is_some_and(|t| t.len() == 2)
     });
-    assert_eq!(names(&outline["tree"], "title"), ["Intro", "Chapter"]);
-    assert_eq!(names(&outline["tree"], "file"), ["main.tex", "ch.tex"]);
+    let headings: Value = outline["tree"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["heading"].clone())
+        .collect();
+    assert_eq!(names(&headings, "title"), ["Intro", "Chapter"]);
+    assert_eq!(names(&headings, "file"), ["main.tex", "ch.tex"]);
     assert_eq!(outline["tree"][1]["words"], 5);
     let levels = names(&outline["headingStyles"], "command");
     assert!(
@@ -178,7 +181,7 @@ async fn replies_follow_the_events_sent_before_them() {
     let draft = rig.call("SaveVersion", json!({ "name": "Draft" }));
     std::thread::sleep(Duration::from_millis(300));
     fs::remove_file(rig.root().join("main.tex")).unwrap();
-    rig.event("tree", |e| !e["tree"].to_string().contains("main.tex"));
+    rig.event("tree", |e| !e.to_string().contains("main.tex"));
     answered_after("live", "StartLive", json!({}));
     let restore = json!({ "id": draft["id"], "paths": ["main.tex"] });
     answered_after("tree", "RestoreVersion", restore);
@@ -194,7 +197,7 @@ async fn replies_follow_the_events_sent_before_them() {
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     answered_after("conflict", "Save", json!({ "reporting": true }));
     let revert = json!({ "path": "ch.tex", "answer": "revert" });
-    answered_after("document_reload", "Resolve", revert);
+    answered_after("documentReload", "Resolve", revert);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -422,7 +425,7 @@ async fn a_change_on_disk_reaches_a_document_without_edits() {
     let doc = rig.open_document("ch.tex");
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    let reload = rig.event("document_reload", |e| e["path"] == "ch.tex");
+    let reload = rig.event("documentReload", |e| e["path"] == "ch.tex");
     assert_eq!(reload["text"], "theirs\n");
     assert!(doc.reload("theirs\n"));
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
@@ -455,7 +458,7 @@ async fn revert_takes_the_disks_text() {
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     rig.event("conflict", |e| e["path"] == "ch.tex");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
-    let reload = rig.event("document_reload", |e| e["path"] == "ch.tex");
+    let reload = rig.event("documentReload", |e| e["path"] == "ch.tex");
     assert_eq!(reload["text"], "theirs\n");
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
@@ -468,14 +471,11 @@ async fn another_apps_files_reach_the_tree() {
     let rig = project().await;
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("new.tex"), "x").unwrap();
-    let tree = rig.event("tree", |e| e["tree"].to_string().contains("new.tex"));
-    assert_eq!(
-        names(&tree["tree"], "name"),
-        ["ch.tex", "main.tex", "new.tex"]
-    );
+    let tree = rig.event("tree", |e| e.to_string().contains("new.tex"));
+    assert_eq!(names(&tree, "name"), ["ch.tex", "main.tex", "new.tex"]);
     fs::write(rig.root().join("ch.tex"), "y").unwrap();
-    rig.event("files_changed", |e| {
-        e["paths"].as_array().unwrap().contains(&json!("ch.tex"))
+    rig.event("filesChanged", |e| {
+        e.as_array().unwrap().contains(&json!("ch.tex"))
     });
 }
 
@@ -485,8 +485,8 @@ async fn a_reloaded_tree_marks_the_main_file_and_hides_dotfiles() {
     write(&rig.root(), &[(".latexmkrc", ""), ("figs/a.png", "png")]);
     rig.call("ReloadTree", json!({}));
     assert!(rig.heard("tree"));
-    let tree = &rig.event("tree", |e| e["tree"].to_string().contains("figs"))["tree"];
-    assert_eq!(names(tree, "name"), ["ch.tex", "figs", "main.tex"]);
+    let tree = rig.event("tree", |e| e.to_string().contains("figs"));
+    assert_eq!(names(&tree, "name"), ["ch.tex", "figs", "main.tex"]);
     let main = &tree[2];
     assert_eq!(
         (&main["main"], &main["kind"]),
@@ -591,7 +591,7 @@ async fn a_build_shows_its_pdf_and_marks_its_errors() {
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
     rig.open_document("main.tex");
     rig.call("Compile", json!({ "auto": false }));
-    let finished = rig.event("build_finished", |_| true);
+    let finished = rig.event("buildFinished", |_| true);
     let result = &finished["result"];
     assert_eq!(result["ok"], false);
     assert!(result["pdf"].as_str().unwrap().ends_with("main.pdf"));
@@ -612,7 +612,7 @@ async fn a_clean_build_has_no_errors() {
     rig.call("Compile", json!({ "auto": false }));
     let started = rig.event("build", |e| e["compiling"] == true);
     assert_eq!(started["auto"], false);
-    let finished = rig.event("build_finished", |_| true);
+    let finished = rig.event("buildFinished", |_| true);
     assert_eq!(finished["result"]["ok"], true);
     assert_eq!(finished["result"]["errors"], json!([]));
     rig.call("Clean", json!({}));
@@ -631,7 +631,7 @@ async fn compiling_slowly() -> Rig {
 async fn kill_all_stops_the_builds_under_way() {
     let rig = compiling_slowly().await;
     rig.library.call("KillAll", json!({})).await;
-    let finished = rig.event("build_finished", |_| true);
+    let finished = rig.event("buildFinished", |_| true);
     assert_eq!(finished["result"]["stopped"], true);
 }
 
@@ -642,7 +642,7 @@ async fn stop_compile_stops_the_sessions_build() {
         rig.root().join("build").is_dir()
     });
     rig.call("StopCompile", json!({}));
-    let finished = rig.event("build_finished", |_| true);
+    let finished = rig.event("buildFinished", |_| true);
     assert_eq!(finished["result"]["stopped"], true);
 }
 
@@ -677,13 +677,13 @@ async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
     let args = || fs::read_to_string(rig.root().join("build/args")).unwrap();
     rig.call("Compile", json!({ "auto": false }));
-    rig.event("build_finished", |_| true);
+    rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-norc"));
     assert!(!args().contains("-shell-escape"));
     rig.forget();
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
     rig.call("Compile", json!({ "auto": false }));
-    rig.event("build_finished", |_| true);
+    rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-shell-escape"));
     assert!(!args().lines().any(|a| a == "-norc"));
 }
@@ -705,10 +705,8 @@ async fn a_fix_adds_the_package_a_command_needs() {
 async fn checks_find_duplicates_missing_files_and_open_groups() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\label{a}\\label{a}\n\\cite{nokey}\n\\input{missing}\n$x\n\nnext {\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    let checks = rig.event("checks", |e| {
-        e["items"].as_array().is_some_and(|i| i.len() == 5)
-    });
-    let lines: Vec<u64> = checks["items"]
+    let checks = rig.event("checks", |e| e.as_array().is_some_and(|i| i.len() == 5));
+    let lines: Vec<u64> = checks
         .as_array()
         .unwrap()
         .iter()

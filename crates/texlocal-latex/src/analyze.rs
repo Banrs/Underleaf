@@ -28,7 +28,7 @@ static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
 static CROSSREF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)(?:^|,)\s*crossref\s*=\s*[{"]?\s*([^\s,{}"]+)"#).unwrap());
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Heading {
     #[serde(skip)]
     pub(crate) depth: usize,
@@ -37,8 +37,7 @@ pub struct Heading {
     pub title: String,
     pub(crate) untitled: bool,
     pub line: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file: Option<String>,
+    pub file: String,
     #[serde(skip)]
     pub(crate) words: usize,
 }
@@ -53,7 +52,7 @@ impl Heading {
             untitled: title.is_none(),
             title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
-            file: None,
+            file: String::new(),
             words: 0,
         }
     }
@@ -515,16 +514,15 @@ fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
     parts
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OutlineNode {
     pub(crate) index: usize,
-    #[serde(flatten)]
     pub(crate) heading: Heading,
     pub(crate) fold_key: String,
     pub(crate) words: usize,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) children: Vec<Self>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) children: Option<Vec<Self>>,
 }
 
 pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
@@ -540,7 +538,7 @@ pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
         {
             let index = *next;
             *next += 1;
-            let file = heading.file.as_deref().unwrap_or_default();
+            let file = &heading.file;
             let title = if heading.untitled {
                 "(untitled)"
             } else {
@@ -556,7 +554,7 @@ pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
                 heading: heading.clone(),
                 fold_key,
                 words: heading.words + children.iter().map(|c| c.words).sum::<usize>(),
-                children,
+                children: (!children.is_empty()).then_some(children),
             });
         }
         nodes
@@ -564,7 +562,7 @@ pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     nest(outline, &mut 0, None, &mut HashMap::new())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Analysis {
     #[serde(skip)]
@@ -573,7 +571,7 @@ pub struct Analysis {
     pub files: Vec<String>,
     pub(crate) tree: Vec<OutlineNode>,
     pub(crate) words: usize,
-    pub(crate) heading_styles: Vec<headings::Level>,
+    pub(crate) heading_styles: Vec<headings::HeadingStyle>,
 }
 
 pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {

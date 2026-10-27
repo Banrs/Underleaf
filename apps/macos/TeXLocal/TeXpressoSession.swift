@@ -1,43 +1,26 @@
 import Observation
 import PDFKit
 
-nonisolated struct LiveDocumentEvent: Decodable, Sendable {
-    let path: String
-    var changed: [[Int]]?
-    let complete: Bool
-}
+nonisolated enum LiveRead: @unchecked Sendable {
+    case document(PDFDocument?, changed: IndexSet, complete: Bool)
+    case page(PDFPage?, at: Int)
 
-nonisolated struct LivePageEvent: Decodable, Sendable { let page: Int, path: String }
-
-nonisolated enum LiveRead: Sendable {
-    case document(LiveDocument?)
-    case page(LivePage?)
-
-    init(_ event: LiveDocumentEvent) {
-        guard let document = Self.mapped(URL(filePath: event.path)), document.pageCount > 0 else {
-            self = .document(nil)
-            return
+    init(_ live: LiveDocument) {
+        let document = Self.mapped(URL(filePath: live.path)).flatMap { $0.pageCount > 0 ? $0 : nil }
+        let changed = live.changed.reduce(into: IndexSet()) { set, range in
+            if range.first <= range.last { set.insert(integersIn: range.first...range.last) }
         }
-        let changed = event.changed.map { ranges in
-            ranges.reduce(into: IndexSet()) { set, range in
-                if range.count == 2, range[0] <= range[1] { set.insert(integersIn: range[0]...range[1]) }
-            }
-        }
-        self = .document(LiveDocument(document: document, changed: changed, complete: event.complete))
+        self = .document(document, changed: changed, complete: live.complete)
     }
 
-    init(_ event: LivePageEvent) {
-        self = .page(Self.mapped(URL(filePath: event.path))?.page(at: 0).map { LivePage(index: event.page, page: $0) })
+    init(_ live: LivePage) {
+        self = .page(Self.mapped(URL(filePath: live.path))?.page(at: 0), at: live.page)
     }
 
     private static func mapped(_ url: URL) -> PDFDocument? {
         (try? Data(contentsOf: url, options: .alwaysMapped)).flatMap(PDFDocument.init(data:))
     }
 }
-
-nonisolated struct LiveDocument: @unchecked Sendable { let document: PDFDocument, changed: IndexSet?, complete: Bool }
-
-nonisolated struct LivePage: @unchecked Sendable { let index: Int, page: PDFPage }
 
 @Observable
 final class TeXpressoSession {
