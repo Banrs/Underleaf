@@ -6,9 +6,10 @@ use std::sync::{Arc, PoisonError};
 use serde::Serialize;
 use serde_json::{Value, json};
 use texlocal_latex::analyze;
+use texlocal_latex::logparse::{aux_inputs, label_number};
+use texlocal_latex::search::score;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::syntax::catalog::CATALOG;
-use texlocal_latex::syntax::scan::closing_brace;
 
 use super::Reply;
 use super::actor::Actor;
@@ -18,8 +19,6 @@ use crate::settings;
 use crate::{lf, lock, lossy_string};
 
 const LISTED: usize = 50;
-const WORD_START: i64 = 8;
-const RUN: i64 = 4;
 
 #[derive(Serialize)]
 struct Item {
@@ -166,53 +165,12 @@ impl Actor {
 }
 
 fn numbered(aux: &Path, label: &str) -> Option<String> {
-    let key = format!("\\newlabel{{{label}}}{{{{");
-    let find = |aux: &str| {
-        let number = &aux[aux.find(&key)? + key.len()..];
-        let end = closing_brace(number)?;
-        let page = number[end + 1..].strip_prefix('{')?;
-        let page = &page[..closing_brace(page)?];
-        Some(format!("{} on page {page}", &number[..end]))
-    };
     let main = fs::read_to_string(aux).ok()?;
-    find(&main).or_else(|| {
+    label_number(&main, label).or_else(|| {
         let folder = aux.parent()?;
-        main.split("\\@input{").skip(1).find_map(|rest| {
-            let included = paths::safe_path(folder, &rest[..rest.find('}')?]).ok()?;
-            find(&fs::read_to_string(included).ok()?)
+        aux_inputs(&main).find_map(|input| {
+            let included = paths::safe_path(folder, input).ok()?;
+            label_number(&fs::read_to_string(included).ok()?, label)
         })
     })
-}
-
-fn score(query: &str, text: &str) -> Option<i64> {
-    let lower = |c: char| c.to_lowercase().next().unwrap_or(c);
-    let text: Vec<char> = text.chars().collect();
-    let word_start = |at: usize| {
-        at == 0
-            || "/-_:. ".contains(text[at - 1])
-            || text[at - 1].is_lowercase() && text[at].is_uppercase()
-    };
-    let mut best: Vec<Option<i64>> = Vec::new();
-    for (i, wanted) in query.chars().map(lower).enumerate() {
-        let mut earlier = None;
-        let mut next = vec![None; text.len()];
-        for (at, &c) in text.iter().enumerate() {
-            if lower(c) == wanted {
-                let bonus = if word_start(at) { WORD_START } else { 0 };
-                let before = match i {
-                    0 => Some(0),
-                    _ => {
-                        let run = at.checked_sub(1).and_then(|k| best[k]).map(|s| s + RUN);
-                        run.max(earlier)
-                    }
-                };
-                next[at] = before.map(|score| score + bonus);
-            }
-            if i > 0 {
-                earlier = earlier.max(best[at]);
-            }
-        }
-        best = next;
-    }
-    best.into_iter().flatten().max()
 }

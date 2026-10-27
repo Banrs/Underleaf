@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use super::scan::{blank_line, closing_brace};
 use super::{
     INDENT, Insertion, Line, NEWLINE, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
-    comment_start, complete, edit, indentation, is, span, splice, utf16,
+    comment_start, complete, edit, indentation, is, span, splice,
 };
+use crate::utf16;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Change {
@@ -146,12 +147,12 @@ impl SourceDocument {
                 let head = format!("{before}\\{command}{marks}{{");
                 let close = if rest.is_some() { "}" } else { "" };
                 let tail = rest.unwrap_or_default();
-                let cursor = utf16(&head) + utf16(title);
+                let cursor = utf16::len(&head) + utf16::len(title);
                 (format!("{head}{title}{close}{tail}{comment}"), cursor)
             }
             Some(rest) => {
                 let plain = format!("{before}{title}{rest}");
-                (format!("{plain}{comment}"), utf16(&plain))
+                (format!("{plain}{comment}"), utf16::len(&plain))
             }
             None => (format!("{code}{comment}"), (caret - start) as usize),
         };
@@ -181,7 +182,10 @@ impl SourceDocument {
                 .for_each(|field| field.start += selection.length);
         }
         Some(Insertion {
-            caret: selection.start + fields.first().map_or(utf16(&block) as u32, |f| f.start),
+            caret: selection.start
+                + fields
+                    .first()
+                    .map_or(utf16::len(&block) as u32, |f| f.start),
             edit: edit(selection.start, selection.length, block),
             fields,
         })
@@ -195,7 +199,7 @@ impl SourceDocument {
         } else {
             format!("${command}$")
         };
-        let caret = selection.start + utf16(&text) as u32;
+        let caret = selection.start + utf16::len(&text) as u32;
         Insertion {
             edit: edit(selection.start, selection.length, text),
             caret,
@@ -307,7 +311,7 @@ impl SourceDocument {
                 end - start,
                 format!("{prefix}{selected}{suffix}"),
             )],
-            selections: vec![span(start + utf16(prefix), end - start)],
+            selections: vec![span(start + utf16::len(prefix), end - start)],
         }
     }
 
@@ -332,7 +336,7 @@ pub(crate) fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Ve
     let map = |position: usize| {
         let (mut added, mut removed) = (0, 0);
         for e in edits {
-            let inserted = utf16(&e.text);
+            let inserted = utf16::len(&e.text);
             let (start, end) = (e.start as usize, (e.start + e.length) as usize);
             if end <= position {
                 added += inserted;

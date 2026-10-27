@@ -166,7 +166,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     };
     Ok(tex
         .iter()
-        .find(|name| name.eq_ignore_ascii_case("main.tex"))
+        .find(|name| fold_case(name) == "main.tex")
         .or_else(|| tex.iter().find(starts_document))
         .or(tex.first())
         .cloned())

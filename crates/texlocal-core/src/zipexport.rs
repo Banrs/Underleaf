@@ -15,7 +15,11 @@ use crate::{SETTINGS_FILE, sys};
 
 pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
     let file = File::create(dest).map_err(CoreError::at(dest))?;
-    let replaced = |rel: &str| added.iter().any(|(path, _)| path.eq_ignore_ascii_case(rel));
+    let replaced = |rel: &str| {
+        added
+            .iter()
+            .any(|(path, _)| fold_case(path) == fold_case(rel))
+    };
     let mut writer = ZipWriter::new(file);
     walk(
         root,

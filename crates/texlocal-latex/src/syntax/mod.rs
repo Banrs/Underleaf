@@ -25,6 +25,8 @@ pub use complete::{Installed, SymbolKind, Symbols};
 pub use complete::{definitions, usages};
 use highlight::Highlight;
 
+use crate::utf16;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct TextRange {
@@ -198,7 +200,7 @@ impl SourceDocument {
     }
 
     pub fn text(&self) -> String {
-        crate::utf16_lossy(&self.text.units)
+        utf16::lossy(&self.text.units)
     }
 
     pub fn line_at(&self, offset: u32) -> u32 {
@@ -292,10 +294,6 @@ fn indentation(line: &[u16]) -> usize {
     line.iter()
         .take_while(|&&u| is(u, ' ') || is(u, '\t'))
         .count()
-}
-
-fn utf16(s: &str) -> usize {
-    s.encode_utf16().count()
 }
 
 fn clamp(selection: TextRange, len: u32) -> TextRange {

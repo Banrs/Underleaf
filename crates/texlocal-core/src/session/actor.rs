@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use notify::RecommendedWatcher;
 use serde_json::{Value, json};
+use texlocal_latex::search::Query;
 use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
@@ -16,7 +17,7 @@ use super::{Compiler, Msg, Preview, Reply, SessionCommand, Sessions};
 use crate::CoreError;
 use crate::events::Queued;
 use crate::paths::Project;
-use crate::projects::{self, History, Query, Symbols};
+use crate::projects::{self, History, Symbols};
 use crate::service::{Service, out, unknown};
 use crate::settings;
 

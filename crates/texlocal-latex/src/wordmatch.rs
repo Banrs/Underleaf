@@ -3,6 +3,8 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use crate::utf16;
+
 #[derive(Debug, Deserialize)]
 pub struct PdfPage {
     pub(crate) page: u32,
@@ -193,7 +195,7 @@ pub fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHi
 }
 
 pub fn find_in_source(source: &str, line: u32, page_text: &str, at: usize) -> Option<(u32, u32)> {
-    if at >= page_text.encode_utf16().count() {
+    if at >= utf16::len(page_text) {
         return None;
     }
     let mut pdf = Letters::default();

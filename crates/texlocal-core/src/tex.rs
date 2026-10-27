@@ -127,32 +127,7 @@ fn ls_r_above(program: &Path) -> Option<PathBuf> {
 }
 
 fn read_installed(ls_r: &Path) -> std::io::Result<Installed> {
-    let ls_r = crate::lossy_string(std::fs::read(ls_r)?);
-    let mut installed = Installed::default();
-    let mut loaded = false;
-    for line in ls_r.lines() {
-        if let Some(folder) = line.strip_suffix(':') {
-            loaded = folder.starts_with("./tex/") || folder.starts_with("./bibtex/");
-            continue;
-        }
-        let (name, list) = match line.rsplit_once('.') {
-            _ if !loaded => continue,
-            Some((name, "sty")) => (name, &mut installed.packages),
-            Some((name, "cls")) => (name, &mut installed.classes),
-            Some((name, "bst")) => (name, &mut installed.styles),
-            Some((name, "tex")) => (name, &mut installed.inputs),
-            _ => continue,
-        };
-        list.push(name.to_owned());
-    }
-    for list in [
-        &mut installed.packages,
-        &mut installed.classes,
-        &mut installed.styles,
-        &mut installed.inputs,
-    ] {
-        list.sort_unstable();
-        list.dedup();
-    }
-    Ok(installed)
+    Ok(Installed::from_ls_r(&crate::lossy_string(std::fs::read(
+        ls_r,
+    )?)))
 }

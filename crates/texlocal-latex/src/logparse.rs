@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 
 use crate::syntax::catalog::CATALOG;
+use crate::syntax::scan::closing_brace;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
@@ -610,6 +611,20 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
         .filter(|line| !line.starts_with("   "))
         .map(|line| LogItem::error(line.trim()))
         .collect()
+}
+
+pub fn label_number(aux: &str, label: &str) -> Option<String> {
+    let key = format!("\\newlabel{{{label}}}{{{{");
+    let number = &aux[aux.find(&key)? + key.len()..];
+    let end = closing_brace(number)?;
+    let page = number[end + 1..].strip_prefix('{')?;
+    let page = &page[..closing_brace(page)?];
+    Some(format!("{} on page {page}", &number[..end]))
+}
+
+pub fn aux_inputs(aux: &str) -> impl Iterator<Item = &str> {
+    let inputs = aux.split("\\@input{").skip(1);
+    inputs.filter_map(|rest| rest.get(..rest.find('}')?))
 }
 
 #[cfg(test)]

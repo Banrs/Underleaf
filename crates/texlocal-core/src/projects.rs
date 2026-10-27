@@ -12,6 +12,7 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::error::CoreError;
+use crate::paths::fold_case;
 
 pub(crate) const MAX_FILES: usize = 20_000;
 
@@ -23,7 +24,7 @@ pub(crate) use library::{guess_main_file, new_project};
 pub(crate) use opened::{find as find_opened, is_opened};
 pub use opened::{forget_folder, open_path};
 pub(crate) use search::replace_in_files;
-pub use search::{Query, search_groups, search_project};
+pub use search::{search_groups, search_project};
 pub use symbols::{Files, Symbols, scan_symbols};
 pub use tree::{TreeNode, file_tree};
 pub(crate) use tree::{listed, walk};
@@ -48,7 +49,7 @@ pub(crate) fn is_litter(name: &str) -> bool {
     name.starts_with("._")
         || name.starts_with(".texlocal-")
         || matches!(
-            name.to_ascii_lowercase().as_str(),
+            fold_case(name).as_str(),
             ".git" | ".hg" | ".svn" | ".ds_store" | "__macosx"
         )
 }

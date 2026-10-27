@@ -1,12 +1,11 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::ops::Range;
 use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
 use texlocal_latex::analyze::Place;
-use texlocal_latex::{FileKind, file_kind};
+use texlocal_latex::{FileKind, file_kind, utf16};
 
 use super::files::{Planned, inside, write_all};
 use super::history::MAX_KEPT;
@@ -46,80 +45,6 @@ pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
         .collect()
 }
 
-fn fold_into(s: &str, match_case: bool, out: &mut String) {
-    out.clear();
-    out.extend(s.chars().map(|c| match c {
-        _ if match_case => c,
-        c if c.is_ascii() => c.to_ascii_lowercase(),
-        c => c.to_lowercase().next().unwrap_or(c),
-    }));
-}
-
-pub struct Query {
-    text: String,
-    chars: usize,
-    match_case: bool,
-    whole_word: bool,
-}
-
-impl Query {
-    pub fn new(text: &str, match_case: bool, whole_word: bool) -> Self {
-        let mut folded = String::new();
-        fold_into(text, match_case, &mut folded);
-        Self {
-            chars: folded.chars().count(),
-            text: folded,
-            match_case,
-            whole_word,
-        }
-    }
-
-    fn in_line(&self, line: &str, folded: &mut String) -> Vec<Range<usize>> {
-        let mut found = Vec::new();
-        if self.text.is_empty() {
-            return found;
-        }
-        fold_into(line, self.match_case, folded);
-        let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let (mut from, mut chars) = (0, 0);
-        while let Some(at) = folded[from..].find(&self.text) {
-            let (start, end) = (from + at, from + at + self.text.len());
-            chars += folded[from..start].chars().count();
-            if self.whole_word
-                && (word(folded[..start].chars().next_back()) || word(folded[end..].chars().next()))
-            {
-                let next = folded[start..].chars().next().map_or(1, char::len_utf8);
-                (from, chars) = (start + next, chars + 1);
-                continue;
-            }
-            found.push(chars..chars + self.chars);
-            (from, chars) = (end, chars + self.chars);
-        }
-        found
-    }
-
-    pub fn places(&self, text: &str) -> Vec<Place> {
-        let (mut places, mut folded) = (Vec::new(), String::new());
-        for (i, line) in text.split('\n').enumerate() {
-            let found = self.in_line(line, &mut folded);
-            if found.is_empty() {
-                continue;
-            }
-            let chars: Vec<char> = line.chars().collect();
-            places.extend(found.into_iter().map(|at| Place {
-                line: i as u32 + 1,
-                column: utf16(&chars[..at.start]),
-                length: utf16(&chars[at]),
-            }));
-        }
-        places
-    }
-}
-
-fn utf16(chars: &[char]) -> u32 {
-    chars.iter().map(|c| c.len_utf16() as u32).sum()
-}
-
 fn cap(rel: &str) -> u64 {
     match file_kind(rel) {
         FileKind::Tex | FileKind::Bib => u64::MAX,
@@ -157,30 +82,29 @@ pub fn search_project(
                 continue;
             }
             last = place.line;
-            let chars: Vec<char> = lines[place.line as usize - 1].chars().collect();
-            let char_at = |units: u32| {
-                let mut seen = 0;
-                let before = |c: &&char| {
-                    let before = seen < units;
-                    seen += c.len_utf16() as u32;
-                    before
-                };
-                chars.iter().take_while(before).count()
-            };
-            let at = char_at(place.column)..char_at(place.column + place.length);
-            let text = |range: Range<usize>| chars[range].iter().collect::<String>();
-            let start = at.start.saturating_sub(24);
-            let ellipsis = if start > 0 { "…" } else { "" };
-            let before = format!("{ellipsis}{}", text(start..at.start));
-            let after = text(at.end..(at.end + 60).min(chars.len()));
+            let line = lines[place.line as usize - 1];
+            let byte = |units: u32| utf16::byte_offset(line, units as usize).unwrap_or(line.len());
+            let (start, end) = (byte(place.column), byte(place.column + place.length));
+            let from = line[..start]
+                .char_indices()
+                .rev()
+                .nth(23)
+                .map_or(0, |(at, _)| at);
+            let to = line[end..]
+                .char_indices()
+                .nth(60)
+                .map_or(line.len(), |(at, _)| end + at);
+            let ellipsis = if from > 0 { "…" } else { "" };
             hits.push(SearchHit {
                 file: rel.to_owned(),
                 line: place.line,
                 column: place.column,
                 length: place.length,
-                before: before.trim_start().to_string(),
-                matched: text(at),
-                after: after.trim_end().to_string(),
+                before: format!("{ellipsis}{}", &line[from..start])
+                    .trim_start()
+                    .to_owned(),
+                matched: line[start..end].to_owned(),
+                after: line[end..to].trim_end().to_owned(),
             });
         }
         Ok(hits.len() < limit)
@@ -239,16 +163,7 @@ pub(crate) fn replace_in_files(
 
 fn replaced(file: &str, places: &[Place], to: &str) -> String {
     let to = &to.replace('\n', newline(file));
-    let byte = |s: &str, units: u32| {
-        let mut seen = 0;
-        let mut chars = s.char_indices();
-        let past = chars.find(|&(_, c)| {
-            let past = seen >= units;
-            seen += c.len_utf16() as u32;
-            past
-        });
-        past.map_or(s.len(), |(i, _)| i)
-    };
+    let byte = |s: &str, units: u32| utf16::byte_offset(s, units as usize).unwrap_or(s.len());
     let (mut out, mut line, mut start, mut copied) = (String::new(), 1, 0, 0);
     for place in places {
         while line < place.line {

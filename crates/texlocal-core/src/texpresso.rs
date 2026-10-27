@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
+use texlocal_latex::diff::delta;
+use texlocal_latex::utf16::byte_offset;
+
 use crate::paths::{self, Project};
 use crate::process::{self, Tree};
 use crate::tex::{find_tool, program_at};
@@ -136,17 +139,6 @@ impl Output {
         let start = self.bytes.len().saturating_sub(MAX_OUTPUT);
         String::from_utf8_lossy(&self.bytes[start..]).into_owned()
     }
-}
-
-fn byte_offset(text: &str, units: usize) -> Option<usize> {
-    let mut counted = 0;
-    for (at, char) in text.char_indices() {
-        if counted >= units {
-            return (counted == units).then_some(at);
-        }
-        counted += char.len_utf16();
-    }
-    (counted == units).then_some(text.len())
 }
 
 fn splice(
@@ -518,27 +510,6 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
         return program_at(Path::new(&override_path));
     }
     find_tool("texpresso", path_env).and_then(|p| std::fs::canonicalize(p).ok())
-}
-
-fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) -> usize {
-    a.zip(b).take_while(|(a, b)| a == b).count()
-}
-
-pub(crate) fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
-    let (a, b) = (old.as_bytes(), new.as_bytes());
-    let mut start = common(a.iter(), b.iter());
-    while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
-        start -= 1;
-    }
-    let mut suffix = common(a[start..].iter().rev(), b[start..].iter().rev());
-    while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
-        suffix -= 1;
-    }
-    (
-        start,
-        old.len() - start - suffix,
-        &new[start..new.len() - suffix],
-    )
 }
 
 async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<Session>) {

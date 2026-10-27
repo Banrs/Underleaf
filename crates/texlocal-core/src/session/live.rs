@@ -3,9 +3,9 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use texlocal_latex::is_text;
 use texlocal_latex::logparse::{LogItem, parse_live_log};
 use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::{is_text, utf16};
 
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
@@ -269,7 +269,7 @@ impl Actor {
         if !self.live.active() {
             return;
         }
-        let end = edit.start as usize + edit.text.encode_utf16().count();
+        let end = edit.start as usize + utf16::len(&edit.text);
         self.live.caret = Some((path.to_owned(), end));
         let live = &self.live;
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
@@ -517,7 +517,7 @@ impl Actor {
 
     pub fn live_issues_edited(&mut self, path: &str, edit: Option<&TextEdit>) {
         let doc = &self.docs[path].doc;
-        let inserted = edit.map_or(0, |edit| edit.text.encode_utf16().count() as u32);
+        let inserted = edit.map_or(0, |edit| utf16::len(&edit.text) as u32);
         self.live.issues.retain_mut(|issue| {
             if issue.item.file.as_deref() != Some(path) {
                 return true;

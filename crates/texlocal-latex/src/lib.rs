@@ -1,9 +1,12 @@
 pub mod analyze;
 pub mod checks;
+pub mod diff;
 pub mod logparse;
+pub mod search;
 pub mod synctex;
 pub mod syntax;
 pub mod templates;
+pub mod utf16;
 pub mod wordmatch;
 
 use std::ffi::OsStr;
@@ -51,7 +54,7 @@ pub enum FileKind {
 
 pub fn file_kind(name: &str) -> FileKind {
     let path = Path::new(name);
-    let lower = |part: Option<&OsStr>| part.unwrap_or_default().to_string_lossy().to_lowercase();
+    let lower = |part: Option<&OsStr>| fold_case(&part.unwrap_or_default().to_string_lossy());
     match lower(path.extension()).as_str() {
         "tex" => FileKind::Tex,
         "bib" => FileKind::Bib,
@@ -68,22 +71,4 @@ pub fn is_text(name: &str) -> bool {
         file_kind(name),
         FileKind::Tex | FileKind::Bib | FileKind::Text
     )
-}
-
-pub(crate) fn utf16_lossy(units: &[u16]) -> String {
-    let mut bytes = Vec::with_capacity(units.len());
-    let mut rest = units;
-    while !rest.is_empty() {
-        let ascii = rest.iter().position(|&u| u >= 0x80).unwrap_or(rest.len());
-        bytes.extend(rest[..ascii].iter().map(|&u| u as u8));
-        rest = &rest[ascii..];
-        let other = rest.iter().position(|&u| u < 0x80).unwrap_or(rest.len());
-        let mut buf = [0; 4];
-        for c in char::decode_utf16(rest[..other].iter().copied()) {
-            let c = c.unwrap_or(char::REPLACEMENT_CHARACTER);
-            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-        }
-        rest = &rest[other..];
-    }
-    String::from_utf8(bytes).expect("ASCII and encoded chars are UTF-8")
 }

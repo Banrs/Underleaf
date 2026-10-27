@@ -35,7 +35,7 @@ pub(crate) struct Entry {
 
 pub(crate) fn listed(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    !name.starts_with('.') && !rel.eq_ignore_ascii_case(BUILD_DIR)
+    !name.starts_with('.') && fold_case(rel) != BUILD_DIR
 }
 
 fn entries(

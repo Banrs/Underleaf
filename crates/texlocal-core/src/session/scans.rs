@@ -5,13 +5,14 @@ use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
 use texlocal_latex::checks;
 use texlocal_latex::logparse::LogItem;
+use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::Actor;
 use super::documents::Shared;
 use super::{Msg, Reply};
-use crate::projects::{self, Query, Symbols};
+use crate::projects::{self, Symbols};
 use crate::service::out;
 use crate::{CoreError, lock, tex};
 

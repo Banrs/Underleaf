@@ -7,8 +7,9 @@ use super::scan::{Group, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
     INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, range, span,
-    splice, utf16,
+    splice,
 };
+use crate::utf16;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Keystroke {
@@ -210,7 +211,7 @@ impl SourceDocument {
             _ => INDENT,
         };
         let inner = format!("\n{indented}{step}");
-        let caret = start + utf16(&inner);
+        let caret = start + utf16::len(&inner);
         if let Some((name, begin)) = begun
             && blank_line(rest)
         {
@@ -221,13 +222,13 @@ impl SourceDocument {
             };
             return key(start, rest, inner + &close, caret);
         }
-        let end_tag = |(name, _)| crate::utf16_lossy(rest).starts_with(&format!("\\end{{{name}}}"));
+        let end_tag = |(name, _)| utf16::lossy(rest).starts_with(&format!("\\end{{{name}}}"));
         if begun.is_some_and(end_tag) || length == 0 && closer_after(units, start).is_some() {
             return key(start, 0, format!("{inner}\n{indented}"), caret);
         }
         let list = groups.iter().rev().find_map(|g| g.end.strip_prefix("env:"));
         let from = line.start + indent;
-        let content = crate::utf16_lossy(units.get(from..start).unwrap_or_default());
+        let content = utf16::lossy(units.get(from..start).unwrap_or_default());
         let item = content.strip_prefix("\\item");
         if matches!(list, Some("itemize" | "enumerate" | "description"))
             && blank_line(rest)
@@ -238,7 +239,7 @@ impl SourceDocument {
                 return key(from, line.end - from, String::new(), from);
             }
             let next = format!("\n{indented}\\item ");
-            let caret = start + utf16(&next);
+            let caret = start + utf16::len(&next);
             return key(start, rest.len(), next, caret);
         }
         while start + length < line.end
@@ -263,7 +264,7 @@ impl SourceDocument {
         mirroring: bool,
     ) -> Vec<TextEdit> {
         self.edit(start, length, text);
-        let delta = utf16(text) as i64 - length as i64;
+        let delta = utf16::len(text) as i64 - length as i64;
         self.follow(range(start, length), delta, changing, mirroring);
         if mirroring {
             return Vec::new();

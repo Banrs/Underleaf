@@ -262,3 +262,45 @@ pub(crate) fn put_back(
         }))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pruning_keeps_named_and_recent_versions_then_one_an_hour_then_one_a_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = History {
+            dir: dir.path().into(),
+        };
+        let now = 1000 * DAY;
+        let versions = [
+            ("recent", now - HOUR, None),
+            ("hour", now - 2 * DAY - 10 * MINUTE, None),
+            ("same-hour", now - 2 * DAY - 20 * MINUTE, None),
+            ("day", now - 30 * DAY - HOUR, None),
+            ("same-day", now - 30 * DAY - 2 * HOUR, None),
+            ("old", now - 100 * DAY, None),
+            ("named", now - 100 * DAY - 1, Some("Draft")),
+        ];
+        fs::create_dir_all(history.objects()).unwrap();
+        fs::write(history.objects().join("loose"), "").unwrap();
+        for (object, id, name) in versions {
+            fs::write(history.objects().join(object), "").unwrap();
+            let files = BTreeMap::from([("main.tex".to_owned(), object.to_owned())]);
+            let snapshot = Snapshot {
+                name: name.map(str::to_owned),
+                reason: None,
+                files,
+            };
+            history.write(id, &snapshot).unwrap();
+        }
+        history.prune(now);
+        let kept = [versions[0].1, versions[1].1, versions[3].1, versions[6].1];
+        assert_eq!(history.ids().unwrap(), kept);
+        let objects = fs::read_dir(history.objects()).unwrap();
+        let mut objects: Vec<_> = objects.map(|entry| entry.unwrap().file_name()).collect();
+        objects.sort_unstable();
+        assert_eq!(objects, ["day", "hour", "named", "recent"]);
+    }
+}

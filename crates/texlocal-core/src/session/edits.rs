@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use texlocal_latex::analyze::{Facts, Place};
 use texlocal_latex::logparse::Fix;
+use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
 use texlocal_latex::{FileKind, file_kind};
 
@@ -11,7 +12,7 @@ use super::actor::Actor;
 use super::documents::Doc;
 use super::scans::tex;
 use crate::paths::Project;
-use crate::projects::{self, Query};
+use crate::projects;
 use crate::settings;
 use crate::{CoreError, packages};
 

@@ -5,8 +5,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{SourceDocument, Text, catalog, indentation, utf16};
+use super::{SourceDocument, Text, catalog, indentation};
 use crate::analyze::{Defined, Facts, Input, Named, Place};
+use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +64,38 @@ pub struct Installed {
     pub inputs: Vec<String>,
 }
 
+impl Installed {
+    pub fn from_ls_r(ls_r: &str) -> Self {
+        let mut installed = Self::default();
+        let mut loaded = false;
+        for line in ls_r.lines() {
+            if let Some(folder) = line.strip_suffix(':') {
+                loaded = folder.starts_with("./tex/") || folder.starts_with("./bibtex/");
+                continue;
+            }
+            let (name, list) = match line.rsplit_once('.') {
+                _ if !loaded => continue,
+                Some((name, "sty")) => (name, &mut installed.packages),
+                Some((name, "cls")) => (name, &mut installed.classes),
+                Some((name, "bst")) => (name, &mut installed.styles),
+                Some((name, "tex")) => (name, &mut installed.inputs),
+                _ => continue,
+            };
+            list.push(name.to_owned());
+        }
+        for list in [
+            &mut installed.packages,
+            &mut installed.classes,
+            &mut installed.styles,
+            &mut installed.inputs,
+        ] {
+            list.sort_unstable();
+            list.dedup();
+        }
+        installed
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Completions {
     pub(crate) start: u32,
@@ -86,7 +119,7 @@ impl SourceDocument {
         let catalog = &*catalog::CATALOG;
         let offer = |start: usize, kind: SymbolKind, items: Vec<Completion>| {
             (!items.is_empty()).then(|| Completions {
-                start: from + utf16(&before[..start]) as u32,
+                start: from + utf16::len(&before[..start]) as u32,
                 kind,
                 items,
             })
@@ -108,7 +141,7 @@ impl SourceDocument {
                     return offer(start, SymbolKind::Label, described(labels));
                 }
                 "begin" | "end" => {
-                    let at = from as usize + utf16(&before[..c.get(0).unwrap().start()]);
+                    let at = from as usize + utf16::len(&before[..c.get(0).unwrap().start()]);
                     let groups = (&c[1] == "end").then(|| self.scanned_to(at).groups());
                     let mut groups = groups.into_iter().flatten().rev();
                     let open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
@@ -388,8 +421,8 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
                 names.len() - 1
             });
         fields.push(SnippetField {
-            start: (utf16(&snippet[..whole.start()]) - 3 * fields.len()) as u32,
-            length: utf16(name) as u32,
+            start: (utf16::len(&snippet[..whole.start()]) - 3 * fields.len()) as u32,
+            length: utf16::len(name) as u32,
             index: index as u32,
         });
         name.to_owned()

@@ -5,11 +5,11 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::FileKind;
 use crate::checks::{Slip, Structure, Walk};
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::{Group, Scanner, Visit};
 use crate::syntax::{SymbolKind, Symbols, Text, headings, prose, scan};
+use crate::{FileKind, utf16};
 
 static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\(?:texorpdfstring|label|index|footnote|begin|end)\s*\{").unwrap()
@@ -21,6 +21,9 @@ static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_]
 static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
+static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
+});
 static CROSSREF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)(?:^|,)\s*crossref\s*=\s*[{"]?\s*([^\s,{}"]+)"#).unwrap());
 
@@ -156,9 +159,9 @@ impl Facts {
         if kind == FileKind::Bib {
             let (mut byte, mut unit) = (0, 0);
             let mut cited = |at: Range<usize>| {
-                unit += source[byte..at.start].encode_utf16().count();
+                unit += utf16::len(&source[byte..at.start]);
                 byte = at.start;
-                let units = unit..unit + source[at].encode_utf16().count();
+                let units = unit..unit + utf16::len(&source[at]);
                 named(&text, SymbolKind::Citation, units)
             };
             for (entry, body) in entries(source) {
@@ -426,6 +429,22 @@ fn detail(fields: &[(String, String)]) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
+pub const MAGIC_LINES: usize = 20;
+
+pub fn magic_comments(text: &str) -> (Option<String>, Option<String>) {
+    let mut found = (None, None);
+    let lines = text.lines().take(MAGIC_LINES);
+    for m in lines.filter_map(|line| MAGIC_COMMENT.captures(line)) {
+        let slot = if m[1].eq_ignore_ascii_case("root") {
+            &mut found.0
+        } else {
+            &mut found.1
+        };
+        slot.get_or_insert_with(|| m[2].to_string());
+    }
+    found
+}
+
 pub fn bib_entry(source: &str, key: &str) -> Option<String> {
     let (_, body) = entries(source).find(|(entry, _)| &entry[2] == key)?;
     let fields = fields(body);
@@ -668,7 +687,7 @@ fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folde
             let name: String = char::decode_utf16(units[stop..].iter().copied())
                 .map_while(|c| c.ok().filter(|c| !"{}\\% \t\r\n".contains(*c)))
                 .collect();
-            let end = stop + name.encode_utf16().count();
+            let end = stop + utf16::len(&name);
             (name, Folder::Inherited, stop..end)
         }
         ("import" | "subimport", (Some((folder, _)), stop)) => {

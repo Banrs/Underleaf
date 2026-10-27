@@ -2,12 +2,10 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use texlocal_latex::analyze::Facts;
+use texlocal_latex::analyze::{self, Facts};
 use texlocal_latex::{FileKind, file_kind, templates};
 use zip::ZipArchive;
 use zip::result::ZipError;
@@ -42,10 +40,6 @@ enum Source {
     File(PathBuf),
     Zip(usize),
 }
-
-static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
-});
 
 const MAX_UNZIPPED: u64 = 1 << 30;
 const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
@@ -253,9 +247,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let ext = src
-        .extension()
-        .map(|ext| ext.to_string_lossy().to_lowercase());
+    let ext = src.extension().map(|ext| fold_case(&ext.to_string_lossy()));
     if ext.as_deref() == Some("zip") {
         let file = File::open(src).map_err(CoreError::at(src))?;
         let zip = ZipArchive::new(file).map_err(|err| match err {
@@ -295,25 +287,11 @@ fn file_name(path: &Path) -> String {
 }
 
 fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
-    let mut found = (None, None);
     let Ok(file) = File::open(file) else {
-        return found;
+        return (None, None);
     };
-    for line in io::BufReader::new(file)
-        .lines()
-        .take(20)
-        .map_while(Result::ok)
-    {
-        if let Some(m) = MAGIC_COMMENT.captures(&line) {
-            let slot = if m[1].eq_ignore_ascii_case("root") {
-                &mut found.0
-            } else {
-                &mut found.1
-            };
-            slot.get_or_insert_with(|| m[2].to_string());
-        }
-    }
-    found
+    let lines = io::BufReader::new(file).lines().take(analyze::MAGIC_LINES);
+    analyze::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
 }
 
 pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
