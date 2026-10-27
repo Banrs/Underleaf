@@ -36,18 +36,3 @@ nonisolated struct HeadingStyle: Decodable, Sendable {
     let title, command: String
     static let standard: [HeadingStyle] = Syntax.call("heading_styles", [:])!
 }
-
-enum TeXEngine: String, CaseIterable, Identifiable {
-    case pdflatex, xelatex, lualatex
-
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .pdflatex: "pdfLaTeX"
-        case .xelatex: "XeLaTeX"
-        case .lualatex: "LuaLaTeX"
-        }
-    }
-}

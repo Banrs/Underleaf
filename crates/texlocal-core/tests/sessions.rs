@@ -21,6 +21,7 @@ for arg in "$@"; do
   case "$arg" in -outdir=*) out="${arg#-outdir=}";; ./*) main="${arg#./}";; esac
 done
 mkdir -p "$out"
+grep -q slowly "$main" && sleep 30
 printf '%s\n' "$@" > "$out/args"
 stem="${main%.tex}"
 printf '%%PDF-1.4\n' > "$out/$stem.pdf"
@@ -46,7 +47,7 @@ fn stub_tex(library: &Library) {
     std::thread::spawn(move || {
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(service.call("set_tex_dir", json!({ "dir": bin })))
+            .block_on(service.call("SetTexDir", json!({ "dir": bin })))
             .unwrap();
     })
     .join()
@@ -526,6 +527,17 @@ async fn a_clean_build_has_no_errors() {
     assert_eq!(finished["result"]["errors"], json!([]));
     rig.call("session_clean", json!({}));
     assert!(!rig.root().join("build").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn kill_all_stops_the_builds_under_way() {
+    let main = "\\documentclass{article}\n% slowly\n\\begin{document}\n\\end{document}\n";
+    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
+    rig.call("session_compile", json!({}));
+    rig.event("build", |e| e["compiling"] == true);
+    rig.call("KillAll", json!({}));
+    let finished = rig.event("build_finished", |_| true);
+    assert_eq!(finished["result"]["stopped"], true);
 }
 
 #[tokio::test(flavor = "multi_thread")]

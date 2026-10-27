@@ -61,10 +61,10 @@ final class ProjectModel {
     var importClash: ImportClash?
 
     var expandedFolders: Set<String> = [] {
-        didSet { if expandedFolders != oldValue { saveUIState(["expandedFolders": expandedFolders.sorted()]) } }
+        didSet { if expandedFolders != oldValue { saveUIState(UiPatch(expandedFolders: expandedFolders.sorted())) } }
     }
     var foldedHeadings: Set<String> = [] {
-        didSet { if foldedHeadings != oldValue { saveUIState(["foldedHeadings": foldedHeadings.sorted()]) } }
+        didSet { if foldedHeadings != oldValue { saveUIState(UiPatch(foldedHeadings: foldedHeadings.sorted())) } }
     }
     @ObservationIgnored private var showingUIState = false
     @ObservationIgnored var uiStateWrites: Task<Void, Never>?
@@ -140,14 +140,15 @@ final class ProjectModel {
 
     func savePlace() async {
         guard initialLoadComplete else { return }
-        saveUIState(["file": openPath, "line": cursorLine, "page": pdf.keptPage, "zoom": pdf.keptZoom.json, "panel": panel.shown])
+        let place = UiPlace(file: openPath, line: cursorLine, page: pdf.keptPage, zoom: pdf.keptZoom.wire, panel: panel.shown)
+        saveUIState(UiPatch(place: place))
         await uiStateWrites?.value
     }
 
     func load() async {
         connectEditor()
         let session = core.observe { [weak self] event in self?.handle(event) }
-        async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
+        async let pdfShown = showBuildPDF(try? await core.call(PdfPath(id: id)))
         let ui: UIState
         do {
             let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
@@ -227,9 +228,9 @@ final class ProjectModel {
         core.send("session_set_options", ["session": session, "autoCompile": app?.autoCompile ?? false])
     }
 
-    private func saveUIState(_ patch: [String: any Sendable]) {
+    private func saveUIState(_ patch: UiPatch) {
         guard !showingUIState, !closed else { return }
-        _ = enqueue(&uiStateWrites) { [core, id] in try? await core.call("set_ui_state", ["id": id, "patch": patch]) }
+        _ = enqueue(&uiStateWrites) { [core, id] in _ = try? await core.call(SetUiState(id: id, patch: patch)) }
     }
 
     func showUIState(_ state: UIState) {
@@ -377,10 +378,8 @@ final class ProjectModel {
 
     private func copyFigure(_ url: URL) async -> String? {
         let folder = openPath?.parentFolder ?? ""
-        let args: [String: any Sendable] = ["id": id, "dir": folder, "paths": [url.path(percentEncoded: false)], "conflict": "keepBoth"]
-        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", {
-            try await core.call("import_files", args, as: Imported.self)
-        }) else { return nil }
+        let request = ImportFiles(id: id, dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
+        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await core.call(request) }) else { return nil }
         await tree.reload()
         let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
         guard let kind = tree.node(at: path)?.kind else { return nil }
@@ -514,7 +513,7 @@ final class ProjectModel {
             _ = try await core.call("session_history_restore", ["session": session, "id": snapshot, "paths": answer.written.map(\.file)],
                                     as: Edited.self)
         }
-        throw CoreError(message: String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
+        throw CoreError(kind: .conflict, message: String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
     }
 
     @discardableResult
@@ -615,7 +614,7 @@ final class ProjectModel {
     }
 
     func mainFileChanged() {
-        Task { if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) } }
+        Task { if let path = try? await core.call(PdfPath(id: id)) { await showBuildPDF(path) } }
     }
 
     func reveal(_ item: OutlineItem) {

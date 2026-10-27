@@ -37,7 +37,7 @@ async fn synctex_goes_from_a_line_to_the_pdf_and_back() {
     let (rig, result) = built(&[("main.tex", ARTICLE), ("refs.bib", REFS)]).await;
     assert_eq!(result["ok"], true);
     let forward = rig.call(
-        "synctex_forward",
+        "SynctexForward",
         json!({ "id": rig.id, "file": "main.tex", "line": 4 }),
     );
     assert_eq!(forward["page"].as_f64(), Some(1.0));
@@ -47,7 +47,7 @@ async fn synctex_goes_from_a_line_to_the_pdf_and_back() {
     );
     let height = forward["height"].as_f64().unwrap_or(0.0);
     let back = rig.call(
-        "synctex_inverse",
+        "SynctexInverse",
         json!({ "id": rig.id, "page": 1, "x": h + 5.0, "y": v - height / 2.0 }),
     );
     assert_eq!(back["file"], "main.tex");

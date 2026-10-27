@@ -20,6 +20,7 @@ pub struct Library {
 impl Library {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("data")).unwrap();
         let service = Arc::new(Service::new(dir.path().join("data")));
         Self { dir, service }
     }
@@ -39,7 +40,7 @@ impl Library {
     pub async fn create(&self, name: &str, template: &str) -> String {
         let made = self
             .call(
-                "create_project",
+                "CreateProject",
                 json!({ "name": name, "template": template }),
             )
             .await;
@@ -134,10 +135,7 @@ impl Rig {
         let mut reply = self.find(|e| e["reply"] == id);
         match reply.get_mut("ok") {
             Some(ok) => Ok(ok.take()),
-            None => Err(CoreError {
-                kind: serde_json::from_value(reply["kind"].take()).unwrap(),
-                message: reply["error"].as_str().unwrap().to_owned(),
-            }),
+            None => Err(serde_json::from_value(reply["error"].take()).unwrap()),
         }
     }
 

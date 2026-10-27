@@ -28,7 +28,7 @@ async fn a_new_project_is_listed_with_its_template() {
     let library = Library::new();
     let made = library
         .call(
-            "create_project",
+            "CreateProject",
             json!({ "name": "Paper", "template": "report" }),
         )
         .await;
@@ -38,7 +38,7 @@ async fn a_new_project_is_listed_with_its_template() {
     let root = library.project_root("Paper");
     assert!(root.join("main.tex").is_file() && root.join("references.bib").is_file());
     assert_eq!(
-        ids(&library.call("list_projects", json!({})).await),
+        ids(&library.call("ListProjects", json!({})).await),
         ["Paper"]
     );
 }
@@ -53,11 +53,11 @@ async fn a_taken_name_is_numbered() {
 #[tokio::test]
 async fn the_free_name_is_the_next_untitled() {
     let library = Library::new();
-    let free = library.call("free_project_name", json!({})).await;
-    assert_eq!(free["name"], "Untitled");
+    let free = library.call("FreeProjectName", json!({})).await;
+    assert_eq!(free, "Untitled");
     library.create("Untitled", "blank").await;
-    let free = library.call("free_project_name", json!({})).await;
-    assert_eq!(free["name"], "Untitled 2");
+    let free = library.call("FreeProjectName", json!({})).await;
+    assert_eq!(free, "Untitled 2");
 }
 
 #[tokio::test]
@@ -66,17 +66,23 @@ async fn bad_names_and_engines_are_refused() {
     for name in [".hidden", "   "] {
         let refused = library
             .service
-            .call("create_project", json!({ "name": name }))
+            .call(
+                "CreateProject",
+                json!({ "name": name, "template": "blank" }),
+            )
             .await;
         assert_eq!(kind(refused), ErrorKind::Invalid, "{name:?}");
     }
     let refused = library
         .service
-        .call("create_project", json!({ "name": "E", "engine": "word" }))
+        .call(
+            "CreateProject",
+            json!({ "name": "E", "template": "blank", "engine": "word" }),
+        )
         .await;
     assert_eq!(kind(refused), ErrorKind::Invalid);
     assert_eq!(
-        ids(&library.call("list_projects", json!({})).await),
+        ids(&library.call("ListProjects", json!({})).await),
         Vec::<&str>::new()
     );
 }
@@ -87,11 +93,11 @@ async fn a_project_is_renamed_unless_the_name_is_taken() {
     library.create("A", "blank").await;
     library.create("B", "blank").await;
     let taken = library
-        .refuse("rename_project", json!({ "id": "B", "name": "A" }))
+        .refuse("RenameProject", json!({ "id": "B", "name": "A" }))
         .await;
     assert_eq!(taken.kind, ErrorKind::Conflict);
     let renamed = library
-        .call("rename_project", json!({ "id": "B", "name": "C" }))
+        .call("RenameProject", json!({ "id": "B", "name": "C" }))
         .await;
     assert_eq!(renamed["id"], "C");
     assert!(library.path("data/C/main.tex").is_file());
@@ -108,7 +114,7 @@ async fn a_duplicate_copies_the_sources_but_not_the_build() {
     );
     let copy = library
         .call(
-            "duplicate_project",
+            "DuplicateProject",
             json!({ "id": "Paper", "name": "Paper copy" }),
         )
         .await;
@@ -125,7 +131,7 @@ async fn the_tree_marks_the_main_file_and_hides_dotfiles() {
         &library.project_root("Paper"),
         &[(".latexmkrc", ""), ("figs/a.png", "png")],
     );
-    let tree = library.call("file_tree", json!({ "id": "Paper" })).await;
+    let tree = library.call("ReadTree", json!({ "id": "Paper" })).await;
     let names: Vec<&str> = tree
         .as_array()
         .unwrap()
@@ -149,7 +155,7 @@ async fn a_folder_opens_where_it_is() {
     let library = Library::new();
     let folder = library.path("Thesis");
     write(&folder, &[("thesis.tex", "\\documentclass{article}")]);
-    let opened = library.call("open_path", json!({ "path": folder })).await;
+    let opened = library.call("OpenPath", json!({ "path": folder })).await;
     assert_eq!(opened["file"], Value::Null);
     assert_eq!(opened["project"]["opened"], true);
     assert_eq!(opened["project"]["mainFile"], "thesis.tex");
@@ -166,10 +172,10 @@ async fn a_tex_file_opens_its_folder_at_that_file() {
     let folder = library.path("Notes");
     write(&folder, &[("a.tex", "x"), ("b.tex", "y")]);
     let opened = library
-        .call("open_path", json!({ "path": folder.join("b.tex") }))
+        .call("OpenPath", json!({ "path": folder.join("b.tex") }))
         .await;
     assert_eq!(opened["file"], "b.tex");
-    let again = library.call("open_path", json!({ "path": folder })).await;
+    let again = library.call("OpenPath", json!({ "path": folder })).await;
     assert_eq!(again["project"]["id"], opened["project"]["id"]);
 }
 
@@ -178,14 +184,14 @@ async fn opening_what_is_not_there_or_not_tex_is_refused() {
     let library = Library::new();
     let gone = library
         .service
-        .call("open_path", json!({ "path": library.path("gone") }))
+        .call("OpenPath", json!({ "path": library.path("gone") }))
         .await;
     assert_eq!(kind(gone), ErrorKind::NotFound);
     let photo = library.path("photo.jpg");
     fs::write(&photo, "jpg").unwrap();
     let refused = library
         .service
-        .call("open_path", json!({ "path": photo }))
+        .call("OpenPath", json!({ "path": photo }))
         .await;
     assert_eq!(kind(refused), ErrorKind::Invalid);
 }
@@ -195,18 +201,18 @@ async fn forgetting_a_folder_leaves_it_on_disk() {
     let library = Library::new();
     let folder = library.path("Thesis");
     write(&folder, &[("main.tex", "x")]);
-    let opened = library.call("open_path", json!({ "path": folder })).await;
+    let opened = library.call("OpenPath", json!({ "path": folder })).await;
     let id = opened["project"]["id"].clone();
-    library.call("forget_folder", json!({ "id": id })).await;
+    library.call("ForgetFolder", json!({ "id": id })).await;
     assert_eq!(
-        ids(&library.call("list_projects", json!({})).await),
+        ids(&library.call("ListProjects", json!({})).await),
         Vec::<&str>::new()
     );
     assert!(folder.join("main.tex").is_file());
     library.create("Library", "blank").await;
     let refused = library
         .service
-        .call("forget_folder", json!({ "id": "Library" }))
+        .call("ForgetFolder", json!({ "id": "Library" }))
         .await;
     assert_eq!(kind(refused), ErrorKind::Invalid);
 }
@@ -216,37 +222,37 @@ async fn a_folder_no_longer_where_it_was_is_missing() {
     let library = Library::new();
     let folder = library.path("Thesis");
     write(&folder, &[("main.tex", "x")]);
-    library.call("open_path", json!({ "path": folder })).await;
+    library.call("OpenPath", json!({ "path": folder })).await;
     assert_eq!(
-        library.call("list_projects", json!({})).await[0]["missing"],
+        library.call("ListProjects", json!({})).await[0]["missing"],
         false
     );
     fs::rename(&folder, library.path("Moved")).unwrap();
-    let list = library.call("list_projects", json!({})).await;
+    let list = library.call("ListProjects", json!({})).await;
     assert_eq!(list[0]["missing"], true);
     assert_eq!(list[0]["mtime"], 0);
 }
 
 #[tokio::test]
-async fn the_ui_state_keeps_what_it_is_given() {
+async fn the_ui_state_keeps_what_it_is_given_and_what_it_is_not() {
     let library = Library::new();
     library.create("Paper", "blank").await;
-    let state = library
-        .call(
-            "set_ui_state",
-            json!({ "id": "Paper", "patch": { "openFile": "main.tex", "line": 12 } }),
-        )
+    let file = library.project_root("Paper").join(".texlocal.json");
+    fs::write(&file, r#"{"ui": {"openFile": "main.tex"}}"#).unwrap();
+    let zoom = json!({ "type": "scale", "value": 1.5 });
+    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom, "panel": true });
+    let patch = |patch| json!({ "id": "Paper", "patch": patch });
+    library
+        .call("SetUiState", patch(json!({ "place": place })))
         .await;
-    assert_eq!(state["openFile"], "main.tex");
-    assert_eq!(state["line"], 12);
-    let again = library
-        .call(
-            "set_ui_state",
-            json!({ "id": "Paper", "patch": { "zoom": 1.5 } }),
-        )
-        .await;
-    assert_eq!(again["line"], 12);
-    assert_eq!(again["zoom"], 1.5);
+    let folders = json!({ "expandedFolders": ["figs"] });
+    library.call("SetUiState", patch(folders)).await;
+    let ui = &serde_json::from_slice::<Value>(&fs::read(&file).unwrap()).unwrap()["ui"];
+    assert_eq!(
+        (&ui["openFile"], &ui["line"], &ui["zoom"]),
+        (&json!("main.tex"), &json!(12), &json!(1.5))
+    );
+    assert_eq!(ui["expandedFolders"], json!(["figs"]));
 }
 
 #[tokio::test]
@@ -259,7 +265,10 @@ async fn an_export_holds_the_sources_without_build_or_settings() {
     );
     let dest = library.path("out.zip");
     library
-        .call("export_zip", json!({ "id": "Paper", "dest": dest }))
+        .call(
+            "ExportZip",
+            json!({ "id": "Paper", "dest": dest, "forArxiv": false }),
+        )
         .await;
     assert_eq!(zip_names(&dest), ["main.tex", "references.bib"]);
 }
@@ -271,7 +280,7 @@ async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
     let dest = library.path("arxiv.zip");
     library
         .call(
-            "export_zip",
+            "ExportZip",
             json!({ "id": "Paper", "dest": dest, "forArxiv": true }),
         )
         .await;
@@ -281,7 +290,7 @@ async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
     let refused = library
         .service
         .call(
-            "export_zip",
+            "ExportZip",
             json!({ "id": "Paper", "dest": library.path("b.zip"), "forArxiv": true }),
         )
         .await;
@@ -294,9 +303,12 @@ async fn a_zip_opens_as_a_new_project() {
     library.create("Paper", "article").await;
     let dest = library.path("Shared.zip");
     library
-        .call("export_zip", json!({ "id": "Paper", "dest": dest }))
+        .call(
+            "ExportZip",
+            json!({ "id": "Paper", "dest": dest, "forArxiv": false }),
+        )
         .await;
-    let opened = library.call("open_path", json!({ "path": dest })).await;
+    let opened = library.call("OpenPath", json!({ "path": dest })).await;
     assert_eq!(opened["project"]["name"], "Shared");
     assert_eq!(opened["project"]["opened"], false);
     assert!(library.project_root("Shared").join("main.tex").is_file());
@@ -309,18 +321,18 @@ async fn files_are_imported_and_a_name_taken_is_asked_about() {
     let image = library.path("plot.png");
     fs::write(&image, "png").unwrap();
     let args = json!({ "id": "Paper", "dir": "figs", "paths": [image] });
-    let first = library.call("import_files", args.clone()).await;
+    let first = library.call("ImportFiles", args.clone()).await;
     assert_eq!(first["existing"], json!([]));
     let root = library.project_root("Paper");
     assert_eq!(fs::read(root.join("figs/plot.png")).unwrap(), b"png");
-    let second = library.call("import_files", args.clone()).await;
+    let second = library.call("ImportFiles", args.clone()).await;
     assert_eq!(
         second["existing"],
         json!([{ "path": "plot.png", "keepBoth": "plot 2.png" }])
     );
     let mut keep = args;
     keep["conflict"] = json!("keepBoth");
-    library.call("import_files", keep).await;
+    library.call("ImportFiles", keep).await;
     assert!(root.join("figs/plot 2.png").is_file());
 }
 
@@ -332,18 +344,18 @@ async fn unknown_commands_and_bad_arguments_are_refused() {
         ErrorKind::NotFound
     );
     assert_eq!(
-        kind(library.service.call("file_tree", json!({})).await),
+        kind(library.service.call("ReadTree", json!({})).await),
         ErrorKind::Invalid
     );
     assert_eq!(
-        kind(library.service.call("file_tree", json!([])).await),
+        kind(library.service.call("ReadTree", json!([])).await),
         ErrorKind::Invalid
     );
     assert_eq!(
         kind(
             library
                 .service
-                .call("file_tree", json!({ "id": "Nope" }))
+                .call("ReadTree", json!({ "id": "Nope" }))
                 .await
         ),
         ErrorKind::NotFound
@@ -357,12 +369,12 @@ async fn a_tex_folder_without_latexmk_is_refused() {
     fs::create_dir(&empty).unwrap();
     let refused = library
         .service
-        .call("set_tex_dir", json!({ "dir": empty }))
+        .call("SetTexDir", json!({ "dir": empty }))
         .await;
     assert_eq!(kind(refused), ErrorKind::Invalid);
     let refused = library
         .service
-        .call("set_texpresso_dir", json!({ "dir": empty }))
+        .call("SetTexpressoDir", json!({ "dir": empty }))
         .await;
     assert_eq!(kind(refused), ErrorKind::Invalid);
 }
@@ -381,7 +393,7 @@ async fn a_zip_cannot_write_outside_its_project() {
     zip.finish().unwrap();
     let opened = library
         .service
-        .call("open_path", json!({ "path": path }))
+        .call("OpenPath", json!({ "path": path }))
         .await;
     assert!(!library.path("escape.tex").exists());
     assert!(!library.path("data/escape.tex").exists());

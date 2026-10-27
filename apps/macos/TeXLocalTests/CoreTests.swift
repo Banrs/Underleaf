@@ -11,13 +11,13 @@ struct CoreTests {
 
     @Test func aCommandAnswersDecodedValues() async throws {
         let project = try await newProject()
-        let listed = try await Core.shared.call("list_projects", as: [ProjectInfo].self)
+        let listed = try await Core.shared.call(ListProjects())
         #expect(listed.contains { $0.id == project.id && $0.mainFile == "main.tex" })
     }
 
     @Test func aRefusalCarriesItsKind() async {
         await #expect {
-            try await Core.shared.call("file_tree", ["id": "No such project"], as: [TreeNode].self)
+            try await Core.shared.call(ReadTree(id: "No such project"))
         } throws: { error in
             (error as? CoreError)?.kind == .notFound
         }
@@ -46,7 +46,7 @@ struct CoreTests {
     }
 
     @Test func aSessionDocumentIsEditedAndSaved() async throws {
-        let project = try await newProject(template: "blank")
+        let project = try await newProject(template: .blank)
         let session = Core.shared.observe { _ in }
         defer { Core.shared.forget(session) }
         try await Core.shared.call("session_open", ["id": project.id, "session": session])
@@ -61,7 +61,7 @@ struct CoreTests {
     }
 
     @Test func aReplyComesAfterTheEventsBeforeIt() async throws {
-        let project = try await newProject(template: "blank")
+        let project = try await newProject(template: .blank)
         var trees = 0
         let session = Core.shared.observe { if case .tree = $0 { trees += 1 } }
         defer { Core.shared.forget(session) }
@@ -69,6 +69,18 @@ struct CoreTests {
         try await Core.shared.call("session_create_entry", ["session": session, "name": "new.tex"])
         #expect(trees > 0)
         try await Core.shared.call("session_close", ["session": session])
+    }
+
+    @Test func theWireFixturesRoundTripAndItsRejectsAreRefused() throws {
+        let object = { (data: Data) in try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) as? NSObject }
+        for (type, json) in wireSamples {
+            let sent = try JSONEncoder().encode(try JSONDecoder().decode(type, from: Data(json.utf8)))
+            #expect(try object(sent) == object(Data(json.utf8)), "\(json)")
+        }
+        for (type, json) in wireRejects {
+            #expect(throws: DecodingError.self, "\(json)") { try JSONDecoder().decode(type, from: Data(json.utf8)) }
+        }
+        #expect(FixtureUnit.highContrast.title == "High Contrast")
     }
 
     @Test func anEventOfAnUnknownTypeIsLeftOut() throws {

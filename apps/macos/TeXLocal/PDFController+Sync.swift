@@ -37,19 +37,18 @@ extension PDFController {
         revealing?.cancel()
         guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
         guard let source else { return showFound(loc, on: located, hit: nil) }
-        let pages = syncPages(loc.matches ?? [loc], in: document)
+        let pages = syncPages(loc.matches, in: document)
         let read = pages.map(\.page) + [located]
+        let match = SynctexMatch(id: source.id, file: source.file, line: source.line, column: source.column, pages: pages.map(\.text))
         revealing = Task {
-            let hit = try? await Core.shared.call("synctex_match", ["id": source.id, "file": source.file, "line": source.line,
-                                                                    "column": source.column, "pages": pages.map(\.args)],
-                                                  as: PageHit?.self)
+            let hit = try? await Core.shared.call(match)
             guard !Task.isCancelled, view.document === document, read.allSatisfy({ document.number(of: $0) != nil }),
                   !source.quietly || hit != nil else { return }
             showFound(loc, on: located, hit: hit)
         }
     }
 
-    private func showFound(_ loc: ForwardLoc, on located: PDFPage, hit: PageHit?) {
+    private func showFound(_ loc: ForwardLoc, on located: PDFPage, hit: PdfHit?) {
         var found: (page: PDFPage, selection: PDFSelection)?
         if let hit, hit.end > hit.start, let page = view.document?.page(ifAt: hit.page - 1),
            let selection = page.selection(for: NSRange(hit.start..<hit.end)) {
@@ -62,7 +61,7 @@ extension PDFController {
         highlight(found?.selection, or: rect, on: page)
     }
 
-    private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [(page: PDFPage, args: [String: any Sendable])] {
+    private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [(page: PDFPage, text: PdfPage)] {
         let numbers = boxes.map { Int($0.page) }
         guard let lowest = numbers.min(), let highest = numbers.max() else { return [] }
         let first = max(1, lowest - 1), last = min(document.pageCount, highest + 1)
@@ -70,15 +69,15 @@ extension PDFController {
         return (first...last).compactMap { number in
             guard let page = document.page(ifAt: number - 1), let text = page.string else { return nil }
             let bounds = page.bounds(for: view.displayBox)
-            var near: [[Int]] = []
+            var near: [TextRange] = []
             for box in boxes where Int(box.page) == number {
                 guard let covered = page.selection(for: SyncTeXGeometry.highlightRect(box, pageBounds: bounds)) else { continue }
                 for index in 0..<covered.numberOfTextRanges(on: page) {
                     let range = covered.range(at: index, on: page)
-                    if range.location != NSNotFound, range.length > 0 { near.append([range.location, NSMaxRange(range)]) }
+                    if range.location != NSNotFound, range.length > 0 { near.append(TextRange(start: range.location, length: range.length)) }
                 }
             }
-            return (page, ["page": number, "text": text, "near": near])
+            return (page, PdfPage(page: number, text: text, near: near))
         }
     }
 }

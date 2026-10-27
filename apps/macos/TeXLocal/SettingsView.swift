@@ -26,7 +26,7 @@ extension View {
 }
 
 private struct GeneralSettings: View {
-    @AppStorage(DefaultsKey.newProjectEngine) private var engine = TeXEngine.pdflatex
+    @AppStorage(DefaultsKey.newProjectEngine) private var engine = Engine.pdflatex
 
     var body: some View {
         Form {
@@ -43,7 +43,7 @@ private struct GeneralSettings: View {
             }
             Section("New Projects") {
                 Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $engine) {
-                    ForEach(TeXEngine.allCases) { Text($0.title).tag($0) }
+                    ForEach(Engine.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
             }
         }

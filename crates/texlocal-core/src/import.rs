@@ -3,10 +3,12 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
-use texlocal_latex::{FileKind, file_kind, templates};
+use texlocal_latex::templates::ProjectTemplate;
+use texlocal_latex::{FileKind, file_kind};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
@@ -17,19 +19,19 @@ use crate::settings::write_settings;
 use crate::zipexport::left_out;
 use crate::{CoreError, SETTINGS_FILE, atomic};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ImportConflict {
     Replace,
     KeepBoth,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Imported {
     pub existing: Vec<Clash>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Clash {
     pub path: String,
@@ -347,7 +349,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
         if settings.get("mainFile").is_none() {
-            let (file, content) = templates::files("blank")[0];
+            let (file, content) = ProjectTemplate::Blank.files()[0];
             fs::write(root.join(file), content)?;
             settings["mainFile"] = file.into();
         }

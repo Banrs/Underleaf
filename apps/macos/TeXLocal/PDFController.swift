@@ -248,11 +248,11 @@ final class PDFController: NSObject {
             }
         }
 
-        var json: any Sendable {
+        var wire: TeXLocal.Zoom {
             switch self {
-            case .fitWidth: "fitWidth"
-            case .fitPage: "fitPage"
-            case .scale(let scale): scale
+            case .fitWidth: .fitWidth
+            case .fitPage: .fitPage
+            case .scale(let scale): .scale(scale)
             }
         }
     }

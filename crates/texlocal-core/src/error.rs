@@ -2,9 +2,10 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorKind {
     Invalid,
@@ -16,7 +17,7 @@ pub enum ErrorKind {
     Internal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CoreError {
     pub kind: ErrorKind,
     pub message: String,

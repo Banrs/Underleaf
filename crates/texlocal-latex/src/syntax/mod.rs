@@ -17,6 +17,7 @@ mod typing;
 
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use call::call;
@@ -27,7 +28,8 @@ use highlight::Highlight;
 
 use crate::utf16;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[repr(C)]
 pub struct TextRange {
     pub start: u32,

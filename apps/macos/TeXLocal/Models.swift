@@ -1,41 +1,17 @@
 import Foundation
 
-nonisolated struct ProjectInfo: Decodable, Identifiable {
-    let id, name: String
-    let mtime: Double
-    let mainFile, path: String
-    let opened, missing: Bool
-
-    var modified: Date { Date(timeIntervalSince1970: mtime / 1000) }
+nonisolated extension ProjectInfo: Identifiable {
+    var modified: Date { Date(timeIntervalSince1970: Double(mtime) / 1000) }
     var folder: URL { URL(filePath: path, directoryHint: .isDirectory) }
 }
 
-enum ProjectTemplate: String, CaseIterable, Identifiable {
-    case blank, article, report, beamer
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .blank: "Blank"
-        case .article: "Article"
-        case .report: "Report"
-        case .beamer: "Presentation"
-        }
-    }
+nonisolated extension ProjectTemplate: Identifiable {
+    var id: Self { self }
 }
 
-nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
-    nonisolated enum Entry: String, Decodable { case file, dir }
-
-    let type: Entry
-    let name, path: String
-    var kind: FileKind?
-    var children: [TreeNode]?
-    var main: Bool?
-
+nonisolated extension TreeNode: Identifiable {
     var id: String { path }
-    var isDirectory: Bool { type == .dir }
+    var isDirectory: Bool { children != nil }
 
     var symbol: String {
         switch kind {
@@ -49,14 +25,8 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     }
 }
 
-nonisolated enum FileKind: String, Decodable, Sendable {
-    case tex, bib, image, pdf, text, other
-
+nonisolated extension FileKind {
     var isText: Bool { self == .tex || self == .bib || self == .text }
-
-    init(from decoder: any Decoder) throws {
-        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
-    }
 }
 
 extension [TreeNode] {
@@ -70,12 +40,6 @@ nonisolated extension String {
 
 nonisolated extension NSRange {
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
-}
-
-nonisolated struct TexStatus: Decodable {
-    let available: Bool
-    var latexmkVersion: String?
-    var texDir, found, texpresso, texpressoDir: String?
 }
 
 nonisolated struct ProjectSettings: Decodable {
@@ -147,14 +111,6 @@ nonisolated struct Usages: Decodable {
     let groups: [SearchGroup]
 }
 
-nonisolated struct ForwardLoc: Decodable {
-    let page: Double
-    let h, v, width, height: Double?
-    var matches: [ForwardLoc]? = nil
-}
-
-nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
-
 struct Place: Equatable {
     var path: String
     let line: Int
@@ -199,16 +155,6 @@ nonisolated struct SyncSource: Sendable {
     let id, file: String
     let line, column: Int
     var quietly = false
-}
-
-nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }
-
-nonisolated struct PageClick: Equatable, Sendable { let text: String, at: Int }
-
-nonisolated struct Imported: Decodable {
-    nonisolated struct Clash: Decodable { let path, keepBoth: String }
-
-    let existing: [Clash]
 }
 
 nonisolated struct RenameResult: Decodable {

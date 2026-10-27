@@ -2,11 +2,7 @@ import Foundation
 import os
 import TeXLocalCore
 
-nonisolated struct CoreError: LocalizedError {
-    enum Kind: String, Decodable { case invalid, denied, notFound, conflict, unfit, unavailable, `internal` }
-
-    let message: String
-    var kind: Kind?
+nonisolated extension CoreError: LocalizedError {
     var errorDescription: String? { message }
 }
 
@@ -29,7 +25,7 @@ final class Core {
 
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
-    private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
+    private static let unavailable = CoreError(kind: .unavailable, message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
     private init() {
         Task {
@@ -54,6 +50,11 @@ final class Core {
         return (handle, String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self))
     }
 
+    private func prepared<R: WireRequest>(_ request: R) throws -> (OpaquePointer, String) {
+        guard let handle else { throw Self.unavailable }
+        return (handle, String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
+    }
+
     private var pending: [UInt64: (Data) -> Void] = [:]
     private var asked: UInt64 = 0
 
@@ -66,12 +67,12 @@ final class Core {
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let answer: Result<T, CoreError>
 
-        private enum Keys: CodingKey { case ok, error, kind }
+        private enum Keys: CodingKey { case ok, error }
 
         init(from decoder: any Decoder) throws {
             let envelope = try decoder.container(keyedBy: Keys.self)
-            if let error = try envelope.decodeIfPresent(String.self, forKey: .error) {
-                answer = .failure(CoreError(message: error, kind: try? envelope.decodeIfPresent(CoreError.Kind.self, forKey: .kind)))
+            if let error = try envelope.decodeIfPresent(CoreError.self, forKey: .error) {
+                answer = .failure(error)
             } else {
                 answer = .success(try envelope.decode(T.self, forKey: .ok))
             }
@@ -94,12 +95,22 @@ final class Core {
 
     private nonisolated static func fault(_ command: String, _ problem: String) -> CoreError {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")
-        return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
+        return CoreError(kind: .internal, message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
+    }
+
+    @discardableResult
+    func call<R: LibraryRequest>(_ request: R) async throws -> R.Reply {
+        let (handle, json) = try prepared(request)
+        return try await answer(handle, R.command, json)
     }
 
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
         let (handle, json) = try prepared(command, args)
-        return try await withCheckedThrowingContinuation { done in
+        return try await answer(handle, command, json)
+    }
+
+    private func answer<T: Decodable & Sendable>(_ handle: OpaquePointer, _ command: String, _ json: String) async throws -> T {
+        try await withCheckedThrowingContinuation { done in
             ask(handle, command, json) { envelope in
                 done.resume(with: Result { try Self.decoded(command, envelope) })
             }

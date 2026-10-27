@@ -2,7 +2,8 @@ use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
 
@@ -11,7 +12,7 @@ use crate::paths::{Project, disk_spelling, safe_path, safe_rel_file, source_rel}
 use crate::settings::read_settings;
 use crate::stamp::Kept;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ForwardLoc {
     pub page: f64,
     pub h: Option<f64>,
@@ -21,7 +22,14 @@ pub struct ForwardLoc {
     pub matches: Vec<Self>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PageClick {
+    text: String,
+    at: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct InverseLoc {
     pub file: String,
     pub line: u32,
@@ -111,7 +119,7 @@ pub fn synctex_inverse(
     page: f64,
     x: f64,
     y: f64,
-    click: Option<(&str, usize)>,
+    click: Option<PageClick>,
     live: Option<&Path>,
     typeset: &dyn Fn(&str) -> Option<String>,
 ) -> Result<InverseLoc, CoreError> {
@@ -126,10 +134,10 @@ pub fn synctex_inverse(
         .ok_or_else(|| CoreError::not_found("Nothing in the source matches this spot."))?;
     let rel = source_file(root, name)
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
-    let found = click.and_then(|(text, at)| {
+    let found = click.and_then(|PageClick { text, at }| {
         let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
         let source = typeset(&rel).or_else(disk)?;
-        find_in_source(&source, line, text, at)
+        find_in_source(&source, line, &text, at)
     });
     Ok(InverseLoc {
         file: rel,

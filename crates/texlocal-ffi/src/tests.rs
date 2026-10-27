@@ -101,25 +101,22 @@ fn opening_needs_a_folder_and_a_listener() {
 #[test]
 fn a_command_answers_ok_or_an_error_kind() {
     let core = Core::open();
-    assert_eq!(core.call("list_projects", json!({}))["ok"], json!([]));
-    assert_eq!(core.call("nope", json!({}))["kind"], "notFound");
-    let bad = core.call_raw(Some("list_projects"), Some("{not json"));
-    assert_eq!(bad["kind"], "invalid");
-    assert_eq!(core.call_raw(None, None)["kind"], "invalid");
+    assert_eq!(core.call("ListProjects", json!({}))["ok"], json!([]));
+    assert_eq!(core.call("nope", json!({}))["error"]["kind"], "notFound");
+    let bad = core.call_raw(Some("ListProjects"), Some("{not json"));
+    assert_eq!(bad["error"]["kind"], "invalid");
+    assert_eq!(core.call_raw(None, None)["error"]["kind"], "invalid");
     unsafe { tl_send(ptr::null(), 0, ptr::null(), ptr::null()) };
 }
 
 #[test]
 fn each_reply_arrives_exactly_once() {
     let core = Core::open();
-    core.call(
-        "create_project",
-        json!({ "name": "P", "template": "blank" }),
-    );
+    core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     let sent = [
-        (Some("list_projects"), Some("{}")),
+        (Some("ListProjects"), Some("{}")),
         (Some("nope"), Some("{}")),
-        (Some("list_projects"), Some("{not json")),
+        (Some("ListProjects"), Some("{not json")),
         (None, None),
         (Some("session_open"), Some(r#"{"id":"P","session":1}"#)),
         (Some("session_open"), Some(r#"{"id":"P","session":1}"#)),
@@ -140,10 +137,7 @@ fn each_reply_arrives_exactly_once() {
 #[test]
 fn a_session_document_is_edited_and_saved_through_the_abi() {
     let core = Core::open();
-    core.call(
-        "create_project",
-        json!({ "name": "P", "template": "blank" }),
-    );
+    core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     core.call("session_open", json!({ "id": "P", "session": 7 }));
     core.call(
         "session_open_document",
@@ -175,7 +169,7 @@ fn a_session_document_is_edited_and_saved_through_the_abi() {
 fn session_events_reach_the_listener() {
     let core = Core::open();
     core.call(
-        "create_project",
+        "CreateProject",
         json!({ "name": "P", "template": "article" }),
     );
     core.send(Some("session_open"), Some(r#"{"id":"P","session":1}"#));

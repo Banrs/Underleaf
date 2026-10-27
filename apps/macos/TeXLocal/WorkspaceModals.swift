@@ -33,8 +33,8 @@ struct WorkspaceModals: ViewModifier {
                     .fileDialogConfirmationLabel("Export")
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
-                Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
+                Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: .keepBoth) } }
+                Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: .replace) } }
                 Button("Cancel", role: .cancel) {}
             } message: { clash in
                 Text(clash.message)

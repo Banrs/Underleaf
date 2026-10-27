@@ -11,7 +11,7 @@ extension ProjectModel {
 
     var liveEngine: String? {
         texpresso.engine.flatMap { engine in
-            livePDF && engine != settings?.engine ? TeXEngine(rawValue: engine)?.title ?? engine : nil
+            livePDF && engine != settings?.engine ? Engine(rawValue: engine)?.title ?? engine : nil
         }
     }
 
@@ -70,12 +70,12 @@ extension ProjectModel {
     func forwardSync(quietly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column) = (editor.currentLine, editor.currentColumn)
-        let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line])
+        let live = livePDF, request = SynctexForward(id: id, file: path, line: line, live: liveSession)
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             let shown = pdf.shownVersion
             do {
-                let loc = try await core.call("synctex_forward", args, as: ForwardLoc.self)
+                let loc = try await core.call(request)
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
                 app?.requestPDF(.reveal(loc, SyncSource(id: id, file: path, line: line, column: column, quietly: quietly)))
             } catch {
@@ -84,16 +84,12 @@ extension ProjectModel {
         }.value
     }
 
-    private func syncArguments(_ arguments: [String: any Sendable]) -> [String: any Sendable] {
-        guard livePDF, let session else { return arguments }
-        return arguments.merging(["live": true, "session": session]) { $1 }
-    }
+    private var liveSession: UInt64? { livePDF ? session : nil }
 
     func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil, quietly: Bool = false) async {
         await restart(&syncTask) { [self] in
             do {
-                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "text": click?.text, "at": click?.at])
-                let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
+                let loc = try await core.call(SynctexInverse(id: id, page: Double(page), x: x, y: y, click: click, live: liveSession))
                 guard !Task.isCancelled, !closed, !quietly || loc.column != nil else { return }
                 await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {

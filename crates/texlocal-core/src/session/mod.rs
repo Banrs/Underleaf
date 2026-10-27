@@ -295,7 +295,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let service = Arc::new(Service::new(dir.path().into()));
         let made = json!({ "name": "P", "template": "blank" });
-        service.call("create_project", made).await.unwrap();
+        service.call("CreateProject", made).await.unwrap();
         let (tx, heard) = channel();
         let tx = Mutex::new(tx);
         let listener = Box::new(move |said: &Value| drop(lock(&tx).send(said.clone())));
@@ -326,7 +326,11 @@ mod tests {
         }
         assert!(replies[&0]["ok"].is_object());
         for id in 1..=4 {
-            assert_eq!(replies[&id]["kind"], "internal", "{}", replies[&id]);
+            assert_eq!(
+                replies[&id]["error"]["kind"], "internal",
+                "{}",
+                replies[&id]
+            );
         }
     }
 }

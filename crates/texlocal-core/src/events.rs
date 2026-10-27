@@ -30,9 +30,7 @@ impl Hub {
                         Queued::Event(event) => event,
                         Queued::Reply { id, answer } => match answer {
                             Ok(ok) => json!({ "reply": id, "ok": ok }),
-                            Err(err) => {
-                                json!({ "reply": id, "error": err.message, "kind": err.kind })
-                            }
+                            Err(err) => json!({ "reply": id, "error": err }),
                         },
                     };
                     let _ = catch_unwind(AssertUnwindSafe(|| listen(&said)));

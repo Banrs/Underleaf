@@ -12,6 +12,7 @@ pub mod wordmatch;
 use std::ffi::OsStr;
 use std::path::{Component, Path};
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 pub fn segments(rel: &str) -> Option<Vec<&str>> {
@@ -41,8 +42,8 @@ const TEXT_EXTENSIONS: &[&str] = &[
 
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum FileKind {
     Tex,
     Bib,

@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -37,12 +38,15 @@ impl ProjectSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum Engine {
     #[default]
+    #[schemars(title = "pdfLaTeX")]
     Pdflatex,
+    #[schemars(title = "XeLaTeX")]
     Xelatex,
+    #[schemars(title = "LuaLaTeX")]
     Lualatex,
 }
 
@@ -214,15 +218,69 @@ pub(crate) fn store_ui(
     Ok(file.ui)
 }
 
-pub fn write_ui(file: &Path, patch: &Value) -> Result<UiState, CoreError> {
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UiPatch {
+    expanded_folders: Option<Vec<String>>,
+    folded_headings: Option<Vec<String>>,
+    place: Option<UiPlace>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UiPlace {
+    file: Option<String>,
+    line: Option<u32>,
+    page: Option<u32>,
+    zoom: Option<Zoom>,
+    panel: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub enum Zoom {
+    FitWidth,
+    FitPage,
+    Scale(f64),
+}
+
+impl Zoom {
+    fn stored(self) -> Value {
+        match self {
+            Self::FitWidth => "fitWidth".into(),
+            Self::FitPage => "fitPage".into(),
+            Self::Scale(scale) => scale.into(),
+        }
+    }
+}
+
+pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
     store_ui(file, |state| {
-        let live_preview = state.live_preview;
-        *state = UiState {
-            live_preview,
-            ..merged(state, patch, "ui state")?
-        };
+        let UiPatch {
+            expanded_folders,
+            folded_headings,
+            place,
+        } = patch;
+        if let Some(folders) = expanded_folders {
+            state.expanded_folders = folders;
+        }
+        if let Some(headings) = folded_headings {
+            state.folded_headings = headings;
+        }
+        if let Some(UiPlace {
+            file,
+            line,
+            page,
+            zoom,
+            panel,
+        }) = place
+        {
+            (state.file, state.line, state.page) = (file, line, page);
+            (state.zoom, state.panel) = (zoom.map(Zoom::stored), panel);
+        }
         Ok(())
     })
+    .map(drop)
 }
 
 pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {

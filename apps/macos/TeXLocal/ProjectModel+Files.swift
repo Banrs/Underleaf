@@ -100,10 +100,10 @@ extension ProjectModel {
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
 
-    func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
-        let args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }, "conflict": conflict]
+    func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
+        let request = ImportFiles(id: id, dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
         do {
-            let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
+            let clashes = try await core.call(request).existing.map(\.path)
             if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
         } catch {
             app?.report(error, "Couldn’t Add the Files")
@@ -123,7 +123,7 @@ extension ProjectModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
         let url = folder.appending(path: "\(name).zip")
-        try await core.call("export_zip", ["id": id, "dest": url.path(percentEncoded: false), "forArxiv": forArxiv])
+        try await core.call(ExportZip(id: id, dest: url.path(percentEncoded: false), forArxiv: forArxiv))
         return url
     }
 

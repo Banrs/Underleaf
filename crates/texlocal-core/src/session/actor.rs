@@ -18,7 +18,8 @@ use crate::CoreError;
 use crate::events::Queued;
 use crate::paths::Project;
 use crate::projects::{self, History, Symbols};
-use crate::service::{Service, out, unknown};
+use crate::protocol::unknown;
+use crate::service::{Service, out};
 use crate::settings;
 
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";

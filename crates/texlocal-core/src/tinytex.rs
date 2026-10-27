@@ -119,3 +119,14 @@ async fn tlmgr(root: &Path, path_env: &str, args: &[&str]) -> Result<(), CoreErr
     command.args(args);
     checked(run(command).await?).map(drop)
 }
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn tinytex_is_not_installed_over_a_folder_already_there() {
+        let root = tempfile::tempdir().unwrap();
+        let refused = super::install_into(root.path(), "").await.unwrap_err();
+        assert_eq!(refused.kind, crate::ErrorKind::Conflict);
+        assert!(root.path().is_dir());
+    }
+}

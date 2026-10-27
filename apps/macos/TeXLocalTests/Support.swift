@@ -20,6 +20,6 @@ nonisolated final class TestDefaults {
     deinit { UserDefaults.standard.removePersistentDomain(forName: name) }
 }
 
-func newProject(template: String = "article") async throws -> ProjectInfo {
-    try await Core.shared.call("create_project", ["name": "Test " + UUID().uuidString, "template": template], as: ProjectInfo.self)
+func newProject(template: ProjectTemplate = .article) async throws -> ProjectInfo {
+    try await Core.shared.call(CreateProject(name: "Test " + UUID().uuidString, template: template))
 }

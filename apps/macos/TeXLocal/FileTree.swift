@@ -26,7 +26,7 @@ final class FileTree {
     func reload() async {
         reads += 1
         let read = reads
-        guard let files = try? await core.call("file_tree", ["id": id], as: [TreeNode].self), read > taken else { return }
+        guard let files = try? await core.call(ReadTree(id: id)), read > taken else { return }
         taken = read
         if !Task.isCancelled { take(files) }
     }
