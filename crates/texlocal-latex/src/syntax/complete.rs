@@ -2,22 +2,23 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use super::{SourceDocument, Text, catalog, indentation};
-use crate::analyze::{Defined, Facts, Input, Named, Place};
+use crate::analyze::{Defined, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SnippetField {
     pub(crate) start: u32,
     pub(crate) length: u32,
     pub(crate) index: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct Completion {
     pub(crate) label: String,
     pub(crate) text: String,
@@ -26,14 +27,20 @@ pub(crate) struct Completion {
     pub(crate) detail: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SymbolKind {
+    #[schemars(title = "Command")]
     Command,
+    #[schemars(title = "Environment")]
     Environment,
+    #[schemars(title = "Label")]
     Label,
+    #[schemars(title = "Citation")]
     Citation,
+    #[schemars(title = "Entry Type")]
     EntryType,
+    #[schemars(title = "File")]
     File,
 }
 
@@ -96,11 +103,18 @@ impl Installed {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct Completions {
     pub(crate) start: u32,
     pub(crate) kind: SymbolKind,
     pub(crate) items: Vec<Completion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct Definition {
+    kind: SymbolKind,
+    name: String,
+    places: Vec<FilePlace>,
 }
 
 static ARGUMENT: LazyLock<Regex> =
@@ -214,7 +228,7 @@ impl SourceDocument {
         offer(m.start(), SymbolKind::Command, items)
     }
 
-    pub(crate) fn definition(&self, at: u32) -> Option<Value> {
+    pub(crate) fn definition(&self, at: u32) -> Option<Definition> {
         let own = Facts::read(&self.text(), file_kind(&self.path));
         let (kind, name, file) = self.symbol_at(&own, at)?;
         let places = match kind {
@@ -228,13 +242,11 @@ impl SourceDocument {
             }
             kind => self.defined(&own, kind, &name),
         };
-        let places: Vec<Value> = places
+        let places: Vec<FilePlace> = places
             .into_iter()
-            .map(|(file, at)| {
-                json!({ "file": file, "line": at.line, "column": at.column, "length": at.length })
-            })
+            .map(|(file, at)| at.in_file(file))
             .collect();
-        (!places.is_empty()).then(|| json!({ "kind": kind, "name": name, "places": places }))
+        (!places.is_empty()).then_some(Definition { kind, name, places })
     }
 
     pub fn symbol_at(&self, own: &Facts, at: u32) -> Option<(SymbolKind, String, Option<String>)> {

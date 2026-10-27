@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -57,12 +59,18 @@ pub enum LiveEvent {
         path: String,
         pages: u32,
         run: String,
-        changed: Vec<[u32; 2]>,
+        changed: Vec<PageRange>,
     },
     Done(String),
     Synced(u64),
     Log,
     Ended(Option<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PageRange {
+    pub first: u32,
+    pub last: u32,
 }
 
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
@@ -93,6 +101,8 @@ pub(crate) trait Preview: Send + Sync {
     fn tex_log(&self, owner: u64) -> Option<String>;
     fn status(&self, owner: u64) -> Result<Status, CoreError>;
     fn stop_request(&self, owner: u64) -> Status;
+    fn live_text(&self, owner: u64, rel: &str) -> Option<String>;
+    fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError>;
     fn stop(&self, root: &Path) -> Result<(), CoreError>;
 }
 
@@ -257,18 +267,6 @@ impl Manager {
             .get(&owner)
             .cloned()
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
-    }
-    pub fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
-        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
-    }
-    pub fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
-        let pdf = self.owned(owner)?.pdf.clone();
-        if !pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(
-                "TeXpresso hasn't written a document to sync with yet",
-            ));
-        }
-        Ok(pdf)
     }
 }
 
@@ -496,6 +494,18 @@ impl Preview for Manager {
             session.status()
         })
     }
+    fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
+        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
+    }
+    fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
+        let pdf = self.owned(owner)?.pdf.clone();
+        if !pdf.with_extension("synctex").is_file() {
+            return Err(CoreError::not_found(
+                "TeXpresso hasn't written a document to sync with yet",
+            ));
+        }
+        Ok(pdf)
+    }
     fn stop(&self, root: &Path) -> Result<(), CoreError> {
         let root = std::fs::canonicalize(root)?;
         for session in lock(&self.sessions).values().filter(|s| s.root == root) {
@@ -621,7 +631,13 @@ fn apply_message(session: &Session, message: &Value) {
                 path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
                 run: run.to_owned(),
-                changed: ranges.iter().map(|r| [page(r, 0), page(r, 1)]).collect(),
+                changed: ranges
+                    .iter()
+                    .map(|r| PageRange {
+                        first: page(r, 0),
+                        last: page(r, 1),
+                    })
+                    .collect(),
             }
         }
         "done" => match message[1].as_str() {

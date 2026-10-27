@@ -29,22 +29,18 @@ extension ProjectModel {
             compiling = true
             AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
         }
-        let sent: Void? = await alerting(notSavedTitle()) {
-            try await core.call("session_compile", ["session": session, "auto": auto])
-        }
+        let sent = await alerting(notSavedTitle()) { try await session.call(Compile(auto: auto)) }
         if sent == nil { compiling = false }
     }
 
     func stopCompile() {
         guard compiling, let session else { return }
-        core.send("session_stop_compile", ["session": session])
+        session.send(StopCompile())
     }
 
     func cleanBuildFolder() async {
         guard let session, !closed else { return }
-        let cleaned: Void? = await alerting("Couldn’t Clean the Build Folder") {
-            try await core.call("session_clean", ["session": session])
-        }
+        let cleaned = await alerting("Couldn’t Clean the Build Folder") { try await session.call(Clean()) }
         guard cleaned != nil else { return }
         await inOrder { self.buildCleaned() }.value
     }

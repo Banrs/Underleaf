@@ -20,6 +20,7 @@ pub struct Library {
 impl Library {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("data")).unwrap();
         let service = Arc::new(Service::new(dir.path().join("data")));
         Self { dir, service }
     }
@@ -32,14 +33,14 @@ impl Library {
         answer(command, self.service.call(command, args).await)
     }
 
-    pub async fn refuse(&self, command: &str, args: Value) -> CoreError {
-        self.service.call(command, args).await.unwrap_err()
+    pub async fn refuse(&self, command: &str, args: Value) -> ErrorKind {
+        self.service.call(command, args).await.unwrap_err().kind
     }
 
     pub async fn create(&self, name: &str, template: &str) -> String {
         let made = self
             .call(
-                "create_project",
+                "CreateProject",
                 json!({ "name": name, "template": template }),
             )
             .await;
@@ -55,8 +56,12 @@ fn answer(command: &str, result: Result<Value, CoreError>) -> Value {
     result.unwrap_or_else(|err| panic!("{command}: {:?} {}", err.kind, err.message))
 }
 
-pub fn kind(result: Result<Value, CoreError>) -> ErrorKind {
-    result.unwrap_err().kind
+pub fn names(list: &Value, key: &str) -> Vec<String> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item[key].as_str().unwrap().to_owned())
+        .collect()
 }
 
 pub fn write(root: &Path, files: &[(&str, &str)]) {
@@ -104,7 +109,7 @@ impl Rig {
             seen: Mutex::default(),
             asked: AtomicU64::default(),
         };
-        rig.call("session_open", json!({ "id": rig.id, "session": SESSION }));
+        rig.call("OpenProject", json!({ "id": rig.id, "autoCompile": false }));
         rig
     }
 
@@ -113,20 +118,22 @@ impl Rig {
     }
 
     pub fn call(&self, command: &str, args: Value) -> Value {
-        answer(command, self.try_call(command, args))
+        self.call_to(SESSION, command, args)
     }
 
-    pub fn try_call(&self, command: &str, args: Value) -> Result<Value, CoreError> {
-        self.reply(self.send(command, args))
+    pub fn call_to(&self, session: u64, command: &str, args: Value) -> Value {
+        answer(command, self.reply(self.send(session, command, args)))
     }
 
-    pub fn send(&self, command: &str, mut args: Value) -> u64 {
-        if command.starts_with("session_") {
-            let args = args.as_object_mut().unwrap();
-            args.entry("session").or_insert(json!(SESSION));
-        }
+    pub fn refuse(&self, command: &str, args: Value) -> ErrorKind {
+        self.reply(self.send(SESSION, command, args))
+            .unwrap_err()
+            .kind
+    }
+
+    pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
-        self.sessions.send(id, command, args);
+        self.sessions.send_to(id, session, command, args);
         id
     }
 
@@ -134,20 +141,18 @@ impl Rig {
         let mut reply = self.find(|e| e["reply"] == id);
         match reply.get_mut("ok") {
             Some(ok) => Ok(ok.take()),
-            None => Err(CoreError {
-                kind: serde_json::from_value(reply["kind"].take()).unwrap(),
-                message: reply["error"].as_str().unwrap().to_owned(),
-            }),
+            None => Err(serde_json::from_value(reply["error"].take()).unwrap()),
         }
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
-        self.call("session_open_document", json!({ "path": path }));
+        self.call("OpenDocument", json!({ "path": path }));
         self.sessions.document(SESSION, path).unwrap()
     }
 
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        self.find(|e| e["type"] == kind && matching(e))
+        let event = |e: &Value| e["event"]["type"] == kind && matching(&e["event"]["value"]);
+        self.find(event)["event"]["value"].take()
     }
 
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
@@ -169,26 +174,12 @@ impl Rig {
     }
 
     pub fn heard(&self, kind: &str) -> bool {
-        self.seen.lock().unwrap().iter().any(|e| e["type"] == kind)
+        let seen = self.seen.lock().unwrap();
+        seen.iter().any(|e| e["event"]["type"] == kind)
     }
 
     pub fn forget(&self) {
         self.seen.lock().unwrap().clear();
         while self.events.try_recv().is_ok() {}
-    }
-
-    pub fn latest(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        self.event(kind, &matching);
-        while let Ok(event) = self.events.recv_timeout(Duration::from_millis(300)) {
-            self.seen.lock().unwrap().push(event);
-        }
-        self.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|e| e["type"] == kind && matching(e))
-            .cloned()
-            .unwrap()
     }
 }

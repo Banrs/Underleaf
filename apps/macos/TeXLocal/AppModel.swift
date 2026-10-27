@@ -65,13 +65,6 @@ struct NewProjectDraft: Identifiable {
     var id: ProjectTemplate { template }
 }
 
-private nonisolated struct FreeName: Decodable { let name: String }
-
-private nonisolated struct Opening: Decodable {
-    let project: ProjectInfo
-    let file: String?
-}
-
 @Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
@@ -142,8 +135,8 @@ final class AppModel {
     func newProject(_ template: ProjectTemplate = .article) {
         guard libraryProblem == nil else { return }
         Task {
-            let free = try? await core.call("free_project_name", as: FreeName.self)
-            newProjectDraft = NewProjectDraft(template: template, name: free?.name ?? "Untitled")
+            let free = try? await core.call(FreeProjectName())
+            newProjectDraft = NewProjectDraft(template: template, name: free ?? "Untitled")
         }
     }
 
@@ -200,10 +193,10 @@ final class AppModel {
     func refresh() async {
         guard core.isOpen else { return }
         do {
-            let listed = try await core.call("list_projects", as: [ProjectInfo].self)
+            let listed = try await core.call(ListProjects())
             var followed = false
             for project in listed where project.missing { followed = await follow(project) || followed }
-            projects = followed ? try await core.call("list_projects", as: [ProjectInfo].self) : listed
+            projects = followed ? try await core.call(ListProjects()) : listed
             libraryProblem = nil
         } catch {
             libraryProblem = AppAlert("Couldn’t Load Projects", error)
@@ -214,27 +207,27 @@ final class AppModel {
     func refreshTeXStatus() async {
         guard !settingTeX else { return }
         await restart(&texCheck) { [self] in
-            let status = try? await core.call("status", as: TexStatus.self)
+            let status = try? await core.call(CheckTex())
             if !Task.isCancelled, let status { tex = status }
         }.value
     }
 
     func setTeXFolder(_ path: String?, texpresso: Bool) async throws {
-        try await setTeX(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path])
+        if texpresso { try await setTeX(SetTexpressoDir(dir: path)) } else { try await setTeX(SetTexDir(dir: path)) }
     }
 
     func installTeX() async throws {
         installingTeX = true
         defer { installingTeX = false }
-        try await setTeX("install_tex")
+        try await setTeX(InstallTex())
     }
 
-    private func setTeX(_ command: String, _ args: [String: any Sendable] = [:]) async throws {
+    private func setTeX<R: LibraryRequest>(_ request: R) async throws where R.Reply == TexStatus {
         settingTeX = true
         texCheck?.cancel()
         defer { settingTeX = false }
         do {
-            tex = try await core.call(command, args, as: TexStatus.self)
+            tex = try await core.call(request)
         } catch {
             Task { await refreshTeXStatus() }
             throw error
@@ -242,9 +235,8 @@ final class AppModel {
     }
 
     func create(name: String, template: ProjectTemplate) async throws {
-        let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(TeXEngine.init(rawValue:))
-        let info = try await core.call("create_project", ["name": name, "template": template.rawValue, "engine": engine?.rawValue],
-                                       as: ProjectInfo.self)
+        let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(Engine.init(rawValue:))
+        let info = try await core.call(CreateProject(name: name, template: template, engine: engine))
         await refresh()
         Task { await open(info.id) }
     }
@@ -279,7 +271,7 @@ final class AppModel {
     }
 
     private func openPath(_ url: URL) async throws -> Opening {
-        let opening = try await core.call("open_path", ["path": url.path(percentEncoded: false)], as: Opening.self)
+        let opening = try await core.call(OpenPath(path: url.path(percentEncoded: false)))
         if opening.project.opened {
             bookmarks[opening.project.id] = try? opening.project.folder.bookmarkData()
         }
@@ -304,8 +296,8 @@ final class AppModel {
     }
 
     func forget(_ project: ProjectInfo) async {
-        let forgotten: Void? = await alerting("Couldn’t Remove “\(project.name)” from the List") {
-            try await core.call("forget_folder", ["id": project.id])
+        let forgotten = await alerting("Couldn’t Remove “\(project.name)” from the List") {
+            try await core.call(ForgetFolder(id: project.id))
         }
         if forgotten != nil {
             bookmarks[project.id] = nil
@@ -323,7 +315,7 @@ final class AppModel {
 
     private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
         await alerting("Couldn’t Rename “\(shown)”") {
-            let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
+            let renamed = try await core.call(RenameProject(id: id, name: name))
             recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
             return renamed
         }
@@ -341,8 +333,7 @@ final class AppModel {
 
     func duplicate(_ project: ProjectInfo) async -> String? {
         let copy = await alerting("Couldn’t Duplicate “\(project.name)”") {
-            try await core.call("duplicate_project", ["id": project.id, "name": String(localized: "\(project.name) copy")],
-                                as: ProjectInfo.self)
+            try await core.call(DuplicateProject(id: project.id, name: String(localized: "\(project.name) copy")))
         }
         await refresh()
         return copy?.id
@@ -431,8 +422,7 @@ final class AppModel {
         guard let project else { return true }
         if !project.closed && !project.isClosing {
             guard await project.save(), generation == openGeneration else { return false }
-            await project.savePlace()
-            guard generation == openGeneration else { return false }
+            project.savePlace()
         }
         return await project.close().value && generation == openGeneration
     }

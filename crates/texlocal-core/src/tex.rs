@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::syntax::Installed;
 
@@ -85,7 +86,7 @@ pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 static LATEXMK_VERSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,

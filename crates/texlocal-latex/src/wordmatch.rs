@@ -1,19 +1,21 @@
 use std::cmp::Reverse;
 use std::ops::Range;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::syntax::TextRange;
 use crate::utf16;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PdfPage {
     pub(crate) page: u32,
     pub(crate) text: String,
-    #[serde(default)]
-    pub(crate) near: Vec<(usize, usize)>,
+    pub(crate) near: Vec<TextRange>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PdfHit {
     pub(crate) page: u32,
     pub(crate) start: usize,
@@ -166,7 +168,7 @@ pub fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHi
         let near = page
             .near
             .iter()
-            .map(|&(from, to)| pdf.between(group, from, to));
+            .map(|r| pdf.between(group, r.start as usize, (r.start + r.length) as usize));
         boxes.extend(near.filter(|r| r.start < r.end));
     }
     let dist = |i: usize| {

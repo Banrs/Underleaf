@@ -1,21 +1,24 @@
-use serde_json::{Value, json};
+use std::path::PathBuf;
+
 use texlocal_latex::{FileKind, file_kind};
 
+use super::Pending;
 use super::actor::{Actor, Later, Timer};
 use super::documents::CloseReason;
 use super::watch::{self, TreeIndex};
-use crate::CoreError;
-use crate::paths::{self, within};
-use crate::projects;
-use crate::service::out;
-use crate::settings;
+use crate::events::{DocumentRenamed, Event};
+use crate::import::{self, ImportConflict, Imported};
+use crate::paths::{self, Project, within};
+use crate::projects::{self, RenameResult};
+use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch};
+use crate::{CoreError, zipexport};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
 impl Actor {
-    pub fn deleted(&mut self, path: &str, trashed: Option<bool>) {
+    pub fn deleted(&mut self, path: &str, trashed: bool) {
         self.deleting.remove(path);
-        if trashed.unwrap_or(true) {
+        if trashed {
             for doc in self.docs_within(path) {
                 self.close_doc(&doc, CloseReason::Deleted);
             }
@@ -28,13 +31,13 @@ impl Actor {
         folder: &str,
         name: &str,
         dir: bool,
-    ) -> Result<Value, CoreError> {
+    ) -> Result<String, CoreError> {
         let path = paths::in_folder(folder, name);
         let made = self.service.with_project(&self.project_id, |project| {
             projects::create_free(&project.root, &path, dir)
         })?;
         self.reload_tree();
-        Ok(json!({ "path": made }))
+        Ok(made)
     }
 
     pub fn deleting(&self, path: &str) -> bool {
@@ -58,7 +61,8 @@ impl Actor {
             self.after(Timer::Symbols);
         }
         if !others.is_empty() {
-            self.emit("files_changed", json!({ "paths": others }));
+            let paths = others.iter().map(|&path| path.clone()).collect();
+            self.emit(Event::FilesChanged(paths));
         }
         if meaning.tree || !others.is_empty() {
             self.edits += 1;
@@ -97,13 +101,42 @@ impl Actor {
         }
         self.tree = index;
         self.after(Timer::Symbols);
-        self.emit("tree", json!({ "tree": tree }));
+        self.emit(Event::Tree(tree));
         self.live_files_changed();
     }
 
-    pub fn rename(&mut self, from: &str, to: &str) -> Result<Value, CoreError> {
+    pub fn import(
+        &mut self,
+        dir: &str,
+        paths: &[PathBuf],
+        conflict: Option<ImportConflict>,
+    ) -> Result<Imported, CoreError> {
+        let imported = import::import_files(&self.service, &self.project_id, dir, paths, conflict)?;
+        self.reload_tree();
+        Ok(imported)
+    }
+
+    pub fn export(&self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
+        let project = self.project.clone();
+        tokio::task::spawn_blocking(move || {
+            reply.send(zipexport::export_zip(&project, &dest, for_arxiv));
+        });
+    }
+
+    pub fn write_ui(&self, patch: UiPatch) -> Result<(), CoreError> {
+        let write = |project: &Project| settings::write_ui(&project.ui, patch);
+        self.service.with_project(&self.project_id, write)
+    }
+
+    pub fn pdf_path(&self) -> Result<String, CoreError> {
+        let settings = settings::read_settings(&self.project.settings);
+        let pdf = settings.output(&self.project.build, "pdf")?;
+        Ok(pdf.to_string_lossy().into_owned())
+    }
+
+    pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
         if !self.save_edits(true)? {
-            return Ok(Value::Null);
+            return Ok(None);
         }
         let (renamed, main) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
@@ -123,33 +156,34 @@ impl Actor {
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
-            doc.shown = Value::Null;
+            doc.shown = None;
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
                 self.last_edits.insert(new.clone(), edit);
             }
-            self.emit("document_renamed", json!({ "from": old, "to": new }));
+            let moved = DocumentRenamed {
+                from: old,
+                to: new.clone(),
+            };
+            self.emit(Event::DocumentRenamed(moved));
             self.publish_doc(&new);
         }
         self.reload_tree();
         if renamed.main_file != main {
             self.main_file_changed();
         }
-        let mut answer = out(renamed)?;
-        answer["ui"] = out(settings::read_ui(&self.project.ui))?;
-        Ok(answer)
+        Ok(Some(renamed))
     }
 
-    pub fn set_settings(&mut self, patch: &Value, build: bool) -> Result<Value, CoreError> {
+    pub fn set_settings(
+        &mut self,
+        patch: &SettingsPatch,
+        build: bool,
+    ) -> Result<ProjectSettings, CoreError> {
         let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
-            let grant = patch.get("shellEscape").map(|on| {
-                on.as_bool()
-                    .ok_or_else(|| CoreError::bad_request("Invalid settings: shellEscape"))
-            });
-            let grant = grant.transpose()?;
             let updated = settings::write_settings(&project.settings, patch)?;
-            if let Some(on) = grant {
+            if let Some(on) = patch.shell_escape {
                 settings::grant(project, on)?;
             }
             let main_changed = updated.main_file != main;
@@ -176,15 +210,15 @@ impl Actor {
         }
     }
 
-    pub fn prepare_delete(&mut self, path: &str) -> Result<Value, CoreError> {
+    pub fn prepare_delete(&mut self, path: &str) -> Result<bool, CoreError> {
         if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
-            return Ok(json!({ "ready": false }));
+            return Ok(false);
         }
         let main = settings::read_settings(&self.project.settings).main_file;
         if paths::after_entry(&main, path).is_some() {
             return Err(CoreError::conflict(MAIN_FILE_TRASH));
         }
         self.deleting.insert(path.to_owned());
-        Ok(json!({ "ready": true }))
+        Ok(true)
     }
 }

@@ -16,6 +16,7 @@ ratex-parser = "=0.1.14"
 ratex-svg = { version = "=0.1.14", features = ["embed-fonts"] }
 ratex-types = "=0.1.14"
 rust-embed = { version = "8.11", features = ["debug-embed"] }
+schemars = "1.2"
 
 [lints]
 workspace = true

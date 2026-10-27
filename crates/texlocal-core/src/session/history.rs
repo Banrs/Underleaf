@@ -3,14 +3,13 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{Value, json};
-use texlocal_latex::diff::{compare, edit_to};
+use texlocal_latex::diff::{DiffLine, compare, edit_to};
 
-use super::Reply;
+use super::Pending;
 use super::actor::Actor;
+use super::edits::DocumentEdits;
 use crate::paths::RelPath;
-use crate::projects::{self, History, Taken};
-use crate::service::out;
+use crate::projects::{self, History, Snapshot, Taken};
 use crate::{CoreError, lf, lock, lossy_string};
 
 fn now() -> i64 {
@@ -29,20 +28,20 @@ impl Actor {
         Ok(taken.map(|id| id.to_string()))
     }
 
-    fn beside(
+    fn beside<T: 'static>(
         &self,
-        job: impl FnOnce(&History) -> Result<Value, CoreError> + Send + 'static,
-        reply: Reply,
+        job: impl FnOnce(&History) -> Result<T, CoreError> + Send + 'static,
+        reply: Pending<T>,
     ) {
         let history = Arc::clone(&self.history);
         tokio::task::spawn_blocking(move || reply.send(job(&lock(&history))));
     }
 
-    pub fn history_list(&self, reply: Reply) {
-        self.beside(|history| out(history.list()?), reply);
+    pub fn history_list(&self, reply: Pending<Vec<Snapshot>>) {
+        self.beside(History::list, reply);
     }
 
-    pub fn history_save(&self, name: String, reply: Reply) {
+    pub fn history_save(&self, name: String, reply: Pending<Option<Snapshot>>) {
         let name = name.trim().to_owned();
         if name.is_empty() {
             return reply.send(Err(CoreError::bad_request("A version needs a name.")));
@@ -50,12 +49,12 @@ impl Actor {
         let root = self.project.root.clone();
         let save = move |history: &History| {
             history.take(&root, now(), Taken::Named(name))?;
-            out(history.list()?.first())
+            Ok(history.list()?.into_iter().next())
         };
         self.beside(save, reply);
     }
 
-    pub fn history_compare(&self, id: String, path: String, reply: Reply) {
+    pub fn history_compare(&self, id: String, path: String, reply: Pending<Vec<DiffLine>>) {
         if !texlocal_latex::is_text(&path) {
             let refused = CoreError::bad_request("Only a text file can be compared.");
             return reply.send(Err(refused));
@@ -70,7 +69,7 @@ impl Actor {
                 (None, Err(err)) if err.kind() == ErrorKind::NotFound => String::new(),
                 (None, read) => text(read?),
             };
-            out(compare(
+            Ok(compare(
                 &old.map_or(String::new(), |(_, bytes)| text(bytes)),
                 &new,
             ))
@@ -82,7 +81,7 @@ impl Actor {
         &mut self,
         id: &str,
         paths: Option<Vec<RelPath>>,
-    ) -> Result<Value, CoreError> {
+    ) -> Result<Option<DocumentEdits>, CoreError> {
         let open = self.texts_to_edit("restored")?;
         let chosen = |path: &str| {
             paths
@@ -95,7 +94,12 @@ impl Actor {
             match open.iter().find(|(open, ..)| *open == path) {
                 Some((_, text, version)) => {
                     if let Some(edit) = edit_to(text, &lf(lossy_string(bytes))) {
-                        edits.push(json!({ "path": path, "version": version, "edits": [edit] }));
+                        let version = *version;
+                        edits.push(DocumentEdits {
+                            path,
+                            version,
+                            edits: vec![edit],
+                        });
                     }
                 }
                 None if !self.deleting(&path) => others.push((path, bytes)),
@@ -112,6 +116,6 @@ impl Actor {
         if !written.is_empty() {
             self.reload_tree();
         }
-        Ok(json!({ "edits": edits.pop() }))
+        Ok(edits.pop())
     }
 }

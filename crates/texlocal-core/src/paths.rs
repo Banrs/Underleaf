@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
+use serde::Deserialize;
 pub(crate) use texlocal_latex::fold_case;
 
 use crate::error::CoreError;
@@ -128,8 +129,9 @@ pub fn rel_key(rel: &str) -> Result<String, CoreError> {
     Ok(safe_segments(rel)?.join("/"))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(try_from = "String")]
+#[schemars(inline)]
 pub(crate) struct RelPath(pub String);
 
 impl TryFrom<String> for RelPath {

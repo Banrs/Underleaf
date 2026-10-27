@@ -57,7 +57,7 @@ struct FilesList: View {
                         Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
                         Divider()
                     } else if node.kind == .tex {
-                        Button("Set as Main File") { Task { await project.patchSettings(.mainFile(node.path)) } }
+                        Button("Set as Main File") { Task { await project.patchSettings(SettingsPatch(mainFile: node.path)) } }
                             .disabled(node.main == true)
                         Divider()
                     }
@@ -220,11 +220,11 @@ struct OutlineList: View {
                 TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
                     disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
                 }) { node in
-                    HeadingRow(item: node.item, words: app.showWordCount ? node.words : nil).tag(node.id)
+                    HeadingRow(node: node, words: app.showWordCount ? node.words : nil).tag(node.id)
                         .simultaneousGesture(TapGesture().onEnded {
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
                             chosen = node.id == current ? nil : node.id
-                            project.reveal(node.item)
+                            project.reveal(node.heading)
                         })
                 }
             }
@@ -237,8 +237,8 @@ struct OutlineList: View {
             .overlay { if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") } }
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
-                let item = outline[id]
-                Task { await project.open(item.file, line: item.line, atTop: true, focus: true, jump: true) }
+                let heading = outline[id]
+                Task { await project.open(heading.file, line: heading.line, atTop: true, focus: true, jump: true) }
             }
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil
@@ -284,14 +284,15 @@ struct OutlineHeader: View {
 private let sidebarListRoom: CGFloat = 10
 
 private struct HeadingRow: View {
-    let item: OutlineItem
+    let node: OutlineNode
     let words: Int?
 
     var body: some View {
+        let heading = node.heading
         HStack {
-            Text(item.title)
-                .help(item.title)
-                .foregroundStyle(item.untitled ? .secondary : .primary)
+            Text(heading.title)
+                .help(heading.title)
+                .foregroundStyle(heading.untitled ? .secondary : .primary)
             if let words {
                 Spacer(minLength: 4)
                 Text(words, format: .number)
@@ -302,8 +303,8 @@ private struct HeadingRow: View {
         }
         .lineLimit(1)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(item.level)
-        .id(item.id)
+        .accessibilityValue(heading.level)
+        .id(node.id)
     }
 }
 

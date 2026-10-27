@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::logparse::{
     LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
@@ -37,7 +38,7 @@ const GLOSSARY_RULES: &str = "\
         $failed } \
     tl_rule('glo', 'gls'); tl_rule('acn', 'acr'); tl_rule('nlo', 'nls'); tl_rule('aux', 'glstex');";
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
     pub ok: bool,

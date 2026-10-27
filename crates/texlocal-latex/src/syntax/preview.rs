@@ -3,6 +3,7 @@ use std::ops::Range;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::SourceDocument;
@@ -10,7 +11,7 @@ use super::catalog::CATALOG;
 use super::scan::{Group, Visit, environment_name};
 use crate::utf16;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct MathPreview {
     pub(crate) start: u32,
     pub(crate) tex: String,

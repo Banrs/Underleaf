@@ -3,33 +3,34 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use texlocal_latex::analyze::{self, Facts};
-use texlocal_latex::{FileKind, file_kind, templates};
+use texlocal_latex::templates::ProjectTemplate;
+use texlocal_latex::{FileKind, file_kind};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
-use crate::projects::{self, ProjectInfo, Trash, is_litter, walk};
+use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
-use crate::settings::write_settings;
+use crate::settings::{Engine, SettingsPatch, write_settings};
 use crate::zipexport::left_out;
 use crate::{CoreError, SETTINGS_FILE, atomic};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ImportConflict {
     Replace,
     KeepBoth,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Imported {
     pub existing: Vec<Clash>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Clash {
     pub path: String,
@@ -44,9 +45,9 @@ enum Source {
 const MAX_UNZIPPED: u64 = 1 << 30;
 const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
 
-const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
+const ENGINE_PACKAGES: [(Engine, &[&str]); 2] = [
     (
-        "xelatex",
+        Engine::Xelatex,
         &[
             "fontspec",
             "unicode-math",
@@ -55,16 +56,15 @@ const ENGINE_PACKAGES: [(&str, &[&str]); 2] = [
             "mathspec",
         ],
     ),
-    ("lualatex", &["luacode", "luatexja", "luaotfload"]),
+    (Engine::Lualatex, &["luacode", "luatexja", "luaotfload"]),
 ];
 
-pub fn import_files(
+pub(crate) fn import_files(
     service: &Service,
     id: &str,
     dir: &str,
     paths: &[PathBuf],
     conflict: Option<ImportConflict>,
-    trash: Trash,
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
     for abs in paths {
@@ -92,13 +92,13 @@ pub fn import_files(
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
     }
-    let replace = (conflict == Some(ImportConflict::Replace)).then_some(trash);
+    let replace = conflict == Some(ImportConflict::Replace);
     for (path, source) in files {
         let path = match conflict {
             Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
             _ => path,
         };
-        save(service, id, &in_folder(dir, &path), &source, replace)?;
+        save(service, id, &root, &in_folder(dir, &path), &source, replace)?;
     }
     Ok(Imported { existing })
 }
@@ -171,14 +171,14 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
 fn save(
     service: &Service,
     id: &str,
+    root: &Path,
     rel: &str,
     source: &Path,
-    replace: Option<Trash>,
+    replace: bool,
 ) -> Result<(), CoreError> {
-    let root = service.project(id)?.root;
-    let abs = paths::safe_write_path(&root, rel)?;
+    let abs = paths::safe_write_path(root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
-    let (mut file, temp) = atomic::create_temp(folder.unwrap_or(&root))?;
+    let (mut file, temp) = atomic::create_temp(folder.unwrap_or(root))?;
     let mut origin = File::open(source).map_err(CoreError::at(source))?;
     io::copy(&mut origin, &mut file)?;
     file.sync_all()?;
@@ -187,10 +187,10 @@ fn save(
         let root = &project.root;
         let abs = paths::safe_write_path(root, rel)?;
         if let Some(taken) = occupant(root, &rel_key(rel)?) {
-            let Some(trash) = replace else {
+            if !replace {
                 return Err(CoreError::conflict(format!("“{taken}” already exists")));
-            };
-            projects::discard_replaced(project, &taken, trash)?;
+            }
+            projects::discard_replaced(project, &taken)?;
         }
         fs::create_dir_all(abs.parent().unwrap_or(root))?;
         atomic::rename_exclusive(&temp, &abs)?;
@@ -294,7 +294,10 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
     analyze::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
 }
 
-pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Value, CoreError> {
+pub(crate) fn guessed_settings(
+    root: &Path,
+    chosen: Option<&str>,
+) -> Result<SettingsPatch, CoreError> {
     let chosen = chosen.filter(|main| !main.starts_with('-'));
     let (named_root, program) = chosen
         .map(|chosen| magic_comments(&root.join(chosen)))
@@ -309,23 +312,24 @@ pub(crate) fn guessed_settings(root: &Path, chosen: Option<&str>) -> Result<Valu
     let main_path = main.as_ref().map(|main| root.join(main));
     let program = program.or_else(|| magic_comments(main_path.as_ref()?).1);
     let program = program.unwrap_or_default().to_lowercase();
-    let named = ["xelatex", "lualatex", "pdflatex"]
-        .into_iter()
-        .find(|engine| program.contains(engine));
+    let named = [
+        ("xelatex", Engine::Xelatex),
+        ("lualatex", Engine::Lualatex),
+        ("pdflatex", Engine::Pdflatex),
+    ]
+    .into_iter()
+    .find_map(|(name, engine)| program.contains(name).then_some(engine));
     let engine = named.or_else(|| {
         let facts = Facts::read(&fs::read_to_string(main_path?).ok()?, FileKind::Tex);
         let loads = |names: &[&str]| facts.packages.iter().any(|p| names.contains(&p.as_str()));
         let needed = ENGINE_PACKAGES.into_iter().find(|(_, names)| loads(names));
         needed.map(|(engine, _)| engine)
     });
-    let mut settings = json!({});
-    if let Some(main) = main {
-        settings["mainFile"] = main.into();
-    }
-    if let Some(engine) = engine {
-        settings["engine"] = engine.into();
-    }
-    Ok(settings)
+    Ok(SettingsPatch {
+        main_file: main,
+        engine,
+        ..SettingsPatch::default()
+    })
 }
 
 pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
@@ -346,10 +350,10 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
     projects::new_project(&service.data_dir, &base, |root| {
         write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
-        if settings.get("mainFile").is_none() {
-            let (file, content) = templates::files("blank")[0];
+        if settings.main_file.is_none() {
+            let (file, content) = ProjectTemplate::Blank.files()[0];
             fs::write(root.join(file), content)?;
-            settings["mainFile"] = file.into();
+            settings.main_file = Some(file.into());
         }
         write_settings(&root.join(SETTINGS_FILE), &settings)?;
         Ok(())

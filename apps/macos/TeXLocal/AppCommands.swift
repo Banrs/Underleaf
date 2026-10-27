@@ -132,12 +132,12 @@ private struct BuildOptionItems: View {
 
     var body: some View {
         let project = app.commandProject
-        option("Shell Escape", project, \.shellEscape, SettingsChange.shellEscape)
-        option("Stop on First Error", project, \.stopOnFirstError, SettingsChange.stopOnFirstError)
+        option("Shell Escape", project, \.shellEscape) { SettingsPatch(shellEscape: $0) }
+        option("Stop on First Error", project, \.stopOnFirstError) { SettingsPatch(stopOnFirstError: $0) }
     }
 
     private func option(_ title: LocalizedStringKey, _ project: ProjectModel?, _ setting: KeyPath<ProjectSettings, Bool>,
-                        _ change: @escaping (Bool) -> SettingsChange) -> some View {
+                        _ change: @escaping (Bool) -> SettingsPatch) -> some View {
         let isOn = project?.settings?[keyPath: setting]
         return Toggle(title, isOn: Binding(get: { isOn ?? false }, set: { on in
             if let project { Task.immediate { await project.patchSettings(change(on)) } }
@@ -152,7 +152,7 @@ private struct SetMainFileItem: View {
     var body: some View {
         let project = app.commandProject
         Button("Set as Main File") {
-            if let project, let path = project.openPath { Task { await project.patchSettings(.mainFile(path)) } }
+            if let project, let path = project.openPath { Task { await project.patchSettings(SettingsPatch(mainFile: path)) } }
         }
         .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
     }

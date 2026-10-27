@@ -285,10 +285,9 @@ struct EnginePicker: View {
     var body: some View {
         let engine = project?.settings?.engine
         Picker("Engine", selection: Binding(get: { engine }, set: { new in
-            if let project, let new { Task.immediate { await project.patchSettings(.engine(new)) } }
+            if let project, let new { Task.immediate { await project.patchSettings(SettingsPatch(engine: new)) } }
         })) {
-            ForEach(TeXEngine.allCases) { Text($0.title).tag(Optional($0.id)) }
-            if project != nil, !TeXEngine.allCases.contains(where: { $0.id == engine }) { Text(engine ?? "").tag(engine) }
+            ForEach(Engine.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
         }
         .disabled(engine == nil)
     }

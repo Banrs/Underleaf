@@ -1,6 +1,5 @@
 import AppKit
 import Observation
-import UniformTypeIdentifiers
 
 @Observable
 final class ProjectModel {
@@ -11,7 +10,7 @@ final class ProjectModel {
     private(set) var initialLoadComplete = false
     var openPath: String? { didSet { if openPath != oldValue { openKindChanged() } } }
     private(set) var openKind: FileKind?
-    private(set) var outline: [OutlineItem] = []
+    private(set) var outline: [Heading] = []
     private(set) var outlineTree: [OutlineNode] = []
     private(set) var headingStyles = HeadingStyle.standard
     var words: Int?
@@ -24,20 +23,20 @@ final class ProjectModel {
     @ObservationIgnored private var caretMoved = false
     var trail = Trail()
 
-    @ObservationIgnored private(set) var session: UInt64?
+    @ObservationIgnored private(set) var session: SessionClient?
     @ObservationIgnored private var root: URL?
-    private var documents: [String: OpenDocument] = [:]
-    private struct OpenDocument {
+    private var documents: [String: Doc] = [:]
+    private struct Doc {
         var state: DocumentState?
         var heldReason: String?
-        var lineIssues: [Int: IssuesEvent.Line] = [:], liveIssues: [Int: IssuesEvent.Line] = [:]
+        var lineIssues: [Int: IssueLine] = [:], liveIssues: [Int: IssueLine] = [:]
     }
     @ObservationIgnored private var composingPath: String?
     @ObservationIgnored private var treeChanged = false
 
     var compiling = false
     var outdated = false
-    var fixing: LogItem.Fix?
+    var fixing: Fix?
     var result: CompileResult?
     var checks: [LogItem] = []
     var chosenIssue: Int?
@@ -61,20 +60,17 @@ final class ProjectModel {
     var importClash: ImportClash?
 
     var expandedFolders: Set<String> = [] {
-        didSet { if expandedFolders != oldValue { saveUIState(["expandedFolders": expandedFolders.sorted()]) } }
+        didSet { if expandedFolders != oldValue { saveUIState(UiPatch(expandedFolders: expandedFolders.sorted())) } }
     }
     var foldedHeadings: Set<String> = [] {
-        didSet { if foldedHeadings != oldValue { saveUIState(["foldedHeadings": foldedHeadings.sorted()]) } }
+        didSet { if foldedHeadings != oldValue { saveUIState(UiPatch(foldedHeadings: foldedHeadings.sorted())) } }
     }
-    @ObservationIgnored private var showingUIState = false
-    @ObservationIgnored var uiStateWrites: Task<Void, Never>?
 
     let search = ProjectSearch()
 
     let editor = SourceEditor()
     private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
-    let core = Core.shared
     @ObservationIgnored private var analysis: Analysis?
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
@@ -92,10 +88,10 @@ final class ProjectModel {
         self.id = id
         name = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
-        tree = FileTree(id: id)
+        tree = FileTree()
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
             guard let self else { return }
-            if let session { core.send("session_live_log", ["session": session, "shown": shown]) }
+            session?.send(LiveLog(shown: shown))
             if !shown { texpresso.logClosed() }
         }
         tree.onChange = { [weak self] in self?.openKindChanged() }
@@ -138,39 +134,37 @@ final class ProjectModel {
 
     let notices = ProjectNotices()
 
-    func savePlace() async {
+    func savePlace() {
         guard initialLoadComplete else { return }
-        saveUIState(["file": openPath, "line": cursorLine, "page": pdf.keptPage, "zoom": pdf.keptZoom.json, "panel": panel.shown])
-        await uiStateWrites?.value
+        let place = UiPlace(file: openPath, line: cursorLine, page: pdf.keptPage, zoom: pdf.keptZoom, panel: panel.shown)
+        saveUIState(UiPatch(place: place))
     }
 
     func load() async {
         connectEditor()
-        let session = core.observe { [weak self] event in self?.handle(event) }
-        async let pdfShown = showBuildPDF(try? await core.call("pdf_path", ["id": id], as: String.self))
-        let ui: UIState
+        let session = SessionClient { [weak self] event in self?.handle(event) }
+        let opened: SessionOpened
         do {
-            let opened = try await core.call("session_open", ["id": id, "session": session, "autoCompile": app?.autoCompile ?? false],
-                                             as: SessionOpened.self)
+            opened = try await session.call(OpenProject(id: id, autoCompile: app?.autoCompile ?? false))
             guard !closed else { throw CancellationError() }
-            self.session = session
-            name = opened.name
-            root = URL(filePath: opened.root, directoryHint: .isDirectory)
-            settings = opened.settings
-            ui = opened.ui
-            showUIState(ui)
-            (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
-            if !treeChanged { tree.show(opened.tree) }
-            let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
-            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
         } catch {
-            core.forget(session)
-            core.send("session_close", ["session": session])
+            session.discard()
             guard !closed else { return }
             app?.report(error, "Couldn’t Open “\(name)”")
             if app?.project === self { await app?.close() }
             return
         }
+        let ui = opened.ui
+        name = opened.name
+        root = URL(filePath: opened.root, directoryHint: .isDirectory)
+        settings = opened.settings
+        (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
+        self.session = session
+        async let pdfShown = showBuildPDF(try? await session.call(PdfPath()))
+        (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
+        if !treeChanged { tree.show(opened.tree) }
+        let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
+        if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
         _ = await pdfShown
         guard !closed else { return }
         initialLoadComplete = true
@@ -224,57 +218,58 @@ final class ProjectModel {
 
     func autoCompileChanged() {
         guard let session, !closed else { return }
-        core.send("session_set_options", ["session": session, "autoCompile": app?.autoCompile ?? false])
+        session.send(SetOptions(autoCompile: app?.autoCompile ?? false))
     }
 
-    private func saveUIState(_ patch: [String: any Sendable]) {
-        guard !showingUIState, !closed else { return }
-        _ = enqueue(&uiStateWrites) { [core, id] in try? await core.call("set_ui_state", ["id": id, "patch": patch]) }
-    }
-
-    func showUIState(_ state: UIState) {
-        showingUIState = true
-        (expandedFolders, foldedHeadings) = (Set(state.expandedFolders), Set(state.foldedHeadings))
-        showingUIState = false
-    }
-
-    func handle(_ event: SessionEvent) {
+    private func saveUIState(_ patch: UiPatch) {
         guard !closed else { return }
+        session?.send(SetUiState(patch: patch))
+    }
+
+    func handle(_ heard: Heard) {
+        guard !closed else { return }
+        switch heard {
+        case .event(let event): handle(event)
+        case .live(let read): showLive(read)
+        }
+    }
+
+    private func handle(_ event: Event) {
         switch event {
         case .document(let state): documentChanged(state)
         case .outline(let analysis):
             self.analysis = analysis
             showOutline()
-        case .reload(let reloaded): reload(reloaded)
-        case .closed(let gone):
+        case .documentReload(let reloaded): reload(reloaded)
+        case .documentClosed(let gone):
             documents[gone.path] = nil
-            if openPath == gone.path, gone.reason != "closed" { clearOpenFile() }
-        case .renamed(let renamed):
+            if openPath == gone.path, gone.reason != .closed { clearOpenFile() }
+        case .documentRenamed(let renamed):
             documents[renamed.to] = documents.removeValue(forKey: renamed.from)
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .issues(let marked):
-            documents[marked.path, default: OpenDocument()].lineIssues = marked.byLine
+            documents[marked.path, default: Doc()].lineIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.lines = marked.byLine }
         case .liveIssues(let marked):
-            documents[marked.path, default: OpenDocument()].liveIssues = marked.byLine
+            documents[marked.path, default: Doc()].liveIssues = marked.byLine
             if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
-        case .checks(let found): inOrder { self.checks = found.items }
+        case .checks(let items): inOrder { self.checks = items }
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
-        case .tree(let listed):
+        case .tree(let nodes):
             treeChanged = true
-            tree.show(listed.tree)
+            tree.show(nodes)
             if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
-            if let main = Self.mainMarked(in: listed.tree), let current = settings?.mainFile, main != current {
+            if let main = Self.mainMarked(in: nodes), let current = settings?.mainFile, main != current {
                 settings?.mainFile = main
                 mainFileChanged()
             }
-        case .filesChanged(let changed):
-            if let openPath, !editsText, changed.paths.contains(openPath) { previewVersion += 1 }
-        case .live(let state): liveChanged(state)
-        case .livePDF(let read): showLive(read)
+        case .filesChanged(let paths):
+            if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
+        case .live(let live): liveChanged(live.state, alert: live.alert)
+        case .livePage, .liveDocument: break
         }
     }
 
@@ -284,7 +279,7 @@ final class ProjectModel {
 
     private func documentChanged(_ state: DocumentState) {
         let before = documents[state.path]?.state
-        documents[state.path, default: OpenDocument()].state = state
+        documents[state.path, default: Doc()].state = state
         if !state.held { documents[state.path]?.heldReason = nil }
         if let error = state.error, before?.error == nil {
             let title = notSavedTitle(state.path)
@@ -292,10 +287,10 @@ final class ProjectModel {
         }
     }
 
-    private func reload(_ event: ReloadEvent) {
+    private func reload(_ event: DocumentReload) {
         if editor.path == event.path {
             editor.reload(text: event.text)
-        } else if let session, let source = SourceDocument(session: session, path: event.path) {
+        } else if let session, let source = SourceDocument(session: session.id, path: event.path) {
             source.reload(event.text)
         }
     }
@@ -313,16 +308,16 @@ final class ProjectModel {
             if jump, let from = caretPlace { trail.jumped(from: from) }
             if path != openPath {
                 guard let session else { return }
-                if tree.node(at: path) == nil { await tree.reload() }
+                if tree.node(at: path) == nil { _ = try? await session.call(ReloadTree()) }
                 let text = isText(path)
                 do {
-                    if text { try await core.call("session_open_document", ["session": session, "path": path]) }
+                    if text { try await session.call(OpenDocument(path: path)) }
                 } catch {
                     if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
                     return
                 }
                 guard latest() else {
-                    if text { core.send("session_close_document", ["session": session, "path": path]) }
+                    if text { session.send(CloseDocument(path: path)) }
                     return
                 }
                 let was = editsText ? openPath : nil
@@ -336,7 +331,7 @@ final class ProjectModel {
     private func show(_ path: String, focus: Bool) {
         openPath = path
         guard editsText else { return }
-        guard let session, let source = SourceDocument(session: session, path: path) else { openPath = nil; return }
+        guard let session, let source = SourceDocument(session: session.id, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
         editor.textView.issues.lines = documents[path]?.lineIssues ?? [:]
         editor.textView.issues.live = documents[path]?.liveIssues ?? [:]
@@ -344,13 +339,13 @@ final class ProjectModel {
 
     func closeDocument(_ path: String) async {
         guard let session else { return }
-        await alerting(notSavedTitle(path)) { try await core.call("session_close_document", ["session": session, "path": path]) }
+        await alerting(notSavedTitle(path)) { try await session.call(CloseDocument(path: path)) }
     }
 
     private func composing(_ composing: Bool) {
         guard let session, let path = composing ? editor.path : composingPath else { return }
         composingPath = composing ? path : nil
-        core.send("session_composing", ["session": session, "path": path, "composing": composing])
+        session.send(Composing(path: path, composing: composing))
     }
 
     func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
@@ -363,50 +358,31 @@ final class ProjectModel {
     }
 
     private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        let into = openKind?.rawValue ?? ""
         guard let path = projectPath(url) else {
-            let type = UTType(filenameExtension: url.pathExtension)
-            let kind = type?.conforms(to: .pdf) == true ? "pdf" : type?.conforms(to: .image) == true ? "image" : ""
-            return Self.includeGraphics(url.lastPathComponent, kind: kind, into: into) == nil ? nil
-                : .copy { [weak self] in await self?.copyFigure(url) }
+            return includeGraphics(url.lastPathComponent) == nil ? nil : .copy { [weak self] in await self?.copyFigure(url) }
         }
-        guard let kind = tree.node(at: path)?.kind else { return nil }
-        if let insert = Self.includeGraphics(path, kind: kind.rawValue, into: into) { return .insert(insert) }
+        guard tree.node(at: path) != nil else { return nil }
+        if let insert = includeGraphics(path) { return .insert(insert) }
         return .open { [weak self] in Task { await self?.open(path) } }
     }
 
     private func copyFigure(_ url: URL) async -> String? {
         let folder = openPath?.parentFolder ?? ""
-        let args: [String: any Sendable] = ["id": id, "dir": folder, "paths": [url.path(percentEncoded: false)], "conflict": "keepBoth"]
-        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", {
-            try await core.call("import_files", args, as: Imported.self)
-        }) else { return nil }
-        await tree.reload()
+        let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
+        guard let session, let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
+        else { return nil }
         let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
-        guard let kind = tree.node(at: path)?.kind else { return nil }
-        return Self.includeGraphics(path, kind: kind.rawValue)
+        guard tree.node(at: path) != nil else { return nil }
+        return includeGraphics(path)
     }
 
-    static func includeGraphics(_ path: String, kind: String, into: String = "tex") -> String? {
-        guard into == "tex", ["image", "pdf"].contains(kind),
-              ["png", "jpg", "jpeg", "pdf"].contains((path as NSString).pathExtension.lowercased()) else { return nil }
-        var depth = 0
-        for character in path {
-            switch character {
-            case "%", "#", "\\": return nil
-            case "{": depth += 1
-            case "}": depth -= 1; if depth < 0 { return nil }
-            default: break
-            }
-        }
-        return depth == 0 ? "\\includegraphics{\(path)}" : nil
-    }
+    private func includeGraphics(_ path: String) -> String? { Syntax.call(IncludeGraphics(path: path, into: openPath ?? "")) ?? nil }
 
     @discardableResult
     func save(reporting: Bool = true) async -> Bool {
         guard let session, !closed else { return true }
         do {
-            return try await core.call("session_save", ["session": session, "reporting": reporting], as: Saved.self).saved
+            return try await session.call(Save(reporting: reporting))
         } catch {
             if reporting, !closed { app?.report(error, notSavedTitle()) }
             return false
@@ -434,15 +410,15 @@ final class ProjectModel {
 
     private func heading(at line: Int) -> Int? {
         guard let openPath else { return nil }
-        return outline.last { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }?.id
+        return outline.lastIndex { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }
     }
 
     func replaceAll() async {
         guard let session else { return }
         let asked = search.searched
-        let args = asked.arguments.merging(["session": session, "replacement": search.replacement]) { $1 }
+        let replace = Replace(query: asked.query, replacement: search.replacement, matchCase: asked.matchCase, wholeWord: asked.wholeWords)
         guard let answer = await alerting("Couldn’t Replace “\(asked.query)”", {
-            try await editProject("session_replace", args, named: String(localized: "Replace"))
+            try await editProject(replace, in: session, named: String(localized: "Replace"))
         }) else { return }
         let count = (answer.edits?.edits.count ?? 0) + answer.written.reduce(0) { $0 + $1.count }
         let files = answer.written.count + (answer.edits == nil ? 0 : 1)
@@ -455,7 +431,7 @@ final class ProjectModel {
         guard let session, let path = editor.path else { return }
         let offset = editor.textView.selection.location
         guard let found = await alerting("Couldn’t Find Usages", {
-            try await core.call("session_usages", ["session": session, "path": path, "offset": offset], as: Usages?.self)
+            try await session.call(FindUsages(path: path, offset: offset))
         }) else { return }
         guard let found else {
             NSSound.beep()
@@ -468,7 +444,7 @@ final class ProjectModel {
     func quickHelp(at offset: Int) async {
         guard let session, let path = editor.path else { return }
         guard let answer = await alerting("Couldn’t Show Quick Help", {
-            try await core.call("session_quick_help", ["session": session, "path": path, "offset": offset], as: QuickHelp?.self)
+            try await session.call(LookUp(path: path, offset: offset))
         }), editor.path == path else { return }
         guard let help = answer else {
             NSSound.beep()
@@ -490,67 +466,64 @@ final class ProjectModel {
 
     func renameSymbol(_ symbol: Definition, to name: String) async throws {
         guard let session else { return }
-        try await editProject("session_rename_symbol", ["session": session, "kind": symbol.kind, "from": symbol.name, "to": name],
-                              named: String(localized: "Rename"))
+        try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), in: session, named: String(localized: "Rename"))
     }
 
     func saveVersion(named name: String) async throws {
         guard let session else { return }
-        let saved = try await core.call("session_history_save", ["session": session, "name": name], as: Snapshot.self)
-        notices.note(String(localized: "Saved Version “\(saved.title)”"))
+        if let saved = try await session.call(SaveVersion(name: name)) { notices.note(String(localized: "Saved Version “\(saved.title)”")) }
     }
 
     func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
         guard let session else { return }
-        apply(try await core.call("session_history_restore", ["session": session, "id": snapshot.id, "paths": paths], as: Edited.self).edits,
-              named: String(localized: "Restore"))
+        apply(try await session.call(RestoreVersion(id: snapshot.id, paths: paths)), named: String(localized: "Restore"))
     }
 
     @discardableResult
-    private func editProject(_ command: String, _ args: [String: any Sendable], named name: String) async throws -> ProjectEdits {
-        let answer = try await core.call(command, args, as: ProjectEdits.self)
+    private func editProject<R: SessionRequest>(_ request: R, in session: SessionClient, named name: String) async throws -> ProjectEdits
+        where R.Reply == ProjectEdits {
+        let answer = try await session.call(request)
         if apply(answer.edits, named: name) { return answer }
-        if let session, let snapshot = answer.snapshot, !answer.written.isEmpty {
-            _ = try await core.call("session_history_restore", ["session": session, "id": snapshot, "paths": answer.written.map(\.file)],
-                                    as: Edited.self)
+        if let snapshot = answer.snapshot, !answer.written.isEmpty {
+            try await session.call(RestoreVersion(id: snapshot, paths: answer.written.map(\.file)))
         }
-        throw CoreError(message: String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
+        throw CoreError(kind: .conflict, message: String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
     }
 
     @discardableResult
-    private func apply(_ edits: ProjectEdits.Document?, named name: String) -> Bool {
+    private func apply(_ edits: DocumentEdits?, named name: String) -> Bool {
         guard let edits else { return true }
-        guard edits.path == editor.path, edits.version == editor.textView.document.version else { return false }
+        guard edits.path == editor.path, editor.textView.document.version == edits.version else { return false }
         editor.textView.apply(edits.edits, named: name)
         return true
     }
 
-    func run(_ fix: LogItem.Fix) async {
+    func run(_ fix: Fix) async {
         guard let session else { return }
         fixing = fix
         defer { fixing = nil }
-        let answer: Edited?
+        let answer: Fixed?
         do {
-            answer = try await core.call("session_fix", ["session": session, "id": fix.id], as: Edited?.self)
+            answer = try await session.call(ApplyFix(id: fix.id))
         } catch {
             if !closed { app?.report(error, "Couldn’t \(fix.title)") }
             return
         }
         guard let answer, !closed else { return }
         apply(answer.edits, named: fix.title)
-        if let updated = answer.settings { settings = updated }
+        settings = answer.settings
         await compile()
     }
 
-    func answer(_ path: String, _ answer: String, holding reason: String? = nil) {
+    func answer(_ path: String, _ answer: Resolution, holding reason: String? = nil) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
-        if let reason { documents[path, default: OpenDocument()].heldReason = reason }
-        if answer == "close", openPath == path { clearOpenFile() }
+        if let reason { documents[path, default: Doc()].heldReason = reason }
+        if answer == .close, openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
             await alerting(notSavedTitle(path)) {
-                try await core.call("session_resolve", ["session": session, "path": path, "answer": answer])
+                try await session.call(Resolve(path: path, answer: answer))
             }
         }
     }
@@ -566,15 +539,13 @@ final class ProjectModel {
                 closing = nil
                 if !closed { editor.textView.isEditable = editable }
             }
-            await uiStateWrites?.value
             if let session {
                 do {
-                    guard try await core.call("session_close", ["session": session], as: Saved.self).saved else { return false }
+                    guard try await session.close() else { return false }
                 } catch {
                     app?.report(error, notSavedTitle())
                     return false
                 }
-                core.forget(session)
             }
             closed = true
             let undo = app?.undoManager
@@ -583,7 +554,6 @@ final class ProjectModel {
             trashed = []
             removeExport()
             notices.cancel()
-            tree.close()
             syncTask?.cancel()
             pdfLoad?.cancel()
             liveLogWatch?.cancel()
@@ -596,14 +566,14 @@ final class ProjectModel {
 
     @ObservationIgnored private var settingsPatches = 0
 
-    @discardableResult func patchSettings(_ change: SettingsChange) async -> Bool {
+    @discardableResult func patchSettings(_ patch: SettingsPatch) async -> Bool {
         guard let session, !closed else { return false }
         settingsPatches += 1
-        let patch = settingsPatches, before = settings
-        if settings != nil { change.apply(&settings!) }
-        let latest = { patch == self.settingsPatches }
+        let number = settingsPatches, before = settings
+        settings?.apply(patch)
+        let latest = { number == self.settingsPatches }
         guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
-            try await core.call("session_set_settings", ["session": session, "patch": change.patch], as: ProjectSettings.self)
+            try await session.call(SetSettings(patch: patch))
         }) else {
             if !closed, latest() { settings = before }
             return false
@@ -615,33 +585,11 @@ final class ProjectModel {
     }
 
     func mainFileChanged() {
-        Task { if let path = try? await core.call("pdf_path", ["id": id], as: String.self) { await showBuildPDF(path) } }
+        Task { if let path = try? await session?.call(PdfPath()) { await showBuildPDF(path) } }
     }
 
-    func reveal(_ item: OutlineItem) {
-        guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
-        Task { await open(item.file, line: item.line, atTop: true, focus: false, jump: true) }
+    func reveal(_ heading: Heading) {
+        guard heading.file != openPath || cursorLine != heading.line || topLine != heading.line else { return }
+        Task { await open(heading.file, line: heading.line, atTop: true, focus: false, jump: true) }
     }
-}
-
-private nonisolated struct ProjectEdits: Decodable {
-    nonisolated struct Document: Decodable {
-        var path: String
-        var version: Int
-        var edits: [TextEdit]
-    }
-
-    nonisolated struct Written: Decodable {
-        var file: String
-        var count: Int
-    }
-
-    var edits: Document?
-    var written: [Written]
-    var snapshot: String?
-}
-
-private nonisolated struct Edited: Decodable {
-    let edits: ProjectEdits.Document?
-    let settings: ProjectSettings?
 }

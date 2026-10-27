@@ -1,26 +1,47 @@
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::Serialize;
 use texlocal_latex::analyze::{Facts, Place};
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
 use texlocal_latex::{FileKind, file_kind};
 
-use super::Reply;
+use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::scans::tex;
 use crate::paths::Project;
-use crate::projects;
-use crate::settings;
+use crate::projects::{self, Written};
+use crate::settings::{self, Engine, ProjectSettings, SettingsPatch};
 use crate::{CoreError, packages};
 
 pub(super) const ONE_DOCUMENT: &str =
     "Only one open document can be edited at once: close the others first.";
 
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct ProjectEdits {
+    edits: Option<DocumentEdits>,
+    written: Vec<Written>,
+    snapshot: Option<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct DocumentEdits {
+    pub path: String,
+    pub version: u64,
+    pub edits: Vec<TextEdit>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct Fixed {
+    edits: Option<DocumentEdits>,
+    settings: ProjectSettings,
+}
+
 impl Actor {
-    pub fn replace(&self, query: &Query, to: &str) -> Result<Value, CoreError> {
+    pub fn replace(&self, query: &Query, to: &str) -> Result<ProjectEdits, CoreError> {
         let open = self.texts_to_edit("replaced")?;
         let found = |_: &str, text: &str| query.places(text);
         self.edit_project(
@@ -37,7 +58,7 @@ impl Actor {
         kind: SymbolKind,
         from: &str,
         to: &str,
-    ) -> Result<Value, CoreError> {
+    ) -> Result<ProjectEdits, CoreError> {
         let noun = match kind {
             SymbolKind::Label => "label",
             SymbolKind::Citation => "citation",
@@ -78,33 +99,37 @@ impl Actor {
         self.edit_project("Before Rename", &open, &tex, &found, to)
     }
 
-    pub fn fix(&mut self, fix: Fix, reply: Reply) {
+    pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
         let edits = match fix {
             Fix::Install(file) => {
                 let (service, project) = (Arc::clone(&self.service), self.project.clone());
                 tokio::spawn(async move {
                     let installed = packages::install_package(&file, &service.tool_paths().0).await;
                     reply.send(match installed {
-                        Err(err) if err.kind == crate::ErrorKind::Denied => Ok(Value::Null),
-                        installed => installed.map(|_| fixed(Value::Null, &project)),
+                        Err(err) if err.kind == crate::ErrorKind::Denied => Ok(None),
+                        installed => installed.map(|_| Some(fixed(None, &project))),
                     });
                 });
                 return;
             }
-            Fix::AddPackage(name) => self
-                .add_package(&name)
-                .map(|mut added| added["edits"].take()),
-            Fix::Xelatex => self
-                .set_settings(&json!({ "engine": "xelatex" }), false)
-                .map(|_| Value::Null),
-            Fix::ShellEscape => self
-                .set_settings(&json!({ "shellEscape": true }), false)
-                .map(|_| Value::Null),
+            Fix::AddPackage(name) => self.add_package(&name).map(|added| added.edits),
+            Fix::Xelatex => self.patch_settings(SettingsPatch {
+                engine: Some(Engine::Xelatex),
+                ..SettingsPatch::default()
+            }),
+            Fix::ShellEscape => self.patch_settings(SettingsPatch {
+                shell_escape: Some(true),
+                ..SettingsPatch::default()
+            }),
         };
-        reply.send(edits.map(|edits| fixed(edits, &self.project)));
+        reply.send(edits.map(|edits| Some(fixed(edits, &self.project))));
     }
 
-    fn add_package(&self, name: &str) -> Result<Value, CoreError> {
+    fn patch_settings(&mut self, patch: SettingsPatch) -> Result<Option<DocumentEdits>, CoreError> {
+        self.set_settings(&patch, false).map(|_| None)
+    }
+
+    fn add_package(&self, name: &str) -> Result<ProjectEdits, CoreError> {
         let main = self.tree.main.as_deref();
         let open = self.texts_to_edit("added")?;
         let found = |_: &str, text: &str| {
@@ -141,9 +166,9 @@ impl Actor {
         chosen: &dyn Fn(&str) -> bool,
         found: &dyn Fn(&str, &str) -> Vec<Place>,
         to: &str,
-    ) -> Result<Value, CoreError> {
+    ) -> Result<ProjectEdits, CoreError> {
         let open = open.iter().filter(|(path, ..)| chosen(path));
-        let mut edits: Vec<Value> = open
+        let mut edits: Vec<DocumentEdits> = open
             .filter_map(|(path, text, version)| {
                 let lines = Text::new(text).lines;
                 let edit = |place: Place| TextEdit {
@@ -152,8 +177,11 @@ impl Actor {
                     text: to.to_owned(),
                 };
                 let edits: Vec<TextEdit> = found(path, text).into_iter().map(edit).collect();
-                (!edits.is_empty())
-                    .then(|| json!({ "path": path, "version": version, "edits": edits }))
+                (!edits.is_empty()).then(|| DocumentEdits {
+                    path: path.clone(),
+                    version: *version,
+                    edits,
+                })
             })
             .collect();
         if edits.len() > 1 {
@@ -164,10 +192,17 @@ impl Actor {
         let written = self.service.with_project(&self.project_id, |project| {
             projects::replace_in_files(&project.root, &others, found, to)
         })?;
-        Ok(json!({ "edits": edits.pop(), "written": written, "snapshot": snapshot }))
+        Ok(ProjectEdits {
+            edits: edits.pop(),
+            written,
+            snapshot,
+        })
     }
 }
 
-fn fixed(edits: Value, project: &Project) -> Value {
-    json!({ "edits": edits, "settings": settings::shown(project) })
+fn fixed(edits: Option<DocumentEdits>, project: &Project) -> Fixed {
+    Fixed {
+        edits,
+        settings: settings::shown(project),
+    }
 }

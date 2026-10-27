@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::{FileKind, file_kind};
 
@@ -23,7 +24,7 @@ pub(super) struct Folder {
     identity: Option<(u64, u64)>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Opening {
     pub project: ProjectInfo,
     pub file: Option<String>,

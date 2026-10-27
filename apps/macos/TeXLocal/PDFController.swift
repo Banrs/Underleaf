@@ -235,27 +235,6 @@ final class PDFController: NSObject {
         view.document = nil
         (page, pageCount) = (0, 0)
     }
-
-    nonisolated enum Zoom: Decodable, Hashable {
-        case fitWidth, fitPage, scale(Double)
-
-        init(from decoder: any Decoder) throws {
-            let value = try decoder.singleValueContainer()
-            if let scale = try? value.decode(Double.self) {
-                self = .scale(scale)
-            } else {
-                self = try value.decode(String.self) == "fitPage" ? .fitPage : .fitWidth
-            }
-        }
-
-        var json: any Sendable {
-            switch self {
-            case .fitWidth: "fitWidth"
-            case .fitPage: "fitPage"
-            case .scale(let scale): scale
-            }
-        }
-    }
 }
 
 extension PDFDocument {

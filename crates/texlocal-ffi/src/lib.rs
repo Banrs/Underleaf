@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use texlocal_core::CoreError;
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
-use texlocal_latex::syntax::{self, SourceDocument, TextRange};
+use texlocal_latex::syntax::{Source, SourceDocument, Syntax, TextRange};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -69,12 +69,10 @@ unsafe fn command_args<'a>(
 ) -> Result<(&'a str, Value), CoreError> {
     let command =
         unsafe { str_arg(command) }.ok_or_else(|| CoreError::bad_request("Invalid command"))?;
-    let args: Value = match unsafe { str_arg(args_json) } {
-        Some(text) => serde_json::from_str(text)
-            .map_err(|e| CoreError::bad_request(format!("Invalid JSON: {e}")))?,
-        None if args_json.is_null() => json!({}),
-        None => return Err(CoreError::bad_request("Arguments are not UTF-8")),
-    };
+    let args =
+        unsafe { str_arg(args_json) }.ok_or_else(|| CoreError::bad_request("Invalid arguments"))?;
+    let args = serde_json::from_str(args)
+        .map_err(|e| CoreError::bad_request(format!("Invalid JSON: {e}")))?;
     Ok((command, args))
 }
 
@@ -91,6 +89,24 @@ pub unsafe extern "C" fn tl_send(
     let _entered = handle.runtime.enter();
     caught(|| match unsafe { command_args(command, args_json) } {
         Ok((command, args)) => handle.sessions.send(id, command, args),
+        Err(err) => handle.sessions.refuse(id, err),
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_session_send(
+    handle: *const TlHandle,
+    id: u64,
+    session: u64,
+    command: *const c_char,
+    args_json: *const c_char,
+) {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return;
+    };
+    let _entered = handle.runtime.enter();
+    caught(|| match unsafe { command_args(command, args_json) } {
+        Ok((command, args)) => handle.sessions.send_to(id, session, command, args),
         Err(err) => handle.sessions.refuse(id, err),
     });
 }
@@ -122,6 +138,25 @@ unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut Tl
         .unwrap_or_default()
 }
 
+fn answered(body: impl FnOnce() -> Result<Value, CoreError>) -> *mut c_char {
+    let answer = caught(body).unwrap_or_else(|| Err(CoreError::internal("The editor panicked")));
+    let said = match answer {
+        Ok(ok) => json!({ "ok": ok }),
+        Err(error) => json!({ "error": error }),
+    };
+    c_json(said.to_string()).into_raw()
+}
+
+unsafe fn answer_on(
+    source: *mut TlSource,
+    body: impl FnOnce(&mut TlSource) -> Result<Value, CoreError>,
+) -> *mut c_char {
+    answered(|| match unsafe { source.as_mut() } {
+        Some(source) => body(source),
+        None => Err(CoreError::bad_request("No source")),
+    })
+}
+
 unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     if ptr.is_null() {
         return Cow::Borrowed("");
@@ -148,7 +183,12 @@ pub unsafe extern "C" fn tl_session_source(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
-    let doc = SourceDocument::new(&unsafe { text_arg(text, len) });
+    let text = unsafe { text_arg(text, len) };
+    own(|| SourceDocument::new(&text))
+}
+
+fn own(make: impl FnOnce() -> SourceDocument) -> *mut TlSource {
+    let doc = caught(make).unwrap_or_else(|| SourceDocument::new(""));
     Box::into_raw(Box::new(TlSource::Own(Box::new(doc))))
 }
 
@@ -169,9 +209,9 @@ pub unsafe extern "C" fn tl_source_edit(
             TlSource::Own(doc) => doc.apply_edit(start, length, &text, changing, mirroring),
             TlSource::Session(document) => document.edit(start, length, &text, changing, mirroring),
         };
-        (!mirrors.is_empty()).then(|| c_json(json!(mirrors).to_string()).into_raw())
+        Ok(json!(mirrors))
     };
-    unsafe { on_source(source, edit) }.unwrap_or(std::ptr::null_mut())
+    unsafe { answer_on(source, edit) }
 }
 
 #[unsafe(no_mangle)]
@@ -218,6 +258,30 @@ pub unsafe extern "C" fn tl_source_reload(
         TlSource::Session(document) => document.reload(&text),
     };
     unsafe { on_source(source, reload) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_restore(source: *mut TlSource, text: *const u8, len: usize) {
+    let text = unsafe { text_arg(text, len) };
+    let restore = |source: &mut TlSource| match source {
+        TlSource::Own(doc) => **doc = SourceDocument::new(&text),
+        TlSource::Session(document) => document.restore(&text),
+    };
+    unsafe { on_source(source, restore) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_version(source: *mut TlSource, version: *mut u64) -> bool {
+    let read = |source: &mut TlSource| match source {
+        TlSource::Own(_) => None,
+        TlSource::Session(document) => Some(document.version()),
+    };
+    let (Some(version), Some(read)) = (unsafe { (version.as_mut(), on_source(source, read)) })
+    else {
+        return false;
+    };
+    *version = read;
+    true
 }
 
 #[unsafe(no_mangle)]
@@ -269,18 +333,14 @@ pub unsafe extern "C" fn tl_source_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
+    let called = unsafe { command_args(command, args_json) };
     let call = |source: &mut TlSource| {
-        let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
-        match source {
-            TlSource::Session(document) if command == "version" => {
-                Some(document.version().to_string())
-            }
-            TlSource::Own(_) if command == "version" => Some("null".to_owned()),
-            _ => source.with(|doc| doc.call(command, args)),
-        }
+        let (command, args) = called?;
+        source
+            .with(|doc| Source::call(doc, command, args))
+            .map_err(CoreError::bad_request)
     };
-    let answer = unsafe { on_source(source, call) };
-    answer.map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
+    unsafe { answer_on(source, call) }
 }
 
 #[unsafe(no_mangle)]
@@ -288,13 +348,11 @@ pub unsafe extern "C" fn tl_syntax_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let call = || {
-        let (command, args) = unsafe { (str_arg(command)?, str_arg(args_json)?) };
-        syntax::call(command, args)
-    };
-    caught(call)
-        .flatten()
-        .map_or(std::ptr::null_mut(), |json| c_json(json).into_raw())
+    let called = unsafe { command_args(command, args_json) };
+    answered(|| {
+        let (command, args) = called?;
+        Syntax::call(command, args).map_err(CoreError::bad_request)
+    })
 }
 
 #[unsafe(no_mangle)]

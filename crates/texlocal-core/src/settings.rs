@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -12,13 +13,13 @@ use crate::paths::{Project, identity, safe_rel_file};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct ProjectSettings {
+pub struct StoredSettings {
     pub main_file: String,
     pub engine: Engine,
     pub stop_on_first_error: bool,
 }
 
-impl Default for ProjectSettings {
+impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             main_file: "main.tex".into(),
@@ -28,7 +29,7 @@ impl Default for ProjectSettings {
     }
 }
 
-impl ProjectSettings {
+impl StoredSettings {
     pub fn output(&self, build: &Path, ext: &str) -> Result<PathBuf, CoreError> {
         let main = safe_rel_file(&self.main_file)?;
         let base = Path::new(&main).file_stem().unwrap_or_default();
@@ -37,12 +38,15 @@ impl ProjectSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum Engine {
     #[default]
+    #[schemars(title = "pdfLaTeX")]
     Pdflatex,
+    #[schemars(title = "XeLaTeX")]
     Xelatex,
+    #[schemars(title = "LuaLaTeX")]
     Lualatex,
 }
 
@@ -60,8 +64,8 @@ impl Engine {
 #[serde(default)]
 struct ProjectFile {
     #[serde(flatten)]
-    settings: ProjectSettings,
-    ui: UiState,
+    settings: StoredSettings,
+    ui: StoredUi,
     #[serde(rename = "shellEscapeFor", skip_serializing_if = "Option::is_none")]
     shell_escape_for: Option<(u64, u64)>,
     #[serde(flatten)]
@@ -106,15 +110,20 @@ fn read_project(file: &Path) -> ProjectFile {
     load(file).unwrap_or_default()
 }
 
-pub fn read_settings(file: &Path) -> ProjectSettings {
+pub fn read_settings(file: &Path) -> StoredSettings {
     read_project(file).settings
 }
 
-pub fn write_settings(file: &Path, patch: &Value) -> Result<ProjectSettings, CoreError> {
+pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
-        let mut settings = merged(&file.settings, patch, "settings")?;
-        settings.main_file = safe_rel_file(&settings.main_file)?;
-        file.settings = settings;
+        let settings = &mut file.settings;
+        if let Some(main_file) = &patch.main_file {
+            settings.main_file = safe_rel_file(main_file)?;
+        }
+        settings.engine = patch.engine.unwrap_or(settings.engine);
+        settings.stop_on_first_error = patch
+            .stop_on_first_error
+            .unwrap_or(settings.stop_on_first_error);
         file.rest.remove("shellEscape");
         Ok(())
     })?;
@@ -134,27 +143,36 @@ pub fn grant(project: &Project, on: bool) -> Result<(), CoreError> {
     .map(drop)
 }
 
-pub fn shown(project: &Project) -> Value {
-    let settings = read_settings(&project.settings);
-    let mut shown = serde_json::to_value(settings).expect("settings as JSON");
-    shown["shellEscape"] = granted(project).into();
-    shown
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSettings {
+    main_file: String,
+    engine: Engine,
+    stop_on_first_error: bool,
+    shell_escape: bool,
 }
 
-fn merged<T: Serialize + DeserializeOwned>(
-    value: &T,
-    patch: &Value,
-    what: &str,
-) -> Result<T, CoreError> {
-    let Value::Object(patch) = patch else {
-        return Err(CoreError::bad_request(format!("Invalid {what}")));
-    };
-    let Ok(Value::Object(mut merged)) = serde_json::to_value(value) else {
-        unreachable!("{what} serialize as an object");
-    };
-    merged.extend(patch.clone());
-    T::deserialize(Value::Object(merged))
-        .map_err(|err| CoreError::bad_request(format!("Invalid {what}: {err}")))
+pub fn shown(project: &Project) -> ProjectSettings {
+    let StoredSettings {
+        main_file,
+        engine,
+        stop_on_first_error,
+    } = read_settings(&project.settings);
+    ProjectSettings {
+        main_file,
+        engine,
+        stop_on_first_error,
+        shell_escape: granted(project),
+    }
+}
+
+#[derive(Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub main_file: Option<String>,
+    pub engine: Option<Engine>,
+    pub stop_on_first_error: Option<bool>,
+    pub shell_escape: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -182,7 +200,7 @@ impl AppSettings {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct UiState {
+pub struct StoredUi {
     pub expanded_folders: Vec<String>,
     pub folded_headings: Vec<String>,
     pub file: Option<String>,
@@ -195,14 +213,37 @@ pub struct UiState {
     pub rest: Map<String, Value>,
 }
 
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UiState {
+    expanded_folders: Vec<String>,
+    folded_headings: Vec<String>,
+    file: Option<String>,
+    line: Option<u32>,
+    page: Option<u32>,
+    zoom: Option<Zoom>,
+    panel: bool,
+    live_preview: bool,
+}
+
 pub fn read_ui(file: &Path) -> UiState {
-    read_project(file).ui
+    let ui = read_project(file).ui;
+    UiState {
+        zoom: ui.zoom.as_ref().and_then(Zoom::read),
+        expanded_folders: ui.expanded_folders,
+        folded_headings: ui.folded_headings,
+        file: ui.file,
+        line: ui.line,
+        page: ui.page,
+        panel: ui.panel,
+        live_preview: ui.live_preview,
+    }
 }
 
 pub(crate) fn store_ui(
     file: &Path,
-    change: impl FnOnce(&mut UiState) -> Result<(), CoreError>,
-) -> Result<UiState, CoreError> {
+    change: impl FnOnce(&mut StoredUi) -> Result<(), CoreError>,
+) -> Result<StoredUi, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
         change(&mut file.ui)?;
         for list in [&mut file.ui.expanded_folders, &mut file.ui.folded_headings] {
@@ -214,19 +255,82 @@ pub(crate) fn store_ui(
     Ok(file.ui)
 }
 
-pub fn write_ui(file: &Path, patch: &Value) -> Result<UiState, CoreError> {
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UiPatch {
+    expanded_folders: Option<Vec<String>>,
+    folded_headings: Option<Vec<String>>,
+    place: Option<UiPlace>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UiPlace {
+    file: Option<String>,
+    line: Option<u32>,
+    page: Option<u32>,
+    zoom: Option<Zoom>,
+    panel: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub enum Zoom {
+    FitWidth,
+    FitPage,
+    Scale(f64),
+}
+
+impl Zoom {
+    fn stored(self) -> Value {
+        match self {
+            Self::FitWidth => "fitWidth".into(),
+            Self::FitPage => "fitPage".into(),
+            Self::Scale(scale) => scale.into(),
+        }
+    }
+
+    fn read(stored: &Value) -> Option<Self> {
+        match stored {
+            Value::Number(scale) => scale.as_f64().map(Self::Scale),
+            Value::String(fit) if fit == "fitPage" => Some(Self::FitPage),
+            Value::String(_) => Some(Self::FitWidth),
+            _ => None,
+        }
+    }
+}
+
+pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
     store_ui(file, |state| {
-        let live_preview = state.live_preview;
-        *state = UiState {
-            live_preview,
-            ..merged(state, patch, "ui state")?
-        };
+        let UiPatch {
+            expanded_folders,
+            folded_headings,
+            place,
+        } = patch;
+        if let Some(folders) = expanded_folders {
+            state.expanded_folders = folders;
+        }
+        if let Some(headings) = folded_headings {
+            state.folded_headings = headings;
+        }
+        if let Some(UiPlace {
+            file,
+            line,
+            page,
+            zoom,
+            panel,
+        }) = place
+        {
+            (state.file, state.line, state.page) = (file, line, page);
+            (state.zoom, state.panel) = (zoom.map(Zoom::stored), panel);
+        }
         Ok(())
     })
+    .map(drop)
 }
 
 pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
-    let before = read_ui(file);
+    let before = read_project(file).ui;
     let mut state = before.clone();
     for folder in &mut state.expanded_folders {
         if let Some(new) = moved(folder) {

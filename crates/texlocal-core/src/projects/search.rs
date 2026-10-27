@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::{Value, json};
 use texlocal_latex::analyze::Place;
 use texlocal_latex::{FileKind, file_kind, utf16};
 
@@ -16,7 +16,7 @@ use crate::{lf, lossy_string, newline};
 
 const SEARCH_FILE_MAX: u64 = 8 << 20;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct SearchHit {
     pub file: String,
     pub line: u32,
@@ -28,10 +28,16 @@ pub struct SearchHit {
     pub after: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct SearchGroup {
     pub file: String,
     pub hits: Vec<SearchHit>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Written {
+    file: String,
+    count: usize,
 }
 
 pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
@@ -117,7 +123,7 @@ pub(crate) fn replace_in_files(
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     to: &str,
-) -> Result<Vec<Value>, CoreError> {
+) -> Result<Vec<Written>, CoreError> {
     let replace = |abs: &Path, rel: &str| -> Result<Option<(String, usize, String)>, CoreError> {
         let Some(bytes) = read_capped(abs, cap(rel))? else {
             return Ok(None);
@@ -155,7 +161,7 @@ pub(crate) fn replace_in_files(
             abs,
             bytes: file.into_bytes(),
             was: Some(was.into_bytes()),
-            done: json!({ "file": rel, "count": count }),
+            done: Written { file: rel, count },
         });
         Ok(planned)
     })

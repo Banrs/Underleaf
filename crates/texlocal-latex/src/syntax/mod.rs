@@ -17,24 +17,28 @@ mod typing;
 
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use call::call;
+pub use call::{Source, Syntax};
 use complete::SnippetField;
 pub use complete::{Installed, SymbolKind, Symbols};
 pub use complete::{definitions, usages};
 use highlight::Highlight;
+pub use highlight::HighlightKind;
 
 use crate::utf16;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[repr(C)]
 pub struct TextRange {
     pub start: u32,
     pub length: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TextEdit {
     pub start: u32,
     pub length: u32,
@@ -68,14 +72,14 @@ fn splice(start: usize, length: usize, text: impl Into<String>) -> TextEdit {
     edit(start as u32, length as u32, text)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Checker {
     Spelling,
     WritingTools,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub(crate) struct Insertion {
     pub(crate) edit: TextEdit,
     pub(crate) caret: u32,

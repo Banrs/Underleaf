@@ -2,11 +2,7 @@ import Foundation
 import os
 import TeXLocalCore
 
-nonisolated struct CoreError: LocalizedError {
-    enum Kind: String, Decodable { case invalid, denied, notFound, conflict, unfit, unavailable, `internal` }
-
-    let message: String
-    var kind: Kind?
+nonisolated extension CoreError: LocalizedError {
     var errorDescription: String? { message }
 }
 
@@ -29,14 +25,14 @@ final class Core {
 
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
-    private static let unavailable = CoreError(message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
+    private static let unavailable = CoreError(kind: .unavailable, message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
     private init() {
         Task {
             for await (said, json) in Self.heard.stream {
                 switch said {
                 case .reply(let id): pending.removeValue(forKey: id)?(json)
-                case .event(let read): if let event = read.event { observers[read.session]?(event) }
+                case .event(let session, let heard): observers[session]?(heard)
                 }
             }
         }
@@ -48,39 +44,36 @@ final class Core {
 
     func reopen() { if handle == nil { handle = Self.open() } }
 
-    private func prepared(_ command: String, _ args: [String: any Sendable]) throws -> (OpaquePointer, String) {
+    private func prepared<R: WireRequest>(_ request: R) throws -> (OpaquePointer, String) {
         guard let handle else { throw Self.unavailable }
-        guard JSONSerialization.isValidJSONObject(args) else { throw Self.fault(command, "Arguments that aren't JSON") }
-        return (handle, String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self))
+        return (handle, String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
     }
 
     private var pending: [UInt64: (Data) -> Void] = [:]
     private var asked: UInt64 = 0
 
-    private func ask(_ handle: OpaquePointer, _ command: String, _ json: String, _ answered: @escaping (Data) -> Void) {
+    private func ask(_ sent: (UInt64) -> Void, _ answered: @escaping (Data) -> Void) {
         asked += 1
         pending[asked] = answered
-        tl_send(handle, asked, command, json)
+        sent(asked)
     }
 
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let answer: Result<T, CoreError>
 
-        private enum Keys: CodingKey { case ok, error, kind }
+        private enum Keys: CodingKey { case ok, error }
 
         init(from decoder: any Decoder) throws {
             let envelope = try decoder.container(keyedBy: Keys.self)
-            if let error = try envelope.decodeIfPresent(String.self, forKey: .error) {
-                answer = .failure(CoreError(message: error, kind: try? envelope.decodeIfPresent(CoreError.Kind.self, forKey: .kind)))
+            if let error = try envelope.decodeIfPresent(CoreError.self, forKey: .error) {
+                answer = .failure(error)
             } else {
                 answer = .success(try envelope.decode(T.self, forKey: .ok))
             }
         }
     }
 
-    private nonisolated struct Ignored: Decodable, Sendable { init(from decoder: any Decoder) {} }
-
-    private nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
+    nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
         let answer: Result<T, CoreError>
         do {
             answer = try JSONDecoder().decode(Envelope<T>.self, from: envelope).answer
@@ -94,30 +87,37 @@ final class Core {
 
     private nonisolated static func fault(_ command: String, _ problem: String) -> CoreError {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")
-        return CoreError(message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
+        return CoreError(kind: .internal, message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
-    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: any Sendable] = [:], as: T.Type) async throws -> T {
-        let (handle, json) = try prepared(command, args)
-        return try await withCheckedThrowingContinuation { done in
-            ask(handle, command, json) { envelope in
-                done.resume(with: Result { try Self.decoded(command, envelope) })
+    @discardableResult
+    func call<R: LibraryRequest>(_ request: R) async throws -> R.Reply {
+        let (handle, json) = try prepared(request)
+        return try await answer(R.self) { tl_send(handle, $0, R.command, json) }
+    }
+
+    @discardableResult
+    func call<R: SessionRequest>(_ request: R, in session: UInt64) async throws -> R.Reply {
+        let (handle, json) = try prepared(request)
+        return try await answer(R.self) { tl_session_send(handle, $0, session, R.command, json) }
+    }
+
+    private func answer<R: WireRequest>(_: R.Type, _ sent: (UInt64) -> Void) async throws -> R.Reply {
+        try await withCheckedThrowingContinuation { done in
+            ask(sent) { envelope in
+                done.resume(with: Result { try Self.decoded(R.command, envelope) })
             }
         }
     }
 
-    func call(_ command: String, _ args: [String: any Sendable]) async throws {
-        _ = try await call(command, args, as: Ignored?.self)
-    }
-
-    func send(_ command: String, _ args: [String: any Sendable]) {
+    func send<R: SessionRequest>(_ request: R, in session: UInt64) {
         let logged = { (error: any Error) in
-            Self.log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            Self.log.error("\(R.command, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
         do {
-            let (handle, json) = try prepared(command, args)
-            ask(handle, command, json) { envelope in
-                do { let _: Ignored? = try Self.decoded(command, envelope) } catch { logged(error) }
+            let (handle, json) = try prepared(request)
+            ask({ tl_session_send(handle, $0, session, R.command, json) }) { envelope in
+                do { let _: R.Reply = try Self.decoded(R.command, envelope) } catch { logged(error) }
             }
         } catch {
             logged(error)
@@ -128,7 +128,7 @@ final class Core {
 
     private nonisolated enum Said: Decodable {
         case reply(UInt64)
-        case event(EventRead)
+        case event(UInt64, Heard)
 
         private enum Keys: CodingKey { case reply }
 
@@ -136,7 +136,8 @@ final class Core {
             if let id = try decoder.container(keyedBy: Keys.self).decodeIfPresent(UInt64.self, forKey: .reply) {
                 self = .reply(id)
             } else {
-                self = .event(try EventRead(from: decoder))
+                let said = try SessionEvent(from: decoder)
+                self = .event(said.session, Heard(said.event))
             }
         }
     }
@@ -152,10 +153,10 @@ final class Core {
         }
     }
 
-    private var observers: [UInt64: (SessionEvent) -> Void] = [:]
+    private var observers: [UInt64: (Heard) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    func observe(_ observer: @escaping (SessionEvent) -> Void) -> UInt64 {
+    func observe(_ observer: @escaping (Heard) -> Void) -> UInt64 {
         numbered += 1
         observers[numbered] = observer
         return numbered
@@ -164,15 +165,38 @@ final class Core {
     func forget(_ session: UInt64) { observers[session] = nil }
 }
 
-nonisolated struct EventRead: Decodable {
-    let session: UInt64
-    let event: SessionEvent?
+final class SessionClient {
+    let id: UInt64
+    private let core = Core.shared
 
-    private enum Keys: CodingKey { case type, session }
+    init(_ observer: @escaping (Heard) -> Void) { id = core.observe(observer) }
 
-    init(from decoder: any Decoder) throws {
-        let head = try decoder.container(keyedBy: Keys.self)
-        session = try head.decode(UInt64.self, forKey: .session)
-        event = try SessionEvent(head.decode(String.self, forKey: .type), decoder)
+    @discardableResult
+    func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
+
+    func send<R: SessionRequest>(_ request: R) { core.send(request, in: id) }
+
+    func close() async throws -> Bool {
+        guard try await call(CloseProject()) else { return false }
+        core.forget(id)
+        return true
+    }
+
+    func discard() {
+        core.forget(id)
+        send(CloseProject())
+    }
+}
+
+nonisolated enum Heard: Sendable {
+    case event(Event)
+    case live(LiveRead)
+
+    init(_ event: Event) {
+        switch event {
+        case .liveDocument(let live): self = .live(LiveRead(live))
+        case .livePage(let live): self = .live(LiveRead(live))
+        default: self = .event(event)
+        }
     }
 }

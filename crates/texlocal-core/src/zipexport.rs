@@ -13,7 +13,11 @@ use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
 use crate::{SETTINGS_FILE, sys};
 
-pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Result<(), CoreError> {
+pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Result<(), CoreError> {
+    let added = match for_arxiv {
+        true => arxiv_files(project)?,
+        false => Vec::new(),
+    };
     let file = File::create(dest).map_err(CoreError::at(dest))?;
     let replaced = |rel: &str| {
         added
@@ -22,7 +26,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
     };
     let mut writer = ZipWriter::new(file);
     walk(
-        root,
+        &project.root,
         &|rel| !left_out(rel) && !replaced(rel),
         true,
         &mut |entry| {
@@ -38,7 +42,7 @@ pub fn export_zip(root: &Path, dest: &Path, added: &[(String, Vec<u8>)]) -> Resu
             Ok(true)
         },
     )?;
-    for (rel, bytes) in added {
+    for (rel, bytes) in &added {
         writer.start_file(rel, options(Ok(SystemTime::now())))?;
         writer.write_all(bytes)?;
     }
@@ -54,7 +58,8 @@ fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), 
     io::copy(&mut file, writer)?;
     Ok(())
 }
-pub(crate) fn for_arxiv(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
+
+fn arxiv_files(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     let settings = read_settings(&project.settings);
     if granted(project) {
         return Err(CoreError::conflict(

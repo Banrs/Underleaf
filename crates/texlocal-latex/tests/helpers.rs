@@ -1,6 +1,6 @@
 use texlocal_latex::diff::{
     self,
-    Row::{Added, Removed, Same, Skipped},
+    DiffLine::{Added, Removed, Same, Skipped},
 };
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::{Query, score};
@@ -13,18 +13,29 @@ fn a_diff_shows_three_lines_around_each_change() {
     let new = old.replace('e', "E");
     let rows = [
         Skipped(1),
-        Same("b"),
-        Same("c"),
-        Same("d"),
-        Removed("e"),
-        Added("E"),
+        Same("b".into()),
+        Same("c".into()),
+        Same("d".into()),
+        Removed("e".into()),
+        Added("E".into()),
     ];
-    let rows = rows
-        .into_iter()
-        .chain([Same("f"), Same("g"), Same("h"), Skipped(2)]);
+    let rows = rows.into_iter().chain([
+        Same("f".into()),
+        Same("g".into()),
+        Same("h".into()),
+        Skipped(2),
+    ]);
     assert_eq!(diff::compare(old, &new), rows.collect::<Vec<_>>());
     let inserted = diff::compare("a\nb\nc", "a\nx\nb\nc");
-    assert_eq!(inserted, [Same("a"), Added("x"), Same("b"), Same("c")]);
+    assert_eq!(
+        inserted,
+        [
+            Same("a".into()),
+            Added("x".into()),
+            Same("b".into()),
+            Same("c".into())
+        ]
+    );
     assert_eq!(diff::compare(old, old), []);
 }
 

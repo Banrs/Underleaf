@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use serde_json::{Value, json};
 use texlocal_latex::logparse::{Fix, LogItem, Severity};
 
 use super::actor::{Actor, Later, Timer};
-use super::{Document, Msg, Reply};
+use super::{Document, Msg, Pending};
 use crate::CoreError;
 use crate::compile::{CompileManager, CompileResult};
+use crate::events::{BuildFinished, BuildState, Event, FileIssues, IssueLine};
 use crate::paths::Project;
 use crate::paths::disk_spelling;
 use crate::service::Service;
@@ -56,12 +56,12 @@ pub(crate) struct Builds {
     issues: Vec<LogItem>,
     error_count: usize,
     checks: Option<Vec<LogItem>>,
-    checks_shown: Value,
+    checks_shown: Option<Vec<LogItem>>,
     checked: u64,
     result_edits: u64,
-    pub cleaners: Vec<Reply>,
+    pub cleaners: Vec<Pending<()>>,
     cleaning: Option<(bool, u64)>,
-    shown: Value,
+    shown: Option<BuildState>,
 }
 
 impl Builds {
@@ -154,9 +154,12 @@ impl Actor {
         if !result.stopped {
             self.live_rescan();
         }
-        let fields =
-            json!({ "auto": auto, "announce": announce, "outdated": outdated, "result": result });
-        self.emit("build_finished", fields);
+        self.emit(Event::BuildFinished(BuildFinished {
+            auto,
+            announce,
+            outdated,
+            result,
+        }));
         self.builds.compiling = false;
         if !self.builds.cleaners.is_empty() && self.builds.cleaning.is_none() {
             self.start_clean();
@@ -167,20 +170,16 @@ impl Actor {
         self.publish_build();
     }
 
-    fn build_state(&self) -> Value {
-        let builds = &self.builds;
-        json!({
-            "compiling": builds.compiling,
-            "auto": builds.compiling && builds.auto,
-            "outdated": builds.outdated,
-        })
-    }
-
     fn publish_build(&mut self) {
-        let state = self.build_state();
-        if state != self.builds.shown {
-            self.builds.shown = state.clone();
-            self.emit("build", state);
+        let builds = &self.builds;
+        let state = BuildState {
+            compiling: builds.compiling,
+            auto: builds.compiling && builds.auto,
+            outdated: builds.outdated,
+        };
+        if builds.shown != Some(state) {
+            self.builds.shown = Some(state);
+            self.emit(Event::Build(state));
         }
     }
 
@@ -191,7 +190,7 @@ impl Actor {
         }
     }
 
-    pub fn clean(&mut self, reply: Reply) {
+    pub fn clean(&mut self, reply: Pending<()>) {
         self.stop_compile();
         self.builds.cleaners.push(reply);
         if !self.builds.compiling && self.builds.cleaning.is_none() {
@@ -224,14 +223,14 @@ impl Actor {
             self.mark_issues();
             self.publish_checks();
             self.publish_build();
-            self.emit("build_cleaned", json!({}));
+            self.emit(Event::BuildCleaned);
         }
         let queued = self.builds.queued.take();
         if let Some(auto) = queued.or((result.is_ok() && self.auto_compile).then_some(true)) {
             self.later.push_back(Later::Compile(auto));
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
-            reply.send(result.clone().map(|()| Value::Null));
+            reply.send(result.clone());
         }
     }
 
@@ -245,10 +244,10 @@ impl Actor {
         if self.builds.checks.is_none() {
             return;
         }
-        let items = json!(self.builds.checks().collect::<Vec<_>>());
-        if items != self.builds.checks_shown {
-            self.builds.checks_shown = items.clone();
-            self.emit("checks", json!({ "items": items }));
+        let items: Vec<LogItem> = self.builds.checks().cloned().collect();
+        if self.builds.checks_shown.as_ref() != Some(&items) {
+            self.builds.checks_shown = Some(items.clone());
+            self.emit(Event::Checks(items));
         }
     }
 
@@ -257,7 +256,8 @@ impl Actor {
             && !doc.issues.is_empty()
         {
             doc.issues.clear();
-            self.emit("issues", json!({ "path": path, "lines": [] }));
+            let (path, lines) = (path.to_owned(), Vec::new());
+            self.emit(Event::Issues(FileIssues { path, lines }));
         }
     }
 
@@ -280,11 +280,14 @@ impl Actor {
             let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             if lines != doc.issues {
                 doc.issues.clone_from(&lines);
-                changed.push(json!({ "path": path, "lines": lines }));
+                changed.push(FileIssues {
+                    path: path.clone(),
+                    lines,
+                });
             }
         }
         for issues in changed {
-            self.emit("issues", issues);
+            self.emit(Event::Issues(issues));
         }
     }
 }
@@ -294,7 +297,7 @@ pub(super) fn issue_lines<'a>(
     path: &str,
     doc: &Document,
     index: impl Fn(u32) -> Option<usize>,
-) -> Vec<Value> {
+) -> Vec<IssueLine> {
     let mut lines: BTreeMap<u32, Vec<&LogItem>> = BTreeMap::new();
     for item in issues
         .into_iter()
@@ -314,17 +317,16 @@ pub(super) fn issue_lines<'a>(
         let tokens = command.map_or_else(Vec::new, |command| {
             doc.with(|source| source.command_ranges(line, command))
         });
-        let others: Vec<&str> = others.iter().map(|other| other.message.as_str()).collect();
-        json!({
-            "line": line,
-            "error": item.kind == Severity::Error,
-            "message": item.message,
-            "short": item.short,
-            "compact": compact,
-            "tokens": tokens,
-            "others": others,
-            "index": index(line),
-        })
+        IssueLine {
+            line,
+            error: item.kind == Severity::Error,
+            message: item.message.clone(),
+            short: item.short.clone(),
+            compact,
+            tokens,
+            others: others.iter().map(|other| other.message.clone()).collect(),
+            index: index(line),
+        }
     };
     lines.into_iter().map(line).collect()
 }

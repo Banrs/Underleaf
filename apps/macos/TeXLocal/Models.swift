@@ -1,41 +1,17 @@
 import Foundation
 
-nonisolated struct ProjectInfo: Decodable, Identifiable {
-    let id, name: String
-    let mtime: Double
-    let mainFile, path: String
-    let opened, missing: Bool
-
-    var modified: Date { Date(timeIntervalSince1970: mtime / 1000) }
+nonisolated extension ProjectInfo: Identifiable {
+    var modified: Date { Date(timeIntervalSince1970: Double(mtime) / 1000) }
     var folder: URL { URL(filePath: path, directoryHint: .isDirectory) }
 }
 
-enum ProjectTemplate: String, CaseIterable, Identifiable {
-    case blank, article, report, beamer
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .blank: "Blank"
-        case .article: "Article"
-        case .report: "Report"
-        case .beamer: "Presentation"
-        }
-    }
+nonisolated extension ProjectTemplate: Identifiable {
+    var id: Self { self }
 }
 
-nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
-    nonisolated enum Entry: String, Decodable { case file, dir }
-
-    let type: Entry
-    let name, path: String
-    var kind: FileKind?
-    var children: [TreeNode]?
-    var main: Bool?
-
+nonisolated extension TreeNode: Identifiable {
     var id: String { path }
-    var isDirectory: Bool { type == .dir }
+    var isDirectory: Bool { children != nil }
 
     var symbol: String {
         switch kind {
@@ -49,14 +25,8 @@ nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     }
 }
 
-nonisolated enum FileKind: String, Decodable, Sendable {
-    case tex, bib, image, pdf, text, other
-
+nonisolated extension FileKind {
     var isText: Bool { self == .tex || self == .bib || self == .text }
-
-    init(from decoder: any Decoder) throws {
-        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
-    }
 }
 
 extension [TreeNode] {
@@ -72,53 +42,20 @@ nonisolated extension NSRange {
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
 }
 
-nonisolated struct TexStatus: Decodable {
-    let available: Bool
-    var latexmkVersion: String?
-    var texDir, found, texpresso, texpressoDir: String?
-}
-
-nonisolated struct ProjectSettings: Decodable {
-    var mainFile, engine: String
-    var shellEscape, stopOnFirstError: Bool
-}
-
-nonisolated struct SettingsChange {
-    let patch: [String: any Sendable]
-    let apply: (inout ProjectSettings) -> Void
-
-    static func mainFile(_ path: String) -> Self { Self(patch: ["mainFile": path]) { $0.mainFile = path } }
-    static func engine(_ name: String) -> Self { Self(patch: ["engine": name]) { $0.engine = name } }
-    static func shellEscape(_ on: Bool) -> Self { Self(patch: ["shellEscape": on]) { $0.shellEscape = on } }
-    static func stopOnFirstError(_ on: Bool) -> Self {
-        Self(patch: ["stopOnFirstError": on]) { $0.stopOnFirstError = on }
+nonisolated extension ProjectSettings {
+    mutating func apply(_ patch: SettingsPatch) {
+        mainFile = patch.mainFile ?? mainFile
+        engine = patch.engine ?? engine
+        stopOnFirstError = patch.stopOnFirstError ?? stopOnFirstError
+        shellEscape = patch.shellEscape ?? shellEscape
     }
 }
 
-nonisolated struct LogItem: Decodable {
-    let type: String
-    let file: String?
-    let line: Int?
-    let message: String
-    let explain: String?
-    let fix: Fix?
-
-    var isError: Bool { type == "error" }
-
-    nonisolated struct Fix: Decodable, Equatable {
-        let id, title, help: String
-        let confirm: String?
-    }
+nonisolated extension LogItem {
+    var isError: Bool { kind == .error }
 }
 
-nonisolated struct CompileResult: Decodable {
-    let ok, stopped: Bool
-    let pdf: String?
-    let pdfChanged: Bool
-    let durationMs: Int
-    let errors, warnings, badBoxes: [LogItem]
-    let log: String
-
+nonisolated extension CompileResult {
     var failed: Bool { !ok && !stopped }
 
     var durationText: String {
@@ -127,33 +64,17 @@ nonisolated struct CompileResult: Decodable {
     }
 }
 
-nonisolated struct SearchHit: Decodable, Identifiable {
-    let file: String
-    let line, column, length: Int
-    let before, match, after: String
+nonisolated extension FileIssues {
+    var byLine: [Int: IssueLine] { Dictionary(lines.map { ($0.line, $0) }) { $1 } }
+}
 
+nonisolated extension SearchHit: Identifiable {
     var id: String { "\(file):\(line):\(before.count)" }
 }
 
-nonisolated struct SearchGroup: Decodable, Identifiable {
-    let file: String
-    let hits: [SearchHit]
-
+nonisolated extension SearchGroup: Identifiable {
     var id: String { file }
 }
-
-nonisolated struct Usages: Decodable {
-    let name: String
-    let groups: [SearchGroup]
-}
-
-nonisolated struct ForwardLoc: Decodable {
-    let page: Double
-    let h, v, width, height: Double?
-    var matches: [ForwardLoc]? = nil
-}
-
-nonisolated struct InverseLoc: Decodable { let file: String, line: Int, column: Int? }
 
 struct Place: Equatable {
     var path: String
@@ -190,50 +111,17 @@ struct Trail {
     }
 }
 
-nonisolated struct QuickHelp: Decodable {
-    let title, detail: String
-    let place: Definition.Place?
-}
-
 nonisolated struct SyncSource: Sendable {
-    let id, file: String
+    let session: UInt64
+    let file: String
     let line, column: Int
     var quietly = false
 }
 
-nonisolated struct PageHit: Decodable, Sendable { let page, start, end: Int }
-
-nonisolated struct PageClick: Equatable, Sendable { let text: String, at: Int }
-
-nonisolated struct Imported: Decodable {
-    nonisolated struct Clash: Decodable { let path, keepBoth: String }
-
-    let existing: [Clash]
-}
-
-nonisolated struct RenameResult: Decodable {
-    let from, to, mainFile: String
-    let ui: UIState
-}
-
-nonisolated struct Snapshot: Decodable, Identifiable {
-    nonisolated struct Change: Decodable {
-        nonisolated enum Kind: String, Decodable { case added, deleted, changed }
-
-        let path: String
-        let change: Kind
-    }
-
-    let id: String
-    private let time: Double
-    let name, reason: String?
-    let changed: [Change]
-
-    var date: Date { Date(timeIntervalSince1970: time / 1000) }
+nonisolated extension Snapshot: Identifiable {
+    var date: Date { Date(timeIntervalSince1970: Double(time) / 1000) }
     var title: String { name ?? reason ?? String(localized: "Automatic") }
 }
-
-nonisolated struct DiffLine: Decodable { let same, removed, added: String?; let skipped: Int? }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }

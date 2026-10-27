@@ -7,6 +7,7 @@ mod packages;
 mod paths;
 mod process;
 mod projects;
+pub mod protocol;
 pub mod service;
 pub mod session;
 mod settings;

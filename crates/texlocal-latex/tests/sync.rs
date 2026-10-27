@@ -36,10 +36,10 @@ fn synctex_goes_from_a_line_to_its_page_and_back() {
 
 #[test]
 fn a_word_is_found_in_the_pdf_by_the_words_around_it() {
-    let text = pages(json!([{ "page": 3, "text": "the world and the world turns" }]));
+    let text = pages(json!([{ "page": 3, "text": "the world and the world turns", "near": [] }]));
     let hit = in_pdf("the \\emph{world} turns", 11, &text);
     assert_eq!(hit, json!({ "page": 3, "start": 18, "end": 23 }));
-    let ligature = pages(json!([{ "page": 1, "text": "the ﬁrst" }]));
+    let ligature = pages(json!([{ "page": 1, "text": "the ﬁrst", "near": [] }]));
     assert_eq!(
         in_pdf("the first", 5, &ligature),
         json!({ "page": 1, "start": 4, "end": 8 })
@@ -48,9 +48,11 @@ fn a_word_is_found_in_the_pdf_by_the_words_around_it() {
 
 #[test]
 fn a_word_twice_in_the_pdf_needs_the_box_synctex_gives() {
-    let twice = json!([{ "page": 1, "text": "a cat. a cat." }]);
+    let twice = json!([{ "page": 1, "text": "a cat. a cat.", "near": [] }]);
     assert_eq!(in_pdf("cat", 1, &pages(twice)), Value::Null);
-    let near = pages(json!([{ "page": 1, "text": "a cat. a cat.", "near": [[9, 12]] }]));
+    let near = pages(
+        json!([{ "page": 1, "text": "a cat. a cat.", "near": [{ "start": 9, "length": 3 }] }]),
+    );
     assert_eq!(
         in_pdf("cat", 1, &near),
         json!({ "page": 1, "start": 9, "end": 12 })

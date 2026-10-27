@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             let left = await app.leave()
             if left {
-                try? await Core.shared.call("kill_all", [:])
+                _ = try? await Core.shared.call(KillAll())
             } else if mainWindow.window?.isVisible != true {
                 mainWindow.showWindow(nil)
             }

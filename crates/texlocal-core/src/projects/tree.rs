@@ -2,6 +2,7 @@ use std::fs;
 use std::io::ErrorKind::{NotFound, PermissionDenied};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::{FileKind, file_kind};
 
@@ -11,17 +12,14 @@ use crate::error::CoreError;
 use crate::paths::{Project, fold_case};
 use crate::settings::read_settings;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct TreeNode {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
     pub name: String,
     pub path: String,
-    #[serde(rename = "kind", skip_serializing_if = "Option::is_none")]
-    pub file_kind: Option<FileKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FileKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<Self>>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub main: bool,
 }
 
@@ -127,10 +125,9 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
                 None
             };
             found.push(TreeNode {
-                kind: if entry.dir { "dir" } else { "file" },
                 main: !entry.dir && fold_case(&entry.rel) == main,
                 path: entry.rel,
-                file_kind: (!entry.dir).then(|| file_kind(&entry.name)),
+                kind: (!entry.dir).then(|| file_kind(&entry.name)),
                 name: entry.name,
                 children,
             });

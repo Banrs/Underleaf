@@ -1,3 +1,6 @@
+use schemars::JsonSchema;
+use serde::Deserialize;
+
 const ARTICLE_BIB: &str = r#"@article{knuth1984,
   author  = {Knuth, Donald E.},
   title   = {Literate Programming},
@@ -128,11 +131,26 @@ const BEAMER_MAIN: &str = r#"\documentclass{beamer}
 \end{document}
 "#;
 
-pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
-    match template {
-        "blank" => &[("main.tex", BLANK_MAIN)],
-        "report" => &[("main.tex", REPORT_MAIN), ("references.bib", ARTICLE_BIB)],
-        "beamer" => &[("main.tex", BEAMER_MAIN)],
-        _ => &[("main.tex", ARTICLE_MAIN), ("references.bib", ARTICLE_BIB)],
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectTemplate {
+    #[schemars(title = "Blank")]
+    Blank,
+    #[schemars(title = "Article")]
+    Article,
+    #[schemars(title = "Report")]
+    Report,
+    #[schemars(title = "Presentation")]
+    Beamer,
+}
+
+impl ProjectTemplate {
+    pub fn files(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Blank => &[("main.tex", BLANK_MAIN)],
+            Self::Article => &[("main.tex", ARTICLE_MAIN), ("references.bib", ARTICLE_BIB)],
+            Self::Report => &[("main.tex", REPORT_MAIN), ("references.bib", ARTICLE_BIB)],
+            Self::Beamer => &[("main.tex", BEAMER_MAIN)],
+        }
     }
 }

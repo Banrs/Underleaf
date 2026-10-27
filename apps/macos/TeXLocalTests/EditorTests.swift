@@ -16,7 +16,7 @@ struct EditorTests {
         let heading = try #require(document.setHeading(caret: 3, command: "subsection"))
         #expect(heading.edit.text == "\\subsection{Intro}")
         #expect(document.mathAt(caret: 22) == MathPreview(start: 21, tex: "x^2", display: false))
-        #expect(document.folds() == [SourceDocument.Fold(line: 1, end: 3)])
+        #expect(document.folds() == [Fold(line: 1, end: 3)])
         #expect(document.toggleComment([NSRange(location: 0, length: 0)]).first?.text == "% ")
         #expect(document.words(in: NSRange(location: 16, length: 15)) == 2)
     }
@@ -34,5 +34,13 @@ struct EditorTests {
         #expect(document.text == "one\n2")
         #expect(document.lineCount == 2)
         #expect(document.line(at: 4) == 2)
+        #expect(document.version == nil)
+    }
+
+    @Test func aRefusedCallReloadsTheCoresCopyFromTheEditorsText() {
+        let document = SourceDocument(text: "stale")
+        document.shown = { "shown" }
+        #expect(document.mathAt(caret: -1) == nil)
+        #expect(document.text == "shown")
     }
 }

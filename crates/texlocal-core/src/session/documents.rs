@@ -6,12 +6,13 @@ use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use texlocal_latex::syntax::TextEdit;
 
 use super::Document;
 use super::actor::{Actor, Later, Timer};
+use crate::events::{Conflict, DocumentClosed, DocumentReload, DocumentState, Event, IssueLine};
 use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
@@ -21,14 +22,14 @@ const NOT_UTF8: &str =
     "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
 pub(super) const MAX_EDITED: u64 = 64 << 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum DiskConflict {
     Changed,
     Gone,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Resolution {
     Save,
@@ -37,7 +38,7 @@ pub(crate) enum Resolution {
     Close,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CloseReason {
     Closed,
@@ -65,9 +66,9 @@ pub(crate) struct Doc {
     error: Option<String>,
     pub reloads: VecDeque<Reload>,
     composing: bool,
-    pub issues: Vec<Value>,
-    pub live_issues: Vec<Value>,
-    pub shown: Value,
+    pub issues: Vec<IssueLine>,
+    pub live_issues: Vec<IssueLine>,
+    pub shown: Option<DocumentState>,
 }
 
 impl Doc {
@@ -75,8 +76,12 @@ impl Doc {
         self.force || self.doc.version() != self.saved
     }
 
-    pub fn state(&self) -> Value {
-        json!({ "path": self.path, "error": self.error, "held": self.held })
+    pub fn state(&self) -> DocumentState {
+        DocumentState {
+            path: self.path.clone(),
+            error: self.error.clone(),
+            held: self.held,
+        }
     }
 }
 
@@ -176,7 +181,7 @@ impl Actor {
             composing: false,
             issues: Vec::new(),
             live_issues: Vec::new(),
-            shown: Value::Null,
+            shown: None,
         };
         self.docs.insert(path.to_owned(), doc);
         self.after(Timer::Symbols);
@@ -187,17 +192,18 @@ impl Actor {
         Ok(())
     }
 
-    pub fn close_document(&mut self, path: &str) -> Result<Value, CoreError> {
+    pub fn close_document(&mut self, path: &str) -> Result<bool, CoreError> {
         let closed = self.flush(Some(path), true)?;
         if closed {
             self.close_doc(path, CloseReason::Closed);
         }
-        Ok(json!({ "closed": closed }))
+        Ok(closed)
     }
 
     pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
         if self.docs.remove(path).is_some() {
-            self.emit("document_closed", json!({ "path": path, "reason": reason }));
+            let path = path.to_owned();
+            self.emit(Event::DocumentClosed(DocumentClosed { path, reason }));
         }
     }
 
@@ -249,9 +255,9 @@ impl Actor {
             return;
         };
         let state = doc.state();
-        if state != doc.shown {
-            doc.shown = state.clone();
-            self.emit("document", state);
+        if doc.shown.as_ref() != Some(&state) {
+            doc.shown = Some(state.clone());
+            self.emit(Event::Document(state));
         }
     }
 
@@ -381,18 +387,22 @@ impl Actor {
     fn ask(&mut self, path: &str, kind: DiskConflict) {
         if let Some(doc) = self.docs.get_mut(path) {
             doc.asking = Some(kind);
-            self.emit("conflict", json!({ "path": path, "kind": kind }));
+            let asked = Conflict {
+                path: path.to_owned(),
+                kind,
+            };
+            self.emit(Event::Conflict(asked));
             self.publish_doc(path);
         }
     }
 
-    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<Value, CoreError> {
+    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<(), CoreError> {
         let doc = self
             .docs
             .get_mut(path)
             .ok_or_else(|| CoreError::not_found("The document isn't open"))?;
         let Some(kind) = doc.asking.or(doc.conflict) else {
-            return Ok(Value::Null);
+            return Ok(());
         };
         match (kind, answer) {
             (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, true),
@@ -405,7 +415,7 @@ impl Actor {
             }
             (DiskConflict::Gone, Resolution::Close) => {
                 self.close_doc(path, CloseReason::Closed);
-                return Ok(Value::Null);
+                return Ok(());
             }
             _ => {
                 return Err(CoreError::bad_request(
@@ -415,15 +425,15 @@ impl Actor {
         }
         self.publish_doc(path);
         match answer {
-            Resolution::Save => Ok(json!({ "saved": self.save_edits(true)? })),
+            Resolution::Save => self.save_edits(true).map(drop),
             Resolution::Revert => {
                 match self.docs[path].disk_text.clone() {
                     Some(text) => self.request_reload(path, &text, Reload::Revert),
                     None => self.close_doc(path, CloseReason::Gone),
                 }
-                Ok(Value::Null)
+                Ok(())
             }
-            _ => Ok(Value::Null),
+            _ => Ok(()),
         }
     }
 
@@ -435,7 +445,8 @@ impl Actor {
             };
             doc.doc.expect_reload(seen);
             doc.reloads.push_back(reason);
-            self.emit("document_reload", json!({ "path": path, "text": text }));
+            let (path, text) = (path.to_owned(), text.to_owned());
+            self.emit(Event::DocumentReload(DocumentReload { path, text }));
         }
     }
 

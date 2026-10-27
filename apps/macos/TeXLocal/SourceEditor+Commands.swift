@@ -12,7 +12,7 @@ extension SourceEditor {
     var renamable: Definition? {
         _ = changes.count
         guard let found = textView.document.definition(at: textView.selection.location),
-              ["label", "citation"].contains(found.kind) else { return nil }
+              [.label, .citation].contains(found.kind) else { return nil }
         return found
     }
 

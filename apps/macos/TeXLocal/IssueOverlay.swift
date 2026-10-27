@@ -14,12 +14,12 @@ final class IssueOverlay {
 
     init(in view: SourceTextView) { self.view = view }
 
-    var lines: [Int: IssuesEvent.Line] = [:] { didSet { if lines != oldValue { changed() } } }
-    var live: [Int: IssuesEvent.Line] = [:] { didSet { if live != oldValue { changed() } } }
+    var lines: [Int: IssueLine] = [:] { didSet { if lines != oldValue { changed() } } }
+    var live: [Int: IssueLine] = [:] { didSet { if live != oldValue { changed() } } }
     var isEmpty: Bool { lines.isEmpty && live.isEmpty }
     var clicked: (Int) -> Void = { _ in }
 
-    func issue(on number: Int) -> (issue: IssuesEvent.Line, live: Bool)? {
+    func issue(on number: Int) -> (issue: IssueLine, live: Bool)? {
         lines[number].map { ($0, false) } ?? live[number].map { ($0, true) }
     }
 
@@ -64,7 +64,7 @@ final class IssueOverlay {
         updateTips()
     }
 
-    private func row(_ number: Int, _ reported: IssuesEvent.Line, on lines: ArraySlice<NSTextLineFragment>,
+    private func row(_ number: Int, _ reported: IssueLine, on lines: ArraySlice<NSTextLineFragment>,
                      of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> Row? {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)

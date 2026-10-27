@@ -32,7 +32,9 @@ fn found(symbols: &Symbols) -> Vec<(String, u32, String)> {
 
 fn titles(tree: &Value) -> Vec<&str> {
     let nodes = tree.as_array().unwrap().iter();
-    nodes.map(|node| node["title"].as_str().unwrap()).collect()
+    nodes
+        .map(|node| node["heading"]["title"].as_str().unwrap())
+        .collect()
 }
 
 const MAIN: &str = "\\documentclass{article}
@@ -131,7 +133,7 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
     let outline = serde_json::to_value(&analysis).unwrap();
     assert_eq!(titles(&outline["tree"]), ["One", "Three"]);
     assert_eq!(titles(&outline["tree"][0]["children"]), ["Two"]);
-    assert_eq!(outline["tree"][1]["file"], "ch.tex");
+    assert_eq!(outline["tree"][1]["heading"]["file"], "ch.tex");
     assert_eq!(outline["words"], 9);
     let lone = analyze::analyze_project(&symbols, Some("main.tex"), Some("lone.tex"));
     assert_eq!(lone.files, ["lone.tex"]);

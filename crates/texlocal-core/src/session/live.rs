@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::Serialize;
-use serde_json::{Value, json};
 use texlocal_latex::logparse::{LogItem, parse_live_log};
 use texlocal_latex::syntax::TextEdit;
 use texlocal_latex::{is_text, utf16};
@@ -10,6 +10,7 @@ use texlocal_latex::{is_text, utf16};
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
 use super::build::issue_lines;
+use crate::events::{Event, FileIssues, LiveDocument, LivePage, LiveUpdate};
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
@@ -19,14 +20,24 @@ pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 const DIDNT_START: &str =
     "TeXpresso didn’t start. Check its location in Settings and the log below.";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Phase {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum LivePhase {
     #[default]
     Stopped,
     Starting,
     Running,
     Stopping,
+}
+
+#[derive(Clone, PartialEq, Serialize, JsonSchema)]
+pub(crate) struct LiveState {
+    phase: LivePhase,
+    engine: Engine,
+    halted: bool,
+    log: Option<String>,
+    failure: Option<String>,
+    error: Option<String>,
 }
 
 struct Issue {
@@ -36,7 +47,7 @@ struct Issue {
 
 #[derive(Default)]
 pub(crate) struct Live {
-    phase: Phase,
+    phase: LivePhase,
     pending: BTreeMap<String, Option<String>>,
     synced: HashSet<String>,
     sent: HashMap<String, u64>,
@@ -54,7 +65,7 @@ pub(crate) struct Live {
     pub intent: u64,
     generation: u64,
     pub document_seen: bool,
-    shown: Value,
+    shown: Option<LiveState>,
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
@@ -62,11 +73,11 @@ pub(crate) struct Live {
 
 impl Live {
     pub fn active(&self) -> bool {
-        matches!(self.phase, Phase::Starting | Phase::Running)
+        matches!(self.phase, LivePhase::Starting | LivePhase::Running)
     }
 
     fn fits(&self, path: &str) -> bool {
-        self.phase == Phase::Running && !self.pending.contains_key(path)
+        self.phase == LivePhase::Running && !self.pending.contains_key(path)
     }
 
     fn errors(&self) -> Vec<String> {
@@ -77,18 +88,18 @@ impl Live {
 }
 
 impl Actor {
-    fn live_state(&self) -> Value {
+    fn live_state(&self) -> LiveState {
         let live = &self.live;
         let errors = live.errors();
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
-        json!({
-            "phase": live.phase,
-            "engine": Engine::Xelatex,
-            "halted": live.halted,
-            "log": live.log_shown.then(|| self.live_log(failure.as_deref())),
-            "failure": failure,
-            "error": live.error,
-        })
+        LiveState {
+            phase: live.phase,
+            engine: Engine::Xelatex,
+            halted: live.halted,
+            log: live.log_shown.then(|| self.live_log(failure.as_deref())),
+            failure,
+            error: live.error.clone(),
+        }
     }
 
     fn live_log(&self, failure: Option<&str>) -> String {
@@ -105,13 +116,12 @@ impl Actor {
 
     pub fn publish_live(&mut self, alert: bool) {
         let mut state = self.live_state();
-        if state != self.live.shown || alert {
-            self.live.shown = state.clone();
-            state["alert"] = alert.into();
+        if self.live.shown.as_ref() != Some(&state) || alert {
+            self.live.shown = Some(state.clone());
             if alert && !self.live.log_shown {
-                state["log"] = self.live_log(state["failure"].as_str()).into();
+                state.log = Some(self.live_log(state.failure.as_deref()));
             }
-            self.emit("live", state);
+            self.emit(Event::Live(LiveUpdate { state, alert }));
         }
     }
 
@@ -162,7 +172,7 @@ impl Actor {
     }
 
     fn ended(&mut self) {
-        self.live.phase = Phase::Stopped;
+        self.live.phase = LivePhase::Stopped;
         self.live_reset();
         self.live.rejected.clear();
         self.live.document_seen = false;
@@ -181,9 +191,9 @@ impl Actor {
         });
     }
 
-    pub fn live_start_asked(&mut self) -> Value {
+    pub fn live_start_asked(&mut self) -> LiveState {
         self.remember_live(true);
-        if self.live.phase == Phase::Stopped {
+        if self.live.phase == LivePhase::Stopped {
             self.live_cancel_work();
             self.live_start();
         }
@@ -192,7 +202,7 @@ impl Actor {
 
     pub fn live_start(&mut self) {
         let live = &mut self.live;
-        live.phase = Phase::Starting;
+        live.phase = LivePhase::Starting;
         live.failure = None;
         live.rejected.clear();
         live.reported.clear();
@@ -221,7 +231,7 @@ impl Actor {
                 self.live.sent = versions;
                 (self.live.sent_view, self.live.caret) = (self.live.view, caret);
                 if status.running {
-                    self.live.phase = Phase::Running;
+                    self.live.phase = LivePhase::Running;
                 } else if status.error.is_none() {
                     self.live.failure = Some(DIDNT_START.into());
                 }
@@ -240,7 +250,7 @@ impl Actor {
         }
     }
 
-    pub fn live_stop_asked(&mut self) -> Value {
+    pub fn live_stop_asked(&mut self) -> LiveState {
         self.remember_live(false);
         self.live_stop();
         self.live_state()
@@ -248,11 +258,11 @@ impl Actor {
 
     pub fn live_stop(&mut self) {
         self.live_cancel_work();
-        if self.live.phase == Phase::Stopped {
+        if self.live.phase == LivePhase::Stopped {
             self.preview.stop_request(self.id);
             return;
         }
-        self.live.phase = Phase::Stopping;
+        self.live.phase = LivePhase::Stopping;
         self.live_reset();
         self.publish_live(false);
         self.live.error = self.preview.stop_request(self.id).error;
@@ -296,7 +306,7 @@ impl Actor {
     }
 
     pub fn flush_pending(&mut self) {
-        if self.live.phase != Phase::Running {
+        if self.live.phase != LivePhase::Running {
             return;
         }
         self.timers.remove(&Timer::Retry);
@@ -340,7 +350,7 @@ impl Actor {
     }
 
     pub fn live_rescan(&mut self) {
-        if self.live.phase == Phase::Running
+        if self.live.phase == LivePhase::Running
             && let Err(error) = self.preview.rescan(self.id)
         {
             self.fail(error);
@@ -350,7 +360,7 @@ impl Actor {
     pub fn live_view(&mut self, first: u32, last: u32) {
         let pages = (first, last.max(first));
         self.live.view = Some(pages);
-        if self.live.phase == Phase::Running && self.live.sent_view != Some(pages) {
+        if self.live.phase == LivePhase::Running && self.live.sent_view != Some(pages) {
             let _ = self.preview.view(self.id, pages.0, pages.1);
             self.live.sent_view = Some(pages);
         }
@@ -358,7 +368,7 @@ impl Actor {
 
     pub fn live_caret(&mut self, path: String, offset: usize) {
         self.live.wanted = Some((path, offset));
-        if self.live.phase == Phase::Running {
+        if self.live.phase == LivePhase::Running {
             self.after(Timer::Caret);
         }
     }
@@ -417,9 +427,7 @@ impl Actor {
             return;
         }
         match event {
-            LiveEvent::Page { page, path } => {
-                self.emit("live_page", json!({ "page": page, "path": path }));
-            }
+            LiveEvent::Page { page, path } => self.emit(Event::LivePage(LivePage { page, path })),
             LiveEvent::Document {
                 path,
                 pages,
@@ -429,12 +437,11 @@ impl Actor {
                 if pages > 0 {
                     self.live.document_seen = true;
                     let complete = !matches!(run.as_str(), "stopped" | "partial");
-                    let document = json!({
-                        "path": path,
-                        "changed": changed,
-                        "complete": complete,
-                    });
-                    self.emit("live_document", document);
+                    self.emit(Event::LiveDocument(LiveDocument {
+                        path,
+                        changed,
+                        complete,
+                    }));
                 }
                 self.run_ended(&run);
             }
@@ -444,7 +451,7 @@ impl Actor {
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
                 if self.timers.contains_key(&Timer::Restart) {
-                    self.live.phase = Phase::Starting;
+                    self.live.phase = LivePhase::Starting;
                     self.live_reset();
                     return self.publish_live(false);
                 }
@@ -485,7 +492,7 @@ impl Actor {
 
     pub fn live_issues_settled(&mut self) {
         let live = &self.live;
-        if live.phase != Phase::Running || live.mark_read != live.mark_sent {
+        if live.phase != LivePhase::Running || live.mark_read != live.mark_sent {
             return;
         }
         let (Some(log), Some(main)) = (self.preview.tex_log(self.id), &self.tree.main) else {
@@ -561,7 +568,8 @@ impl Actor {
         let lines = issue_lines(items, path, &doc.doc, |_| None);
         if lines != doc.live_issues {
             doc.live_issues.clone_from(&lines);
-            self.emit("live_issues", json!({ "path": path, "lines": lines }));
+            let path = path.to_owned();
+            self.emit(Event::LiveIssues(FileIssues { path, lines }));
         }
     }
 }

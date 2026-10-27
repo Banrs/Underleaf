@@ -3,6 +3,7 @@ import AppKit
 extension SourceTextView {
     func load(_ text: String, source: SourceDocument? = nil) {
         document = source ?? SourceDocument(text: text)
+        document.shown = { [weak self] in self?.string }
         show(text)
     }
 

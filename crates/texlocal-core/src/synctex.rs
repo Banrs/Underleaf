@@ -1,17 +1,18 @@
 use std::io::{Error, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
-use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf, find_in_source};
+use texlocal_latex::wordmatch::find_in_source;
 
 use crate::error::CoreError;
-use crate::paths::{Project, disk_spelling, safe_path, safe_rel_file, source_rel};
+use crate::paths::{Project, disk_spelling, source_rel};
 use crate::settings::read_settings;
 use crate::stamp::Kept;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ForwardLoc {
     pub page: f64,
     pub h: Option<f64>,
@@ -21,25 +22,28 @@ pub struct ForwardLoc {
     pub matches: Vec<Self>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PageClick {
+    text: String,
+    at: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct InverseLoc {
     pub file: String,
     pub line: u32,
     pub column: Option<u32>,
 }
 
-fn pdf_for(project: &Project, live: Option<&Path>) -> Result<PathBuf, CoreError> {
-    if let Some(live) = live {
-        return Ok(live.to_path_buf());
-    }
-    Some(read_settings(&project.settings).output(&project.build, "pdf")?)
-        .filter(|pdf| pdf.exists())
-        .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))
-}
-
 fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
-    beside(&pdf_for(project, live)?)
-        .map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
+    let pdf = match live {
+        Some(live) => live.to_path_buf(),
+        None => Some(read_settings(&project.settings).output(&project.build, "pdf")?)
+            .filter(|pdf| pdf.exists())
+            .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))?,
+    };
+    beside(&pdf).map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
 }
 
 fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
@@ -60,20 +64,19 @@ fn source_file(root: &Path, name: &str) -> Option<String> {
     source_rel(root, name).and_then(|rel| disk_spelling(root, &rel))
 }
 
-pub fn synctex_forward_at(
+pub(crate) fn forward(
     project: &Project,
     file: &str,
     line: u32,
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    let rel = safe_rel_file(file)?;
     if line < 1 {
         return Err(CoreError::bad_request("Invalid source line"));
     }
     let sync = sync_for(project, live)?;
     let tag = sync
         .inputs()
-        .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(rel.as_str()))
+        .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(file))
         .map(|(tag, _)| tag);
     let line = i32::try_from(line).unwrap_or(i32::MAX);
     let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
@@ -106,12 +109,12 @@ pub fn synctex_forward_at(
     Ok(first)
 }
 
-pub fn synctex_inverse(
+pub(crate) fn inverse(
     project: &Project,
     page: f64,
     x: f64,
     y: f64,
-    click: Option<(&str, usize)>,
+    click: Option<PageClick>,
     live: Option<&Path>,
     typeset: &dyn Fn(&str) -> Option<String>,
 ) -> Result<InverseLoc, CoreError> {
@@ -126,28 +129,14 @@ pub fn synctex_inverse(
         .ok_or_else(|| CoreError::not_found("Nothing in the source matches this spot."))?;
     let rel = source_file(root, name)
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
-    let found = click.and_then(|(text, at)| {
+    let found = click.and_then(|PageClick { text, at }| {
         let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
         let source = typeset(&rel).or_else(disk)?;
-        find_in_source(&source, line, text, at)
+        find_in_source(&source, line, &text, at)
     });
     Ok(InverseLoc {
         file: rel,
         line: found.map_or(line, |(line, _)| line),
         column: found.map(|(_, column)| column),
     })
-}
-
-pub fn match_forward(
-    root: &Path,
-    file: &str,
-    line: u32,
-    column: usize,
-    pages: &[PdfPage],
-) -> Result<Option<PdfHit>, CoreError> {
-    let text = crate::lossy_string(std::fs::read(safe_path(root, file)?)?);
-    let line = line
-        .checked_sub(1)
-        .and_then(|n| text.lines().nth(n as usize));
-    Ok(line.and_then(|line| find_in_pdf(line, column, pages)))
 }

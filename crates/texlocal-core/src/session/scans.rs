@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
-use serde_json::{Value, json};
-use texlocal_latex::analyze::{self, Facts};
+use schemars::JsonSchema;
+use serde::Serialize;
+use texlocal_latex::analyze::{self, Analysis, Facts};
 use texlocal_latex::checks;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::search::Query;
@@ -11,10 +12,16 @@ use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::Actor;
 use super::documents::Shared;
-use super::{Msg, Reply};
-use crate::projects::{self, Symbols};
-use crate::service::out;
+use super::{Msg, Pending};
+use crate::events::Event;
+use crate::projects::{self, SearchGroup, Symbols};
 use crate::{CoreError, lock, tex};
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct Usages {
+    name: String,
+    groups: Vec<SearchGroup>,
+}
 
 impl Actor {
     pub fn scan_symbols(&mut self) {
@@ -33,7 +40,7 @@ impl Actor {
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
-            let result = symbols.and_then(|symbols| {
+            let result = symbols.map(|symbols| {
                 let symbols = Symbols {
                     files,
                     installed,
@@ -44,8 +51,7 @@ impl Actor {
                     .map_or_else(Vec::new, |main| checks::check(&symbols, main));
                 let analysis =
                     analyze::analyze_project(&symbols, main.as_deref(), shown.as_deref());
-                let outline = out(&analysis)?;
-                Ok(Box::new((symbols, checks, outline)))
+                Box::new((symbols, checks, analysis))
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
         });
@@ -55,7 +61,7 @@ impl Actor {
         &mut self,
         seq: u64,
         edits: u64,
-        result: Result<Box<(Symbols, Vec<LogItem>, Value)>, CoreError>,
+        result: Result<Box<(Symbols, Vec<LogItem>, Analysis)>, CoreError>,
     ) {
         if let Ok(scanned) = result
             && seq == self.symbols_seq
@@ -63,27 +69,27 @@ impl Actor {
             let (symbols, checks, outline) = *scanned;
             *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
             self.checks_done(checks, edits);
-            if outline != self.outline {
-                self.emit("outline", outline.clone());
-                self.outline = outline;
+            if self.outline.as_ref() != Some(&outline) {
+                self.outline = Some(outline.clone());
+                self.emit(Event::Outline(outline));
             }
         }
     }
 
-    pub fn search(&self, query: Query, reply: Reply) {
+    pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
         let (root, docs) = (self.project.root.clone(), self.docs.shared());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
             let hits =
                 projects::search_project(&root, &open, &texlocal_latex::is_text, &found, 100);
-            reply.send(hits.and_then(|hits| out(projects::search_groups(hits))));
+            reply.send(hits.map(projects::search_groups));
         });
     }
 
-    pub fn usages(&self, path: &str, offset: u32, reply: Reply) {
+    pub fn usages(&self, path: &str, offset: u32, reply: Pending<Option<Usages>>) {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
-            return reply.send(Ok(Value::Null));
+            return reply.send(Ok(None));
         };
         let (root, docs) = (self.project.root.clone(), self.docs.shared());
         tokio::task::spawn_blocking(move || {
@@ -94,7 +100,7 @@ impl Actor {
                 kind => Some((kind, name)),
             });
             let Some((kind, name)) = named else {
-                return reply.send(Ok(Value::Null));
+                return reply.send(Ok(None));
             };
             let symbols = doc.symbols();
             let found = |rel: &str, text: &str| {
@@ -109,7 +115,7 @@ impl Actor {
                 _ => name,
             };
             let groups = hits.map(projects::search_groups);
-            reply.send(groups.map(|groups| json!({ "name": name, "groups": groups })));
+            reply.send(groups.map(|groups| Some(Usages { name, groups })));
         });
     }
 }

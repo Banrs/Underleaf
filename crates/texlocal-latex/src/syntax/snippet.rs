@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::scan::environment_name;
@@ -7,8 +8,8 @@ use super::{
     span, splice,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct Tab {
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct Tabbing {
     pub(crate) field: Option<TextRange>,
     pub(crate) edits: Vec<TextEdit>,
 }
@@ -142,24 +143,24 @@ impl SourceDocument {
         self.typing.snippet.take_if(|s| s.tabs()).is_some()
     }
 
-    pub(crate) fn tab(&mut self, selections: &[TextRange], step: i64) -> Tab {
+    pub(crate) fn tab(&mut self, selections: &[TextRange], step: i64) -> Tabbing {
         let snippet = self.typing.snippet.as_mut().filter(|s| s.tabs());
         let moved = snippet.map(|snippet| snippet.go(step));
         let edits = match moved {
             Some(Some(field)) => {
-                return Tab {
+                return Tabbing {
                     field: Some(span(field.start, field.length)),
                     edits: vec![],
                 };
             }
-            Some(None) if step < 0 => return Tab::default(),
+            Some(None) if step < 0 => return Tabbing::default(),
             Some(None) => {
                 self.typing.snippet = None;
                 self.indent(selections, true)
             }
             None => self.indent(selections, step > 0),
         };
-        Tab { field: None, edits }
+        Tabbing { field: None, edits }
     }
 
     pub(super) fn environment_names(&mut self, selection: TextRange) -> Option<Snippet> {

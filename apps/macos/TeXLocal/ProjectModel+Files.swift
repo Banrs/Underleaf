@@ -4,8 +4,7 @@ extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
         guard let session, let made = await alerting("Couldn’t Create “\(name)”", {
-            try await core.call("session_create_entry", ["session": session, "folder": folder, "name": name, "dir": directory],
-                                as: PathEvent.self).path
+            try await session.call(CreateEntry(folder: folder, name: name, dir: directory))
         }), !closed else { return nil }
         if !directory { await open(made, focus: false) }
         return made
@@ -26,9 +25,8 @@ extension ProjectModel {
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
         let (before, wasText) = (openPath, editsText)
-        await uiStateWrites?.value
         guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
-            try await core.call("session_rename", ["session": session, "from": from, "to": to], as: RenameResult?.self)
+            try await session.call(Rename(from: from, to: to))
         }), let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
         trail.moved(result.from, to: result.to)
@@ -37,7 +35,9 @@ extension ProjectModel {
         if moved { openPath = now }
         let mainChanged = result.mainFile != settings?.mainFile
         settings?.mainFile = result.mainFile
-        showUIState(result.ui)
+        let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
+        expandedFolders = Set(expandedFolders.map(remap))
+        foldedHeadings = Set(foldedHeadings.map { key in key.firstIndex(of: "\t").map { remap(String(key[..<$0])) + key[$0...] } ?? key })
         if moved, let now, openPath == now, !closed {
             if isText(now) != wasText {
                 if wasText { await closeDocument(now) }
@@ -54,7 +54,7 @@ extension ProjectModel {
         let item = UndoableTrash(
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in await self?.tree.reload() },
+            changed: { [weak self] in _ = try? await self?.session?.call(ReloadTree()) },
             failed: { [weak self] title, error in self?.app?.report(error, title) })
         trashed.append(item)
         await item.moveToTrash()
@@ -64,8 +64,7 @@ extension ProjectModel {
         guard let session, !closed else { return false }
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
         do {
-            guard try await core.call("session_prepare_delete", ["session": session, "path": path], as: Ready.self).ready,
-                  !closed else { return false }
+            guard try await session.call(PrepareDelete(path: path)), !closed else { return false }
         } catch {
             guard !closed else { return false }
             app?.report(error, title)
@@ -74,11 +73,11 @@ extension ProjectModel {
         do {
             try item.recycle()
         } catch {
-            core.send("session_deleted", ["session": session, "path": path, "trashed": false])
+            session.send(Deleted(path: path, trashed: false))
             app?.report(error, title)
             return false
         }
-        core.send("session_deleted", ["session": session, "path": path])
+        session.send(Deleted(path: path, trashed: true))
         editor.forget(path: path)
         let gone = { (file: String) in file == path || file.hasPrefix(path + "/") }
         if let shown = openPath, gone(shown) {
@@ -100,18 +99,19 @@ extension ProjectModel {
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
 
-    func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
-        let args: [String: any Sendable] = ["id": id, "dir": dir, "paths": urls.map { $0.path(percentEncoded: false) }, "conflict": conflict]
+    func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
+        guard let session else { return }
+        let request = ImportFiles(dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
         do {
-            let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
+            let clashes = try await session.call(request).existing.map(\.path)
             if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
         } catch {
             app?.report(error, "Couldn’t Add the Files")
         }
-        await tree.reload()
     }
 
     func exportZip(forArxiv: Bool = false) async throws -> URL {
+        guard let session else { throw CancellationError() }
         guard await save() else {
             let name = openPath?.fileName ?? self.name
             throw CocoaError(.fileWriteUnknown, userInfo: [
@@ -123,7 +123,7 @@ extension ProjectModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         exportFolder = folder
         let url = folder.appending(path: "\(name).zip")
-        try await core.call("export_zip", ["id": id, "dest": url.path(percentEncoded: false), "forArxiv": forArxiv])
+        try await session.call(ExportZip(dest: url.path(percentEncoded: false), forArxiv: forArxiv))
         return url
     }
 

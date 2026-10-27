@@ -6,15 +6,15 @@ extension PDFController {
 
     func showLive(_ read: LiveRead) {
         switch read {
-        case .document(let live?):
-            let changed = liveMissed && live.changed != nil ? IndexSet(integersIn: 0..<live.document.pageCount) : live.changed
+        case .document(let document?, let changed, let complete):
+            let changed = liveMissed ? IndexSet(integersIn: 0..<document.pageCount) : changed
             liveMissed = false
-            showLive(live.document, changed: changed, complete: live.complete)
+            showLive(document, changed: changed, complete: complete)
             liveShown = true
-        case .document(nil):
+        case .document(nil, _, _):
             liveMissed = true
-        case .page(let live?) where liveShown:
-            showLive(live.page, at: live.index)
+        case .page(let page?, let index) where liveShown:
+            showLive(page, at: index)
         case .page:
             break
         }

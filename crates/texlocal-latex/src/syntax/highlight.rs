@@ -1,9 +1,12 @@
+use schemars::JsonSchema;
+
 use super::catalog::CATALOG;
 use super::scan::blank_line;
 use super::stack::Stack;
 use super::{NAME, Text, ascii, letter};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum HighlightKind {
     Command,
     Argument,
