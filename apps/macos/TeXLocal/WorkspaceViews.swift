@@ -78,7 +78,7 @@ final class WorkspaceViews: ProjectViews {
             showIssues()
         case .section(.shownPdf): showPDF()
         case .documentReload(let path): reload(path)
-        case .documentRenamed(let renamed): if editor.path == renamed.from { editor.path = renamed.to }
+        case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
         case .buildFinished(let finished): built(finished)
         case .liveDocument(let document): showLive(document)
         case .livePage(let page): showLive(page)
@@ -103,7 +103,6 @@ final class WorkspaceViews: ProjectViews {
         return true
     }
 
-    func moved(from: String, to: String) { editor.rename(from: from, to: to) }
     func trashed(_ path: String) { editor.forget(path: path) }
     func beep() { NSSound.beep() }
     func perform(_ command: EditorCommand) { editor.perform(command) }

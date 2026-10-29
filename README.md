@@ -48,31 +48,29 @@ Settings › Compiling.
 
 ## Installing
 
-There are no downloads yet, so you build TeXLocal yourself. Install Xcode 27 and
-[Rust](https://rustup.rs), then run:
+There are no downloads yet, so you build TeXLocal yourself. Install Xcode 27,
+[Rust](https://rustup.rs) and, with Homebrew,
+[TeXpresso's build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md) (SDL isn't
+needed), then run:
 
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
+tools/texpresso/build.sh
+tools/texpresso/install.sh tools/texpresso/source/build
 zsh tools/install-mac.sh
 ```
 
-The script builds TeXLocal, copies it to `/Applications` and opens it. To update, pull and run it
-again. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
+The first two build TeXpresso with Underleaf's patch, for Live Preview, and install it. The last builds
+TeXLocal, copies it to `/Applications` and opens it. To update, pull and run all three again, since TeXLocal
+needs the TeXpresso from its own checkout. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press
+Run.
 
 ## Live Preview
 
-Live Preview needs TeXpresso built with Underleaf's patch. Install
-[TeXpresso's build dependencies](https://github.com/let-def/texpresso/blob/main/INSTALL.md) with
-Homebrew (SDL isn't needed), then run:
-
-```sh
-tools/texpresso/build.sh
-tools/texpresso/install.sh tools/texpresso/source/build
-```
-
-Turn it on from the Compile menu or the project's inspector. If you keep TeXpresso somewhere else,
-choose its folder in Settings › Live Preview.
+Live Preview, which is experimental, typesets as you type with the TeXpresso you installed above. Turn it on
+from the Compile menu or the project's inspector. If you keep TeXpresso somewhere else, choose its folder in
+Settings › Live Preview.
 
 ## Projects and security
 

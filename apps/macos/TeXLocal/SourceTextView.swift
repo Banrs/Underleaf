@@ -43,7 +43,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         lastMath = nil
         dismissedMath = nil
         _ = document.endSnippet()
-        endFieldTyping()
         completions.close()
         mark(nil)
         updateGutterWidth()
@@ -75,7 +74,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
         guard !edits.isEmpty else { return false }
-        endFieldTyping()
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
@@ -172,10 +170,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if let over = selectionMoved(from: old) {
             super.setSelectedRanges([NSValue(range: over)], affinity: affinity, stillSelecting: stillSelecting)
         }
-        if !typing {
-            completions.close()
-            endFieldTyping()
-        }
+        if !typing { completions.close() }
         if partnerMark != nil { mark(nil) }
         previewMath()
         document.select(selectedRange(), mirroring: mirroring)
@@ -364,10 +359,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func complete(_ sender: Any?) { completions.complete(explicit: true) }
 
-    override func cancelOperation(_ sender: Any?) {
-        endFieldTyping()
-        cancel()
-    }
+    override func cancelOperation(_ sender: Any?) { cancel() }
 
     override func doCommand(by selector: Selector) {
         if selector == #selector(cancelOperation(_:)) { return cancelOperation(nil) }
@@ -388,19 +380,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private var mirroring = false
     private var mirrorEdits: [TextEdit] = []
-    private var fieldTyping: (undo: UndoManager, watch: any NSObjectProtocol)?
 
     override func didChangeText() {
         super.didChangeText()
-        guard !mirroring else { return }
-        guard !mirrorEdits.isEmpty else { return endFieldTyping() }
-        if fieldTyping == nil, let undo = undoManager, undo.groupsByEvent, !undo.isUndoing, !undo.isRedoing {
-            undo.groupsByEvent = false
-            let watch = NotificationCenter.default.addObserver(forName: .NSUndoManagerWillUndoChange, object: undo, queue: nil) {
-                [weak self] _ in MainActor.assumeIsolated { self?.endFieldTyping() }
-            }
-            fieldTyping = (undo, watch)
-        }
+        guard !mirroring, !mirrorEdits.isEmpty else { return }
         let edits = mirrorEdits, selection = selectedRange()
         mirrorEdits = []
         mirroring = true
@@ -410,14 +393,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         }
         mirroring = false
         setSelectedRange(selection)
-    }
-
-    private func endFieldTyping() {
-        guard let (undo, watch) = fieldTyping else { return }
-        fieldTyping = nil
-        NotificationCenter.default.removeObserver(watch)
-        if undo.groupingLevel > 0 { undo.endUndoGrouping() }
-        undo.groupsByEvent = true
         breakUndoCoalescing()
     }
 

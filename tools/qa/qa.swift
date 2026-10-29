@@ -6,7 +6,6 @@ func _AXUIElementGetWindow(_ e: AXUIElement, _ id: UnsafeMutablePointer<CGWindow
 
 let env = ProcessInfo.processInfo.environment
 let SCR = env["QA_SCRATCH"] ?? NSTemporaryDirectory() + "texlocal-qa"
-let BG = env["QA_BG"] == "1"
 setvbuf(stdout, nil, _IOLBF, 0)
 
 func fail(_ msg: String, _ code: Int32 = 1) -> Never {
@@ -39,29 +38,15 @@ let appPath = takeOpt("--app") ?? env["QA_APP"] ?? "\(SCR)/dd-frontend/Build/Pro
 
 guard !args.isEmpty else {
     fail("usage: qa <check|launch|quit|front|window|resize|move|shot|screen|menu|menus|key|type|click|move-mouse|"
-        + "drag|scroll|tree|find|press|set|get|caret|insert|text|toolbar|close|wait|wait-for|lock> …")
+        + "drag|scroll|tree|find|press|set|get|caret|insert|text|toolbar|close|wait|wait-for> …")
 }
 let cmd = args.removeFirst()
 
-if env["QA_LOCK_HELD"] != "1" {
-    let fd = open("\(SCR)/qa/lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
-    if fd < 0 { fail("cannot open lock file") }
-    if flock(fd, LOCK_EX | LOCK_NB) != 0 {
-        FileHandle.standardError.write(Data("qa: waiting for lock…\n".utf8))
-        if flock(fd, LOCK_EX) != 0 { fail("flock failed") }
-    }
-}
-
-if cmd == "lock" {
-    if args.first == "--" { args.removeFirst() }
-    guard !args.isEmpty else { fail("usage: qa lock -- <command> [args…]") }
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = args
-    p.environment = env.merging(["QA_LOCK_HELD": "1"]) { $1 }
-    do { try p.run() } catch { fail("cannot run \(args[0]): \(error)") }
-    p.waitUntilExit()
-    exit(p.terminationStatus)
+let lock = open("\(SCR)/qa/lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
+if lock < 0 { fail("cannot open lock file") }
+if flock(lock, LOCK_EX | LOCK_NB) != 0 {
+    FileHandle.standardError.write(Data("qa: waiting for lock…\n".utf8))
+    if flock(lock, LOCK_EX) != 0 { fail("flock failed") }
 }
 
 @discardableResult
@@ -225,7 +210,6 @@ func rel(_ r: CGRect, _ win: CGRect) -> [Double] {
 func frameJSON(_ f: CGRect) -> [CGFloat] { [f.origin.x, f.origin.y, f.width, f.height] }
 
 func front() {
-    if BG { return }
     let app = needApp()
     let a = axApp(app.processIdentifier)
     if app.isHidden { app.unhide() }
@@ -254,9 +238,8 @@ func windows() -> [[String: Any]] {
     return [windowInfo(m, main: true)] + axWindows().filter { windowID($0) != mid }.map { windowInfo($0, main: false) }
 }
 
-func post(_ e: CGEvent?) {
-    if BG { fail("refusing to post a mouse or key event in the background (QA_BG): use an Accessibility command") }
-    e?.post(tap: .cghidEventTap)
+func post(_ e: CGEvent?, key: Bool = false) {
+    if key { e?.postToPid(needApp().processIdentifier) } else { e?.post(tap: .cghidEventTap) }
 }
 
 let keyCodes: [String: CGKeyCode] = [
@@ -270,6 +253,7 @@ let keyCodes: [String: CGKeyCode] = [
     "f11": 103, "f12": 111,
 ]
 let fnKeys: Set = ["left", "right", "up", "down", "home", "end", "pageup", "pagedown", "forwarddelete"]
+let keySource = CGEventSource(stateID: .privateState)
 
 func modifiers(_ names: [String]) -> CGEventFlags {
     var flags: CGEventFlags = []
@@ -293,24 +277,22 @@ func pressKey(_ chord: String) {
     if key.isEmpty { key = "="; flags.insert(.maskShift) }
     guard let code = keyCodes[key] else { fail("unknown key '\(key)'") }
     if fnKeys.contains(key) { flags.insert(.maskSecondaryFn) }
-    let src = CGEventSource(stateID: .hidSystemState)
     for down in [true, false] {
-        let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+        let e = CGEvent(keyboardEventSource: keySource, virtualKey: code, keyDown: down)
         e?.flags = flags
-        post(e)
+        post(e, key: true)
         sleepS(0.02)
     }
 }
 func typeText(_ t: String) {
-    let src = CGEventSource(stateID: .hidSystemState)
     for ch in t {
-        if ch == "\n" { pressKey("return"); continue }
+        if ch == "\n" { pressKey("return"); sleepS(0.2); continue }
         let u = Array(String(ch).utf16)
         for down in [true, false] {
-            let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
+            let e = CGEvent(keyboardEventSource: keySource, virtualKey: 0, keyDown: down)
             e?.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
             e?.flags = []
-            post(e)
+            post(e, key: true)
         }
         sleepS(0.012)
     }
@@ -326,9 +308,6 @@ func guardPoint(_ p: CGPoint) {
         fail("refusing to click at \(Int(p.x)),\(Int(p.y)): the topmost window there belongs to '\(owner)', "
             + "not the target app")
     }
-}
-func noEvents(_ what: String) {
-    if BG { fail("background mode (QA_BG=1): \(what) posts real events; use press, set, caret, insert") }
 }
 func guardFrontmost() {
     let frontmost = NSWorkspace.shared.frontmostApplication
@@ -473,7 +452,7 @@ func launch() {
             envs = ["QA_APPEARANCE=\(dark ? "dark" : "light")", "DYLD_INSERT_LIBRARIES=\(dylib)"] + envs
         }
         envs += (env["QA_ENV"] ?? "").split(separator: ";").filter { $0.contains("=") }.map(String.init)
-        var oa = (BG ? ["-g"] : []) + ["-n"] + envs.flatMap { ["--env", $0] } + [appPath, "--args"]
+        var oa = ["-n"] + envs.flatMap { ["--env", $0] } + [appPath, "--args"]
         if light { oa += ["-NSRequiresAquaSystemAppearance", "YES"] }
         if dark { oa += ["-AppleInterfaceStyle", "Dark"] }
         if run("/usr/bin/open", oa + extra) != 0 { fail("open failed for \(appPath)") }
@@ -659,7 +638,7 @@ case "resize", "move":
 
 case "shot":
     checkAX()
-    let noFront = takeFlag("--no-front") || BG
+    let noFront = takeFlag("--no-front")
     let title = takeOpt("--window")
     guard let out = args.first else { fail("usage: qa shot <out.png> [--window t] [--no-front]") }
     shotWindow(out, title: title, noFront: noFront)
@@ -701,7 +680,7 @@ case "menu":
     emit(["menu": args])
 
 case "key", "type":
-    checkAX(); noEvents(cmd)
+    checkAX()
     let noRaise = takeFlag("--no-raise")
     guard let a = args.first else { fail("usage: qa \(cmd) <\(cmd == "key" ? "chord" : "text")> [--no-raise]") }
     if !noRaise { front(); sleepS(0.1) }
@@ -709,7 +688,7 @@ case "key", "type":
     if cmd == "key" { pressKey(a) } else { typeText(a) }
 
 case "click":
-    checkAX(); noEvents("click")
+    checkAX()
     let right = takeFlag("--right"), double = takeFlag("--double"), screen = takeFlag("--screen")
     let mods = modifiers((takeOpt("--mod") ?? "").lowercased().split(separator: ",").map(String.init))
     let noRaise = takeFlag("--no-raise")
@@ -718,14 +697,14 @@ case "click":
     clickAt(point(n[0], n[1], screen: screen), right: right, count: double ? 2 : 1, flags: mods)
 
 case "move-mouse":
-    checkAX(); noEvents("move-mouse")
+    checkAX()
     let screen = takeFlag("--screen"), noRaise = takeFlag("--no-raise")
     let n = nums(2, "qa move-mouse <x> <y>")
     if !noRaise { front() }
     post(mouse(.mouseMoved, point(n[0], n[1], screen: screen)))
 
 case "drag":
-    checkAX(); noEvents("drag")
+    checkAX()
     let screen = takeFlag("--screen")
     let duration = Double(takeOpt("--duration") ?? "0.5") ?? 0.5
     let steps = Int(takeOpt("--steps") ?? "30") ?? 30
@@ -743,7 +722,7 @@ case "drag":
     post(mouse(.leftMouseUp, b))
 
 case "scroll":
-    checkAX(); noEvents("scroll")
+    checkAX()
     let screen = takeFlag("--screen")
     let n = nums(4, "qa scroll <x> <y> <dx> <dy>")
     front(); sleepS(0.1)
@@ -789,7 +768,6 @@ case "press":
     if !double, ((actions as? [String]) ?? []).contains("AXPress") {
         pressAsync(h.el.ref, timeout: 2)
     } else if let f = h.el.frame {
-        noEvents(double ? "press --double" : "press on an element without AXPress")
         front(); clickAt(CGPoint(x: f.midX, y: f.midY), count: double ? 2 : 1)
     } else { fail(double ? "element has no frame" : "element has no AXPress and no frame") }
     emit(hitJSON(h))

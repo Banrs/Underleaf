@@ -155,7 +155,7 @@ nonisolated enum Syntax {
     static func answer<T: Decodable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
         defer { tl_free(out) }
         do {
-            return try Core.decoded(command, Data(bytes: out, count: strlen(out)))
+            return try Core.decoded(command, Data(bytes: out, count: strlen(out))) as T
         } catch {
             log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil

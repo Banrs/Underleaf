@@ -95,13 +95,3 @@ struct InsertMenuItems: View {
         .disabled(project?.sourceToolsEnabled != true)
     }
 }
-
-extension MathGlyphs {
-    static func spokenName(_ glyph: String, _ command: String) -> String {
-        let letter = String(command.dropFirst())
-        let name = glyph.first?.isLetter == true
-            ? (glyph.first?.isUppercase == true ? "capital " + letter.lowercased() : letter)
-            : glyph.unicodeScalars.first?.properties.name?.lowercased() ?? letter
-        return "\(name), \(command)"
-    }
-}

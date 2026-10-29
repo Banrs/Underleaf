@@ -46,6 +46,15 @@ struct PDFTests {
         #expect(try shown(view).page == 1)
     }
 
+    @Test func thePaperIsDarkWhenChosenOrMatchingADarkAppearance() {
+        let view = SyncPDFView()
+        for (paper, appearance, dark) in [(PDFPaper.white, NSAppearance.Name.darkAqua, false), (.dark, .aqua, true), (.auto, .aqua, false), (.auto, .darkAqua, true)] {
+            view.appearance = NSAppearance(named: appearance)
+            view.paper = paper
+            #expect(view.darkPaper == dark, "\(paper) in \(appearance.rawValue)")
+        }
+    }
+
     @Test func aLivePageReplacesItsPageInPlace() throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)

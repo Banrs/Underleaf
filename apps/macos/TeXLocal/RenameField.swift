@@ -43,7 +43,7 @@ struct RenameField: View {
                     }
                 }
                 .onChange(of: focused) { was, now in
-                    if now { selection = isFile ? .baseName(of: text) : TextSelection(range: text.startIndex..<text.endIndex) }
+                    if now, isFile { selection = .baseName(of: text) }
                     if was, !now { commit() }
                 }
                 .onAppear { focused = true }

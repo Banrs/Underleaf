@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <mach-o/dyld.h>
 #include <mupdf/fitz.h>
-#include "base64.h"
 #include "editor.h"
 #include "engine.h"
 #include "mydvi.h"
@@ -34,7 +33,6 @@ typedef struct
   txp_engine *eng;
   const char *doc_path;
   const char *pdf_output;
-  bool paused;
 
   struct {
     int first, last;
@@ -69,32 +67,18 @@ static double live_ms(void)
   return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
 
-static bool poll_input(live_state *l)
+static bool poll_input(void)
 {
   struct pollfd fd = {STDIN_FILENO, POLLRDNORM, 0};
   return poll(&fd, 1, 0) == 1 && (fd.revents & (POLLRDNORM | POLLHUP)) != 0;
 }
 
-static const char *relative_path(const char *path, const char *dir, int *go_up)
-{
-  size_t n = strlen(dir);
-  *go_up = 0;
-  if (strncmp(path, dir, n) == 0 && (path[n] == '/' || path[n] == 0))
-  {
-    path += n;
-    while (*path == '/') path++;
-    return path;
-  }
-  if (path[0] == '/')
-    *go_up = 1;
-  return path;
-}
-
 static fileentry_t *find_entry(live_state *l, const char *path, const char *verb)
 {
-  int go_up = 0;
-  path = relative_path(path, l->doc_path, &go_up);
-  if (go_up > 0)
+  size_t n = strlen(l->doc_path);
+  if (strncmp(path, l->doc_path, n) == 0 && path[n] == '/')
+    path += n + 1;
+  else if (path[0] == '/')
   {
     fprintf(stderr, "[command] %s %s: file has a different root, skipping\n", verb, path);
     return NULL;
@@ -110,17 +94,6 @@ static int find_diff(const fz_buffer *buf, const void *data, int size)
   return i;
 }
 
-#include "utf_mapping.h"
-
-static int line_offset(fz_buffer *b, int line)
-{
-  int offset = 0;
-  while (line > 0 && offset < (int)b->len)
-    if (b->data[offset++] == '\n')
-      line -= 1;
-  return line > 0 ? -1 : offset;
-}
-
 static void apply_change(live_state *l, struct editor_change *op)
 {
   fileentry_t *e = find_entry(l, op->path, "change");
@@ -132,28 +105,6 @@ static void apply_change(live_state *l, struct editor_change *op)
   }
 
   int offset = op->span.offset, remove = op->span.remove, length = op->length;
-  if (op->base == BASE_LINE)
-  {
-    offset = line_offset(b, op->span.offset);
-    int end = offset < 0 ? -1 : line_offset(b, op->span.offset + op->span.remove);
-    if (end < 0 && offset >= 0) end = b->len;
-    remove = end - offset;
-  }
-  else if (op->base == BASE_RANGE)
-  {
-    int start = line_offset(b, op->range.start_line);
-    int stop = line_offset(b, op->range.end_line);
-    if (start < 0 || stop < 0)
-      offset = -1;
-    else
-    {
-      int sc = utf16_to_utf8_offset(b->data + start, b->data + b->len, op->range.start_char);
-      int ec = utf16_to_utf8_offset(b->data + stop, b->data + b->len, op->range.end_char);
-      offset = sc < 0 ? -1 : start + sc;
-      remove = ec < 0 ? -1 : stop + ec - offset;
-    }
-  }
-
   if (remove < 0 || offset < 0 || offset + remove > (int)b->len)
   {
     fprintf(stderr, "[command] change %s: invalid range, skipping\n", op->path);
@@ -174,7 +125,6 @@ static void apply_open(live_state *l, const char *path, const void *data, int si
     return;
 
   int changed = -1;
-  bool had_edit_data = e->edit_data != NULL;
   if (e->edit_data)
   {
     changed = find_diff(e->edit_data, data, size);
@@ -193,19 +143,8 @@ static void apply_open(live_state *l, const char *path, const void *data, int si
     else if (e->seen >= 0)
       changed = 0;
   }
-  if (changed >= 0 && !(e->promised && !had_edit_data))
+  if (changed >= 0)
     send(notify_file_changes, l->eng, l->ctx, e, changed);
-}
-
-static void apply_close(live_state *l, const char *path)
-{
-  fileentry_t *e = find_entry(l, path, "close");
-  if (!e || !e->edit_data)
-    return;
-  int changed = e->fs_data ? find_diff(e->fs_data, e->edit_data->data, e->edit_data->len) : 0;
-  fz_drop_buffer(l->ctx, e->edit_data);
-  e->edit_data = NULL;
-  send(notify_file_changes, l->eng, l->ctx, e, changed);
 }
 
 static void interpret_command(live_state *l, vstack *stack, val command)
@@ -218,23 +157,7 @@ static void interpret_command(live_state *l, vstack *stack, val command)
   {
     case EDIT_OPEN:
       l->wish.touched = true;
-      if (cmd.open.base64)
-      {
-        unsigned char *buf = malloc(cmd.open.length);
-        if (!buf) break;
-        memcpy(buf, cmd.open.data, cmd.open.length);
-        int decoded = base64_decode(buf, cmd.open.length);
-        if (decoded >= 0)
-          apply_open(l, cmd.open.path, buf, decoded);
-        free(buf);
-      }
-      else
-        apply_open(l, cmd.open.path, cmd.open.data, cmd.open.length);
-      break;
-
-    case EDIT_CLOSE:
-      l->wish.touched = true;
-      apply_close(l, cmd.close.path);
+      apply_open(l, cmd.open.path, cmd.open.data, cmd.open.length);
       break;
 
     case EDIT_CHANGE:
@@ -242,23 +165,8 @@ static void interpret_command(live_state *l, vstack *stack, val command)
       apply_change(l, &cmd.change);
       break;
 
-    case EDIT_REGISTER:
-    {
-      fileentry_t *e = find_entry(l, cmd.reg.path, "register");
-      if (e) e->promised = true;
-      break;
-    }
-
     case EDIT_RESCAN:
       l->wish.scan = true;
-      break;
-
-    case EDIT_PAUSE:
-      l->paused = true;
-      break;
-
-    case EDIT_RESUME:
-      l->paused = false;
       break;
 
     case EDIT_VIEW:
@@ -284,7 +192,7 @@ static bool read_commands(live_state *l, prot_parser *parser, vstack *stack)
 {
   char buffer[4096];
   int n = -1;
-  while (poll_input(l) && (n = read(STDIN_FILENO, buffer, sizeof buffer)) != 0)
+  while (poll_input() && (n = read(STDIN_FILENO, buffer, sizeof buffer)) != 0)
   {
     if (n == -1)
     {
@@ -327,7 +235,7 @@ static live_page *live_at(live_state *l, int index)
   return &l->pages[index];
 }
 
-static bool live_write_page(live_state *l, int index)
+static void live_write_page(live_state *l, int index)
 {
   fz_context *ctx = l->ctx;
   fz_buffer *pdf = NULL, *text = NULL;
@@ -360,11 +268,7 @@ static bool live_write_page(live_state *l, int index)
     fz_drop_buffer(ctx, text);
   }
   fz_catch(ctx)
-  {
     fprintf(stderr, "[pdf] couldn't write page %d: %s\n", index, fz_caught_message(ctx));
-    return false;
-  }
-  return true;
 }
 
 static void live_scan(live_state *l, bool view)
@@ -432,7 +336,7 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
       fz_device *dev = fz_begin_page(ctx, writer, txp_tex_page_box(l->eng, i));
       txp_tex_run_page(l->eng, ctx, i, dev);
       fz_end_page(ctx, writer);
-      interrupted = interruptible && (i & 3) == 3 && poll_input(l);
+      interrupted = interruptible && (i & 3) == 3 && poll_input();
     }
     if (!interrupted)
       fz_close_document_writer(ctx, writer);
@@ -490,7 +394,7 @@ static bool live_step(live_state *l, int count)
   for (int steps = 1; send(step, l->eng, l->ctx, false); steps++)
   {
     if (send(page_count, l->eng) != count || live_ms() > until ||
-        ((steps & 15) == 0 && poll_input(l)))
+        ((steps & 15) == 0 && poll_input()))
       return send(get_status, l->eng) == DOC_RUNNING;
   }
   return false;
@@ -544,8 +448,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     live_caret(l);
     if (send(end_changes, l->eng, ctx))
     {
-      if (!l->paused)
-        send(step, l->eng, ctx, true);
+      send(step, l->eng, ctx, true);
       running = true;
       if (scanned)
       {
@@ -561,7 +464,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       l->tail = true;
     }
 
-    bool stepping = send(get_status, l->eng) == DOC_RUNNING && !l->paused;
+    bool stepping = send(get_status, l->eng) == DOC_RUNNING;
     int count = send(page_count, l->eng);
     bool rest = l->tail || (l->aux && l->passes < LIVE_PASSES);
     bool wanted = stepping && (count <= l->wish.last ||
@@ -575,10 +478,10 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       more = true;
     }
     live_scan(l, first != l->wish.first || last != l->wish.last);
-    stepping = send(get_status, l->eng) == DOC_RUNNING && !l->paused;
+    stepping = send(get_status, l->eng) == DOC_RUNNING;
     count = send(page_count, l->eng);
 
-    if (running && !stepping && !l->paused)
+    if (running && !stepping)
     {
       running = false;
       l->started = true;
@@ -659,12 +562,14 @@ static void usage(void)
                   "with TEXPRESSO_PDF_OUTPUT=<folder>/live.pdf\n");
 }
 
-static bool executable_path(const char *argv0, char path[PATH_MAX])
+static bool engine_path(const char *argv0, char path[PATH_MAX])
 {
-  char exe_path[PATH_MAX];
+  char exe[PATH_MAX], real[PATH_MAX];
   uint32_t size = PATH_MAX;
-  return (_NSGetExecutablePath(exe_path, &size) == 0 && realpath(exe_path, path)) ||
-         realpath(argv0, path);
+  if (!(_NSGetExecutablePath(exe, &size) == 0 && realpath(exe, real)) && !realpath(argv0, real))
+    return false;
+  snprintf(path, PATH_MAX, "%.*s/texpresso-xetex", (int)(strrchr(real, '/') - real), real);
+  return true;
 }
 
 static char diagnostics[1 << 15];
@@ -683,8 +588,8 @@ int main(int argc, const char **argv)
   sigaction(SIGSEGV, &crash, NULL);
   sigaction(SIGBUS, &crash, NULL);
   const char *pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
-  char exe_path[PATH_MAX];
-  if (!executable_path(argv[0], exe_path))
+  char engine[PATH_MAX];
+  if (!engine_path(argv[0], engine))
   {
     perror("finding executable path");
     return 1;
@@ -724,6 +629,8 @@ int main(int argc, const char **argv)
   }
   char *doc_name = strrchr(doc_path, '/');
   *doc_name++ = 0;
+  if (chdir(doc_path) != 0)
+    perror("chdir to the document's folder");
 
   editor_set_protocol(EDITOR_JSON);
 
@@ -739,12 +646,11 @@ int main(int argc, const char **argv)
   fz_set_error_callback(ctx, live_mupdf_message, "error");
   fz_register_document_handlers(ctx);
   live_state l = {.ctx = ctx, .doc_path = doc_path, .pdf_output = pdf_output};
-  l.eng = txp_tex_live_engine(ctx, exe_path, doc_path, doc_name, inputs);
+  l.eng = txp_tex_live_engine(ctx, engine, inputs, doc_name, doc_path);
 
   vstack *stack = vstack_new(ctx);
   prot_parser parser;
   prot_initialize(&parser, true);
-  dvi_page_fonts(ctx, true);
   int status = 0;
   fz_try(ctx)
   {
@@ -756,7 +662,7 @@ int main(int argc, const char **argv)
     status = 1;
   }
   send(destroy, l.eng, ctx);
-  dvi_page_fonts(ctx, false);
+  dvi_drop_page_fonts(ctx);
   vstack_free(ctx, stack);
   fz_drop_context(ctx);
   return status;

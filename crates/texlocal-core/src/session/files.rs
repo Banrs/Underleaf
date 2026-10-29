@@ -6,7 +6,7 @@ use super::Pending;
 use super::actor::{Actor, Later, Timer};
 use super::build::built_pdf;
 use super::watch;
-use crate::events::{DocumentRenamed, Event};
+use crate::events::{Event, Renamed};
 use crate::import::{self, ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{self, Project, within};
@@ -138,6 +138,8 @@ impl Actor {
             self.preview.stop(&project.root)?;
             Ok((renamed, main))
         })?;
+        let (from, to) = (renamed.from.clone(), renamed.to.clone());
+        self.emit(Event::Renamed(Renamed { from, to }));
         self.live_follow();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
@@ -154,10 +156,8 @@ impl Actor {
             doc.doc.moved(&new);
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
-                self.last_edits.insert(new.clone(), edit);
+                self.last_edits.insert(new, edit);
             }
-            let moved = DocumentRenamed { from: old, to: new };
-            self.emit(Event::DocumentRenamed(moved));
         }
         if open.is_some() {
             self.open = open;

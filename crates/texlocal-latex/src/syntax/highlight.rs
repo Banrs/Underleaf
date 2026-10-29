@@ -1,11 +1,13 @@
+use std::ops::Range;
+
 use schemars::JsonSchema;
 
 use super::catalog::CATALOG;
 use super::scan::blank_line;
 use super::stack::Stack;
-use super::{NAME, Text, ascii, letter};
+use super::{NAME, Text, ascii, is, letter};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Copy, Debug, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum HighlightKind {
     Command,
@@ -15,7 +17,6 @@ pub enum HighlightKind {
     Invalid,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Highlight {
     pub start: u32,
     pub length: u32,
@@ -151,33 +152,24 @@ fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, H
 }
 
 fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
-    if s.peek() == Some(b'\\' as u16) {
-        if s.at(1).is_some_and(command_letter) {
-            s.pos += 1;
-            let name = s.pos;
-            s.eat_while(command_letter);
-            let name = &s.text[name..s.pos];
-            match ascii(name, &mut [0; NAME]) {
-                "verb" => {
-                    s.eat("*");
-                    if let Some(delimiter) = s.peek() {
-                        state.mode = Mode::Verb(delimiter);
-                    }
-                }
-                "begin" if let Some(name) = verbatim_environment(&s.text[s.pos..]) => {
-                    state.mode = Mode::Opening(name);
-                }
-                _ => {
-                    open(&mut state.commands, styles(name));
-                    state.mode = Mode::Arguments;
+    if let Some(name) = control_word(s) {
+        let name = &s.text[name];
+        match ascii(name, &mut [0; NAME]) {
+            "verb" => {
+                s.eat("*");
+                if let Some(delimiter) = s.peek() {
+                    state.mode = Mode::Verb(delimiter);
                 }
             }
-            return Some(Command);
+            "begin" if let Some(name) = verbatim_environment(&s.text[s.pos..]) => {
+                state.mode = Mode::Opening(name);
+            }
+            _ => {
+                open(&mut state.commands, styles(name));
+                state.mode = Mode::Arguments;
+            }
         }
-        if s.at(1).is_some_and(|u| one_of(u, "$&%#{}_,;!/\\")) {
-            s.pos += 2;
-            return Some(Command);
-        }
+        return Some(Command);
     }
     for (open, close) in [("\\[", "\\]"), ("\\(", "\\)"), ("$$", "$$"), ("$", "$")] {
         if s.eat(open) {
@@ -185,8 +177,11 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             return Some(Maths);
         }
     }
+    if control_symbol(s) {
+        return Some(Command);
+    }
     let c = s.next();
-    if c == b'%' as u16 {
+    if is(c, '%') {
         s.pos = s.text.len();
         Some(Comment)
     } else if one_of(c, "}]") {
@@ -199,10 +194,10 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         open(&mut state.commands, &[]);
         None
     } else if is_digit(c) {
-        s.eat_while(|u| word(u) || u == b'.' as u16);
+        s.eat_while(|u| word(u) || is(u, '.'));
         Some(Argument)
     } else {
-        s.eat_while(|u| word(u) || u == b'-' as u16);
+        s.eat_while(|u| word(u) || is(u, '-'));
         let command = styled(&state.commands)?;
         command
             .brackets
@@ -219,20 +214,13 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
         state.mode = Mode::Normal;
         return Some(Maths);
     }
-    let c = s.peek()?;
-    let next = s.at(1);
-    if c == b'\\' as u16 && next.is_some_and(|u| letter(u) || u == b'@' as u16) {
-        s.pos += 1;
-        s.eat_while(|u| letter(u) || u == b'@' as u16);
+    if control_word(s).is_some() || control_symbol(s) {
         return Some(Command);
     }
+    let c = s.peek()?;
     if math_letter(c) {
         s.eat_while(math_letter);
         return Some(Maths);
-    }
-    if c == b'\\' as u16 && next.is_some_and(|u| one_of(u, "$&%#{}_,;!/")) {
-        s.pos += 2;
-        return Some(Command);
     }
     if one_of(c, "^_&") {
         s.pos += 1;
@@ -242,9 +230,9 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
         s.pos += 1;
         return None;
     }
-    if is_digit(c) || (c == b'.' as u16 && next.is_some_and(is_digit)) {
+    if is_digit(c) || (is(c, '.') && s.at(1).is_some_and(is_digit)) {
         s.eat_while(is_digit);
-        if s.peek() == Some(b'.' as u16) {
+        if s.peek().is_some_and(|u| is(u, '.')) {
             s.pos += 1;
             s.eat_while(is_digit);
         }
@@ -253,7 +241,7 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
     s.pos += 1;
     if one_of(c, "{}[]()") {
         None
-    } else if c == b'%' as u16 {
+    } else if is(c, '%') {
         s.pos = s.text.len();
         Some(Comment)
     } else {
@@ -280,11 +268,28 @@ fn arguments(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     normal(s, state)
 }
 
-fn verbatim_environment(rest: &[u16]) -> Option<&'static str> {
-    if rest.first() != Some(&(b'{' as u16)) {
+fn control_word(s: &mut Stream) -> Option<Range<usize>> {
+    let backslash = s.peek().is_some_and(|u| is(u, '\\'));
+    if !backslash || !s.at(1).is_some_and(command_letter) {
         return None;
     }
-    let close = rest.iter().take(NAME).position(|&u| u == b'}' as u16)?;
+    s.pos += 1;
+    let name = s.pos;
+    s.eat_while(command_letter);
+    Some(name..s.pos)
+}
+
+fn control_symbol(s: &mut Stream) -> bool {
+    let symbol = s.peek().is_some_and(|u| is(u, '\\')) && s.at(1).is_some_and(|u| u < 128);
+    s.pos += 2 * symbol as usize;
+    symbol
+}
+
+fn verbatim_environment(rest: &[u16]) -> Option<&'static str> {
+    if !rest.first().is_some_and(|&u| is(u, '{')) {
+        return None;
+    }
+    let close = rest.iter().take(NAME).position(|&u| is(u, '}'))?;
     let mut buf = [0; NAME];
     let name = ascii(&rest[1..close], &mut buf);
     CATALOG.verbatim_environments.get(name).map(String::as_str)
@@ -372,11 +377,11 @@ fn is_digit(u: u16) -> bool {
 }
 
 fn word(u: u16) -> bool {
-    u < 128 && ((u as u8).is_ascii_alphanumeric() || u == b'_' as u16)
+    u < 128 && ((u as u8).is_ascii_alphanumeric() || is(u, '_'))
 }
 
 fn command_letter(u: u16) -> bool {
-    u == b'@' as u16 || math_letter(u)
+    is(u, '@') || math_letter(u)
 }
 
 fn math_letter(u: u16) -> bool {

@@ -5,12 +5,13 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{SourceDocument, Text, catalog, indentation};
+use super::scan::{Group, Scanner};
+use super::{INDENT, SourceDocument, Text, catalog, indentation};
 use crate::analyze::{Defined, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SnippetField {
     pub(crate) start: u32,
@@ -18,7 +19,7 @@ pub(crate) struct SnippetField {
     pub(crate) index: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct Completion {
     pub(crate) label: String,
     pub(crate) text: String,
@@ -27,7 +28,7 @@ pub(crate) struct Completion {
     pub(crate) detail: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SymbolKind {
     #[schemars(title = "Command")]
@@ -103,14 +104,14 @@ impl Installed {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct Completions {
     pub(crate) start: u32,
     pub(crate) kind: SymbolKind,
     pub(crate) items: Vec<Completion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct Definition {
     kind: SymbolKind,
     name: String,
@@ -156,16 +157,14 @@ impl SourceDocument {
                 }
                 "begin" | "end" => {
                     let at = from as usize + utf16::len(&before[..c.get(0).unwrap().start()]);
-                    let groups = (&c[1] == "end").then(|| self.scanned_to(at).groups());
-                    let mut groups = groups.into_iter().flatten().rev();
-                    let open = groups.find_map(|g| Some(g.end.strip_prefix("env:")?.to_owned()));
+                    let scanner = (&c[1] == "end").then(|| self.scanned_to(at));
+                    let mut groups = scanner.iter().flat_map(Scanner::groups);
+                    let open = groups.find_map(Group::environment);
                     let own = &self.symbols.environments;
                     let others = catalog.environments.iter().filter(|e| !own.contains(e));
-                    let rest = own
-                        .iter()
-                        .chain(others)
-                        .filter(|e| Some(*e) != open.as_ref());
-                    listed = open.iter().chain(rest).cloned().collect();
+                    let rest = own.iter().chain(others).map(String::as_str);
+                    let rest = rest.filter(|&e| Some(e) != open);
+                    listed = open.into_iter().chain(rest).map(str::to_owned).collect();
                     (&listed, SymbolKind::Environment)
                 }
                 "usepackage" | "RequirePackage" => (&installed.packages, SymbolKind::File),
@@ -419,7 +418,7 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
     let line = source.line(source.line_index(at));
     let indentation = String::from_utf16_lossy(&line[..indentation(line)]);
     let snippet = snippet
-        .replace('\t', "  ")
+        .replace('\t', INDENT)
         .replace('\n', &format!("\n{indentation}"));
     let mut names = Vec::new();
     let mut fields = Vec::new();

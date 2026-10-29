@@ -1,10 +1,9 @@
-use std::borrow::Cow;
 use std::ops::Range;
 
 use super::stack::Stack;
 use super::{NAME, NEWLINE, ascii, catalog::CATALOG, is, letter};
 
-pub fn closing_brace(body: &str) -> Option<usize> {
+pub(crate) fn closing_brace(body: &str) -> Option<usize> {
     let (mut depth, mut slashes) = (1, 0);
     body.find(|c| {
         if slashes % 2 == 0 {
@@ -95,26 +94,47 @@ pub(crate) fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usiz
     is(rest[close], '}').then_some((&rest[1..close], from + leading + close + 1))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum End {
+    Brace,
+    Dollar,
+    Dollars,
+    Parenthesis,
+    Bracket,
+    Environment(String),
+}
+
+#[derive(Clone)]
 pub(crate) struct Group {
     pub(crate) math: bool,
-    pub(crate) end: Cow<'static, str>,
+    pub(crate) end: End,
     pub(crate) open: usize,
     pub(crate) command: Option<(usize, usize)>,
 }
 
 impl Group {
-    fn new(math: bool, end: impl Into<Cow<'static, str>>, open: usize) -> Self {
+    fn new(math: bool, end: End, open: usize) -> Self {
         Self {
             math,
-            end: end.into(),
+            end,
             open,
             command: None,
         }
     }
 
-    pub(crate) fn delimited(&self) -> bool {
-        matches!(self.end.as_ref(), "$" | "$$" | "\\)" | "\\]")
+    pub(crate) fn environment(&self) -> Option<&str> {
+        match &self.end {
+            End::Environment(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn delimiter(&self) -> Option<usize> {
+        match self.end {
+            End::Dollar => Some(1),
+            End::Dollars | End::Parenthesis | End::Bracket => Some(2),
+            End::Brace | End::Environment(_) => None,
+        }
     }
 }
 
@@ -147,10 +167,8 @@ impl Scanner {
         self.stack.top().is_some_and(|g| g.math)
     }
 
-    pub(crate) fn groups(&self) -> Vec<Group> {
-        let mut groups: Vec<Group> = self.stack.iter().cloned().collect();
-        groups.reverse();
-        groups
+    pub(crate) fn groups(&self) -> impl Iterator<Item = &Group> {
+        self.stack.iter()
     }
 
     pub(crate) fn run(
@@ -164,11 +182,11 @@ impl Scanner {
         while self.i < src.len().min(until) {
             let start = self.i;
             while probe < probes.len() && probes[probe] <= start {
-                visit.at(self.groups());
+                visit.at(self.outermost_first());
                 probe += 1;
             }
             let answered = !probes.is_empty() && probe == probes.len();
-            if answered && (paragraph_ended || !self.stack.iter().any(|g| g.end == "}")) {
+            if answered && (paragraph_ended || !self.groups().any(|g| g.end == End::Brace)) {
                 break;
             }
             let pending = self.last_command.take();
@@ -189,13 +207,13 @@ impl Scanner {
                     let math = !self.text_argument && self.in_math();
                     self.stack.push(Group {
                         command: pending,
-                        ..Group::new(math, "}", start)
+                        ..Group::new(math, End::Brace, start)
                     });
                     self.text_argument = false;
                 }
                 '}' => {
                     visit.brace(start, false);
-                    self.close(start..self.i, "}", visit);
+                    self.close(start..self.i, &End::Brace, visit);
                 }
                 '\\' if self.i < src.len() => (code, read) = self.control(src, start, visit),
                 _ => {
@@ -214,8 +232,14 @@ impl Scanner {
             self.reach = self.reach.max(read).max(self.i + 1);
         }
         for _ in &probes[probe..] {
-            visit.at(self.groups());
+            visit.at(self.outermost_first());
         }
+    }
+
+    fn outermost_first(&self) -> Vec<Group> {
+        let mut groups: Vec<Group> = self.groups().cloned().collect();
+        groups.reverse();
+        groups
     }
 
     fn in_address(&self, src: &[u16]) -> bool {
@@ -251,8 +275,9 @@ impl Scanner {
         self.reach = self.reach.max(next + 1);
         let ends = src.get(next) == Some(&NEWLINE);
         if ends {
+            let delimited = |group: &Group| group.delimiter().is_some();
             self.stack
-                .pop_to(true, Group::delimited, |group| visit.unclosed(group));
+                .pop_to(true, delimited, |group| visit.unclosed(group));
             self.text_argument = false;
         } else {
             self.last_command = pending;
@@ -266,23 +291,23 @@ impl Scanner {
 
     fn dollar(&mut self, src: &[u16], start: usize, visit: &mut impl Visit) {
         let double = src.get(self.i).is_some_and(|&u| is(u, '$'));
-        let top = self.stack.top().map(|g| g.end.as_ref());
-        if let Some(end @ ("$" | "$$")) = top {
-            self.i += (end == "$$" && double) as usize;
+        let top = self.stack.top().map(|g| &g.end);
+        if let Some(end @ (End::Dollar | End::Dollars)) = top {
+            self.i += (*end == End::Dollars && double) as usize;
             let close = start..self.i;
             self.stack
                 .pop_to(false, |_| true, |g| visit.closed(g, close));
         } else if !self.in_math() {
-            let end = if double { "$$" } else { "$" };
+            let end = if double { End::Dollars } else { End::Dollar };
             self.stack.push(Group::new(true, end, start));
             self.i += double as usize;
         }
         self.text_argument = false;
     }
 
-    fn close(&mut self, token: Range<usize>, end: &str, visit: &mut impl Visit) {
+    fn close(&mut self, token: Range<usize>, end: &End, visit: &mut impl Visit) {
         self.stack
-            .pop_to(false, |g| g.end == end, |g| visit.closed(g, token));
+            .pop_to(false, |g| g.end == *end, |g| visit.closed(g, token));
     }
 
     fn control(&mut self, src: &[u16], start: usize, visit: &mut impl Visit) -> (bool, usize) {
@@ -291,10 +316,10 @@ impl Scanner {
         if !letter(src[self.i]) {
             let token = start..start + 2;
             match char::from_u32(src[self.i] as u32).unwrap_or_default() {
-                '(' if !in_math => self.stack.push(Group::new(true, "\\)", start)),
-                '[' if !in_math => self.stack.push(Group::new(true, "\\]", start)),
-                ')' => self.close(token, "\\)", visit),
-                ']' => self.close(token, "\\]", visit),
+                '(' if !in_math => self.stack.push(Group::new(true, End::Parenthesis, start)),
+                '[' if !in_math => self.stack.push(Group::new(true, End::Bracket, start)),
+                ')' => self.close(token, &End::Parenthesis, visit),
+                ']' => self.close(token, &End::Bracket, visit),
                 _ if !in_math => visit.command("", start, start + 2),
                 _ => {}
             }
@@ -370,7 +395,8 @@ impl Scanner {
         let name = name.trim();
         self.i = after;
         if end {
-            self.close(start..after, &format!("env:{name}"), visit);
+            let end = End::Environment(name.to_owned());
+            self.close(start..after, &end, visit);
         } else if CATALOG.verbatim_environments.contains(name) {
             let end: Vec<u16> = format!("\\end{{{name}}}").encode_utf16().collect();
             self.skip_literal(src, after, &end, None);
@@ -381,8 +407,8 @@ impl Scanner {
         } else {
             let bare = name.strip_suffix('*').unwrap_or(name);
             let math = in_math || CATALOG.math_environments.contains(bare);
-            self.stack
-                .push(Group::new(math, format!("env:{name}"), start));
+            let end = End::Environment(name.to_owned());
+            self.stack.push(Group::new(math, end, start));
         }
         (false, read)
     }

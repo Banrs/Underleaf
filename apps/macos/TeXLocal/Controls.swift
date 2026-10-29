@@ -11,27 +11,3 @@ extension Picker where Label == TupleView<(Text, Text)> {
         self.init(selection: selection, content: content) { Text(title); Text(detail) }
     }
 }
-
-struct LinkButton: View {
-    @Environment(\.openURL) private var openURL
-    let title: LocalizedStringKey
-    let url: URL
-
-    var body: some View { Button(title) { openURL(url) } }
-}
-
-nonisolated enum PDFPaper: String, CaseIterable, Identifiable {
-    case white, dark, auto
-
-    var id: Self { self }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .white: "White"
-        case .dark: "Dark"
-        case .auto: "Match Appearance"
-        }
-    }
-
-    func isDark(onDark appearance: Bool) -> Bool { self == .dark || (self == .auto && appearance) }
-}

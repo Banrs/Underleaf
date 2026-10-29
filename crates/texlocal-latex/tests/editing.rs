@@ -1,54 +1,11 @@
+mod common;
+
+use common::{apply, caret, run};
 use serde_json::{Value, json};
 use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
 
-fn run(doc: &mut SourceDocument, command: &str, args: Value) -> Value {
-    Source::call(doc, command, args).expect(command)
-}
-
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
-}
-
-fn caret(at: u32) -> Value {
-    json!({ "start": at, "length": 0 })
-}
-
-fn apply(doc: &mut SourceDocument, edit: &Value) {
-    let start = edit["start"].as_u64().unwrap() as u32;
-    let length = edit["length"].as_u64().unwrap() as u32;
-    doc.apply_edit(start, length, edit["text"].as_str().unwrap(), None, false);
-}
-
-fn kinds(doc: &mut SourceDocument) -> Vec<(String, String)> {
-    let text: Vec<u16> = doc.text().encode_utf16().collect();
-    doc.highlights(0, text.len() as u32)
-        .iter()
-        .map(|h| {
-            let (start, end) = (h.start as usize, (h.start + h.length) as usize);
-            (
-                String::from_utf16_lossy(&text[start..end]),
-                format!("{:?}", h.kind),
-            )
-        })
-        .collect()
-}
-
-#[test]
-fn highlighting_marks_commands_maths_and_comments() {
-    let mut doc = SourceDocument::new("\\emph{a} $x$ % note");
-    let found = kinds(&mut doc);
-    assert!(found.contains(&("\\emph".into(), "Command".into())));
-    assert!(found.contains(&("x".into(), "Maths".into())));
-    assert!(found.contains(&("% note".into(), "Comment".into())));
-}
-
-#[test]
-fn highlighting_marks_names_and_a_stray_brace() {
-    let mut doc = SourceDocument::new("\\ref{fig} \\cite{key} }");
-    let found = kinds(&mut doc);
-    assert!(found.contains(&("fig".into(), "Argument".into())));
-    assert!(found.contains(&("key".into(), "Argument".into())));
-    assert!(found.contains(&("}".into(), "Invalid".into())));
 }
 
 #[test]
@@ -58,25 +15,6 @@ fn edits_update_the_text() {
     assert_eq!(doc.text(), "one\n2");
     assert_eq!(doc.line_count(), 2);
     assert_eq!(doc.line_at(4), 2);
-}
-
-#[test]
-fn a_command_completes_with_its_argument() {
-    let mut doc = SourceDocument::new("\\sec");
-    let answer = run(
-        &mut doc,
-        "Complete",
-        json!({ "caret": 4, "explicit": false }),
-    );
-    assert_eq!(answer["kind"], "command");
-    assert_eq!(answer["start"], 0);
-    assert!(
-        answer["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["label"] == "\\section" && item["text"] == "\\section{}")
-    );
 }
 
 #[test]
@@ -161,17 +99,6 @@ fn return_after_an_item_starts_another() {
 }
 
 #[test]
-fn prose_words_leave_out_commands_maths_and_comments() {
-    let mut doc = SourceDocument::new("\\section{Intro}\nSome $x^2$ text % a note\n");
-    let answer = run(
-        &mut doc,
-        "Words",
-        json!({ "selection": { "start": 0, "length": 40 } }),
-    );
-    assert_eq!(answer, 3);
-}
-
-#[test]
 fn the_maths_under_the_caret_is_found() {
     let mut doc = SourceDocument::new("Some $x^2$ text");
     let answer = run(&mut doc, "MathAt", json!({ "caret": 7 }));
@@ -240,20 +167,6 @@ fn tab_indents_every_selected_line() {
 }
 
 #[test]
-fn spelling_leaves_out_commands_and_maths() {
-    let mut doc = SourceDocument::new("\\emph{word} and $x$");
-    let ranges = run(
-        &mut doc,
-        "CodeRanges",
-        json!({ "selection": { "start": 0, "length": 19 }, "checker": "spelling" }),
-    );
-    assert_eq!(
-        ranges,
-        json!([{ "start": 0, "length": 5 }, { "start": 16, "length": 3 }])
-    );
-}
-
-#[test]
 fn a_section_folds_to_the_next_heading() {
     let mut doc = SourceDocument::new("\\section{A}\ntext\n\\section{B}\nmore\n");
     assert_eq!(
@@ -263,70 +176,11 @@ fn a_section_folds_to_the_next_heading() {
 }
 
 #[test]
-fn a_symbol_outside_maths_goes_in_dollars() {
-    let mut doc = SourceDocument::new("");
-    let answer = run(
-        &mut doc,
-        "InsertSymbol",
-        json!({ "command": "\\alpha", "selection": caret(0) }),
-    );
-    assert_eq!(answer["edit"]["text"], "$\\alpha$");
-}
-
-#[test]
-fn a_figure_block_leaves_fields_to_fill() {
-    let mut doc = SourceDocument::new("");
-    let answer = run(
-        &mut doc,
-        "InsertBlock",
-        json!({ "id": "figure", "selection": caret(0) }),
-    );
-    assert!(
-        answer["edit"]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("\\begin{figure}")
-    );
-    assert_eq!(answer["fields"].as_array().unwrap().len(), 3);
-}
-
-#[test]
 fn a_reference_leads_to_its_label() {
     let mut doc = SourceDocument::new("\\label{a} \\ref{a}");
     let answer = run(&mut doc, "DefinitionAt", json!({ "at": 15 }));
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
-}
-
-#[test]
-fn a_snippet_tabs_from_field_to_field_until_it_ends() {
-    let mut doc = SourceDocument::new("");
-    let block = run(
-        &mut doc,
-        "InsertBlock",
-        json!({ "id": "figure", "selection": caret(0) }),
-    );
-    apply(&mut doc, &block["edit"]);
-    let fields = &block["fields"];
-    let place = |i: usize| json!({ "start": fields[i]["start"], "length": fields[i]["length"] });
-    let first = run(
-        &mut doc,
-        "StartSnippet",
-        json!({ "fields": fields, "at": 0 }),
-    );
-    assert_eq!(first, place(0));
-    let tab = |doc: &mut SourceDocument, step: i64| {
-        run(
-            doc,
-            "InsertTab",
-            json!({ "selections": [first], "step": step }),
-        )
-    };
-    assert_eq!(tab(&mut doc, 1)["field"], place(1));
-    assert_eq!(tab(&mut doc, -1)["field"], place(0));
-    assert_eq!(run(&mut doc, "EndSnippet", json!({})), true);
-    assert_eq!(run(&mut doc, "EndSnippet", json!({})), false);
-    assert_eq!(tab(&mut doc, 1)["field"], Value::Null);
 }
 
 #[test]

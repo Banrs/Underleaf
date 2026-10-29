@@ -182,6 +182,38 @@ struct FieldTests {
         }
         #expect(height("my notes.tex") > height("notes.tex"))
     }
+
+    @Test func aNameFieldSelectsTheBaseNameAndTakesFastTypingInOrder() async throws {
+        let rename = InPlaceRename<String>()
+        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: Renaming(rename: rename))
+        window.makeKeyAndOrderFront(nil)
+        rename.begin("a.tex", name: "untitled.tex")
+        try await waitUntil { (window.firstResponder as? NSTextView)?.selectedRange() == NSRange(location: 0, length: 8) }
+        for key in "renamed".map(String.init) {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                NSApp.postEvent(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                                 context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0)!,
+                                atStart: false)
+            }
+        }
+        try await waitUntil { rename.name == "renamed.tex" }
+    }
+}
+
+private final class KeyWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+}
+
+private struct Renaming: View {
+    let rename: InPlaceRename<String>
+
+    var body: some View {
+        if rename.id != nil {
+            RenameField(text: Bindable(rename).name, isFile: true, ended: {}, commit: {}, cancel: {})
+        }
+    }
 }
 
 struct SwitchTests {
@@ -216,6 +248,7 @@ struct ViewsTests {
         await project.load()
         #expect(views.ui != nil && project.initialLoadComplete)
         #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
+        #expect(await project.createEntry(in: "", directory: true) == "untitled-folder")
         await project.renameEntry("untitled.tex", to: "notes.tex")
         #expect(views.shown == ["main.tex", "untitled.tex", "notes.tex"])
         #expect(views.revealed == ["main.tex:3", "untitled.tex"])
@@ -242,6 +275,7 @@ struct ViewsTests {
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }
+            if case .renamed(let renamed) = event { moved += [renamed.from, renamed.to] }
         }
 
         func opened(_ ui: UiState) -> Task<Void, Never>? {
@@ -253,7 +287,6 @@ struct ViewsTests {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
         func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
-        func moved(from: String, to: String) { moved += [from, to] }
         func trashed(_ path: String) {}
         func beep() {}
         func perform(_ command: EditorCommand) {}

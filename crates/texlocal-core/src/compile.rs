@@ -212,9 +212,8 @@ impl CompileManager {
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
             Ok((mut child, tree)) => {
-                let (code, mut output, stderr, timed_out) =
+                let (code, output, timed_out) =
                     drive(&mut child, &tree, auto.then_some(COMPILE_TIMEOUT)).await;
-                output.push_str(&stderr);
                 let end = if timed_out {
                     End::TimedOut
                 } else {

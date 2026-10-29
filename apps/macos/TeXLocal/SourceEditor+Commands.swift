@@ -2,10 +2,7 @@ import AppKit
 
 extension SourceEditor {
     func jumpToDefinition() {
-        guard let place = textView.document.definition(at: textView.selection.location)?.places.first else {
-            NSSound.beep()
-            return
-        }
+        guard let place = textView.document.definition(at: textView.selection.location)?.places.first else { return NSSound.beep() }
         textView.openDefinition(place)
     }
 

@@ -33,7 +33,7 @@ extension SourceEditor {
     func forget(path: String) { kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") } }
 
     func rename(from: String, to: String) {
-        if to != from { forget(path: to) }
+        forget(path: to)
         kept = Dictionary(uniqueKeysWithValues: kept.map { (remapPath($0.key, from: from, to: to), $0.value) })
         path = path.map { remapPath($0, from: from, to: to) }
     }

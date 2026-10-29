@@ -9,7 +9,7 @@ use texlocal_latex::message::Message;
 use texlocal_latex::templates::ProjectTemplate;
 
 use crate::compile::CompileManager;
-use crate::events::Queued;
+use crate::events::{Queued, Sent};
 use crate::messages;
 use crate::paths::Project;
 use crate::projects::{self, History, Opening, ProjectInfo};
@@ -27,7 +27,7 @@ pub struct Service {
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
     pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
-    sent: Mutex<Option<String>>,
+    sent: Mutex<Sent<LibrarySection>>,
     in_sessions: Mutex<Vec<String>>,
 }
 
@@ -93,9 +93,7 @@ impl Service {
         };
         let mut sent = lock(&self.sent);
         let section = LibrarySection::Projects(self.projects()?);
-        let said = serde_json::to_string(&section).expect("a section serialises");
-        if sent.as_ref() != Some(&said) {
-            *sent = Some(said);
+        if sent.changed(&section) {
             let _ = hub.send(Queued::Library(section));
         }
         Ok(())

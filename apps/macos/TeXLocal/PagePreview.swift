@@ -16,10 +16,10 @@ struct PagePreview: View {
                 bar(64, 5).padding(.top, 16)
                 bar(40, 3)
                 bar(52, 3).padding(.bottom, 6)
-                ForEach(0..<2, id: \.self) { _ in bar(78, 2) }
+                ForEach(0..<2) { _ in bar(78, 2) }
                 bar(60, 2).padding(.bottom, 4)
                 HStack { bar(40, 3); Spacer() }.padding(.horizontal, 16)
-                ForEach(0..<4, id: \.self) { _ in bar(88, 2) }
+                ForEach(0..<4) { _ in bar(88, 2) }
                 bar(50, 2)
                 Spacer(minLength: 0)
             }

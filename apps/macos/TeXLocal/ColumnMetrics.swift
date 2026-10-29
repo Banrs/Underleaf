@@ -11,6 +11,5 @@ enum ColumnMetrics {
     static let zoom: CGFloat = 156
     static let compile: CGFloat = 110
     static let separator: CGFloat = 5
-    static let toolbarMinimum: CGFloat = 533
-    static let contentMinimum = CGSize(width: toolbarMinimum, height: 400)
+    static let contentMinimum = CGSize(width: 533, height: 400)
 }

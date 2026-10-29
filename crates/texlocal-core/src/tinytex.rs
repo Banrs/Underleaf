@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use crate::error::CoreError;
 use crate::messages;
@@ -10,7 +9,6 @@ use crate::tex::{find_tool, join_path};
 use crate::{process, sys};
 
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
-const PACKAGES: [&str; 2] = ["beamer", "makeindex"];
 const UNFINISHED: &str = ".texlocal-tinytex-";
 
 pub(crate) async fn install(path_env: &str) -> Result<(), CoreError> {
@@ -36,8 +34,7 @@ async fn install_into(root: &Path, path_env: &str) -> Result<(), CoreError> {
         .tempdir_in(parent)?;
     let unpacked = unpack(temp.path(), path_env).await?;
     tlmgr(&unpacked, path_env, &["update", "--self"]).await?;
-    let install = ["install"].into_iter().chain(PACKAGES);
-    tlmgr(&unpacked, path_env, &install.collect::<Vec<_>>()).await?;
+    tlmgr(&unpacked, path_env, &["install", "beamer", "makeindex"]).await?;
     std::fs::rename(&unpacked, root)?;
     let postaction = ["postaction", "install", "script", "xetex"];
     tlmgr(root, path_env, &postaction).await
@@ -52,8 +49,7 @@ async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
         bundle(&release).ok_or_else(|| CoreError::internal(messages::no_tinytex_bundle()))?;
     let archive = temp.join("TinyTeX.tar.xz");
     fetch(url, &archive, path_env).await?;
-    let sum = Sha256::digest(std::fs::read(&archive)?);
-    if sum.iter().map(|b| format!("{b:02x}")).collect::<String>() != digest {
+    if crate::sha256(&std::fs::read(&archive)?) != digest {
         return Err(CoreError::internal(messages::tinytex_mismatch()));
     }
     match run(sys::unpack(&archive, temp, path_env)?).await? {
@@ -87,14 +83,8 @@ fn bundle(release: &Release) -> Option<(&str, &str)> {
 async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
     match run(sys::download(url, to, path_env)?).await? {
         (0, _) => Ok(()),
-        (6 | 7, _) => Err(CoreError::new(
-            crate::ErrorKind::Unavailable,
-            messages::github_unreachable(),
-        )),
-        (28, _) => Err(CoreError::new(
-            crate::ErrorKind::Unavailable,
-            messages::tinytex_stalled(),
-        )),
+        (6 | 7, _) => Err(CoreError::unavailable(messages::github_unreachable())),
+        (28, _) => Err(CoreError::unavailable(messages::tinytex_stalled())),
         (_, out) => Err(CoreError::internal(messages::tinytex_download_failed(
             crate::tail(out.trim(), 2000),
         ))),

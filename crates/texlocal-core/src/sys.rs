@@ -114,11 +114,8 @@ pub(crate) fn copy_xattrs(from: &Path, to: &File) {
 }
 
 pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
-    let c_path = |path: &Path| {
-        CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
-    };
-    let (from, to) = (c_path(from)?, c_path(to)?);
+    let from = CString::new(from.as_os_str().as_encoded_bytes())?;
+    let to = CString::new(to.as_os_str().as_encoded_bytes())?;
     if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
         Ok(())
     } else {

@@ -467,10 +467,11 @@ async fn a_new_entry_is_numbered_past_a_taken_name() {
     let second = rig.call("CreateEntry", entry("untitled.tex", false));
     assert_eq!(
         (first, second),
-        (json!("untitled.tex"), json!("untitled 2.tex"))
+        (json!("untitled.tex"), json!("untitled-2.tex"))
     );
-    let folder = rig.call("CreateEntry", entry("figs", true));
-    assert!(rig.root().join(folder.as_str().unwrap()).is_dir());
+    let folders = [(); 2].map(|()| rig.call("CreateEntry", entry("figs", true)));
+    assert_eq!(folders, [json!("figs"), json!("figs-2")]);
+    assert!(rig.root().join("figs-2").is_dir());
     for name in [".texlocal.json", "../outside.tex"] {
         let refused = rig.refuse("CreateEntry", entry(name, false));
         assert_eq!(refused, ErrorKind::Invalid, "{name}");
@@ -478,7 +479,7 @@ async fn a_new_entry_is_numbered_past_a_taken_name() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn renaming_the_open_main_file_sends_its_event_and_sections_before_the_reply() {
+async fn a_rename_sends_its_paths_and_the_open_files_sections_before_the_reply() {
     let rig = project().await;
     rig.open_document("main.tex");
     rig.section("outline", |o| !o.is_null());
@@ -487,7 +488,7 @@ async fn renaming_the_open_main_file_sends_its_event_and_sections_before_the_rep
     assert_eq!(renamed["to"], "thesis.tex");
     assert!(rig.root().join("thesis.tex").is_file());
     let said = [
-        "documentRenamed",
+        "renamed",
         "documents",
         "tree",
         "project",
@@ -495,11 +496,17 @@ async fn renaming_the_open_main_file_sends_its_event_and_sections_before_the_rep
         "reply",
     ];
     assert_eq!(rig.said(), said);
+    let renamed = rig.event("renamed", |_| true);
+    assert_eq!(renamed, json!({ "from": "main.tex", "to": "thesis.tex" }));
     let project = rig.section("project", |_| true);
     assert_eq!(project["settings"]["mainFile"], "thesis.tex");
     let documents = rig.section("documents", |_| true);
     assert_eq!(names(&documents, "path"), ["thesis.tex"]);
     assert_eq!(rig.section("openFile", |_| true)["path"], "thesis.tex");
+    rig.forget();
+    rig.call("Rename", json!({ "from": "ch.tex", "to": "parts/ch.tex" }));
+    let renamed = rig.event("renamed", |_| true);
+    assert_eq!(renamed, json!({ "from": "ch.tex", "to": "parts/ch.tex" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -671,12 +678,12 @@ async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
     let second = rig.call("ImportFiles", args.clone());
     assert_eq!(
         second["existing"],
-        json!([{ "path": "plot.png", "keepBoth": "plot 2.png" }])
+        json!([{ "path": "plot.png", "keepBoth": "plot-2.png" }])
     );
     let mut keep = args;
     keep["conflict"] = json!("keepBoth");
     rig.call("ImportFiles", keep);
-    assert!(rig.root().join("figs/plot 2.png").is_file());
+    assert!(rig.root().join("figs/plot-2.png").is_file());
 }
 
 #[tokio::test(flavor = "multi_thread")]

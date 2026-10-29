@@ -33,7 +33,7 @@ struct PDFEmptyState: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                LinkButton(title: "Get MacTeX", url: Links.mactex)
+                Link("Get MacTeX", destination: Links.mactex)
             }
         } else if project.compiling {
             ContentUnavailableView {

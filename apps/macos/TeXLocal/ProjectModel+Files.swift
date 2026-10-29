@@ -2,7 +2,7 @@ import Foundation
 
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
-        let name = directory ? "untitled folder" : "untitled.tex"
+        let name = directory ? "untitled-folder" : "untitled.tex"
         guard let made = await alerting("Couldn’t Create “\(name)”", {
             try await session.call(CreateEntry(folder: folder, name: name, dir: directory))
         }) else { return nil }
@@ -26,7 +26,6 @@ extension ProjectModel {
         guard to != from, let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
             try await session.call(Rename(from: from, to: to))
         }), let result = renamed else { return nil }
-        views?.moved(from: result.from, to: result.to)
         trail.moved(result.from, to: result.to)
         let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
         expandedFolders = Set(expandedFolders.map(remap))

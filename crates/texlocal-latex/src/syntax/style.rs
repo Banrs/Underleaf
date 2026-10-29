@@ -6,14 +6,14 @@ use serde::Serialize;
 use super::scan::{Group, Visit};
 use super::{NAME, SourceDocument, TextEdit, TextRange, ascii, clamp, splice};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct TextStyles {
     pub(crate) bold: Option<Vec<TextEdit>>,
     pub(crate) italic: Option<Vec<TextEdit>>,
     pub(crate) underline: Option<Vec<TextEdit>>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 enum Shape {
     Upright,
     Slanted,

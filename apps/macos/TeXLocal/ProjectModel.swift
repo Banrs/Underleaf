@@ -9,7 +9,6 @@ protocol ProjectViews: AnyObject {
     func opened(_ ui: UiState) -> Task<Void, Never>?
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool)
     func apply(_ edits: DocumentEdits, named name: String) -> Bool
-    func moved(from: String, to: String)
     func trashed(_ path: String)
     func beep()
     func perform(_ command: EditorCommand)
@@ -198,7 +197,7 @@ final class ProjectModel {
     func handle(_ event: Event) {
         switch event {
         case .section(let section): apply(section)
-        case .documentReload, .documentRenamed, .livePage, .liveDocument: break
+        case .documentReload, .renamed, .livePage, .liveDocument: break
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .buildFinished(let finished): buildFinished(finished)

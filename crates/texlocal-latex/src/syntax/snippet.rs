@@ -8,13 +8,13 @@ use super::{
     span, splice,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Default, Serialize, JsonSchema)]
 pub(crate) struct Tabbing {
     pub(crate) field: Option<TextRange>,
     pub(crate) edits: Vec<TextEdit>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct Field {
     index: usize,
     start: usize,
@@ -31,7 +31,6 @@ impl Field {
     }
 }
 
-#[derive(Clone, Debug)]
 pub(super) struct Snippet {
     fields: Vec<Field>,
     active: usize,

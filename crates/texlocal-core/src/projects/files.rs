@@ -136,9 +136,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     if is_under(&to, &from) {
         return Err(CoreError::bad_request(messages::into_itself()));
     }
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    dest.parent().map_or(Ok(()), fs::create_dir_all)?;
     let main_file = read_settings(&project.settings).main_file;
     let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);
@@ -175,8 +173,8 @@ pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreE
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
     let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let numbered = move |n: u32| match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
-        _ => format!("{name} {n}"),
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{n}.{ext}"),
+        _ => format!("{name}-{n}"),
     };
     let copies = std::iter::once(name.to_owned()).chain((2..).map(numbered));
     copies.map(move |copy| match parent {

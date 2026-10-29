@@ -10,7 +10,7 @@ use crate::messages;
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::scan::closing_brace;
 
-#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
@@ -249,12 +249,6 @@ fn is_path(text: &str) -> bool {
     text.contains(['/', '\\']) || (text.contains('.') && !text.contains(char::is_whitespace))
 }
 
-fn warning_start(line: &str) -> Option<Captures<'_>> {
-    line.contains(" Warning:")
-        .then(|| WARNING.captures(line))
-        .flatten()
-}
-
 fn project_path(path: &str) -> Option<String> {
     let absolute = match path.as_bytes() {
         [b'/' | b'\\', ..] => true,
@@ -338,7 +332,7 @@ fn starts_new(line: &str) -> bool {
         || line.starts_with(['!', '<'])
         || L_NO.is_match(line)
         || error_start(line).is_some()
-        || warning_start(line).is_some()
+        || WARNING.is_match(line)
 }
 
 fn continuation<'a>(
@@ -451,12 +445,7 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        let may_err = line.starts_with("! ") || line.contains(':');
-        let start = may_err
-            .then(|| error_start(line))
-            .flatten()
-            .or_else(|| warning_start(line));
-        if let Some(m) = start {
+        if let Some(m) = error_start(line).or_else(|| WARNING.captures(line)) {
             let mut found = diagnostic(&lines, i, &m);
             if found.error {
                 quiet_until = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
@@ -575,20 +564,13 @@ pub fn aux_inputs(aux: &str) -> impl Iterator<Item = &str> {
 mod tests {
     use super::*;
 
-    fn errors(log: &str) -> Vec<LogItem> {
+    fn found(log: &str, kind: Severity) -> Vec<LogItem> {
         let (items, _) = parse_log(log, "main.tex");
-        items
-            .into_iter()
-            .filter(|i| i.kind == Severity::Error)
-            .collect()
+        items.into_iter().filter(|i| i.kind == kind).collect()
     }
 
-    fn warnings(log: &str) -> Vec<LogItem> {
-        let (items, _) = parse_log(log, "main.tex");
-        items
-            .into_iter()
-            .filter(|i| i.kind == Severity::Warning)
-            .collect()
+    fn errors(log: &str) -> Vec<LogItem> {
+        found(log, Severity::Error)
     }
 
     #[test]
@@ -632,7 +614,7 @@ mod tests {
     #[test]
     fn undefined_references_and_citations_are_warnings_on_their_lines() {
         let log = "(./main.tex\nLaTeX Warning: Reference `fig:x' on page 1 undefined on input line 7.\n\nLaTeX Warning: Citation `knuth' on page 1 undefined on input line 9.\n)";
-        let found = warnings(log);
+        let found = found(log, Severity::Warning);
         assert_eq!(found.len(), 2);
         assert_eq!(
             (found[0].file.as_deref(), found[0].line),

@@ -6,6 +6,13 @@ The Mac app TeXLocal: a Rust core in `crates/` and the SwiftUI and AppKit app in
 - `texlocal-core`: projects, sessions, compiling and the live preview. Platform calls stay in `sys.rs`.
 - `texlocal-ffi`: the C ABI the app links.
 
+The app talks to the core two ways. The editor engine is synchronous and in process (`tl_source_*`). Everything
+else is one ordered stream: `tl_send` and `tl_session_send` carry the commands that `texlocal-core/src/protocol.rs`
+types, and one listener hears their replies after the events sent before them. A session's state arrives as
+sections, each sent again only when it changes. The Swift side of the protocol, `apps/macos/TeXLocal/Wire.swift`,
+and the test fixtures in `WireFixtures.swift` are generated: after changing a command, event or section type, run
+`BLESS=1 cargo test -p texlocal-core --test wire` and commit what it writes.
+
 ## Where code goes
 
 Ask in order; the first yes decides.
@@ -32,8 +39,15 @@ Ask in order; the first yes decides.
 The two target checks need `rustup target add wasm32-unknown-unknown aarch64-apple-ios`. The QA scripts need
 `zsh tools/qa/setup.sh <scratch>` once, then `export QA_SCRATCH=<scratch>`.
 
+The real-TeX tests, `cargo test -p texlocal-core -- --ignored`, need TeX on the `PATH` and, for Live Preview, a
+TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly.
+
+`zsh tools/qa/build.sh` builds the QA app, and `$QA_SCRATCH/qa/qa` drives it for checking by eye what no test can.
+
 ## Rules
 
 - Never run tests or UI checks against the installed app or `~/TeXLocal`. Use the QA app that
   `tools/qa` builds, with its own data.
-- Install only when asked: `zsh tools/install-mac.sh`.
+- Install only when asked: TeXpresso first (`tools/texpresso/build.sh`, then
+  `tools/texpresso/install.sh tools/texpresso/source/build`), since the app needs the TeXpresso of its own
+  checkout, then `zsh tools/install-mac.sh`.
