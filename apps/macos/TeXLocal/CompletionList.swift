@@ -128,6 +128,47 @@ final class CompletionList {
     func move(_ step: Int) { rows.move(step) }
 }
 
+struct ChoiceList<Item, Row: View>: View {
+    let rows: ChoiceRows<Item>
+    let height: CGFloat
+    let truncation: Text.TruncationMode
+    let chosen: (Int) -> Void
+    @ViewBuilder let row: (Item) -> Row
+
+    private static var text: Color { Color(nsColor: .labelColor) }
+    private static var chosenText: Color { Color(nsColor: .alternateSelectedControlTextColor) }
+    private static var accent: Color { Color(nsColor: .controlAccentColor) }
+
+    var body: some View {
+        ScrollViewReader { scroller in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(rows.items.indices, id: \.self) { index in
+                        let selected = index == rows.selection
+                        row(rows.items[index])
+                            .lineLimit(1)
+                            .truncationMode(truncation)
+                            .foregroundStyle(selected ? Self.chosenText : Self.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, CompletionRowsView.textInset)
+                            .frame(height: height)
+                            .background(selected ? Self.accent : .clear, in: .rect(cornerRadius: CompletionRowsView.rowCorner))
+                            .padding(.horizontal, CompletionRowsView.margin)
+                            .contentShape(.rect)
+                            .onTapGesture { chosen(index) }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .id(index)
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+            .padding(.vertical, CompletionRowsView.margin)
+            .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
+        }
+    }
+}
+
 @Observable final class ChoiceRows<Item> {
     var items: [Item] = [] { didSet { selection = 0 } }
     var selection = 0
@@ -168,52 +209,27 @@ struct CompletionRowsView: View {
     let clicked: (Int) -> Void
 
     static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20, corner: CGFloat = 13, rowCorner: CGFloat = 8
-    private static let text = Color(nsColor: .labelColor), chosenText = Color(nsColor: .alternateSelectedControlTextColor)
-    private static let accent = Color(nsColor: .controlAccentColor)
 
     var body: some View {
-        ScrollViewReader { scroller in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows.items.indices, id: \.self) { row in
-                        let chosen = row == rows.selection, detail = rows.items[row].detail
-                        HStack(spacing: Self.detailSpacing) {
-                            Text(label(row)).layoutPriority(1)
-                            if let detail {
-                                Text(detail)
-                                    .font(Font(look.detailFont))
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .trailing)
-                            }
-                        }
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(chosen ? Self.chosenText : Self.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Self.textInset)
-                        .frame(height: look.height)
-                        .background(chosen ? Self.accent : .clear, in: .rect(cornerRadius: Self.rowCorner))
-                        .padding(.horizontal, Self.margin)
-                        .contentShape(.rect)
-                        .onTapGesture { clicked(row) }
-                        .help(detail ?? "")
-                        .accessibilityElement(children: .combine)
-                        .accessibilityAddTraits(chosen ? .isSelected : [])
-                        .id(row)
-                    }
+        ChoiceList(rows: rows, height: look.height, truncation: .tail, chosen: clicked) { item in
+            HStack(spacing: Self.detailSpacing) {
+                Text(label(item)).layoutPriority(1)
+                if let detail = item.detail {
+                    Text(detail)
+                        .font(Font(look.detailFont))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .scrollIndicators(.never)
-            .padding(.vertical, Self.margin)
-            .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
+            .help(item.detail ?? "")
         }
         .glassEffect(.regular, in: .rect(cornerRadius: Self.corner))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Completions")
     }
 
-    private func label(_ row: Int) -> AttributedString {
-        let text = rows.items[row].label
+    private func label(_ item: Completion) -> AttributedString {
+        let text = item.label
         var label = AttributedString(text)
         label.font = Font(look.font as CTFont)
         let typed = NSRange(location: 0, length: min(look.typed, (text as NSString).length))

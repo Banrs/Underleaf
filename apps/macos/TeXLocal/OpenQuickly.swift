@@ -95,14 +95,7 @@ private struct QuickOpenView: View {
             .frame(height: OpenQuickly.fieldHeight)
             if !rows.items.isEmpty {
                 Divider()
-                ScrollViewReader { scroller in
-                    ScrollView {
-                        LazyVStack(spacing: 0) { ForEach(rows.items.indices, id: \.self, content: row) }
-                    }
-                    .scrollIndicators(.never)
-                    .padding(.vertical, CompletionRowsView.margin)
-                    .onChange(of: rows.revealed) { scroller.scrollTo(rows.selection) }
-                }
+                ChoiceList(rows: rows, height: OpenQuickly.rowHeight, truncation: .middle, chosen: open, row: row)
             }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
@@ -110,8 +103,7 @@ private struct QuickOpenView: View {
         .accessibilityLabel("Open Quickly")
     }
 
-    private func row(_ index: Int) -> some View {
-        let item = rows.items[index], chosen = index == rows.selection
+    private func row(_ item: QuickOpenItem) -> some View {
         let symbol = switch item.kind {
         case .heading: "list.bullet.indent"
         case .label: "tag"
@@ -126,18 +118,5 @@ private struct QuickOpenView: View {
                 }
             }
         }
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .foregroundStyle(Color(nsColor: chosen ? .alternateSelectedControlTextColor : .labelColor))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, CompletionRowsView.textInset)
-        .frame(height: OpenQuickly.rowHeight)
-        .background(chosen ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 8))
-        .padding(.horizontal, CompletionRowsView.margin)
-        .contentShape(.rect)
-        .onTapGesture { open(index) }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(chosen ? .isSelected : [])
-        .id(index)
     }
 }

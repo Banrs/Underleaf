@@ -201,6 +201,29 @@ struct LaneTests {
         #expect(cancelled == (true, true))
     }
 
+    @Test func movingToTheTrashUndoesAndRedoes() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "a.tex")
+        try Data("a".utf8).write(to: file)
+        let exists = { FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) }
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        var changes = 0
+        let item = UndoableTrash(original: file, name: "a.tex", undoManager: undo, trash: { (try? $0.recycle()) != nil },
+                                 changed: { changes += 1 }, failed: { _, _ in })
+        undo.beginUndoGrouping()
+        await item.moveToTrash()
+        undo.endUndoGrouping()
+        #expect(!exists() && undo.undoActionName == "Move to Trash")
+        undo.undo()
+        try await waitUntil { exists() && changes == 1 }
+        undo.redo()
+        try await waitUntil { !exists() && changes == 2 }
+        undo.undo()
+        try await waitUntil { exists() && changes == 3 }
+    }
 }
 
 struct FieldTests {
