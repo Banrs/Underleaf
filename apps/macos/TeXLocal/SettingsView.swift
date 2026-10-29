@@ -175,9 +175,9 @@ private struct ProgramFolder: View {
                             Button("Install TinyTeX") { attempt { try await app.installTeX() } }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(app.settingTeX)
-                            LinkButton(title: "Get MacTeX", url: Links.mactex)
+                            Link("Get MacTeX", destination: Links.mactex)
                         } else {
-                            LinkButton(title: "Install Guide", url: Links.texpressoGuide)
+                            Link("Install Guide", destination: Links.texpressoGuide)
                         }
                     }
                     if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking \(program.title)") }

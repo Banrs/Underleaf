@@ -20,11 +20,10 @@ use super::edits::{DocumentEdits, Fixed, ProjectEdits};
 use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
-use super::state::Sent;
 use super::watch::{self, Change, TreeIndex};
-use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
+use super::{Compiler, Msg, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
-use crate::events::{Event, Queued, SessionEvent};
+use crate::events::{Event, Queued, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
@@ -148,7 +147,7 @@ pub(crate) struct Actor {
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
     pub writes_history: Arc<AtomicBool>,
-    pub sent: Sent,
+    pub sent: Sent<SessionSection>,
     in_session: Option<InSession>,
     closing: Option<Pending<bool>>,
     closed: bool,

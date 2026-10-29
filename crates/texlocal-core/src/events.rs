@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::mem::{Discriminant, discriminant};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 
@@ -19,6 +21,23 @@ pub(crate) enum Queued {
         id: u64,
         answer: Result<Value, CoreError>,
     },
+}
+
+pub(crate) struct Sent<S>(HashMap<Discriminant<S>, String>);
+
+impl<S> Default for Sent<S> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl<S: Serialize> Sent<S> {
+    pub fn changed(&mut self, section: &S) -> bool {
+        let said = serde_json::to_string(section).expect("a section serialises");
+        let kind = discriminant(section);
+        let before = self.0.insert(kind, said);
+        before.as_ref() != self.0.get(&kind)
+    }
 }
 
 #[derive(Serialize, JsonSchema)]

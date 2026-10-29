@@ -15,7 +15,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     private func matchPaper() {
-        darkPaper = paper.isDark(onDark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        darkPaper = paper == .dark || paper == .auto && effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     private(set) var darkPaper = false {
@@ -262,5 +262,19 @@ extension NSMenu {
         for item in list where !item.isSeparatorItem || shown.last?.isSeparatorItem == false { shown.append(item) }
         if shown.last?.isSeparatorItem == true { shown.removeLast() }
         items = shown
+    }
+}
+
+nonisolated enum PDFPaper: String, CaseIterable, Identifiable {
+    case white, dark, auto
+
+    var id: Self { self }
+
+    var title: LocalizedStringResource {
+        switch self {
+        case .white: "White"
+        case .dark: "Dark"
+        case .auto: "Match Appearance"
+        }
     }
 }
