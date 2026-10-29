@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use texlocal_latex::diff::{DiffLine, compare, edit_to};
@@ -18,9 +19,26 @@ fn now() -> i64 {
 }
 
 impl Actor {
+    fn off_thread<T: 'static>(
+        &self,
+        job: impl FnOnce(&History) -> T + Send + 'static,
+        done: impl FnOnce(Option<T>) + Send + 'static,
+    ) {
+        let (history, open) = (Arc::clone(&self.history), Arc::clone(&self.writes_history));
+        tokio::task::spawn_blocking(move || {
+            let history = lock(&history);
+            done(open.load(Ordering::Acquire).then(|| job(&history)));
+        });
+    }
+
     pub fn snapshot_soon(&self) {
-        let (history, root) = (Arc::clone(&self.history), self.project.root.clone());
-        tokio::task::spawn_blocking(move || lock(&history).take(&root, now(), Taken::Auto));
+        let root = self.project.root.clone();
+        self.off_thread(move |history| history.take(&root, now(), Taken::Auto), drop);
+    }
+
+    pub fn stop_history(&self) {
+        self.writes_history.store(false, Ordering::Release);
+        drop(lock(&self.history));
     }
 
     pub fn snapshot_before(&self, reason: &'static str) -> Result<Option<String>, CoreError> {
@@ -33,8 +51,9 @@ impl Actor {
         job: impl FnOnce(&History) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
-        let history = Arc::clone(&self.history);
-        tokio::task::spawn_blocking(move || reply.send(job(&lock(&history))));
+        self.off_thread(job, |done| {
+            reply.send(done.unwrap_or_else(|| Err(super::gone())));
+        });
     }
 
     pub fn history_list(&self, reply: Pending<Vec<Snapshot>>) {

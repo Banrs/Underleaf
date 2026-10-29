@@ -95,6 +95,10 @@ pub(crate) struct Builds {
 }
 
 impl Builds {
+    pub fn busy(&self) -> bool {
+        self.compiling || self.cleaning.is_some()
+    }
+
     fn built(&self) -> impl Iterator<Item = &LogItem> {
         let result = self.result.iter();
         result.flat_map(|result| result.errors.iter().chain(&result.warnings))
@@ -131,7 +135,7 @@ impl Actor {
             self.builds.waiting_for_tex = true;
             return Ok(());
         }
-        if self.builds.compiling || self.builds.cleaning.is_some() {
+        if self.builds.busy() {
             self.builds.queued = Some(self.builds.queued.unwrap_or(true) && auto);
             return Ok(());
         }
@@ -198,6 +202,7 @@ impl Actor {
         self.publish_build();
         self.publish_pdf();
         self.emit(Event::BuildFinished(BuildFinished { auto, announce }));
+        self.close_when_idle();
     }
 
     pub fn publish_build(&mut self) {
@@ -282,6 +287,7 @@ impl Actor {
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(result.clone());
         }
+        self.close_when_idle();
     }
 
     pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {

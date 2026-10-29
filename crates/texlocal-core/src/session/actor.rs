@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
-use tokio::sync::{mpsc, watch as signal};
+use tokio::sync::{mpsc, oneshot, watch as signal};
 use tokio::time::Instant;
 
 use super::build::{Builds, built_pdf};
@@ -149,8 +149,10 @@ pub(crate) struct Actor {
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
+    pub writes_history: Arc<AtomicBool>,
     pub sent: Sent,
     in_session: Option<InSession>,
+    closing: Option<Pending<bool>>,
     closed: bool,
 }
 
@@ -214,8 +216,10 @@ impl Actor {
             live: Live::default(),
             later,
             history,
+            writes_history: Arc::new(AtomicBool::new(true)),
             sent: Sent::default(),
             in_session: Some(in_session),
+            closing: None,
             closed: false,
         };
         actor.publish_all(tree);
@@ -223,7 +227,11 @@ impl Actor {
         Ok((actor, ui))
     }
 
-    pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
+    pub async fn run(
+        mut self,
+        mut rx: mpsc::UnboundedReceiver<Msg>,
+        mut runtime_gone: oneshot::Receiver<()>,
+    ) {
         let mut woken = None;
         loop {
             let step = catch_unwind(AssertUnwindSafe(|| {
@@ -245,6 +253,8 @@ impl Actor {
             let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
             let waiting_for_tex = self.builds.waiting_for_tex;
             woken = tokio::select! {
+                biased;
+                _ = &mut runtime_gone => return,
                 message = rx.recv() => match message {
                     Some(message) => Some(Wake::Message(message)),
                     None => return,
@@ -271,6 +281,7 @@ impl Actor {
             self.stop_compile();
             self.live_stop();
         }));
+        self.stop_history();
         for (_, doc) in self.docs.iter_mut() {
             doc.doc.close();
             let error = if doc.dirty() {
@@ -345,7 +356,7 @@ impl Actor {
 
     fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
-            if self.closed {
+            if self.closed || self.closing.is_some() {
                 self.later.clear();
                 return;
             }
@@ -366,7 +377,9 @@ impl Actor {
             Session::OpenProject(_, answer) => {
                 answer(Err(CoreError::conflict("That session is open already")))
             }
-            Session::CloseProject(CloseProject {}, answer) => answer(self.close()),
+            Session::CloseProject(CloseProject {}, answer) => {
+                return self.close(Pending { reply, answer });
+            }
             Session::SetOptions(SetOptions { auto_compile }, answer) => {
                 answer(Ok(self.auto_compile = auto_compile))
             }
@@ -482,16 +495,28 @@ impl Actor {
         reply.send(answer);
     }
 
-    fn close(&mut self) -> Result<bool, CoreError> {
-        if !self.flush_all(true)? {
-            return Ok(false);
+    fn close(&mut self, reply: Pending<bool>) {
+        match self.flush_all(true) {
+            Ok(true) => self.closing = Some(reply),
+            flushed => return reply.send(flushed),
         }
         self.stop_compile();
-        self.closed = true;
         self.live_stop();
         self.docs.clear();
+        self.close_when_idle();
+    }
+
+    pub fn close_when_idle(&mut self) {
+        if self.builds.busy() {
+            return;
+        }
+        let Some(reply) = self.closing.take() else {
+            return;
+        };
+        self.stop_history();
+        self.closed = true;
         self.in_session = None;
         let _ = self.service.publish_projects();
-        Ok(true)
+        reply.send(Ok(true));
     }
 }

@@ -874,6 +874,18 @@ async fn stop_compile_stops_the_sessions_build() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn closing_answers_once_the_build_it_stopped_has_ended() {
+    let rig = compiling_slowly().await;
+    rig.forget();
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    let said = rig.said();
+    assert!(
+        said.ends_with(&["buildFinished", "library", "reply"].map(String::from)),
+        "{said:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn turning_auto_compile_on_builds_after_a_save() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
     rig.call("SetOptions", json!({ "autoCompile": true }));

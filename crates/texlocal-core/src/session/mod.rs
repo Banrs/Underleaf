@@ -21,7 +21,7 @@ use serde_json::Value;
 use texlocal_latex::analyze::Analysis;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::syntax::TextEdit;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener, Queued};
@@ -210,6 +210,8 @@ impl Sessions {
             opens: Arc::clone(&opens),
         });
         let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
+        let (mut alive, runtime_gone) = oneshot::channel::<()>();
+        runtime.spawn(async move { alive.closed().await });
         std::thread::Builder::new()
             .name(format!("texlocal-session-{session}"))
             .spawn(move || {
@@ -218,7 +220,7 @@ impl Sessions {
                     match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
                         Ok((actor, ui)) => {
                             reply.send(Ok(ui));
-                            runtime.block_on(actor.run(rx));
+                            runtime.block_on(actor.run(rx, runtime_gone));
                         }
                         Err(err) => reply.send(Err(err)),
                     }
