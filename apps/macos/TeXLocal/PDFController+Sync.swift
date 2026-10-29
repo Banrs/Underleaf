@@ -41,7 +41,7 @@ extension PDFController {
         let read = pages.map(\.page) + [located]
         let match = SynctexMatch(file: source.file, line: source.line, column: source.column, pages: pages.map(\.text))
         revealing = Task {
-            let hit = try? await Core.shared.call(match, in: source.session)
+            let hit = try? await source.session.call(match)
             guard !Task.isCancelled, view.document === document, read.allSatisfy({ document.number(of: $0) != nil }),
                   !source.quietly || hit != nil else { return }
             showFound(loc, on: located, hit: hit)

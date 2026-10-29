@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct BuildPanelPage: View {
@@ -48,6 +47,7 @@ struct IssueRow: View {
     let item: LogItem
     let place: Int
     let project: ProjectModel
+    @State private var confirming = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -82,25 +82,20 @@ struct IssueRow: View {
         if project.fixing == fix {
             ProgressView().controlSize(.small).accessibilityLabel(fix.title.text)
         } else {
-            Button(fix.title.text) { run(fix) }
+            Button(fix.title.text) { if fix.confirm == nil { run(fix) } else { confirming = true } }
                 .controlSize(.small)
                 .disabled(project.fixing != nil)
                 .help(fix.help.text)
+                .alert("\(fix.title.text)?", isPresented: $confirming) {
+                    Button(fix.title.text) { run(fix) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(fix.confirm?.text ?? "")
+                }
         }
     }
 
-    private func run(_ fix: Fix) { Task { if await confirmed(fix) { await project.run(fix) } } }
-
-    private func confirmed(_ fix: Fix) async -> Bool {
-        guard let confirm = fix.confirm else { return true }
-        let alert = NSAlert()
-        alert.messageText = "\(fix.title.text)?"
-        alert.informativeText = confirm.text
-        alert.addButton(withTitle: fix.title.text)
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        guard let window = project.editor.textView.window else { return alert.runModal() == .alertFirstButtonReturn }
-        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
-    }
+    private func run(_ fix: Fix) { Task { await project.run(fix) } }
 
     private func location(line: String) -> String? { item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file } }
 }

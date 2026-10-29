@@ -47,6 +47,7 @@ class DraggedSplitView: NSSplitView {
         defer {
             dragging = false
             workspace?.quiet(false)
+            workspace?.dragged(self)
         }
         super.mouseDown(with: event)
     }
@@ -91,6 +92,11 @@ final class SidebarSplitViewController: ThinSplitViewController {
 }
 
 final class ColumnsSplitView: DraggedSplitView {
+    override func layout() {
+        super.layout()
+        (window?.contentViewController as? WorkspaceController)?.fitToolbar()
+    }
+
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }

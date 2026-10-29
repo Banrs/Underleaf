@@ -95,9 +95,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var applied: NSFont?
 
     private func applyFont() {
-        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let chosen = fontName.isEmpty ? nil : NSFontManager.shared.font(withFamily: fontName, traits: [], weight: 5, size: fontSize)
-        let font = chosen ?? .monospacedSystemFont(ofSize: fontSize, weight: dark ? .medium : .regular)
+        let font = Self.font(named: fontName, size: fontSize, dark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         guard font != applied else { return }
         let resized = applied?.pointSize != font.pointSize || applied?.familyName != font.familyName
         applied = font
@@ -122,6 +120,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         gutter.font = EditorGutter.font(forText: fontSize)
         issues.fontChanged(size: fontSize, text: font)
         updateGutterWidth()
+    }
+
+    static func font(named name: String, size: CGFloat, dark: Bool) -> NSFont {
+        (name.isEmpty ? nil : NSFontManager.shared.font(withFamily: name, traits: [], weight: 5, size: size))
+            ?? .monospacedSystemFont(ofSize: size, weight: dark ? .medium : .regular)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -253,6 +256,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     var autoPair = true, autoComplete = true
     var composing: (Bool) -> Void = { _ in }
+    var spellCheckToggled: (Bool) -> Void = { _ in }
     private var toldComposing = false
     private var typing = false
 
@@ -313,7 +317,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func toggleContinuousSpellChecking(_ sender: Any?) {
         super.toggleContinuousSpellChecking(sender)
-        EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
+        spellCheckToggled(isContinuousSpellCheckingEnabled)
     }
 
     func markedTextChanged() {

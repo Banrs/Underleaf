@@ -9,7 +9,7 @@ struct SectionLevelItems: View {
             if style.command == "paragraph" { Divider() }
             Toggle(style.title,
                    isOn: Binding(get: { project?.headingCommand == style.command },
-                                 set: { _ in project?.editor.perform(.heading(style.command)) }))
+                                 set: { _ in project?.views?.perform(.heading(style.command)) }))
         }
         .disabled(project?.sourceToolsEnabled != true)
     }
@@ -28,7 +28,7 @@ struct SymbolItems: View {
                 ForEach(Array(stride(from: 0, to: symbols.count, by: columns)), id: \.self) { start in
                     ControlGroup {
                         ForEach(symbols[start..<min(start + columns, symbols.count)], id: \.command) { symbol in
-                            Button { project?.editor.perform(.symbol(symbol.command)) } label: {
+                            Button { project?.views?.perform(.symbol(symbol.command)) } label: {
                                 Label {
                                     Text(verbatim: MathGlyphs.spokenName(symbol.glyph, symbol.command))
                                 } icon: {
@@ -61,7 +61,7 @@ struct MathMenuItems: View {
         .keyboardShortcut(shortcut)
         .disabled(off || !inlineMathEnabled)
         Group {
-            Button { project?.editor.perform(.displayMath) } label: {
+            Button { project?.views?.perform(.displayMath) } label: {
                 Text("Display Math")
                 Text(verbatim: "\\[ … \\]")
             }

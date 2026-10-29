@@ -29,7 +29,7 @@ func restart(_ slot: inout Task<Void, Never>?, after delay: Duration, _ work: @e
 func enqueue<T: Sendable>(_ slot: inout Task<T, Never>?, _ work: @escaping @MainActor () async -> T) -> Task<T, Never> {
     let previous = slot
     let task = Task {
-        _ = await previous?.value
+        _ = await withTaskCancellationHandler { await previous?.value } onCancel: { previous?.cancel() }
         return await work()
     }
     slot = task

@@ -5,10 +5,10 @@ import UniformTypeIdentifiers
 enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }
 
 struct SettingsView: View {
-    @AppStorage(DefaultsKey.settingsPane) private var pane = SettingsPane.general
+    @Environment(AppModel.self) private var app
 
     var body: some View {
-        TabView(selection: $pane) {
+        TabView(selection: Bindable(app).settingsPane) {
             Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings().settingsPane() }
             Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings().settingsPane() }
             Tab("Compiling", systemImage: "hammer", value: .compiling) { CompilingSettings().settingsPane() }
@@ -26,9 +26,10 @@ extension View {
 }
 
 private struct GeneralSettings: View {
-    @AppStorage(DefaultsKey.newProjectEngine) private var engine = Engine.pdflatex
+    @Environment(AppModel.self) private var app
 
     var body: some View {
+        @Bindable var app = app
         Form {
             Section {
                 LabeledContent {
@@ -42,7 +43,7 @@ private struct GeneralSettings: View {
                 Text("New and imported projects are kept here.").frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("New Projects") {
-                Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $engine) {
+                Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $app.newProjectEngine) {
                     ForEach(Engine.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
             }
@@ -51,56 +52,51 @@ private struct GeneralSettings: View {
 }
 
 private struct EditorSettings: View {
-    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
-    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
-    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
-    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
-    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
+    @Environment(AppModel.self) private var app
     private static let families = Set((NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? [])
         .compactMap { NSFont(name: $0, size: 0)?.familyName }).sorted()
-    private static let sizes = Double(EditorPrefs.fontSizes.lowerBound)...Double(EditorPrefs.fontSizes.upperBound)
+    private static let sizes = Double(AppModel.fontSizes.lowerBound)...Double(AppModel.fontSizes.upperBound)
 
     var body: some View {
+        @Bindable var app = app
         Form {
             Section("Text") {
-                Picker("Font", selection: $fontName) {
+                Picker("Font", selection: $app.fontName) {
                     Text("System Monospaced").tag("")
                     Divider()
                     ForEach(Self.families, id: \.self) { Text($0).tag($0) }
-                    if !fontName.isEmpty, !Self.families.contains(fontName) { Text(fontName).tag(fontName) }
+                    if !app.fontName.isEmpty, !Self.families.contains(app.fontName) { Text(app.fontName).tag(app.fontName) }
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
                 Picker("Theme", detail: "Colours for commands, math and comments. All follow light and dark appearance.",
-                       selection: $syntaxTheme) {
+                       selection: $app.syntaxTheme) {
                     ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
                 }
-                Toggle("Show Line Numbers", isOn: $lineNumbers)
+                Toggle("Show Line Numbers", isOn: $app.lineNumbers)
             }
             Section("Typing") {
-                Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $autoPair)
-                Toggle("Suggest Completions While Typing", detail: "When off, press Option-Escape to see suggestions.", isOn: $autoComplete)
+                Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $app.autoPair)
+                Toggle("Suggest Completions While Typing", detail: "When off, press Option-Escape to see suggestions.", isOn: $app.autoComplete)
             }
         }
     }
 
     private var size: Binding<Double> {
-        Binding(get: { Double(fontSize) }, set: {
-            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
+        Binding(get: { Double(app.fontSize) }, set: {
+            app.fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
         })
     }
 }
 
 private struct CompilingSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(DefaultsKey.syncAfterCompile) private var syncAfterCompile = false
 
     var body: some View {
         @Bindable var app = app
         Form {
             Section {
                 Toggle("Compile Automatically", detail: "Compiles shortly after you stop typing.", isOn: $app.autoCompile)
-                Toggle("Scroll to Cursor After Compiling", detail: "Scrolls the PDF to the line you are editing.", isOn: $syncAfterCompile)
+                Toggle("Scroll to Cursor After Compiling", detail: "Scrolls the PDF to the line you are editing.", isOn: $app.syncAfterCompile)
             }
             Section {
                 ProgramFolder(program: .tex)
@@ -110,13 +106,14 @@ private struct CompilingSettings: View {
 }
 
 private struct PDFSettings: View {
-    @AppStorage(DefaultsKey.pdfPaper) private var paper = PDFPaper.white
+    @Environment(AppModel.self) private var app
 
     var body: some View {
+        @Bindable var app = app
         Form {
             Picker("Page Colour",
                    detail: "Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.",
-                   selection: $paper) {
+                   selection: $app.paper) {
                 ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
             }
         }
@@ -164,7 +161,7 @@ private struct ProgramFolder: View {
 
     @Environment(AppModel.self) private var app
     @State private var choosing = false
-    @State private var alert: AppAlert?
+    @State private var failure: String?
 
     private enum Choice: Hashable { case automatic, chosen, other }
 
@@ -175,7 +172,7 @@ private struct ProgramFolder: View {
                 HStack {
                     if program.folder(in: tex) == nil {
                         if program == .tex {
-                            Button("Install TinyTeX", action: install)
+                            Button("Install TinyTeX") { attempt { try await app.installTeX() } }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(app.settingTeX)
                             LinkButton(title: "Get MacTeX", url: Links.mactex)
@@ -204,6 +201,7 @@ private struct ProgramFolder: View {
                 Text(program.title)
                 Text(app.installingTeX && program == .tex ? "Installing TinyTeX…" : program.detail(in: tex))
                     .textSelection(.enabled)
+                if let failure { FailureText(text: failure) }
             }
             .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result { setFolder(url.path) }
@@ -212,25 +210,17 @@ private struct ProgramFolder: View {
             .fileDialogMessage(program.dialogMessage)
             .fileDialogBrowserOptions(.includeHiddenFiles)
             .fileDialogDefaultDirectory(URL(filePath: program.folder(in: tex) ?? "/usr/local", directoryHint: .isDirectory))
-            .alert($alert)
         } else {
             LabeledContent(program.title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(program.title)") }
         }
     }
 
-    private func install() {
-        Task {
-            do { try await app.installTeX() } catch { alert = AppAlert("Couldn’t Install TinyTeX", error) }
-        }
-    }
+    private func setFolder(_ path: String?) { attempt { try await app.setTeXFolder(path, texpresso: program == .texpresso) } }
 
-    private func setFolder(_ path: String?) {
+    private func attempt(_ work: @escaping () async throws -> Void) {
+        failure = nil
         Task {
-            do {
-                try await app.setTeXFolder(path, texpresso: program == .texpresso)
-            } catch {
-                alert = AppAlert(path.map { "Couldn’t Use “\(URL(filePath: $0).lastPathComponent)”" } ?? "Couldn’t Find \(program == .tex ? "TeX" : "TeXpresso") Automatically", error)
-            }
+            do { try await work() } catch { failure = error.localizedDescription }
         }
     }
 }

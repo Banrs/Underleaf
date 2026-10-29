@@ -1953,7 +1953,6 @@ nonisolated struct UiPlace: Encodable, Hashable, Sendable {
     var file: String?
     var line: Int?
     var zoom: Zoom?
-    var panel: Bool
 }
 
 nonisolated struct UiState: Decodable, Hashable, Sendable {
@@ -1962,9 +1961,8 @@ nonisolated struct UiState: Decodable, Hashable, Sendable {
     var file: String?
     var line: Int?
     var zoom: Zoom?
-    var panel: Bool
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom, panel }
+    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom }
 }
 
 nonisolated extension UiState {
@@ -1975,7 +1973,6 @@ nonisolated extension UiState {
         file = try wire.decode(String?.self, forKey: .file)
         line = try wire.decode(Int?.self, forKey: .line)
         zoom = try wire.decode(Zoom?.self, forKey: .zoom)
-        panel = try wire.decode(Bool.self, forKey: .panel)
     }
 }
 

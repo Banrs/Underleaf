@@ -1,10 +1,8 @@
-import AppKit
+import Foundation
 import Observation
 
 @Observable
 final class ProjectSearch {
-    private let core = Core.shared
-
     nonisolated struct Asked: Hashable {
         var query = "", matchCase = false, wholeWords = false
     }
@@ -29,11 +27,11 @@ final class ProjectSearch {
         (searched.query, query) = (found.name, found.name)
     }
 
-    func run(in session: SessionClient?) async {
+    func run(in session: SessionClient) async {
         let asked = asked
         guard asked.query != usages?.name else { return }
         var found: [SearchGroup]?, why: String?
-        if isSearching, let session {
+        if isSearching {
             do {
                 found = try await session.call(Search(query: asked.query, matchCase: asked.matchCase, wholeWord: asked.wholeWords))
             } catch {
@@ -44,10 +42,11 @@ final class ProjectSearch {
         (groups, failure, searched, usages, chosen) = (found, why, asked, nil, nil)
     }
 
-    func step(_ step: Int) {
+    func step(_ step: Int) -> Bool {
         let hits = groups?.flatMap(\.hits).map(\.id) ?? []
-        guard !hits.isEmpty else { return NSSound.beep() }
+        guard !hits.isEmpty else { return false }
         let at = chosen.flatMap(hits.firstIndex) ?? (step > 0 ? -1 : 0)
         chosen = hits[(at + step + hits.count) % hits.count]
+        return true
     }
 }

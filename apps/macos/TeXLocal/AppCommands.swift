@@ -57,9 +57,11 @@ struct AppCommands: Commands {
             Menu("Section Level") { SectionLevelItems(project: project) }
         }
         CommandGroup(replacing: .sidebar) {
-            items(.viewToggleSidebar)
-            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") { app.outlineCollapsed.toggle() }
-                .disabled(project?.isLaTeX != true || project?.search.isSearching == true || !app.sidebarShown)
+            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") {
+                app.outlineCollapsed.toggle()
+                if !app.outlineCollapsed { app.window?.revealSidebar() }
+            }
+            .disabled(project?.isLaTeX != true || project?.search.isSearching == true)
             Menu("Editor Layout") { WorkspaceLayoutPicker(app: app) }.disabled(project == nil)
             items(.viewToggleSource, .viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()

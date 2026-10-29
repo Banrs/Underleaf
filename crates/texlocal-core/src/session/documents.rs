@@ -170,6 +170,17 @@ impl Actor {
         Ok(())
     }
 
+    pub fn reopen(&mut self, file: Option<String>) {
+        let file = file
+            .filter(|file| self.tree.files.contains(file))
+            .or_else(|| self.tree.main.clone());
+        if let Some(file) = file
+            && (!is_text(&file) || self.open_document(&file).is_ok())
+        {
+            self.open = Some(file);
+        }
+    }
+
     pub fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
         if self.docs.contains_key(path) {
             return Ok(());

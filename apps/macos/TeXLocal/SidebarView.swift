@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FilesList: View {
     @Environment(AppModel.self) private var app
+    @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     @State private var selection: String?
     @State private var rename = InPlaceRename<String>()
@@ -128,7 +129,8 @@ struct FilesList: View {
         return Label {
             HStack {
                 if rename.id == node.path {
-                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: { renameEnded(node) }) {
+                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/",
+                                spaceWarning: "Spaces can break \\input and \\include.", ended: { renameEnded(node) }) {
                         commitRename(node)
                     } cancel: {
                         rename.cancel()
@@ -157,14 +159,14 @@ struct FilesList: View {
     }
 
     private func renameEnded(_ node: TreeNode) {
-        if created == node.path { project.editor.focus() } else { listFocused = true }
+        if created == node.path { views.focusEditor() } else { listFocused = true }
         created = nil
     }
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
         guard !name.contains("/") else {
-            app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
+            app.report("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
             return
         }
         let folder = node.path.parentFolder

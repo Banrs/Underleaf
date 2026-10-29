@@ -98,10 +98,37 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
     assert_eq!(project["settings"]["mainFile"], "main.tex");
     let tree = rig.section("tree", |_| true);
     assert_eq!(names(&tree, "name"), ["ch.tex", "main.tex"]);
-    assert_eq!(rig.section("documents", |_| true), json!([]));
+    let documents = rig.section("documents", |_| true);
+    assert_eq!(names(&documents, "path"), ["main.tex"]);
     assert_eq!(rig.section("outline", |_| true), Value::Null);
     let open = json!({ "id": rig.id, "autoCompile": false });
     assert_eq!(rig.refuse("OpenProject", open), ErrorKind::Conflict);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_reopens_the_last_open_file_before_its_reply_or_else_the_main_file() {
+    let last = |file: &'static str| {
+        move |library: &Library| {
+            let ui = json!({ "ui": { "file": file } });
+            let settings = library.project_root("P").join(".texlocal.json");
+            fs::write(settings, ui.to_string()).unwrap();
+        }
+    };
+    let reopened = |rig: Rig| {
+        let said = rig.said();
+        assert_eq!(said.last().map(String::as_str), Some("reply"));
+        assert_eq!(said_of(&rig, &["openFile"]), ["openFile"]);
+        let documents = rig.section("documents", |_| true);
+        let open = rig.section("openFile", |_| true)["path"].take();
+        (open, json!(names(&documents, "path")))
+    };
+    let both = [("main.tex", MAIN), ("ch.tex", CHAPTER)];
+    let rig = Rig::open_with(&both, last("ch.tex")).await;
+    assert_eq!(reopened(rig), (json!("ch.tex"), json!(["ch.tex"])));
+    let rig = Rig::open_with(&both, last("gone.tex")).await;
+    assert_eq!(reopened(rig), (json!("main.tex"), json!(["main.tex"])));
+    let rig = Rig::open_with(&[("ch.tex", CHAPTER)], last("gone.tex")).await;
+    assert_eq!(reopened(rig), (Value::Null, json!([])));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -307,14 +334,15 @@ async fn the_open_file_is_one_at_a_time_and_a_closed_documents_edits_are_refused
 #[tokio::test(flavor = "multi_thread")]
 async fn an_open_that_a_later_one_supersedes_is_dropped() {
     let rig = project().await;
+    rig.forget();
     let again = 2;
     let open = json!({ "id": rig.id, "autoCompile": false });
     rig.send(again, "OpenProject", open);
     let opens = ["ch.tex", "main.tex"].map(|path| rig.send(again, "Open", json!({ "path": path })));
     let opened = opens.map(|id| rig.reply(id).unwrap());
     assert_eq!(opened, [Value::Null, json!("main.tex")]);
-    let documents = rig.section("documents", |d| d != &json!([]));
-    assert_eq!(names(&documents, "path"), ["main.tex"]);
+    assert_eq!(said_of(&rig, &["openFile"]), ["openFile"]);
+    assert_eq!(rig.section("openFile", |_| true)["path"], "main.tex");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -692,7 +720,7 @@ async fn ui_state_is_written_before_the_close_and_keeps_what_it_is_not_given() {
     })
     .await;
     let zoom = json!({ "type": "scale", "value": 1.5 });
-    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom, "panel": true });
+    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom });
     let patch = |patch| json!({ "patch": patch });
     rig.send(SESSION, "SetUiState", patch(json!({ "place": place })));
     let folders = json!({ "expandedFolders": ["figs"] });

@@ -10,7 +10,7 @@ shot() { $Q shot $O/$1.png >/dev/null 2>&1 || echo "shot failed: $1"; }
 fresh() { $Q quit >/dev/null 2>&1; sleep 0.7; defaults delete com.texlocal.mac.qa >/dev/null 2>&1; rsync -a --delete $S/qa-library-seed/ $S/qa-library/; }
 for mode in light dark; do
   fresh
-  $Q launch --$mode -- -openProject "Test Errors and Warnings" -sidebarVisible YES -inspectorVisible NO -showPDF YES >/dev/null; sleep 6
+  $Q launch --$mode -- -openProject "Test Errors and Warnings" -showPDF YES >/dev/null; sleep 6
   $Q resize 1400 820 >/dev/null; sleep 1
   shot workspace-1400-$mode
   $Q press "Inspector" >/dev/null 2>&1; sleep 1; shot inspector-$mode

@@ -18,24 +18,26 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
     weak var workspace: WorkspaceController?
     private let app: AppModel
-    private let project: ProjectModel
-    private var closed = false
-    private lazy var format = FormatPopover(app: app, project: project)
+    private let views: WorkspaceViews
+    private var project: ProjectModel { views.project }
+    private var pdf: PDFController { views.pdf }
+    private var watch: Task<Void, Never>?
+    private lazy var format = FormatPopover(app: app, views: views)
 
-    init(app: AppModel, project: ProjectModel) {
+    init(app: AppModel, views: WorkspaceViews) {
         self.app = app
-        self.project = project
+        self.views = views
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = app.savesLayout
-        watch()
+        watch = track({ [weak self] in self?.state }) { [weak self] in if let state = $0 { self?.apply(state) } }
     }
 
     func close() {
-        closed = true
+        watch?.cancel()
         format.popover.close()
     }
 
@@ -56,7 +58,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
-        item.target = workspace
         item.visibilityPriority = .high
     }
 
@@ -124,12 +125,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && !project.closed && !project.isClosing }) { [app, project] in
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && !project.closed && !project.isClosing }) { [app, project, pdf] in
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }.disabled(!app.isEnabled(command, on: project))
             }
             Divider()
-            ScaleMenuItems(pdf: project.pdf)
+            ScaleMenuItems(pdf: pdf)
         })
         let control = ZoomControl()
         control.segmentCount = 3
@@ -137,9 +138,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         control.addTarget(self, action: #selector(zoom(_:)), for: .primaryActionTriggered)
         control.setImage(NSImage(systemSymbolName: "minus.magnifyingglass", accessibilityDescription: "Zoom Out"), forSegment: 0)
         control.setImage(NSImage(systemSymbolName: "plus.magnifyingglass", accessibilityDescription: "Zoom In"), forSegment: 2)
-        control.setLabel(project.pdf.zoomLabel, forSegment: 1)
-        control.widestLabel = project.pdf.widestZoomLabel
-        control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: project.pdf)), forSegment: 1)
+        control.setLabel(pdf.zoomLabel, forSegment: 1)
+        control.widestLabel = pdf.widestZoomLabel
+        control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         for (index, help) in ["Zoom out of the PDF", "Choose a zoom level", "Zoom in on the PDF"].enumerated() {
             control.setToolTip(help, forSegment: index)
@@ -167,7 +168,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }) { content })
     }
 
-    private struct State {
+    private nonisolated struct State: Equatable {
         let sourceTools, hasPDF, showsPDF, canShare, compiling, canCompile, open: Bool
         let layout: WorkspaceLayout
         let zoomLabel: String
@@ -178,18 +179,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, showsPDF: app.showPDF,
               canShare: project.buildPDF != nil, compiling: project.compiling,
               canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: !project.closed && !project.isClosing, layout: app.layout,
-              zoomLabel: project.pdf.zoomLabel, canZoomIn: project.pdf.canZoomIn, canZoomOut: project.pdf.canZoomOut)
-    }
-
-    private func watch() {
-        guard !closed else { return }
-        apply(withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
-            MainActor.assumeIsolated { self?.watch() }
-        })
+              zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut)
     }
 
     private func apply(_ state: State) {
-        guard !closed else { return }
         for item in toolbar.items { configure(item, state) }
     }
 
@@ -239,7 +232,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func zoom(_ control: NSSegmentedControl) {
-        if [0, 2].contains(control.selectedSegment) { project.pdf.zoom(in: control.selectedSegment == 2) }
+        if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }
     }
     @objc private func back() { app.perform(.projectClose, on: project) }
     @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }

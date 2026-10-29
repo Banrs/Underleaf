@@ -24,27 +24,36 @@ struct RenameField: View {
     @Binding var text: String
     var isFile = false
     var forbidden: Character?
+    var spaceWarning: LocalizedStringKey?
     let ended, commit, cancel: () -> Void
     @FocusState private var focused: Bool
     @State private var selection: TextSelection?
 
     var body: some View {
-        TextField("Name", text: $text, selection: $selection)
-            .labelsHidden()
-            .focused($focused)
-            .onExitCommand { cancel(); ended() }
-            .onSubmit { commit(); ended() }
-            .onChange(of: text) { _, new in
-                if let forbidden, new.contains(forbidden) {
-                    text = new.filter { $0 != forbidden }
-                    NSSound.beep()
+        VStack(alignment: .leading, spacing: 2) {
+            TextField("Name", text: $text, selection: $selection)
+                .labelsHidden()
+                .focused($focused)
+                .onExitCommand { cancel(); ended() }
+                .onSubmit { commit(); ended() }
+                .onChange(of: text) { _, new in
+                    if let forbidden, new.contains(forbidden) {
+                        text = new.filter { $0 != forbidden }
+                        NSSound.beep()
+                    }
                 }
+                .onChange(of: focused) { was, now in
+                    if now { selection = isFile ? .baseName(of: text) : TextSelection(range: text.startIndex..<text.endIndex) }
+                    if was, !now { commit() }
+                }
+                .onAppear { focused = true }
+            if let spaceWarning, text.contains(" ") {
+                Text(spaceWarning)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .onChange(of: focused) { was, now in
-                if now { selection = isFile ? .baseName(of: text) : TextSelection(range: text.startIndex..<text.endIndex) }
-                if was, !now { commit() }
-            }
-            .onAppear { focused = true }
+        }
     }
 }
 

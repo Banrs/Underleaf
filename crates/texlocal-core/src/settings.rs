@@ -210,7 +210,6 @@ pub struct StoredUi {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub zoom: Option<Value>,
-    pub panel: bool,
     pub live_preview: bool,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
@@ -221,10 +220,9 @@ pub struct StoredUi {
 pub struct UiState {
     expanded_folders: Vec<String>,
     folded_headings: Vec<String>,
-    file: Option<String>,
+    pub(crate) file: Option<String>,
     line: Option<u32>,
     zoom: Option<Zoom>,
-    panel: bool,
     #[serde(skip)]
     pub(crate) live_preview: bool,
 }
@@ -237,7 +235,6 @@ pub fn read_ui(file: &Path) -> UiState {
         folded_headings: ui.folded_headings,
         file: ui.file,
         line: ui.line,
-        panel: ui.panel,
         live_preview: ui.live_preview,
     }
 }
@@ -271,7 +268,6 @@ pub struct UiPlace {
     file: Option<String>,
     line: Option<u32>,
     zoom: Option<Zoom>,
-    panel: bool,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -314,15 +310,8 @@ pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
         if let Some(headings) = folded_headings {
             state.folded_headings = headings;
         }
-        if let Some(UiPlace {
-            file,
-            line,
-            zoom,
-            panel,
-        }) = place
-        {
-            (state.file, state.line, state.zoom, state.panel) =
-                (file, line, zoom.map(Zoom::stored), panel);
+        if let Some(UiPlace { file, line, zoom }) = place {
+            (state.file, state.line, state.zoom) = (file, line, zoom.map(Zoom::stored));
         }
         Ok(())
     })

@@ -9,19 +9,23 @@ struct TeXLocalApp: App {
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
+            SidebarCommands()
         }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) static weak var shared: AppDelegate?
-    let app = AppModel()
+    let app = AppModel(core: .shared)
     private(set) lazy var mainWindow = MainWindowController(app: app)
 
     override init() {
         super.init()
         Self.shared = self
+        app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
     }
+
+    func applicationWillFinishLaunching(_ notification: Notification) { app.window = mainWindow }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindow.start()
@@ -51,12 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
-            let left = await app.leave()
-            if left {
-                _ = try? await Core.shared.call(KillAll())
-            } else if mainWindow.window?.isVisible != true {
-                mainWindow.showWindow(nil)
-            }
+            let left = await app.quit()
+            if !left, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
             sender.reply(toApplicationShouldTerminate: left)
         }
         return .terminateLater

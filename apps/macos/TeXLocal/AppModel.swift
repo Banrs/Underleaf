@@ -1,9 +1,10 @@
-import SwiftUI
+import Accessibility
+import CoreTransferable
+import Foundation
+import Observation
 import UniformTypeIdentifiers
 
 nonisolated enum DefaultsKey {
-    static let sidebarVisible = "sidebarVisible"
-    static let inspectorVisible = "inspectorVisible"
     static let autoCompile = "autoCompile"
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
@@ -54,6 +55,14 @@ struct ExportFile: Transferable {
     }
 }
 
+protocol AppWindow: AnyObject {
+    var undoManager: UndoManager? { get }
+    func attach(_ project: ProjectModel)
+    func performPDF(_ action: PDFAction)
+    func revealSidebar()
+    func focusSearch()
+}
+
 nonisolated enum WorkspaceLayout { case source, split, pdf }
 
 nonisolated enum OutlineState { case open, folded, hidden }
@@ -67,6 +76,7 @@ struct NewProjectDraft: Identifiable {
 
 @Observable
 final class AppModel {
+    let core: Core
     var projects: [ProjectInfo] { core.library.projects }
     private(set) var projectsLoaded = false
     var tex: TexStatus?
@@ -74,8 +84,7 @@ final class AppModel {
     private(set) var installingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
-    private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil
-        : AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice)
+    private(set) var libraryProblem: AppAlert?
 
     var newProjectDraft: NewProjectDraft?
     var prompt: Prompt?
@@ -83,23 +92,11 @@ final class AppModel {
     var openingProject = false
     var addingFiles = false
     var exporting: ExportFile?
-    var searchFocusToken = 0
-    @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
+    @ObservationIgnored weak var window: (any AppWindow)?
+    @ObservationIgnored var recentLimit: () -> Int = { 10 }
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
 
-    var sidebarVisible: Bool { didSet { defaults.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) } }
-    var inspectorVisible: Bool { didSet { defaults.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) } }
-    var sidebarFolded = false
-    var inspectorFolded = false
-    var sidebarShown: Bool {
-        get { sidebarVisible && !sidebarFolded }
-        set { (sidebarVisible, sidebarFolded) = (newValue, false) }
-    }
-    var inspectorShown: Bool {
-        get { inspectorVisible && !inspectorFolded }
-        set { (inspectorVisible, inspectorFolded) = (newValue, false) }
-    }
     var autoCompile: Bool {
         didSet {
             defaults.set(autoCompile, forKey: DefaultsKey.autoCompile)
@@ -116,13 +113,31 @@ final class AppModel {
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
-    init(defaults: UserDefaults = .standard) {
+    static let fontSizes = 10...28
+    var fontName: String { didSet { defaults.set(fontName, forKey: DefaultsKey.editorFontName) } }
+    var fontSize: Int { didSet { defaults.set(fontSize, forKey: DefaultsKey.editorFontSize) } }
+    var syntaxTheme: SyntaxTheme { didSet { defaults.set(syntaxTheme.rawValue, forKey: DefaultsKey.editorSyntaxTheme) } }
+    var lineNumbers: Bool { didSet { defaults.set(lineNumbers, forKey: DefaultsKey.editorLineNumbers) } }
+    var autoPair: Bool { didSet { defaults.set(autoPair, forKey: DefaultsKey.editorAutoPair) } }
+    var autoComplete: Bool { didSet { defaults.set(autoComplete, forKey: DefaultsKey.editorAutoComplete) } }
+    var spellCheck: Bool { didSet { defaults.set(spellCheck, forKey: DefaultsKey.editorSpellCheck) } }
+    var syncAfterCompile: Bool { didSet { defaults.set(syncAfterCompile, forKey: DefaultsKey.syncAfterCompile) } }
+    var newProjectEngine: Engine { didSet { defaults.set(newProjectEngine.rawValue, forKey: DefaultsKey.newProjectEngine) } }
+    var paper: PDFPaper { didSet { defaults.set(paper.rawValue, forKey: DefaultsKey.pdfPaper) } }
+    var settingsPane: SettingsPane { didSet { defaults.set(settingsPane.rawValue, forKey: DefaultsKey.settingsPane) } }
+    @ObservationIgnored var buildPanelHeight: Double { didSet { defaults.set(buildPanelHeight, forKey: DefaultsKey.buildPanelHeight) } }
+
+    init(core: Core, defaults: UserDefaults = .standard) {
+        self.core = core
         self.defaults = defaults
-        defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
-                                     DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
-                                     DefaultsKey.showPDF: true])
-        sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
-        inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
+        if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice) }
+        defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
+                                     DefaultsKey.showPDF: true, DefaultsKey.editorFontSize: 13, DefaultsKey.editorLineNumbers: true,
+                                     DefaultsKey.editorAutoPair: true, DefaultsKey.editorAutoComplete: true,
+                                     DefaultsKey.editorSpellCheck: true])
+        func choice<T: RawRepresentable<String>>(_ key: String, _ fallback: T) -> T {
+            defaults.string(forKey: key).flatMap { T(rawValue: $0) } ?? fallback
+        }
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
@@ -130,6 +145,18 @@ final class AppModel {
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
+        fontName = defaults.string(forKey: DefaultsKey.editorFontName) ?? ""
+        fontSize = defaults.integer(forKey: DefaultsKey.editorFontSize)
+        syntaxTheme = choice(DefaultsKey.editorSyntaxTheme, .system)
+        lineNumbers = defaults.bool(forKey: DefaultsKey.editorLineNumbers)
+        autoPair = defaults.bool(forKey: DefaultsKey.editorAutoPair)
+        autoComplete = defaults.bool(forKey: DefaultsKey.editorAutoComplete)
+        spellCheck = defaults.bool(forKey: DefaultsKey.editorSpellCheck)
+        syncAfterCompile = defaults.bool(forKey: DefaultsKey.syncAfterCompile)
+        newProjectEngine = choice(DefaultsKey.newProjectEngine, .pdflatex)
+        paper = choice(DefaultsKey.pdfPaper, .white)
+        settingsPane = choice(DefaultsKey.settingsPane, .general)
+        buildPanelHeight = defaults.double(forKey: DefaultsKey.buildPanelHeight)
     }
 
     func newProject(_ template: ProjectTemplate = .article) {
@@ -162,18 +189,7 @@ final class AppModel {
 
     func requestPDF(_ action: PDFAction) {
         showPDF = true
-        performPDF?(action)
-    }
-
-    nonisolated enum SideColumn { case sidebar, inspector }
-
-    func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
-        switch (column, shown || !byWindow) {
-        case (.sidebar, true): sidebarShown = shown
-        case (.sidebar, false): sidebarFolded = sidebarVisible
-        case (.inspector, true): inspectorShown = shown
-        case (.inspector, false): inspectorFolded = inspectorVisible
-        }
+        window?.performPDF(action)
     }
 
     func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
@@ -181,7 +197,6 @@ final class AppModel {
         return project.initialLoadComplete ? project : shown
     }
 
-    private let core = Core.shared
     @ObservationIgnored private var texCheck: Task<Void, Never>?
 
     func retryLibrary() async {
@@ -233,12 +248,9 @@ final class AppModel {
     }
 
     func create(name: String, template: ProjectTemplate) async throws {
-        let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(Engine.init(rawValue:))
-        let info = try await core.call(CreateProject(name: name, template: template, engine: engine))
+        let info = try await core.call(CreateProject(name: name, template: template, engine: newProjectEngine))
         Task { await open(info.id) }
     }
-
-    private static var recentLimit: Int { NSDocumentController.shared.maximumRecentDocumentCount }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
@@ -273,7 +285,6 @@ final class AppModel {
         }
         return opening
     }
-
 
     private var bookmarks: [String: Data] {
         get { defaults.dictionary(forKey: DefaultsKey.folderBookmarks) as? [String: Data] ?? [:] }
@@ -329,8 +340,7 @@ final class AppModel {
         return copy?.id
     }
 
-    var undoManager: UndoManager? { undoSource() }
-    @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
+    var undoManager: UndoManager? { window?.undoManager }
 
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
@@ -342,29 +352,35 @@ final class AppModel {
                     self?.recentProjects.removeAll { $0 == project.id }
                     return true
                 } catch {
-                    self?.alert = AppAlert(failure, error)
+                    self?.report(failure, error)
                     return false
                 }
             },
             changed: { [weak self] in await self?.reloadProjects() },
-            failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })
+            failed: { [weak self] title, error in self?.report(title, error) })
         await item.moveToTrash()
         await reloadProjects()
     }
 
-    func alerting<T>(_ title: @autoclosure () -> String, unless quiet: () -> Bool = { false },
-                     _ work: () async throws -> T) async -> T? {
+    func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
         do {
             return try await work()
         } catch {
-            if !quiet() { report(error, title()) }
+            report(title(), error)
             return nil
         }
     }
 
-    func report(_ error: any Error, _ title: String) { if alert?.title != title { alert = AppAlert(title, error) } }
+    func report(_ title: String, _ message: String) {
+        guard alert == nil else { return AccessibilityNotification.Announcement(title).post() }
+        alert = AppAlert(title, message)
+    }
 
-    @ObservationIgnored private var openGeneration = 0
+    func report(_ title: String, _ error: any Error) {
+        if !(error is CancellationError) { report(title, error.localizedDescription) }
+    }
+
+    @ObservationIgnored private var switching: Task<Bool, Never>?
     private(set) var opening: String?
     private(set) var importing: [URL] = []
     var isOpening: Bool { opening != nil || !importing.isEmpty }
@@ -372,27 +388,30 @@ final class AppModel {
 
     func open(_ id: String) async {
         guard project?.id != id || project?.closed == true else { return }
-        openGeneration += 1
-        let generation = openGeneration
         opening = id
         defer { if opening == id { opening = nil } }
-        guard await leave(generation) else { return }
-        dropRequests()
-        undoManager?.removeAllActions()
-        recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(Self.recentLimit))
-        let model = ProjectModel(id: id, app: self)
-        project = model
-        await model.load()
+        _ = await restart(&switching) { [self] in
+            guard await leave() else { return false }
+            dropRequests()
+            undoManager?.removeAllActions()
+            recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
+            let model = ProjectModel(id: id, app: self)
+            project = model
+            window?.attach(model)
+            await model.load()
+            return true
+        }.value
     }
 
     @discardableResult
     func close() async -> Bool {
-        openGeneration += 1
-        guard project != nil else { return true }
-        guard await leave(openGeneration) else { return false }
-        project = nil
-        dropRequests()
-        return true
+        await restart(&switching) { [self] in
+            guard project != nil else { return true }
+            guard await leave() else { return false }
+            project = nil
+            dropRequests()
+            return true
+        }.value
     }
 
     private func dropRequests() {
@@ -402,17 +421,18 @@ final class AppModel {
         exporting = nil
     }
 
-    func leave() async -> Bool {
-        openGeneration += 1
-        return await leave(openGeneration)
+    func quit() async -> Bool {
+        guard await restart(&switching, leave).value else { return false }
+        _ = try? await core.call(KillAll())
+        return true
     }
 
-    private func leave(_ generation: Int) async -> Bool {
+    private func leave() async -> Bool {
         guard let project else { return true }
         if !project.closed && !project.isClosing {
-            guard await project.save(), generation == openGeneration else { return false }
+            guard await project.save(), !Task.isCancelled else { return false }
             project.savePlace()
         }
-        return await project.close().value && generation == openGeneration
+        return await project.close().value && !Task.isCancelled
     }
 }

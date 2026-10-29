@@ -2,11 +2,12 @@ import QuickLookUI
 import SwiftUI
 
 struct SourceColumn: View {
+    @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
 
     var body: some View {
         ZStack {
-            EditorView(editor: project.editor, shown: project.editsText)
+            EditorView(editor: views.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .background(.textSurface)
             if project.openPath == nil {
@@ -24,22 +25,17 @@ struct SourceColumn: View {
 private struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
-    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
-    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(DefaultsKey.editorLineNumbers) private var lineNumbers = true
-    @AppStorage(DefaultsKey.editorSyntaxTheme) private var syntaxTheme = SyntaxTheme.system
-    @AppStorage(DefaultsKey.editorAutoPair) private var autoPair = true
-    @AppStorage(DefaultsKey.editorAutoComplete) private var autoComplete = true
+    @Environment(AppModel.self) private var app
 
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
     func updateNSView(_ view: NSScrollView, context: Context) {
-        if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
-        editor.textView.fontName = fontName
-        editor.textView.showsLineNumbers = lineNumbers
-        editor.textView.syntaxTheme = syntaxTheme
-        editor.textView.autoPair = autoPair
-        editor.textView.autoComplete = autoComplete
+        if editor.textView.fontSize != CGFloat(app.fontSize) { editor.textView.fontSize = CGFloat(app.fontSize) }
+        editor.textView.fontName = app.fontName
+        editor.textView.showsLineNumbers = app.lineNumbers
+        editor.textView.syntaxTheme = app.syntaxTheme
+        editor.textView.autoPair = app.autoPair
+        editor.textView.autoComplete = app.autoComplete
         if editor.shown != shown { editor.shown = shown }
     }
 }

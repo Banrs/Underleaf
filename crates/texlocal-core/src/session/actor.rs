@@ -208,7 +208,7 @@ impl Actor {
             tex: sessions.service.tex_found.subscribe(),
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
-            tree: TreeIndex::default(),
+            tree: TreeIndex::of(&tree),
             _watcher: watcher,
             deleting: BTreeSet::new(),
             live: Live::default(),
@@ -220,6 +220,7 @@ impl Actor {
             closing: None,
             closed: false,
         };
+        actor.reopen(ui.file.clone());
         actor.publish_all(tree);
         actor.snapshot_soon();
         Ok((actor, ui))
