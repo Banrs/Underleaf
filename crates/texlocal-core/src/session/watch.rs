@@ -7,11 +7,9 @@ use tokio::sync::mpsc;
 
 use super::Msg;
 use crate::SETTINGS_FILE;
-use crate::paths::disk_spelling;
-use crate::paths::{fold_case, within};
+use crate::paths::{disk_spelling, fold_case, within};
 use crate::projects::{TreeNode, listed};
 
-#[derive(Debug)]
 pub(crate) struct Change {
     pub path: PathBuf,
     pub structural: bool,
@@ -48,7 +46,7 @@ fn changes(event: notify::Event) -> Vec<Change> {
     paths.map(|path| Change { path, structural }).collect()
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,
@@ -83,7 +81,7 @@ impl TreeIndex {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) struct Meaning {
     pub tree: bool,
     pub settings: bool,

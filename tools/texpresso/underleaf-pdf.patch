@@ -137,7 +137,7 @@ index c922019..10af953 100644
  texpresso-dev: $(BUILD)/texpresso-dev
  $(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..3222f0e 100644
+index 6face98..23cc695 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
 @@ -1,5 +1,4 @@
@@ -241,11 +241,11 @@ index 6face98..3222f0e 100644
 +  putc_unlocked('"', stdout);
 +}
 +
-+void editor_page(int page, const char *path)
++void editor_page(int page, const char *base64, size_t len)
 +{
-+  printf("[\"page\", %d, ", page);
-+  json_path(path);
-+  fputs("]\n", stdout);
++  printf("[\"page\", %d, \"", page);
++  fwrite(base64, 1, len, stdout);
++  fputs("\"]\n", stdout);
 +  fflush(stdout);
 +}
 +
@@ -302,7 +302,7 @@ index 6face98..3222f0e 100644
    const char *status_msg;
  
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..4332087 100644
+index 05fdd1c..ce0b993 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
 @@ -1,9 +1,16 @@
@@ -361,7 +361,7 @@ index 05fdd1c..4332087 100644
 +   the last one the editor sent (["mark", n]) that the pages in view reflect. */
 +enum EDITOR_RUN { RUN_PARTIAL, RUN_COMPLETE, RUN_STOPPED };
 +void editor_live(int version);
-+void editor_page(int page, const char *path);
++void editor_page(int page, const char *base64, size_t len);
 +void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges);
 +void editor_done(enum EDITOR_RUN run);
 +void editor_synced(int mark);

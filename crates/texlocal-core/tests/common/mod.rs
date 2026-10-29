@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_core::session::Sessions;
+use texlocal_core::session::{
+    FileBuffer, LiveEvent, Pane, Preview, Project, Sessions, Sink, Status,
+};
 use texlocal_core::{CoreError, ErrorKind};
 
 pub struct Library {
@@ -45,6 +47,10 @@ impl Library {
             )
             .await;
         made["id"].as_str().unwrap().to_owned()
+    }
+
+    pub fn projects(&self) -> Value {
+        json!(self.service.projects().unwrap())
     }
 
     pub fn project_root(&self, id: &str) -> PathBuf {
@@ -89,6 +95,22 @@ impl Rig {
     }
 
     pub async fn open_with(files: &[(&str, &str)], prepare: impl FnOnce(&Library)) -> Self {
+        Self::start(files, prepare, None).await
+    }
+
+    pub async fn previewing(
+        files: &[(&str, &str)],
+        prepare: impl FnOnce(&Library),
+        preview: Arc<FakePreview>,
+    ) -> Self {
+        Self::start(files, prepare, Some(preview)).await
+    }
+
+    async fn start(
+        files: &[(&str, &str)],
+        prepare: impl FnOnce(&Library),
+        preview: Option<Arc<FakePreview>>,
+    ) -> Self {
         let library = Library::new();
         let id = library.create("P", "blank").await;
         let root = library.project_root(&id);
@@ -100,7 +122,14 @@ impl Rig {
         let listener = Box::new(move |event: &Value| {
             let _ = tx.lock().unwrap().send(event.clone());
         });
-        let sessions = Arc::new(Sessions::new(Arc::clone(&library.service), listener));
+        let service = Arc::clone(&library.service);
+        let sessions = Arc::new(match preview {
+            Some(preview) => {
+                let compiler = Arc::new(Arc::clone(&service));
+                Sessions::with_compiler(service, compiler, preview, true, listener)
+            }
+            None => Sessions::new(service, listener),
+        });
         let rig = Self {
             library,
             sessions,
@@ -131,6 +160,18 @@ impl Rig {
             .kind
     }
 
+    pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, CoreError> {
+        let id = self.asked.fetch_add(1, Ordering::Relaxed);
+        self.sessions.send(id, command, args);
+        self.reply(id)
+    }
+
+    pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
+        let listed =
+            |e: &Value| e["library"]["type"] == "projects" && matching(&e["library"]["value"]);
+        self.find(listed)["library"]["value"].take()
+    }
+
     pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
         self.sessions.send_to(id, session, command, args);
@@ -146,13 +187,18 @@ impl Rig {
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
-        self.call("OpenDocument", json!({ "path": path }));
+        assert_eq!(self.call("Open", json!({ "path": path })), path);
         self.sessions.document(SESSION, path).unwrap()
     }
 
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| e["event"]["type"] == kind && matching(&e["event"]["value"]);
         self.find(event)["event"]["value"].take()
+    }
+
+    pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
+        self.event("section", section)["value"].take()
     }
 
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
@@ -174,12 +220,108 @@ impl Rig {
     }
 
     pub fn heard(&self, kind: &str) -> bool {
+        self.said().contains(&kind.to_owned())
+    }
+
+    pub fn said(&self) -> Vec<String> {
         let seen = self.seen.lock().unwrap();
-        seen.iter().any(|e| e["event"]["type"] == kind)
+        let kind = |e: &Value| match &e["event"] {
+            Value::Null if e["library"].is_object() => "library".to_owned(),
+            Value::Null => "reply".to_owned(),
+            event if event["type"] == "section" => event["value"]["type"].as_str().unwrap().into(),
+            event => event["type"].as_str().unwrap().into(),
+        };
+        seen.iter().map(kind).collect()
     }
 
     pub fn forget(&self) {
         self.seen.lock().unwrap().clear();
         while self.events.try_recv().is_ok() {}
+    }
+}
+
+#[derive(Default)]
+pub struct FakePreview {
+    sink: Mutex<Option<Sink>>,
+    pub log: Mutex<String>,
+}
+
+impl FakePreview {
+    pub fn send(&self, event: LiveEvent) {
+        if let Some(sink) = &*self.sink.lock().unwrap() {
+            sink(event);
+        }
+    }
+}
+
+impl Preview for FakePreview {
+    fn available(&self, _: &str) -> bool {
+        true
+    }
+
+    fn start(
+        &self,
+        _: u64,
+        _: &Project,
+        _: &[FileBuffer],
+        _: &str,
+        _: &Pane,
+        sink: Sink,
+    ) -> Result<Status, CoreError> {
+        *self.sink.lock().unwrap() = Some(sink);
+        Ok(Status {
+            running: true,
+            ..Status::default()
+        })
+    }
+
+    fn update(&self, _: u64, _: &str, _: &str) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    fn edit(&self, _: u64, _: &str, _: usize, _: usize, _: &str) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    fn view(&self, _: u64, _: u32, _: u32) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    fn caret(&self, _: u64, _: &str, _: usize) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    fn rescan(&self, _: u64) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    fn mark(&self, _: u64, mark: u64) -> Result<(), CoreError> {
+        self.send(LiveEvent::Synced(mark));
+        Ok(())
+    }
+
+    fn tex_log(&self, _: u64) -> Option<String> {
+        Some(self.log.lock().unwrap().clone())
+    }
+
+    fn status(&self, _: u64) -> Result<Status, CoreError> {
+        Ok(Status::default())
+    }
+
+    fn stop_request(&self, _: u64) -> Status {
+        self.sink.lock().unwrap().take();
+        Status::default()
+    }
+
+    fn live_text(&self, _: u64, _: &str) -> Option<String> {
+        None
+    }
+
+    fn live_pdf(&self, _: u64) -> Result<PathBuf, CoreError> {
+        Err(CoreError::not_found("No live PDF"))
+    }
+
+    fn stop(&self, _: &Path) -> Result<(), CoreError> {
+        Ok(())
     }
 }

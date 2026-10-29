@@ -8,7 +8,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
 use super::tree::visit_files;
-use crate::error::CoreError;
+use crate::error::{CoreError, ErrorKind};
 use crate::paths::{Project, identity};
 use crate::service::Service;
 use crate::settings::write_settings;
@@ -24,7 +24,7 @@ pub(super) struct Folder {
     identity: Option<(u64, u64)>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub struct Opening {
     pub project: ProjectInfo,
     pub file: Option<String>,
@@ -101,7 +101,7 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
         let file = meta.is_file().then_some(inside);
         return Ok(Opening { project, file });
     }
-    let real = std::fs::canonicalize(path)?;
+    let real = fs::canonicalize(path)?;
     let name = real.file_name().unwrap_or_default().to_string_lossy();
     let (project, file) = if meta.is_dir() {
         (open_folder(service, &real, None)?, None)
@@ -110,7 +110,7 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
     } else {
         let folder = real.parent().expect("a file's folder");
         let project = match open_folder(service, folder, Some(&name)) {
-            Err(refused) if refused.kind == crate::ErrorKind::Invalid => {
+            Err(refused) if refused.kind == ErrorKind::Invalid => {
                 import::import_project(service, path)?
             }
             opened => opened?,
@@ -127,7 +127,7 @@ fn open_folder(
 ) -> Result<ProjectInfo, CoreError> {
     let data_dir = &service.data_dir;
     let name = root.file_name().unwrap_or(root.as_os_str()).display();
-    let library = std::fs::canonicalize(data_dir)?;
+    let library = fs::canonicalize(data_dir)?;
     if library.starts_with(root) || root.starts_with(&library) {
         return Err(CoreError::bad_request(format!(
             "“{name}” holds TeXLocal’s projects. Choose the folder that holds the document."
@@ -177,11 +177,7 @@ fn open_folder(
     Ok(ProjectInfo::of(id, &project(root, &store)))
 }
 
-pub fn forget_folder(
-    service: &Service,
-    id: &str,
-    stop: impl FnOnce(&Path) -> Result<(), CoreError>,
-) -> Result<(), CoreError> {
+pub fn forget_folder(service: &Service, id: &str) -> Result<(), CoreError> {
     if !is_opened(id) {
         return Err(CoreError::bad_request(
             "Only a folder opened where it is can be removed from the list.",
@@ -190,11 +186,8 @@ pub fn forget_folder(
     let store = store(&service.data_dir, id);
     let edits = lock(&service.edits);
     let known = folders(&service.data_dir);
-    let Some((_, folder)) = known.iter().find(|(known, _)| known == id) else {
+    if !known.iter().any(|(known, _)| known == id) {
         return Err(CoreError::not_found(format!("No such project: {id}")));
-    };
-    if folder.path.is_dir() {
-        stop(&folder.path)?;
     }
     fs::remove_file(store.join(FOLDER))?;
     drop(edits);

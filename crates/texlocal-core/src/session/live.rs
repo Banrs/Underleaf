@@ -9,8 +9,9 @@ use texlocal_latex::{is_text, utf16};
 
 use super::Msg;
 use super::actor::{Actor, Later, Timer};
-use super::build::issue_lines;
-use crate::events::{Event, FileIssues, LiveDocument, LivePage, LiveUpdate};
+use super::build::{IssueLine, issue_lines};
+use super::state::SessionSection;
+use crate::events::{Event, LiveDocument, LivePage};
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
@@ -30,7 +31,7 @@ pub(crate) enum LivePhase {
     Stopping,
 }
 
-#[derive(Clone, PartialEq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct LiveState {
     phase: LivePhase,
     engine: Engine,
@@ -38,6 +39,7 @@ pub(crate) struct LiveState {
     log: Option<String>,
     failure: Option<String>,
     error: Option<String>,
+    lines: BTreeMap<String, Vec<IssueLine>>,
 }
 
 struct Issue {
@@ -65,7 +67,6 @@ pub(crate) struct Live {
     pub intent: u64,
     generation: u64,
     pub document_seen: bool,
-    shown: Option<LiveState>,
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
@@ -92,6 +93,11 @@ impl Actor {
         let live = &self.live;
         let errors = live.errors();
         let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
+        let lines = self.docs.iter().filter_map(|(path, doc)| {
+            let items = live.issues.iter().map(|issue| &issue.item);
+            let lines = issue_lines(items, path, &doc.doc, |_| None);
+            (!lines.is_empty()).then(|| (path.clone(), lines))
+        });
         LiveState {
             phase: live.phase,
             engine: Engine::Xelatex,
@@ -99,6 +105,7 @@ impl Actor {
             log: live.log_shown.then(|| self.live_log(failure.as_deref())),
             failure,
             error: live.error.clone(),
+            lines: lines.collect(),
         }
     }
 
@@ -115,13 +122,10 @@ impl Actor {
     }
 
     pub fn publish_live(&mut self, alert: bool) {
-        let mut state = self.live_state();
-        if self.live.shown.as_ref() != Some(&state) || alert {
-            self.live.shown = Some(state.clone());
-            if alert && !self.live.log_shown {
-                state.log = Some(self.live_log(state.failure.as_deref()));
-            }
-            self.emit(Event::Live(LiveUpdate { state, alert }));
+        let state = self.live_state();
+        self.publish(SessionSection::Live(state));
+        if alert {
+            self.emit(Event::LiveAlert);
         }
     }
 
@@ -152,7 +156,6 @@ impl Actor {
         (live.halted, live.sent_view, live.caret) = (false, None, None);
         (live.mark_sent, live.mark_read) = (0, 0);
         live.issues.clear();
-        self.show_all_live_issues();
     }
 
     fn live_cancel_work(&mut self) {
@@ -177,6 +180,7 @@ impl Actor {
         self.live.rejected.clear();
         self.live.document_seen = false;
         self.publish_live(false);
+        self.publish_pdf();
         if self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
@@ -191,13 +195,12 @@ impl Actor {
         });
     }
 
-    pub fn live_start_asked(&mut self) -> LiveState {
+    pub fn live_start_asked(&mut self) {
         self.remember_live(true);
         if self.live.phase == LivePhase::Stopped {
             self.live_cancel_work();
             self.live_start();
         }
-        self.live_state()
     }
 
     pub fn live_start(&mut self) {
@@ -250,10 +253,9 @@ impl Actor {
         }
     }
 
-    pub fn live_stop_asked(&mut self) -> LiveState {
+    pub fn live_stop_asked(&mut self) {
         self.remember_live(false);
         self.live_stop();
-        self.live_state()
     }
 
     pub fn live_stop(&mut self) {
@@ -427,7 +429,7 @@ impl Actor {
             return;
         }
         match event {
-            LiveEvent::Page { page, path } => self.emit(Event::LivePage(LivePage { page, path })),
+            LiveEvent::Page { page, pdf } => self.emit(Event::LivePage(LivePage { page, pdf })),
             LiveEvent::Document {
                 path,
                 pages,
@@ -436,6 +438,7 @@ impl Actor {
             } => {
                 if pages > 0 {
                     self.live.document_seen = true;
+                    self.publish_pdf();
                     let complete = !matches!(run.as_str(), "stopped" | "partial");
                     self.emit(Event::LiveDocument(LiveDocument {
                         path,
@@ -519,14 +522,18 @@ impl Actor {
             Some(Issue { item, at })
         });
         self.live.issues = placed.collect();
-        self.show_all_live_issues();
+        self.publish_live(false);
     }
 
     pub fn live_issues_edited(&mut self, path: &str, edit: Option<&TextEdit>) {
+        let ours = |issue: &Issue| issue.item.file.as_deref() == Some(path);
+        if !self.live.issues.iter().any(ours) {
+            return;
+        }
         let doc = &self.docs[path].doc;
         let inserted = edit.map_or(0, |edit| utf16::len(&edit.text) as u32);
         self.live.issues.retain_mut(|issue| {
-            if issue.item.file.as_deref() != Some(path) {
+            if !ours(issue) {
                 return true;
             }
             let Some(edit) = edit else {
@@ -540,7 +547,7 @@ impl Actor {
                 edit.start > issue.at
             }
         });
-        self.show_live_issues(path);
+        self.publish_live(false);
     }
 
     pub fn live_issues_opened(&mut self, path: &str) {
@@ -550,26 +557,6 @@ impl Actor {
             let line = issue.item.line.unwrap_or_default();
             issue.at = doc.with(|source| source.line_start(line));
         }
-        self.show_live_issues(path);
-    }
-
-    fn show_all_live_issues(&mut self) {
-        let paths: Vec<String> = self.docs.keys().cloned().collect();
-        for path in paths {
-            self.show_live_issues(&path);
-        }
-    }
-
-    fn show_live_issues(&mut self, path: &str) {
-        let Some(doc) = self.docs.get_mut(path) else {
-            return;
-        };
-        let items = self.live.issues.iter().map(|issue| &issue.item);
-        let lines = issue_lines(items, path, &doc.doc, |_| None);
-        if lines != doc.live_issues {
-            doc.live_issues.clone_from(&lines);
-            let path = path.to_owned();
-            self.emit(Event::LiveIssues(FileIssues { path, lines }));
-        }
+        self.publish_live(false);
     }
 }

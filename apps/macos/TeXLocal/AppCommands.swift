@@ -132,17 +132,14 @@ private struct BuildOptionItems: View {
 
     var body: some View {
         let project = app.commandProject
-        option("Shell Escape", project, \.shellEscape) { SettingsPatch(shellEscape: $0) }
-        option("Stop on First Error", project, \.stopOnFirstError) { SettingsPatch(stopOnFirstError: $0) }
+        option("Shell Escape", project, \.shellEscape)
+        option("Stop on First Error", project, \.stopOnFirstError)
     }
 
-    private func option(_ title: LocalizedStringKey, _ project: ProjectModel?, _ setting: KeyPath<ProjectSettings, Bool>,
-                        _ change: @escaping (Bool) -> SettingsPatch) -> some View {
-        let isOn = project?.settings?[keyPath: setting]
-        return Toggle(title, isOn: Binding(get: { isOn ?? false }, set: { on in
-            if let project { Task.immediate { await project.patchSettings(change(on)) } }
-        }))
-        .disabled(isOn == nil)
+    private func option(_ title: LocalizedStringKey, _ project: ProjectModel?,
+                        _ setting: ReferenceWritableKeyPath<ProjectModel, Bool>) -> some View {
+        Toggle(title, isOn: project.map { Bindable($0)[dynamicMember: setting] } ?? .constant(false))
+            .disabled(project?.settings == nil)
     }
 }
 
@@ -152,8 +149,8 @@ private struct SetMainFileItem: View {
     var body: some View {
         let project = app.commandProject
         Button("Set as Main File") {
-            if let project, let path = project.openPath { Task { await project.patchSettings(SettingsPatch(mainFile: path)) } }
+            if let project, let path = project.openPath { project.mainFile = path }
         }
-        .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
+        .disabled(project?.isLaTeX != true || project?.openPath == project?.mainFile)
     }
 }

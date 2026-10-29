@@ -9,6 +9,7 @@ pub enum Ty {
     UInt64,
     Double,
     String,
+    Data,
     Done,
     List(Box<Self>),
     Map(Box<Self>),
@@ -52,6 +53,7 @@ pub enum Way {
 pub struct Ir {
     pub defs: BTreeMap<String, Def>,
     pub requests: Vec<Request>,
+    pub stores: Vec<String>,
 }
 
 const TAKEN: &[&str] = &[
@@ -174,7 +176,24 @@ impl Ir {
         });
     }
 
+    pub fn store(&mut self, sections: &Value) {
+        let Ty::Named(name) = ty(sections) else {
+            panic!("a store's sections aren't a named enum")
+        };
+        assert!(name.ends_with("Section"), "{name} doesn't end in Section");
+        self.stores.push(name);
+    }
+
     pub fn check(&self) {
+        for store in &self.stores {
+            let Shape::Union(cases) = &self.defs[store].shape else {
+                panic!("{store} isn't a tagged union")
+            };
+            assert!(
+                cases.iter().all(|(_, value)| value.is_some()),
+                "{store} has a case without a value"
+            );
+        }
         let mut named = Vec::new();
         for def in self.defs.values() {
             match &def.shape {
@@ -239,6 +258,7 @@ fn object(schema: &Value) -> &Map<String, Value> {
         "additionalProperties",
         "anyOf",
         "const",
+        "contentEncoding",
         "default",
         "enum",
         "format",
@@ -302,7 +322,11 @@ pub fn ty(schema: &Value) -> Ty {
         "integer" if schema.get("format") == Some(&"uint64".into()) => Ty::UInt64,
         "integer" => Ty::Int,
         "number" => Ty::Double,
-        "string" => Ty::String,
+        "string" => match schema.get("contentEncoding") {
+            None => Ty::String,
+            Some(base64) if base64 == "base64" => Ty::Data,
+            Some(other) => panic!("a string encoded as {other}"),
+        },
         "null" => Ty::Done,
         "array" => Ty::List(Box::new(ty(&schema["items"]))),
         "object" if !schema.contains_key("properties") => {

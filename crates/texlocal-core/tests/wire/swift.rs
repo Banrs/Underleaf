@@ -3,6 +3,7 @@ use std::fmt::Write;
 use super::ir::{Def, Field, Ir, Request, Shape, Ty};
 
 const PREAMBLE: &str = r#"import Foundation
+import Observation
 
 nonisolated protocol WireRequest: Encodable, Sendable {
     associatedtype Reply: Decodable & Sendable
@@ -49,7 +50,11 @@ pub fn file(ir: &Ir) -> String {
         )
         .unwrap();
     }
-    out + &types(ir)
+    out += &types(ir);
+    for sections in &ir.stores {
+        store(&mut out, sections, ir);
+    }
+    out
 }
 
 pub fn types(ir: &Ir) -> String {
@@ -73,6 +78,7 @@ fn swift(ty: &Ty) -> String {
         Ty::UInt64 => "UInt64".into(),
         Ty::Double => "Double".into(),
         Ty::String => "String".into(),
+        Ty::Data => "Data".into(),
         Ty::Done => "Done".into(),
         Ty::List(ty) => format!("[{}]", swift(ty)),
         Ty::Map(ty) => format!("[String: {}]", swift(ty)),
@@ -223,6 +229,30 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
         out.push_str("    }\n");
     }
     out.push_str("}\n");
+}
+
+fn store(out: &mut String, sections: &str, ir: &Ir) {
+    let Shape::Union(cases) = &ir.defs[sections].shape else {
+        unreachable!("a store's sections are checked")
+    };
+    let name = sections.trim_end_matches("Section");
+    writeln!(out, "\n@Observable\nfinal class {name}Store {{").unwrap();
+    for (case, ty) in cases {
+        let ty = ty.as_ref().expect("a store's sections are checked");
+        let (ty, initial) = match ty {
+            Ty::List(_) => (swift(ty), " = []"),
+            Ty::Map(_) => (swift(ty), " = [:]"),
+            Ty::Optional(_) => (swift(ty), ""),
+            _ => (format!("{}?", swift(ty)), ""),
+        };
+        writeln!(out, "    private(set) var {}: {ty}{initial}", ident(case)).unwrap();
+    }
+    writeln!(out, "\n    func apply(_ section: {sections}) {{").unwrap();
+    out.push_str("        switch section {\n");
+    for (case, _) in cases {
+        writeln!(out, "        case .{case}(let value): self.{case} = value").unwrap();
+    }
+    out.push_str("        }\n    }\n}\n");
 }
 
 fn enumeration(out: &mut String, name: &str, def: &Def, units: &[(String, Option<String>)]) {

@@ -1,16 +1,10 @@
 import AppKit
 
 extension SourceTextView {
-    func load(_ text: String, source: SourceDocument? = nil) {
-        document = source ?? SourceDocument(text: text)
+    func load(_ source: SourceDocument) {
+        document = source
         document.shown = { [weak self] in self?.string }
-        show(text)
-    }
-
-    func reload(_ text: String) -> Bool {
-        guard document.reload(text) else { return false }
-        show(text)
-        return true
+        show(source.text)
     }
 
     @discardableResult

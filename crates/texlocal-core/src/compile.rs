@@ -10,6 +10,7 @@ use serde::Serialize;
 use texlocal_latex::logparse::{
     LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
 };
+use tokio::process::Child;
 
 use crate::error::CoreError;
 use crate::lock;
@@ -38,15 +39,18 @@ const GLOSSARY_RULES: &str = "\
         $failed } \
     tl_rule('glo', 'gls'); tl_rule('acn', 'acr'); tl_rule('nlo', 'nls'); tl_rule('aux', 'glstex');";
 
-#[derive(Debug, Default, Serialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
     pub ok: bool,
     pub stopped: bool,
     pub duration_ms: u64,
     pub pdf: Option<String>,
+    #[serde(skip)]
     pub pdf_changed: bool,
+    #[serde(skip)]
     pub errors: Vec<LogItem>,
+    #[serde(skip)]
     pub warnings: Vec<LogItem>,
     pub bad_boxes: Vec<LogItem>,
     pub log: String,
@@ -74,10 +78,16 @@ enum End {
 }
 
 struct CompileRun {
+    root: PathBuf,
     main_rel: String,
     pdf: PathBuf,
     before: HashMap<&'static str, Stamp>,
     request_started: Instant,
+}
+
+pub struct Started {
+    run: CompileRun,
+    spawned: Option<std::io::Result<(Child, Tree)>>,
 }
 
 impl CompileRun {
@@ -115,17 +125,14 @@ impl CompileManager {
         }
     }
 
-    pub fn stop(&self, root: &Path) -> bool {
-        let mut running = lock(&self.running);
-        let Some(entry) = running.get_mut(root) else {
-            return false;
-        };
-        entry.stopped = true;
-        entry.halt();
-        if let Some(record) = entry.record.take() {
-            let _ = std::fs::remove_file(record);
+    pub fn stop(&self, root: &Path) {
+        if let Some(entry) = lock(&self.running).get_mut(root) {
+            entry.stopped = true;
+            entry.halt();
+            if let Some(record) = entry.record.take() {
+                let _ = std::fs::remove_file(record);
+            }
         }
-        true
     }
 
     pub fn clean(build: &Path) -> Result<(), CoreError> {
@@ -135,12 +142,7 @@ impl CompileManager {
         }
     }
 
-    pub async fn compile(
-        &self,
-        project: &Project,
-        path_env: &str,
-        auto: bool,
-    ) -> Result<CompileResult, CoreError> {
+    pub fn start(&self, project: &Project, path_env: &str) -> Result<Started, CoreError> {
         let request_started = Instant::now();
         let root = &project.root;
         let (settings, trusted) = (read_settings(&project.settings), granted(project));
@@ -156,6 +158,7 @@ impl CompileManager {
             Some((ext, Stamp::of(&meta)))
         });
         let run = CompileRun {
+            root: root.clone(),
             before: before.collect(),
             main_rel,
             pdf,
@@ -190,13 +193,19 @@ impl CompileManager {
             command.arg(format!("./{}", run.main_rel));
             command
         });
-        let started = self.register(root, |entry| {
+        let mut running = lock(&self.running);
+        let spawned = (!self.shutdown.load(Ordering::Acquire)).then(|| {
+            let entry = running.entry(root.clone()).or_default();
             entry.record = Some(run.output("fdb_latexmk"));
-            command
-                .and_then(|mut command| Tree::spawn(&mut command))
-                .inspect(|(_, tree)| entry.tree = Some(tree.clone()))
+            let spawned = command.and_then(|mut command| Tree::spawn(&mut command));
+            spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()))
         });
-        let Some(spawned) = started else {
+        Ok(Started { run, spawned })
+    }
+
+    pub async fn wait(&self, started: Started, auto: bool) -> Result<CompileResult, CoreError> {
+        let Started { run, spawned } = started;
+        let Some(spawned) = spawned else {
             return Ok(stopped_before_start(&run));
         };
         let (end, output) = match spawned {
@@ -213,26 +222,7 @@ impl CompileManager {
                 (end, output)
             }
         };
-        self.ended(root, run, end, "latexmk", output).await
-    }
-
-    fn register<T>(&self, root: &Path, start: impl FnOnce(&mut Running) -> T) -> Option<T> {
-        let mut running = lock(&self.running);
-        if self.shutdown.load(Ordering::Acquire) {
-            return None;
-        }
-        Some(start(running.entry(root.to_path_buf()).or_default()))
-    }
-
-    async fn ended(
-        &self,
-        root: &Path,
-        run: CompileRun,
-        end: End,
-        tool: &'static str,
-        output: String,
-    ) -> Result<CompileResult, CoreError> {
-        let entry = lock(&self.running).remove(root).unwrap_or_default();
+        let entry = lock(&self.running).remove(&run.root).unwrap_or_default();
         let end = if entry.stopped || self.shutdown.load(Ordering::Acquire) {
             End::Stopped
         } else {
@@ -243,7 +233,7 @@ impl CompileManager {
         {
             let _ = std::fs::remove_file(record);
         }
-        tokio::task::spawn_blocking(move || finish(&run, &end, tool, output))
+        tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
             .map_err(|err| CoreError::internal(err.to_string()))
     }
@@ -266,7 +256,7 @@ fn stopped_before_start(run: &CompileRun) -> CompileResult {
     }
 }
 
-fn finish(run: &CompileRun, end: &End, tool: &str, output: String) -> CompileResult {
+fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
     if matches!(end, End::Stopped | End::TimedOut) {
         run.discard_cut_short();
     }
@@ -292,14 +282,14 @@ fn finish(run: &CompileRun, end: &End, tool: &str, output: String) -> CompileRes
             COMPILE_TIMEOUT.as_secs() / 60
         ))),
         End::Unstarted(err) => {
-            errors = vec![LogItem::error(format!("Couldn't start {tool}: {err}"))];
+            errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
         }
         &End::Exited(code) if !ok && errors.is_empty() => {
             errors = latexmk_errors(&output);
             if errors.is_empty() {
                 errors.push(LogItem::error(match code {
                     0 => "The build made no PDF. See the Build Log.".to_string(),
-                    code => format!("{tool} stopped with exit code {code}. See the Build Log."),
+                    code => format!("latexmk stopped with exit code {code}. See the Build Log."),
                 }));
             }
         }

@@ -22,6 +22,7 @@ final class Core {
 
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
+    let library = LibraryStore()
 
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
@@ -32,7 +33,8 @@ final class Core {
             for await (said, json) in Self.heard.stream {
                 switch said {
                 case .reply(let id): pending.removeValue(forKey: id)?(json)
-                case .event(let session, let heard): observers[session]?(heard)
+                case .event(let session, let event): observers[session]?(event)
+                case .library(let section): library.apply(section)
                 }
             }
         }
@@ -128,16 +130,20 @@ final class Core {
 
     private nonisolated enum Said: Decodable {
         case reply(UInt64)
-        case event(UInt64, Heard)
+        case event(UInt64, Event)
+        case library(LibrarySection)
 
-        private enum Keys: CodingKey { case reply }
+        private enum Keys: CodingKey { case reply, library }
 
         init(from decoder: any Decoder) throws {
-            if let id = try decoder.container(keyedBy: Keys.self).decodeIfPresent(UInt64.self, forKey: .reply) {
+            let said = try decoder.container(keyedBy: Keys.self)
+            if let id = try said.decodeIfPresent(UInt64.self, forKey: .reply) {
                 self = .reply(id)
+            } else if let section = try said.decodeIfPresent(LibrarySection.self, forKey: .library) {
+                self = .library(section)
             } else {
                 let said = try SessionEvent(from: decoder)
-                self = .event(said.session, Heard(said.event))
+                self = .event(said.session, said.event)
             }
         }
     }
@@ -153,10 +159,10 @@ final class Core {
         }
     }
 
-    private var observers: [UInt64: (Heard) -> Void] = [:]
+    private var observers: [UInt64: (Event) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    func observe(_ observer: @escaping (Heard) -> Void) -> UInt64 {
+    func observe(_ observer: @escaping (Event) -> Void) -> UInt64 {
         numbered += 1
         observers[numbered] = observer
         return numbered
@@ -169,7 +175,7 @@ final class SessionClient {
     let id: UInt64
     private let core = Core.shared
 
-    init(_ observer: @escaping (Heard) -> Void) { id = core.observe(observer) }
+    init(_ observer: @escaping (Event) -> Void) { id = core.observe(observer) }
 
     @discardableResult
     func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
@@ -185,18 +191,5 @@ final class SessionClient {
     func discard() {
         core.forget(id)
         send(CloseProject())
-    }
-}
-
-nonisolated enum Heard: Sendable {
-    case event(Event)
-    case live(LiveRead)
-
-    init(_ event: Event) {
-        switch event {
-        case .liveDocument(let live): self = .live(LiveRead(live))
-        case .livePage(let live): self = .live(LiveRead(live))
-        default: self = .event(event)
-        }
     }
 }

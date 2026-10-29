@@ -16,6 +16,7 @@ use crate::{atomic, sys};
 pub struct RenameResult {
     pub from: String,
     pub to: String,
+    #[serde(skip)]
     pub main_file: String,
 }
 

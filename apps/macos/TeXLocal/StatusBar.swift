@@ -183,7 +183,7 @@ private struct PagePlace: View {
     let project: ProjectModel
     let detail: StatusBar.Detail
 
-    static func shows(_ project: ProjectModel, _ app: AppModel) -> Bool { app.showPDF && project.hasPDF && project.pdf.pageCount > 0 }
+    static func shows(_ project: ProjectModel, _ app: AppModel) -> Bool { app.showPDF && project.hasPDF }
 
     var body: some View {
         if Self.shows(project, app) {

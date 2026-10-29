@@ -5,7 +5,6 @@ import SwiftUI
 final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     static let maxMatches = 5000
     static let debounce: Duration = .milliseconds(200)
-    private static let rerunDelay: Duration = .milliseconds(350)
 
     private static func normalize(_ query: String) -> String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -38,7 +37,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     @ObservationIgnored private var running: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
     @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
-    @ObservationIgnored private var rerunning: Task<Void, Never>?
 
     init(view: SyncPDFView) { self.view = view }
 
@@ -67,7 +65,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     func rerun() { if isOpen { search(text, keepingPlace: true) } }
 
     func cancel() {
-        rerunning?.cancel()
         let document = running?.document
         running = nil
         document?.cancelFindString()
@@ -103,19 +100,6 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         view.highlightedSelections = matches.isEmpty ? nil : matches
         if matches.isEmpty { view.clearSelection() }
         if !keepingPlace || view.currentSelection == nil { select(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
-    }
-
-    func pagesReplaced(_ gone: Set<PDFPage>) {
-        let kept = matches.filter { !$0.pages.contains(where: gone.contains) }
-        if kept.count != matches.count {
-            let chosen = matches.indices.contains(matchIndex) ? matches[matchIndex] : nil
-            matches = kept
-            matchIndex = chosen.flatMap { kept.firstIndex(of: $0) } ?? min(matchIndex, max(0, kept.count - 1))
-            view.highlightedSelections = kept.isEmpty ? nil : kept
-        }
-        guard isOpen else { return }
-        cancel()
-        restart(&rerunning, after: Self.rerunDelay) { [weak self] in self?.rerun() }
     }
 
     private typealias Position = (page: Int, down: CGFloat, across: CGFloat)

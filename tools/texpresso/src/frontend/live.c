@@ -17,16 +17,15 @@
 #include "providers.h"
 #include "vstack.h"
 
-#define LIVE_PASSES 4
-
-static int live_tail_ms = 150, live_whole_ms = 300, live_rerun_ms = 1000;
+#define LIVE_PASSES 2
+#define LIVE_SETTLE_MS 1000
+#define LIVE_RERUN_MS 3000
 
 typedef struct
 {
   uint64_t now;
   uint64_t shown;
   uint64_t whole;
-  int file[2];
 } live_page;
 
 typedef struct
@@ -41,7 +40,6 @@ typedef struct
     int first, last;
     int mark;
     bool touched;
-    bool rerun;
     bool scan;
     char caret_path[1024];
     int caret_offset;
@@ -50,7 +48,6 @@ typedef struct
   live_page *pages;
   int cap;
   int checked;
-  int serial;
   uint64_t salt;
   int whole_pages;
   bool had_complete;
@@ -58,11 +55,11 @@ typedef struct
   bool dirty;
   int synced;
   bool started;
+  bool tail;
   double changed_at;
   int run;
   bool aux;
   int passes;
-  char dir[4096];
 } live_state;
 
 static double live_ms(void)
@@ -70,12 +67,6 @@ static double live_ms(void)
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
-}
-
-static int live_env(const char *name, int value)
-{
-  const char *text = getenv(name);
-  return text && *text ? atoi(text) : value;
 }
 
 static bool poll_input(live_state *l)
@@ -270,10 +261,6 @@ static void interpret_command(live_state *l, vstack *stack, val command)
       l->paused = false;
       break;
 
-    case EDIT_RERUN_ONCE:
-      l->wish.rerun = true;
-      break;
-
     case EDIT_VIEW:
       l->wish.first = fz_maxi(cmd.view.first, 0);
       l->wish.last = fz_maxi(cmd.view.last, l->wish.first);
@@ -340,51 +327,43 @@ static live_page *live_at(live_state *l, int index)
   return &l->pages[index];
 }
 
-static void live_page_path(live_state *l, char *path, size_t size, int index, int serial)
-{
-  snprintf(path, size, "%s/page-%d-%d.pdf", l->dir, index, serial);
-}
-
-static void live_retire(live_state *l, live_page *page, int index, int serial)
-{
-  char path[4200];
-  if (page->file[1])
-  {
-    live_page_path(l, path, sizeof path, index, page->file[1]);
-    remove(path);
-  }
-  page->file[1] = page->file[0];
-  page->file[0] = serial;
-}
-
 static bool live_write_page(live_state *l, int index)
 {
   fz_context *ctx = l->ctx;
-  live_page *page = &l->pages[index];
-  int serial = ++l->serial;
-  char path[4200];
-  live_page_path(l, path, sizeof path, index, serial);
+  fz_buffer *pdf = NULL, *text = NULL;
   fz_document_writer *writer = NULL;
+  fz_output *out = NULL;
+  fz_var(pdf);
+  fz_var(text);
   fz_var(writer);
+  fz_var(out);
   fz_try(ctx)
   {
-    writer = fz_new_pdf_writer(ctx, path, "");
+    pdf = fz_new_buffer(ctx, 64 * 1024);
+    writer = fz_new_document_writer_with_buffer(ctx, pdf, "pdf", "");
     fz_device *dev = fz_begin_page(ctx, writer, txp_tex_page_box(l->eng, index));
     txp_tex_run_page(l->eng, ctx, index, dev);
     fz_end_page(ctx, writer);
     fz_close_document_writer(ctx, writer);
+    text = fz_new_buffer(ctx, pdf->len / 3 * 4 + 4);
+    out = fz_new_output_with_buffer(ctx, text);
+    fz_write_base64_buffer(ctx, out, pdf, 0);
+    fz_close_output(ctx, out);
+    l->pages[index].shown = l->pages[index].now;
+    editor_page(index, (const char *)text->data, text->len);
   }
   fz_always(ctx)
+  {
+    fz_drop_output(ctx, out);
     fz_drop_document_writer(ctx, writer);
+    fz_drop_buffer(ctx, pdf);
+    fz_drop_buffer(ctx, text);
+  }
   fz_catch(ctx)
   {
-    fprintf(stderr, "[pdf] couldn't write %s: %s\n", path, fz_caught_message(ctx));
-    remove(path);
+    fprintf(stderr, "[pdf] couldn't write page %d: %s\n", index, fz_caught_message(ctx));
     return false;
   }
-  live_retire(l, page, index, serial);
-  page->shown = page->now;
-  editor_page(index, path);
   return true;
 }
 
@@ -494,7 +473,6 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
       }
     }
     page->whole = page->shown = i < pages ? page->now : 0;
-    live_retire(l, page, i, 0);
   }
   l->whole_pages = pages;
   l->dirty = false;
@@ -538,20 +516,12 @@ static void live_caret(live_state *l)
 static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
 {
   fz_context *ctx = l->ctx;
-  snprintf(l->dir, sizeof l->dir, "%s", l->pdf_output);
-  char *slash = strrchr(l->dir, '/');
-  if (slash)
-    *slash = 0;
-  else
-    strcpy(l->dir, ".");
   l->whole_pages = -1;
   l->changed_at = -1e9;
   l->wish.last = 1;
   l->wish.caret_offset = -1;
-  live_tail_ms = live_env("TEXPRESSO_LIVE_TAIL_MS", live_tail_ms);
-  live_whole_ms = live_env("TEXPRESSO_LIVE_WHOLE_MS", live_whole_ms);
-  live_rerun_ms = live_env("TEXPRESSO_LIVE_RERUN_MS", live_rerun_ms);
-  editor_live(2);
+  l->tail = true;
+  editor_live(3);
 
   struct pollfd opening = {STDIN_FILENO, POLLRDNORM, 0};
   poll(&opening, 1, 100);
@@ -588,12 +558,14 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       if (l->started)
         l->changed_at = live_ms();
       l->passes = 0;
+      l->tail = true;
     }
 
     bool stepping = send(get_status, l->eng) == DOC_RUNNING && !l->paused;
     int count = send(page_count, l->eng);
+    bool rest = l->tail || (l->aux && l->passes < LIVE_PASSES);
     bool wanted = stepping && (count <= l->wish.last ||
-                               live_ms() - l->changed_at >= live_tail_ms);
+                               (rest && live_ms() - l->changed_at >= LIVE_SETTLE_MS));
     bool more = wanted && live_step(l, count);
     txp_engine *eng = txp_tex_successor(l->eng, ctx);
     if (eng != l->eng)
@@ -610,10 +582,9 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     {
       running = false;
       l->started = true;
+      l->tail = false;
       l->run = txp_tex_outcome(l->eng);
       l->aux = l->run == RUN_COMPLETE && txp_tex_aux_changed(l->eng);
-      if (!l->aux)
-        l->wish.rerun = false;
       editor_done(l->run);
     }
     if (l->wish.mark != l->synced && (!stepping || count > l->wish.last))
@@ -628,8 +599,8 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       if (l->whole_pages < 0 && count > l->wish.last &&
           live_write_whole(l, RUN_PARTIAL, false) == LIVE_FAILED)
         l->whole_pages = 0;
-      if (!wanted)
-        wake = l->changed_at + live_tail_ms;
+      if (!wanted && rest)
+        wake = l->changed_at + LIVE_SETTLE_MS;
     }
     else if (!running)
     {
@@ -637,7 +608,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       bool differs = (l->dirty || count != l->whole_pages || completed) &&
                      !(l->run == RUN_STOPPED && l->had_complete);
       double due = l->run == RUN_COMPLETE && (count != l->whole_pages || completed)
-                       ? now : l->changed_at + live_whole_ms;
+                       ? now : l->changed_at + LIVE_SETTLE_MS;
       if (differs && now >= due)
       {
         enum live_written written = live_write_whole(l, l->run, l->whole_pages >= 0);
@@ -649,15 +620,13 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
       else if (differs)
         wake = due;
 
-      if (l->wish.rerun)
-        l->passes = fz_mini(l->passes, LIVE_PASSES - 1);
-      double pass_due = l->wish.rerun ? now : l->changed_at + live_rerun_ms;
+      double pass_due = l->changed_at + LIVE_RERUN_MS;
       if (l->aux && l->passes < LIVE_PASSES && now >= pass_due && !more)
       {
-        l->wish.rerun = false;
         l->passes++;
         fprintf(stderr, "[live] finishing pass %d\n", l->passes);
         txp_tex_rerun(l->eng, ctx);
+        l->tail = true;
         running = true;
         more = true;
       }

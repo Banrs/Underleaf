@@ -42,15 +42,6 @@ nonisolated extension NSRange {
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
 }
 
-nonisolated extension ProjectSettings {
-    mutating func apply(_ patch: SettingsPatch) {
-        mainFile = patch.mainFile ?? mainFile
-        engine = patch.engine ?? engine
-        stopOnFirstError = patch.stopOnFirstError ?? stopOnFirstError
-        shellEscape = patch.shellEscape ?? shellEscape
-    }
-}
-
 nonisolated extension LogItem {
     var isError: Bool { kind == .error }
 }
@@ -64,8 +55,12 @@ nonisolated extension CompileResult {
     }
 }
 
-nonisolated extension FileIssues {
-    var byLine: [Int: IssueLine] { Dictionary(lines.map { ($0.line, $0) }) { $1 } }
+nonisolated extension BuildState {
+    var listed: [LogItem] { issues + (result?.badBoxes ?? []) }
+}
+
+extension [IssueLine] {
+    var byLine: [Int: IssueLine] { Dictionary(map { ($0.line, $0) }) { $1 } }
 }
 
 nonisolated extension SearchHit: Identifiable {

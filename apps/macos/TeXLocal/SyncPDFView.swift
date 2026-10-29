@@ -24,7 +24,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         didSet {
             guard darkPaper != oldValue else { return }
             for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] { overlay.dark = darkPaper }
-            liveCanvas.layer?.filters = darkPaper ? Self.invert : nil
             matchScroller()
         }
     }
@@ -38,82 +37,26 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     func matchScroller() { pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark }
 
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
-        Self.drawPaper(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)), to: context) {
-            page.draw(with: .cropBox, to: context)
-        }
-    }
-
-    private nonisolated static func drawPaper(_ box: CGRect, to context: CGContext, page draw: () -> Void) {
         context.saveGState()
-        defer { context.restoreGState() }
         context.setFillColor(.white)
-        context.fill(box)
-        draw()
+        context.fill(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)))
+        context.restoreGState()
+        page.draw(with: .cropBox, to: context)
     }
 
-    private let liveCanvas: NSView = {
-        let canvas = FilterView()
-        canvas.autoresizingMask = [.width, .height]
-        canvas.layer?.zPosition = 1
-        return canvas
-    }()
-    private var liveLayers: [Int: CALayer] = [:]
-    private var liveScale: CGFloat = 0
-    private var shownScale: CGFloat { pageScrollView?.magnification ?? scaleFactor }
-    var liveScaleChanged: Bool { !liveLayers.isEmpty && shownScale != liveScale }
+    private var drawsCovers = false
+    private var uncovering: Task<Void, Never>?
 
-    func showLive(_ page: PDFPage, over shown: PDFPage, at index: Int) -> Bool {
-        guard let documentView, let window, let overlay = shownOverlay(of: shown) else { return false }
-        let visible = overlay.visibleRect
-        guard !visible.isEmpty else { return false }
-        if liveCanvas.superview !== documentView {
-            liveCanvas.frame = documentView.bounds
-            documentView.addSubview(liveCanvas)
+    func covering(_ change: () -> Void) {
+        drawsCovers = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        change()
+        CATransaction.commit()
+        drawsCovers = false
+        restart(&uncovering, after: .milliseconds(400)) { [weak self] in
+            for case let overlay as PageOverlay in self?.overlays.objectEnumerator()?.allObjects ?? [] { overlay.uncover() }
         }
-        let pixel = window.backingScaleFactor, box = overlay.bounds
-        let onScreen = overlay.convert(box, to: nil).size.applying(CGAffineTransform(scaleX: pixel, y: pixel))
-        let toPixels = CGAffineTransform(scaleX: onScreen.width / box.width, y: onScreen.height / box.height)
-            .translatedBy(x: -box.minX, y: -box.minY)
-        let whole = CGRect(x: 0, y: 0, width: onScreen.width.rounded(), height: onScreen.height.rounded())
-        let part = visible.applying(toPixels).integral.intersection(whole)
-        guard part.width >= 1, part.height >= 1,
-              let surface = IOSurface(properties: [.width: Int(part.width), .height: Int(part.height),
-                                                   .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA]),
-              surface.lock(options: [], seed: nil) == KERN_SUCCESS else { return false }
-        let context = CGContext(data: surface.baseAddress, width: surface.width, height: surface.height, bitsPerComponent: 8,
-                                bytesPerRow: surface.bytesPerRow, space: Self.liveSpace,
-                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-        if let context {
-            let paper = page.bounds(for: .cropBox)
-            context.translateBy(x: -part.minX, y: -part.minY)
-            context.scaleBy(x: scaleFactor * pixel, y: scaleFactor * pixel)
-            context.translateBy(x: -paper.minX, y: -paper.minY)
-            Self.drawPaper(paper, to: context) { page.draw(with: .cropBox, to: context) }
-        }
-        surface.unlock(options: [], seed: nil)
-        if let name = Self.liveSpace.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, name) }
-        let layer = liveLayers[index] ?? {
-            let layer = CALayer()
-            layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
-            liveCanvas.layer?.addSublayer(layer)
-            liveLayers[index] = layer
-            return layer
-        }()
-        layer.contents = surface
-        layer.frame = liveCanvas.convert(part.applying(toPixels.inverted()), from: overlay)
-        liveScale = shownScale
-        return true
-    }
-
-    private static let liveSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-
-    func hasLive(at index: Int) -> Bool { liveLayers[index] != nil }
-
-    func removeLive(at index: Int) { liveLayers.removeValue(forKey: index)?.removeFromSuperlayer() }
-
-    func removeLive() {
-        for layer in liveLayers.values { layer.removeFromSuperlayer() }
-        liveLayers.removeAll()
     }
 
     private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView, fading: Task<Void, Never>)?
@@ -154,8 +97,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         mark = nil
     }
 
-    func shownOverlay(of page: PDFPage) -> NSView? { overlays.object(forKey: page).flatMap { $0.window == nil ? nil : $0 } }
-
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
         let overlay = PageOverlay()
         overlay.dark = darkPaper
@@ -164,6 +105,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
+        if drawsCovers, let overlay = overlay as? PageOverlay {
+            overlay.cover(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))) { draw(page, to: $0) }
+        }
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
     }
 
@@ -183,9 +127,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         let widthChanged = newSize.width != frame.width, atStart = hasShownArea && atDocumentStart
         super.setFrameSize(newSize)
         onResize()
-        if atStart, widthChanged || !atDocumentStart, let page = document?.page(at: 0) {
-            go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
-        }
+        if atStart, widthChanged || !atDocumentStart { goToStart() }
+    }
+
+    func goToStart() {
+        guard let page = document?.page(at: 0) else { return }
+        go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
     }
 
     private var atDocumentStart: Bool {
@@ -195,6 +142,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
+
+    var shownRect: CGRect { CGRect(x: bounds.minX, y: bounds.minY + safeAreaInsets.bottom, width: bounds.width, height: shownHeight) }
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
@@ -237,20 +186,53 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 }
 
-private class FilterView: NSView {
+final class PageOverlay: NSView {
+    private static let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    private let drawing = CALayer()
+
+    var dark = false {
+        didSet {
+            layer?.backgroundFilters = dark ? SyncPDFView.invert : nil
+            drawing.filters = layer?.backgroundFilters
+        }
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layerUsesCoreImageFilters = true
+        drawing.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        layer?.addSublayer(drawing)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
 
-private final class PageOverlay: FilterView {
-    var dark = false { didSet { layer?.backgroundFilters = dark ? SyncPDFView.invert : nil } }
+    override func setFrameSize(_ newSize: NSSize) {
+        if newSize != frame.size { uncover() }
+        super.setFrameSize(newSize)
+    }
+
+    func cover(_ box: CGRect, with draw: (CGContext) -> Void) {
+        let part = visibleRect, pixel = window?.backingScaleFactor ?? 1
+        guard !part.isEmpty, !box.isEmpty,
+              let context = CGContext(data: nil, width: Int((part.width * pixel).rounded(.up)), height: Int((part.height * pixel).rounded(.up)),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: Self.space,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return }
+        context.scaleBy(x: pixel, y: pixel)
+        context.translateBy(x: -part.minX, y: -part.minY)
+        context.scaleBy(x: bounds.width / box.width, y: bounds.height / box.height)
+        context.translateBy(x: -box.minX, y: -box.minY)
+        draw(context)
+        drawing.contents = context.makeImage()
+        drawing.frame = part
+    }
+
+    func uncover() { drawing.contents = nil }
+
+    var covered: Bool { drawing.contents != nil }
 }
 
 private final class MarkView: NSView {

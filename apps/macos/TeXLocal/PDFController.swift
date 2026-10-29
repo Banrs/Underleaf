@@ -18,23 +18,13 @@ final class PDFController: NSObject {
     var canZoomIn: Bool { scale < Self.maxScale }
     var canZoomOut: Bool { scale > Self.minScale }
 
-    @ObservationIgnored var restorePage: Int?
     @ObservationIgnored var restoreZoom: Zoom?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
-    @ObservationIgnored var wholeAt = UInt64.max
+    @ObservationIgnored private(set) var loading: Task<Void, Never>?
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
-    @ObservationIgnored private var scrolling: NotificationCenter.ObservationToken?
-
-    @ObservationIgnored var liveWaiting: [Int: PDFPage] = [:]
-    @ObservationIgnored var liveSettling: Task<Void, Never>?
-    @ObservationIgnored var liveClearing: Task<Void, Never>?
-    @ObservationIgnored var liveTaking: Task<Void, Never>?
-    @ObservationIgnored var liveBacklog: (document: PDFDocument, pages: IndexSet, complete: Bool)?
-    @ObservationIgnored var liveMissed = false
-    @ObservationIgnored var liveShown = false
 
     @ObservationIgnored var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
     @ObservationIgnored var revealing: Task<Void, Never>?
@@ -47,7 +37,6 @@ final class PDFController: NSObject {
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
-            dropLive()
             if zoom == .fitPage { fitPage() }
             restoreIfReady()
             if let pending = pendingReveal { reveal(pending.loc, from: pending.source) }
@@ -57,13 +46,13 @@ final class PDFController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
     }
 
-    @objc func pageChanged() {
-        guard let document = view.document, let page = view.currentPage else { return }
-        if let number = document.number(of: page) { self.page = number }
+    @objc private func pageChanged() {
+        guard let document = view.document else { return }
         pageCount = document.pageCount
+        if let page = view.currentPage, let number = document.number(of: page) { self.page = number }
     }
 
-    var visiblePages: ClosedRange<Int>? {
+    private var visiblePages: ClosedRange<Int>? {
         guard let document = view.document, view.hasShownArea else { return nil }
         let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
         return shown.min().flatMap { first in shown.max().map { first...$0 } }
@@ -78,15 +67,14 @@ final class PDFController: NSObject {
     private func watchScrollView() {
         guard let scrollView = view.pageScrollView, scrollView !== watched else { return }
         watched = scrollView
+        scrollView.setAccessibilityLabel("PDF")
+        view.matchScroller()
         magnification = scrollView.observe(\.magnification, options: .initial) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.scaleChanged() }
         }
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        scrolling = NotificationCenter.default.addObserver(of: scrollView.contentView, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
     }
 
     @objc private func scaleChanged() {
-        if view.liveScaleChanged { dropLive() }
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
         if view.autoScales, abs(scale - view.scaleFactorForSizeToFit) < 0.001 {
@@ -139,14 +127,21 @@ final class PDFController: NSObject {
         view.autoScales = true
     }
 
-    func restoreIfReady() {
-        guard view.document != nil, view.hasShownArea else { return }
-        if let zoom = restoreZoom.take() { apply(zoom) }
-        if let number = restorePage.take() { go(toPage: number) }
+    private func restoreIfReady() {
+        guard view.document != nil, view.hasShownArea, let zoom = restoreZoom.take() else { return }
+        apply(zoom)
+        view.goToStart()
     }
 
-    var keptPage: Int? { restorePage ?? (page > 0 ? page : nil) }
     var keptZoom: Zoom { restoreZoom ?? zoom }
+
+    func load(_ url: URL?) -> Task<Void, Never> {
+        restart(&loading) { [self] in
+            let document: PDFDocument? = if let url { await Self.loadDocument(url) } else { nil }
+            guard !Task.isCancelled else { return }
+            if let document { show(document) } else { clear() }
+        }
+    }
 
     @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
@@ -160,6 +155,8 @@ final class PDFController: NSObject {
         return document
     }
 
+    @concurrent static func loadPage(_ pdf: Data) async -> sending PDFPage? { PDFDocument(data: pdf)?.page(at: 0) }
+
     func print(title: String, file: URL?) {
         Task {
             let document = if let file { await Self.loadDocument(file) } else { view.document }
@@ -172,64 +169,45 @@ final class PDFController: NSObject {
 
     func show(_ document: PDFDocument) {
         shownVersion += 1
+        loading?.cancel()
         revealing?.cancel()
-        resetLive()
-        clearLiveLater()
-        let place = restorePage == nil ? view.shownPlace : nil
-        let (autoScales, scale) = (view.autoScales, view.scaleFactor)
         view.removeMark()
-        if view.document != nil {
-            find.cancel()
-            view.clearSelection()
-            view.highlightedSelections = nil
-        }
-        if let shown = view.document, !hasGrown {
-            shown.replacePages(with: document)
-        } else {
-            view.removeLive()
+        view.clearSelection()
+        let place = view.document == nil ? nil : view.shownPlace
+        let autoScales = view.autoScales
+        view.covering {
             view.document = document
-            wholeAt = Self.footprint + 512 << 20
+            view.minScaleFactor = Self.minScale
+            view.maxScaleFactor = Self.maxScale
+            view.autoScales = autoScales
+            if let place, let page = document.page(ifAt: min(place.index, document.pageCount - 1)) {
+                view.go(to: PDFDestination(page: page, at: place.point))
+            }
+            view.layoutDocumentView()
         }
         watchScrollView()
-        view.minScaleFactor = Self.minScale
-        view.maxScaleFactor = Self.maxScale
-        view.pageScrollView?.setAccessibilityLabel("PDF")
-        view.matchScroller()
-        if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         restoreIfReady()
-        let start = document.page(at: 0).map { (index: 0, point: CGPoint(x: 0, y: $0.bounds(for: view.displayBox).maxY)) }
-        if let place = place ?? (restorePage == nil ? start : nil) { go(to: place) }
         pageChanged()
         find.rerun()
     }
 
-    var hasGrown: Bool { Self.footprint > wholeAt }
-
-    private static var footprint: UInt64 {
-        var usage = rusage_info_current()
-        let read = withUnsafeMutablePointer(to: &usage) {
-            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_CURRENT, $0) }
+    func show(_ page: PDFPage, at index: Int) {
+        guard let document = view.document, let old = document.page(ifAt: index) else { return }
+        find.cancel()
+        view.removeMark()
+        view.covering {
+            document.insert(page, at: index)
+            document.removePage(at: index + 1)
         }
-        return read == 0 ? usage.ri_phys_footprint : 0
+        if view.currentSelection?.pages.contains(old) == true { view.clearSelection() }
+        pageChanged()
+        find.rerun()
     }
 
-    private func go(to place: (index: Int, point: CGPoint)) {
-        guard let document = view.document, let page = document.page(ifAt: min(place.index, document.pageCount - 1)) else { return }
-        view.go(to: PDFDestination(page: page, at: place.point))
-        guard let scroll = view.pageScrollView else { return }
-        let clip = scroll.contentView
-        let target = clip.convert(view.convert(place.point, from: page), from: view)
-        let top = clip.convert(CGPoint(x: view.bounds.minX, y: view.bounds.maxY - view.safeAreaInsets.top), from: view)
-        clip.scroll(to: CGPoint(x: clip.bounds.minX + target.x - top.x, y: clip.bounds.minY + target.y - top.y))
-        scroll.reflectScrolledClipView(clip)
-    }
-
-    func clear() {
+    private func clear() {
         shownVersion += 1
         pendingReveal = nil
         revealing?.cancel()
-        resetLive()
-        dropLive()
         view.removeMark()
         find.reset()
         view.document = nil
@@ -243,33 +221,5 @@ extension PDFDocument {
     func number(of page: PDFPage) -> Int? {
         let index = index(for: page)
         return index == NSNotFound ? nil : index + 1
-    }
-
-    func replacePage(at index: Int, with new: PDFPage) -> PDFPage? {
-        guard let old = page(ifAt: index) else { return nil }
-        insert(new, at: index)
-        removePage(at: index + 1)
-        return old
-    }
-
-    func replacePages(with other: PDFDocument) {
-        let pages = (0..<other.pageCount).compactMap { other.page(at: $0)?.copy() as? PDFPage }
-        for (index, page) in pages.enumerated() {
-            if replacePage(at: index, with: page) == nil { insert(page, at: index) }
-        }
-        while pageCount > pages.count { removePage(at: pageCount - 1) }
-        func here(_ destination: PDFDestination?) -> PDFDestination? {
-            guard let destination, let target = destination.page, target.document === other,
-                  let page = page(ifAt: other.index(for: target)) else { return nil }
-            let local = PDFDestination(page: page, at: destination.point)
-            local.zoom = destination.zoom
-            return local
-        }
-        for link in pages.flatMap(\.annotations) where link.type == "Link" {
-            if let destination = here(link.destination) { link.destination = destination }
-            if let goTo = link.action as? PDFActionGoTo, let destination = here(goTo.destination) {
-                link.action = PDFActionGoTo(destination: destination)
-            }
-        }
     }
 }

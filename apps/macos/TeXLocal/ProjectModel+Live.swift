@@ -16,7 +16,6 @@ extension ProjectModel {
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
         texpresso.starting()
-        if let pages = pdf.visiblePages { liveView(pages) }
         liveCaret()
         session.send(StartLive())
     }
@@ -24,15 +23,11 @@ extension ProjectModel {
     func stopTeXpresso() {
         guard let session else { return }
         texpresso.stopping()
-        Task {
-            if let state = try? await session.call(StopLive()), state.phase == .stopped,
-               texpresso.phase == .stopping { liveChanged(state) }
-        }
-        Task { await endLivePDF() }
+        session.send(StopLive())
     }
 
     func liveView(_ pages: ClosedRange<Int>) {
-        guard texpresso.active, let session else { return }
+        guard let session else { return }
         session.send(LiveView(first: pages.lowerBound, last: pages.upperBound))
     }
 
@@ -41,40 +36,50 @@ extension ProjectModel {
         session.send(LiveCaret(path: path, offset: editor.caret))
     }
 
-    func endLivePDF() async {
-        guard livePDF, !texpresso.active, !(await showBuildPDF(buildPDF?.path(percentEncoded: false), replacingLive: true)), livePDF,
-              !texpresso.active, !closed else { return }
-        shown = .none
-        pdf.clear()
+    func liveChanged(_ state: LiveState) {
+        texpresso.receive(state)
+        if state.phase != .running { followsCaret = false }
+        showIssues()
     }
 
-    func liveChanged(_ state: LiveState, alert: Bool = false) {
-        let was = texpresso.phase
-        texpresso.receive(state, alert: alert)
-        if alert { panel.show(.texpresso) }
-        if state.phase == .stopped, was != .stopped { Task { await endLivePDF() } }
-        if state.phase != .running { pdf.endLiveRun() }
-    }
+    private var showsLive: Bool { !closed && texpresso.active && livePDF }
 
-    func showLive(_ read: LiveRead) {
-        guard texpresso.active, !closed else { return }
-        if case .document(_?, _, _) = read {
-            if !livePDF, app?.showPDF == false { app?.showPDF = true }
-            shown = .live
+    func showLive(_ live: LiveDocument) {
+        _ = enqueue(&liveReads) { [self] in
+            guard let document = await PDFController.loadDocument(URL(filePath: live.path)), showsLive else { return }
+            pdf.show(document)
+            if followsCaret { followCaret() }
         }
-        pdf.showLive(read)
+    }
+
+    func showLive(_ live: LivePage) {
+        _ = enqueue(&liveReads) { [self] in
+            guard let page = await PDFController.loadPage(live.pdf), showsLive else { return }
+            pdf.show(page, at: live.page)
+        }
+    }
+
+    private func followCaret() {
+        guard let session, let path = openPath, isLaTeX else { return }
+        let line = editor.currentLine
+        _ = restart(&followTask) { [self] in
+            guard let loc = try? await session.call(SynctexForward(file: path, line: line)), !Task.isCancelled, !closed, livePDF,
+                  openPath == path else { return }
+            followsCaret = false
+            pdf.follow(loc)
+        }
     }
 
     func forwardSync(quietly: Bool = false) async {
         guard let session, let path = openPath else { return }
         let (line, column) = (editor.currentLine, editor.currentColumn)
-        let live = livePDF, request = SynctexForward(file: path, line: line)
+        let request = SynctexForward(file: path, line: line)
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             let shown = pdf.shownVersion
             do {
                 let loc = try await session.call(request)
-                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
+                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown else { return }
                 app?.requestPDF(.reveal(loc, SyncSource(session: session.id, file: path, line: line, column: column, quietly: quietly)))
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }

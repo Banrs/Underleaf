@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 @testable import TeXLocal
 
@@ -9,10 +9,10 @@ struct CoreTests {
         #expect(Core.shared.isOpen)
     }
 
-    @Test func aCommandAnswersDecodedValues() async throws {
+    @Test func aCommandAnswersDecodedValuesAfterTheLibraryItChanged() async throws {
         let project = try await newProject()
-        let listed = try await Core.shared.call(ListProjects())
-        #expect(listed.contains { $0.id == project.id && $0.mainFile == "main.tex" })
+        #expect(project.mainFile == "main.tex")
+        #expect(Core.shared.library.projects.contains { $0.id == project.id })
     }
 
     @Test func aRefusalCarriesItsKind() async {
@@ -26,15 +26,10 @@ struct CoreTests {
     @Test func aSessionsDocumentIsEditedAndSavedAndItsEventsDecode() async throws {
         let project = try await newProject()
         var events: [Event] = []
-        let session = SessionClient { if case .event(let event) = $0 { events.append(event) } }
-        let opened = try await session.call(OpenProject(id: project.id, autoCompile: false))
-        #expect(opened.settings.mainFile == "main.tex")
-        #expect(opened.tree.contains { $0.name == "main.tex" })
-        try await session.call(OpenDocument(path: "main.tex"))
-        try await waitUntil {
-            events.contains { if case .outline = $0 { true } else { false } }
-                && events.contains { if case .checks = $0 { true } else { false } }
-        }
+        let session = SessionClient { events.append($0) }
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
+        #expect(try await session.call(Open(path: "main.tex")) == "main.tex")
+        try await waitUntil { events.contains { if case .section(.outline(_?)) = $0 { true } else { false } } }
         let document = try #require(SourceDocument(session: session.id, path: "main.tex"))
         let version = try #require(document.version)
         _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
@@ -45,13 +40,62 @@ struct CoreTests {
         #expect(try await session.close())
     }
 
-    @Test func aReplyComesAfterTheEventsBeforeIt() async throws {
+    @Test func theEditorFollowsTheOpenFileAndItsReloadsAndAClosedDocumentRefusesEdits() async throws {
+        let info = try await newProject()
+        let defaults = TestDefaults()
+        let app = AppModel(defaults: defaults.store)
+        app.autoCompile = false
+        let project = ProjectModel(id: info.id, app: app)
+        await project.load()
+        let editor = project.editor
+        #expect(project.openPath == "main.tex" && editor.path == "main.tex")
+        try await Task.sleep(for: .milliseconds(300))
+        try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
+        try await waitUntil { editor.textView.string == "theirs\n" }
+        let main = editor.textView.document
+        #expect(main.editable)
+        #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
+        #expect(project.openPath == "untitled.tex" && editor.path == "untitled.tex")
+        #expect(!main.editable)
+        let view = SourceTextView.plainDocument()
+        view.load(main)
+        view.insertText("late ", replacementRange: NSRange(location: 0, length: 0))
+        #expect(view.string == "theirs\n")
+        #expect(await project.close().value)
+    }
+
+    @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let app = AppModel(defaults: defaults.store)
+        app.autoCompile = false
+        let project = ProjectModel(id: info.id, app: app)
+        await project.load()
+        project.engine = .xelatex
+        try await waitUntil { project.engine == .xelatex }
+        #expect(await project.close().value)
+        #expect(app.alert == nil)
+        let settings = info.path + "/.texlocal.json"
+        try "{ not json".write(toFile: settings, atomically: true, encoding: .utf8)
+        let corrupt = ProjectModel(id: info.id, app: app)
+        await corrupt.load()
+        #expect(app.alert?.title == "Couldn’t Read the Project’s Settings")
+        #expect(corrupt.engine == .pdflatex)
+        #expect(try String(contentsOfFile: settings, encoding: .utf8) == "{ not json")
+        #expect(await corrupt.close().value)
+    }
+
+    @Test func theStoreIsFilledBeforeTheOpenReplyAndEachReplyFollowsItsSections() async throws {
         let project = try await newProject(template: .blank)
-        var trees = 0
-        let session = SessionClient { if case .event(.tree) = $0 { trees += 1 } }
+        let store = SessionStore()
+        let session = SessionClient { if case .section(let section) = $0 { store.apply(section) } }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
+        #expect(store.project?.name == project.name)
+        #expect(store.project?.settings.mainFile == "main.tex")
+        #expect(store.tree.contains { $0.name == "main.tex" && $0.main })
+        #expect(store.build?.result == nil && store.shownPdf?.path == nil && store.live?.phase == .stopped)
         try await session.call(CreateEntry(folder: "", name: "new.tex", dir: false))
-        #expect(trees > 0)
+        #expect(store.tree.contains { $0.name == "new.tex" })
         #expect(try await session.close())
     }
 

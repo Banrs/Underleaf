@@ -57,8 +57,18 @@ extension PDFController {
         let page = found?.page ?? located
         let rect = found.map { $0.selection.bounds(for: $0.page) }
             ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
-        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
+        show(rect, on: page)
         highlight(found?.selection, or: rect, on: page)
+    }
+
+    func follow(_ loc: ForwardLoc) {
+        guard view.hasShownArea, let page = view.document?.page(ifAt: Int(loc.page) - 1) else { return }
+        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+        if !view.shownRect.contains(view.convert(rect, from: page)) { show(rect, on: page) }
+    }
+
+    private func show(_ rect: CGRect, on page: PDFPage) {
+        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
     }
 
     private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [(page: PDFPage, text: PdfPage)] {

@@ -11,7 +11,7 @@ use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{Project, identity, safe_rel_file};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StoredSettings {
     pub main_file: String,
@@ -130,6 +130,12 @@ pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettin
     Ok(file.settings)
 }
 
+pub fn problem(project: &Project) -> Option<String> {
+    let unreadable = |file: &Path| load::<ProjectFile>(file).err();
+    let problem = unreadable(&project.settings).or_else(|| unreadable(&project.ui));
+    problem.map(|err| err.message)
+}
+
 pub fn granted(project: &Project) -> bool {
     let granted = read_project(&project.ui).shell_escape_for;
     granted.is_some_and(|folder| identity(&project.root) == Some(folder))
@@ -152,14 +158,14 @@ pub struct ProjectSettings {
     shell_escape: bool,
 }
 
-pub fn shown(project: &Project) -> ProjectSettings {
+pub fn shown(project: &Project, main: Option<String>) -> ProjectSettings {
     let StoredSettings {
         main_file,
         engine,
         stop_on_first_error,
     } = read_settings(&project.settings);
     ProjectSettings {
-        main_file,
+        main_file: main.unwrap_or(main_file),
         engine,
         stop_on_first_error,
         shell_escape: granted(project),
@@ -175,7 +181,7 @@ pub struct SettingsPatch {
     pub shell_escape: Option<bool>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct AppSettings {
     pub tex_dir: Option<PathBuf>,
@@ -198,14 +204,13 @@ impl AppSettings {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StoredUi {
     pub expanded_folders: Vec<String>,
     pub folded_headings: Vec<String>,
     pub file: Option<String>,
     pub line: Option<u32>,
-    pub page: Option<u32>,
     pub zoom: Option<Value>,
     pub panel: bool,
     pub live_preview: bool,
@@ -220,10 +225,10 @@ pub struct UiState {
     folded_headings: Vec<String>,
     file: Option<String>,
     line: Option<u32>,
-    page: Option<u32>,
     zoom: Option<Zoom>,
     panel: bool,
-    live_preview: bool,
+    #[serde(skip)]
+    pub(crate) live_preview: bool,
 }
 
 pub fn read_ui(file: &Path) -> UiState {
@@ -234,7 +239,6 @@ pub fn read_ui(file: &Path) -> UiState {
         folded_headings: ui.folded_headings,
         file: ui.file,
         line: ui.line,
-        page: ui.page,
         panel: ui.panel,
         live_preview: ui.live_preview,
     }
@@ -268,12 +272,11 @@ pub struct UiPatch {
 pub struct UiPlace {
     file: Option<String>,
     line: Option<u32>,
-    page: Option<u32>,
     zoom: Option<Zoom>,
     panel: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub enum Zoom {
     FitWidth,
@@ -316,13 +319,12 @@ pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
         if let Some(UiPlace {
             file,
             line,
-            page,
             zoom,
             panel,
         }) = place
         {
-            (state.file, state.line, state.page) = (file, line, page);
-            (state.zoom, state.panel) = (zoom.map(Zoom::stored), panel);
+            (state.file, state.line, state.zoom, state.panel) =
+                (file, line, zoom.map(Zoom::stored), panel);
         }
         Ok(())
     })

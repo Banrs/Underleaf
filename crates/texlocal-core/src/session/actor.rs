@@ -1,46 +1,44 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use notify::RecommendedWatcher;
-use schemars::JsonSchema;
-use serde::Serialize;
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
-use tokio::sync::{mpsc, watch as signal};
+use tokio::sync::{mpsc, oneshot, watch as signal};
 use tokio::time::Instant;
 
-use super::build::Builds;
+use super::build::{Builds, built_pdf};
 use super::documents::{Docs, Resolution};
 use super::edits::{DocumentEdits, Fixed, ProjectEdits};
-use super::live::{Live, LiveState};
+use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
+use super::state::Sent;
 use super::watch::{self, Change, TreeIndex};
 use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
 use crate::CoreError;
-use crate::events::{DocumentState, Event, Queued, SessionEvent};
+use crate::events::{Event, Queued, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols, TreeNode};
+use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols};
 use crate::protocol::requests;
-use crate::service::Service;
-use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch, UiState};
+use crate::service::{InSession, Service};
+use crate::settings::{self, SettingsPatch, UiPatch, UiState};
 use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
 
 requests! {
     Session {
-        OpenProject { id: String, auto_compile: bool } -> SessionOpened,
+        OpenProject { id: String, auto_compile: bool } -> UiState,
         CloseProject {} -> bool,
         SetOptions { auto_compile: bool } -> (),
-        OpenDocument { path: RelPath } -> (),
-        CloseDocument { path: RelPath } -> bool,
+        Open { path: RelPath } -> Option<String>,
         Composing { path: RelPath, composing: bool } -> (),
         Save { reporting: bool } -> bool,
         Resolve { path: RelPath, answer: Resolution } -> (),
@@ -60,11 +58,11 @@ requests! {
         RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> Option<DocumentEdits>,
         Rename { from: RelPath, to: String } -> Option<RenameResult>,
         CreateEntry { folder: String, name: String, dir: bool } -> String,
-        SetSettings { patch: SettingsPatch } -> ProjectSettings,
+        SetSettings { patch: SettingsPatch } -> (),
         PrepareDelete { path: RelPath } -> bool,
         Deleted { path: RelPath, trashed: bool } -> (),
-        StartLive {} -> LiveState,
-        StopLive {} -> LiveState,
+        StartLive {} -> (),
+        StopLive {} -> (),
         LiveView { first: u32, last: u32 } -> (),
         LiveCaret { path: RelPath, offset: usize } -> (),
         LiveLog { shown: bool } -> (),
@@ -72,20 +70,10 @@ requests! {
         ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
         ExportZip { dest: PathBuf, for_arxiv: bool } -> (),
         SetUiState { patch: UiPatch } -> (),
-        PdfPath {} -> String,
         SynctexForward { file: RelPath, line: u32 } -> ForwardLoc,
         SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc,
         SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
     }
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct SessionOpened {
-    name: String,
-    root: String,
-    tree: Vec<TreeNode>,
-    settings: ProjectSettings,
-    ui: UiState,
 }
 
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -143,10 +131,10 @@ pub(crate) struct Actor {
     pub tx: mpsc::UnboundedSender<Msg>,
     pub docs: Docs,
     pub next_doc: u64,
-    pub shown: u64,
+    pub open: Option<String>,
+    pub opens: Arc<AtomicU64>,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     pub symbols_seq: u64,
-    pub outline: Option<Analysis>,
     pub facts: Arc<projects::Files>,
     pub edits: u64,
     pub last_edits: HashMap<String, u64>,
@@ -161,6 +149,10 @@ pub(crate) struct Actor {
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
+    pub writes_history: Arc<AtomicBool>,
+    pub sent: Sent,
+    in_session: Option<InSession>,
+    closing: Option<Pending<bool>>,
     closed: bool,
 }
 
@@ -170,36 +162,32 @@ impl Actor {
         id: u64,
         opening: OpenProject,
         docs: Docs,
+        opens: Arc<AtomicU64>,
         tx: mpsc::UnboundedSender<Msg>,
-    ) -> Result<(Self, SessionOpened), CoreError> {
+    ) -> Result<(Self, UiState), CoreError> {
         let OpenProject {
             id: project_id,
             auto_compile,
         } = opening;
+        let in_session = sessions.service.in_session(&project_id);
         let project = sessions.service.project(&project_id)?;
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let index = TreeIndex::of(&tree);
-        let opened = SessionOpened {
-            name: project.name(),
-            root: project.root.to_string_lossy().into_owned(),
-            tree,
-            settings: settings::shown(&project),
-            ui: settings::read_ui(&project.ui),
-        };
         let mut builds = Builds::default();
-        builds.pdf = settings::read_settings(&project.settings)
-            .output(&project.build, "pdf")
-            .is_ok_and(|pdf| pdf.is_file());
+        builds.pdf = built_pdf(&project);
+        let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
-        if auto_compile && !builds.pdf {
+        if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
+            later.push_back(Later::Restart);
+        }
+        if auto_compile && builds.pdf.is_none() {
             later.push_back(Later::Compile(true));
         }
         let history = sessions.service.history(&project);
-        let actor = Self {
+        let mut actor = Self {
             id,
             project_id,
             project,
@@ -210,10 +198,10 @@ impl Actor {
             tx,
             docs,
             next_doc: 1,
-            shown: 0,
+            open: None,
+            opens,
             symbols: Arc::default(),
             symbols_seq: 0,
-            outline: None,
             facts: Arc::default(),
             edits: 0,
             last_edits: HashMap::new(),
@@ -222,19 +210,28 @@ impl Actor {
             tex: sessions.service.tex_found.subscribe(),
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
-            tree: index,
+            tree: TreeIndex::default(),
             _watcher: watcher,
             deleting: BTreeSet::new(),
             live: Live::default(),
             later,
             history,
+            writes_history: Arc::new(AtomicBool::new(true)),
+            sent: Sent::default(),
+            in_session: Some(in_session),
+            closing: None,
             closed: false,
         };
+        actor.publish_all(tree);
         actor.snapshot_soon();
-        Ok((actor, opened))
+        Ok((actor, ui))
     }
 
-    pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
+    pub async fn run(
+        mut self,
+        mut rx: mpsc::UnboundedReceiver<Msg>,
+        mut runtime_gone: oneshot::Receiver<()>,
+    ) {
         let mut woken = None;
         loop {
             let step = catch_unwind(AssertUnwindSafe(|| {
@@ -256,6 +253,8 @@ impl Actor {
             let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
             let waiting_for_tex = self.builds.waiting_for_tex;
             woken = tokio::select! {
+                biased;
+                _ = &mut runtime_gone => return,
                 message = rx.recv() => match message {
                     Some(message) => Some(Wake::Message(message)),
                     None => return,
@@ -282,18 +281,17 @@ impl Actor {
             self.stop_compile();
             self.live_stop();
         }));
-        for doc in self.docs.values() {
+        self.stop_history();
+        for (_, doc) in self.docs.iter_mut() {
+            doc.doc.close();
             let error = if doc.dirty() {
                 STOPPED_UNSAVED
             } else {
                 STOPPED_SAVED
             };
-            let error = Some(error.to_owned());
-            self.emit(Event::Document(DocumentState {
-                error,
-                ..doc.state()
-            }));
+            doc.error = Some(error.to_owned());
         }
+        self.publish_documents();
         rx.close();
         while let Ok(message) = rx.try_recv() {
             if let Msg::Command(_, reply) = message {
@@ -314,7 +312,7 @@ impl Actor {
 
     fn handle(&mut self, message: Msg) {
         match message {
-            Msg::Changed { doc, version, edit } => self.changed(doc, version, edit),
+            Msg::Changed { doc, version, edit } => self.changed(doc, version, &edit),
             Msg::Command(command, reply) => self.command(command, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
@@ -358,7 +356,7 @@ impl Actor {
 
     fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
-            if self.closed {
+            if self.closed || self.closing.is_some() {
                 self.later.clear();
                 return;
             }
@@ -379,16 +377,13 @@ impl Actor {
             Session::OpenProject(_, answer) => {
                 answer(Err(CoreError::conflict("That session is open already")))
             }
-            Session::CloseProject(CloseProject {}, answer) => answer(self.close()),
+            Session::CloseProject(CloseProject {}, answer) => {
+                return self.close(Pending { reply, answer });
+            }
             Session::SetOptions(SetOptions { auto_compile }, answer) => {
                 answer(Ok(self.auto_compile = auto_compile))
             }
-            Session::OpenDocument(OpenDocument { path }, answer) => {
-                answer(self.open_document(&path.0))
-            }
-            Session::CloseDocument(CloseDocument { path }, answer) => {
-                answer(self.close_document(&path.0))
-            }
+            Session::Open(Open { path }, answer) => answer(self.open(&path.0)),
             Session::Composing(Composing { path, composing }, answer) => {
                 answer(Ok(self.composing(&path.0, composing)))
             }
@@ -481,7 +476,6 @@ impl Actor {
                 return self.export(dest, for_arxiv, Pending { reply, answer });
             }
             Session::SetUiState(SetUiState { patch }, answer) => answer(self.write_ui(patch)),
-            Session::PdfPath(PdfPath {}, answer) => answer(self.pdf_path()),
             Session::SynctexForward(SynctexForward { file, line }, answer) => {
                 return self.synctex_forward(file.0, line, Pending { reply, answer });
             }
@@ -501,14 +495,28 @@ impl Actor {
         reply.send(answer);
     }
 
-    fn close(&mut self) -> Result<bool, CoreError> {
-        if !self.flush_all(true)? {
-            return Ok(false);
+    fn close(&mut self, reply: Pending<bool>) {
+        match self.flush_all(true) {
+            Ok(true) => self.closing = Some(reply),
+            flushed => return reply.send(flushed),
         }
         self.stop_compile();
-        self.closed = true;
         self.live_stop();
         self.docs.clear();
-        Ok(true)
+        self.close_when_idle();
+    }
+
+    pub fn close_when_idle(&mut self) {
+        if self.builds.busy() {
+            return;
+        }
+        let Some(reply) = self.closing.take() else {
+            return;
+        };
+        self.stop_history();
+        self.closed = true;
+        self.in_session = None;
+        let _ = self.service.publish_projects();
+        reply.send(Ok(true));
     }
 }

@@ -1,26 +1,5 @@
+import Foundation
 import Observation
-import PDFKit
-
-nonisolated enum LiveRead: @unchecked Sendable {
-    case document(PDFDocument?, changed: IndexSet, complete: Bool)
-    case page(PDFPage?, at: Int)
-
-    init(_ live: LiveDocument) {
-        let document = Self.mapped(URL(filePath: live.path)).flatMap { $0.pageCount > 0 ? $0 : nil }
-        let changed = live.changed.reduce(into: IndexSet()) { set, range in
-            if range.first <= range.last { set.insert(integersIn: range.first...range.last) }
-        }
-        self = .document(document, changed: changed, complete: live.complete)
-    }
-
-    init(_ live: LivePage) {
-        self = .page(Self.mapped(URL(filePath: live.path))?.page(at: 0), at: live.page)
-    }
-
-    private static func mapped(_ url: URL) -> PDFDocument? {
-        (try? Data(contentsOf: url, options: .alwaysMapped)).flatMap(PDFDocument.init(data:))
-    }
-}
 
 @Observable
 final class TeXpressoSession {
@@ -54,8 +33,10 @@ final class TeXpressoSession {
 
     func logClosed() { if phase == .stopped { acknowledged = true } }
 
-    func receive(_ state: LiveState, alert: Bool) {
-        if alert || state.phase == .starting && phase == .stopped { acknowledged = false }
+    func alerted() { acknowledged = false }
+
+    func receive(_ state: LiveState) {
+        if state.phase == .starting && phase == .stopped { acknowledged = false }
         (phase, engine, halted, failed) = (state.phase, state.engine, state.halted, state.failure != nil || state.error != nil)
         if let log = state.log { self.log = log }
     }

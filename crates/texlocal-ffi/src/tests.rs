@@ -114,16 +114,21 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     let (open, save) = (r#"{"id":"P","autoCompile":false}"#, r#"{"reporting":true}"#);
     let sent = [
-        (None, Some("ListProjects"), Some("{}"), Some("ok")),
+        (None, Some("ReloadProjects"), Some("{}"), Some("ok")),
         (None, Some("nope"), Some("{}"), Some("notFound")),
         (
             None,
-            Some("ListProjects"),
+            Some("ReloadProjects"),
             Some("{not json"),
             Some("invalid"),
         ),
         (None, None, None, Some("invalid")),
-        (Some(1), Some("ListProjects"), Some("{}"), Some("notFound")),
+        (
+            Some(1),
+            Some("ReloadProjects"),
+            Some("{}"),
+            Some("notFound"),
+        ),
         (Some(1), Some("OpenProject"), Some(open), Some("ok")),
         (Some(1), Some("OpenProject"), Some(open), Some("conflict")),
         (Some(1), Some("Save"), Some(save), Some("ok")),
@@ -155,20 +160,20 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
 }
 
 #[test]
-fn a_session_document_is_edited_restored_and_saved_through_the_abi() {
+fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
     let core = Core::open();
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
-    core.ask(7, "OpenDocument", json!({ "path": "main.tex" }));
+    core.ask(7, "Open", json!({ "path": "main.tex" }));
     let path = c("main.tex");
     let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
     assert!(!source.is_null());
     let (before, opened) = (source_text(source), version(source).unwrap());
     let note = "% note\n";
-    let mirrored =
-        unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
+    let edit =
+        || unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
     assert_eq!(
-        take(mirrored),
+        take(edit()),
         json!({ "ok": [] }),
         "an edit outside a snippet mirrors nothing"
     );
@@ -183,13 +188,14 @@ fn a_session_document_is_edited_restored_and_saved_through_the_abi() {
     let text = "restored\n";
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(version(source), Some(opened + 2));
-    unsafe { tl_source_free(source) };
-    assert_eq!(
-        core.ask(7, "Save", json!({ "reporting": true }))["ok"],
-        true
-    );
+    assert!(unsafe { tl_source_editable(source) });
+    assert_eq!(core.ask(7, "CloseProject", json!({}))["ok"], true);
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
     assert_eq!(saved, text);
+    assert!(!unsafe { tl_source_editable(source) });
+    assert_eq!(take(edit())["error"]["kind"], "conflict");
+    assert_eq!(source_text(source), text);
+    unsafe { tl_source_free(source) };
 }
 
 #[test]
@@ -203,7 +209,7 @@ fn session_events_reach_the_listener() {
     core.send(Some(1), Some("OpenProject"), Some(open));
     let found = (0..50)
         .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
-        .find(|event| event["event"]["type"] == "outline");
+        .find(|event| event["event"]["type"] == "section");
     assert_eq!(found.unwrap()["session"], 1);
 }
 

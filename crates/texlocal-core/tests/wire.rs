@@ -51,6 +51,9 @@ fn wire_swift_is_generated_from_the_protocol() {
         let (call, reply) = (request.request.as_value(), request.reply.as_value());
         ir.request(request.name, request.group, call, reply);
     }
+    for store in &protocol.stores {
+        ir.store(store.as_value());
+    }
     ir.check();
     current("apps/macos/TeXLocal/Wire.swift", &swift::file(&ir));
 }
@@ -63,6 +66,8 @@ struct FixtureStruct {
     total: u64,
     ratio: f64,
     on: bool,
+    #[schemars(extend("contentEncoding" = "base64"))]
+    bytes: String,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -136,6 +141,7 @@ fn the_fixtures_round_trip_and_their_swift_is_current() {
         total: u64::MAX,
         ratio: 0.5,
         on: true,
+        bytes: "aGk=".into(),
     };
     let note = FixtureOptional {
         note: Some("n".into()),
@@ -163,7 +169,8 @@ fn the_fixtures_round_trip_and_their_swift_is_current() {
         ("FixtureMap", sample(&nested.map)),
         ("FixtureNested", sample(&nested)),
     ];
-    let full = json!({ "name": "a", "count": 1, "total": 1, "ratio": 1.0, "on": false });
+    let full =
+        json!({ "name": "a", "count": 1, "total": 1, "ratio": 1.0, "on": false, "bytes": "" });
     let mut extra = full.clone();
     extra["more"] = json!(1);
     let rejects = [
@@ -279,6 +286,11 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         count: u32,
     }
     #[derive(JsonSchema)]
+    struct Hex {
+        #[schemars(extend("contentEncoding" = "base16"))]
+        hex: String,
+    }
+    #[derive(JsonSchema)]
     struct Skipped {
         #[serde(skip_serializing_if = "Vec::is_empty")]
         items: Vec<u32>,
@@ -295,6 +307,7 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         (refused::<Open>(), "deny_unknown_fields"),
         (refused::<Defaulted>(), "left out"),
         (refused::<Skipped>(), "left out"),
+        (refused::<Hex>(), "encoded as \"base16\""),
     ];
     for (panic, expected) in cases {
         assert!(

@@ -6,6 +6,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     let scrollView = NSScrollView()
     var onCursor: (Int, Int) -> Void = { _, _ in }
     var onScroll: (Int) -> Void = { _ in }
+    var onEdit: () -> Void = {}
 
     var path: String?
     var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?, folded: [NSRange])] = [:]
@@ -72,7 +73,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
-    func textDidChange(_ notification: Notification) { changes.count += 1 }
+    func textDidChange(_ notification: Notification) {
+        changes.count += 1
+        onEdit()
+    }
 
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],

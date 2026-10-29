@@ -12,7 +12,7 @@ use crate::error::CoreError;
 use crate::paths::{Project, fold_case};
 use crate::settings::read_settings;
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub struct TreeNode {
     pub name: String,
     pub path: String,

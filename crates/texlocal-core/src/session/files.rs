@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
-use texlocal_latex::{FileKind, file_kind};
+use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
-use super::documents::CloseReason;
-use super::watch::{self, TreeIndex};
+use super::build::built_pdf;
+use super::watch;
 use crate::events::{DocumentRenamed, Event};
 use crate::import::{self, ImportConflict, Imported};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, RenameResult};
-use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch};
+use crate::settings::{self, SettingsPatch, UiPatch};
 use crate::{CoreError, zipexport};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -19,8 +19,13 @@ impl Actor {
     pub fn deleted(&mut self, path: &str, trashed: bool) {
         self.deleting.remove(path);
         if trashed {
+            if self.open.as_ref().is_some_and(|open| within(open, path))
+                && let Some(main) = self.tree.main.clone()
+            {
+                let _ = self.open_file(&main);
+            }
             for doc in self.docs_within(path) {
-                self.close_doc(&doc, CloseReason::Deleted);
+                self.close_doc(&doc);
             }
             self.reload_tree();
         }
@@ -66,7 +71,7 @@ impl Actor {
         }
         if meaning.tree || !others.is_empty() {
             self.edits += 1;
-            self.mark_outdated();
+            self.mark_outdated(None);
             if self.auto_compile {
                 self.later.push_back(Later::Compile(true));
             }
@@ -85,6 +90,7 @@ impl Actor {
             if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
                 self.main_file_changed();
             }
+            self.publish_project();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
             self.after(Timer::Disk);
@@ -92,17 +98,12 @@ impl Actor {
     }
 
     pub fn reload_tree(&mut self) {
-        let Ok(tree) = projects::file_tree(&self.project) else {
-            return;
-        };
-        let index = TreeIndex::of(&tree);
-        if index == self.tree {
-            return;
+        if let Ok(tree) = projects::file_tree(&self.project)
+            && self.show_tree(tree)
+        {
+            self.after(Timer::Symbols);
+            self.live_files_changed();
         }
-        self.tree = index;
-        self.after(Timer::Symbols);
-        self.emit(Event::Tree(tree));
-        self.live_files_changed();
     }
 
     pub fn import(
@@ -128,12 +129,6 @@ impl Actor {
         self.service.with_project(&self.project_id, write)
     }
 
-    pub fn pdf_path(&self) -> Result<String, CoreError> {
-        let settings = settings::read_settings(&self.project.settings);
-        let pdf = settings.output(&self.project.build, "pdf")?;
-        Ok(pdf.to_string_lossy().into_owned())
-    }
-
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
         if !self.save_edits(true)? {
             return Ok(None);
@@ -148,26 +143,37 @@ impl Actor {
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
             if !within(&path, from) {
-                self.close_doc(&path, CloseReason::Gone);
+                self.close_doc(&path);
             }
         }
+        let moved = |path: &str| Some(format!("{to}{}", paths::after_entry(path, from)?));
+        let open = self.open.as_deref().and_then(moved);
         for old in self.docs_within(from) {
-            let new = format!("{to}{}", paths::after_entry(&old, from).expect("within"));
+            let new = moved(&old).expect("within");
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
-            doc.shown = None;
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
                 self.last_edits.insert(new.clone(), edit);
             }
-            let moved = DocumentRenamed {
-                from: old,
-                to: new.clone(),
-            };
+            let moved = DocumentRenamed { from: old, to: new };
             self.emit(Event::DocumentRenamed(moved));
-            self.publish_doc(&new);
         }
+        if open.is_some() {
+            self.open = open;
+        }
+        for path in self.docs_within(to) {
+            if !is_text(&path) {
+                self.docs.close(&path);
+            }
+        }
+        if let Some(open) = self.open.clone().filter(|open| is_text(open)) {
+            let _ = self.open_document(&open);
+        }
+        self.publish_documents();
+        self.publish_build();
+        self.publish_live(false);
         self.reload_tree();
         if renamed.main_file != main {
             self.main_file_changed();
@@ -175,12 +181,8 @@ impl Actor {
         Ok(Some(renamed))
     }
 
-    pub fn set_settings(
-        &mut self,
-        patch: &SettingsPatch,
-        build: bool,
-    ) -> Result<ProjectSettings, CoreError> {
-        let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
+    pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
+        let main_changed = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
             let updated = settings::write_settings(&project.settings, patch)?;
             if let Some(on) = patch.shell_escape {
@@ -190,19 +192,22 @@ impl Actor {
             if main_changed {
                 self.preview.stop(&project.root)?;
             }
-            Ok((settings::shown(project), main_changed))
+            Ok(main_changed)
         })?;
         if main_changed {
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
-        Ok(updated)
+        self.publish_project();
+        Ok(())
     }
 
     fn main_file_changed(&mut self) {
         self.reload_tree();
         self.live_follow();
+        self.builds.pdf = built_pdf(&self.project);
+        self.publish_pdf();
         let building = self.builds.compiling;
         self.stop_compile();
         if self.auto_compile || building {

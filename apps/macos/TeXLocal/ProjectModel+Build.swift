@@ -1,36 +1,21 @@
 import Accessibility
 import AppKit
-import PDFKit
 
 extension ProjectModel {
-    @discardableResult func showBuildPDF(_ path: String?, reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
-        await restart(&pdfLoad) { [self] in
-            guard let path, !closed else { return false }
-            let url = URL(filePath: path)
-            var live: Bool { texpresso.active && (replacingLive || livePDF) }
-            if live {
-                buildPDF = FileManager.default.fileExists(atPath: path) ? url : nil
-                return true
-            }
-            if !reloadIfUnchanged, shown == .build(url) { return true }
-            let document = await PDFController.loadDocument(url)
-            if Task.isCancelled { return true }
-            guard let document, !closed, !live else { return false }
-            buildPDF = url
-            shown = .build(url)
-            pdf.show(document)
-            return true
-        }.value
+    @discardableResult func showPDF() -> Task<Void, Never>? {
+        guard let shown = store.shownPdf, !shown.live else { return nil }
+        return pdf.load(shown.path.map { URL(filePath: $0) })
     }
 
-    func compile(auto: Bool = false) async {
+    func showIssues() {
+        guard let path = editor.path else { return }
+        editor.textView.issues.lines = store.build?.lines[path]?.byLine ?? [:]
+        editor.textView.issues.live = store.live?.lines[path]?.byLine ?? [:]
+    }
+
+    func compile() async {
         guard let session, !closed, app?.tex?.available == true else { return }
-        if !auto, !compiling {
-            compiling = true
-            AccessibilityNotification.Announcement(String(localized: "Compiling")).post()
-        }
-        let sent = await alerting(notSavedTitle()) { try await session.call(Compile(auto: auto)) }
-        if sent == nil { compiling = false }
+        await alerting(notSavedTitle()) { try await session.call(Compile(auto: false)) }
     }
 
     func stopCompile() {
@@ -40,26 +25,24 @@ extension ProjectModel {
 
     func cleanBuildFolder() async {
         guard let session, !closed else { return }
-        let cleaned = await alerting("Couldn’t Clean the Build Folder") { try await session.call(Clean()) }
-        guard cleaned != nil else { return }
-        await inOrder { self.buildCleaned() }.value
+        await alerting("Couldn’t Clean the Build Folder") { try await session.call(Clean()) }
     }
 
-    func buildChanged(_ state: BuildState) {
-        if state.compiling, !compiling, !state.auto { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
-        (compiling, outdated) = (state.compiling, state.outdated)
+    func buildChanged(_ build: BuildState, was: BuildState?) {
+        let manual = { (build: BuildState?) in build?.compiling == true && build?.auto == false }
+        if manual(build), !manual(was) { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
+        if build.listed != was?.listed { chosenIssue = nil }
+        showIssues()
     }
 
-    func buildFinished(_ finished: BuildFinished) async {
-        let result = finished.result
-        if let pdf = result.pdf, !closed {
-            await showBuildPDF(pdf, reloadIfUnchanged: result.pdfChanged)
-            if result.ok, !finished.outdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
-                Task { await forwardSync(quietly: true) }
+    func buildFinished(_ finished: BuildFinished) {
+        guard let result else { return }
+        if result.ok, !outdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
+            Task { [loading = pdf.loading] in
+                await loading?.value
+                await forwardSync(quietly: true)
             }
         }
-        guard !closed else { return }
-        (self.result, outdated, chosenIssue) = (result, finished.outdated, nil)
         if !finished.auto {
             if result.failed {
                 panel.openForFailedBuild()
@@ -71,17 +54,6 @@ extension ProjectModel {
         } else if finished.announce {
             announceResult(result, queued: true)
         }
-    }
-
-    func buildCleaned() {
-        guard !closed else { return }
-        pdfLoad?.cancel()
-        buildPDF = nil
-        if !livePDF || !texpresso.active {
-            shown = .none
-            pdf.clear()
-        }
-        (result, chosenIssue, outdated) = (nil, nil, false)
     }
 
     private func announceResult(_ result: CompileResult, queued: Bool = false) {

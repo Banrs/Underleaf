@@ -42,9 +42,9 @@ void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mi
 uint8_t *_Nullable tl_source_text(TlSource *source, size_t *_Nullable len);
 void tl_source_free_text(uint8_t *_Nullable text, size_t len);
 
-bool tl_source_reload(TlSource *source, const uint8_t *_Nullable text, size_t len);
 void tl_source_restore(TlSource *source, const uint8_t *_Nullable text, size_t len);
 
+bool tl_source_editable(TlSource *source);
 bool tl_source_version(TlSource *source, uint64_t *version);
 
 uint32_t tl_source_line_at(TlSource *source, uint32_t offset);

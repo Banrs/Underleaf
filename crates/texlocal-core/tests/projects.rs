@@ -20,10 +20,7 @@ async fn a_new_project_is_listed_with_its_template() {
     assert_eq!(made["opened"], false);
     let root = library.project_root("Paper");
     assert!(root.join("main.tex").is_file() && root.join("references.bib").is_file());
-    assert_eq!(
-        names(&library.call("ListProjects", json!({})).await, "id"),
-        ["Paper"]
-    );
+    assert_eq!(names(&library.projects(), "id"), ["Paper"]);
 }
 
 #[tokio::test]
@@ -55,10 +52,7 @@ async fn bad_names_are_refused() {
             .await;
         assert_eq!(refused, ErrorKind::Invalid, "{name:?}");
     }
-    assert_eq!(
-        names(&library.call("ListProjects", json!({})).await, "id"),
-        Vec::<&str>::new()
-    );
+    assert_eq!(names(&library.projects(), "id"), Vec::<&str>::new());
 }
 
 #[tokio::test]
@@ -147,10 +141,7 @@ async fn forgetting_a_folder_leaves_it_on_disk() {
     let opened = library.call("OpenPath", json!({ "path": folder })).await;
     let id = opened["project"]["id"].clone();
     library.call("ForgetFolder", json!({ "id": id })).await;
-    assert_eq!(
-        names(&library.call("ListProjects", json!({})).await, "id"),
-        Vec::<&str>::new()
-    );
+    assert_eq!(names(&library.projects(), "id"), Vec::<&str>::new());
     assert!(folder.join("main.tex").is_file());
     library.create("Library", "blank").await;
     let refused = library
@@ -165,12 +156,9 @@ async fn a_folder_no_longer_where_it_was_is_missing() {
     let folder = library.path("Thesis");
     write(&folder, &[("main.tex", "x")]);
     library.call("OpenPath", json!({ "path": folder })).await;
-    assert_eq!(
-        library.call("ListProjects", json!({})).await[0]["missing"],
-        false
-    );
+    assert_eq!(library.projects()[0]["missing"], false);
     fs::rename(&folder, library.path("Moved")).unwrap();
-    let list = library.call("ListProjects", json!({})).await;
+    let list = library.projects();
     assert_eq!(list[0]["missing"], true);
     assert_eq!(list[0]["mtime"], 0);
 }

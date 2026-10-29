@@ -134,7 +134,7 @@ struct LogTextView: NSViewRepresentable {
         context.coordinator.shown = text
     }
 
-    func updateText(in scroll: NSScrollView) {
+    private func updateText(in scroll: NSScrollView) {
         let view = scroll.documentView as! NSTextView
         let shown = view.string
         guard shown != text else { return }

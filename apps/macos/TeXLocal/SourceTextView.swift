@@ -53,7 +53,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var changing: NSRange?
 
     override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
-        guard super.shouldChangeText(inRanges: affectedRanges, replacementStrings: replacementStrings) else { return false }
+        guard document.editable, super.shouldChangeText(inRanges: affectedRanges, replacementStrings: replacementStrings) else {
+            return false
+        }
         changing = affectedRanges.count == 1 && replacementStrings != nil ? affectedRanges[0].rangeValue : nil
         return true
     }

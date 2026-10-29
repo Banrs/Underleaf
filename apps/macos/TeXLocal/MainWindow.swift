@@ -46,7 +46,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         guard Core.shared.isOpen else { return }
         Task {
             async let tex: Void = app.refreshTeXStatus()
-            await app.refresh()
+            await app.reloadProjects()
             await tex
             let restored = self.restored.take().flatMap { id in app.projects.contains { $0.id == id } ? id : nil }
             if let id = app.launchProject.take() ?? restored, app.project == nil, !app.isOpening { await app.open(id) }

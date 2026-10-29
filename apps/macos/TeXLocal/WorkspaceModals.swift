@@ -43,9 +43,7 @@ struct WorkspaceModals: ViewModifier {
                    item: $project.missingFile) { path in
                 Button("Save Again") { project.answer(path, .save) }
                 Button("Discard Changes", role: .destructive) { project.answer(path, .close) }
-                Button("Cancel", role: .cancel) {
-                    project.answer(path, .cancel, holding: String(localized: "Another app moved or deleted “\(path.fileName)”."))
-                }
+                Button("Cancel", role: .cancel) { project.answer(path, .cancel) }
             } message: { path in
                 Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
             }
@@ -81,7 +79,7 @@ struct WorkspaceModals: ViewModifier {
             switch response {
             case .alertFirstButtonReturn: project.answer(path, .save)
             case .alertSecondButtonReturn: project.answer(path, .revert)
-            default: project.answer(path, .cancel, holding: String(localized: "Another app changed “\(path.fileName)”."))
+            default: project.answer(path, .cancel)
             }
         }
         if let window = project.editor.textView.window {

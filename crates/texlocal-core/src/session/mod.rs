@@ -8,41 +8,46 @@ mod history;
 mod live;
 mod navigate;
 mod scans;
+mod state;
 mod watch;
 
 use std::collections::HashMap;
 use std::collections::hash_map::{Entry, VacantEntry};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use texlocal_latex::analyze::Analysis;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::syntax::TextEdit;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener, Queued};
 use crate::projects::Symbols;
 use crate::protocol::Answer;
 use crate::service::Service;
-use crate::texpresso::{LiveEvent, Preview};
+use crate::settings::UiState;
 use crate::{CoreError, lock, paths};
 
+use actor::OpenProject;
 pub(crate) use actor::Session;
-use actor::{OpenProject, SessionOpened};
-pub(crate) use build::Compiler;
+pub use build::Compiler;
 pub use document::Document;
-pub(crate) use documents::{CloseReason, DiskConflict};
+pub(crate) use documents::DiskConflict;
 use documents::{Docs, Shared};
-pub(crate) use live::LiveState;
+pub(crate) use state::SessionSection;
 use watch::Change;
+
+pub use crate::paths::Project;
+pub use crate::texpresso::{FileBuffer, LiveEvent, Pane, Preview, Sink, Status};
 
 pub(crate) enum Msg {
     Changed {
         doc: u64,
         version: u64,
-        edit: Option<TextEdit>,
+        edit: TextEdit,
     },
     Command(Session, Reply),
     BuildDone(Result<CompileResult, CoreError>),
@@ -102,6 +107,7 @@ fn gone() -> CoreError {
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     docs: Shared,
+    opens: Arc<AtomicU64>,
 }
 
 pub struct Sessions {
@@ -120,16 +126,18 @@ impl Sessions {
         Self::with_compiler(service, compiler, preview, true, listener)
     }
 
-    pub(crate) fn with_compiler(
+    pub fn with_compiler(
         service: Arc<Service>,
         compiler: Arc<dyn Compiler>,
         preview: Arc<dyn Preview>,
         watch: bool,
         listener: Listener,
     ) -> Self {
+        let hub = Hub::new(listener);
+        let _ = service.hub.set(hub.queue.clone());
         Self {
             service,
-            hub: Hub::new(listener),
+            hub,
             compiler,
             preview,
             watch,
@@ -140,7 +148,9 @@ impl Sessions {
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
         let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
-        lock(&docs).get(&path).cloned()
+        let document = lock(&docs).get(&path).cloned()?;
+        document.shown();
+        Some(document)
     }
 
     pub fn send(&self, id: u64, command: &str, args: Value) {
@@ -162,7 +172,12 @@ impl Sessions {
             Err(err) => return reply.send(Err(err)),
         };
         match lock(&self.open).entry(session) {
-            Entry::Occupied(open) => drop(open.get().tx.send(Msg::Command(request, reply))),
+            Entry::Occupied(open) => {
+                if matches!(request, Session::Open(..)) {
+                    open.get().opens.fetch_add(1, Ordering::Relaxed);
+                }
+                drop(open.get().tx.send(Msg::Command(request, reply)));
+            }
             Entry::Vacant(entry) => match request {
                 Session::OpenProject(opening, answer) => {
                     self.open(entry, opening, Pending { reply, answer });
@@ -184,25 +199,28 @@ impl Sessions {
         self: &Arc<Self>,
         entry: VacantEntry<'_, u64, Open>,
         opening: OpenProject,
-        reply: Pending<SessionOpened>,
+        reply: Pending<UiState>,
     ) {
         let session = *entry.key();
         let (tx, rx) = mpsc::unbounded_channel();
-        let docs = Docs::default();
+        let (docs, opens) = (Docs::default(), Arc::default());
         entry.insert(Open {
             tx: tx.clone(),
             docs: docs.shared(),
+            opens: Arc::clone(&opens),
         });
         let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
+        let (mut alive, runtime_gone) = oneshot::channel::<()>();
+        runtime.spawn(async move { alive.closed().await });
         std::thread::Builder::new()
             .name(format!("texlocal-session-{session}"))
             .spawn(move || {
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
-                    match actor::Actor::new(&sessions, session, opening, docs, tx.clone()) {
-                        Ok((actor, opened)) => {
-                            reply.send(Ok(opened));
-                            runtime.block_on(actor.run(rx));
+                    match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
+                        Ok((actor, ui)) => {
+                            reply.send(Ok(ui));
+                            runtime.block_on(actor.run(rx, runtime_gone));
                         }
                         Err(err) => reply.send(Err(err)),
                     }
@@ -230,7 +248,6 @@ mod tests {
 
     use super::build::Fut;
     use super::*;
-    use crate::paths::Project;
 
     struct Panics;
 

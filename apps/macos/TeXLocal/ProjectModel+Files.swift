@@ -24,28 +24,14 @@ extension ProjectModel {
 
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, let session, !closed else { return nil }
-        let (before, wasText) = (openPath, editsText)
         guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
             try await session.call(Rename(from: from, to: to))
         }), let result = renamed, !closed else { return nil }
         editor.rename(from: result.from, to: result.to)
         trail.moved(result.from, to: result.to)
-        let now = before.map { remapPath($0, from: result.from, to: result.to) }
-        let moved = now != before && (openPath == before || openPath == now)
-        if moved { openPath = now }
-        let mainChanged = result.mainFile != settings?.mainFile
-        settings?.mainFile = result.mainFile
         let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
         expandedFolders = Set(expandedFolders.map(remap))
         foldedHeadings = Set(foldedHeadings.map { key in key.firstIndex(of: "\t").map { remap(String(key[..<$0])) + key[$0...] } ?? key })
-        if moved, let now, openPath == now, !closed {
-            if isText(now) != wasText {
-                if wasText { await closeDocument(now) }
-                if openPath == now { clearOpenFile() }
-                await open(now, focus: false, showsSource: false)
-            }
-        }
-        if mainChanged, !closed { mainFileChanged() }
         return result
     }
 
@@ -79,15 +65,8 @@ extension ProjectModel {
         }
         session.send(Deleted(path: path, trashed: true))
         editor.forget(path: path)
-        let gone = { (file: String) in file == path || file.hasPrefix(path + "/") }
-        if let shown = openPath, gone(shown) {
-            clearOpenFile()
-            if let main = settings?.mainFile, !gone(main) { await open(main, focus: false) }
-        }
         return true
     }
-
-    func clearOpenFile() { openPath = nil }
 
     func dropFiles(_ urls: [URL], into dir: String) async {
         var outside: [URL] = []
