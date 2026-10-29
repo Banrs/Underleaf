@@ -14,6 +14,7 @@ use super::watch::TreeIndex;
 use crate::events::Event;
 use crate::projects::TreeNode;
 use crate::settings::{self, ProjectSettings};
+use texlocal_latex::message::Message;
 
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
@@ -33,13 +34,13 @@ pub(crate) struct ProjectState {
     name: String,
     root: String,
     settings: ProjectSettings,
-    problem: Option<String>,
+    problem: Option<Message>,
 }
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct DocumentState {
     pub path: String,
-    pub error: Option<String>,
+    pub error: Option<Message>,
     pub held: Option<DiskConflict>,
 }
 

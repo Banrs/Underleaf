@@ -3,7 +3,13 @@ import os
 import TeXLocalCore
 
 nonisolated extension CoreError: LocalizedError {
-    var errorDescription: String? { message }
+    var errorDescription: String? { message.text }
+}
+
+nonisolated struct AppFailure: LocalizedError {
+    let errorDescription: String?
+
+    init(_ text: String) { errorDescription = text }
 }
 
 final class Core {
@@ -26,7 +32,7 @@ final class Core {
 
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
-    private static let unavailable = CoreError(kind: .unavailable, message: "TeXLocal can’t open its projects folder. \(libraryAdvice)")
+    private static let unavailable = AppFailure("TeXLocal can’t open its projects folder. \(libraryAdvice)")
 
     private init() {
         Task {
@@ -87,9 +93,9 @@ final class Core {
 
     private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
 
-    private nonisolated static func fault(_ command: String, _ problem: String) -> CoreError {
+    private nonisolated static func fault(_ command: String, _ problem: String) -> AppFailure {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")
-        return CoreError(kind: .internal, message: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
+        return AppFailure("Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
     }
 
     @discardableResult

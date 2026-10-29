@@ -9,13 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::{Child, Command};
 
 use crate::error::CoreError;
+use crate::messages;
 use crate::process;
 
 pub(crate) const TEXLIVE: &str = "/usr/local/texlive";
 pub(crate) const TEX_DIRS: [&str; 3] =
     ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"];
-pub(crate) const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
-pub(crate) const NO_TEXPRESSO: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 pub(crate) const TINYTEX_BUNDLE: (&str, &str) = ("TinyTeX-1-darwin-", ".tar.xz");
 pub(crate) const ADMIN_CANCELLED: &str = "(-128)";
 
@@ -49,10 +48,7 @@ pub(crate) fn trash(path: &Path) -> Result<(), CoreError> {
         return Ok(());
     }
     let said = String::from_utf8_lossy(&trashed.stderr);
-    Err(CoreError::internal(format!(
-        "Could not move the item to Trash: {}",
-        said.trim()
-    )))
+    Err(CoreError::internal(messages::trash_failed(said.trim())))
 }
 
 pub(crate) fn install_as_administrator(

@@ -8,6 +8,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::error::CoreError;
+use crate::messages;
 use crate::paths::{Project, fold_case, in_build_dir, safe_rel_file};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
@@ -62,14 +63,10 @@ fn add_file(writer: &mut ZipWriter<File>, rel: &str, path: &Path) -> Result<(), 
 fn arxiv_files(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     let settings = read_settings(&project.settings);
     if granted(project) {
-        return Err(CoreError::conflict(
-            "arXiv compiles without shell escape. Turn Shell Escape off for this project, check that it still compiles, then export again.",
-        ));
+        return Err(CoreError::conflict(messages::arxiv_shell_escape()));
     }
     if settings.engine == Engine::Lualatex {
-        return Err(CoreError::conflict(
-            "arXiv doesn't compile with LuaLaTeX. Choose pdfLaTeX or XeLaTeX for this project, check that it still compiles, then export again.",
-        ));
+        return Err(CoreError::conflict(messages::arxiv_lualatex()));
     }
     let main = safe_rel_file(&settings.main_file)?;
     let readme = json!({

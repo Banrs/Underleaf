@@ -27,7 +27,7 @@ final class BuildPanelModel {
     func closeAfterCleanBuild() { if openedByBuild, tab == .issues { shown = false } }
 
     func matches(_ item: LogItem) -> Bool {
-        issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(issueFilter)
+        issueFilter.isEmpty || item.message.text.localizedCaseInsensitiveContains(issueFilter)
             || (item.file?.localizedCaseInsensitiveContains(issueFilter) ?? false)
     }
 

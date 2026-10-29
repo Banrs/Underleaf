@@ -4,6 +4,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::error::CoreError;
+use crate::messages;
 use crate::packages::{checked, run};
 use crate::tex::{find_tool, join_path};
 use crate::{process, sys};
@@ -13,8 +14,7 @@ const PACKAGES: [&str; 2] = ["beamer", "makeindex"];
 const UNFINISHED: &str = ".texlocal-tinytex-";
 
 pub(crate) async fn install(path_env: &str) -> Result<(), CoreError> {
-    let root =
-        sys::tinytex_root().ok_or_else(|| CoreError::internal("The user's folder isn't known."))?;
+    let root = sys::tinytex_root().ok_or_else(|| CoreError::internal(messages::no_home()))?;
     install_into(&root, path_env).await
 }
 
@@ -22,11 +22,7 @@ async fn install_into(root: &Path, path_env: &str) -> Result<(), CoreError> {
     static INSTALLING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _one = INSTALLING.lock().await;
     if root.exists() {
-        let message = format!(
-            "“{}” is there already, and was left as it is.",
-            root.display()
-        );
-        return Err(CoreError::conflict(message));
+        return Err(CoreError::conflict(messages::tinytex_there(root.display())));
     }
     let parent = root.parent().expect("TinyTeX's folder is in another");
     std::fs::create_dir_all(parent)?;
@@ -51,23 +47,19 @@ async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
     let release = temp.join("release.json");
     fetch(RELEASE, &release, path_env).await?;
     let release = serde_json::from_slice(&std::fs::read(&release)?)
-        .map_err(|err| CoreError::internal(err.to_string()))?;
-    let (url, digest) = bundle(&release).ok_or_else(|| {
-        CoreError::internal("TinyTeX's latest release has no bundle for this computer.")
-    })?;
+        .map_err(|err| CoreError::internal(messages::unexpected(err)))?;
+    let (url, digest) =
+        bundle(&release).ok_or_else(|| CoreError::internal(messages::no_tinytex_bundle()))?;
     let archive = temp.join("TinyTeX.tar.xz");
     fetch(url, &archive, path_env).await?;
     let sum = Sha256::digest(std::fs::read(&archive)?);
     if sum.iter().map(|b| format!("{b:02x}")).collect::<String>() != digest {
-        return Err(CoreError::internal(
-            "TinyTeX's download wasn't what GitHub says it is. Try again.",
-        ));
+        return Err(CoreError::internal(messages::tinytex_mismatch()));
     }
     match run(sys::unpack(&archive, temp, path_env)?).await? {
         (0, _) => Ok(temp.join("TinyTeX")),
-        (_, out) => Err(CoreError::internal(format!(
-            "TinyTeX couldn't be unpacked:\n{}",
-            crate::tail(out.trim(), 2000)
+        (_, out) => Err(CoreError::internal(messages::tinytex_unpack_failed(
+            crate::tail(out.trim(), 2000),
         ))),
     }
 }
@@ -97,15 +89,14 @@ async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
         (0, _) => Ok(()),
         (6 | 7, _) => Err(CoreError::new(
             crate::ErrorKind::Unavailable,
-            "GitHub, where TinyTeX comes from, can't be reached. Check the internet connection, then try again.",
+            messages::github_unreachable(),
         )),
         (28, _) => Err(CoreError::new(
             crate::ErrorKind::Unavailable,
-            "TinyTeX's download stalled, and was stopped. Try again later.",
+            messages::tinytex_stalled(),
         )),
-        (_, out) => Err(CoreError::internal(format!(
-            "TinyTeX couldn't be downloaded:\n{}",
-            crate::tail(out.trim(), 2000)
+        (_, out) => Err(CoreError::internal(messages::tinytex_download_failed(
+            crate::tail(out.trim(), 2000),
         ))),
     }
 }
@@ -114,7 +105,7 @@ async fn tlmgr(root: &Path, path_env: &str, args: &[&str]) -> Result<(), CoreErr
     let path =
         join_path(std::iter::once(sys::tinytex_bin(root)).chain(std::env::split_paths(path_env)));
     let tlmgr = find_tool("tlmgr", &path)
-        .ok_or_else(|| CoreError::internal("TinyTeX's package manager, tlmgr, wasn't found."))?;
+        .ok_or_else(|| CoreError::internal(messages::no_tinytex_tlmgr()))?;
     let mut command = process::tool(&tlmgr, &path);
     command.args(args);
     checked(run(command).await?).map(drop)

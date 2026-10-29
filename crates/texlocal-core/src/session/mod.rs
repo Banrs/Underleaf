@@ -31,6 +31,7 @@ use crate::service::Service;
 use crate::settings::UiState;
 use crate::{CoreError, lock, paths};
 
+use crate::messages;
 use actor::OpenProject;
 pub(crate) use actor::Session;
 pub use build::Compiler;
@@ -97,11 +98,11 @@ impl<T> Pending<T> {
 }
 
 pub(crate) fn stopped() -> CoreError {
-    CoreError::internal("The project stopped after an internal error. Close it and open it again.")
+    CoreError::internal(messages::session_stopped())
 }
 
 fn gone() -> CoreError {
-    CoreError::not_found("No such session")
+    CoreError::not_found(messages::no_such_session())
 }
 
 struct Open {

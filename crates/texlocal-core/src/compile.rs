@@ -14,6 +14,7 @@ use tokio::process::Child;
 
 use crate::error::CoreError;
 use crate::lock;
+use crate::messages;
 use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Tree, drive};
 use crate::settings::{granted, read_settings};
@@ -148,8 +149,8 @@ impl CompileManager {
         let (settings, trusted) = (read_settings(&project.settings), granted(project));
         let main_rel = safe_rel_file(&settings.main_file)?;
         if !root.join(&main_rel).exists() {
-            return Err(CoreError::bad_request(format!(
-                "Main file not found: {main_rel}"
+            return Err(CoreError::bad_request(messages::main_file_missing(
+                main_rel,
             )));
         }
         let pdf = settings.output(&project.build, "pdf")?;
@@ -235,7 +236,7 @@ impl CompileManager {
         }
         tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
-            .map_err(|err| CoreError::internal(err.to_string()))
+            .map_err(|err| CoreError::internal(messages::unexpected(err)))
     }
 }
 
@@ -277,19 +278,18 @@ fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
 
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
     match end {
-        End::TimedOut => errors.push(LogItem::error(format!(
-            "This automatic build was stopped after {} minutes without finishing. Compile to build without a time limit; the Build Log shows how far it got.",
-            COMPILE_TIMEOUT.as_secs() / 60
+        End::TimedOut => errors.push(LogItem::error(messages::timed_out(
+            COMPILE_TIMEOUT.as_secs() / 60,
         ))),
         End::Unstarted(err) => {
-            errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
+            errors = vec![LogItem::error(messages::latexmk_unstarted(err))];
         }
         &End::Exited(code) if !ok && errors.is_empty() => {
             errors = latexmk_errors(&output);
             if errors.is_empty() {
                 errors.push(LogItem::error(match code {
-                    0 => "The build made no PDF. See the Build Log.".to_string(),
-                    code => format!("latexmk stopped with exit code {code}. See the Build Log."),
+                    0 => messages::no_pdf_made(),
+                    code => messages::latexmk_failed(code),
                 }));
             }
         }

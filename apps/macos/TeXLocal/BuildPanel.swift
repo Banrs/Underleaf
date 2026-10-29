@@ -81,11 +81,11 @@ struct IssueList: View {
                         if item.file != nil { Button(item.line == nil ? "Open File" : "Go to Line") { open(item) } }
                         Button("Copy") {
                             NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(item.message, forType: .string)
+                            NSPasteboard.general.setString(item.message.text, forType: .string)
                         }
                     }
                 } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
-                .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
+                .copyable(project.chosenIssue.flatMap(item).map { [$0.message.text] } ?? [])
                 .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
                     if let place = project.chosenIssue { proxy.scrollTo(place) }

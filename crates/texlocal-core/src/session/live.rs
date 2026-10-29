@@ -12,14 +12,14 @@ use super::actor::{Actor, Later, Timer};
 use super::build::{IssueLine, issue_lines};
 use super::state::SessionSection;
 use crate::events::{Event, LiveDocument, LivePage};
+use crate::messages;
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
+use texlocal_latex::message::Message;
 
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
-const DIDNT_START: &str =
-    "TeXpresso didn’t start. Check its location in Settings and the log below.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -37,8 +37,7 @@ pub(crate) struct LiveState {
     engine: Engine,
     halted: bool,
     log: Option<String>,
-    failure: Option<String>,
-    error: Option<String>,
+    failures: Vec<Message>,
     lines: BTreeMap<String, Vec<IssueLine>>,
 }
 
@@ -53,10 +52,10 @@ pub(crate) struct Live {
     pending: BTreeMap<String, Option<String>>,
     synced: HashSet<String>,
     sent: HashMap<String, u64>,
-    rejected: BTreeMap<String, String>,
-    failure: Option<String>,
-    reported: BTreeSet<String>,
-    error: Option<String>,
+    rejected: BTreeMap<String, Message>,
+    failure: Option<Message>,
+    reported: Vec<Message>,
+    error: Option<Message>,
     log_shown: bool,
     halted: bool,
     view: Option<(u32, u32)>,
@@ -81,18 +80,18 @@ impl Live {
         self.phase == LivePhase::Running && !self.pending.contains_key(path)
     }
 
-    fn errors(&self) -> Vec<String> {
+    fn failures(&self) -> Vec<Message> {
         let rejected = self.rejected.iter();
-        let rejected = rejected.map(|(path, error)| format!("{path}: {error}"));
-        self.failure.iter().cloned().chain(rejected).collect()
+        let rejected = rejected.map(|(path, error)| messages::live_rejected(path, error));
+        let mut failures: Vec<Message> = self.failure.iter().cloned().chain(rejected).collect();
+        failures.extend(self.error.clone().filter(|error| !failures.contains(error)));
+        failures
     }
 }
 
 impl Actor {
     fn live_state(&self) -> LiveState {
         let live = &self.live;
-        let errors = live.errors();
-        let failure = (!errors.is_empty()).then(|| errors.join("\n\n"));
         let lines = self.docs.iter().filter_map(|(path, doc)| {
             let items = live.issues.iter().map(|issue| &issue.item);
             let lines = issue_lines(items, path, &doc.doc, |_| None);
@@ -102,23 +101,19 @@ impl Actor {
             phase: live.phase,
             engine: Engine::Xelatex,
             halted: live.halted,
-            log: live.log_shown.then(|| self.live_log(failure.as_deref())),
-            failure,
-            error: live.error.clone(),
+            log: live.log_shown.then(|| self.live_log()),
+            failures: live.failures(),
             lines: lines.collect(),
         }
     }
 
-    fn live_log(&self, failure: Option<&str>) -> String {
-        let mut parts: Vec<&str> = failure.into_iter().collect();
-        let status = self.preview.status(self.id);
-        if let Ok(status) = &status {
-            let error = status.error.as_deref();
-            parts.extend(error.filter(|&error| Some(error) != failure));
-            let texts = [status.log.as_str(), status.output.as_str()];
-            parts.extend(texts.into_iter().filter(|text| !text.is_empty()));
-        }
-        parts.join("\n\n")
+    fn live_log(&self) -> String {
+        let Ok(status) = self.preview.status(self.id) else {
+            return String::new();
+        };
+        let texts = [status.log, status.output];
+        let texts: Vec<String> = texts.into_iter().filter(|text| !text.is_empty()).collect();
+        texts.join("\n\n")
     }
 
     pub fn publish_live(&mut self, alert: bool) {
@@ -137,10 +132,9 @@ impl Actor {
     }
 
     fn report(&mut self) {
-        let mut errors: BTreeSet<String> = self.live.errors().into_iter().collect();
-        errors.extend(self.live.error.clone());
-        let alert = !errors.is_subset(&self.live.reported);
-        self.live.reported = errors;
+        let failures = self.live.failures();
+        let alert = failures.iter().any(|f| !self.live.reported.contains(f));
+        self.live.reported = failures;
         self.publish_live(alert);
     }
 
@@ -236,7 +230,7 @@ impl Actor {
                 if status.running {
                     self.live.phase = LivePhase::Running;
                 } else if status.error.is_none() {
-                    self.live.failure = Some(DIDNT_START.into());
+                    self.live.failure = Some(messages::texpresso_didnt_start());
                 }
                 self.live.error = status.error;
                 self.report();

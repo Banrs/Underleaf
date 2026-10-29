@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::CoreError;
+use crate::messages;
 use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{SettingsPatch, move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
@@ -102,18 +103,11 @@ fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
         ErrorKind::PermissionDenied => {
             let folder = abs.parent().and_then(Path::file_name).unwrap_or_default();
             let folder = folder.to_string_lossy();
-            format!("You don’t have permission to save the file “{file}” in the folder “{folder}”.")
+            messages::no_permission(file, folder)
         }
-        ErrorKind::ReadOnlyFilesystem => {
-            format!("The file “{file}” couldn’t be saved because the volume is read only.")
-        }
-        ErrorKind::StorageFull => {
-            format!("The file “{file}” couldn’t be saved because there isn’t enough space.")
-        }
-        _ => format!(
-            "The file “{file}” couldn’t be saved ({}).",
-            fallback.message
-        ),
+        ErrorKind::ReadOnlyFilesystem => messages::read_only_volume(file),
+        ErrorKind::StorageFull => messages::disk_full(file),
+        _ => messages::not_saved(file, &fallback.message),
     };
     CoreError {
         message,
@@ -134,15 +128,13 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     let (src, dest) = (safe_path(root, from)?, safe_write_path(root, to)?);
     let (from, to) = (rel_key(from)?, rel_key(to)?);
     if fs::symlink_metadata(&src).is_err() {
-        return Err(CoreError::not_found("Not found"));
+        return Err(CoreError::not_found(messages::not_found()));
     }
     if occupied(&src, &dest) {
-        return Err(CoreError::conflict("Destination already exists"));
+        return Err(CoreError::conflict(messages::destination_exists()));
     }
     if is_under(&to, &from) {
-        return Err(CoreError::bad_request(
-            "A folder can't be moved into itself",
-        ));
+        return Err(CoreError::bad_request(messages::into_itself()));
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -162,10 +154,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     {
         return Err(match atomic::rename_exclusive(&dest, &src) {
             Ok(()) => err,
-            Err(rollback) => CoreError::internal(format!(
-                "{}; rename rollback failed: {rollback}",
-                err.message
-            )),
+            Err(rollback) => CoreError::internal(messages::rollback_failed(err, rollback)),
         });
     }
     move_ui(&project.ui, moved);
@@ -178,9 +167,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
 
 pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreError> {
     if is_under(&read_settings(&project.settings).main_file, rel) {
-        return Err(CoreError::conflict(
-            "Choose a different main file before replacing this folder",
-        ));
+        return Err(CoreError::conflict(messages::main_file_inside()));
     }
     sys::trash(&safe_path(&project.root, rel)?)
 }

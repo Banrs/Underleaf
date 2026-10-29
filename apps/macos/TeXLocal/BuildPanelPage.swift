@@ -59,8 +59,8 @@ struct IssueRow: View {
     private var label: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.message).lineLimit(place == project.chosenIssue ? nil : 3)
-                if let explain = item.explain { Text(explain).foregroundStyle(.secondary) }
+                Text(item.message.text).lineLimit(place == project.chosenIssue ? nil : 3)
+                if let explain = item.explain { Text(explain.text).foregroundStyle(.secondary) }
                 if let location = location(line: ":") {
                     Text(location)
                         .font(.subheadline)
@@ -71,21 +71,21 @@ struct IssueRow: View {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
         }
-        .help([item.message, item.explain].compactMap(\.self).joined(separator: "\n"))
+        .help([item.message, item.explain].compactMap { $0?.text }.joined(separator: "\n"))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
-        .accessibilityValue([item.explain, location(line: ", line ")].compactMap(\.self).joined(separator: " "))
+        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message.text)")
+        .accessibilityValue([item.explain?.text, location(line: ", line ")].compactMap(\.self).joined(separator: " "))
     }
 
     @ViewBuilder private func offer(_ fix: Fix) -> some View {
         Spacer()
         if project.fixing == fix {
-            ProgressView().controlSize(.small).accessibilityLabel(fix.title)
+            ProgressView().controlSize(.small).accessibilityLabel(fix.title.text)
         } else {
-            Button(fix.title) { run(fix) }
+            Button(fix.title.text) { run(fix) }
                 .controlSize(.small)
                 .disabled(project.fixing != nil)
-                .help(fix.help)
+                .help(fix.help.text)
         }
     }
 
@@ -94,9 +94,9 @@ struct IssueRow: View {
     private func confirmed(_ fix: Fix) async -> Bool {
         guard let confirm = fix.confirm else { return true }
         let alert = NSAlert()
-        alert.messageText = "\(fix.title)?"
-        alert.informativeText = confirm
-        alert.addButton(withTitle: fix.title)
+        alert.messageText = "\(fix.title.text)?"
+        alert.informativeText = confirm.text
+        alert.addButton(withTitle: fix.title.text)
         alert.addButton(withTitle: String(localized: "Cancel"))
         guard let window = project.editor.textView.window else { return alert.runModal() == .alertFirstButtonReturn }
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn

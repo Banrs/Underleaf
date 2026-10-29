@@ -1,3 +1,5 @@
+mod messages;
+
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -67,12 +69,12 @@ unsafe fn command_args<'a>(
     command: *const c_char,
     args_json: *const c_char,
 ) -> Result<(&'a str, Value), CoreError> {
-    let command =
-        unsafe { str_arg(command) }.ok_or_else(|| CoreError::bad_request("Invalid command"))?;
-    let args =
-        unsafe { str_arg(args_json) }.ok_or_else(|| CoreError::bad_request("Invalid arguments"))?;
+    let command = unsafe { str_arg(command) }
+        .ok_or_else(|| CoreError::bad_request(messages::invalid_command()))?;
+    let args = unsafe { str_arg(args_json) }
+        .ok_or_else(|| CoreError::bad_request(messages::unreadable_arguments()))?;
     let args = serde_json::from_str(args)
-        .map_err(|e| CoreError::bad_request(format!("Invalid JSON: {e}")))?;
+        .map_err(|e| CoreError::bad_request(messages::invalid_json(e)))?;
     Ok((command, args))
 }
 
@@ -139,7 +141,8 @@ unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut Tl
 }
 
 fn answered(body: impl FnOnce() -> Result<Value, CoreError>) -> *mut c_char {
-    let answer = caught(body).unwrap_or_else(|| Err(CoreError::internal("The editor panicked")));
+    let answer =
+        caught(body).unwrap_or_else(|| Err(CoreError::internal(messages::editor_panicked())));
     let said = match answer {
         Ok(ok) => json!({ "ok": ok }),
         Err(error) => json!({ "error": error }),
@@ -153,7 +156,7 @@ unsafe fn answer_on(
 ) -> *mut c_char {
     answered(|| match unsafe { source.as_mut() } {
         Some(source) => body(source),
-        None => Err(CoreError::bad_request("No source")),
+        None => Err(CoreError::bad_request(messages::no_source())),
     })
 }
 
@@ -208,7 +211,7 @@ pub unsafe extern "C" fn tl_source_edit(
             TlSource::Own(doc) => doc.apply_edit(start, length, &text, changing, mirroring),
             TlSource::Session(document) => document
                 .edit(start, length, &text, changing, mirroring)
-                .ok_or_else(|| CoreError::conflict("The document isn’t open for editing"))?,
+                .ok_or_else(|| CoreError::conflict(messages::not_editable()))?,
         };
         Ok(json!(mirrors))
     };

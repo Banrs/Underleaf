@@ -9,7 +9,9 @@ use serde_json::{Map, Value};
 
 use crate::atomic;
 use crate::error::CoreError;
+use crate::messages;
 use crate::paths::{Project, identity, safe_rel_file};
+use texlocal_latex::message::Message;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -76,11 +78,7 @@ const MAX_FILE: u64 = 1 << 20;
 
 fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, CoreError> {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let unreadable = |why: String| {
-        CoreError::conflict(format!(
-            "“{name}” can't be read ({why}), so it was left as it is. Correct it, or delete it to start again."
-        ))
-    };
+    let unreadable = |why: Message| CoreError::conflict(messages::unreadable(&name, why));
     let mut bytes = Vec::new();
     match fs::File::open(path) {
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(T::default()),
@@ -89,9 +87,9 @@ fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, CoreError> {
             .map_err(|err| unreadable(CoreError::from(err).message))?,
     };
     if bytes.len() as u64 > MAX_FILE {
-        return Err(unreadable("it's over 1 MB".into()));
+        return Err(unreadable(messages::over_one_mb()));
     }
-    serde_json::from_slice(&bytes).map_err(|err| unreadable(err.to_string()))
+    serde_json::from_slice(&bytes).map_err(|err| unreadable(messages::unexpected(err)))
 }
 
 fn update<T: DeserializeOwned + Default + Serialize>(
@@ -100,8 +98,8 @@ fn update<T: DeserializeOwned + Default + Serialize>(
 ) -> Result<T, CoreError> {
     let mut value = load(path)?;
     change(&mut value)?;
-    let bytes =
-        serde_json::to_vec_pretty(&value).map_err(|e| CoreError::internal(e.to_string()))?;
+    let bytes = serde_json::to_vec_pretty(&value)
+        .map_err(|e| CoreError::internal(messages::unexpected(e)))?;
     atomic::write(path, &bytes)?;
     Ok(value)
 }
@@ -130,7 +128,7 @@ pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettin
     Ok(file.settings)
 }
 
-pub fn problem(project: &Project) -> Option<String> {
+pub fn problem(project: &Project) -> Option<Message> {
     let unreadable = |file: &Path| load::<ProjectFile>(file).err();
     let problem = unreadable(&project.settings).or_else(|| unreadable(&project.ui));
     problem.map(|err| err.message)

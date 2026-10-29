@@ -602,7 +602,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             issues.issue(on: line).map { issue, live in
                 let place = live ? String(localized: "Live Preview error on line \(line)")
                     : issue.error ? String(localized: "Error on line \(line)") : String(localized: "Warning on line \(line)")
-                return (line, String(localized: "\(place): \(issue.message)"))
+                return (line, String(localized: "\(place): \(issue.message.text)"))
             }
         }
         if !filter.isEmpty { items = items.filter { $0.title.localizedCaseInsensitiveContains(filter) } }

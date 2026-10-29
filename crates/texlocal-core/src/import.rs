@@ -11,6 +11,7 @@ use texlocal_latex::{FileKind, file_kind};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
+use crate::messages;
 use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
@@ -43,7 +44,6 @@ enum Source {
 }
 
 const MAX_UNZIPPED: u64 = 1 << 30;
-const TOO_LARGE: &str = "This zip unpacks to more than 1 GB, which is more than a project holds.";
 
 const ENGINE_PACKAGES: [(Engine, &[&str]); 2] = [
     (
@@ -120,9 +120,7 @@ fn validate<'a>(
             || folders.contains(&key)
             || parents().any(|parent| seen.contains(parent))
         {
-            return Err(CoreError::bad_request(
-                "Two of the files to import would take the same place.",
-            ));
+            return Err(CoreError::bad_request(messages::same_place()));
         }
         folders.extend(parents().map(str::to_string));
         rels.push(rel);
@@ -188,7 +186,7 @@ fn save(
         let abs = paths::safe_write_path(root, rel)?;
         if let Some(taken) = occupant(root, &rel_key(rel)?) {
             if !replace {
-                return Err(CoreError::conflict(format!("“{taken}” already exists")));
+                return Err(CoreError::conflict(messages::exists_already(taken)));
             }
             projects::discard_replaced(project, &taken)?;
         }
@@ -209,15 +207,13 @@ struct Opened {
 impl Opened {
     fn of_zip(base: String, mut zip: ZipArchive<File>) -> Result<Self, CoreError> {
         if zip.len() > projects::MAX_FILES {
-            return Err(CoreError::bad_request(format!(
-                "“{base}” has more than 20,000 files, more than a document has."
-            )));
+            return Err(CoreError::bad_request(messages::zip_too_many_files(&base)));
         }
         let mut files = Vec::new();
         for i in 0..zip.len() {
             let entry = zip.by_index_raw(i)?;
             let name = entry.name().replace('\\', "/");
-            let segments = match normalize_segments(&name, "") {
+            let segments = match normalize_segments(&name, messages::path_escapes) {
                 Ok(s) if entry.is_file() && !s.is_empty() && !name.contains('\0') => s,
                 _ => continue,
             };
@@ -254,16 +250,14 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
             ZipError::Io(err) => CoreError::at(src)(err),
             err => {
                 let name = file_name(src);
-                CoreError::bad_request(format!("“{name}” can't be read as a zip ({err})"))
+                CoreError::bad_request(messages::not_a_zip(name, err))
             }
         })?;
         return Opened::of_zip(stem, zip);
     }
     let path = file_name(src);
     if file_kind(&path) != FileKind::Tex {
-        return Err(CoreError::bad_request(format!(
-            "“{path}” isn’t a project: TeXLocal opens a folder, a .tex file or a .zip of a project."
-        )));
+        return Err(CoreError::bad_request(messages::not_a_project(&path)));
     }
     Ok(Opened {
         base: stem,
@@ -274,9 +268,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
 }
 
 pub(crate) fn no_tex(name: &str) -> CoreError {
-    CoreError::bad_request(format!(
-        "“{name}” has no LaTeX file (.tex). Open the folder that holds the document, or start one with New Project."
-    ))
+    CoreError::bad_request(messages::no_tex(name))
 }
 
 fn file_name(path: &Path) -> String {
@@ -374,7 +366,7 @@ fn write_files(
             }
         }
         if unzipped > MAX_UNZIPPED {
-            return Err(CoreError::bad_request(TOO_LARGE));
+            return Err(CoreError::bad_request(messages::zip_too_large()));
         }
     }
     for (path, source) in files {
@@ -390,7 +382,7 @@ fn write_files(
                 let mut entry = zip.as_mut().expect("a zip source").by_index(*i)?;
                 let size = entry.size();
                 if io::copy(&mut Read::take(&mut entry, size + 1), &mut dest)? > size {
-                    return Err(CoreError::bad_request(TOO_LARGE));
+                    return Err(CoreError::bad_request(messages::zip_too_large()));
                 }
             }
         }
@@ -405,9 +397,7 @@ pub(crate) fn duplicate_project(
     name: &str,
 ) -> Result<ProjectInfo, CoreError> {
     if projects::is_opened(id) {
-        return Err(CoreError::conflict(
-            "A folder opened where it is can't be duplicated here. Copy the folder itself, then open the copy.",
-        ));
+        return Err(CoreError::conflict(messages::opened_not_duplicated()));
     }
     let root = service.project(id)?.root;
     let mut files = Vec::new();

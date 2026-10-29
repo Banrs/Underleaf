@@ -26,7 +26,8 @@ fn project(files: &[(&str, &str)], installed: &[&str]) -> Symbols {
 
 fn found(symbols: &Symbols) -> Vec<(String, u32, String)> {
     let items = checks::check(symbols, "main.tex").into_iter();
-    let item = |i: texlocal_latex::logparse::LogItem| (i.file.unwrap(), i.line.unwrap(), i.message);
+    let item =
+        |i: texlocal_latex::logparse::LogItem| (i.file.unwrap(), i.line.unwrap(), i.message.text);
     items.map(item).collect()
 }
 

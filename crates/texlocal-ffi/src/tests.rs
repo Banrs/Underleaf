@@ -231,6 +231,8 @@ fn a_source_of_the_hosts_own_highlights_and_answers_commands() {
     let unknown = c("nope");
     let refused = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
     assert_eq!(refused["error"]["kind"], "invalid");
+    let message = json!({ "id": "unknown_command", "args": {}, "text": "Unknown command" });
+    assert_eq!(refused["error"]["message"], message);
     unsafe { tl_source_free(source) };
 }
 
@@ -242,6 +244,19 @@ fn syntax_commands_need_no_source() {
     assert!(answer["ok"]["templates"].is_object());
     let refused = take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) });
     assert_eq!(refused["error"]["kind"], "invalid");
+}
+
+#[test]
+fn each_message_id_is_in_one_catalog() {
+    let catalogs = [
+        texlocal_latex::messages::CATALOG,
+        texlocal_core::messages::CATALOG,
+        messages::CATALOG,
+    ];
+    let mut ids: Vec<&str> = catalogs.concat().iter().map(|(id, _)| *id).collect();
+    ids.sort_unstable();
+    let twice: Vec<&[&str]> = ids.windows(2).filter(|pair| pair[0] == pair[1]).collect();
+    assert!(twice.is_empty(), "{twice:?}");
 }
 
 #[test]

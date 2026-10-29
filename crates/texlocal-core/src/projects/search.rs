@@ -12,6 +12,7 @@ use super::history::MAX_KEPT;
 use super::read_capped;
 use super::tree::visit_files;
 use crate::error::CoreError;
+use crate::messages;
 use crate::{lf, lossy_string, newline};
 
 const SEARCH_FILE_MAX: u64 = 8 << 20;
@@ -137,15 +138,11 @@ pub(crate) fn replace_in_files(
             return Ok(None);
         }
         if !utf8 {
-            return Err(CoreError::bad_request(format!(
-                "“{rel}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it."
-            )));
+            return Err(CoreError::bad_request(messages::not_utf8_file(rel)));
         }
         let now = replaced(&file, &places, to);
         if file.len().max(now.len()) as u64 > MAX_KEPT {
-            return Err(CoreError::bad_request(format!(
-                "“{rel}” is too large for the version history to keep, so nothing was changed, as it couldn’t be put back."
-            )));
+            return Err(CoreError::bad_request(messages::too_large_to_keep(rel)));
         }
         Ok(Some((now, places.len(), file)))
     };

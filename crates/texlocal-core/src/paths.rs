@@ -5,15 +5,18 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 pub(crate) use texlocal_latex::fold_case;
 
+use texlocal_latex::message::Message;
+
 use crate::error::CoreError;
+use crate::messages;
 use crate::projects::{self, is_opened};
 use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, sys};
 
-pub(crate) fn normalize_segments<'a>(
-    rel: &'a str,
-    escape_err: &str,
-) -> Result<Vec<&'a str>, CoreError> {
-    texlocal_latex::segments(rel).ok_or_else(|| CoreError::bad_request(escape_err))
+pub(crate) fn normalize_segments(
+    rel: &str,
+    escape: fn() -> Message,
+) -> Result<Vec<&str>, CoreError> {
+    texlocal_latex::segments(rel).ok_or_else(|| CoreError::bad_request(escape()))
 }
 
 #[derive(Debug, Clone)]
@@ -27,15 +30,15 @@ pub struct Project {
 
 impl Project {
     pub fn find(data_dir: &Path, id: &str) -> Result<Self, CoreError> {
-        let [name] = normalize_segments(id, "Bad project id")?[..] else {
-            return Err(CoreError::bad_request("Bad project id"));
+        let [name] = normalize_segments(id, messages::bad_project_id)?[..] else {
+            return Err(CoreError::bad_request(messages::bad_project_id()));
         };
         if is_opened(name) {
             return projects::find_opened(data_dir, name);
         }
         let root = data_dir.join(name);
         if !root.is_dir() {
-            return Err(CoreError::not_found(format!("No such project: {id}")));
+            return Err(CoreError::not_found(messages::no_such_project(id)));
         }
         Ok(Self::in_folder(&std::fs::canonicalize(root)?))
     }
@@ -63,12 +66,14 @@ pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
 
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
-        return Err(CoreError::bad_request("Missing path"));
+        return Err(CoreError::bad_request(messages::missing_path()));
     }
-    let segments = normalize_segments(rel, "Path escapes project")?;
+    let segments = normalize_segments(rel, messages::path_escapes)?;
     match segments[..] {
-        [] => Err(CoreError::bad_request("Path escapes project")),
-        [name] if fold_case(name) == SETTINGS_FILE => Err(CoreError::bad_request("Reserved file")),
+        [] => Err(CoreError::bad_request(messages::path_escapes())),
+        [name] if fold_case(name) == SETTINGS_FILE => {
+            Err(CoreError::bad_request(messages::reserved_file()))
+        }
         _ => Ok(segments),
     }
 }
@@ -86,9 +91,7 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     let rel = rel_key(rel)?;
     if in_build_dir(&rel) {
-        return Err(CoreError::bad_request(
-            "“build” holds the compiled PDF. Choose another name.",
-        ));
+        return Err(CoreError::bad_request(messages::build_folder()));
     }
     Ok(root.join(rel))
 }
@@ -145,9 +148,7 @@ impl TryFrom<String> for RelPath {
 pub fn safe_rel_file(rel: &str) -> Result<String, CoreError> {
     let segments = safe_segments(rel)?;
     if segments.iter().any(|s| s.starts_with('-')) {
-        return Err(CoreError::bad_request(
-            "Path segments cannot start with \"-\"",
-        ));
+        return Err(CoreError::bad_request(messages::dash_segment()));
     }
     Ok(segments.join("/"))
 }
@@ -160,7 +161,7 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
         .take(80)
         .collect();
     if clean.is_empty() || clean.starts_with('.') {
-        return Err(CoreError::bad_request("Invalid name"));
+        return Err(CoreError::bad_request(messages::invalid_name()));
     }
     Ok(clean)
 }

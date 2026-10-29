@@ -9,6 +9,7 @@ use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
 use super::tree::visit_files;
 use crate::error::{CoreError, ErrorKind};
+use crate::messages;
 use crate::paths::{Project, identity};
 use crate::service::Service;
 use crate::settings::write_settings;
@@ -76,15 +77,12 @@ pub(super) fn list(data_dir: &Path) -> Vec<ProjectInfo> {
 pub(crate) fn find(data_dir: &Path, id: &str) -> Result<Project, CoreError> {
     let store = store(data_dir, id);
     let Some(Folder { path, .. }) = read(&store) else {
-        return Err(CoreError::not_found(format!("No such project: {id}")));
+        return Err(CoreError::not_found(messages::no_such_project(id)));
     };
     let project = project(&path, &store);
     if !path.is_dir() {
-        return Err(CoreError::not_found(format!(
-            "“{}” isn’t at {} any more. Open it where it is now, or remove it from the list.",
-            project.name(),
-            path.display()
-        )));
+        let moved = messages::folder_moved(project.name(), path.display());
+        return Err(CoreError::not_found(moved));
     }
     Ok(project)
 }
@@ -129,9 +127,7 @@ fn open_folder(
     let name = root.file_name().unwrap_or(root.as_os_str()).display();
     let library = fs::canonicalize(data_dir)?;
     if library.starts_with(root) || root.starts_with(&library) {
-        return Err(CoreError::bad_request(format!(
-            "“{name}” holds TeXLocal’s projects. Choose the folder that holds the document."
-        )));
+        return Err(CoreError::bad_request(messages::holds_library(name)));
     }
     let (mut files, mut tex) = (0, false);
     visit_files(root, &mut |_, rel| {
@@ -140,9 +136,7 @@ fn open_folder(
         Ok(files <= MAX_FILES)
     })?;
     if files > MAX_FILES {
-        return Err(CoreError::bad_request(format!(
-            "“{name}” has more than 20,000 files. Choose the folder that holds the document."
-        )));
+        return Err(CoreError::bad_request(messages::too_many_files(name)));
     }
     let _edits = lock(&service.edits);
     let folder = Folder {
@@ -170,7 +164,7 @@ fn open_folder(
         }
     };
     let record = serde_json::to_vec_pretty(&folder);
-    let record = record.map_err(|err| CoreError::bad_request(err.to_string()))?;
+    let record = record.map_err(|err| CoreError::bad_request(messages::unexpected(err)))?;
     atomic::write(&store.join(FOLDER), &record)?;
     made.map(tempfile::TempDir::keep);
     let id = format!(".{}", store.file_name().unwrap_or_default().display());
@@ -179,15 +173,13 @@ fn open_folder(
 
 pub fn forget_folder(service: &Service, id: &str) -> Result<(), CoreError> {
     if !is_opened(id) {
-        return Err(CoreError::bad_request(
-            "Only a folder opened where it is can be removed from the list.",
-        ));
+        return Err(CoreError::bad_request(messages::only_opened_forgotten()));
     }
     let store = store(&service.data_dir, id);
     let edits = lock(&service.edits);
     let known = folders(&service.data_dir);
     if !known.iter().any(|(known, _)| known == id) {
-        return Err(CoreError::not_found(format!("No such project: {id}")));
+        return Err(CoreError::not_found(messages::no_such_project(id)));
     }
     fs::remove_file(store.join(FOLDER))?;
     drop(edits);

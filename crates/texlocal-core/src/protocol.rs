@@ -3,6 +3,7 @@ use schemars::generate::SchemaSettings;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use texlocal_latex::messages;
 use texlocal_latex::protocol::Described;
 use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 
@@ -19,11 +20,11 @@ pub(crate) fn answer<T: Serialize>(result: Result<T, CoreError>) -> Result<Value
 
 pub(crate) fn arguments<T: DeserializeOwned>(args: Value) -> Result<T, CoreError> {
     serde_json::from_value(args)
-        .map_err(|err| CoreError::bad_request(format!("Invalid arguments: {err}")))
+        .map_err(|err| CoreError::bad_request(messages::invalid_arguments(err)))
 }
 
 pub(crate) fn unknown() -> CoreError {
-    CoreError::not_found("Unknown command")
+    CoreError::not_found(messages::unknown_command())
 }
 
 pub struct Protocol {

@@ -15,19 +15,18 @@ use tokio::sync::mpsc;
 use texlocal_latex::diff::delta;
 use texlocal_latex::utf16::byte_offset;
 
+use crate::messages;
 use crate::paths::{self, Project};
 use crate::process::{self, Tree};
 use crate::tex::{find_tool, program_at};
 use crate::{CoreError, lock, settings, sys, tail};
+use texlocal_latex::message::Message;
 
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
-const NOT_RUNNING: &str = "Live Preview isn't running.";
-const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh.";
 const LIVE_VERSION: u64 = 3;
-const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
 #[derive(Debug)]
 pub struct FileBuffer {
@@ -46,7 +45,7 @@ pub struct Status {
     pub running: bool,
     pub log: String,
     pub output: String,
-    pub error: Option<String>,
+    pub error: Option<Message>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +63,7 @@ pub enum LiveEvent {
     Done(String),
     Synced(u64),
     Log,
-    Ended(Option<String>),
+    Ended(Option<Message>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -177,7 +176,7 @@ struct State {
     live: bool,
     protocol_seen: bool,
     stderr: Output,
-    error: Option<String>,
+    error: Option<Message>,
 }
 
 struct Session {
@@ -192,7 +191,7 @@ impl Session {
     fn running(&self) -> bool {
         lock(&self.state).link.is_some()
     }
-    fn stop(&self, error: Option<String>) {
+    fn stop(&self, error: Option<Message>) {
         let link = {
             let mut state = lock(&self.state);
             let link = state.link.take();
@@ -267,7 +266,7 @@ impl Manager {
         lock(&self.sessions)
             .get(&owner)
             .cloned()
-            .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
+            .ok_or_else(|| CoreError::not_found(messages::live_not_running()))
     }
 
     fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
@@ -375,17 +374,17 @@ impl Preview for Manager {
         let main = settings::read_settings(&project.settings).main_file;
         let main = paths::safe_path(&root, &main)?;
         if !main.is_file() {
-            return Err(CoreError::bad_request("The main file does not exist."));
+            return Err(CoreError::bad_request(messages::live_no_main()));
         }
         let (buffers, opening) = opening(&root, files, pane);
-        let failed = |error: String| {
+        let failed = |error: Message| {
             Ok(Status {
                 error: Some(error),
                 ..Status::default()
             })
         };
         let Some(executable) = discover(path_env) else {
-            return failed(sys::NO_TEXPRESSO.into());
+            return failed(messages::no_texpresso());
         };
         let (build, pdf) = self.prepare(owner, project)?;
         let mut command = command(&executable, path_env, &build, &main, &root, &pdf);
@@ -393,9 +392,7 @@ impl Preview for Manager {
             Ok(spawned) => spawned,
             Err(err) => {
                 remove_pdf_folder(&pdf);
-                return failed(format!(
-                    "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
-                ));
+                return failed(messages::texpresso_unstarted(err));
             }
         };
         let (session, queued) = self.open(owner, root, pdf, buffers, sink, tree.clone());
@@ -447,7 +444,7 @@ impl Preview for Manager {
         let held = files.get_mut(rel);
         let (offset, removed) = held
             .and_then(|held| splice(held, start, remove, text))
-            .ok_or_else(|| CoreError::unfit(UNFIT))?;
+            .ok_or_else(|| CoreError::unfit(messages::live_unfit()))?;
         session.send(&[json!([
             "change",
             session.root.join(rel),
@@ -466,7 +463,7 @@ impl Preview for Manager {
         let session = self.owned(owner)?;
         let offset = (lock(&session.files).get(rel))
             .and_then(|text| byte_offset(text, offset))
-            .ok_or_else(|| CoreError::unfit(UNFIT))?;
+            .ok_or_else(|| CoreError::unfit(messages::live_unfit()))?;
         session.send(&[json!(["caret", session.root.join(rel), offset])]);
         Ok(())
     }
@@ -502,9 +499,7 @@ impl Preview for Manager {
     fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
         let pdf = self.owned(owner)?.pdf.clone();
         if !pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(
-                "TeXpresso hasn't written a document to sync with yet",
-            ));
+            return Err(CoreError::not_found(messages::texpresso_unsynced()));
         }
         Ok(pdf)
     }
@@ -525,7 +520,7 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
 }
 
 async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<Session>) {
-    struct Stop(Weak<Session>, Option<String>);
+    struct Stop(Weak<Session>, Option<Message>);
     impl Drop for Stop {
         fn drop(&mut self) {
             if let Some(session) = self.0.upgrade() {
@@ -534,9 +529,7 @@ async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<
         }
     }
     let mut stop = Stop(session, None);
-    stop.1 = (exit.await).map(|status| {
-        format!("TeXpresso exited ({status}). Check its log and start TeXpresso again.")
-    });
+    stop.1 = (exit.await).map(messages::texpresso_exited);
 }
 
 async fn write_lines(
@@ -551,13 +544,11 @@ async fn write_lines(
         };
         let error = match tokio::time::timeout(UNREAD, write).await {
             Ok(Ok(())) => continue,
-            Ok(Err(err)) => err.to_string(),
-            Err(_) => "viewer stopped reading commands".to_owned(),
+            Ok(Err(err)) => messages::io_error(err),
+            Err(_) => messages::viewer_stopped(),
         };
         if let Some(session) = session.upgrade() {
-            session.stop(Some(format!(
-                "Couldn't send changes to TeXpresso: {error}. Start TeXpresso again."
-            )));
+            session.stop(Some(messages::texpresso_unsent(error)));
         }
         break;
     }
@@ -610,7 +601,7 @@ fn apply_message(session: &Session, mut message: Value) {
         state.live
     };
     if !live {
-        return session.stop(Some(UNPATCHED.into()));
+        return session.stop(Some(messages::live_unpatched()));
     }
     let event = match verb {
         "page" => match (number(1), message[2].take()) {
