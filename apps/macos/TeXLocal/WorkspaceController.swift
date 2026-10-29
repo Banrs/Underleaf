@@ -4,7 +4,8 @@ import SwiftUI
 final class WorkspaceController: ThinSplitViewController {
     let app: AppModel
     let project: ProjectModel
-    var pdf: PDFController { project.pdf }
+    let views: WorkspaceViews
+    var pdf: PDFController { views.pdf }
     let toolbar: WorkspaceToolbar
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
@@ -25,11 +26,12 @@ final class WorkspaceController: ThinSplitViewController {
     private var collapses: [NSKeyValueObservation] = []
     private var resizes: [NotificationCenter.ObservationToken] = []
 
-    init(app: AppModel, project: ProjectModel, size: CGSize) {
+    init(app: AppModel, project: ProjectModel, views: WorkspaceViews, size: CGSize) {
         self.app = app
         self.project = project
+        self.views = views
         inspectorMount = Mount(shown: app.inspectorVisible)
-        toolbar = WorkspaceToolbar(app: app, project: project)
+        toolbar = WorkspaceToolbar(app: app, project: project, views: views)
         super.init()
         toolbar.workspace = self
         if app.savesLayout {
@@ -133,7 +135,8 @@ final class WorkspaceController: ThinSplitViewController {
         sidebarItem.isCollapsed = !app.sidebarVisible
         let search = Bindable(project.search)
         sidebarSearch = accessory(hostingView(SearchField(
-            text: search.query, prompt: "Search Project", handle: searchField, step: project.search.step,
+            text: search.query, prompt: "Search Project", handle: searchField,
+            step: { [search = project.search] in if !search.step($0) { NSSound.beep() } },
             options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords)])))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
@@ -157,10 +160,6 @@ final class WorkspaceController: ThinSplitViewController {
             pane.frame = pdfPane.view.bounds
             pane.autoresizingMask = [.width, .height]
             pdfPane.view.addSubview(pane)
-        }
-        pdf.view.onInverse = { [weak project, app] page, point, click, quietly in
-            guard !quietly || app.showSource else { return }
-            Task { await project?.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
         }
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
@@ -202,14 +201,14 @@ final class WorkspaceController: ThinSplitViewController {
     override func toggleInspector(_ sender: Any?) { app.inspectorShown.toggle() }
 
     private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mount: Mount? = nil) -> NSViewController {
-        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app))
+        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app).environment(views))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
         return host
     }
 
     private func hostingView(_ content: some View) -> NSHostingView<some View> {
-        let host = NSHostingView(rootView: Pane(project: project, content: content).environment(app))
+        let host = NSHostingView(rootView: Pane(project: project, content: content).environment(app).environment(views))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -265,7 +264,7 @@ final class WorkspaceController: ThinSplitViewController {
             if !app.showSource, responder.isDescendant(of: sourceItem.viewController.view) {
                 view.window?.makeFirstResponder(pdf.view)
             } else if !app.showPDF, responder.isDescendant(of: pdfItem.viewController.view) {
-                project.editor.focus()
+                views.focusEditor()
             }
         }
     }
@@ -372,7 +371,7 @@ final class WorkspaceController: ThinSplitViewController {
     private func performPDF(_ action: PDFAction) {
         setCollapsed(pdfItem, false) { [weak self] in
             guard let self else { return }
-            project.perform(action) {
+            views.perform(action) {
                 pdf.find.isOpen = true
                 setHidden(pdfFind, false)
                 focus(pdf.find.field, in: pdfFind)

@@ -1,18 +1,7 @@
 import Accessibility
-import AppKit
+import Foundation
 
 extension ProjectModel {
-    @discardableResult func showPDF() -> Task<Void, Never>? {
-        guard let shown = store.shownPdf, !shown.live else { return nil }
-        return pdf.load(shown.path.map { URL(filePath: $0) })
-    }
-
-    func showIssues() {
-        guard let path = editor.path else { return }
-        editor.textView.issues.lines = store.build?.lines[path]?.byLine ?? [:]
-        editor.textView.issues.live = store.live?.lines[path]?.byLine ?? [:]
-    }
-
     func compile() async {
         guard let session, !closed, app?.tex?.available == true else { return }
         await alerting(notSavedTitle()) { try await session.call(Compile(auto: false)) }
@@ -32,21 +21,13 @@ extension ProjectModel {
         let manual = { (build: BuildState?) in build?.compiling == true && build?.auto == false }
         if manual(build), !manual(was) { AccessibilityNotification.Announcement(String(localized: "Compiling")).post() }
         if build.listed != was?.listed { chosenIssue = nil }
-        showIssues()
     }
 
     func buildFinished(_ finished: BuildFinished) {
         guard let result else { return }
-        if result.ok, !outdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
-            Task { [loading = pdf.loading] in
-                await loading?.value
-                await forwardSync(quietly: true)
-            }
-        }
         if !finished.auto {
             if result.failed {
                 panel.openForFailedBuild()
-                if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
             } else if result.ok, issues.isEmpty {
                 panel.closeAfterCleanBuild()
             }

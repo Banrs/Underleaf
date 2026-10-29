@@ -1,10 +1,27 @@
-import AppKit
+import Foundation
 import Observation
+
+protocol ProjectViews: AnyObject {
+    var hasPDF: Bool { get }
+    var zoom: Zoom { get }
+    var shownVersion: Int { get }
+    func heard(_ event: Event)
+    func opened(_ ui: UiState) -> Task<Void, Never>?
+    func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool)
+    func apply(_ edits: DocumentEdits, named name: String) -> Bool
+    func moved(from: String, to: String)
+    func trashed(_ path: String)
+    func beep()
+    func perform(_ command: EditorCommand)
+    func perform(_ command: MenuCommand)
+    func validates(_ command: MenuCommand) -> Bool
+}
 
 @Observable
 final class ProjectModel {
     let id: String
     let store = SessionStore()
+    private let core: Core
     private let listedName: String
     var name: String { store.project?.name ?? listedName }
     var settings: ProjectSettings? { store.project?.settings }
@@ -40,6 +57,7 @@ final class ProjectModel {
     private(set) var currentHeading: Int?
     @ObservationIgnored private var currentLine = 1
     @ObservationIgnored private var caretMoved = false
+    @ObservationIgnored private(set) var caret: (path: String, offset: Int)?
     var trail = Trail()
 
     @ObservationIgnored private(set) var session: SessionClient?
@@ -53,10 +71,9 @@ final class ProjectModel {
     var listed: [LogItem] { store.build?.listed ?? [] }
     var fixing: Fix?
     var chosenIssue: Int?
-    var hasPDF: Bool { pdf.pageCount > 0 }
+    var hasPDF: Bool { views?.hasPDF == true }
     var livePDF: Bool { store.shownPdf?.live == true }
     var buildPDF: URL? { store.shownPdf?.path.map { URL(filePath: $0) } }
-    let pdf = PDFController()
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
 
@@ -76,13 +93,10 @@ final class ProjectModel {
 
     let search = ProjectSearch()
 
-    let editor = SourceEditor()
-    private(set) var sourceHasKeyboard = false
+    var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
+    @ObservationIgnored weak var views: (any ProjectViews)?
     @ObservationIgnored var syncTask: Task<Void, Never>?
-    @ObservationIgnored var followTask: Task<Void, Never>?
-    @ObservationIgnored var followsCaret = false
-    @ObservationIgnored var liveReads: Task<Void, Never>?
     private var closing: Task<Bool, Never>?
     var isClosing: Bool { closing != nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -92,6 +106,7 @@ final class ProjectModel {
 
     init(id: String, app: AppModel) {
         self.id = id
+        core = app.core
         listedName = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
@@ -99,7 +114,6 @@ final class ProjectModel {
             session?.send(LiveLog(shown: shown))
             if !shown { texpresso.logClosed() }
         }
-        pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
     }
 
     var isLaTeX: Bool { openKind == .tex }
@@ -137,13 +151,12 @@ final class ProjectModel {
 
     func savePlace() {
         guard initialLoadComplete else { return }
-        let place = UiPlace(file: openPath, line: cursorLine, zoom: pdf.keptZoom, panel: panel.shown)
+        let place = UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom, panel: panel.shown)
         saveUIState(UiPatch(place: place))
     }
 
     func load() async {
-        connectEditor()
-        let session = SessionClient { [weak self] event in self?.handle(event) }
+        let session = SessionClient(core: core) { [weak self] event in self?.handle(event) }
         let ui: UiState
         do {
             ui = try await session.call(OpenProject(id: id, autoCompile: app?.autoCompile ?? false))
@@ -157,8 +170,8 @@ final class ProjectModel {
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         self.session = session
-        (panel.shown, pdf.restoreZoom) = (ui.panel, ui.zoom)
-        let pdfShown = showPDF()
+        panel.shown = ui.panel
+        let pdfShown = views?.opened(ui)
         let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
         if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
         await pdfShown?.value
@@ -166,50 +179,24 @@ final class ProjectModel {
         initialLoadComplete = true
     }
 
-    private func connectEditor() {
-        editor.onCursor = { [weak self] line, column in
-            guard let self, line != cursorLine || column != cursorColumn else { return }
-            cursorLine = line
-            cursorColumn = column
-            currentLine = line
-            if !caretMoved {
-                caretMoved = true
-                Task { [weak self] in self?.caretMoved = false }
-            }
-            findHeadings()
-            liveCaret()
+    func cursorMoved(to line: Int, column: Int, caret offset: Int, in path: String?) {
+        caret = path.map { ($0, offset) }
+        guard line != cursorLine || column != cursorColumn else { return }
+        cursorLine = line
+        cursorColumn = column
+        currentLine = line
+        if !caretMoved {
+            caretMoved = true
+            Task { [weak self] in self?.caretMoved = false }
         }
-        editor.onEdit = { [weak self] in if let self, livePDF { followsCaret = true } }
-        editor.textView.composing = { [weak self] composing in self?.composing(composing) }
-        editor.textView.keyboardChanged = { [weak self] in self?.sourceHasKeyboard = $0 }
-        editor.onScroll = { [weak self] line in
-            guard let self, line != topLine else { return }
-            topLine = line
-            findHeadings()
-        }
-        editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
-        editor.textView.issues.clicked = { [weak self] line in
-            guard let self else { return }
-            if let index = editor.textView.issues.lines[line]?.index {
-                panel.show(.issues)
-                chooseIssue(index, focus: false, open: false)
-            } else if editor.textView.issues.live[line] != nil {
-                panel.show(.texpresso)
-            }
-        }
-        editor.textView.headings = { [weak self] in
-            guard let self else { return [] }
-            return outline.filter { $0.file == self.openPath }.map { ($0.line, $0.title) }
-        }
-        editor.textView.forwardSync = { [weak self] quietly in
-            guard let self, hasPDF, isLaTeX, !quietly || app?.showPDF == true else { return nil }
-            return { Task { await self.forwardSync(quietly: quietly) } }
-        }
-        editor.textView.openDefinition = { [weak self] place in
-            Task { await self?.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
-        }
-        editor.textView.quickHelp = { [weak self] offset in Task { await self?.quickHelp(at: offset) } }
-        editor.command = { [weak self] in self?.app?.perform($0, on: self) }
+        findHeadings()
+        liveCaret()
+    }
+
+    func scrolled(to line: Int) {
+        guard line != topLine else { return }
+        topLine = line
+        findHeadings()
     }
 
     func autoCompileChanged() {
@@ -226,8 +213,7 @@ final class ProjectModel {
         guard !closed else { return }
         switch event {
         case .section(let section): apply(section)
-        case .documentReload(let path): reload(path)
-        case .documentRenamed(let renamed): if editor.path == renamed.from { editor.path = renamed.to }
+        case .documentReload, .documentRenamed, .livePage, .liveDocument: break
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .buildFinished(let finished): buildFinished(finished)
@@ -236,9 +222,8 @@ final class ProjectModel {
         case .liveAlert:
             texpresso.alerted()
             panel.show(.texpresso)
-        case .livePage(let page): showLive(page)
-        case .liveDocument(let document): showLive(document)
         }
+        views?.heard(event)
     }
 
     private func apply(_ section: SessionSection) {
@@ -248,37 +233,21 @@ final class ProjectModel {
         case .project(let now):
             if let error = now.problem, error != problem { alert(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
         case .tree(let nodes): tree.show(nodes)
-        case .openFile: showOpenFile()
+        case .openFile, .outline: findHeadings()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
                 alert(notSavedTitle(document.path), error.text)
             }
-        case .outline: findHeadings()
         case .build(let now): buildChanged(now, was: build)
         case .shownPdf(let shown):
             if shown.live, !live, app?.showPDF == false { app?.showPDF = true }
-            if session != nil { showPDF() }
-        case .live(let state): liveChanged(state)
+        case .live(let state): texpresso.receive(state)
         }
     }
 
     private func alert(_ title: String, _ message: String) {
         if let app, app.alert == nil { app.alert = AppAlert(title, message) } else { notices.announce(title) }
-    }
-
-    private func showOpenFile() {
-        findHeadings()
-        guard let file = store.openFile, file.kind.isText, let session,
-              editor.path != file.path || !editor.textView.document.editable,
-              let source = SourceDocument(session: session.id, path: file.path) else { return }
-        editor.open(path: file.path, source: source)
-        showIssues()
-    }
-
-    private func reload(_ path: String) {
-        guard editor.path == path, let session, let source = SourceDocument(session: session.id, path: path) else { return }
-        editor.reload(source)
     }
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
@@ -293,13 +262,12 @@ final class ProjectModel {
             if !closed { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
             return
         }
-        guard let opened, opened == openPath, editsText, editor.path == opened, !closed else { return }
-        editor.focusWhenShown = focus
-        if let line { editor.reveal(line: line, column: column, length: length, atTop: atTop, focus: focus) } else if focus { editor.focus() }
+        guard let opened, opened == openPath, editsText, !closed else { return }
+        views?.reveal(opened, line: line, column: column, length: length, atTop: atTop, focus: focus)
     }
 
-    private func composing(_ composing: Bool) {
-        guard let session, let path = composing ? editor.path : composingPath else { return }
+    func composing(_ composing: Bool, in path: String?) {
+        guard let session, let path = composing ? path : composingPath else { return }
         composingPath = composing ? path : nil
         session.send(Composing(path: path, composing: composing))
     }
@@ -313,16 +281,7 @@ final class ProjectModel {
         return inside.dropFirst(folder.count).joined(separator: "/")
     }
 
-    private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        guard let path = projectPath(url) else {
-            return includeGraphics(url.lastPathComponent) == nil ? nil : .copy { [weak self] in await self?.copyFigure(url) }
-        }
-        guard tree.node(at: path) != nil else { return nil }
-        if let insert = includeGraphics(path) { return .insert(insert) }
-        return .open { [weak self] in Task { await self?.open(path) } }
-    }
-
-    private func copyFigure(_ url: URL) async -> String? {
+    func copyFigure(_ url: URL) async -> String? {
         let folder = openPath?.parentFolder ?? ""
         let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
         guard let session, let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
@@ -332,7 +291,7 @@ final class ProjectModel {
         return includeGraphics(path)
     }
 
-    private func includeGraphics(_ path: String) -> String? { Syntax.call(IncludeGraphics(path: path, into: openPath ?? "")) ?? nil }
+    func includeGraphics(_ path: String) -> String? { Syntax.call(IncludeGraphics(path: path, into: openPath ?? "")) ?? nil }
 
     @discardableResult
     func save(reporting: Bool = true) async -> Bool {
@@ -374,30 +333,24 @@ final class ProjectModel {
         await search.run(in: session)
     }
 
-    func findUsages() async {
-        guard let session, let path = editor.path else { return }
-        let offset = editor.textView.selection.location
-        guard let found = await alerting("Couldn’t Find Usages", {
+    func findUsages(in path: String, at offset: Int) async {
+        guard let session, let found = await alerting("Couldn’t Find Usages", {
             try await session.call(FindUsages(path: path, offset: offset))
         }) else { return }
         guard let found else {
-            NSSound.beep()
+            views?.beep()
             return
         }
         search.show(found)
         app?.sidebarShown = true
     }
 
-    func quickHelp(at offset: Int) async {
-        guard let session, let path = editor.path else { return }
-        guard let answer = await alerting("Couldn’t Show Quick Help", {
+    func quickHelp(in path: String, at offset: Int) async -> QuickHelp? {
+        guard let session, let answer = await alerting("Couldn’t Show Quick Help", {
             try await session.call(LookUp(path: path, offset: offset))
-        }), editor.path == path else { return }
-        guard let help = answer else {
-            NSSound.beep()
-            return
-        }
-        editor.textView.showQuickHelp(help, at: offset)
+        }) else { return nil }
+        if answer == nil { views?.beep() }
+        return answer
     }
 
     private var caretPlace: Place? { openPath.map { Place(path: $0, line: editsText ? cursorLine : 1) } }
@@ -440,9 +393,7 @@ final class ProjectModel {
     @discardableResult
     private func apply(_ edits: DocumentEdits?, named name: String) -> Bool {
         guard let edits else { return true }
-        guard edits.path == editor.path, editor.textView.document.version == edits.version else { return false }
-        editor.textView.apply(edits.edits, named: name)
-        return true
+        return views?.apply(edits, named: name) ?? false
     }
 
     func run(_ fix: Fix) async {
@@ -476,13 +427,8 @@ final class ProjectModel {
     func close() -> Task<Bool, Never> {
         if let closing { return closing }
         guard !closed else { return Task { true } }
-        let editable = editor.textView.isEditable
-        editor.textView.isEditable = false
         let task = Task { [self] in
-            defer {
-                closing = nil
-                if !closed { editor.textView.isEditable = editable }
-            }
+            defer { closing = nil }
             if let session {
                 do {
                     guard try await session.close() else { return false }
@@ -499,8 +445,6 @@ final class ProjectModel {
             removeExport()
             notices.cancel()
             syncTask?.cancel()
-            followTask?.cancel()
-            pdf.loading?.cancel()
             liveLogWatch?.cancel()
             return true
         }

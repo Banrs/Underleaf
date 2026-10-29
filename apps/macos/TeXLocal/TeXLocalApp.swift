@@ -15,12 +15,15 @@ struct TeXLocalApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) static weak var shared: AppDelegate?
-    let app = AppModel()
+    let app = AppModel(core: .shared)
     private(set) lazy var mainWindow = MainWindowController(app: app)
 
     override init() {
         super.init()
         Self.shared = self
+        app.undoSource = { NSApp.mainWindow?.undoManager }
+        app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
+        app.attachViews = { [unowned self] in mainWindow.attach($0) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,12 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
-            let left = await app.leave()
-            if left {
-                _ = try? await Core.shared.call(KillAll())
-            } else if mainWindow.window?.isVisible != true {
-                mainWindow.showWindow(nil)
-            }
+            let left = await app.quit()
+            if !left, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
             sender.reply(toApplicationShouldTerminate: left)
         }
         return .terminateLater

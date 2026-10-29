@@ -22,6 +22,9 @@ struct SaveVersionSheet: View {
 struct VersionHistorySheet: View {
     let project: ProjectModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
+    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
     @State private var snapshots: [Snapshot]?
     @State private var chosen: Snapshot.ID?
     @State private var file: String?
@@ -133,8 +136,7 @@ struct VersionHistorySheet: View {
         let name = file?.fileName ?? ""
         switch shown {
         case .diff(let rows):
-            DiffView(rows: rows,
-                     font: project.editor.textView.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+            DiffView(rows: rows, font: SourceTextView.font(named: fontName, size: CGFloat(fontSize), dark: colorScheme == .dark))
         case .same:
             ContentUnavailableView("No Differences", systemImage: "equal",
                                    description: Text("“\(name)” is the same now as in this version."))

@@ -26,11 +26,11 @@ struct CoreTests {
     @Test func aSessionsDocumentIsEditedAndSavedAndItsEventsDecode() async throws {
         let project = try await newProject()
         var events: [Event] = []
-        let session = SessionClient { events.append($0) }
+        let session = SessionClient(core: .shared) { events.append($0) }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         #expect(try await session.call(Open(path: "main.tex")) == "main.tex")
         try await waitUntil { events.contains { if case .section(.outline(_?)) = $0 { true } else { false } } }
-        let document = try #require(SourceDocument(session: session.id, path: "main.tex"))
+        let document = try #require(SourceDocument(session: session, path: "main.tex"))
         let version = try #require(document.version)
         _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
         #expect(document.version == version + 1)
@@ -43,11 +43,11 @@ struct CoreTests {
     @Test func theEditorFollowsTheOpenFileAndItsReloadsAndAClosedDocumentRefusesEdits() async throws {
         let info = try await newProject()
         let defaults = TestDefaults()
-        let app = AppModel(defaults: defaults.store)
+        let app = defaults.app()
         app.autoCompile = false
         let project = ProjectModel(id: info.id, app: app)
+        let views = WorkspaceViews(project: project), editor = views.editor
         await project.load()
-        let editor = project.editor
         #expect(project.openPath == "main.tex" && editor.path == "main.tex")
         try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
@@ -62,12 +62,13 @@ struct CoreTests {
         view.insertText("late ", replacementRange: NSRange(location: 0, length: 0))
         #expect(view.string == "theirs\n")
         #expect(await project.close().value)
+        try await waitUntil { !views.editor.textView.isEditable }
     }
 
     @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
-        let app = AppModel(defaults: defaults.store)
+        let app = defaults.app()
         app.autoCompile = false
         let project = ProjectModel(id: info.id, app: app)
         await project.load()
@@ -88,7 +89,7 @@ struct CoreTests {
     @Test func theStoreIsFilledBeforeTheOpenReplyAndEachReplyFollowsItsSections() async throws {
         let project = try await newProject(template: .blank)
         let store = SessionStore()
-        let session = SessionClient { if case .section(let section) = $0 { store.apply(section) } }
+        let session = SessionClient(core: .shared) { if case .section(let section) = $0 { store.apply(section) } }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         #expect(store.project?.name == project.name)
         #expect(store.project?.settings.mainFile == "main.tex")

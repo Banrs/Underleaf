@@ -179,14 +179,19 @@ final class Core {
 
 final class SessionClient {
     let id: UInt64
-    private let core = Core.shared
+    private let core: Core
 
-    init(_ observer: @escaping (Event) -> Void) { id = core.observe(observer) }
+    init(core: Core, _ observer: @escaping (Event) -> Void) {
+        self.core = core
+        id = core.observe(observer)
+    }
 
     @discardableResult
     func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
 
     func send<R: SessionRequest>(_ request: R) { core.send(request, in: id) }
+
+    func source(_ path: String) -> OpaquePointer? { core.source(session: id, path: path) }
 
     func close() async throws -> Bool {
         guard try await call(CloseProject()) else { return false }

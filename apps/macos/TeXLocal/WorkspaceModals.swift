@@ -1,9 +1,9 @@
-import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
+    @Environment(WorkspaceViews.self) private var views
     @Bindable var project: ProjectModel
 
     func body(content: Content) -> some View {
@@ -47,14 +47,21 @@ struct WorkspaceModals: ViewModifier {
             } message: { path in
                 Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
             }
+            .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "", item: $project.diskConflict) { path in
+                Button("Save Anyway") { project.answer(path, .save) }
+                Button("Revert", role: .destructive) { project.answer(path, .revert) }
+                Button("Cancel", role: .cancel) { project.answer(path, .cancel) }
+            } message: { path in
+                Text("Another app changed “\(path)” while it has unsaved changes here.")
+            }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {
                 case .gotoPage:
-                    GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
+                    GoToSheet(noun: "Page", limit: { views.pdf.pageCount > 0 ? views.pdf.pageCount : nil }) {
                         app.requestPDF(.goToPage($0))
                     }
                 case .gotoLine:
-                    GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) { line in
+                    GoToSheet(noun: "Line", limit: { views.lineCount }) { line in
                         if let path = project.openPath { Task { await project.open(path, line: line, jump: true) } }
                     }
                 case .rename(let symbol):
@@ -65,28 +72,6 @@ struct WorkspaceModals: ViewModifier {
                     VersionHistorySheet(project: project)
                 }
             }
-            .onChange(of: project.diskConflict) { _, path in if let path { askWhichVersion(of: path) } }
-    }
-
-    private func askWhichVersion(of path: String) {
-        let alert = NSAlert()
-        alert.messageText = String(localized: "“\(path.fileName)” Changed on Disk")
-        alert.informativeText = String(localized: "Another app changed “\(path)” while it has unsaved changes here.")
-        alert.addButton(withTitle: String(localized: "Save Anyway")).keyEquivalent = ""
-        alert.addButton(withTitle: String(localized: "Revert")).hasDestructiveAction = true
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        let answered = { [project] (response: NSApplication.ModalResponse) in
-            switch response {
-            case .alertFirstButtonReturn: project.answer(path, .save)
-            case .alertSecondButtonReturn: project.answer(path, .revert)
-            default: project.answer(path, .cancel)
-            }
-        }
-        if let window = project.editor.textView.window {
-            alert.beginSheetModal(for: window, completionHandler: answered)
-        } else {
-            answered(alert.runModal())
-        }
     }
 }
 

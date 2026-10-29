@@ -153,6 +153,7 @@ private struct CaretPlace: View {
 
 private struct WordCount: View {
     @Environment(AppModel.self) private var app
+    @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     let detail: StatusBar.Detail
     @State private var selectedWords: Int?
@@ -168,11 +169,11 @@ private struct WordCount: View {
             }
             .foregroundStyle(.secondary)
             .layoutPriority(-1)
-            .task(id: project.editor.changes.count) {
-                let selection = project.editor.textView.selectedRange()
+            .task(id: views.changes) {
+                let selection = views.selection
                 guard selection.length > 0 else { return selectedWords = nil }
                 guard (try? await Task.sleep(for: .milliseconds(200))) != nil else { return }
-                selectedWords = project.editor.textView.document.words(in: selection)
+                selectedWords = views.words(in: selection)
             }
         }
     }
@@ -180,6 +181,7 @@ private struct WordCount: View {
 
 private struct PagePlace: View {
     @Environment(AppModel.self) private var app
+    @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     let detail: StatusBar.Detail
 
@@ -189,9 +191,8 @@ private struct PagePlace: View {
         if Self.shows(project, app) {
             freshness
             Button { app.perform(.pdfGotoPage, on: project) } label: {
-                place(detail, "Page \(project.pdf.page) of \(project.pdf.pageCount)",
-                      short: "\(project.pdf.page)/\(project.pdf.pageCount)",
-                      spoken: "Page \(project.pdf.page) of \(project.pdf.pageCount)")
+                let (page, count) = (views.pdf.page, views.pdf.pageCount)
+                place(detail, "Page \(page) of \(count)", short: "\(page)/\(count)", spoken: "Page \(page) of \(count)")
             }
             .help("Go to a page")
         }

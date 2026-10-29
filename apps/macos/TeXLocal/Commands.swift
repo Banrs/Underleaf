@@ -148,24 +148,6 @@ enum PDFAction {
     case reveal(ForwardLoc, SyncSource?)
 }
 
-extension ProjectModel {
-    func perform(_ action: PDFAction, find: () -> Void) {
-        guard hasPDF else { return }
-        switch action {
-        case .zoomIn: pdf.zoom(in: true)
-        case .zoomOut: pdf.zoom(in: false)
-        case .actualSize: pdf.setScale(1)
-        case .fitWidth: pdf.fitWidth()
-        case .fitPage: pdf.fitPage()
-        case .goToPage(let page): pdf.go(toPage: page)
-        case .find: find()
-        case let .reveal(loc, source): pdf.reveal(loc, from: source)
-        case .inverseFromView:
-            if case let (page, point)? = pdf.sourcePoint() { Task { await inverseSync(page: page, x: point.x, y: point.y) } }
-        }
-    }
-}
-
 extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         guard project?.closed != true, project?.isClosing != true else { return false }
@@ -176,11 +158,10 @@ extension AppModel {
             project?.editsText == true
         case .goBack, .goForward: project?.canRetrace(back: command == .goBack) ?? false
         case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
-        case .editRename: project.map { $0.editsText && $0.editor.renamable != nil } ?? false
+        case .editRename: project.map { $0.editsText && $0.views?.validates(command) == true } ?? false
         case .compileRun: tex?.available == true && project?.compiling == false
         case .compileStop: project?.compiling == true
-        case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
-        case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
+        case .viewZoomIn, .viewZoomOut: project.map { $0.hasPDF && $0.views?.validates(command) == true } ?? false
         case .pdfSave, .pdfOpen, .filePrint: project?.buildPDF != nil
         case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
@@ -222,7 +203,7 @@ extension AppModel {
     func perform(_ command: MenuCommand, on project: ProjectModel?) {
         guard isEnabled(command, on: project) else { return }
         switch command.action {
-        case .edit(let edit)?: project?.editor.perform(edit)
+        case .edit(let edit)?: project?.views?.perform(edit)
         case .pdf(let action)?: requestPDF(action)
         case nil: break
         }
@@ -250,15 +231,10 @@ extension AppModel {
         case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .fileBrowseVersions: prompt = .versionHistory
         case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
-        case .quickHelp: if let project { Task { await project.quickHelp(at: project.editor.textView.caret) } }
-        case .filePrint: if let project { project.pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil) }
-        case .editShiftRight: project?.editor.textView.shiftLines(1)
-        case .editShiftLeft: project?.editor.textView.shiftLines(-1)
+        case .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition, .findUsages, .editRename:
+            project?.views?.perform(command)
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
-        case .jumpToDefinition: project?.editor.jumpToDefinition()
-        case .findUsages: Task { await project?.findUsages() }
-        case .editRename: prompt = project?.editor.renamable.map(Prompt.rename)
         case .pdfGotoPage: prompt = .gotoPage
         case .viewToggleSidebar: sidebarShown.toggle()
         case .viewToggleSource: toggleSource()

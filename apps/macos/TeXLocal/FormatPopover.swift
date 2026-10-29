@@ -5,12 +5,14 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
     private let project: ProjectModel
+    private let views: WorkspaceViews
     private var closingClick: Int?
     private var click: Int? { NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil } }
 
-    init(app: AppModel, project: ProjectModel) {
+    init(app: AppModel, project: ProjectModel, views: WorkspaceViews) {
         self.app = app
         self.project = project
+        self.views = views
         super.init()
         popover.behavior = .transient
         popover.delegate = self
@@ -19,7 +21,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func toggle(relativeTo item: NSToolbarItem) {
         if popover.isShown { return popover.close() }
         if let click, click == closingClick { return }
-        let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in self?.popover.close() })
+        let content = NSHostingController(rootView: FormatPanel(app: app, project: project, views: views) { [weak self] in self?.popover.close() })
         content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
         popover.show(relativeTo: item)
@@ -32,13 +34,12 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
+    let views: WorkspaceViews
     let close: () -> Void
-    @State private var styles = TextStyles()
     @State private var hovered: String?
 
     var body: some View {
-        let headings = project.headingStyles
-        let current = project.headingCommand
+        let (headings, current, styles) = (project.headingStyles, project.headingCommand, views.textStyles)
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach([(MenuCommand.editBold, styles.bold), (.editItalic, styles.italic), (.editUnderline, styles.underline)], id: \.0) { command, edits in
@@ -62,7 +63,6 @@ struct FormatPanel: View {
             .accessibilityLabel("Section Level")
         }
         .fixedSize()
-        .onChange(of: project.editor.changes.count, initial: true) { styles = project.editor.textStyles }
     }
 
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
@@ -82,7 +82,7 @@ struct FormatPanel: View {
     private func row(_ style: HeadingStyle, checked: Bool) -> some View {
         let lit = hovered == style.command
         return Button {
-            project.editor.perform(.heading(style.command))
+            views.perform(.heading(style.command))
             close()
         } label: {
             HStack(spacing: 6) {

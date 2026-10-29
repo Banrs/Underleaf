@@ -62,7 +62,8 @@ struct PDFTests {
 
     @Test func aLivePageWaitsForTheLiveDocumentThatCameBeforeIt() async throws {
         let defaults = TestDefaults()
-        let project = ProjectModel(id: "P", app: AppModel(defaults: defaults.store))
+        let project = ProjectModel(id: "P", app: defaults.app())
+        let views = WorkspaceViews(project: project)
         project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, log: nil, failures: [],
                                                 lines: [:]))))
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 0, live: true))))
@@ -72,8 +73,8 @@ struct PDFTests {
         let typed = try #require(try textPDF(["typed"]).dataRepresentation())
         project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [], complete: true)))
         project.handle(.livePage(LivePage(page: 1, pdf: typed)))
-        await project.liveReads?.value
-        let document = try #require(project.pdf.view.document)
+        await views.liveReads?.value
+        let document = try #require(views.pdf.view.document)
         #expect(document.pageCount == 2 && document.page(at: 1)?.string?.contains("typed") == true)
     }
 

@@ -62,15 +62,15 @@ struct LayoutTests {
     private let defaults = TestDefaults()
 
     @Test func theLayoutIsKeptInTheDefaults() {
-        let app = AppModel(defaults: defaults.store)
+        let app = defaults.app()
         for layout in [WorkspaceLayout.source, .pdf, .split] {
             app.layout = layout
-            #expect(AppModel(defaults: defaults.store).layout == layout)
+            #expect(defaults.app().layout == layout)
         }
     }
 
     @Test func togglingNeverHidesBothPanes() {
-        let app = AppModel(defaults: defaults.store)
+        let app = defaults.app()
         app.layout = .source
         app.toggleSource()
         #expect(app.layout == .pdf)
@@ -81,7 +81,7 @@ struct LayoutTests {
     @Test func oldDefaultsHidingBothShowTheSource() {
         defaults.store.set(false, forKey: DefaultsKey.showSource)
         defaults.store.set(false, forKey: DefaultsKey.showPDF)
-        #expect(AppModel(defaults: defaults.store).layout == .source)
+        #expect(defaults.app().layout == .source)
     }
 }
 
@@ -89,7 +89,7 @@ struct SectionTests {
     private let defaults = TestDefaults()
 
     @Test func theProjectReadsItsSectionsAndAnnouncesAFailedSave() {
-        let app = AppModel(defaults: defaults.store)
+        let app = defaults.app()
         let project = ProjectModel(id: "P", app: app)
         let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
         let file = { (name: String) in TreeNode(name: name, path: name, kind: .tex, children: nil, main: name == "main.tex") }
@@ -110,7 +110,7 @@ struct SectionTests {
     }
 
     @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
-        let app = AppModel(defaults: defaults.store)
+        let app = defaults.app()
         app.layout = .source
         let project = ProjectModel(id: "P", app: app)
         let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: "tex", args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
@@ -133,5 +133,56 @@ struct SectionTests {
         #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !app.showPDF)
         pdf(true)
         #expect(project.livePDF && app.showPDF)
+    }
+}
+
+struct ViewsTests {
+    private let defaults = TestDefaults()
+
+    @Test func aProjectOnItsCoreTellsItsViewsWhatTheStoreShows() async throws {
+        let info = try await newProject()
+        let app = defaults.app()
+        app.autoCompile = false
+        let project = ProjectModel(id: info.id, app: app)
+        let views = Views(project)
+        await project.load()
+        #expect(views.ui != nil && project.initialLoadComplete)
+        #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
+        await project.renameEntry("untitled.tex", to: "notes.tex")
+        #expect(views.shown == ["main.tex", "untitled.tex", "notes.tex"])
+        #expect(views.revealed == ["main.tex", "untitled.tex"])
+        #expect(views.moved == ["untitled.tex", "notes.tex"])
+        #expect(await project.close().value)
+    }
+
+    private final class Views: ProjectViews {
+        private let project: ProjectModel
+        var ui: UiState?
+        var shown: [String] = [], revealed: [String] = [], moved: [String] = []
+
+        init(_ project: ProjectModel) {
+            self.project = project
+            project.views = self
+        }
+
+        let hasPDF = false, zoom = Zoom.fitWidth, shownVersion = 0
+
+        func heard(_ event: Event) {
+            if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }
+        }
+
+        func opened(_ ui: UiState) -> Task<Void, Never>? {
+            self.ui = ui
+            return nil
+        }
+
+        func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) { revealed.append(path) }
+        func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
+        func moved(from: String, to: String) { moved += [from, to] }
+        func trashed(_ path: String) {}
+        func beep() {}
+        func perform(_ command: EditorCommand) {}
+        func perform(_ command: MenuCommand) {}
+        func validates(_ command: MenuCommand) -> Bool { false }
     }
 }

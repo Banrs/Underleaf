@@ -2,11 +2,12 @@ import QuickLookUI
 import SwiftUI
 
 struct SourceColumn: View {
+    @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
 
     var body: some View {
         ZStack {
-            EditorView(editor: project.editor, shown: project.editsText)
+            EditorView(editor: views.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .background(.textSurface)
             if project.openPath == nil {

@@ -9,6 +9,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var home: NSViewController?
     private(set) var workspace: WorkspaceController?
     private var restored: String?
+    private var views: WorkspaceViews?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
     private let findEditor = FindPassingTextView()
@@ -43,7 +44,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     func start() {
         showWindow(nil)
-        guard Core.shared.isOpen else { return }
+        guard app.core.isOpen else { return }
         Task {
             async let tex: Void = app.refreshTeXStatus()
             await app.reloadProjects()
@@ -53,11 +54,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         }
     }
 
+    func attach(_ project: ProjectModel) { views = WorkspaceViews(project: project) }
+
     private func showProject() {
         guard let project = app.workspaceProject(after: workspace?.project) else { return showHome() }
-        guard workspace?.project !== project, let window else { return }
+        guard workspace?.project !== project, let views, views.project === project, let window else { return }
         workspace?.close()
-        let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
+        let workspace = WorkspaceController(app: app, project: project, views: views, size: window.contentLayoutRect.size)
         window.toolbar = nil
         setContent(workspace)
         window.toolbar = workspace.toolbar.toolbar
@@ -75,6 +78,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     private func showHome() {
+        if app.project == nil { views = nil }
         guard home == nil || workspace != nil, let window else { return }
         titleWatch?.cancel()
         workspace?.close()
@@ -116,17 +120,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag)
         else { return nil }
         let app = app
-        guard let project = workspace?.project, !project.closed else {
+        guard let workspace, !workspace.project.closed else {
             guard home != nil, action == .showFindInterface else { return nil }
             return { app.searchFocusToken += 1 }
         }
-        let pdf = project.pdf
+        let (project, pdf) = (workspace.project, workspace.pdf)
         guard app.showPDF, !app.showSource || pdfPagesHaveKeyboard || pdf.find.field.hasFocus else {
             guard project.editsText else {
                 guard action == .showFindInterface, project.hasPDF else { return nil }
                 return { app.requestPDF(.find) }
             }
-            let editor = project.editor
+            let editor = workspace.views.editor
             guard editor.textView.validateUserInterfaceItem(item) else { return nil }
             return {
                 editor.focus()

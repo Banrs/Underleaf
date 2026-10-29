@@ -11,8 +11,8 @@ final class SourceDocument {
         raw = text.withUTF8 { tl_source_new($0.baseAddress, $0.count) }
     }
 
-    init?(session: UInt64, path: String) {
-        guard let raw = Core.shared.source(session: session, path: path) else { return nil }
+    init?(session: SessionClient, path: String) {
+        guard let raw = session.source(path) else { return nil }
         self.raw = raw
     }
 

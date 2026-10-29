@@ -1,4 +1,6 @@
-import SwiftUI
+import CoreTransferable
+import Foundation
+import Observation
 import UniformTypeIdentifiers
 
 nonisolated enum DefaultsKey {
@@ -67,6 +69,7 @@ struct NewProjectDraft: Identifiable {
 
 @Observable
 final class AppModel {
+    let core: Core
     var projects: [ProjectInfo] { core.library.projects }
     private(set) var projectsLoaded = false
     var tex: TexStatus?
@@ -74,8 +77,7 @@ final class AppModel {
     private(set) var installingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
-    private(set) var libraryProblem: AppAlert? = Core.shared.isOpen ? nil
-        : AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice)
+    private(set) var libraryProblem: AppAlert?
 
     var newProjectDraft: NewProjectDraft?
     var prompt: Prompt?
@@ -85,6 +87,8 @@ final class AppModel {
     var exporting: ExportFile?
     var searchFocusToken = 0
     @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
+    @ObservationIgnored var attachViews: (ProjectModel) -> Void = { _ in }
+    @ObservationIgnored var recentLimit: () -> Int = { 10 }
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
 
@@ -116,8 +120,10 @@ final class AppModel {
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
-    init(defaults: UserDefaults = .standard) {
+    init(core: Core, defaults: UserDefaults = .standard) {
+        self.core = core
         self.defaults = defaults
+        if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice) }
         defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
                                      DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
                                      DefaultsKey.showPDF: true])
@@ -181,7 +187,6 @@ final class AppModel {
         return project.initialLoadComplete ? project : shown
     }
 
-    private let core = Core.shared
     @ObservationIgnored private var texCheck: Task<Void, Never>?
 
     func retryLibrary() async {
@@ -237,8 +242,6 @@ final class AppModel {
         let info = try await core.call(CreateProject(name: name, template: template, engine: engine))
         Task { await open(info.id) }
     }
-
-    private static var recentLimit: Int { NSDocumentController.shared.maximumRecentDocumentCount }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
@@ -330,7 +333,7 @@ final class AppModel {
     }
 
     var undoManager: UndoManager? { undoSource() }
-    @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
+    @ObservationIgnored var undoSource: () -> UndoManager? = { nil }
 
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
@@ -379,9 +382,10 @@ final class AppModel {
         guard await leave(generation) else { return }
         dropRequests()
         undoManager?.removeAllActions()
-        recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(Self.recentLimit))
+        recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
         let model = ProjectModel(id: id, app: self)
         project = model
+        attachViews(model)
         await model.load()
     }
 
@@ -405,6 +409,12 @@ final class AppModel {
     func leave() async -> Bool {
         openGeneration += 1
         return await leave(openGeneration)
+    }
+
+    func quit() async -> Bool {
+        guard await leave() else { return false }
+        _ = try? await core.call(KillAll())
+        return true
     }
 
     private func leave(_ generation: Int) async -> Bool {

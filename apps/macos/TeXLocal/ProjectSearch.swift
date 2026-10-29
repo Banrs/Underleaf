@@ -1,10 +1,8 @@
-import AppKit
+import Foundation
 import Observation
 
 @Observable
 final class ProjectSearch {
-    private let core = Core.shared
-
     nonisolated struct Asked: Hashable {
         var query = "", matchCase = false, wholeWords = false
     }
@@ -44,10 +42,11 @@ final class ProjectSearch {
         (groups, failure, searched, usages, chosen) = (found, why, asked, nil, nil)
     }
 
-    func step(_ step: Int) {
+    func step(_ step: Int) -> Bool {
         let hits = groups?.flatMap(\.hits).map(\.id) ?? []
-        guard !hits.isEmpty else { return NSSound.beep() }
+        guard !hits.isEmpty else { return false }
         let at = chosen.flatMap(hits.firstIndex) ?? (step > 0 ? -1 : 0)
         chosen = hits[(at + step + hits.count) % hits.count]
+        return true
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FilesList: View {
     @Environment(AppModel.self) private var app
+    @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     @State private var selection: String?
     @State private var rename = InPlaceRename<String>()
@@ -157,7 +158,7 @@ struct FilesList: View {
     }
 
     private func renameEnded(_ node: TreeNode) {
-        if created == node.path { project.editor.focus() } else { listFocused = true }
+        if created == node.path { views.focusEditor() } else { listFocused = true }
         created = nil
     }
 
