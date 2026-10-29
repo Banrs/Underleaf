@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use super::scan::{Scanner, Visit, arguments};
+use super::scan::{Visit, arguments};
 use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
 impl SourceDocument {
@@ -14,7 +14,7 @@ impl SourceDocument {
     pub(crate) fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let (text, mut point) = (&self.text, self.scans.resume(&self.text, start, end));
-        let mut reading = Reading::new(text, end, point.names, checker, |_: &Text, _: &str, _| {});
+        let mut reading = Reading::new(text, end, point.names, checker);
         let run = point.run.map(|(from, to)| span(from, to - from));
         reading.ranges.extend(run);
         let others = |range| reading.others.push(range);
@@ -90,18 +90,17 @@ impl Names {
     }
 }
 
-struct Reading<'a, F> {
+pub(crate) struct Reading<'a> {
     text: &'a Text,
     end: usize,
     ranges: Vec<TextRange>,
     others: Vec<TextRange>,
     names: Names,
     comments: bool,
-    command: F,
 }
 
-impl<'a, F: FnMut(&Text, &str, usize)> Reading<'a, F> {
-    fn new(text: &'a Text, end: usize, names: Names, checker: Checker, command: F) -> Self {
+impl<'a> Reading<'a> {
+    fn new(text: &'a Text, end: usize, names: Names, checker: Checker) -> Self {
         Self {
             text,
             end,
@@ -109,12 +108,25 @@ impl<'a, F: FnMut(&Text, &str, usize)> Reading<'a, F> {
             others: Vec::new(),
             names,
             comments: checker == Checker::WritingTools,
-            command,
+        }
+    }
+
+    pub(crate) fn whole(text: &'a Text) -> Self {
+        let checker = Checker::WritingTools;
+        Self::new(text, text.units.len(), Names::default(), checker)
+    }
+
+    pub(crate) fn prose(self) -> Prose<'a> {
+        let mut skipped = self.ranges;
+        skipped.extend(self.others);
+        Prose {
+            units: &self.text.units,
+            skipped: merged(skipped),
         }
     }
 }
 
-impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
+impl Visit for Reading<'_> {
     fn range(&mut self, from: usize, to: usize) {
         merge_range(&mut self.ranges, span(from, to - from));
     }
@@ -131,26 +143,12 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
         let command = (name, command_start, name_end);
         let others = |range| self.others.push(range);
         self.names.command(self.text, command, self.end, others);
-        (self.command)(self.text, name, name_end);
     }
 }
 
 pub(crate) struct Prose<'a> {
     units: &'a [u16],
     skipped: Vec<TextRange>,
-}
-
-pub(crate) fn prose<'a>(text: &'a Text, command: impl FnMut(&Text, &str, usize)) -> Prose<'a> {
-    let len = text.units.len();
-    let writing = Checker::WritingTools;
-    let mut reading = Reading::new(text, len, Names::default(), writing, command);
-    Scanner::default().run(&text.units, len, &[], &mut reading);
-    let mut skipped = reading.ranges;
-    skipped.extend(reading.others);
-    Prose {
-        units: &text.units,
-        skipped: merged(skipped),
-    }
 }
 
 impl Prose<'_> {

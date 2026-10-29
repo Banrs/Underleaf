@@ -17,9 +17,8 @@ const CONTEXT: usize = 3;
 
 pub fn compare(old: &str, new: &str) -> Vec<DiffLine> {
     let (a, b): (Vec<_>, Vec<_>) = (old.lines().collect(), new.lines().collect());
-    let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let ends = a[head..].iter().rev().zip(b[head..].iter().rev());
-    let tail = ends.take_while(|(x, y)| x == y).count();
+    let head = common(a.iter(), b.iter());
+    let tail = common(a[head..].iter().rev(), b[head..].iter().rev());
     let (x, y) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
     let mut rows: Vec<DiffLine> = a[..head]
         .iter()

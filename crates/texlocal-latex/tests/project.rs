@@ -96,13 +96,15 @@ fn checks_find_unclosed_and_stray_groups() {
 
 #[test]
 fn facts_read_names_packages_and_commands() {
-    let text = "\\usepackage{amsmath,graphicx}\n\\newcommand{\\vect}[1]{\\mathbf{#1}}\n\\begin{document}\n\\label{eq}\n";
+    let text = "\\usepackage{amsmath,graphicx}\n\\newcommand{\\vect}[1]{\\mathbf{#1}}\n\\begin{document}\n\\label{eq}\n\\section{The \\emph{Start}}\\label{start}\n\\caption{A cat} \\label{cat}\n";
     let facts = Facts::read(text, FileKind::Tex);
     assert_eq!(facts.packages, ["amsmath", "graphicx"]);
     let commands: Vec<&str> = facts.commands.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(commands, ["\\vect"]);
     assert_eq!(facts.labels[0].name, "eq");
     assert_eq!(facts.labels[0].place.line, 4);
+    let details: Vec<_> = facts.labels.iter().map(|l| l.detail.as_deref()).collect();
+    assert_eq!(details, [None, Some("The Start"), Some("A cat")]);
     let end_of_line_1 = Place {
         line: 1,
         column: 29,
@@ -110,11 +112,13 @@ fn facts_read_names_packages_and_commands() {
     };
     assert_eq!(facts.new_package, Some(end_of_line_1));
     let bib = Facts::read(
-        "@book{a, title={A}}\n@comment{b,}\n@misc{c,}",
+        "@book{a, title={A}}\n@comment{b,}\n@misc{c,}\n@article{d, author={Knuth, Donald and Leslie Lamport and Other, A}, year=1984}",
         FileKind::Bib,
     );
     let keys: Vec<&str> = bib.citations.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(keys, ["a", "c"]);
+    assert_eq!(keys, ["a", "c", "d"]);
+    let details: Vec<_> = bib.citations.iter().map(|c| c.detail.as_deref()).collect();
+    assert_eq!(details, [Some("A"), None, Some("Knuth et al. · 1984")]);
 }
 
 #[test]
@@ -136,6 +140,9 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
     assert_eq!(titles(&outline["tree"][0]["children"]), ["Two"]);
     assert_eq!(outline["tree"][1]["heading"]["file"], "ch.tex");
     assert_eq!(outline["words"], 9);
+    let tree = &outline["tree"];
+    let words = [&tree[0], &tree[0]["children"][0], &tree[1]].map(|node| &node["words"]);
+    assert_eq!(words, [7, 3, 2]);
     let lone = analyze::analyze_project(&symbols, Some("main.tex"), Some("lone.tex"));
     assert_eq!(lone.files, ["lone.tex"]);
     let shown = analyze::analyze_project(&symbols, Some("main.tex"), Some("ch.tex"));

@@ -258,7 +258,7 @@ impl SourceDocument {
     }
 }
 
-fn is(u: u16, c: char) -> bool {
+pub(crate) fn is(u: u16, c: char) -> bool {
     u == c as u16
 }
 
@@ -290,7 +290,7 @@ fn ascii<'a>(units: &[u16], buf: &'a mut [u8; NAME]) -> &'a str {
     std::str::from_utf8(&buf[..units.len()]).unwrap_or_default()
 }
 
-fn letter(u: u16) -> bool {
+pub(crate) fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 

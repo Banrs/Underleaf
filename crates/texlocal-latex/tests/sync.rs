@@ -26,8 +26,10 @@ fn synctex_goes_from_a_line_to_its_page_and_back() {
             let shown = synctex.forward(1, line);
             let at = shown.first().unwrap();
             assert_eq!(at.page, page);
-            let back = synctex.inverse(page, at.h + 5.0, at.v - at.height / 2.0);
-            assert_eq!(back, Some(("/p/./main.tex", line)));
+            for h in [at.h + 5.0, 1.0] {
+                let back = synctex.inverse(page, h, at.v - at.height / 2.0);
+                assert_eq!(back, Some(("/p/./main.tex", line)));
+            }
         }
         assert!(synctex.forward(9, 1).is_empty());
     }
@@ -44,6 +46,8 @@ fn a_word_is_found_in_the_pdf_by_the_words_around_it() {
         in_pdf("the first", 5, &ligature),
         json!({ "page": 1, "start": 4, "end": 8 })
     );
+    let short = pages(json!([{ "page": 1, "text": "world", "near": [] }]));
+    assert_eq!(in_pdf("worldwide", 2, &short), Value::Null);
 }
 
 #[test]

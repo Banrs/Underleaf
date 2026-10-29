@@ -95,8 +95,9 @@ impl SyncTex {
     pub fn read(bytes: Vec<u8>) -> Option<Self> {
         let bytes = if bytes.starts_with(&[0x1f, 0x8b]) {
             let mut unzipped = Vec::new();
-            let gz = flate2::read::MultiGzDecoder::new(&bytes[..]).read_to_end(&mut unzipped);
-            gz.ok().map(|_| unzipped)?
+            let mut gz = flate2::read::MultiGzDecoder::new(&bytes[..]);
+            gz.read_to_end(&mut unzipped).ok()?;
+            unzipped
         } else {
             bytes
         };
@@ -189,10 +190,6 @@ fn friends_of(tag: i32, line: i32) -> Option<usize> {
         .map(|key| key % LISTS)
 }
 
-fn named<'a>(line: &'a [u8], name: &str) -> Option<&'a [u8]> {
-    line.strip_prefix(name.as_bytes())
-}
-
 struct Reader {
     s: SyncTex,
     last_v: i32,
@@ -217,15 +214,15 @@ impl SyncTex {
             lines.next();
         }
         lines.find(|line| line.starts_with(b"Output:"))?;
-        let mut setting = |name: &str| {
-            let value = lines.find_map(|line| named(line, name))?;
+        let mut setting = |name: &[u8]| {
+            let value = lines.find_map(|line| line.strip_prefix(name))?;
             number(value, 0).map(|(value, _)| value)
         };
         let (magnification, unit, x_offset, y_offset) = (
-            setting("Magnification:")?,
-            setting("Unit:")?,
-            setting("X Offset:")?,
-            setting("Y Offset:")?,
+            setting(b"Magnification:")?,
+            setting(b"Unit:")?,
+            setting(b"X Offset:")?,
+            setting(b"Y Offset:")?,
         );
         lines.find(|line| line.starts_with(b"Content:"))?;
         let magnification = if magnification > 0 {
@@ -288,7 +285,7 @@ impl SyncTex {
 
 impl Input {
     fn parse(line: &[u8]) -> Option<Self> {
-        let rest = named(line, "Input:")?;
+        let rest = line.strip_prefix(b"Input:")?;
         let (tag, end) = number(rest, 0)?;
         let name = rest.get(end + 1..)?;
         let name = String::from_utf8_lossy(name);
@@ -776,7 +773,6 @@ impl Node {
     }
 }
 
-#[derive(Clone, Copy)]
 struct Bounds {
     min_h: i64,
     max_h: i64,
@@ -811,7 +807,6 @@ impl Bounds {
     }
 }
 
-#[derive(Clone, Copy)]
 struct Near {
     node: Option<u32>,
     distance: i64,
@@ -826,6 +821,16 @@ const NOWHERE: Near = Near {
 struct Point {
     h: i64,
     v: i64,
+}
+
+fn outside(at: i64, min: i64, max: i64) -> i64 {
+    if at < min {
+        min - at
+    } else if at > max {
+        max - at
+    } else {
+        0
+    }
 }
 
 fn next_step(step: i32) -> i32 {
@@ -1054,23 +1059,10 @@ impl SyncTex {
 
     fn h_ordered(&self, hit: Point, id: u32) -> i64 {
         let node = self.node(id);
-        let outside = |min: i64, max: i64| {
-            if hit.h < min {
-                min - hit.h
-            } else if hit.h > max {
-                max - hit.h
-            } else {
-                0
-            }
-        };
         match node.kind {
-            Kind::VBox | Kind::VoidVBox | Kind::VoidHBox => {
-                let min = i64::from(node.at.h);
-                outside(min, min + i64::from(node.at.width).abs())
-            }
-            Kind::HBox => {
+            Kind::VBox | Kind::VoidVBox | Kind::HBox | Kind::VoidHBox => {
                 let min = i64::from(node.seen.h);
-                outside(min, min + i64::from(node.seen.width).abs())
+                outside(hit.h, min, min + i64::from(node.seen.width).abs())
             }
             Kind::Kern => {
                 let (h, width) = (i64::from(node.at.h), i64::from(node.at.width));
@@ -1100,10 +1092,9 @@ impl SyncTex {
     fn v_ordered(&self, hit: Point, id: u32) -> i64 {
         let node = self.node(id);
         let (v, height, depth) = match node.kind {
-            Kind::VBox | Kind::VoidVBox | Kind::VoidHBox => {
-                (node.at.v, node.at.height, node.at.depth)
+            Kind::VBox | Kind::VoidVBox | Kind::HBox | Kind::VoidHBox => {
+                (node.seen.v, node.seen.height, node.seen.depth)
             }
-            Kind::HBox => (node.seen.v, node.seen.height, node.seen.depth),
             Kind::Rule | Kind::Kern | Kind::Glue | Kind::Math => {
                 let parent = node.parent.map(|p| self.node(p).at).unwrap_or_default();
                 (node.at.v, parent.height, parent.depth)
@@ -1111,14 +1102,11 @@ impl SyncTex {
             _ => return FAR,
         };
         let v = i64::from(v);
-        let (min, max) = (v - i64::from(height).abs(), v + i64::from(depth).abs());
-        if hit.v < min {
-            min - hit.v
-        } else if hit.v > max {
-            max - hit.v
-        } else {
-            0
-        }
+        outside(
+            hit.v,
+            v - i64::from(height).abs(),
+            v + i64::from(depth).abs(),
+        )
     }
 
     fn distance(&self, hit: Point, id: u32) -> i64 {
@@ -1127,30 +1115,10 @@ impl SyncTex {
         let parent_height = || i64::from(node.parent.map_or(0, |p| self.node(p).at.height)).abs();
         let (h, v) = (i64::from(at.h), i64::from(at.v));
         let to_box = |min_h: i64, max_h: i64, min_v: i64, max_v: i64| {
-            let across = if hit.h < min_h {
-                min_h - hit.h
-            } else if hit.h > max_h {
-                hit.h - max_h
-            } else {
-                0
-            };
-            let down = if hit.v < min_v {
-                min_v - hit.v
-            } else if hit.v > max_v {
-                hit.v - max_v
-            } else {
-                0
-            };
-            across + down
+            outside(hit.h, min_h, max_h).abs() + outside(hit.v, min_v, max_v).abs()
         };
         match node.kind {
-            Kind::VBox => to_box(
-                h,
-                h + i64::from(at.width).abs(),
-                v - i64::from(at.height).abs(),
-                v + i64::from(at.depth).abs(),
-            ),
-            Kind::HBox => {
+            Kind::VBox | Kind::HBox => {
                 let seen = node.seen;
                 let (h, v) = (i64::from(seen.h), i64::from(seen.v));
                 to_box(

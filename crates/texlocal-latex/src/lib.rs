@@ -45,7 +45,7 @@ const TEXT_EXTENSIONS: &[&str] = &[
 
 const TEXT_NAMES: &[&str] = &["latexmkrc", "makefile", "license", "readme"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
     Tex,
