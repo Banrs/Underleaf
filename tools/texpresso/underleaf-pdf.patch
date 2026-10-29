@@ -84,7 +84,7 @@ index e2f2105..66527f7 100644
  fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
 diff --git a/src/engine/main/main.c b/src/engine/main/main.c
-index 333408e..23db8db 100644
+index 333408e..33299d3 100644
 --- a/src/engine/main/main.c
 +++ b/src/engine/main/main.c
 @@ -62,7 +62,11 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
@@ -100,6 +100,22 @@ index 333408e..23db8db 100644
  }
  
  int ttstub_shell_escape(const unsigned short *cmd, size_t len)
+@@ -229,6 +233,15 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
+ 
+     char *ipath =
+       txp_open(texpresso, id, path, kind_of_ttbc_format(format), TXP_READ);
++    // The project's files are the editor's, by TeX's default extension too. From the disk, `part`
++    // would be the saved part.tex: LaTeX takes it for another file than the edited part.tex once
++    // their sizes differ, and \input{part} reads the saved one.
++    for (const char **exts = format_extensions(format); !ipath && *exts; exts++)
++    {
++      char named[PATH_MAX + 1];
++      snprintf(named, sizeof named, "%s%s", path, *exts);
++      ipath = txp_open(texpresso, id, named, kind_of_ttbc_format(format), TXP_READ);
++    }
+ 
+     if (ipath)
+     {
 diff --git a/src/frontend/Makefile b/src/frontend/Makefile
 index c922019..10af953 100644
 --- a/src/frontend/Makefile
