@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -e
 S=${1:?usage: setup.sh <scratchpad>}; S=${S:A}; T=${0:A:h}
-mkdir -p $S/qa $S/logs $S/locks
+mkdir -p $S/qa
 xcrun swiftc -O -o $S/qa/qa $T/qa.swift
 clang -dynamiclib -framework Cocoa -o $S/qa/appearance.dylib $T/appearance.m
 rsync -a --delete --exclude='*.gz' $T/library-seed/ $S/qa-library-seed/
