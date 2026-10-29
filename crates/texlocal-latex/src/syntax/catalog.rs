@@ -23,7 +23,7 @@ pub struct Catalog {
     pub(crate) symbol_groups: Vec<SymbolGroup>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Templates {
     pub(crate) math: Vec<Template>,
     pub(crate) insert: Vec<Template>,
@@ -31,7 +31,7 @@ pub(crate) struct Templates {
     pub(crate) references: Vec<Template>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Template {
     pub(crate) title: String,
     pub(crate) body: String,
@@ -41,13 +41,13 @@ pub(crate) struct Template {
     pub(crate) inline: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SymbolGroup {
     pub(crate) title: String,
     pub(crate) symbols: Vec<Symbol>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Symbol {
     pub(crate) glyph: String,
     pub(crate) command: String,

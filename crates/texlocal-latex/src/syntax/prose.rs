@@ -4,9 +4,11 @@ use super::scan::{Scanner, Visit, arguments};
 use super::{Checker, SourceDocument, Text, TextRange, catalog::CATALOG, clamp, span};
 
 impl SourceDocument {
-    pub(crate) fn words(&self, selection: TextRange) -> usize {
+    pub(crate) fn words(&mut self, selection: TextRange) -> usize {
         let (start, end) = clamp(selection, self.text.len()).bounds();
-        prose(&self.text, |_, _, _| {}).words(start..end)
+        let skipped = self.code_ranges(selection, Checker::WritingTools);
+        let units = &self.text.units;
+        Prose { units, skipped }.words(start..end)
     }
 
     pub(crate) fn code_ranges(&mut self, selection: TextRange, checker: Checker) -> Vec<TextRange> {
@@ -15,7 +17,8 @@ impl SourceDocument {
         let mut reading = Reading::new(text, end, point.names, checker, |_: &Text, _: &str, _| {});
         let run = point.run.map(|(from, to)| span(from, to - from));
         reading.ranges.extend(run);
-        reading.names.resume(text, end, &mut reading.others);
+        let others = |range| reading.others.push(range);
+        reading.names.resume(text, end, others);
         point
             .scanner
             .run(&text.units[..end], end, &[], &mut reading);
@@ -65,7 +68,7 @@ impl Names {
         text: &Text,
         (name, command_start, name_end): (&str, usize, usize),
         end: usize,
-        ranges: &mut Vec<TextRange>,
+        found: impl FnMut(TextRange),
     ) {
         let catalog = &*CATALOG;
         let lists = [
@@ -75,16 +78,14 @@ impl Names {
         ];
         if command_start >= self.parsed_until && lists.iter().any(|l| l.contains(name)) {
             self.from = Some(name_end);
-            self.resume(text, end, ranges);
+            self.resume(text, end, found);
         }
     }
 
-    pub(crate) fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
+    pub(crate) fn resume(&mut self, text: &Text, end: usize, mut found: impl FnMut(TextRange)) {
         if let Some(from) = self.from {
-            self.parsed_until = arguments(&text.units[..end], from, |r, _| {
-                ranges.push(span(r.start, r.len()));
-            })
-            .0;
+            let units = &text.units[..end];
+            self.parsed_until = arguments(units, from, |r, _| found(span(r.start, r.len()))).0;
         }
     }
 }
@@ -128,8 +129,8 @@ impl<F: FnMut(&Text, &str, usize)> Visit for Reading<'_, F> {
         self.others
             .push(span(command_start, name_end - command_start));
         let command = (name, command_start, name_end);
-        self.names
-            .command(self.text, command, self.end, &mut self.others);
+        let others = |range| self.others.push(range);
+        self.names.command(self.text, command, self.end, others);
         (self.command)(self.text, name, name_end);
     }
 }

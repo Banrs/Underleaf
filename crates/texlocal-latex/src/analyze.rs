@@ -244,7 +244,7 @@ impl Facts {
         let mut scanner = Scanner::default();
         scanner.run(&text.units, text.units.len(), &[], &mut names);
         let Names(.., structure) = names;
-        (facts.slips, facts.end) = structure.finish(&text, &scanner.groups());
+        (facts.slips, facts.end) = structure.finish(&text, scanner.groups());
         facts
     }
 }

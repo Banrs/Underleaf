@@ -8,10 +8,10 @@ use serde::Serialize;
 
 use super::SourceDocument;
 use super::catalog::CATALOG;
-use super::scan::{Group, Visit, environment_name};
+use super::scan::{End, Group, Visit, environment_name};
 use crate::utf16;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct MathPreview {
     pub(crate) start: u32,
     pub(crate) tex: String,
@@ -26,16 +26,16 @@ static CONTROL_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[A-Za-z@]
 const AHEAD: usize = 20_000;
 
 fn display(group: &Group) -> bool {
-    matches!(group.end.as_ref(), "$$" | "\\]")
+    matches!(group.end, End::Dollars | End::Bracket)
         || environment(group).is_some_and(|name| CATALOG.preview_environments.contains(name))
 }
 
 fn inline(group: &Group) -> bool {
-    matches!(group.end.as_ref(), "$" | "\\)")
+    matches!(group.end, End::Dollar | End::Parenthesis)
 }
 
 fn environment(group: &Group) -> Option<&str> {
-    let name = group.end.strip_prefix("env:")?;
+    let name = group.environment()?;
     Some(name.strip_suffix('*').unwrap_or(name))
 }
 
@@ -68,11 +68,11 @@ impl SourceDocument {
             found: None,
         };
         scanner.run(units, caret, &[], &mut close);
-        let groups = scanner.groups();
-        let open = groups.iter().find(|g| display(g));
-        if let Some(group) = open.or_else(|| groups.iter().rev().find(|g| inline(g))) {
+        let open = scanner.groups().filter(|g| display(g)).last();
+        let open = open.or_else(|| scanner.groups().find(|g| inline(g)));
+        if let Some(open) = open.map(|g| g.open) {
             close = Close {
-                open: Some(group.open),
+                open: Some(open),
                 at: caret,
                 found: None,
             };
@@ -81,10 +81,9 @@ impl SourceDocument {
             }
         }
         let (group, close) = close.found?;
-        let body = match group.end.as_ref() {
-            "$" => group.open + 1,
-            "$$" | "\\)" | "\\]" => group.open + 2,
-            _ => environment_name(units, group.open + "\\begin".len())?.1,
+        let body = match group.delimiter() {
+            Some(width) => group.open + width,
+            None => environment_name(units, group.open + "\\begin".len())?.1,
         };
         let tex = preview_tex(
             environment(&group),
