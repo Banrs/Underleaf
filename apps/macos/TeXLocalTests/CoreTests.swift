@@ -26,7 +26,7 @@ struct CoreTests {
     @Test func aSessionsDocumentIsEditedAndSavedAndItsEventsDecode() async throws {
         let project = try await newProject()
         var events: [Event] = []
-        let session = SessionClient { if case .event(let event) = $0 { events.append(event) } }
+        let session = SessionClient { events.append($0) }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         try await session.call(OpenDocument(path: "main.tex"))
         try await waitUntil { events.contains { if case .section(.outline(_?)) = $0 { true } else { false } } }
@@ -43,7 +43,7 @@ struct CoreTests {
     @Test func theStoreIsFilledBeforeTheOpenReplyAndEachReplyFollowsItsSections() async throws {
         let project = try await newProject(template: .blank)
         let store = SessionStore()
-        let session = SessionClient { if case .event(.section(let section)) = $0 { store.apply(section) } }
+        let session = SessionClient { if case .section(let section) = $0 { store.apply(section) } }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         #expect(store.project?.name == project.name)
         #expect(store.project?.settings.mainFile == "main.tex")

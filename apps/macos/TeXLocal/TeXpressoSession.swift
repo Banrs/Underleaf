@@ -1,22 +1,5 @@
+import Foundation
 import Observation
-import PDFKit
-
-nonisolated enum LiveRead: @unchecked Sendable {
-    case document(PDFDocument?)
-    case page(PDFPage?, at: Int)
-
-    init(_ live: LiveDocument) {
-        self = .document(Self.mapped(URL(filePath: live.path)).flatMap { $0.pageCount > 0 ? $0 : nil })
-    }
-
-    init(_ live: LivePage) {
-        self = .page(Self.mapped(URL(filePath: live.path))?.page(at: 0), at: live.page)
-    }
-
-    private static func mapped(_ url: URL) -> PDFDocument? {
-        (try? Data(contentsOf: url, options: .alwaysMapped)).flatMap(PDFDocument.init(data:))
-    }
-}
 
 @Observable
 final class TeXpressoSession {

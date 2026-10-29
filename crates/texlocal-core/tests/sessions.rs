@@ -662,7 +662,7 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
 #[tokio::test(flavor = "multi_thread")]
 async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", BROKEN)], Arc::clone(&preview)).await;
+    let rig = Rig::previewing(&[("main.tex", BROKEN)], |_| {}, Arc::clone(&preview)).await;
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     *preview.log.lock().unwrap() =
@@ -676,7 +676,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     });
     preview.send(LiveEvent::Page {
         page: 0,
-        path: "page.pdf".into(),
+        pdf: "JVBERi0=".into(),
     });
     let live = rig.section("live", |l| !l["lines"]["main.tex"].is_null());
     assert_eq!(live["lines"]["main.tex"][0]["line"], 3);
@@ -692,6 +692,31 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     assert_eq!(rig.section("shownPdf", |_| true)["live"], false);
     let stopped = rig.section("live", |l| l["phase"] == "stopped");
     assert_eq!(stopped["lines"], json!({}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside_it() {
+    let main = "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n";
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", main)], stub_tex, preview).await;
+    rig.call("StartLive", json!({}));
+    rig.call("CloseProject", json!({}));
+    rig.forget();
+    let again = 2;
+    rig.call_to(
+        again,
+        "OpenProject",
+        json!({ "id": rig.id, "autoCompile": true }),
+    );
+    rig.section("live", |l| l["phase"] == "running");
+    rig.call_to(again, "OpenDocument", json!({ "path": "main.tex" }));
+    let doc = rig.sessions.document(again, "main.tex").unwrap();
+    doc.edit(0, 0, "% more\n", None, false);
+    rig.call_to(again, "Save", json!({ "reporting": true }));
+    let builds = || rig.said().iter().filter(|kind| *kind == "build").count();
+    assert_eq!(builds(), 1, "only the open's build section, with no build");
+    rig.call_to(again, "Compile", json!({ "auto": false }));
+    rig.section("build", |b| b["compiling"] == true);
 }
 
 async fn compiling_slowly() -> Rig {

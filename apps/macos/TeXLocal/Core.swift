@@ -32,7 +32,7 @@ final class Core {
             for await (said, json) in Self.heard.stream {
                 switch said {
                 case .reply(let id): pending.removeValue(forKey: id)?(json)
-                case .event(let session, let heard): observers[session]?(heard)
+                case .event(let session, let event): observers[session]?(event)
                 }
             }
         }
@@ -128,7 +128,7 @@ final class Core {
 
     private nonisolated enum Said: Decodable {
         case reply(UInt64)
-        case event(UInt64, Heard)
+        case event(UInt64, Event)
 
         private enum Keys: CodingKey { case reply }
 
@@ -137,7 +137,7 @@ final class Core {
                 self = .reply(id)
             } else {
                 let said = try SessionEvent(from: decoder)
-                self = .event(said.session, Heard(said.event))
+                self = .event(said.session, said.event)
             }
         }
     }
@@ -153,10 +153,10 @@ final class Core {
         }
     }
 
-    private var observers: [UInt64: (Heard) -> Void] = [:]
+    private var observers: [UInt64: (Event) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    func observe(_ observer: @escaping (Heard) -> Void) -> UInt64 {
+    func observe(_ observer: @escaping (Event) -> Void) -> UInt64 {
         numbered += 1
         observers[numbered] = observer
         return numbered
@@ -169,7 +169,7 @@ final class SessionClient {
     let id: UInt64
     private let core = Core.shared
 
-    init(_ observer: @escaping (Heard) -> Void) { id = core.observe(observer) }
+    init(_ observer: @escaping (Event) -> Void) { id = core.observe(observer) }
 
     @discardableResult
     func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
@@ -185,18 +185,5 @@ final class SessionClient {
     func discard() {
         core.forget(id)
         send(CloseProject())
-    }
-}
-
-nonisolated enum Heard: Sendable {
-    case event(Event)
-    case live(LiveRead)
-
-    init(_ event: Event) {
-        switch event {
-        case .liveDocument(let live): self = .live(LiveRead(live))
-        case .livePage(let live): self = .live(LiveRead(live))
-        default: self = .event(event)
-        }
     }
 }

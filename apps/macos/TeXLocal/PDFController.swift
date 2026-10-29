@@ -156,6 +156,8 @@ final class PDFController: NSObject {
         return document
     }
 
+    @concurrent static func loadPage(_ pdf: Data) async -> sending PDFPage? { PDFDocument(data: pdf)?.page(at: 0) }
+
     func print(title: String, file: URL?) {
         Task {
             let document = if let file { await Self.loadDocument(file) } else { view.document }

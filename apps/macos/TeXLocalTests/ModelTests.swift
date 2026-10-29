@@ -98,13 +98,13 @@ struct SectionTests {
             .tree([file("main.tex"), TreeNode(name: "figs", path: "figs", kind: nil, children: [], main: false), file("b.tex")]),
             .documents([DocumentState(path: "b.tex", error: nil, held: .changed)]),
         ]
-        for section in sections { project.handle(.event(.section(section))) }
+        for section in sections { project.handle(.section(section)) }
         #expect(project.name == "Paper")
         #expect(project.settings?.mainFile == "main.tex")
         #expect(project.url("b.tex")?.path(percentEncoded: false) == "/tmp/Paper/b.tex")
         #expect(project.tree.nodes.map(\.name) == ["figs", "b.tex", "main.tex"])
         #expect(project.saveFailure == "Another app changed “b.tex”.")
-        project.handle(.event(.section(.documents([DocumentState(path: "b.tex", error: "The disk is full.", held: nil)]))))
+        project.handle(.section(.documents([DocumentState(path: "b.tex", error: "The disk is full.", held: nil)])))
         #expect(app.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
@@ -117,8 +117,8 @@ struct SectionTests {
         let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
         let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box], log: "")
         let build = { (issues: [LogItem]) in
-            project.handle(.event(.section(.build(BuildState(compiling: false, auto: false, outdated: true, result: result,
-                                                                  issues: issues, lines: [:])))))
+            project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: true, result: result,
+                                                      issues: issues, lines: [:]))))
         }
         build([error, warning])
         #expect(project.listed == [error, warning, box])
@@ -128,7 +128,7 @@ struct SectionTests {
         #expect(project.chosenIssue == 1)
         build([warning])
         #expect(project.chosenIssue == nil)
-        let pdf = { (live: Bool) in project.handle(.event(.section(.shownPdf(ShownPdf(path: "/tmp/P/main.pdf", version: 1, live: live))))) }
+        let pdf = { (live: Bool) in project.handle(.section(.shownPdf(ShownPdf(path: "/tmp/P/main.pdf", version: 1, live: live)))) }
         pdf(false)
         #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !app.showPDF)
         pdf(true)

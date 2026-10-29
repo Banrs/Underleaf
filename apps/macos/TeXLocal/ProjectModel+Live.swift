@@ -16,7 +16,6 @@ extension ProjectModel {
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
         texpresso.starting()
-        if let pages = pdf.visiblePages { liveView(pages) }
         liveCaret()
         session.send(StartLive())
     }
@@ -28,7 +27,7 @@ extension ProjectModel {
     }
 
     func liveView(_ pages: ClosedRange<Int>) {
-        guard texpresso.active, let session else { return }
+        guard let session else { return }
         session.send(LiveView(first: pages.lowerBound, last: pages.upperBound))
     }
 
@@ -43,14 +42,20 @@ extension ProjectModel {
         showIssues()
     }
 
-    func showLive(_ read: LiveRead) {
-        guard texpresso.active, livePDF else { return }
-        switch read {
-        case .document(let document?):
+    private var showsLive: Bool { !closed && texpresso.active && livePDF }
+
+    func showLive(_ live: LiveDocument) {
+        _ = enqueue(&liveReads) { [self] in
+            guard let document = await PDFController.loadDocument(URL(filePath: live.path)), showsLive else { return }
             pdf.show(document)
             if followsCaret { followCaret() }
-        case .page(let page?, let index): pdf.show(page, at: index)
-        case .document(nil), .page(nil, _): break
+        }
+    }
+
+    func showLive(_ live: LivePage) {
+        _ = enqueue(&liveReads) { [self] in
+            guard let page = await PDFController.loadPage(live.pdf), showsLive else { return }
+            pdf.show(page, at: live.page)
         }
     }
 

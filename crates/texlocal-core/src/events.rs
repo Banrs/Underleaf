@@ -73,7 +73,8 @@ pub(crate) struct BuildFinished {
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct LivePage {
     pub page: u32,
-    pub path: String,
+    #[schemars(extend("contentEncoding" = "base64"))]
+    pub pdf: String,
 }
 
 #[derive(Serialize, JsonSchema)]

@@ -172,7 +172,11 @@ impl Actor {
             .flatten();
         let mut builds = Builds::default();
         builds.pdf = built_pdf(&project);
+        let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
+        if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
+            later.push_back(Later::Restart);
+        }
         if auto_compile && builds.pdf.is_none() {
             later.push_back(Later::Compile(true));
         }
@@ -210,7 +214,6 @@ impl Actor {
         };
         actor.publish_all(tree);
         actor.snapshot_soon();
-        let ui = settings::read_ui(&actor.project.ui);
         Ok((actor, ui))
     }
 

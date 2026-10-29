@@ -22,11 +22,11 @@ use crate::{CoreError, lock, settings, sys, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_LOG: usize = 16 * 1024 * 1024;
-const MAX_MESSAGE: usize = 2 * 1024 * 1024;
+const MAX_MESSAGE: usize = 64 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
 const NOT_RUNNING: &str = "Live Preview isn't running.";
 const UNPATCHED: &str = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build it with tools/texpresso/build.sh.";
-const LIVE_VERSION: u64 = 2;
+const LIVE_VERSION: u64 = 3;
 const UNFIT: &str = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
 
 #[derive(Debug)]
@@ -53,7 +53,7 @@ pub struct Status {
 pub enum LiveEvent {
     Page {
         page: u32,
-        path: String,
+        pdf: String,
     },
     Document {
         path: String,
@@ -76,6 +76,7 @@ pub struct PageRange {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub trait Preview: Send + Sync {
+    fn available(&self, path_env: &str) -> bool;
     fn start(
         &self,
         owner: u64,
@@ -360,6 +361,9 @@ fn command(
 }
 
 impl Preview for Manager {
+    fn available(&self, path_env: &str) -> bool {
+        discover(path_env).is_some()
+    }
     fn start(
         &self,
         owner: u64,
@@ -579,7 +583,7 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
             while let Some(end) = rest.iter().position(|&byte| byte == b'\n') {
                 keep(&mut pending, &rest[..end]);
                 if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
-                    apply_message(&session, &message);
+                    apply_message(&session, message);
                 }
                 pending.clear();
                 rest = &rest[end + 1..];
@@ -596,7 +600,7 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
     }
 }
 
-fn apply_message(session: &Session, message: &Value) {
+fn apply_message(session: &Session, mut message: Value) {
     let verb = message[0].as_str().unwrap_or_default();
     let number = |index: usize| message[index].as_u64().map(|n| n as u32);
     let live = {
@@ -611,17 +615,10 @@ fn apply_message(session: &Session, message: &Value) {
         return session.stop(Some(UNPATCHED.into()));
     }
     let event = match verb {
-        "page" => {
-            let folder = session.pdf.parent();
-            let path = (message[2].as_str()).filter(|path| Path::new(path).parent() == folder);
-            let (Some(page), Some(path)) = (number(1), path) else {
-                return;
-            };
-            LiveEvent::Page {
-                page,
-                path: path.to_owned(),
-            }
-        }
+        "page" => match (number(1), message[2].take()) {
+            (Some(page), Value::String(pdf)) => LiveEvent::Page { page, pdf },
+            _ => return,
+        },
         "pdf" => {
             let (Some(run), Some(ranges)) = (message[3].as_str(), message[4].as_array()) else {
                 return;
@@ -666,4 +663,104 @@ fn apply_message(session: &Session, message: &Value) {
         _ => return,
     };
     (session.sink)(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::{Receiver, channel};
+
+    use super::*;
+    use crate::settings::AppSettings;
+    use crate::tex::tool_paths;
+
+    fn heard(events: &Receiver<LiveEvent>, quiet: Duration) -> Vec<LiveEvent> {
+        std::iter::from_fn(|| events.recv_timeout(quiet).ok()).collect()
+    }
+
+    fn typesets(events: &[LiveEvent]) -> usize {
+        let done = events.iter().filter(|e| matches!(e, LiveEvent::Done(_)));
+        done.count()
+    }
+
+    async fn typed(manager: &Manager, at: usize, keys: &str) {
+        for (i, key) in keys.char_indices() {
+            manager
+                .edit(1, "main.tex", at + i, 0, &key.to_string())
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs TeX and TeXpresso"]
+    async fn typing_typesets_the_view_then_the_rest_once_it_settles() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("p");
+        fs::create_dir(&root).unwrap();
+        let para = "A sentence that fills a line of the page. ".repeat(60);
+        let section = |n: usize| {
+            let next = n % 8 + 1;
+            format!(
+                "\\section{{Part {n}}}\\label{{s{n}}}\n{para}\n\n{para}\n\nSee page~\\pageref{{s{next}}}.\n"
+            )
+        };
+        let sections: String = (1..=8).map(section).collect();
+        let text = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\tableofcontents\n{sections}\\end{{document}}\n"
+        );
+        fs::write(root.join("main.tex"), &text).unwrap();
+        let project = Project {
+            build: root.join("build"),
+            root,
+            settings: dir.path().join("settings.json"),
+            ui: dir.path().join("ui.json"),
+            history: dir.path().join("history"),
+        };
+        let (tx, events) = channel();
+        let sink: Sink = Box::new(move |event| drop(tx.send(event)));
+        let manager = Manager::default();
+        let files = [FileBuffer {
+            path: "main.tex".into(),
+            text: text.clone(),
+        }];
+        let pane = Pane {
+            view: Some((0, 0)),
+            caret: None,
+        };
+        let path = tool_paths(&AppSettings::default()).1;
+        let status = manager.start(1, &project, &files, &path, &pane, sink);
+        assert!(status.unwrap().running);
+        assert!(typesets(&heard(&events, Duration::from_secs(5))) > 0);
+
+        typed(&manager, text.find("A sentence").unwrap(), "abcdefgh").await;
+        let typing: Vec<_> = events.try_iter().collect();
+        assert_eq!(typesets(&typing), 0, "only the page in view while typing");
+        let pages = typing.iter().filter_map(|e| match e {
+            LiveEvent::Page { page, .. } => Some(*page),
+            _ => None,
+        });
+        let pages: Vec<u32> = pages.collect();
+        assert!(
+            !pages.is_empty() && pages.iter().all(|&page| page == 0),
+            "{pages:?}"
+        );
+        let settled = typesets(&heard(&events, Duration::from_secs(5)));
+        assert!(
+            (1..=3).contains(&settled),
+            "the rest once, then at most two passes"
+        );
+
+        let last = text.rfind("A sentence").unwrap();
+        manager.caret(1, "main.tex", last).unwrap();
+        let moved = heard(&events, Duration::from_secs(3));
+        assert_eq!(typesets(&moved), 0, "a caret move alone typesets nothing");
+
+        typed(&manager, text.find("{Part 1}").unwrap() + 5, "xy").await;
+        let retitled = typesets(&heard(&events, Duration::from_secs(6)));
+        assert!(
+            (2..=3).contains(&retitled),
+            "the run and at most two passes"
+        );
+        manager.stop_request(1);
+    }
 }

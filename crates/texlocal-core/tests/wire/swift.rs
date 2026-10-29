@@ -78,6 +78,7 @@ fn swift(ty: &Ty) -> String {
         Ty::UInt64 => "UInt64".into(),
         Ty::Double => "Double".into(),
         Ty::String => "String".into(),
+        Ty::Data => "Data".into(),
         Ty::Done => "Done".into(),
         Ty::List(ty) => format!("[{}]", swift(ty)),
         Ty::Map(ty) => format!("[String: {}]", swift(ty)),

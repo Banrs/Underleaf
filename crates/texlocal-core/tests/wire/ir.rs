@@ -9,6 +9,7 @@ pub enum Ty {
     UInt64,
     Double,
     String,
+    Data,
     Done,
     List(Box<Self>),
     Map(Box<Self>),
@@ -257,6 +258,7 @@ fn object(schema: &Value) -> &Map<String, Value> {
         "additionalProperties",
         "anyOf",
         "const",
+        "contentEncoding",
         "default",
         "enum",
         "format",
@@ -320,7 +322,11 @@ pub fn ty(schema: &Value) -> Ty {
         "integer" if schema.get("format") == Some(&"uint64".into()) => Ty::UInt64,
         "integer" => Ty::Int,
         "number" => Ty::Double,
-        "string" => Ty::String,
+        "string" => match schema.get("contentEncoding") {
+            None => Ty::String,
+            Some(base64) if base64 == "base64" => Ty::Data,
+            Some(other) => panic!("a string encoded as {other}"),
+        },
         "null" => Ty::Done,
         "array" => Ty::List(Box::new(ty(&schema["items"]))),
         "object" if !schema.contains_key("properties") => {

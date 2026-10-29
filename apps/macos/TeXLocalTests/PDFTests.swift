@@ -60,6 +60,23 @@ struct PDFTests {
         #expect(try shown(view) == place)
     }
 
+    @Test func aLivePageWaitsForTheLiveDocumentThatCameBeforeIt() async throws {
+        let defaults = TestDefaults()
+        let project = ProjectModel(id: "P", app: AppModel(defaults: defaults.store))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, log: nil, failure: nil, error: nil,
+                                                lines: [:]))))
+        project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 0, live: true))))
+        let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
+        try #require(try textPDF(count: 2).dataRepresentation()).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let typed = try #require(try textPDF(["typed"]).dataRepresentation())
+        project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [], complete: true)))
+        project.handle(.livePage(LivePage(page: 1, pdf: typed)))
+        await project.liveReads?.value
+        let document = try #require(project.pdf.view.document)
+        #expect(document.pageCount == 2 && document.page(at: 1)?.string?.contains("typed") == true)
+    }
+
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)

@@ -94,8 +94,9 @@ nonisolated struct FixtureStruct: Codable, Hashable, Sendable {
     var total: UInt64
     var ratio: Double
     var on: Bool
+    var bytes: Data
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case name, count, total, ratio, on }
+    enum CodingKeys: String, CodingKey, CaseIterable { case name, count, total, ratio, on, bytes }
 }
 
 nonisolated extension FixtureStruct {
@@ -106,6 +107,7 @@ nonisolated extension FixtureStruct {
         total = try wire.decode(UInt64.self, forKey: .total)
         ratio = try wire.decode(Double.self, forKey: .ratio)
         on = try wire.decode(Bool.self, forKey: .on)
+        bytes = try wire.decode(Data.self, forKey: .bytes)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -115,6 +117,7 @@ nonisolated extension FixtureStruct {
         try wire.encode(total, forKey: .total)
         try wire.encode(ratio, forKey: .ratio)
         try wire.encode(on, forKey: .on)
+        try wire.encode(bytes, forKey: .bytes)
     }
 }
 
@@ -163,22 +166,22 @@ nonisolated enum FixtureUnit: String, Codable, CaseIterable, Hashable, Sendable 
 }
 
 nonisolated let wireSamples: [(any (Codable & Hashable & Sendable).Type, String)] = [
-    (FixtureStruct.self, #"{"name":"π","count":3,"total":18446744073709551615,"ratio":0.5,"on":true}"#),
+    (FixtureStruct.self, #"{"name":"π","count":3,"total":18446744073709551615,"ratio":0.5,"on":true,"bytes":"aGk="}"#),
     (FixtureOptional.self, #"{"note":"n","hint":2}"#),
     (FixtureUnit.self, #""light""#),
     (FixtureUnion.self, #"{"type":"empty"}"#),
-    (FixtureUnion.self, #"{"type":"plain","value":{"name":"π","count":3,"total":18446744073709551615,"ratio":0.5,"on":true}}"#),
+    (FixtureUnion.self, #"{"type":"plain","value":{"name":"π","count":3,"total":18446744073709551615,"ratio":0.5,"on":true,"bytes":"aGk="}}"#),
     (FixtureList.self, #"{"items":[]}"#),
     (FixtureMap.self, #"{"scores":{"a":1}}"#),
     (FixtureNested.self, #"{"shape":{"type":"many","value":["highContrast"]},"optional":{"note":null},"list":{"items":[]},"map":{"scores":{"a":1}},"children":[]}"#),
 ]
 
 nonisolated let wireRejects: [(any (Codable & Hashable & Sendable).Type, String)] = [
-    (FixtureStruct.self, #"{"name":"a","count":1,"total":1,"ratio":1.0,"on":false,"more":1}"#),
+    (FixtureStruct.self, #"{"name":"a","count":1,"total":1,"ratio":1.0,"on":false,"bytes":"","more":1}"#),
     (FixtureStruct.self, #"{"name":"a"}"#),
     (FixtureOptional.self, #"{"note":null,"more":1}"#),
     (FixtureUnit.self, #""dark""#),
     (FixtureUnion.self, #"{"type":"round"}"#),
-    (FixtureUnion.self, #"{"type":"plain","value":{"name":"a","count":1,"total":1,"ratio":1.0,"on":false},"more":1}"#),
+    (FixtureUnion.self, #"{"type":"plain","value":{"name":"a","count":1,"total":1,"ratio":1.0,"on":false,"bytes":""},"more":1}"#),
     (FixtureMap.self, #"{"scores":{"a":"1"}}"#),
 ]

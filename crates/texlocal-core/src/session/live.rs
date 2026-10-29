@@ -429,7 +429,7 @@ impl Actor {
             return;
         }
         match event {
-            LiveEvent::Page { page, path } => self.emit(Event::LivePage(LivePage { page, path })),
+            LiveEvent::Page { page, pdf } => self.emit(Event::LivePage(LivePage { page, pdf })),
             LiveEvent::Document {
                 path,
                 pages,

@@ -94,8 +94,12 @@ impl Rig {
         Self::start(files, prepare, None).await
     }
 
-    pub async fn previewing(files: &[(&str, &str)], preview: Arc<FakePreview>) -> Self {
-        Self::start(files, |_| {}, Some(preview)).await
+    pub async fn previewing(
+        files: &[(&str, &str)],
+        prepare: impl FnOnce(&Library),
+        preview: Arc<FakePreview>,
+    ) -> Self {
+        Self::start(files, prepare, Some(preview)).await
     }
 
     async fn start(
@@ -234,6 +238,10 @@ impl FakePreview {
 }
 
 impl Preview for FakePreview {
+    fn available(&self, _: &str) -> bool {
+        true
+    }
+
     fn start(
         &self,
         _: u64,

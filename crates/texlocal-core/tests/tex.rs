@@ -1,6 +1,7 @@
 mod common;
 
 use std::path::Path;
+use std::process::Command;
 
 use common::Rig;
 use serde_json::json;
@@ -90,13 +91,8 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     assert!(Path::new(whole["path"].as_str().unwrap()).is_file());
     rig.forget();
     doc.edit(40, 0, "More words. ", None, false);
-    let typed = rig.find(|e| {
-        matches!(
-            e["event"]["type"].as_str(),
-            Some("livePage" | "liveDocument")
-        )
-    });
-    assert!(Path::new(typed["event"]["value"]["path"].as_str().unwrap()).is_file());
+    let page = rig.event("livePage", |p| p["page"] == 0);
+    assert!(page["pdf"].as_str().unwrap().starts_with("JVBER"), "a PDF");
     rig.call("StopLive", json!({}));
     rig.section("live", |l| l["phase"] == "stopped");
 }
@@ -122,5 +118,35 @@ async fn forward_sync_follows_the_live_documents_synctex() {
         e["complete"] == true && e["changed"].as_array().unwrap().iter().any(second)
     });
     assert_eq!(page(5), Some(2.0));
+    rig.call("StopLive", json!({}));
+}
+
+fn first_page(pdf: &str) -> String {
+    let text = Command::new("mutool")
+        .args(["draw", "-F", "txt", "-o", "-", pdf, "1"])
+        .output()
+        .unwrap()
+        .stdout;
+    let words = String::from_utf8_lossy(&text);
+    words.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs TeX, TeXpresso and mutool"]
+async fn the_live_contents_read_as_the_compiled_ones() {
+    let main = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\tableofcontents\n\\section{Section 1}\nText.\n\\end{document}\n";
+    let (rig, build) = built(&[("main.tex", main)]).await;
+    let compiled = first_page(build["result"]["pdf"].as_str().unwrap());
+    assert!(compiled.contains("Contents 1 Section 1 1"), "{compiled}");
+    rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    rig.call("LiveView", json!({ "first": 0, "last": 0 }));
+    rig.event("liveDocument", |e| {
+        e["complete"] == true && first_page(e["path"].as_str().unwrap()) == compiled
+    });
+    rig.call("LiveLog", json!({ "shown": true }));
+    let log = rig.section("live", |l| l["log"].is_string())["log"].take();
+    let log = log.as_str().unwrap();
+    assert!(!log.lines().any(|line| line.starts_with("! ")), "{log}");
     rig.call("StopLive", json!({}));
 }

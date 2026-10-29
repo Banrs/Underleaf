@@ -221,7 +221,8 @@ pub struct UiState {
     line: Option<u32>,
     zoom: Option<Zoom>,
     panel: bool,
-    live_preview: bool,
+    #[serde(skip)]
+    pub(crate) live_preview: bool,
 }
 
 pub fn read_ui(file: &Path) -> UiState {

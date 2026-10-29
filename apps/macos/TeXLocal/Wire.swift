@@ -932,16 +932,16 @@ nonisolated struct LiveLog: SessionRequest {
 
 nonisolated struct LivePage: Decodable, Hashable, Sendable {
     var page: Int
-    var path: String
+    var pdf: Data
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case page, path }
+    enum CodingKeys: String, CodingKey, CaseIterable { case page, pdf }
 }
 
 nonisolated extension LivePage {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         page = try wire.decode(Int.self, forKey: .page)
-        path = try wire.decode(String.self, forKey: .path)
+        pdf = try wire.decode(Data.self, forKey: .pdf)
     }
 }
 
@@ -1956,9 +1956,8 @@ nonisolated struct UiState: Decodable, Hashable, Sendable {
     var line: Int?
     var zoom: Zoom?
     var panel: Bool
-    var livePreview: Bool
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom, panel, livePreview }
+    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom, panel }
 }
 
 nonisolated extension UiState {
@@ -1970,7 +1969,6 @@ nonisolated extension UiState {
         line = try wire.decode(Int?.self, forKey: .line)
         zoom = try wire.decode(Zoom?.self, forKey: .zoom)
         panel = try wire.decode(Bool.self, forKey: .panel)
-        livePreview = try wire.decode(Bool.self, forKey: .livePreview)
     }
 }
 

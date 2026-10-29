@@ -68,6 +68,7 @@ final class ProjectModel {
     @ObservationIgnored var syncTask: Task<Void, Never>?
     @ObservationIgnored var followTask: Task<Void, Never>?
     @ObservationIgnored var followsCaret = false
+    @ObservationIgnored var liveReads: Task<Void, Never>?
     private var closing: Task<Bool, Never>?
     var isClosing: Bool { closing != nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -157,7 +158,6 @@ final class ProjectModel {
         await pdfShown?.value
         guard !closed else { return }
         initialLoadComplete = true
-        if ui.livePreview, canSwitchLivePreview { livePreview = true }
     }
 
     private func connectEditor() {
@@ -216,15 +216,8 @@ final class ProjectModel {
         session?.send(SetUiState(patch: patch))
     }
 
-    func handle(_ heard: Heard) {
+    func handle(_ event: Event) {
         guard !closed else { return }
-        switch heard {
-        case .event(let event): handle(event)
-        case .live(let read): showLive(read)
-        }
-    }
-
-    private func handle(_ event: Event) {
         switch event {
         case .section(let section): apply(section)
         case .documentReload(let reloaded): reload(reloaded)
@@ -237,7 +230,9 @@ final class ProjectModel {
         case .liveAlert:
             texpresso.alerted()
             panel.show(.texpresso)
-        case .documentRenamed, .livePage, .liveDocument: break
+        case .livePage(let page): showLive(page)
+        case .liveDocument(let document): showLive(document)
+        case .documentRenamed: break
         }
     }
 
