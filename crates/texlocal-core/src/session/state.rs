@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::mem::{Discriminant, discriminant};
-
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::analyze::Analysis;
@@ -50,18 +47,13 @@ pub(crate) struct OpenFile {
     kind: FileKind,
 }
 
-pub(crate) type Sent = HashMap<Discriminant<SessionSection>, String>;
-
 impl Actor {
     pub fn publish(&mut self, section: SessionSection) -> bool {
-        let said = serde_json::to_string(&section).expect("a section serialises");
-        let kind = discriminant(&section);
-        if self.sent.get(&kind) == Some(&said) {
-            return false;
+        let changed = self.sent.changed(&section);
+        if changed {
+            self.emit(Event::Section(section));
         }
-        self.sent.insert(kind, said);
-        self.emit(Event::Section(section));
-        true
+        changed
     }
 
     pub fn publish_all(&mut self, tree: Vec<TreeNode>) {
