@@ -170,10 +170,8 @@ final class PDFController: NSObject {
         shownVersion += 1
         loading?.cancel()
         revealing?.cancel()
-        find.cancel()
         view.removeMark()
         view.clearSelection()
-        view.highlightedSelections = nil
         let place = view.document == nil ? nil : view.shownPlace
         let autoScales = view.autoScales
         view.covering {
@@ -205,7 +203,7 @@ final class PDFController: NSObject {
         find.rerun()
     }
 
-    func clear() {
+    private func clear() {
         shownVersion += 1
         pendingReveal = nil
         revealing?.cancel()
