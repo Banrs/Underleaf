@@ -149,7 +149,6 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        pdfItem.isCollapsed = false
 
         for item in [sourceItem!, pdfItem!] {
             let space = NSView()
