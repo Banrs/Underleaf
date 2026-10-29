@@ -176,9 +176,7 @@ final class ProjectModel {
     func cursorMoved(to line: Int, column: Int, caret offset: Int, in path: String?) {
         caret = path.map { ($0, offset) }
         guard line != cursorLine || column != cursorColumn else { return }
-        cursorLine = line
-        cursorColumn = column
-        currentLine = line
+        (cursorLine, cursorColumn, currentLine) = (line, column, line)
         if !caretMoved {
             caretMoved = true
             Task { [weak self] in self?.caretMoved = false }

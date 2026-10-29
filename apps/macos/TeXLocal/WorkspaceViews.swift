@@ -33,8 +33,7 @@ final class WorkspaceViews: ProjectViews {
 
     private func connect() {
         editor.onCursor = { [weak self] line, column in
-            guard let self else { return }
-            project.cursorMoved(to: line, column: column, caret: editor.caret, in: editor.path)
+            if let self { project.cursorMoved(to: line, column: column, caret: editor.caret, in: editor.path) }
         }
         editor.onEdit = { [weak self] in if let self, project.livePDF { followsCaret = true } }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }

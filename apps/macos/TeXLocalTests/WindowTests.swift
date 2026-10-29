@@ -83,8 +83,8 @@ struct WindowTests {
         try await waitUntil { window.firstResponder is NSTextView }
 
         await app.open(info.id)
-        let workspace = try await waitFor { controller.workspace }
-        let sidebar = try #require(workspace.splitViewItems.first)
+        try await waitUntil { controller.workspace != nil }
+        let sidebar = try #require(controller.workspace?.splitViewItems.first)
         sidebar.isCollapsed = true
         app.perform(.projectSearch, on: app.project)
         try await waitUntil {
@@ -130,14 +130,5 @@ struct WindowTests {
         }
         #expect(!coordinator.control(NSSearchField(), textView: NSTextView(), doCommandBy: #selector(NSResponder.moveLeft(_:))))
         #expect(heard == ["move 1", "move -1", "step 1", "close"])
-    }
-
-    private func waitFor<T>(_ value: () -> T?) async throws -> T {
-        var found: T?
-        try await waitUntil {
-            found = value()
-            return found != nil
-        }
-        return try #require(found)
     }
 }
