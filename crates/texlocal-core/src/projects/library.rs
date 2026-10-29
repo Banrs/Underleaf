@@ -20,7 +20,7 @@ use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{Engine, SettingsPatch, read_settings, write_settings};
 use crate::{SETTINGS_FILE, atomic};
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectInfo {
     pub id: String,
@@ -51,7 +51,6 @@ impl ProjectInfo {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
 pub struct Located {
     pub id: String,
     pub path: String,

@@ -24,7 +24,7 @@ pub(super) struct Folder {
     identity: Option<(u64, u64)>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub struct Opening {
     pub project: ProjectInfo,
     pub file: Option<String>,

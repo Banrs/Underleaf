@@ -11,7 +11,7 @@ use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{Project, identity, safe_rel_file};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StoredSettings {
     pub main_file: String,
@@ -181,7 +181,7 @@ pub struct SettingsPatch {
     pub shell_escape: Option<bool>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct AppSettings {
     pub tex_dir: Option<PathBuf>,
@@ -204,7 +204,7 @@ impl AppSettings {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StoredUi {
     pub expanded_folders: Vec<String>,
@@ -276,7 +276,7 @@ pub struct UiPlace {
     panel: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub enum Zoom {
     FitWidth,
