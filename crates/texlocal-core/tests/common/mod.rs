@@ -171,7 +171,7 @@ impl Rig {
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
-        self.call("OpenDocument", json!({ "path": path }));
+        assert_eq!(self.call("Open", json!({ "path": path })), path);
         self.sessions.document(SESSION, path).unwrap()
     }
 

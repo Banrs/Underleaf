@@ -142,8 +142,7 @@ impl Actor {
 
     pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
-        let unsettled =
-            |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some() || !doc.reloads.is_empty();
+        let unsettled = |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some();
         if let Some(doc) = docs.clone().find(unsettled) {
             return Err(CoreError::conflict(format!(
                 "“{}” changed on disk, so nothing was {done}. Keep your edits or the disk’s first, then try again.",

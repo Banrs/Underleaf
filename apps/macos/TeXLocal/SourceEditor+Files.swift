@@ -1,13 +1,13 @@
 import AppKit
 
 extension SourceEditor {
-    func open(path: String, text: String, source: SourceDocument? = nil, focus: Bool) {
+    func open(path: String, source: SourceDocument) {
         if let current = self.path {
             kept[current] = (textView.source as String, textView.undo, textView.selection, textView.shownTop, textView.folded)
         }
-        let prior = kept[path].flatMap { ($0.text as NSString).isEqual(to: text) ? $0 : nil }
         self.path = path
-        textView.load(text, source: source)
+        textView.load(source)
+        let prior = kept[path].flatMap { textView.source.isEqual(to: $0.text) ? $0 : nil }
         textView.undo = prior?.undo ?? UndoManager()
         if let folded = prior?.folded, !folded.isEmpty {
             textView.folded = folded
@@ -18,13 +18,11 @@ extension SourceEditor {
         scrollView.reflectScrolledClipView(scrollView.contentView)
         if let top = prior?.top { textView.scroll(toShownTop: top) }
         reportCursor()
-        focusWhenShown = focus
-        if focus { self.focus() }
     }
 
-    func reload(text: String) {
+    func reload(_ source: SourceDocument) {
         let selection = textView.selection, top = textView.shownTop
-        guard textView.reload(text) else { return }
+        textView.load(source)
         textView.undo = UndoManager()
         let length = textView.length, start = min(selection.location, length)
         textView.selection = NSRange(location: start, length: min(NSMaxRange(selection), length) - start)

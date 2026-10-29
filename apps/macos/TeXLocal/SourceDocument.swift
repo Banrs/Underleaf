@@ -34,15 +34,12 @@ final class SourceDocument {
         tl_source_select(raw, UInt32(selection.location), UInt32(selection.length), mirroring)
     }
 
-    @discardableResult func reload(_ text: String) -> Bool {
-        var text = text
-        return text.withUTF8 { tl_source_reload(raw, $0.baseAddress, $0.count) }
-    }
-
     private func restore() {
         guard var text = shown() else { return }
         text.withUTF8 { tl_source_restore(raw, $0.baseAddress, $0.count) }
     }
+
+    var editable: Bool { tl_source_editable(raw) }
 
     var version: UInt64? {
         var version: UInt64 = 0

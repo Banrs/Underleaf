@@ -35,8 +35,7 @@ impl Actor {
             self.tree.main.clone(),
             self.edits,
         );
-        let shown = self.docs.values().find(|doc| doc.doc.id() == self.shown);
-        let shown = shown.map(|doc| doc.path.clone());
+        let shown = self.open.clone();
         tokio::task::spawn_blocking(move || {
             let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);

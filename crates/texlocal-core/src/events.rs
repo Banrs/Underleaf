@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::CoreError;
-use crate::session::{CloseReason, DiskConflict, SessionSection};
+use crate::session::{DiskConflict, SessionSection};
 use crate::texpresso::PageRange;
 
 pub type Listener = Box<dyn Fn(&Value) + Send>;
@@ -29,7 +29,6 @@ pub(crate) struct SessionEvent {
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum Event {
     Section(SessionSection),
-    DocumentClosed(DocumentClosed),
     DocumentReload(DocumentReload),
     DocumentRenamed(DocumentRenamed),
     Conflict(Conflict),
@@ -41,15 +40,8 @@ pub(crate) enum Event {
 }
 
 #[derive(Serialize, JsonSchema)]
-pub(crate) struct DocumentClosed {
-    pub path: String,
-    pub reason: CloseReason,
-}
-
-#[derive(Serialize, JsonSchema)]
 pub(crate) struct DocumentReload {
     pub path: String,
-    pub text: String,
 }
 
 #[derive(Serialize, JsonSchema)]

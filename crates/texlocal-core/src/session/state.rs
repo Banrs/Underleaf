@@ -4,6 +4,7 @@ use std::mem::{Discriminant, discriminant};
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::analyze::Analysis;
+use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::actor::Actor;
 use super::build::{BuildState, ShownPdf};
@@ -20,6 +21,7 @@ pub(crate) enum SessionSection {
     Project(ProjectState),
     Tree(Vec<TreeNode>),
     Documents(Vec<DocumentState>),
+    OpenFile(Option<OpenFile>),
     Outline(Option<Analysis>),
     Build(BuildState),
     ShownPdf(ShownPdf),
@@ -38,6 +40,12 @@ pub(crate) struct DocumentState {
     pub path: String,
     pub error: Option<String>,
     pub held: Option<DiskConflict>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct OpenFile {
+    path: String,
+    kind: FileKind,
 }
 
 pub(crate) type Sent = HashMap<Discriminant<SessionSection>, String>;
@@ -67,6 +75,7 @@ impl Actor {
         self.tree = TreeIndex::of(&tree);
         let changed = self.publish(SessionSection::Tree(tree));
         self.publish_project();
+        self.publish_open();
         changed
     }
 
@@ -82,5 +91,20 @@ impl Actor {
     pub fn publish_documents(&mut self) {
         let documents = self.docs.values().map(Doc::state).collect();
         self.publish(SessionSection::Documents(documents));
+    }
+
+    pub fn publish_open(&mut self) {
+        let gone = |open: &String| match is_text(open) {
+            true => !self.docs.contains_key(open),
+            false => !self.tree.files.contains(open),
+        };
+        if self.open.as_ref().is_some_and(gone) {
+            self.open = None;
+        }
+        let open = self.open.clone().map(|path| OpenFile {
+            kind: file_kind(&path),
+            path,
+        });
+        self.publish(SessionSection::OpenFile(open));
     }
 }

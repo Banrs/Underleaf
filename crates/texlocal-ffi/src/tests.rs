@@ -155,20 +155,20 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
 }
 
 #[test]
-fn a_session_document_is_edited_restored_and_saved_through_the_abi() {
+fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
     let core = Core::open();
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
-    core.ask(7, "OpenDocument", json!({ "path": "main.tex" }));
+    core.ask(7, "Open", json!({ "path": "main.tex" }));
     let path = c("main.tex");
     let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
     assert!(!source.is_null());
     let (before, opened) = (source_text(source), version(source).unwrap());
     let note = "% note\n";
-    let mirrored =
-        unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
+    let edit =
+        || unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
     assert_eq!(
-        take(mirrored),
+        take(edit()),
         json!({ "ok": [] }),
         "an edit outside a snippet mirrors nothing"
     );
@@ -183,13 +183,14 @@ fn a_session_document_is_edited_restored_and_saved_through_the_abi() {
     let text = "restored\n";
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(version(source), Some(opened + 2));
-    unsafe { tl_source_free(source) };
-    assert_eq!(
-        core.ask(7, "Save", json!({ "reporting": true }))["ok"],
-        true
-    );
+    assert!(unsafe { tl_source_editable(source) });
+    assert_eq!(core.ask(7, "CloseProject", json!({}))["ok"], true);
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
     assert_eq!(saved, text);
+    assert!(!unsafe { tl_source_editable(source) });
+    assert_eq!(take(edit())["error"]["kind"], "conflict");
+    assert_eq!(source_text(source), text);
+    unsafe { tl_source_free(source) };
 }
 
 #[test]

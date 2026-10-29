@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
-use texlocal_latex::{FileKind, file_kind};
+use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
 use super::build::built_pdf;
-use super::documents::CloseReason;
 use super::watch;
 use crate::events::{DocumentRenamed, Event};
 use crate::import::{self, ImportConflict, Imported};
@@ -20,8 +19,13 @@ impl Actor {
     pub fn deleted(&mut self, path: &str, trashed: bool) {
         self.deleting.remove(path);
         if trashed {
+            if self.open.as_ref().is_some_and(|open| within(open, path))
+                && let Some(main) = self.tree.main.clone()
+            {
+                let _ = self.open_file(&main);
+            }
             for doc in self.docs_within(path) {
-                self.close_doc(&doc, CloseReason::Deleted);
+                self.close_doc(&doc);
             }
             self.reload_tree();
         }
@@ -139,11 +143,13 @@ impl Actor {
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
             if !within(&path, from) {
-                self.close_doc(&path, CloseReason::Gone);
+                self.close_doc(&path);
             }
         }
+        let moved = |path: &str| Some(format!("{to}{}", paths::after_entry(path, from)?));
+        let open = self.open.as_deref().and_then(moved);
         for old in self.docs_within(from) {
-            let new = format!("{to}{}", paths::after_entry(&old, from).expect("within"));
+            let new = moved(&old).expect("within");
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
@@ -153,6 +159,17 @@ impl Actor {
             }
             let moved = DocumentRenamed { from: old, to: new };
             self.emit(Event::DocumentRenamed(moved));
+        }
+        if open.is_some() {
+            self.open = open;
+        }
+        for path in self.docs_within(to) {
+            if !is_text(&path) {
+                self.docs.close(&path);
+            }
+        }
+        if let Some(open) = self.open.clone().filter(|open| is_text(open)) {
+            let _ = self.open_document(&open);
         }
         self.publish_documents();
         self.publish_build();

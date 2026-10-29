@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -37,8 +38,7 @@ requests! {
         OpenProject { id: String, auto_compile: bool } -> UiState,
         CloseProject {} -> bool,
         SetOptions { auto_compile: bool } -> (),
-        OpenDocument { path: RelPath } -> (),
-        CloseDocument { path: RelPath } -> bool,
+        Open { path: RelPath } -> Option<String>,
         Composing { path: RelPath, composing: bool } -> (),
         Save { reporting: bool } -> bool,
         Resolve { path: RelPath, answer: Resolution } -> (),
@@ -131,7 +131,9 @@ pub(crate) struct Actor {
     pub tx: mpsc::UnboundedSender<Msg>,
     pub docs: Docs,
     pub next_doc: u64,
-    pub shown: u64,
+    pub open: Option<String>,
+    pub opens: Arc<AtomicU64>,
+    pub opened: u64,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
@@ -158,6 +160,7 @@ impl Actor {
         id: u64,
         opening: OpenProject,
         docs: Docs,
+        opens: Arc<AtomicU64>,
         tx: mpsc::UnboundedSender<Msg>,
     ) -> Result<(Self, UiState), CoreError> {
         let OpenProject {
@@ -192,7 +195,9 @@ impl Actor {
             tx,
             docs,
             next_doc: 1,
-            shown: 0,
+            open: None,
+            opens,
+            opened: 0,
             symbols: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
@@ -266,6 +271,7 @@ impl Actor {
             self.live_stop();
         }));
         for (_, doc) in self.docs.iter_mut() {
+            doc.doc.close();
             let error = if doc.dirty() {
                 STOPPED_UNSAVED
             } else {
@@ -294,7 +300,7 @@ impl Actor {
 
     fn handle(&mut self, message: Msg) {
         match message {
-            Msg::Changed { doc, version, edit } => self.changed(doc, version, edit),
+            Msg::Changed { doc, version, edit } => self.changed(doc, version, &edit),
             Msg::Command(command, reply) => self.command(command, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
@@ -363,12 +369,7 @@ impl Actor {
             Session::SetOptions(SetOptions { auto_compile }, answer) => {
                 answer(Ok(self.auto_compile = auto_compile))
             }
-            Session::OpenDocument(OpenDocument { path }, answer) => {
-                answer(self.open_document(&path.0))
-            }
-            Session::CloseDocument(CloseDocument { path }, answer) => {
-                answer(self.close_document(&path.0))
-            }
+            Session::Open(Open { path }, answer) => answer(self.open(&path.0)),
             Session::Composing(Composing { path, composing }, answer) => {
                 answer(Ok(self.composing(&path.0, composing)))
             }

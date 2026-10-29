@@ -1,19 +1,21 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::ErrorKind;
 use std::ops::Deref;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use texlocal_latex::is_text;
 use texlocal_latex::syntax::TextEdit;
 
 use super::Document;
 use super::actor::{Actor, Later, Timer};
 use super::state::DocumentState;
-use crate::events::{Conflict, DocumentClosed, DocumentReload, Event};
+use crate::events::{Conflict, DocumentReload, Event};
 use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
@@ -39,14 +41,6 @@ pub(crate) enum Resolution {
     Close,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum CloseReason {
-    Closed,
-    Gone,
-    Deleted,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reload {
     Disk,
@@ -65,7 +59,6 @@ pub(crate) struct Doc {
     pub asking: Option<DiskConflict>,
     held: Option<DiskConflict>,
     pub error: Option<String>,
-    pub reloads: VecDeque<Reload>,
     composing: bool,
 }
 
@@ -122,9 +115,15 @@ impl Docs {
         self.docs.remove(path)
     }
 
+    pub fn close(&mut self, path: &str) -> bool {
+        self.remove(path).map(|doc| doc.doc.close()).is_some()
+    }
+
     pub fn clear(&mut self) {
         lock(&self.shared).clear();
-        self.docs.clear();
+        for doc in std::mem::take(&mut self.docs).into_values() {
+            doc.doc.close();
+        }
     }
 }
 
@@ -138,15 +137,44 @@ impl Actor {
         }
     }
 
-    pub fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
+    pub fn open(&mut self, path: &str) -> Result<Option<String>, CoreError> {
+        self.opened += 1;
+        if self.opened < self.opens.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
         let path =
-            &paths::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
-        if let Some(doc) = self.docs.get(path) {
-            let id = doc.doc.id();
-            if id != self.shown {
-                self.shown = id;
-                self.after(Timer::Symbols);
+            paths::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
+        if !self.tree.contains(&path) {
+            self.reload_tree();
+        }
+        if !is_text(&path) && !self.tree.files.contains(&path) {
+            return Err(CoreError::not_found(format!(
+                "“{path}” isn’t in the project."
+            )));
+        }
+        self.open_file(&path)?;
+        Ok(Some(path))
+    }
+
+    pub fn open_file(&mut self, path: &str) -> Result<(), CoreError> {
+        if is_text(path) {
+            self.open_document(path)?;
+        }
+        let was = self.open.replace(path.to_owned());
+        if was.as_deref() != Some(path) {
+            self.after(Timer::Symbols);
+            self.publish_open();
+            if let Some(was) = was
+                && self.flush(Some(&was), true).unwrap_or(false)
+            {
+                self.close_doc(&was);
             }
+        }
+        Ok(())
+    }
+
+    pub fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
+        if self.docs.contains_key(path) {
             return Ok(());
         }
         let abs = paths::safe_path(&self.project.root, path)?;
@@ -161,7 +189,6 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        self.shown = id;
         let symbols = Arc::clone(&self.symbols);
         let doc = Doc {
             doc: Document::new(id, path, &text, self.tx.clone(), symbols),
@@ -175,11 +202,9 @@ impl Actor {
             asking: None,
             held: None,
             error: None,
-            reloads: VecDeque::new(),
             composing: false,
         };
         self.docs.insert(path.to_owned(), doc);
-        self.after(Timer::Symbols);
         self.publish_documents();
         self.publish_build();
         self.live_issues_opened(path);
@@ -187,64 +212,30 @@ impl Actor {
         Ok(())
     }
 
-    pub fn close_document(&mut self, path: &str) -> Result<bool, CoreError> {
-        let closed = self.flush(Some(path), true)?;
-        if closed {
-            self.close_doc(path, CloseReason::Closed);
-        }
-        Ok(closed)
-    }
-
-    pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
-        if self.docs.remove(path).is_some() {
+    pub fn close_doc(&mut self, path: &str) {
+        if self.docs.close(path) {
             self.publish_documents();
             self.publish_build();
             self.publish_live(false);
-            let path = path.to_owned();
-            self.emit(Event::DocumentClosed(DocumentClosed { path, reason }));
+            self.publish_open();
         }
     }
 
-    pub fn changed(&mut self, id: u64, version: u64, edit: Option<TextEdit>) {
+    pub fn changed(&mut self, id: u64, version: u64, edit: &TextEdit) {
         let Some(doc) = self.docs.values().find(|doc| doc.doc.id() == id) else {
             return;
         };
         let path = doc.path.clone();
-        self.edits += 1;
-        self.last_edits.insert(path.clone(), self.edits);
-        self.mark_outdated(Some(&path));
-        self.live_issues_edited(&path, edit.as_ref());
-        match edit {
-            Some(edit) => {
-                self.after(Timer::Autosave);
-                self.live_edited(&path, version, &edit);
-                let doc = self.docs.get_mut(&path).expect("found by its id");
-                if !doc.reloads.is_empty() {
-                    doc.reloads.clear();
-                    doc.conflict = Some(DiskConflict::Changed);
-                    self.ask(&path, DiskConflict::Changed);
-                }
-            }
-            None => self.reloaded(&path, version),
-        }
+        self.touched(&path, Some(edit));
+        self.after(Timer::Autosave);
+        self.live_edited(&path, version, edit);
     }
 
-    fn reloaded(&mut self, path: &str, version: u64) {
-        self.after(Timer::Symbols);
-        let doc = self.docs.get_mut(path).expect("found by its id");
-        doc.saved = version;
-        let reason = doc.reloads.pop_front();
-        doc.force |= reason == Some(Reload::Revert);
-        self.live_whole(path);
-        match reason {
-            Some(Reload::Revert) => {
-                if self.save_doc(path, true, false).unwrap_or(false) && self.auto_compile {
-                    self.later.push_back(Later::Compile(true));
-                }
-            }
-            Some(Reload::Disk) if self.auto_compile => self.later.push_back(Later::Compile(true)),
-            _ => {}
-        }
+    fn touched(&mut self, path: &str, edit: Option<&TextEdit>) {
+        self.edits += 1;
+        self.last_edits.insert(path.to_owned(), self.edits);
+        self.mark_outdated(Some(path));
+        self.live_issues_edited(path, edit);
     }
 
     pub fn autosave(&mut self) {
@@ -276,11 +267,7 @@ impl Actor {
             if !doc.dirty() {
                 return Ok(true);
             }
-            if !doc.reloads.is_empty()
-                || deleting
-                || doc.asking.is_some()
-                || autosave && doc.composing
-            {
+            if deleting || doc.asking.is_some() || autosave && doc.composing {
                 return Ok(false);
             }
             if let Some(kind) = doc.conflict {
@@ -399,7 +386,7 @@ impl Actor {
                 (doc.asking, doc.conflict) = (None, None);
             }
             (DiskConflict::Gone, Resolution::Close) => {
-                self.close_doc(path, CloseReason::Closed);
+                self.close_doc(path);
                 return Ok(());
             }
             _ => {
@@ -413,8 +400,8 @@ impl Actor {
             Resolution::Save => self.save_edits(true).map(drop),
             Resolution::Revert => {
                 match self.docs[path].disk_text.clone() {
-                    Some(text) => self.request_reload(path, &text, Reload::Revert),
-                    None => self.close_doc(path, CloseReason::Gone),
+                    Some(text) => self.reload(path, &text, Reload::Revert),
+                    None => self.close_doc(path),
                 }
                 Ok(())
             }
@@ -422,16 +409,33 @@ impl Actor {
         }
     }
 
-    fn request_reload(&mut self, path: &str, text: &str, reason: Reload) {
-        if let Some(doc) = self.docs.get_mut(path) {
-            let seen = match reason {
-                Reload::Disk => doc.saved,
-                Reload::Revert => doc.doc.version(),
-            };
-            doc.doc.expect_reload(seen);
-            doc.reloads.push_back(reason);
-            let (path, text) = (path.to_owned(), text.to_owned());
-            self.emit(Event::DocumentReload(DocumentReload { path, text }));
+    fn reload(&mut self, path: &str, text: &str, reason: Reload) {
+        let Some(doc) = self.docs.get_mut(path) else {
+            return;
+        };
+        let seen = match reason {
+            Reload::Disk => doc.saved,
+            Reload::Revert => doc.doc.version(),
+        };
+        let Some(version) = doc.doc.reload(text, seen) else {
+            doc.conflict = Some(DiskConflict::Changed);
+            return self.ask(path, DiskConflict::Changed);
+        };
+        doc.saved = version;
+        doc.force |= reason == Reload::Revert;
+        self.touched(path, None);
+        self.after(Timer::Symbols);
+        self.live_whole(path);
+        let reloaded = DocumentReload {
+            path: path.to_owned(),
+        };
+        self.emit(Event::DocumentReload(reloaded));
+        let saved = match reason {
+            Reload::Revert => self.save_doc(path, true, false).unwrap_or(false),
+            Reload::Disk => true,
+        };
+        if saved && self.auto_compile {
+            self.later.push_back(Later::Compile(true));
         }
     }
 
@@ -473,8 +477,8 @@ impl Actor {
                     self.ask(path, DiskConflict::Changed);
                 }
             }
-            (Some(text), false) => self.request_reload(path, &text, Reload::Disk),
-            (None, false) => self.close_doc(path, CloseReason::Gone),
+            (Some(text), false) => self.reload(path, &text, Reload::Disk),
+            (None, false) => self.close_doc(path),
         }
     }
 
@@ -483,7 +487,7 @@ impl Actor {
             return;
         };
         if !doc.dirty() {
-            return self.close_doc(path, CloseReason::Gone);
+            return self.close_doc(path);
         }
         doc.disk_stamp = None;
         if doc.conflict.replace(DiskConflict::Gone) != Some(DiskConflict::Gone) {

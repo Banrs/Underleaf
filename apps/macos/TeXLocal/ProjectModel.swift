@@ -10,8 +10,8 @@ final class ProjectModel {
     var settings: ProjectSettings? { store.project?.settings }
     let tree = FileTree()
     private(set) var initialLoadComplete = false
-    var openPath: String? { didSet { if openPath != oldValue { openKindChanged() } } }
-    private(set) var openKind: FileKind?
+    var openPath: String? { store.openFile?.path }
+    var openKind: FileKind? { store.openFile?.kind }
     private var analysis: Analysis? { isLaTeX ? store.outline : nil }
     var outline: [Heading] { analysis?.outline ?? [] }
     var outlineTree: [OutlineNode] { analysis?.tree ?? [] }
@@ -63,8 +63,6 @@ final class ProjectModel {
     let editor = SourceEditor()
     private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
-    @ObservationIgnored private var opens: Task<Void, Never>?
-    @ObservationIgnored private var openRequests = 0
     @ObservationIgnored var syncTask: Task<Void, Never>?
     @ObservationIgnored var followTask: Task<Void, Never>?
     @ObservationIgnored var followsCaret = false
@@ -93,14 +91,6 @@ final class ProjectModel {
 
     var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
     var editsText: Bool { openKind?.isText == true }
-
-    private func openKindChanged() {
-        defer { findHeadings() }
-        guard let openPath else { return openKind = nil }
-        if let kind = tree.node(at: openPath)?.kind, kind != openKind { openKind = kind }
-    }
-
-    func isText(_ path: String) -> Bool { tree.node(at: path)?.kind?.isText == true }
 
     var saveFailure: String? {
         for document in store.documents {
@@ -220,8 +210,8 @@ final class ProjectModel {
         guard !closed else { return }
         switch event {
         case .section(let section): apply(section)
-        case .documentReload(let reloaded): reload(reloaded)
-        case .documentClosed(let gone): if openPath == gone.path, gone.reason != .closed { clearOpenFile() }
+        case .documentReload(let reloaded): reload(reloaded.path)
+        case .documentRenamed(let renamed): if editor.path == renamed.from { editor.path = renamed.to }
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
         case .buildFinished(let finished): buildFinished(finished)
@@ -232,7 +222,6 @@ final class ProjectModel {
             panel.show(.texpresso)
         case .livePage(let page): showLive(page)
         case .liveDocument(let document): showLive(document)
-        case .documentRenamed: break
         }
     }
 
@@ -241,10 +230,8 @@ final class ProjectModel {
         store.apply(section)
         switch section {
         case .project: break
-        case .tree(let nodes):
-            tree.show(nodes)
-            openKindChanged()
-            if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
+        case .tree(let nodes): tree.show(nodes)
+        case .openFile: showOpenFile()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
@@ -260,56 +247,35 @@ final class ProjectModel {
         }
     }
 
-    private func reload(_ event: DocumentReload) {
-        if editor.path == event.path {
-            editor.reload(text: event.text)
-        } else if let session, let source = SourceDocument(session: session.id, path: event.path) {
-            source.reload(event.text)
-        }
+    private func showOpenFile() {
+        findHeadings()
+        guard let file = store.openFile, file.kind.isText, let session,
+              editor.path != file.path || !editor.textView.document.editable,
+              let source = SourceDocument(session: session.id, path: file.path) else { return }
+        editor.open(path: file.path, source: source)
+        showIssues()
+    }
+
+    private func reload(_ path: String) {
+        guard editor.path == path, let session, let source = SourceDocument(session: session.id, path: path) else { return }
+        editor.reload(source)
     }
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
               jump: Bool = false, showsSource: Bool = true) async {
-        openRequests += 1
-        let request = openRequests
-        let latest = { request == self.openRequests && !self.closed }
-        await enqueue(&opens) { [self] in
-            guard latest() else { return }
-            if showsSource { app?.showSource = true }
-            if jump, let from = caretPlace { trail.jumped(from: from) }
-            if path != openPath {
-                guard let session else { return }
-                if tree.node(at: path) == nil { _ = try? await session.call(ReloadTree()) }
-                let text = isText(path)
-                do {
-                    if text { try await session.call(OpenDocument(path: path)) }
-                } catch {
-                    if latest() { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
-                    return
-                }
-                guard latest() else {
-                    if text { session.send(CloseDocument(path: path)) }
-                    return
-                }
-                let was = editsText ? openPath : nil
-                show(path, focus: focus)
-                if let was { await closeDocument(was) }
-            }
-            if let line, editsText, latest() { editor.reveal(line: line, column: column, length: length, atTop: atTop, focus: focus) }
-        }.value
-    }
-
-    private func show(_ path: String, focus: Bool) {
-        openPath = path
-        guard editsText else { return }
-        guard let session, let source = SourceDocument(session: session.id, path: path) else { openPath = nil; return }
-        editor.open(path: path, text: source.text, source: source, focus: focus)
-        showIssues()
-    }
-
-    func closeDocument(_ path: String) async {
         guard let session else { return }
-        await alerting(notSavedTitle(path)) { try await session.call(CloseDocument(path: path)) }
+        if showsSource { app?.showSource = true }
+        if jump, let from = caretPlace { trail.jumped(from: from) }
+        let opened: String?
+        do {
+            opened = try await session.call(Open(path: path))
+        } catch {
+            if !closed { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
+            return
+        }
+        guard let opened, opened == openPath, editsText, editor.path == opened, !closed else { return }
+        editor.focusWhenShown = focus
+        if let line { editor.reveal(line: line, column: column, length: length, atTop: atTop, focus: focus) } else if focus { editor.focus() }
     }
 
     private func composing(_ composing: Bool) {
@@ -478,7 +444,6 @@ final class ProjectModel {
     func answer(_ path: String, _ answer: Resolution) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
-        if answer == .close, openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
             await alerting(notSavedTitle(path)) {

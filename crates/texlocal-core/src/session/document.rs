@@ -13,7 +13,14 @@ use crate::projects::Symbols;
 struct Text {
     source: SourceDocument,
     version: u64,
-    edited: bool,
+    closed: bool,
+    behind: bool,
+}
+
+impl Text {
+    fn editable(&self) -> bool {
+        !self.closed && !self.behind
+    }
 }
 
 struct Cell {
@@ -38,7 +45,8 @@ impl Document {
         let text = Mutex::new(Text {
             source,
             version: 0,
-            edited: false,
+            closed: false,
+            behind: false,
         });
         Self(Arc::new(Cell {
             id,
@@ -55,57 +63,67 @@ impl Document {
         text: &str,
         changing: Option<TextRange>,
         mirroring: bool,
-    ) -> Vec<TextEdit> {
+    ) -> Option<Vec<TextEdit>> {
         let mut held = lock(&self.0.text);
+        if !held.editable() {
+            return None;
+        }
         let mirrors = (held.source).apply_edit(start, length, text, changing, mirroring);
-        held.edited = true;
         let edit = TextEdit {
             start,
             length,
             text: text.to_owned(),
         };
-        self.changed(&mut held, Some(edit));
-        mirrors
-    }
-
-    pub(crate) fn expect_reload(&self, version: u64) {
-        let mut held = lock(&self.0.text);
-        held.edited = held.version != version;
-    }
-
-    pub fn reload(&self, text: &str) -> bool {
-        let mut held = lock(&self.0.text);
-        if held.edited {
-            return false;
-        }
-        held.source = SourceDocument::named(text, &held.source.path);
-        self.changed(&mut held, None);
-        true
+        self.changed(&mut held, edit);
+        Some(mirrors)
     }
 
     pub fn restore(&self, text: &str) {
         let mut held = lock(&self.0.text);
+        if !held.editable() {
+            return;
+        }
         let had = held.source.text();
         held.source = SourceDocument::named(text, &held.source.path);
         if had != text {
-            held.edited = true;
             let edit = TextEdit {
                 start: 0,
                 length: utf16::len(&had) as u32,
                 text: text.to_owned(),
             };
-            self.changed(&mut held, Some(edit));
+            self.changed(&mut held, edit);
         }
     }
 
-    fn changed(&self, held: &mut Text, edit: Option<TextEdit>) {
+    pub(crate) fn reload(&self, text: &str, seen: u64) -> Option<u64> {
+        let mut held = lock(&self.0.text);
+        if held.version != seen {
+            return None;
+        }
+        held.source = SourceDocument::named(text, &held.source.path);
+        held.version += 1;
+        held.behind = true;
+        Some(held.version)
+    }
+
+    fn changed(&self, held: &mut Text, edit: TextEdit) {
         held.version += 1;
         let (doc, version) = (self.0.id, held.version);
         let _ = self.0.tx.send(Msg::Changed { doc, version, edit });
     }
 
-    pub fn reset_typing(&self) {
-        lock(&self.0.text).source.reset_typing();
+    pub(crate) fn shown(&self) {
+        let mut held = lock(&self.0.text);
+        held.source.reset_typing();
+        held.behind = false;
+    }
+
+    pub fn editable(&self) -> bool {
+        lock(&self.0.text).editable()
+    }
+
+    pub(crate) fn close(&self) {
+        lock(&self.0.text).closed = true;
     }
 
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {

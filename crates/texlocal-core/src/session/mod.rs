@@ -14,6 +14,7 @@ mod watch;
 use std::collections::HashMap;
 use std::collections::hash_map::{Entry, VacantEntry};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -34,7 +35,7 @@ use actor::OpenProject;
 pub(crate) use actor::Session;
 pub use build::Compiler;
 pub use document::Document;
-pub(crate) use documents::{CloseReason, DiskConflict};
+pub(crate) use documents::DiskConflict;
 use documents::{Docs, Shared};
 pub(crate) use state::SessionSection;
 use watch::Change;
@@ -46,7 +47,7 @@ pub(crate) enum Msg {
     Changed {
         doc: u64,
         version: u64,
-        edit: Option<TextEdit>,
+        edit: TextEdit,
     },
     Command(Session, Reply),
     BuildDone(Result<CompileResult, CoreError>),
@@ -106,6 +107,7 @@ fn gone() -> CoreError {
 struct Open {
     tx: mpsc::UnboundedSender<Msg>,
     docs: Shared,
+    opens: Arc<AtomicU64>,
 }
 
 pub struct Sessions {
@@ -144,7 +146,9 @@ impl Sessions {
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
         let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
-        lock(&docs).get(&path).cloned()
+        let document = lock(&docs).get(&path).cloned()?;
+        document.shown();
+        Some(document)
     }
 
     pub fn send(&self, id: u64, command: &str, args: Value) {
@@ -166,7 +170,12 @@ impl Sessions {
             Err(err) => return reply.send(Err(err)),
         };
         match lock(&self.open).entry(session) {
-            Entry::Occupied(open) => drop(open.get().tx.send(Msg::Command(request, reply))),
+            Entry::Occupied(open) => {
+                if matches!(request, Session::Open(..)) {
+                    open.get().opens.fetch_add(1, Ordering::Relaxed);
+                }
+                drop(open.get().tx.send(Msg::Command(request, reply)));
+            }
             Entry::Vacant(entry) => match request {
                 Session::OpenProject(opening, answer) => {
                     self.open(entry, opening, Pending { reply, answer });
@@ -192,10 +201,11 @@ impl Sessions {
     ) {
         let session = *entry.key();
         let (tx, rx) = mpsc::unbounded_channel();
-        let docs = Docs::default();
+        let (docs, opens) = (Docs::default(), Arc::default());
         entry.insert(Open {
             tx: tx.clone(),
             docs: docs.shared(),
+            opens: Arc::clone(&opens),
         });
         let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
         std::thread::Builder::new()
@@ -203,7 +213,7 @@ impl Sessions {
             .spawn(move || {
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
-                    match actor::Actor::new(&sessions, session, opening, docs, tx.clone()) {
+                    match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
                         Ok((actor, ui)) => {
                             reply.send(Ok(ui));
                             runtime.block_on(actor.run(rx));

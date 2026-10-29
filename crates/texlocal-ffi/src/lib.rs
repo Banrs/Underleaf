@@ -176,7 +176,6 @@ pub unsafe extern "C" fn tl_session_source(
     caught(|| handle.sessions.document(session, path))
         .flatten()
         .map_or(std::ptr::null_mut(), |document| {
-            document.reset_typing();
             Box::into_raw(Box::new(TlSource::Session(document)))
         })
 }
@@ -207,7 +206,9 @@ pub unsafe extern "C" fn tl_source_edit(
     let edit = |source: &mut TlSource| {
         let mirrors = match source {
             TlSource::Own(doc) => doc.apply_edit(start, length, &text, changing, mirroring),
-            TlSource::Session(document) => document.edit(start, length, &text, changing, mirroring),
+            TlSource::Session(document) => document
+                .edit(start, length, &text, changing, mirroring)
+                .ok_or_else(|| CoreError::conflict("The document isn’t open for editing"))?,
         };
         Ok(json!(mirrors))
     };
@@ -244,23 +245,6 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_reload(
-    source: *mut TlSource,
-    text: *const u8,
-    len: usize,
-) -> bool {
-    let text = unsafe { text_arg(text, len) };
-    let reload = |source: &mut TlSource| match source {
-        TlSource::Own(doc) => {
-            **doc = SourceDocument::new(&text);
-            true
-        }
-        TlSource::Session(document) => document.reload(&text),
-    };
-    unsafe { on_source(source, reload) }
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_restore(source: *mut TlSource, text: *const u8, len: usize) {
     let text = unsafe { text_arg(text, len) };
     let restore = |source: &mut TlSource| match source {
@@ -268,6 +252,15 @@ pub unsafe extern "C" fn tl_source_restore(source: *mut TlSource, text: *const u
         TlSource::Session(document) => document.restore(&text),
     };
     unsafe { on_source(source, restore) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_editable(source: *mut TlSource) -> bool {
+    let editable = |source: &mut TlSource| match source {
+        TlSource::Own(_) => true,
+        TlSource::Session(document) => document.editable(),
+    };
+    unsafe { on_source(source, editable) }
 }
 
 #[unsafe(no_mangle)]
