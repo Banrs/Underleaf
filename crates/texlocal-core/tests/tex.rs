@@ -100,3 +100,27 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     rig.call("StopLive", json!({}));
     rig.section("live", |l| l["phase"] == "stopped");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs TeX and TeXpresso"]
+async fn forward_sync_follows_the_live_documents_synctex() {
+    let main = "\\documentclass{article}\n\\begin{document}\nFirst page.\n\\end{document}\n";
+    let rig = Rig::open(&[("main.tex", main)]).await;
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    rig.call("LiveView", json!({ "first": 0, "last": 0 }));
+    rig.event("liveDocument", |e| e["complete"] == true);
+    let page = |line: u32| {
+        let at = json!({ "file": "main.tex", "line": line });
+        rig.call("SynctexForward", at)["page"].as_f64()
+    };
+    assert_eq!(page(3), Some(1.0));
+    let end = main.find("\\end").unwrap() as u32;
+    doc.edit(end, 0, "\\newpage\nSecond page.\n", None, false);
+    rig.event("liveDocument", |e| {
+        let second = |r: &serde_json::Value| r["last"].as_u64() >= Some(1);
+        e["complete"] == true && e["changed"].as_array().unwrap().iter().any(second)
+    });
+    assert_eq!(page(5), Some(2.0));
+    rig.call("StopLive", json!({}));
+}

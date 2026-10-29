@@ -205,7 +205,6 @@ pub struct StoredUi {
     pub folded_headings: Vec<String>,
     pub file: Option<String>,
     pub line: Option<u32>,
-    pub page: Option<u32>,
     pub zoom: Option<Value>,
     pub panel: bool,
     pub live_preview: bool,
@@ -220,7 +219,6 @@ pub struct UiState {
     folded_headings: Vec<String>,
     file: Option<String>,
     line: Option<u32>,
-    page: Option<u32>,
     zoom: Option<Zoom>,
     panel: bool,
     live_preview: bool,
@@ -234,7 +232,6 @@ pub fn read_ui(file: &Path) -> UiState {
         folded_headings: ui.folded_headings,
         file: ui.file,
         line: ui.line,
-        page: ui.page,
         panel: ui.panel,
         live_preview: ui.live_preview,
     }
@@ -268,7 +265,6 @@ pub struct UiPatch {
 pub struct UiPlace {
     file: Option<String>,
     line: Option<u32>,
-    page: Option<u32>,
     zoom: Option<Zoom>,
     panel: bool,
 }
@@ -316,13 +312,12 @@ pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
         if let Some(UiPlace {
             file,
             line,
-            page,
             zoom,
             panel,
         }) = place
         {
-            (state.file, state.line, state.page) = (file, line, page);
-            (state.zoom, state.panel) = (zoom.map(Zoom::stored), panel);
+            (state.file, state.line, state.zoom, state.panel) =
+                (file, line, zoom.map(Zoom::stored), panel);
         }
         Ok(())
     })

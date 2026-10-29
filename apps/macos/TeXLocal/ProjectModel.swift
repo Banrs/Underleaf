@@ -37,7 +37,7 @@ final class ProjectModel {
     var listed: [LogItem] { store.build?.listed ?? [] }
     var fixing: Fix?
     var chosenIssue: Int?
-    var hasPDF = false
+    var hasPDF: Bool { pdf.pageCount > 0 }
     var livePDF: Bool { store.shownPdf?.live == true }
     var buildPDF: URL? { store.shownPdf?.path.map { URL(filePath: $0) } }
     let pdf = PDFController()
@@ -66,7 +66,8 @@ final class ProjectModel {
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
     @ObservationIgnored var syncTask: Task<Void, Never>?
-    @ObservationIgnored var pdfLoad: Task<Void, Never>?
+    @ObservationIgnored var followTask: Task<Void, Never>?
+    @ObservationIgnored var followsCaret = false
     private var closing: Task<Bool, Never>?
     var isClosing: Bool { closing != nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -129,7 +130,7 @@ final class ProjectModel {
 
     func savePlace() {
         guard initialLoadComplete else { return }
-        let place = UiPlace(file: openPath, line: cursorLine, page: pdf.keptPage, zoom: pdf.keptZoom, panel: panel.shown)
+        let place = UiPlace(file: openPath, line: cursorLine, zoom: pdf.keptZoom, panel: panel.shown)
         saveUIState(UiPatch(place: place))
     }
 
@@ -149,11 +150,11 @@ final class ProjectModel {
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         self.session = session
-        (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
+        (panel.shown, pdf.restoreZoom) = (ui.panel, ui.zoom)
         let pdfShown = showPDF()
         let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
         if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
-        await pdfShown.value
+        await pdfShown?.value
         guard !closed else { return }
         initialLoadComplete = true
         if ui.livePreview, canSwitchLivePreview { livePreview = true }
@@ -172,6 +173,7 @@ final class ProjectModel {
             findHeadings()
             liveCaret()
         }
+        editor.onEdit = { [weak self] in if let self, livePDF { followsCaret = true } }
         editor.textView.composing = { [weak self] composing in self?.composing(composing) }
         editor.textView.keyboardChanged = { [weak self] in self?.sourceHasKeyboard = $0 }
         editor.onScroll = { [weak self] line in
@@ -517,9 +519,9 @@ final class ProjectModel {
             removeExport()
             notices.cancel()
             syncTask?.cancel()
-            pdfLoad?.cancel()
+            followTask?.cancel()
+            pdf.loading?.cancel()
             liveLogWatch?.cancel()
-            pdf.endLiveRun()
             return true
         }
         closing = task

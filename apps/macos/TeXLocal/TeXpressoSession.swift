@@ -2,15 +2,11 @@ import Observation
 import PDFKit
 
 nonisolated enum LiveRead: @unchecked Sendable {
-    case document(PDFDocument?, changed: IndexSet, complete: Bool)
+    case document(PDFDocument?)
     case page(PDFPage?, at: Int)
 
     init(_ live: LiveDocument) {
-        let document = Self.mapped(URL(filePath: live.path)).flatMap { $0.pageCount > 0 ? $0 : nil }
-        let changed = live.changed.reduce(into: IndexSet()) { set, range in
-            if range.first <= range.last { set.insert(integersIn: range.first...range.last) }
-        }
-        self = .document(document, changed: changed, complete: live.complete)
+        self = .document(Self.mapped(URL(filePath: live.path)).flatMap { $0.pageCount > 0 ? $0 : nil })
     }
 
     init(_ live: LivePage) {

@@ -1,16 +1,10 @@
 import Accessibility
 import AppKit
-import PDFKit
 
 extension ProjectModel {
-    @discardableResult func showPDF() -> Task<Void, Never> {
-        restart(&pdfLoad) { [self] in
-            guard let shown = store.shownPdf, !shown.live else { return }
-            let document: PDFDocument? = if let path = shown.path { await PDFController.loadDocument(URL(filePath: path)) } else { nil }
-            guard !Task.isCancelled, !closed else { return }
-            if let document { pdf.show(document) } else { pdf.clear() }
-            hasPDF = document != nil
-        }
+    @discardableResult func showPDF() -> Task<Void, Never>? {
+        guard let shown = store.shownPdf, !shown.live else { return nil }
+        return pdf.load(shown.path.map { URL(filePath: $0) })
     }
 
     func showIssues() {
@@ -44,8 +38,8 @@ extension ProjectModel {
     func buildFinished(_ finished: BuildFinished) {
         guard let result else { return }
         if result.ok, !outdated, app?.showPDF == true, isLaTeX, UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
-            Task { [pdfLoad] in
-                await pdfLoad?.value
+            Task { [loading = pdf.loading] in
+                await loading?.value
                 await forwardSync(quietly: true)
             }
         }

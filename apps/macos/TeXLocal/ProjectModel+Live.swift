@@ -39,26 +39,42 @@ extension ProjectModel {
 
     func liveChanged(_ state: LiveState) {
         texpresso.receive(state)
-        if state.phase != .running { pdf.endLiveRun() }
+        if state.phase != .running { followsCaret = false }
         showIssues()
     }
 
     func showLive(_ read: LiveRead) {
-        guard texpresso.active, !closed else { return }
-        if case .document(_?, _, _) = read { hasPDF = true }
-        pdf.showLive(read)
+        guard texpresso.active, livePDF, !closed else { return }
+        switch read {
+        case .document(let document?):
+            pdf.show(document)
+            if followsCaret { followCaret() }
+        case .page(let page?, let index): pdf.show(page, at: index)
+        case .document(nil), .page(nil, _): break
+        }
+    }
+
+    private func followCaret() {
+        guard let session, let path = openPath, isLaTeX else { return }
+        let line = editor.currentLine
+        _ = restart(&followTask) { [self] in
+            guard let loc = try? await session.call(SynctexForward(file: path, line: line)), !Task.isCancelled, !closed, livePDF,
+                  openPath == path else { return }
+            followsCaret = false
+            pdf.follow(loc)
+        }
     }
 
     func forwardSync(quietly: Bool = false) async {
         guard let session, let path = openPath else { return }
         let (line, column) = (editor.currentLine, editor.currentColumn)
-        let live = livePDF, request = SynctexForward(file: path, line: line)
+        let request = SynctexForward(file: path, line: line)
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, !closed, openPath == path else { return }
             let shown = pdf.shownVersion
             do {
                 let loc = try await session.call(request)
-                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
+                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown else { return }
                 app?.requestPDF(.reveal(loc, SyncSource(session: session.id, file: path, line: line, column: column, quietly: quietly)))
             } catch {
                 if !quietly, !Task.isCancelled, !closed { reportSync(error, "Couldn’t Find This Line in the PDF") }
