@@ -21,24 +21,9 @@ trap cleanup EXIT
 chmod 755 "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/libexec"
 cp "$BUILD/texpresso" "$BUILD/texpresso-xetex" "$STAGE/libexec/"
-chmod u+w "$STAGE"/libexec/*
-
-deps() { otool -L "$1" | tail -n +2 | sed 's/ (compat.*//; s/^[[:space:]]*//'; }
 for file in "$STAGE"/libexec/*; do
-  args=()
-  while read -r dep; do
-    case "$dep" in
-      /usr/lib/* | /System/* | /opt/homebrew/*) ;;
-      *) real=$(realpath "$dep" 2>/dev/null) && [ "${real#/opt/homebrew/Cellar/}" != "$real" ] ||
-           fail "$(basename "$file") links $dep, from neither the system nor Homebrew"
-         args+=(-change "$dep" "$(echo "$real" | sed -E 's|Cellar/([^/]+)/[^/]+/|opt/\1/|')") ;;
-    esac
-  done < <(deps "$file")
-  for rpath in $(otool -l "$file" | awk '/LC_RPATH/ { getline; getline; print $2 }'); do
-    args+=(-delete_rpath "$rpath")
-  done
-  if [ ${#args[@]} -gt 0 ]; then install_name_tool "${args[@]}" "$file" 2>/dev/null; fi
-  codesign --force --sign - "$file" 2>/dev/null
+  outside=$(otool -L "$file" | awk 'NR > 1 && $1 !~ "^(/usr/lib/|/System/|/opt/homebrew/)" { print $1 }')
+  [ -z "$outside" ] || fail "$(basename "$file") links $outside, from neither the system nor Homebrew"
 done
 
 cat > "$STAGE/bin/texpresso" <<'EOF'
@@ -51,13 +36,12 @@ exec "$ROOT/libexec/texpresso" "$@"
 EOF
 chmod +x "$STAGE/bin/texpresso"
 
-"$STAGE/bin/texpresso" --help >"$STAGE/check.log" 2>&1 </dev/null & pid=$!
-{ sleep 10; kill "$pid"; } >/dev/null 2>&1 & watchdog=$!
-wait "$pid" || true
-{ kill "$watchdog"; wait "$watchdog"; } 2>/dev/null || true
-grep -q "Usage: texpresso" "$STAGE/check.log" || fail "the staged texpresso does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
-"$STAGE/libexec/texpresso-xetex" --help >"$STAGE/check.log" 2>&1 </dev/null || true
-grep -q "Usage: " "$STAGE/check.log" || fail "the staged texpresso-xetex does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
+runs() {
+  "$1" --help >"$STAGE/check.log" 2>&1 </dev/null || true
+  grep -q "$2" "$STAGE/check.log" || fail "the staged $(basename "$1") does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
+}
+runs "$STAGE/bin/texpresso" "Usage: texpresso"
+runs "$STAGE/libexec/texpresso-xetex" "Usage: "
 rm "$STAGE/check.log"
 
 KEEP=

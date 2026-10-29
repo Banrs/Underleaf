@@ -67,7 +67,7 @@ index 92548a0..58d9b6d 100644
        }
      }
 diff --git a/src/dvi/mydvi.h b/src/dvi/mydvi.h
-index e2f2105..e5fe733 100644
+index e2f2105..66527f7 100644
 --- a/src/dvi/mydvi.h
 +++ b/src/dvi/mydvi.h
 @@ -210,6 +210,12 @@ dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks);
@@ -75,28 +75,14 @@ index e2f2105..e5fe733 100644
  dvi_font *dvi_resmanager_get_tex_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen);
  fz_font *dvi_resmanager_get_xdv_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen, int index);
 +
-+/* The font a glyph of `font` goes to the page in: an OpenType copy of a Type 1 font while the
-+   pages are written as PDF (type1_cff.c), else the font itself. dvi_page_fonts turns that
-+   on or off, and frees the copies made. */
++/* The font a glyph of `font` goes to the page in: an OpenType copy of a Type 1 font
++   (type1_cff.c), since MuPDF writes a font to PDF as a CID font, which can't be Type 1; else
++   the font itself. dvi_drop_page_fonts frees the copies. */
 +fz_font *dvi_page_font(fz_context *ctx, fz_font *font);
-+void dvi_page_fonts(fz_context *ctx, bool on);
++void dvi_drop_page_fonts(fz_context *ctx);
  pdf_document *dvi_resmanager_get_pdf(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
-diff --git a/src/engine/engine/xetex-errors.c b/src/engine/engine/xetex-errors.c
-index fb6c9d3..15bf4ab 100644
---- a/src/engine/engine/xetex-errors.c
-+++ b/src/engine/engine/xetex-errors.c
-@@ -150,7 +150,8 @@ confusion(const char* s)
-     }
- 
-     post_error_message(1);
--    _tt_abort("halted on confusion()");
-+    // TeX's own invariant failed: unlike the stops that end in _tt_abort, a crash report is wanted.
-+    abort();
- }
- 
- 
 diff --git a/src/engine/main/main.c b/src/engine/main/main.c
 index 333408e..23db8db 100644
 --- a/src/engine/main/main.c
@@ -137,7 +123,7 @@ index c922019..10af953 100644
  texpresso-dev: $(BUILD)/texpresso-dev
  $(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..23cc695 100644
+index 6face98..6d25ba0 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
 @@ -1,5 +1,4 @@
@@ -223,7 +209,7 @@ index 6face98..23cc695 100644
    int count = buf ? buf->len : 0;
  
    if (line_output && buf)
-@@ -554,6 +600,58 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+@@ -554,6 +600,51 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
    }
  }
  
@@ -232,13 +218,6 @@ index 6face98..23cc695 100644
 +{
 +  printf("[\"live\", %d]\n", version);
 +  fflush(stdout);
-+}
-+
-+static void json_path(const char *path)
-+{
-+  putc_unlocked('"', stdout);
-+  output_json_string(stdout, path, strlen(path));
-+  putc_unlocked('"', stdout);
 +}
 +
 +void editor_page(int page, const char *base64, size_t len)
@@ -258,9 +237,9 @@ index 6face98..23cc695 100644
 +   page that differ from the document written before. */
 +void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges)
 +{
-+  fputs("[\"pdf\", ", stdout);
-+  json_path(path);
-+  printf(", %d, \"%s\", [", pages, run_name(run));
++  fputs("[\"pdf\", \"", stdout);
++  output_json_string(stdout, path, strlen(path));
++  printf("\", %d, \"%s\", [", pages, run_name(run));
 +  for (int i = 0; i < ranges; i++)
 +    printf("%s[%d, %d]", i ? ", " : "", changed[2 * i], changed[2 * i + 1]);
 +  fputs("]]\n", stdout);
@@ -282,27 +261,8 @@ index 6face98..23cc695 100644
  void editor_flush(void)
  {
    switch (protocol)
-@@ -607,7 +705,7 @@ void editor_reset_sync(void)
- 
- void editor_notify_file_opened(int index, const char *path, int len)
- {
--  if (len == 0)
-+  if (len == 0 || muted)
-     return;
-   switch (protocol)
-   {
-@@ -631,6 +729,9 @@ void editor_notify_lookup(const char *path,
-                           bool read,
-                           enum EDITOR_LOOKUP_STATUS status)
- {
-+  if (muted)
-+    return;
-+
-   const char *kind = read ? "read" : "write";
-   const char *status_msg;
- 
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..ce0b993 100644
+index 05fdd1c..be23096 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
 @@ -1,9 +1,16 @@
@@ -353,7 +313,7 @@ index 05fdd1c..ce0b993 100644
    };
  };
  
-@@ -155,6 +178,16 @@ enum EDITOR_INFO_BUFFER
+@@ -155,6 +178,17 @@ enum EDITOR_INFO_BUFFER
  void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos);
  void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
  void editor_flush(void);
@@ -365,13 +325,14 @@ index 05fdd1c..ce0b993 100644
 +void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges);
 +void editor_done(enum EDITOR_RUN run);
 +void editor_synced(int mark);
-+/* While muted nothing is sent: a finishing pass runs beside the document being shown. */
++/* While muted TeX's output and log aren't sent: a finishing pass runs beside the document
++   being shown. */
 +void editor_mute(bool muted);
  void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
  void editor_reset_sync(void);
  void editor_notify_file_opened(int index, const char *path, int len);
 diff --git a/src/frontend/engine.h b/src/frontend/engine.h
-index 13e945d..ac1b6ba 100644
+index 13e945d..6f244b0 100644
 --- a/src/frontend/engine.h
 +++ b/src/frontend/engine.h
 @@ -47,6 +47,22 @@ txp_engine *txp_create_tex_engine(fz_context *ctx,
@@ -380,8 +341,8 @@ index 13e945d..ac1b6ba 100644
  
 +/* The TeX engine's own, for an editor showing the document in its own PDF view
 + * (live.c). */
-+txp_engine *txp_tex_live_engine(fz_context *ctx, const char *exe_path, const char *root,
-+                                const char *name, const char *inputs);
++txp_engine *txp_tex_live_engine(fz_context *ctx, const char *engine_path,
++                                const char *inclusion_path, const char *name, const char *root);
 +int txp_tex_worker_fd(txp_engine *self); /* what a step waits on, or -1 */
 +uint64_t txp_tex_page_hash(txp_engine *self, int page);
 +int txp_tex_outcome(txp_engine *self); /* enum EDITOR_RUN, once the run is over */
@@ -398,18 +359,10 @@ index 13e945d..ac1b6ba 100644
                                    const char *dvi_path,
                                    dvi_reshooks hooks);
 diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
-index 5866b1b..205bb6c 100644
+index 5866b1b..ace0021 100644
 --- a/src/frontend/engine_tex.c
 +++ b/src/frontend/engine_tex.c
-@@ -38,6 +38,7 @@
- #include "state.h"
- #include "synctex.h"
- #include "editor.h"
-+#include "providers.h"
- 
- typedef struct
- {
-@@ -102,8 +103,25 @@ struct tex_engine
+@@ -102,6 +102,20 @@ struct tex_engine
  
    bool aux_dirty;
    bool finishing;
@@ -429,13 +382,8 @@ index 5866b1b..205bb6c 100644
 +  bool planted;
  };
  
-+// How long a step waits for the worker's next query, in ms
-+static int step_timeout = 10;
-+
  // Backtrackable process state & VFS representation
- 
- static process_t *get_process(struct tex_engine *t)
-@@ -207,6 +225,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
+@@ -207,6 +221,9 @@ static void prepare_process(fz_context *ctx, struct tex_engine *self)
    {
      self->deferred.active = false;
      log_rollback(ctx, self->log, self->restart);
@@ -445,7 +393,7 @@ index 5866b1b..205bb6c 100644
      self->process_count = 1;
      process_t *p = get_process(self);
      p->pid = exec_xelatex(self->engine_path, self->use_texlive, self->name, &p->fd);
-@@ -305,6 +326,25 @@ static void decimate_processes(struct tex_engine *self)
+@@ -305,6 +322,25 @@ static void decimate_processes(struct tex_engine *self)
      }
    }
  
@@ -471,7 +419,7 @@ index 5866b1b..205bb6c 100644
    int i = 0;
    for (int j = 0; j < self->process_count; j++)
    {
-@@ -332,16 +372,33 @@ static void decimate_processes(struct tex_engine *self)
+@@ -332,16 +368,33 @@ static void decimate_processes(struct tex_engine *self)
  
  // Engine class implementation
  
@@ -505,7 +453,7 @@ index 5866b1b..205bb6c 100644
    fz_free(ctx, self);
  }
  
-@@ -474,7 +531,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
+@@ -474,7 +527,7 @@ lookup_path(struct tex_engine *self, const char *path, char buf[1024], struct st
  static bool need_snapshot(fz_context *ctx, struct tex_engine *self, int time)
  {
    // Fences are pending: don't snapshot now
@@ -514,7 +462,7 @@ index 5866b1b..205bb6c 100644
      return 0;
  
    int process = self->process_count - 1;
-@@ -550,6 +607,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -550,6 +603,7 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
            if (!fs_path)
            {
              e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -522,7 +470,7 @@ index 5866b1b..205bb6c 100644
              if (e->promised && !self->deferred.active)
              {
                // File was promised and is missing: notify the editor and wait
-@@ -581,6 +639,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -581,6 +635,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
  
        if (!e)
          e = filesystem_lookup_or_create(ctx, self->fs, q->open.path);
@@ -531,7 +479,7 @@ index 5866b1b..205bb6c 100644
  
        log_filecell(ctx, self->log, cell);
        log_fileentry(ctx, self->log, e);
-@@ -742,6 +802,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -742,6 +798,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
        if (fork)
        {
          a.tag = A_FORK;
@@ -540,7 +488,7 @@ index 5866b1b..205bb6c 100644
          self->fence_pos -= 1;
        }
        else if (need_snapshot(ctx, self, q->time))
-@@ -754,6 +816,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+@@ -754,6 +812,8 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
          a.tag = A_READ;
          a.read.size = n;
        }
@@ -549,7 +497,7 @@ index 5866b1b..205bb6c 100644
        if (0)
        {
          if (fork)
-@@ -986,7 +1050,9 @@ static void revert_trace(trace_entry_t *te)
+@@ -986,7 +1046,9 @@ static void revert_trace(trace_entry_t *te)
  static void rollback_processes(fz_context *ctx, struct tex_engine *self, int reverted, int trace)
  {
    self->deferred.active = false;
@@ -560,7 +508,7 @@ index 5866b1b..205bb6c 100644
  
    fprintf(
      stderr,
-@@ -1018,7 +1084,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
+@@ -1018,7 +1080,10 @@ static void rollback_processes(fz_context *ctx, struct tex_engine *self, int rev
              p->trace_len == 0 ? 0 : self->trace[p->trace_len - 1].time);
    }
  
@@ -572,7 +520,7 @@ index 5866b1b..205bb6c 100644
      pop_process(ctx, self);
  
    int trace_len = self->process_count == 0 ? 0 : get_process(self)->trace_len;
-@@ -1066,6 +1135,7 @@ static bool possible_fence(trace_entry_t *te)
+@@ -1066,6 +1131,7 @@ static bool possible_fence(trace_entry_t *te)
  static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, int offset)
  {
    self->fence_pos = -1;
@@ -580,7 +528,7 @@ index 5866b1b..205bb6c 100644
  
    if (trace <= 0)
      return trace;
-@@ -1074,6 +1144,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
+@@ -1074,6 +1140,9 @@ static int compute_fences(fz_context *ctx, struct tex_engine *self, int trace, i
      mabort();
  
    self->fence_pos = 0;
@@ -590,7 +538,7 @@ index 5866b1b..205bb6c 100644
  
    offset = (offset - 64) & ~(64 - 1);
    if (offset < self->trace[trace].seen)
-@@ -1143,9 +1216,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
+@@ -1143,9 +1212,13 @@ static fz_display_list *engine_render_page(txp_engine *_self, fz_context *ctx, i
    return dl;
  }
  
@@ -604,16 +552,17 @@ index 5866b1b..205bb6c 100644
    if (restart_if_needed)
      prepare_process(ctx, self);
  
-@@ -1169,7 +1246,7 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
+@@ -1169,7 +1242,8 @@ static bool engine_step(txp_engine *_self, fz_context *ctx, bool restart_if_need
      int fd = get_process(self)->fd;
      if (fd == -1)
        return 0;
 -    if (!channel_has_pending_query(self->c, fd, 10))
-+    if (!channel_has_pending_query(self->c, fd, step_timeout))
++    // Live, the caller waits, on the worker and its own input together (txp_tex_worker_fd)
++    if (!channel_has_pending_query(self->c, fd, self->live ? 0 : 10))
        return 0;
      if (!read_query(self, self->c, &q))
      {
-@@ -1368,6 +1445,9 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
+@@ -1368,6 +1442,9 @@ static bool process_pending_messages(fz_context *ctx, struct tex_engine *self)
  
  static void rollback_add_change(fz_context *ctx, struct tex_engine *self, fileentry_t *e, int changed)
  {
@@ -623,7 +572,7 @@ index 5866b1b..205bb6c 100644
    int trace_len = self->rollback.trace_len;
    // if (changed > 0) changed--;
  
-@@ -1584,6 +1664,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
+@@ -1584,6 +1661,8 @@ static bool engine_end_changes(txp_engine *_self, fz_context *ctx)
  static txp_engine_status engine_get_status(txp_engine *_self)
  {
    SELF;
@@ -632,35 +581,20 @@ index 5866b1b..205bb6c 100644
    if (self->process_count == 0)
      return DOC_TERMINATED;
    return get_process(self)->fd > -1 ? DOC_RUNNING : DOC_TERMINATED;
-@@ -1609,6 +1691,253 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
+@@ -1609,6 +1688,234 @@ static fileentry_t *engine_find_file(txp_engine *_self, fz_context *ctx, const c
    return filesystem_lookup_or_create(ctx, self->fs, path);
  }
  
 +// For the editor's own PDF view
 +
-+static struct tex_engine *live_engine(fz_context *ctx, const char *engine_path,
-+                                      const char *inclusion_path, const char *name,
-+                                      const char *root)
++txp_engine *txp_tex_live_engine(fz_context *ctx, const char *engine_path,
++                                const char *inclusion_path, const char *name, const char *root)
 +{
 +  struct tex_engine *self = (struct tex_engine *)txp_create_tex_engine(
 +      ctx, engine_path, true, false, inclusion_path, name, dvi_texlive_hooks(ctx, root));
 +  self->live = true;
 +  self->root = fz_strdup(ctx, root);
-+  return self;
-+}
-+
-+txp_engine *txp_tex_live_engine(fz_context *ctx, const char *exe_path, const char *root,
-+                                const char *name, const char *inputs)
-+{
-+  // Its TeX is beside it, and runs in the document's folder.
-+  char engine_path[PATH_MAX];
-+  snprintf(engine_path, sizeof engine_path, "%.*s/texpresso-xetex",
-+           (int)(strrchr(exe_path, '/') - exe_path), exe_path);
-+  if (chdir(root) != 0)
-+    perror("chdir to the document's folder");
-+  // The caller waits, on the worker and its own input together (txp_tex_worker_fd).
-+  step_timeout = 0;
-+  return (txp_engine *)live_engine(ctx, engine_path, inputs, name, root);
++  return (txp_engine *)self;
 +}
 +
 +int txp_tex_worker_fd(txp_engine *_self)
@@ -668,7 +602,7 @@ index 5866b1b..205bb6c 100644
 +  SELF;
 +  if (self->pass)
 +    return txp_tex_worker_fd((txp_engine *)self->pass);
-+  if (self->process_count == 0 || self->deferred.active)
++  if (self->process_count == 0)
 +    return -1;
 +  return get_process(self)->fd;
 +}
@@ -743,15 +677,11 @@ index 5866b1b..205bb6c 100644
 +      data = e->saved.data;
 +      written = true;
 +    }
-+    if (!data && !e->promised)
++    if (!data)
 +      continue;
 +    fileentry_t *mine = filesystem_lookup_or_create(ctx, self->fs, e->path);
-+    mine->promised = e->promised;
-+    if (data)
-+    {
-+      mine->edit_data = fz_new_buffer_from_copied_data(ctx, data->data, data->len);
-+      mine->edit_data_from_convergence = written || e->edit_data_from_convergence;
-+    }
++    mine->edit_data = fz_new_buffer_from_copied_data(ctx, data->data, data->len);
++    mine->edit_data_from_convergence = written || e->edit_data_from_convergence;
 +  }
 +}
 +
@@ -759,8 +689,8 @@ index 5866b1b..205bb6c 100644
 +bool txp_tex_warm(txp_engine *_self, fileentry_t **entry, int *offset)
 +{
 +  SELF;
-+  if (entry) *entry = self->warm.entry;
-+  if (offset) *offset = self->warm.position;
++  *entry = self->warm.entry;
++  *offset = self->warm.position;
 +  return self->warm.entry != NULL;
 +}
 +
@@ -818,8 +748,8 @@ index 5866b1b..205bb6c 100644
 +void txp_tex_rerun(txp_engine *_self, fz_context *ctx)
 +{
 +  SELF;
-+  struct tex_engine *pass =
-+      live_engine(ctx, self->engine_path, self->inclusion_path, self->name, self->root);
++  struct tex_engine *pass = (struct tex_engine *)txp_tex_live_engine(
++      ctx, self->engine_path, self->inclusion_path, self->name, self->root);
 +  adopt(ctx, pass, self);
 +  // Its own snapshot where this one's is, for the edit after it takes over.
 +  if (self->warm.entry)
