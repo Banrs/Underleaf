@@ -2,7 +2,7 @@ import Foundation
 
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
-        let name = directory ? "untitled folder" : "untitled.tex"
+        let name = directory ? "untitled-folder" : "untitled.tex"
         guard let made = await alerting("Couldn’t Create “\(name)”", {
             try await session.call(CreateEntry(folder: folder, name: name, dir: directory))
         }) else { return nil }

@@ -173,8 +173,8 @@ pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreE
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {
     let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let numbered = move |n: u32| match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
-        _ => format!("{name} {n}"),
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{n}.{ext}"),
+        _ => format!("{name}-{n}"),
     };
     let copies = std::iter::once(name.to_owned()).chain((2..).map(numbered));
     copies.map(move |copy| match parent {

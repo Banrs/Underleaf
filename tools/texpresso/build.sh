@@ -12,5 +12,7 @@ git checkout --quiet --force --detach "$COMMIT"
 git clean --quiet --force -d src
 git apply "$HERE/underleaf-pdf.patch"
 cp -R "$HERE/src/." src/
-make -j4 all "$@"
+ICU=$(brew list --formula | grep -E '^icu4c(@[0-9]+)?$' | sort -V | tail -1)
+[ -n "$ICU" ] || { echo "build.sh: TeXpresso needs icu4c: brew install icu4c" >&2; exit 1; }
+make -j4 all BREW_ICU4C="$(brew --prefix "$ICU")" "$@"
 echo "Built $DEST/build/texpresso. Run $HERE/install.sh $DEST/build to install it."

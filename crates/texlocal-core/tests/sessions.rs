@@ -467,10 +467,11 @@ async fn a_new_entry_is_numbered_past_a_taken_name() {
     let second = rig.call("CreateEntry", entry("untitled.tex", false));
     assert_eq!(
         (first, second),
-        (json!("untitled.tex"), json!("untitled 2.tex"))
+        (json!("untitled.tex"), json!("untitled-2.tex"))
     );
-    let folder = rig.call("CreateEntry", entry("figs", true));
-    assert!(rig.root().join(folder.as_str().unwrap()).is_dir());
+    let folders = [(); 2].map(|()| rig.call("CreateEntry", entry("figs", true)));
+    assert_eq!(folders, [json!("figs"), json!("figs-2")]);
+    assert!(rig.root().join("figs-2").is_dir());
     for name in [".texlocal.json", "../outside.tex"] {
         let refused = rig.refuse("CreateEntry", entry(name, false));
         assert_eq!(refused, ErrorKind::Invalid, "{name}");
@@ -677,12 +678,12 @@ async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
     let second = rig.call("ImportFiles", args.clone());
     assert_eq!(
         second["existing"],
-        json!([{ "path": "plot.png", "keepBoth": "plot 2.png" }])
+        json!([{ "path": "plot.png", "keepBoth": "plot-2.png" }])
     );
     let mut keep = args;
     keep["conflict"] = json!("keepBoth");
     rig.call("ImportFiles", keep);
-    assert!(rig.root().join("figs/plot 2.png").is_file());
+    assert!(rig.root().join("figs/plot-2.png").is_file());
 }
 
 #[tokio::test(flavor = "multi_thread")]

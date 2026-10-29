@@ -141,12 +141,14 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
         .map(|(session, command, args, kind)| (core.send(session, command, args), kind))
         .into();
     let mut replies = Vec::new();
-    while let Ok(said) = core.events.recv_timeout(Duration::from_secs(1)) {
+    while replies.len() < expected.len() {
+        let said = core.events.recv_timeout(Duration::from_secs(10)).unwrap();
         if let Some(id) = said["reply"].as_u64() {
             let kind = said["error"]["kind"].as_str().unwrap_or("ok").to_owned();
             replies.push((id, kind));
         }
     }
+    assert!(core.events.try_iter().all(|said| said["reply"].is_null()));
     replies.sort_unstable();
     let ids: Vec<u64> = replies.iter().map(|(id, _)| *id).collect();
     assert_eq!(ids, expected.iter().map(|(id, _)| *id).collect::<Vec<_>>());

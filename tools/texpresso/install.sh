@@ -51,8 +51,8 @@ if [ -e "$DEST" ]; then OLD=$(mktemp -d "$DEST.old.XXXXXX"); mv "$DEST" "$OLD/pr
 mv "$STAGE" "$DEST" || fail "could not move the installation into $DEST"
 if [ -n "$KEEP" ]; then mv "$OLD/previous/cache" "$DEST/cache" || true; fi
 if [ -n "${NO_LINK:-}" ]; then
-  echo "Installed $DEST. Choose it in Underleaf's Settings: /opt/homebrew/bin/texpresso is as it was."
+  echo "Installed $DEST. Choose it in TeXLocal's Settings: /opt/homebrew/bin/texpresso is as it was."
 else
   ln -sf "$DEST/bin/texpresso" /opt/homebrew/bin/texpresso
-  echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. Underleaf's Settings can stay on Automatic."
+  echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. TeXLocal's Settings can stay on Automatic."
 fi

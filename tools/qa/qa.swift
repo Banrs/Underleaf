@@ -254,9 +254,9 @@ func windows() -> [[String: Any]] {
     return [windowInfo(m, main: true)] + axWindows().filter { windowID($0) != mid }.map { windowInfo($0, main: false) }
 }
 
-func post(_ e: CGEvent?) {
+func post(_ e: CGEvent?, key: Bool = false) {
     if BG { fail("refusing to post a mouse or key event in the background (QA_BG): use an Accessibility command") }
-    e?.post(tap: .cghidEventTap)
+    if key { e?.postToPid(needApp().processIdentifier) } else { e?.post(tap: .cghidEventTap) }
 }
 
 let keyCodes: [String: CGKeyCode] = [
@@ -270,6 +270,7 @@ let keyCodes: [String: CGKeyCode] = [
     "f11": 103, "f12": 111,
 ]
 let fnKeys: Set = ["left", "right", "up", "down", "home", "end", "pageup", "pagedown", "forwarddelete"]
+let keySource = CGEventSource(stateID: .privateState)
 
 func modifiers(_ names: [String]) -> CGEventFlags {
     var flags: CGEventFlags = []
@@ -293,24 +294,22 @@ func pressKey(_ chord: String) {
     if key.isEmpty { key = "="; flags.insert(.maskShift) }
     guard let code = keyCodes[key] else { fail("unknown key '\(key)'") }
     if fnKeys.contains(key) { flags.insert(.maskSecondaryFn) }
-    let src = CGEventSource(stateID: .hidSystemState)
     for down in [true, false] {
-        let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+        let e = CGEvent(keyboardEventSource: keySource, virtualKey: code, keyDown: down)
         e?.flags = flags
-        post(e)
+        post(e, key: true)
         sleepS(0.02)
     }
 }
 func typeText(_ t: String) {
-    let src = CGEventSource(stateID: .hidSystemState)
     for ch in t {
-        if ch == "\n" { pressKey("return"); continue }
+        if ch == "\n" { pressKey("return"); sleepS(0.2); continue }
         let u = Array(String(ch).utf16)
         for down in [true, false] {
-            let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
+            let e = CGEvent(keyboardEventSource: keySource, virtualKey: 0, keyDown: down)
             e?.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
             e?.flags = []
-            post(e)
+            post(e, key: true)
         }
         sleepS(0.012)
     }
