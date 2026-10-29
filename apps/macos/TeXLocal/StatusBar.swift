@@ -212,7 +212,6 @@ private struct PagePlace: View {
             .disabled(!app.isEnabled(.compileRun, on: project))
         }
     }
-
 }
 
 private struct PanelToggle: View {

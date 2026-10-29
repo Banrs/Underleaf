@@ -209,15 +209,7 @@ struct WindowModals: View {
                 .fileDialogMessage("A folder, or a .tex file’s folder, opens where it is. A .zip is copied into the projects folder.")
         }
         .sheet(item: $app.newProjectDraft) { NewProjectSheet(draft: $0) }
-        .alert($app.alert)
+        .alert(app.alert?.title ?? "", item: $app.alert) { _ in } message: { Text($0.message) }
         .environment(app)
-    }
-}
-
-extension View {
-    func alert(_ alert: Binding<AppAlert?>) -> some View {
-        self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in } message: { alert in
-            Text(alert.message)
-        }
     }
 }

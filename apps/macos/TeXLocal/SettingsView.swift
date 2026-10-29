@@ -172,7 +172,7 @@ private struct ProgramFolder: View {
                 HStack {
                     if program.folder(in: tex) == nil {
                         if program == .tex {
-                            Button("Install TinyTeX", action: install)
+                            Button("Install TinyTeX") { attempt { try await app.installTeX() } }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(app.settingTeX)
                             LinkButton(title: "Get MacTeX", url: Links.mactex)
@@ -214,8 +214,6 @@ private struct ProgramFolder: View {
             LabeledContent(program.title) { ProgressView().controlSize(.small).accessibilityLabel("Looking for \(program.title)") }
         }
     }
-
-    private func install() { attempt { try await app.installTeX() } }
 
     private func setFolder(_ path: String?) { attempt { try await app.setTeXFolder(path, texpresso: program == .texpresso) } }
 
