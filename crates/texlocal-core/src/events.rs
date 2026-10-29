@@ -35,11 +35,8 @@ impl<S: Serialize> Sent<S> {
     pub fn changed(&mut self, section: &S) -> bool {
         let said = serde_json::to_string(section).expect("a section serialises");
         let kind = discriminant(section);
-        if self.0.get(&kind) == Some(&said) {
-            return false;
-        }
-        self.0.insert(kind, said);
-        true
+        let before = self.0.insert(kind, said);
+        before.as_ref() != self.0.get(&kind)
     }
 }
 
