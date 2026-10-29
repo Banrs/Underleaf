@@ -1,3 +1,4 @@
+import Accessibility
 import CoreTransferable
 import Foundation
 import Observation
@@ -59,6 +60,7 @@ protocol AppWindow: AnyObject {
     func attach(_ project: ProjectModel)
     func performPDF(_ action: PDFAction)
     func revealSidebar()
+    func focusSearch()
 }
 
 nonisolated enum WorkspaceLayout { case source, split, pdf }
@@ -90,7 +92,6 @@ final class AppModel {
     var openingProject = false
     var addingFiles = false
     var exporting: ExportFile?
-    var searchFocusToken = 0
     @ObservationIgnored weak var window: (any AppWindow)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }
     @ObservationIgnored let defaults: UserDefaults
@@ -112,12 +113,31 @@ final class AppModel {
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
+    static let fontSizes = 10...28
+    var fontName: String { didSet { defaults.set(fontName, forKey: DefaultsKey.editorFontName) } }
+    var fontSize: Int { didSet { defaults.set(fontSize, forKey: DefaultsKey.editorFontSize) } }
+    var syntaxTheme: SyntaxTheme { didSet { defaults.set(syntaxTheme.rawValue, forKey: DefaultsKey.editorSyntaxTheme) } }
+    var lineNumbers: Bool { didSet { defaults.set(lineNumbers, forKey: DefaultsKey.editorLineNumbers) } }
+    var autoPair: Bool { didSet { defaults.set(autoPair, forKey: DefaultsKey.editorAutoPair) } }
+    var autoComplete: Bool { didSet { defaults.set(autoComplete, forKey: DefaultsKey.editorAutoComplete) } }
+    var spellCheck: Bool { didSet { defaults.set(spellCheck, forKey: DefaultsKey.editorSpellCheck) } }
+    var syncAfterCompile: Bool { didSet { defaults.set(syncAfterCompile, forKey: DefaultsKey.syncAfterCompile) } }
+    var newProjectEngine: Engine { didSet { defaults.set(newProjectEngine.rawValue, forKey: DefaultsKey.newProjectEngine) } }
+    var paper: PDFPaper { didSet { defaults.set(paper.rawValue, forKey: DefaultsKey.pdfPaper) } }
+    var settingsPane: SettingsPane { didSet { defaults.set(settingsPane.rawValue, forKey: DefaultsKey.settingsPane) } }
+    @ObservationIgnored var buildPanelHeight: Double { didSet { defaults.set(buildPanelHeight, forKey: DefaultsKey.buildPanelHeight) } }
+
     init(core: Core, defaults: UserDefaults = .standard) {
         self.core = core
         self.defaults = defaults
         if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice) }
-        defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true,
-                                     DefaultsKey.showSource: true, DefaultsKey.showPDF: true])
+        defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
+                                     DefaultsKey.showPDF: true, DefaultsKey.editorFontSize: 13, DefaultsKey.editorLineNumbers: true,
+                                     DefaultsKey.editorAutoPair: true, DefaultsKey.editorAutoComplete: true,
+                                     DefaultsKey.editorSpellCheck: true])
+        func choice<T: RawRepresentable<String>>(_ key: String, _ fallback: T) -> T {
+            defaults.string(forKey: key).flatMap { T(rawValue: $0) } ?? fallback
+        }
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
@@ -125,6 +145,18 @@ final class AppModel {
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
+        fontName = defaults.string(forKey: DefaultsKey.editorFontName) ?? ""
+        fontSize = defaults.integer(forKey: DefaultsKey.editorFontSize)
+        syntaxTheme = choice(DefaultsKey.editorSyntaxTheme, .system)
+        lineNumbers = defaults.bool(forKey: DefaultsKey.editorLineNumbers)
+        autoPair = defaults.bool(forKey: DefaultsKey.editorAutoPair)
+        autoComplete = defaults.bool(forKey: DefaultsKey.editorAutoComplete)
+        spellCheck = defaults.bool(forKey: DefaultsKey.editorSpellCheck)
+        syncAfterCompile = defaults.bool(forKey: DefaultsKey.syncAfterCompile)
+        newProjectEngine = choice(DefaultsKey.newProjectEngine, .pdflatex)
+        paper = choice(DefaultsKey.pdfPaper, .white)
+        settingsPane = choice(DefaultsKey.settingsPane, .general)
+        buildPanelHeight = defaults.double(forKey: DefaultsKey.buildPanelHeight)
     }
 
     func newProject(_ template: ProjectTemplate = .article) {
@@ -216,8 +248,7 @@ final class AppModel {
     }
 
     func create(name: String, template: ProjectTemplate) async throws {
-        let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(Engine.init(rawValue:))
-        let info = try await core.call(CreateProject(name: name, template: template, engine: engine))
+        let info = try await core.call(CreateProject(name: name, template: template, engine: newProjectEngine))
         Task { await open(info.id) }
     }
 
@@ -321,12 +352,12 @@ final class AppModel {
                     self?.recentProjects.removeAll { $0 == project.id }
                     return true
                 } catch {
-                    self?.alert = AppAlert(failure, error)
+                    self?.report(failure, error)
                     return false
                 }
             },
             changed: { [weak self] in await self?.reloadProjects() },
-            failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })
+            failed: { [weak self] title, error in self?.report(title, error) })
         await item.moveToTrash()
         await reloadProjects()
     }
@@ -336,12 +367,17 @@ final class AppModel {
         do {
             return try await work()
         } catch {
-            if !quiet() { report(error, title()) }
+            if !quiet() { report(title(), error) }
             return nil
         }
     }
 
-    func report(_ error: any Error, _ title: String) { if alert?.title != title { alert = AppAlert(title, error) } }
+    func report(_ title: String, _ message: String) {
+        guard alert == nil else { return AccessibilityNotification.Announcement(title).post() }
+        alert = AppAlert(title, message)
+    }
+
+    func report(_ title: String, _ error: any Error) { report(title, error.localizedDescription) }
 
     @ObservationIgnored private var openGeneration = 0
     private(set) var opening: String?

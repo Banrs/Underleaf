@@ -7,8 +7,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onResize: () -> Void = {}
 
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
-
-    private var paperWatch: (any NSObjectProtocol)?
+    var paper = PDFPaper.white { didSet { matchPaper() } }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -16,7 +15,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     private func matchPaper() {
-        let paper = PDFPaper(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.pdfPaper) ?? "") ?? .white
         darkPaper = paper.isDark(onDark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
 
@@ -65,18 +63,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override init(frame: NSRect) {
         super.init(frame: frame)
         pageOverlayViewProvider = self
-        paperWatch = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) {
-            [weak self] _ in MainActor.assumeIsolated { self?.matchPaper() }
-        }
         matchPaper()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    isolated deinit {
-        if let paperWatch { NotificationCenter.default.removeObserver(paperWatch) }
-        mark?.fading.cancel()
-    }
+    isolated deinit { mark?.fading.cancel() }
 
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()

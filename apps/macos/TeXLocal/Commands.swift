@@ -216,7 +216,7 @@ extension AppModel {
                     try await project.exportZip(forArxiv: arxiv)
                 }
             }
-        case .projectSearch: searchFocusToken += 1
+        case .projectSearch: window?.focusSearch()
         case .fileNew, .fileNewFolder:
             window?.revealSidebar()
             newEntry = NewEntry(directory: command == .fileNewFolder)

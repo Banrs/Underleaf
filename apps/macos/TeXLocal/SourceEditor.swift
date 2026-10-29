@@ -31,7 +31,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.textContainerInset = NSSize(width: 0, height: 7)
         text.fontSize = NSFont.systemFontSize
         text.allowsUndo = true
-        text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false
         text.isAutomaticTextReplacementEnabled = false

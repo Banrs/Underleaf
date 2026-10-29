@@ -59,7 +59,7 @@ extension ProjectModel {
     }
 
     private func reportSync(_ error: any Error, _ title: String) {
-        guard (error as? CoreError)?.kind == .notFound else { app?.report(error, title); return }
+        guard (error as? CoreError)?.kind == .notFound else { app?.report(title, error); return }
         views?.beep()
         notices.note(error.localizedDescription)
     }

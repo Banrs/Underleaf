@@ -41,7 +41,7 @@ extension ProjectModel {
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
             changed: { [weak self] in _ = try? await self?.session?.call(ReloadTree()) },
-            failed: { [weak self] title, error in self?.app?.report(error, title) })
+            failed: { [weak self] title, error in self?.app?.report(title, error) })
         trashed.append(item)
         await item.moveToTrash()
     }
@@ -53,14 +53,14 @@ extension ProjectModel {
             guard try await session.call(PrepareDelete(path: path)), !closed else { return false }
         } catch {
             guard !closed else { return false }
-            app?.report(error, title)
+            app?.report(title, error)
             return false
         }
         do {
             try item.recycle()
         } catch {
             session.send(Deleted(path: path, trashed: false))
-            app?.report(error, title)
+            app?.report(title, error)
             return false
         }
         session.send(Deleted(path: path, trashed: true))
@@ -85,7 +85,7 @@ extension ProjectModel {
             let clashes = try await session.call(request).existing.map(\.path)
             if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
         } catch {
-            app?.report(error, "Couldn’t Add the Files")
+            app?.report("Couldn’t Add the Files", error)
         }
     }
 

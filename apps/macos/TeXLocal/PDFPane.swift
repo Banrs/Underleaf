@@ -29,7 +29,7 @@ struct PDFEmptyState: View {
             } actions: {
                 Button("Install TinyTeX") {
                     Task {
-                        do { try await app.installTeX() } catch { app.report(error, "Couldn’t Install TinyTeX") }
+                        do { try await app.installTeX() } catch { app.report("Couldn’t Install TinyTeX", error) }
                     }
                 }
                 .buttonStyle(.borderedProminent)

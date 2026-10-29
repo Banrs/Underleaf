@@ -256,6 +256,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     var autoPair = true, autoComplete = true
     var composing: (Bool) -> Void = { _ in }
+    var spellCheckToggled: (Bool) -> Void = { _ in }
     private var toldComposing = false
     private var typing = false
 
@@ -316,7 +317,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func toggleContinuousSpellChecking(_ sender: Any?) {
         super.toggleContinuousSpellChecking(sender)
-        EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
+        spellCheckToggled(isContinuousSpellCheckingEnabled)
     }
 
     func markedTextChanged() {

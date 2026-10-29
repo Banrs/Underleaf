@@ -167,7 +167,7 @@ final class ProjectModel {
         } catch {
             session.discard()
             guard !closed else { return }
-            app?.report(error, "Couldn’t Open “\(name)”")
+            app?.report("Couldn’t Open “\(name)”", error)
             if app?.project === self { await app?.close() }
             return
         }
@@ -232,23 +232,19 @@ final class ProjectModel {
         store.apply(section)
         switch section {
         case .project(let now):
-            if let error = now.problem, error != problem { alert(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
+            if let error = now.problem, error != problem { app?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
         case .tree: break
         case .openFile, .outline: findHeadings()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
-                alert(notSavedTitle(document.path), error.text)
+                app?.report(notSavedTitle(document.path), error.text)
             }
         case .build(let now): buildChanged(now, was: build)
         case .shownPdf(let shown):
             if shown.live, !live, app?.showPDF == false { app?.showPDF = true }
         case .live(let state): texpresso.heard(state)
         }
-    }
-
-    private func alert(_ title: String, _ message: String) {
-        if let app, app.alert == nil { app.alert = AppAlert(title, message) } else { notices.announce(title) }
     }
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
@@ -260,7 +256,7 @@ final class ProjectModel {
         do {
             opened = try await session.call(Open(path: path))
         } catch {
-            if !closed { app?.report(error, "Couldn’t Open “\(path.fileName)”") }
+            if !closed { app?.report("Couldn’t Open “\(path.fileName)”", error) }
             return
         }
         guard let opened, opened == openPath, editsText, !closed else { return }
@@ -300,7 +296,7 @@ final class ProjectModel {
         do {
             return try await session.call(Save(reporting: reporting))
         } catch {
-            if reporting, !closed { app?.report(error, notSavedTitle()) }
+            if reporting, !closed { app?.report(notSavedTitle(), error) }
             return false
         }
     }
@@ -405,7 +401,7 @@ final class ProjectModel {
         do {
             answer = try await session.call(ApplyFix(id: fix.id))
         } catch {
-            if !closed { app?.report(error, "Couldn’t \(fix.title.text)") }
+            if !closed { app?.report("Couldn’t \(fix.title.text)", error) }
             return
         }
         guard let answer, !closed else { return }
@@ -434,7 +430,7 @@ final class ProjectModel {
                 do {
                     guard try await session.close() else { return false }
                 } catch {
-                    app?.report(error, notSavedTitle())
+                    app?.report(notSavedTitle(), error)
                     return false
                 }
             }

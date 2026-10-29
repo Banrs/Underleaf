@@ -5,7 +5,6 @@ struct HomeView: View {
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
-    @FocusState private var searching: Bool
     @State private var query = ""
     @State private var slowOpening: String?
     @State private var slowImports: [URL] = []
@@ -25,8 +24,6 @@ struct HomeView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
-        .searchFocused($searching)
-        .onChange(of: app.searchFocusToken) { searching = true }
         .task(id: app.opening) {
             if !copied { do { try await Task.sleep(for: .milliseconds(300)) } catch { return } }
             slowOpening = app.opening
@@ -247,7 +244,7 @@ struct NewProjectSheet: View {
 
     var body: some View {
         DialogSheet(title: "New Project", message: "Saved in \(Core.libraryPath).",
-                    action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
+                    action: "Create", enabled: !trimmed.isEmpty) {
             try await app.create(name: trimmed, template: draft.template)
         } fields: {
             TextField("Name", text: $draft.name, prompt: Text("Required"))

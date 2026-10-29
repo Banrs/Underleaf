@@ -25,6 +25,7 @@ final class WorkspaceViews: ProjectViews {
                 self?.followTask?.cancel()
                 self?.pdf.loading?.cancel()
             },
+            track({ [weak project] in project?.app?.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
         ]
     }
 
@@ -39,6 +40,8 @@ final class WorkspaceViews: ProjectViews {
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
         editor.command = { [weak self] in if let project = self?.project { project.app?.perform($0, on: project) } }
         let text = editor.textView
+        text.isContinuousSpellCheckingEnabled = project.app?.spellCheck ?? true
+        text.spellCheckToggled = { [weak self] in self?.project.app?.spellCheck = $0 }
         text.composing = { [weak self] in if let self { project.composing($0, in: editor.path) } }
         text.keyboardChanged = { [weak self] in self?.project.sourceHasKeyboard = $0 }
         text.fileDrop = { [weak self] in self?.dropped($0) }
@@ -177,8 +180,7 @@ final class WorkspaceViews: ProjectViews {
 
     private func built(_ finished: BuildFinished) {
         guard let result = project.result else { return }
-        if result.ok, !project.outdated, project.app?.showPDF == true, project.isLaTeX,
-           UserDefaults.standard.bool(forKey: DefaultsKey.syncAfterCompile) {
+        if result.ok, !project.outdated, project.isLaTeX, let app = project.app, app.showPDF, app.syncAfterCompile {
             Task { [loading = pdf.loading, project] in
                 await loading?.value
                 await project.forwardSync(quietly: true)

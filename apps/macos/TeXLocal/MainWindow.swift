@@ -59,6 +59,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     func performPDF(_ action: PDFAction) { workspace?.performPDF(action) }
     func revealSidebar() { workspace?.revealSidebar() }
 
+    func focusSearch() {
+        if let workspace { return workspace.focusSearch() }
+        window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first?.beginSearchInteraction()
+    }
+
     override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
         guard action == #selector(NSSplitViewController.toggleInspector(_:)) else { return super.supplementalTarget(forAction: action, sender: sender) }
         return window?.contentViewController as? WorkspaceController
@@ -70,7 +75,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, views: views, size: window.contentLayoutRect.size)
         window.toolbar = nil
-        setContent(workspace)
+        setContent(workspace, project: project)
         window.toolbar = workspace.toolbar.toolbar
         window.contentMinSize = ColumnMetrics.contentMinimum
         window.backgroundColor = .untintedTextBackground
@@ -97,16 +102,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.representedURL = nil
         let home = NSHostingController(rootView: HomeView()
             .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
-            .environment(app)
-            .background { WindowModals(app: app, project: nil) })
+            .environment(app))
         home.sceneBridgingOptions = [.title, .toolbars]
-        setContent(home)
+        setContent(home, project: nil)
         self.home = home
     }
 
-    private func setContent(_ controller: NSViewController) {
+    private func setContent(_ controller: NSViewController, project: ProjectModel?) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
+        let modals = NSHostingView(rootView: WindowModals(app: app, project: project).environment(views))
+        modals.sizingOptions = []
+        controller.view.addSubview(modals)
         window.contentViewController = controller
     }
 
@@ -127,11 +134,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private func findAction(for sender: Any?) -> (() -> Void)? {
         guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag)
         else { return nil }
-        let app = app
         guard let workspace, !workspace.project.closed else {
             guard home != nil, action == .showFindInterface else { return nil }
-            return { app.searchFocusToken += 1 }
+            return { [weak self] in self?.focusSearch() }
         }
+        let app = app
         let (project, pdf) = (workspace.project, workspace.pdf)
         guard app.showPDF, !app.showSource || pdfPagesHaveKeyboard || pdf.find.field.hasFocus else {
             guard project.editsText else {
@@ -195,7 +202,7 @@ struct WindowModals: View {
                 .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
                     switch result {
                     case .success(let url): Task { await app.open(url) }
-                    case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
+                    case .failure(let error): app.report("Couldn’t Open the Project", error)
                     }
                 }
                 .fileDialogConfirmationLabel("Open")

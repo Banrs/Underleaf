@@ -16,7 +16,7 @@ struct WorkspaceModals: ViewModifier {
                                   allowsMultipleSelection: true) { result in
                         switch result {
                         case .success(let urls): Task { await project.importFiles(urls) }
-                        case .failure(let error): app.alert = AppAlert("Couldn’t Add the Files", error)
+                        case .failure(let error): app.report("Couldn’t Add the Files", error)
                         }
                     }
                     .fileDialogConfirmationLabel("Add")
@@ -27,7 +27,7 @@ struct WorkspaceModals: ViewModifier {
                                   item: app.exporting,
                                   contentTypes: app.exporting.map { [$0.type] } ?? [],
                                   defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
-                        if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
+                        if case .failure(let error) = result { app.report("Couldn’t Save “\(name)”", error) }
                     }
                     .fileExporterFilenameLabel("Export As:")
                     .fileDialogConfirmationLabel("Export")
@@ -111,8 +111,7 @@ private struct RenameSheet: View {
     }
 
     var body: some View {
-        DialogSheet(title: "Rename “\(name)”", action: "Rename", enabled: !text.isEmpty && text != name,
-                    failure: { "Couldn’t Rename “\(name)”" }) {
+        DialogSheet(title: "Rename “\(name)”", action: "Rename", enabled: !text.isEmpty && text != name) {
             try await rename(text)
         } fields: {
             TextField("New Name", text: $text)

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class OpenQuickly: NSPanel, NSTextFieldDelegate {
+final class OpenQuickly: NSPanel {
     private static weak var shown: OpenQuickly?
 
     static func show(for project: ProjectModel) {
@@ -12,16 +12,17 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         panel.setFrame(NSRect(x: area.midX - wide / 2, y: area.maxY - 40 - fieldHeight, width: wide, height: fieldHeight), display: false)
         window.addChildWindow(panel, ordered: .above)
         panel.makeKey()
-        panel.makeFirstResponder(panel.field)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.field.focus()
         shown = panel
-        panel.search()
+        panel.search("")
     }
 
     static let width: CGFloat = 600, fieldHeight: CGFloat = 48, rowHeight: CGFloat = 38, shownRows = 10
 
     private let project: ProjectModel
     private let rows = ChoiceRows<QuickOpenItem> { [$0.title, $0.detail] }
-    private let field = NSTextField()
+    private let field = FieldHandle()
     private var searching: Task<Void, Never>?
 
     private init(project: ProjectModel) {
@@ -31,12 +32,8 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         backgroundColor = .clear
         hasShadow = true
         isReleasedWhenClosed = false
-        field.placeholderString = String(localized: "Open Quickly")
-        field.setAccessibilityLabel(field.placeholderString)
-        field.font = .systemFont(ofSize: 20)
-        (field.isBezeled, field.drawsBackground, field.focusRingType) = (false, false, .none)
-        field.delegate = self
-        let host = NSHostingView(rootView: QuickOpenView(field: field, rows: rows, tree: project.tree) { [unowned self] in open($0) })
+        let host = NSHostingView(rootView: QuickOpenView(field: field, rows: rows, tree: project.tree, search: { [unowned self] in search($0) },
+                                                         open: { [unowned self] in open($0) }, close: { [unowned self] in close() }))
         host.sizingOptions = []
         contentView = host
     }
@@ -56,23 +53,8 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
         super.close()
     }
 
-    func controlTextDidChange(_ notification: Notification) { search() }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard !textView.hasMarkedText() else { return false }
-        switch selector {
-        case #selector(NSResponder.moveUp(_:)): rows.move(-1)
-        case #selector(NSResponder.moveDown(_:)): rows.move(1)
-        case #selector(NSResponder.insertNewline(_:)): open(rows.selection)
-        case #selector(NSResponder.cancelOperation(_:)): close()
-        default: return false
-        }
-        return true
-    }
-
-    private func search() {
+    private func search(_ query: String) {
         guard let session = project.session else { return }
-        let query = field.stringValue
         searching?.cancel()
         searching = Task {
             guard let items = try? await session.call(QuickOpen(query: query)), !Task.isCancelled else { return }
@@ -94,16 +76,21 @@ final class OpenQuickly: NSPanel, NSTextFieldDelegate {
 }
 
 private struct QuickOpenView: View {
-    let field: NSTextField
+    let field: FieldHandle
     let rows: ChoiceRows<QuickOpenItem>
     let tree: FileTree
+    let search: (String) -> Void
     let open: (Int) -> Void
+    let close: @MainActor () -> Void
+    @State private var query = ""
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary)
-                Field(field: field)
+                SearchField(text: $query, prompt: String(localized: "Open Quickly"), large: true, handle: field,
+                            step: { _ in open(rows.selection) }, move: rows.move, close: close)
+                    .onChange(of: query) { search(query) }
             }
             .padding(.horizontal, 16)
             .frame(height: OpenQuickly.fieldHeight)
@@ -153,16 +140,5 @@ private struct QuickOpenView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(chosen ? .isSelected : [])
         .id(index)
-    }
-}
-
-private struct Field: NSViewRepresentable {
-    let field: NSTextField
-
-    func makeNSView(context: Context) -> NSTextField { field }
-    func updateNSView(_ view: NSTextField, context: Context) {}
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
     }
 }

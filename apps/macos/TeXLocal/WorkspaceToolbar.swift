@@ -21,7 +21,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private let views: WorkspaceViews
     private var project: ProjectModel { views.project }
     private var pdf: PDFController { views.pdf }
-    private var closed = false
+    private var watch: Task<Void, Never>?
     private lazy var format = FormatPopover(app: app, views: views)
 
     init(app: AppModel, views: WorkspaceViews) {
@@ -33,11 +33,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = app.savesLayout
-        watch()
+        watch = track({ [weak self] in self?.state }) { [weak self] in if let state = $0 { self?.apply(state) } }
     }
 
     func close() {
-        closed = true
+        watch?.cancel()
         format.popover.close()
     }
 
@@ -168,7 +168,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }) { content })
     }
 
-    private struct State {
+    private nonisolated struct State: Equatable {
         let sourceTools, hasPDF, showsPDF, canShare, compiling, canCompile, open: Bool
         let layout: WorkspaceLayout
         let zoomLabel: String
@@ -182,15 +182,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut)
     }
 
-    private func watch() {
-        guard !closed else { return }
-        apply(withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
-            MainActor.assumeIsolated { self?.watch() }
-        })
-    }
-
     private func apply(_ state: State) {
-        guard !closed else { return }
         for item in toolbar.items { configure(item, state) }
     }
 

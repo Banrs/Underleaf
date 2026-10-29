@@ -8,7 +8,7 @@ struct SaveVersionSheet: View {
     var body: some View {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         DialogSheet(title: "Save Version", message: "Named versions stay in the version history however old they get.",
-                    action: "Save", enabled: !trimmed.isEmpty, failure: { "Couldn’t Save the Version" }) {
+                    action: "Save", enabled: !trimmed.isEmpty) {
             try await project.saveVersion(named: trimmed)
         } fields: {
             TextField("Name", text: $name)
@@ -22,8 +22,7 @@ struct VersionHistorySheet: View {
     let project: ProjectModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(DefaultsKey.editorFontName) private var fontName = ""
-    @AppStorage(DefaultsKey.editorFontSize) private var fontSize = EditorPrefs.fontSize
+    @Environment(AppModel.self) private var app
     @State private var snapshots: [Snapshot]?
     @State private var chosen: Snapshot.ID?
     @State private var file: String?
@@ -31,7 +30,8 @@ struct VersionHistorySheet: View {
     @State private var restorable = false
     @State private var restoring = false
     @State private var confirmingRestoreAll = false
-    @State private var alert: AppAlert?
+    @State private var listFailure: String?
+    @State private var restoreFailure: String?
 
     private enum Shown { case diff([DiffLine]), same, failed(String) }
 
@@ -62,6 +62,7 @@ struct VersionHistorySheet: View {
                     .disabled(!restorable || restoring)
                 Button("Restore All") { confirmingRestoreAll = true }
                     .disabled(snapshot == nil || restoring)
+                if let restoreFailure { FailureText(text: restoreFailure) }
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -80,7 +81,6 @@ struct VersionHistorySheet: View {
             let time = snapshot.date.formatted(date: .long, time: .shortened)
             Text("Every file goes back to how it was on \(time). Files added since stay as they are, and the version history keeps the project as it is now.")
         }
-        .alert($alert)
     }
 
     private var snapshotList: some View {
@@ -95,7 +95,10 @@ struct VersionHistorySheet: View {
         .listStyle(.sidebar)
         .accessibilityLabel("Versions")
         .overlay {
-            if snapshots?.isEmpty == true {
+            if let listFailure {
+                ContentUnavailableView("Couldn’t Read the Version History", systemImage: "exclamationmark.triangle",
+                                       description: Text(listFailure))
+            } else if snapshots?.isEmpty == true {
                 ContentUnavailableView("No Versions", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
                                        description: Text("A version is kept as you save, at most every 10 minutes."))
             }
@@ -135,7 +138,7 @@ struct VersionHistorySheet: View {
         let name = file?.fileName ?? ""
         switch shown {
         case .diff(let rows):
-            DiffView(rows: rows, font: Font(SourceTextView.font(named: fontName, size: CGFloat(fontSize), dark: colorScheme == .dark)))
+            DiffView(rows: rows, font: Font(SourceTextView.font(named: app.fontName, size: CGFloat(app.fontSize), dark: colorScheme == .dark)))
         case .same:
             ContentUnavailableView("No Differences", systemImage: "equal",
                                    description: Text("“\(name)” is the same now as in this version."))
@@ -158,7 +161,7 @@ struct VersionHistorySheet: View {
             snapshots = listed
             chosen = listed.first?.id
         } catch {
-            alert = AppAlert(String(localized: "Couldn’t Read the Version History"), error)
+            listFailure = error.localizedDescription
         }
     }
 
@@ -178,13 +181,13 @@ struct VersionHistorySheet: View {
     }
 
     private func restore(_ snapshot: Snapshot, paths: [String]?) {
-        restoring = true
+        (restoring, restoreFailure) = (true, nil)
         Task {
             do {
                 try await project.restoreVersion(snapshot, paths: paths)
                 dismiss()
             } catch {
-                alert = AppAlert(String(localized: "Couldn’t Restore “\(snapshot.title)”"), error)
+                restoreFailure = error.localizedDescription
             }
             restoring = false
         }

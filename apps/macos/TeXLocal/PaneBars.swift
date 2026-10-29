@@ -19,8 +19,10 @@ struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
     var symbol: String?
+    var large = false
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
+    var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
     var options: [(title: String, isOn: Binding<Bool>)] = []
 
@@ -39,6 +41,10 @@ struct SearchField: NSViewRepresentable {
             case #selector(NSResponder.insertNewline(_:)):
                 guard let step = field.step else { return false }
                 step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+                return true
+            case #selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveDown(_:)):
+                guard let move = field.move else { return false }
+                move(selector == #selector(NSResponder.moveUp(_:)) ? -1 : 1)
                 return true
             case #selector(NSResponder.cancelOperation(_:)):
                 guard let close = field.close else { return false }
@@ -60,6 +66,11 @@ struct SearchField: NSViewRepresentable {
         view.action = #selector(Coordinator.changed(_:))
         if let symbol, let cell = view.cell as? NSSearchFieldCell {
             cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        }
+        if large, let cell = view.cell as? NSSearchFieldCell {
+            view.font = .systemFont(ofSize: 20)
+            (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
+            (cell.searchButtonCell, cell.cancelButtonCell) = (nil, nil)
         }
         handle?.field = view
         return view
@@ -104,12 +115,11 @@ struct DialogSheet<Fields: View>: View {
     var message: String?
     let action: String
     let enabled: Bool
-    var failure: () -> String = { "" }
     let submit: () async throws -> Void
     @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
     @State private var submitting = false
-    @State private var alert: AppAlert?
+    @State private var failure: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -125,7 +135,13 @@ struct DialogSheet<Fields: View>: View {
                 }
             }
             .scenePadding([.horizontal, .top])
-            Form { fields }
+            Form {
+                Section {
+                    fields
+                } footer: {
+                    if let failure { FailureText(text: failure) }
+                }
+            }
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
@@ -136,16 +152,28 @@ struct DialogSheet<Fields: View>: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(submitting) }
             ToolbarItem(placement: .confirmationAction) {
                 Button(action) {
-                    submitting = true
+                    (submitting, failure) = (true, nil)
                     Task {
-                        do { try await submit(); dismiss() } catch { alert = AppAlert(failure(), error) }
+                        do { try await submit(); dismiss() } catch { failure = error.localizedDescription }
                         submitting = false
                     }
                 }
                 .disabled(!enabled || submitting)
             }
         }
-        .alert($alert)
+    }
+}
+
+struct FailureText: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+        }
+        .onChange(of: text, initial: true) { AccessibilityNotification.Announcement(text).post() }
     }
 }
 
