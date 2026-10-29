@@ -267,10 +267,6 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
     })
 }
 
-pub(crate) fn no_tex(name: &str) -> CoreError {
-    CoreError::bad_request(messages::no_tex(name))
-}
-
 fn file_name(path: &Path) -> String {
     path.file_name()
         .unwrap_or_default()
@@ -336,7 +332,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         .iter()
         .any(|(path, _)| file_kind(path) == FileKind::Tex)
     {
-        return Err(no_tex(&file_name(src)));
+        return Err(CoreError::bad_request(messages::no_tex(file_name(src))));
     }
 
     projects::new_project(&service.data_dir, &base, |root| {

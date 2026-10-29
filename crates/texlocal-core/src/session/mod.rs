@@ -29,9 +29,8 @@ use crate::projects::Symbols;
 use crate::protocol::Answer;
 use crate::service::Service;
 use crate::settings::UiState;
-use crate::{CoreError, lock, paths};
+use crate::{CoreError, lock, messages, paths};
 
-use crate::messages;
 use actor::OpenProject;
 pub(crate) use actor::Session;
 pub use build::Compiler;

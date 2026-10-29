@@ -223,9 +223,10 @@ impl<'a> Walk<'a> {
     }
 }
 
-type Twice = fn(&str, u32, &str) -> Message;
-
-fn twice<'a>(defined: impl IntoIterator<Item = (&'a str, &'a Named)>, said: Twice) -> Vec<LogItem> {
+fn twice<'a>(
+    defined: impl IntoIterator<Item = (&'a str, &'a Named)>,
+    said: fn(&str, u32, &str) -> Message,
+) -> Vec<LogItem> {
     let mut first = HashMap::new();
     let mut twice = Vec::new();
     for (file, named) in defined.into_iter().filter(|(_, n)| literal(&n.name)) {

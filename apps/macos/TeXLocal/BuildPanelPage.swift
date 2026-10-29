@@ -71,7 +71,7 @@ struct IssueRow: View {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
         }
-        .help([item.message, item.explain].compactMap { $0?.text }.joined(separator: "\n"))
+        .help([item.message.text, item.explain?.text].compactMap(\.self).joined(separator: "\n"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message.text)")
         .accessibilityValue([item.explain?.text, location(line: ", line ")].compactMap(\.self).joined(separator: " "))

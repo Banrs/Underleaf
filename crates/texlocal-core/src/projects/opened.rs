@@ -148,7 +148,7 @@ fn open_folder(
     });
     let (store, made) = match same {
         Some((id, _)) => (store(data_dir, &id), None),
-        None if !tex => return Err(import::no_tex(&name.to_string())),
+        None if !tex => return Err(CoreError::bad_request(messages::no_tex(name))),
         None => {
             let stores = data_dir.join(STORE);
             fs::create_dir_all(&stores)?;

@@ -143,9 +143,8 @@ impl LogItem {
     }
 
     fn shell_escape(file: Option<String>, line: Option<u32>) -> Self {
-        let fix = Some(Fix::ShellEscape);
         Self {
-            fix,
+            fix: Some(Fix::ShellEscape),
             ..Self::new(Severity::Error, file, line, messages::needs_shell_escape())
         }
     }
