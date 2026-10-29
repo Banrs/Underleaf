@@ -144,7 +144,8 @@ final class WorkspaceViews: ProjectViews {
         case .find: find()
         case let .reveal(loc, source): pdf.reveal(loc, from: source)
         case .inverseFromView:
-            if case let (page, point)? = pdf.sourcePoint() { project.session.task { [project] in await project.inverseSync(page: page, x: point.x, y: point.y) } }
+            guard case let (page, point)? = pdf.sourcePoint() else { return }
+            project.session.task { [project] in await project.inverseSync(page: page, x: point.x, y: point.y) }
         }
     }
 

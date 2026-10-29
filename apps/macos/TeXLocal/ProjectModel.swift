@@ -195,9 +195,7 @@ final class ProjectModel {
 
     func autoCompileChanged() { session.send(SetOptions(autoCompile: app?.autoCompile ?? false)) }
 
-    private func saveUIState(_ patch: UiPatch) {
-        if initialLoadComplete { session.send(SetUiState(patch: patch)) }
-    }
+    private func saveUIState(_ patch: UiPatch) { if initialLoadComplete { session.send(SetUiState(patch: patch)) } }
 
     func handle(_ event: Event) {
         switch event {
@@ -239,14 +237,8 @@ final class ProjectModel {
               jump: Bool = false) async {
         app?.showSource = true
         if jump, let from = caretPlace { trail.jumped(from: from) }
-        let opened: String?
-        do {
-            opened = try await session.call(Open(path: path))
-        } catch {
-            app?.report("Couldn’t Open “\(path.fileName)”", error)
-            return
-        }
-        guard let opened, opened == openPath, editsText else { return }
+        guard let opened = await alerting("Couldn’t Open “\(path.fileName)”", { try await session.call(Open(path: path)) }) ?? nil,
+              opened == openPath, editsText else { return }
         views?.reveal(opened, line: line, column: column, length: length, atTop: atTop, focus: focus)
     }
 
@@ -378,14 +370,7 @@ final class ProjectModel {
     func run(_ fix: Fix) async {
         fixing = fix
         defer { fixing = nil }
-        let answer: Fixed?
-        do {
-            answer = try await session.call(ApplyFix(id: fix.id))
-        } catch {
-            app?.report("Couldn’t \(fix.title.text)", error)
-            return
-        }
-        guard let answer else { return }
+        guard let answer = await alerting("Couldn’t \(fix.title.text)", { try await session.call(ApplyFix(id: fix.id)) }) ?? nil else { return }
         apply(answer.edits, named: fix.title.text)
         await compile()
     }

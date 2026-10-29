@@ -47,12 +47,7 @@ extension ProjectModel {
 
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
-        do {
-            guard try await session.call(PrepareDelete(path: path)) else { return false }
-        } catch {
-            app?.report(title, error)
-            return false
-        }
+        guard await alerting(title, { try await session.call(PrepareDelete(path: path)) }) == true else { return false }
         do {
             try item.recycle()
         } catch {
@@ -77,12 +72,8 @@ extension ProjectModel {
 
     func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
         let request = ImportFiles(dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
-        do {
-            let clashes = try await session.call(request).existing.map(\.path)
-            if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
-        } catch {
-            app?.report("Couldn’t Add the Files", error)
-        }
+        guard let clashes = await alerting("Couldn’t Add the Files", { try await session.call(request).existing.map(\.path) }) else { return }
+        if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
     }
 
     func exportZip(forArxiv: Bool = false) async throws -> URL {
