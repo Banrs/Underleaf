@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::syntax::TextRange;
 use crate::utf16;
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PdfPage {
     pub(crate) page: u32,
@@ -15,7 +15,7 @@ pub struct PdfPage {
     pub(crate) near: Vec<TextRange>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub struct PdfHit {
     pub(crate) page: u32,
     pub(crate) start: usize,
@@ -67,8 +67,10 @@ impl Letters {
                 continue;
             }
             if c.is_alphanumeric() {
-                let spelt = LIGATURES.iter().find(|(l, _)| *l == c).map(|(_, s)| *s);
-                for letter in spelt.map_or_else(|| c.to_string(), str::to_owned).chars() {
+                let mut buf = [0; 4];
+                let ligature = LIGATURES.iter().find(|(l, _)| *l == c);
+                let spelt = ligature.map_or(&*c.encode_utf8(&mut buf), |(_, s)| s);
+                for letter in spelt.chars() {
                     self.chars.push(letter);
                     self.spans.push(Span {
                         group,
@@ -128,8 +130,8 @@ impl Letters {
 }
 
 fn occurrences<'a>(text: &'a [char], word: &'a [char]) -> impl Iterator<Item = usize> + 'a {
-    (0..=text.len().saturating_sub(word.len()))
-        .filter(move |&k| text.len() >= word.len() && text[k..k + word.len()] == *word)
+    let windows = text.windows(word.len()).enumerate();
+    windows.filter_map(move |(k, window)| (window == word).then_some(k))
 }
 
 fn evidence(from: &Letters, word: &Range<usize>, to: &Letters, k: usize) -> (usize, usize, usize) {

@@ -3,10 +3,10 @@ use std::ops::Range;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use super::scan::{Group, Scanner, Visit, tex_space};
+use super::scan::{Group, Scanner, Visit, blank_line, tex_space};
 use super::{SourceDocument, headings, is};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct Fold {
     pub(crate) line: u32,
     pub(crate) end: u32,
@@ -28,7 +28,7 @@ impl Visit for Found {
     }
 
     fn closed(&mut self, group: &Group, close: Range<usize>) {
-        match group.end.strip_prefix("env:") {
+        match group.environment() {
             Some("document") => self.document_end = Some(close.start),
             Some(_) => self.environments.push((group.open, close.start)),
             None => {}
@@ -50,12 +50,7 @@ impl SourceDocument {
         let mut found = Found::default();
         Scanner::default().run(units, units.len(), &[], &mut found);
         let line = |offset: usize| self.line_at(offset as u32);
-        let blank = |line: u32| {
-            let bounds = self.text.bounds(line as usize - 1);
-            units[bounds.start..bounds.end]
-                .iter()
-                .all(|&u| tex_space(u))
-        };
+        let blank = |line: u32| blank_line(self.text.line(line as usize - 1));
         let mut folds = Vec::new();
         let mut add = |line: u32, mut end: u32| {
             while end > line && blank(end) {
@@ -68,7 +63,9 @@ impl SourceDocument {
         for &(open, close) in &found.environments {
             add(line(open), line(close) - 1);
         }
-        let headings: Vec<_> = (found.headings.iter())
+        let headings: Vec<_> = found
+            .headings
+            .iter()
             .filter(|&&(_, name_end, _)| {
                 let next = units[name_end..].iter().find(|&&u| !tex_space(u));
                 next.is_some_and(|&u| is(u, '{') || is(u, '[') || is(u, '*'))
@@ -82,11 +79,10 @@ impl SourceDocument {
             let end = next.map_or(last, |&&(next, _, _)| line(next) - 1);
             add(line(start), end.min(last.max(line(start))));
         }
-        let mut lines: Vec<u32> = (found.comments.iter())
-            .filter(|&&at| {
-                let start = self.text.bounds(line(at) as usize - 1).start;
-                units[start..at].iter().all(|&u| tex_space(u))
-            })
+        let mut lines: Vec<u32> = found
+            .comments
+            .iter()
+            .filter(|&&at| blank_line(&units[self.text.around(at).start..at]))
             .map(|&at| line(at))
             .collect();
         lines.dedup();

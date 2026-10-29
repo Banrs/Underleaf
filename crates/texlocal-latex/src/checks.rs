@@ -76,13 +76,18 @@ impl Structure {
         if !self.read(group.open) {
             return;
         }
-        let open = &text.units[group.open..group.open + group.end.len()];
+        let width = group.delimiter().unwrap_or_default();
+        let open = &text.units[group.open..group.open + width];
         let message = messages::open_at_paragraph_end(String::from_utf16_lossy(open));
         self.slip(text, group.open, message, Kind::Unbalanced);
     }
 
-    pub(crate) fn finish(mut self, text: &Text, open: &[Group]) -> (Vec<Slip>, Option<Place>) {
-        for group in open.iter().filter(|group| group.delimited()) {
+    pub(crate) fn finish<'a>(
+        mut self,
+        text: &Text,
+        open: impl Iterator<Item = &'a Group>,
+    ) -> (Vec<Slip>, Option<Place>) {
+        for group in open.filter(|group| group.delimiter().is_some()) {
             self.unclosed(text, group);
         }
         for at in std::mem::take(&mut self.braces) {

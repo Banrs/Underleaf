@@ -18,7 +18,7 @@ pub(crate) fn normalize_segments(
     texlocal_latex::segments(rel).ok_or_else(|| CoreError::bad_request(escape()))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Project {
     pub root: PathBuf,
     pub settings: PathBuf,
@@ -39,7 +39,7 @@ impl Project {
         if !root.is_dir() {
             return Err(CoreError::not_found(messages::no_such_project(id)));
         }
-        Ok(Self::in_folder(&std::fs::canonicalize(root)?))
+        Ok(Self::in_folder(&fs::canonicalize(root)?))
     }
 
     pub fn name(&self) -> String {
@@ -166,9 +166,9 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
 }
 
 pub fn source_rel(root: &Path, input: &str) -> Option<String> {
-    let canonical = std::fs::canonicalize(root).ok()?;
     let input_path = Path::new(input);
     let rel = if input_path.is_absolute() {
+        let canonical = fs::canonicalize(root).ok()?;
         let inside = [root, &canonical]
             .into_iter()
             .find_map(|base| input_path.strip_prefix(base).ok());

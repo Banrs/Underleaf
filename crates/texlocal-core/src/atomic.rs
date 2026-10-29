@@ -22,7 +22,7 @@ pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
 
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     let target = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)?,
+        Ok(meta) if meta.file_type().is_symlink() => fs::canonicalize(path)?,
         _ => path.to_path_buf(),
     };
     let permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
@@ -36,9 +36,34 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<Stamp> {
     }
     file.write_all(bytes)?;
     file.sync_all()?;
-    drop(file);
-    let stamp = Stamp::of(&fs::metadata(&temp)?);
-    fs::rename(&temp, &target)?;
-    let _ = temp.keep();
+    let stamp = Stamp::of(&file.metadata()?);
+    temp.persist(&target)?;
     Ok(stamp)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    use super::*;
+
+    #[test]
+    fn a_write_replaces_the_file_a_link_points_to_and_keeps_its_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, link) = (dir.path().join("main.tex"), dir.path().join("link.tex"));
+        fs::write(&file, "old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        symlink(&file, &link).unwrap();
+        let stamp = write(&link, b"new").unwrap();
+        assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+        let meta = fs::metadata(&file).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o640);
+        assert!(stamp == Stamp::of(&meta));
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o440)).unwrap();
+        let refused = write(&file, b"newer").err().map(|err| err.kind());
+        assert_eq!(refused, Some(io::ErrorKind::PermissionDenied));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+    }
 }

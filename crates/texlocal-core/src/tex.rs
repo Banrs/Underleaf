@@ -37,17 +37,12 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
     let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
         .chain(absolute_dirs(&user))
-        .chain(usual_tex_dirs())
+        .chain(sys::TEX_DIRS.map(PathBuf::from))
+        .chain(sys::tinytex_root().map(|root| sys::tinytex_bin(&root)))
         .chain(texlive_bins())
         .collect();
     let texpresso = join_path(app.texpresso_dir.iter().chain(&tex).cloned());
     (join_path(tex), texpresso)
-}
-
-fn usual_tex_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = sys::TEX_DIRS.map(PathBuf::from).into();
-    dirs.extend(sys::tinytex_root().map(|root| sys::tinytex_bin(&root)));
-    dirs
 }
 
 pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {
@@ -86,7 +81,7 @@ pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 static LATEXMK_VERSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
 
-#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
+#[derive(Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
@@ -98,7 +93,7 @@ pub struct TexStatus {
 }
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
-    let Ok((0, stdout)) = run("latexmk", &["-version"], None, path_env).await else {
+    let Ok((0, stdout)) = run("latexmk", &["-version"], path_env).await else {
         return TexStatus::default();
     };
     TexStatus {
@@ -128,7 +123,5 @@ fn ls_r_above(program: &Path) -> Option<PathBuf> {
 }
 
 fn read_installed(ls_r: &Path) -> std::io::Result<Installed> {
-    Ok(Installed::from_ls_r(&crate::lossy_string(std::fs::read(
-        ls_r,
-    )?)))
+    std::fs::read(ls_r).map(|bytes| Installed::from_ls_r(&crate::lossy_string(bytes)))
 }

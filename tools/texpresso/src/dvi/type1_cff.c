@@ -63,12 +63,17 @@ static void put_number(cff_buf *b, long v, int dict)
 
 static void put_offset(cff_buf *b, long v) { put8(b, 29); put32(b, v); }
 
+static int offset_size(size_t total)
+{
+  return total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
+}
+
 static void put_index(cff_buf *b, const unsigned char *data, const size_t *ends, int count)
 {
   put16(b, count);
   if (count == 0) return;
   size_t total = ends[count - 1];
-  int size = total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
+  int size = offset_size(total);
   put8(b, size);
   for (int i = 0; i <= count; i++)
   {
@@ -82,8 +87,7 @@ static void put_index(cff_buf *b, const unsigned char *data, const size_t *ends,
 static size_t index_size(size_t total, int count)
 {
   if (count == 0) return 2;
-  int size = total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
-  return 3 + (size_t)size * (count + 1) + total;
+  return 3 + (size_t)offset_size(total) * (count + 1) + total;
 }
 
 typedef struct { cff_buf *b; double scale; long x, y; long width; int started; } outline_state;
@@ -157,8 +161,8 @@ static unsigned long checksum(const cff_buf *t)
   return sum & 0xffffffff;
 }
 
-static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *advance,
-                               const long bbox[4], size_t *len)
+static unsigned char *opentype(FT_Face face, const char *ps_name, const cff_buf *cff,
+                               const long *advance, const long bbox[4], size_t *len)
 {
   int n = face->num_glyphs;
   long widest = 0;
@@ -207,8 +211,6 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
   for (int gid = 0; gid < n; gid++) { put16(&t[HMTX].data, (int)advance[gid]); put16(&t[HMTX].data, 0); }
   put32(&t[MAXP].data, 0x5000); put16(&t[MAXP].data, n);
 
-  const char *ps_name = FT_Get_Postscript_Name(face);
-  if (!ps_name || !*ps_name) ps_name = "Type1";
   int name_len = (int)strlen(ps_name);
   h = &t[NAME].data;
   put16(h, 0); put16(h, 3); put16(h, 6 + 3 * 12);
@@ -227,9 +229,10 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
   while (search * 2 <= TABLES) { search *= 2; selector++; }
   put32(&out, 0x4F54544F); put16(&out, TABLES); put16(&out, 16 * search);
   put16(&out, selector); put16(&out, 16 * (TABLES - search));
-  size_t at = 12 + 16 * TABLES;
+  size_t at = 12 + 16 * TABLES, head_at = 0;
   for (int k = 0; k < TABLES; k++)
   {
+    if (k == HEAD) head_at = at;
     put(&out, t[k].tag, 4); put32(&out, (long)checksum(&t[k].data));
     put32(&out, (long)at); put32(&out, (long)t[k].data.len);
     at += (t[k].data.len + 3) & ~(size_t)3;
@@ -248,8 +251,6 @@ static unsigned char *opentype(FT_Face face, const cff_buf *cff, const long *adv
     return NULL;
   }
   unsigned long adjust = (0xB1B0AFBAUL - checksum(&out)) & 0xffffffff;
-  size_t head_at = 12 + 16 * TABLES;
-  for (int k = 0; k < HEAD; k++) head_at += (t[k].data.len + 3) & ~(size_t)3;
   for (int k = 0; k < 4; k++) out.data[head_at + 8 + k] = (unsigned char)(adjust >> (24 - 8 * k));
   *len = out.len;
   return out.data;
@@ -335,7 +336,7 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
   int failed = glyphs.failed || fixed.failed || top.failed || fd.failed || out.failed
                || top.len != top_len || fd.len != fd_len
                || out.len != private_at + sizeof private_dict;
-  unsigned char *font = failed ? NULL : opentype(face, &out, advance, bbox, len);
+  unsigned char *font = failed ? NULL : opentype(face, ps_name, &out, advance, bbox, len);
   free(glyph_ends); free(advance);
   free(glyphs.data); free(fixed.data); free(top.data); free(fd.data); free(out.data);
   return font;
@@ -343,9 +344,8 @@ static unsigned char *type1_to_opentype(FT_Face face, size_t *len)
 
 typedef struct page_font { fz_font *font, *copy; struct page_font *next; } page_font;
 static page_font *page_fonts, *last;
-static bool page_fonts_on;
 
-void dvi_page_fonts(fz_context *ctx, bool on)
+void dvi_drop_page_fonts(fz_context *ctx)
 {
   while (page_fonts)
   {
@@ -356,12 +356,11 @@ void dvi_page_fonts(fz_context *ctx, bool on)
     page_fonts = next;
   }
   last = NULL;
-  page_fonts_on = on;
 }
 
 fz_font *dvi_page_font(fz_context *ctx, fz_font *font)
 {
-  if (!page_fonts_on || !font)
+  if (!font)
     return font;
   if (!last || last->font != font)
   {

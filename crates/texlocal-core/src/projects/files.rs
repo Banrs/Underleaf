@@ -136,9 +136,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     if is_under(&to, &from) {
         return Err(CoreError::bad_request(messages::into_itself()));
     }
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    dest.parent().map_or(Ok(()), fs::create_dir_all)?;
     let main_file = read_settings(&project.settings).main_file;
     let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);

@@ -7,8 +7,8 @@ pub(crate) mod headings;
 mod highlight;
 mod preview;
 pub(crate) mod prose;
-pub(crate) mod render;
-pub mod scan;
+mod render;
+pub(crate) mod scan;
 mod scans;
 mod snippet;
 mod stack;
@@ -37,7 +37,7 @@ pub struct TextRange {
     pub length: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextEdit {
     pub start: u32,
@@ -72,14 +72,14 @@ fn splice(start: usize, length: usize, text: impl Into<String>) -> TextEdit {
     edit(start as u32, length as u32, text)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Checker {
     Spelling,
     WritingTools,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct Insertion {
     pub(crate) edit: TextEdit,
     pub(crate) caret: u32,
@@ -258,7 +258,7 @@ impl SourceDocument {
     }
 }
 
-fn is(u: u16, c: char) -> bool {
+pub(crate) fn is(u: u16, c: char) -> bool {
     u == c as u16
 }
 
@@ -290,7 +290,7 @@ fn ascii<'a>(units: &[u16], buf: &'a mut [u8; NAME]) -> &'a str {
     std::str::from_utf8(&buf[..units.len()]).unwrap_or_default()
 }
 
-fn letter(u: u16) -> bool {
+pub(crate) fn letter(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_alphabetic()
 }
 

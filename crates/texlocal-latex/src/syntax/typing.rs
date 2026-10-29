@@ -4,7 +4,7 @@ use std::ops::Range;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use super::scan::{Group, Visit, arguments, blank_line};
+use super::scan::{End, Group, Scanner, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
     INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, range, span,
@@ -12,7 +12,7 @@ use super::{
 };
 use crate::utf16;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Default, Serialize, JsonSchema)]
 pub(crate) struct Keystroke {
     pub(crate) edit: Option<TextEdit>,
     pub(crate) selection: Option<TextRange>,
@@ -20,7 +20,7 @@ pub(crate) struct Keystroke {
     pub(crate) completions: Completing,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Completing {
     #[default]
@@ -81,15 +81,14 @@ impl SourceDocument {
         let (start, end) = clamp(selection, self.text.len()).bounds();
         let length = end - start;
         let dollar = auto_pair && is(key, '$');
-        let innermost = (dollar && length == 0)
-            .then(|| self.scanned_to(start).groups().pop())
-            .flatten();
+        let scanner = (dollar && length == 0).then(|| self.scanned_to(start));
+        let innermost = scanner.iter().flat_map(Scanner::groups).next();
         let typing = &mut self.typing;
         let units = &self.text.units[..];
         let next = units.get(start).copied();
         if length == 0 && typing.closers.contains(&start) && (is_closing(key) || dollar) {
-            let empty = |g: &Group| g.end == "$" && g.open + 1 == start;
-            if dollar && next == Some(key) && innermost.as_ref().is_some_and(empty) {
+            let empty = |g: &Group| g.end == End::Dollar && g.open + 1 == start;
+            if dollar && next == Some(key) && innermost.is_some_and(empty) {
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
                     edit: Some(splice(start, 0, "$$")),
@@ -180,11 +179,8 @@ impl SourceDocument {
         let (mut start, end) = clamp(selection, self.text.len()).bounds();
         let mut length = end - start;
         let line = self.text.around(start);
-        let groups = if length == 0 {
-            self.scanned_to(start).groups()
-        } else {
-            vec![]
-        };
+        let scanner = (length == 0).then(|| self.scanned_to(start));
+        let groups = || scanner.iter().flat_map(Scanner::groups);
         let units = &self.text.units[..];
         let indent = indentation(&units[line.start..line.end]);
         let indented = String::from_utf16_lossy(&units[line.start..line.start + indent]);
@@ -195,11 +191,11 @@ impl SourceDocument {
             completions: Completing::Close,
             ..Keystroke::default()
         };
-        let begun = groups
-            .last()
+        let begun = groups()
+            .next()
             .filter(|g| g.open >= line.start)
             .and_then(|g| {
-                let name = g.end.strip_prefix("env:")?;
+                let name = g.environment()?;
                 let mut read = (g.open + "\\begin".len(), true);
                 while read.1 {
                     read = arguments(&units[..start], read.0, |_, _| {});
@@ -227,7 +223,7 @@ impl SourceDocument {
         if begun.is_some_and(end_tag) || length == 0 && closer_after(units, start).is_some() {
             return key(start, 0, format!("{inner}\n{indented}"), caret);
         }
-        let list = groups.iter().rev().find_map(|g| g.end.strip_prefix("env:"));
+        let list = groups().find_map(Group::environment);
         let from = line.start + indent;
         let content = utf16::lossy(units.get(from..start).unwrap_or_default());
         let item = content.strip_prefix("\\item");
@@ -334,7 +330,7 @@ impl SourceDocument {
         scanner.run(units, at + 1, &[], &mut partner);
         while partner.found.is_none()
             && scanner.i < units.len()
-            && scanner.groups().iter().any(|g| g.open == at)
+            && scanner.groups().any(|g| g.open == at)
         {
             scanner.run(units, scanner.i + 1024, &[], &mut partner);
         }

@@ -1,6 +1,6 @@
+use super::Text;
 use super::prose::Names;
 use super::scan::{Scanner, Visit};
-use super::{Text, TextRange};
 
 pub(crate) struct Scans(Vec<Point>);
 
@@ -15,7 +15,6 @@ struct Keeping<'a> {
     text: &'a Text,
     run: &'a mut Option<(usize, usize)>,
     names: &'a mut Names,
-    scratch: Vec<TextRange>,
 }
 
 impl Visit for Keeping<'_> {
@@ -29,9 +28,7 @@ impl Visit for Keeping<'_> {
     fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
         let end = self.text.units.len();
         let command = (name, command_start, name_end);
-        self.names
-            .command(self.text, command, end, &mut self.scratch);
-        self.scratch.clear();
+        self.names.command(self.text, command, end, |_| {});
     }
 }
 
@@ -51,14 +48,13 @@ impl Scans {
 
     pub(crate) fn resume(&mut self, text: &Text, before: usize, end: usize) -> Point {
         let mut point = self.0[self.0.len() - 1].clone();
-        point.names.resume(text, text.units.len(), &mut Vec::new());
+        point.names.resume(text, text.units.len(), |_| {});
         while point.scanner.i + SPACING <= before && point.scanner.i < text.units.len() {
             let until = point.scanner.i + SPACING;
             let mut keeping = Keeping {
                 text,
                 run: &mut point.run,
                 names: &mut point.names,
-                scratch: Vec::new(),
             };
             point.scanner.run(&text.units, until, &[], &mut keeping);
             self.0.push(point.clone());

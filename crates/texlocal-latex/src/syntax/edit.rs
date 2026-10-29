@@ -12,13 +12,13 @@ use super::{
 };
 use crate::{FileKind, file_kind, utf16};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct Change {
     pub(crate) edits: Vec<TextEdit>,
     pub(crate) selections: Vec<TextRange>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TextStyle {
     Bold,
@@ -174,10 +174,8 @@ impl SourceDocument {
             complete::expand(text, selection.start, &format!("{newline}{template}"));
         if let Some((first, rest)) = fields.split_first_mut().filter(|_| selection.length > 0) {
             let (start, end) = selection.bounds();
-            let mut units: Vec<u16> = block.encode_utf16().collect();
-            let at = first.start as usize;
-            units.splice(at..at, text.units[start..end].iter().copied());
-            block = String::from_utf16_lossy(&units);
+            let at = utf16::byte_offset(&block, first.start as usize)?;
+            block.insert_str(at, &String::from_utf16_lossy(&text.units[start..end]));
             first.length = selection.length;
             rest.iter_mut()
                 .for_each(|field| field.start += selection.length);

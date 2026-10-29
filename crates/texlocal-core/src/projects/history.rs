@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::files::{Planned, inside, write_all};
 use super::tree::visit_files;
@@ -33,7 +32,7 @@ struct Version {
     files: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub struct Snapshot {
     id: String,
     time: i64,
@@ -42,13 +41,13 @@ pub struct Snapshot {
     changed: Vec<ChangedFile>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub struct ChangedFile {
     path: String,
     change: ChangeKind,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeKind {
     Added,
@@ -111,10 +110,7 @@ impl History {
             let Some(bytes) = read_capped(abs, MAX_KEPT)? else {
                 return Ok(true);
             };
-            let hash: String = Sha256::digest(&bytes)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
+            let hash = crate::sha256(&bytes);
             let object = objects.join(&hash);
             if !object.exists() {
                 fs::create_dir_all(&objects)?;
@@ -238,17 +234,15 @@ fn changes(
     after: &BTreeMap<String, String>,
 ) -> Vec<ChangedFile> {
     let paths: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
-    let change = |path: &String| match (before.get(path), after.get(path)) {
-        (None, _) => Some(ChangeKind::Added),
-        (_, None) => Some(ChangeKind::Deleted),
-        (was, now) => (was != now).then_some(ChangeKind::Changed),
-    };
     let changed = paths.into_iter().filter_map(|path| {
-        let change = change(path)?;
-        Some(ChangedFile {
-            path: path.clone(),
-            change,
-        })
+        let change = match (before.get(path), after.get(path)) {
+            (None, _) => ChangeKind::Added,
+            (_, None) => ChangeKind::Deleted,
+            (was, now) if was != now => ChangeKind::Changed,
+            _ => return None,
+        };
+        let path = path.clone();
+        Some(ChangedFile { path, change })
     });
     changed.collect()
 }
