@@ -384,7 +384,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func didChangeText() {
         super.didChangeText()
         guard !mirroring, !mirrorEdits.isEmpty else { return }
-        let edits = mirrorEdits, selection = selectedRange()
+        let edits = mirrorEdits, kept = document.map(selections, through: edits)
         mirrorEdits = []
         mirroring = true
         for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
@@ -392,7 +392,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             super.didChangeText()
         }
         mirroring = false
-        setSelectedRange(selection)
+        setSelectedRanges(kept.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
         breakUndoCoalescing()
     }
 

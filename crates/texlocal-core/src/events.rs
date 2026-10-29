@@ -12,7 +12,7 @@ use crate::service::LibrarySection;
 use crate::session::{DiskConflict, SessionSection};
 use crate::texpresso::PageRange;
 
-pub type Listener = Box<dyn Fn(&Value) + Send>;
+pub type Listener = Box<dyn Fn(String) + Send>;
 
 pub(crate) enum Queued {
     Event(SessionEvent),
@@ -104,14 +104,17 @@ impl Hub {
             .spawn(move || {
                 for queued in events {
                     let said = match queued {
-                        Queued::Event(event) => json!(event),
-                        Queued::Library(section) => json!({ "library": section }),
+                        Queued::Event(event) => {
+                            serde_json::to_string(&event).expect("an event serialises")
+                        }
+                        Queued::Library(section) => json!({ "library": section }).to_string(),
                         Queued::Reply { id, answer } => match answer {
                             Ok(ok) => json!({ "reply": id, "ok": ok }),
                             Err(err) => json!({ "reply": id, "error": err }),
-                        },
+                        }
+                        .to_string(),
                     };
-                    let _ = catch_unwind(AssertUnwindSafe(|| listen(&said)));
+                    let _ = catch_unwind(AssertUnwindSafe(|| listen(said)));
                 }
             })
             .expect("the event thread starts");

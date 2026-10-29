@@ -78,6 +78,19 @@ pub(crate) fn arguments(
     (i, false)
 }
 
+pub(crate) fn braced(units: &[u16], name_end: usize) -> (Option<(String, Range<usize>)>, usize) {
+    let (mut text, mut span) = (Vec::new(), None);
+    let (stop, closed) = arguments(units, name_end, |piece, braced| {
+        if braced {
+            text.extend_from_slice(&units[piece.clone()]);
+            span.get_or_insert(piece.clone()).end = piece.end;
+        }
+    });
+    let span = span.filter(|_| closed);
+    let found = span.map(|span| (String::from_utf16_lossy(&text), span));
+    (found, stop)
+}
+
 const NAME_WINDOW: usize = 64;
 
 pub(crate) fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usize)> {

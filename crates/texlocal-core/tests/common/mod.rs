@@ -126,8 +126,11 @@ impl Rig {
         prepare(&library);
         let (tx, events) = channel();
         let tx = Mutex::new(tx);
-        let listener = Box::new(move |event: &Value| {
-            let _ = tx.lock().unwrap().send(event.clone());
+        let listener = Box::new(move |said: String| {
+            let _ = tx
+                .lock()
+                .unwrap()
+                .send(serde_json::from_str::<Value>(&said).unwrap());
         });
         let service = Arc::clone(&library.service);
         let sessions = Arc::new(match preview {

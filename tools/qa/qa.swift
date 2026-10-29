@@ -418,10 +418,7 @@ func hitJSON(_ h: Hit, _ i: Int? = nil) -> [String: Any] {
     if let e = h.el.enabled { d["enabled"] = e }
     return d
 }
-func bestHit(_ text: String) -> Hit {
-    let roots = takeRoots()
-    let role = takeOpt("--role")
-    let index = takeOpt("--index").flatMap { Int($0) }
+func bestHit(_ text: String, roots: [AXUIElement], role: String?, index: Int?) -> Hit {
     let hits = search(text, roots: roots, role: role)
     guard let top = hits.map(\.rank).max() else { fail("no element matches '\(text)'") }
     let best = hits.filter { $0.rank == top }
@@ -742,26 +739,27 @@ case "find":
 
 case "press":
     checkAX()
+    let roots = takeRoots(), role = takeOpt("--role"), index = takeOpt("--index").flatMap { Int($0) }
+    let double = takeFlag("--double"), rowRole = takeOpt("--row-control")
     guard let t = args.first else { fail("usage: qa press <text> [--index n]") }
-    let double = takeFlag("--double")
-    if let role = takeOpt("--row-control") {
+    if let rowRole {
         let root = pickWindow(nil)
         guard let label = search(t, roots: [root], role: "AXStaticText").max(by: { $0.rank < $1.rank })?.el.frame else {
             fail("no label '\(t)'")
         }
         var best: (AXUIElement, CGFloat)?
         walk(root) { el, _, _ in
-            if el.role == role, let f = el.frame, abs(f.midY - label.midY) < (best?.1 ?? 12) {
+            if el.role == rowRole, let f = el.frame, abs(f.midY - label.midY) < (best?.1 ?? 12) {
                 best = (el.ref, abs(f.midY - label.midY))
             }
             return true
         }
-        guard let control = best?.0 else { fail("no \(role) on the row of '\(t)'") }
+        guard let control = best?.0 else { fail("no \(rowRole) on the row of '\(t)'") }
         pressAsync(control, timeout: 2)
         emit(["pressed": t, "value": attrStr(control, "AXValue") ?? "\(attr(control, "AXValue") ?? "" as CFString)"])
         break
     }
-    let h = bestHit(t)
+    let h = bestHit(t, roots: roots, role: role, index: index)
     front(); sleepS(0.3)
     var actions: CFArray?
     AXUIElementCopyActionNames(h.el.ref, &actions)
@@ -774,11 +772,11 @@ case "press":
 
 case "set":
     checkAX()
+    let roots = takeRoots(), role = takeOpt("--role"), index = takeOpt("--index").flatMap { Int($0) }
+    let name = takeOpt("--attr") ?? "AXValue", number = takeFlag("--number")
     guard args.count >= 2 else { fail("usage: qa set <text> <value>") }
-    let name = takeOpt("--attr") ?? "AXValue"
-    let number = takeFlag("--number")
     let v = args.removeLast()
-    let h = bestHit(args[0])
+    let h = bestHit(args[0], roots: roots, role: role, index: index)
     let value: CFTypeRef = number ? NSNumber(value: Double(v) ?? 0) as CFTypeRef : v as CFString
     let r = AXUIElementSetAttributeValue(h.el.ref, name as CFString, value)
     if r != .success { fail("cannot set \(name) (\(r.rawValue))") }
@@ -789,9 +787,10 @@ case "caret", "insert", "text":
 
 case "get":
     checkAX()
+    let roots = takeRoots(), role = takeOpt("--role"), index = takeOpt("--index").flatMap { Int($0) }
     guard args.count >= 2 else { fail("usage: qa get <text> <attribute>") }
     let a = args.removeLast()
-    let h = bestHit(args[0])
+    let h = bestHit(args[0], roots: roots, role: role, index: index)
     let name = a.hasPrefix("AX") ? a : "AX" + a.prefix(1).uppercased() + a.dropFirst()
     guard let v = attr(h.el.ref, name) else { fail("attribute \(name) not available") }
     if let r = axValue(v, .cgRect, CGRect.zero) { emit(["frame": rel(r, frameOf(pickWindow(nil)) ?? .zero)]) }

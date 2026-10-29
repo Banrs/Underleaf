@@ -54,11 +54,18 @@ pub(super) fn folders(data_dir: &Path) -> Vec<(String, Folder)> {
     stores.flatten().filter_map(folder).collect()
 }
 
+fn own_settings(root: &Path) -> bool {
+    fs::symlink_metadata(root.join(SETTINGS_FILE)).is_ok_and(|meta| meta.is_file())
+}
+
 fn project(root: &Path, store: &Path) -> Project {
     let (own, sidecar) = (root.join(SETTINGS_FILE), store.join(SIDECAR));
-    let own_file = fs::symlink_metadata(&own).is_ok_and(|meta| meta.is_file());
     Project {
-        settings: if own_file { own } else { sidecar.clone() },
+        settings: if own_settings(root) {
+            own
+        } else {
+            sidecar.clone()
+        },
         ui: sidecar,
         build: store.join(BUILD_DIR),
         history: store.join("history"),
@@ -156,7 +163,7 @@ fn open_folder(
                 .prefix("")
                 .rand_bytes(8)
                 .tempdir_in(stores)?;
-            if !root.join(SETTINGS_FILE).is_file() {
+            if !own_settings(root) {
                 let settings = import::guessed_settings(root, chosen)?;
                 write_settings(&made.path().join(SIDECAR), &settings)?;
             }

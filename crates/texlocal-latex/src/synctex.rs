@@ -206,14 +206,13 @@ struct Reader {
 
 impl SyncTex {
     fn parse(bytes: &[u8]) -> Option<Self> {
-        let mut lines = bytes.split(|&c| c == b'\n').peekable();
+        let mut lines = bytes.split(|&c| c == b'\n');
         lines.find(|line| line.starts_with(b"SyncTeX Version:"))?;
-        let mut inputs = BTreeMap::new();
-        while let Some(input) = lines.peek().and_then(|line| Input::parse(line)) {
-            inputs.insert(input.tag, input);
-            lines.next();
-        }
-        lines.find(|line| line.starts_with(b"Output:"))?;
+        let inputs = (lines.by_ref())
+            .take_while(|line| !line.starts_with(b"Output:"))
+            .filter_map(Input::parse)
+            .map(|input| (input.tag, input))
+            .collect();
         let mut setting = |name: &[u8]| {
             let value = lines.find_map(|line| line.strip_prefix(name))?;
             number(value, 0).map(|(value, _)| value)

@@ -108,6 +108,30 @@ struct PDFTests {
         #expect(try shown(view) == place)
     }
 
+    @Test func findNextAndPreviousStartFromTheShownPage() async throws {
+        let board = PDFFind.board
+        PDFFind.board = .withUniqueName()
+        defer { PDFFind.board.releaseGlobally(); PDFFind.board = board }
+        let controller = PDFController(), view = controller.view, find = controller.find
+        let window = onScreen(controller)
+        defer { window.close() }
+        controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
+        let second = try #require(view.document?.page(at: 1))
+        let top = PDFDestination(page: second, at: CGPoint(x: 0, y: second.bounds(for: view.displayBox).maxY))
+        view.go(to: top)
+        find.text = "needle"
+        find.next(-1)
+        try await found(controller)
+        #expect(find.matchIndex == 0)
+        find.close()
+        view.go(to: top)
+        find.next(1)
+        try await found(controller)
+        #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === view.document?.page(at: 2))
+        find.advance(by: 2)
+        #expect(find.matchIndex == 0)
+    }
+
     @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)

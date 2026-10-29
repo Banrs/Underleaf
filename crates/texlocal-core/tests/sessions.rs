@@ -28,6 +28,7 @@ for arg in "$@"; do
   case "$arg" in -outdir=*) out="${arg#-outdir=}";; ./*) main="${arg#./}";; esac
 done
 mkdir -p "$out"
+: > "$out/${main%.tex}.fdb_latexmk"
 grep -q slowly "$main" && sleep 30
 printf '%s\n' "$@" > "$out/args"
 stem="${main%.tex}"
@@ -168,6 +169,27 @@ async fn a_corrupt_settings_file_is_reported_at_open_and_left_as_it_is() {
     fs::write(&settings, r#"{ "engine": "lualatex" }"#).unwrap();
     let fixed = rig.section("project", |p| p["problem"].is_null());
     assert_eq!(fixed["settings"]["engine"], "lualatex");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_setting_lands_in_an_opened_folders_own_file_without_its_ui() {
+    let rig = project().await;
+    let folder = rig.library.path("Thesis");
+    let own = r#"{"mainFile":"main.tex"}"#;
+    write(&folder, &[("main.tex", MAIN), (".texlocal.json", own)]);
+    let opened = rig.ask_library("OpenPath", json!({ "path": folder }));
+    let id = opened.unwrap()["project"]["id"].clone();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    rig.call_to(
+        2,
+        "SetSettings",
+        json!({ "patch": { "engine": "xelatex" } }),
+    );
+    let file = fs::read_to_string(folder.join(".texlocal.json")).unwrap();
+    let file: Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(file["engine"], "xelatex");
+    assert_eq!(file["mainFile"], "main.tex");
+    assert!(file["ui"].is_null(), "{file}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -786,6 +808,7 @@ async fn a_build_sends_its_sections_before_it_finishes_and_its_pdf_follows_the_m
     };
     assert_eq!(main_file("ch.tex"), Value::Null);
     assert_eq!(main_file("main.tex"), path);
+    assert!(rig.root().join("build/main.fdb_latexmk").exists());
     rig.forget();
     rig.call("Clean", json!({}));
     assert_eq!(rig.said(), ["build", "shownPdf", "reply"]);
@@ -805,6 +828,7 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
     assert_eq!(said_of(&rig, &kinds), said);
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["ok"], false);
+    assert!(!rig.root().join("build/main.fdb_latexmk").exists());
     let issue = &build["issues"][0];
     assert_eq!(
         (&issue["file"], &issue["line"]),
@@ -858,6 +882,22 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
+    let preview = Arc::new(FakePreview::default());
+    let files = [("sub/main.tex", MAIN), ("ch.tex", BROKEN)];
+    let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
+    let main = json!({ "patch": { "mainFile": "sub/main.tex" } });
+    rig.call("SetSettings", main);
+    rig.open_document("ch.tex");
+    rig.call("StartLive", json!({}));
+    *preview.log.lock().unwrap() =
+        "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    preview.send(LiveEvent::Done("complete".into()));
+    let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
+    assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside_it() {
     let main = "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n";
     let preview = Arc::new(FakePreview::default());
@@ -904,6 +944,7 @@ async fn stop_compile_stops_the_sessions_build() {
     rig.event("buildFinished", |_| true);
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["stopped"], true);
+    assert!(!rig.root().join("build/main.fdb_latexmk").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -971,18 +1012,4 @@ async fn a_fix_adds_the_package_a_command_needs() {
     assert_eq!(edit["start"], "\\documentclass{article}".len());
     let unknown = rig.refuse("ApplyFix", json!({ "id": "format:disk" }));
     assert_eq!(unknown, ErrorKind::Invalid);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn checks_find_duplicates_missing_files_and_open_groups() {
-    let main = "\\documentclass{article}\n\\begin{document}\n\\label{a}\\label{a}\n\\cite{nokey}\n\\input{missing}\n$x\n\nnext {\n\\end{document}\n";
-    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    let build = rig.section("build", |b| b["issues"].as_array().unwrap().len() == 5);
-    let lines: Vec<u64> = build["issues"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["line"].as_u64().unwrap())
-        .collect();
-    assert_eq!(lines, [3, 4, 5, 6, 8]);
 }

@@ -83,15 +83,36 @@ fn checks_trust_inputs_tex_has_and_skip_citations_without_their_bib() {
 #[test]
 fn checks_find_unclosed_and_stray_groups() {
     let main = "\\begin{document}\n\\begin{itemize}\n\\item a}\n\\end{document}\n";
-    let found = found(&project(&[("main.tex", main)], &[]));
     let item = |line, message: &str| ("main.tex".to_owned(), line, message.to_owned());
     assert_eq!(
-        found,
+        found(&project(&[("main.tex", main)], &[])),
         [
             item(3, "This } has nothing to close."),
             item(4, "\\begin{itemize} on line 2 is ended by \\end{document}."),
         ]
     );
+    let main = "\\begin{document}\n$x\n\nnext {\n\\end{document}\n";
+    assert_eq!(
+        found(&project(&[("main.tex", main)], &[])),
+        [
+            item(2, "This $ is still open where the paragraph ends."),
+            item(4, "This { is never closed."),
+        ]
+    );
+}
+
+#[test]
+fn checks_pair_environments_across_inputs_and_trust_unreadable_ones() {
+    let main = "\\input{head}\nText.\n\\input{tail}\n";
+    let head = "\\documentclass{article}\n\\begin{document}\n";
+    let files = [
+        ("main.tex", main),
+        ("head.tex", head),
+        ("tail.tex", "\\end{document}\n"),
+    ];
+    assert!(found(&project(&files, &[])).is_empty());
+    let main = "\\begin{document}\n\\input{\\jobname-body}\n";
+    assert!(found(&project(&[("main.tex", main)], &[])).is_empty());
 }
 
 #[test]
@@ -123,7 +144,7 @@ fn facts_read_names_packages_and_commands() {
 
 #[test]
 fn the_outline_nests_headings_across_inputs_and_counts_words() {
-    let main = "\\documentclass{article}\n\\begin{document}\n\\section{One}\nA b c.\n\\subsection{Two}\nD e.\n\\input{ch}\n\\end{document}\n";
+    let main = "\\documentclass{article}\n\\begin{document}\n\\section{One}\nA b c.\n\\subsection{Two}\nD e.\n\\input{ch}\n\\end{document}\nNotes after the end.\n";
     let ch = "\\section{Three}\nF.\n";
     let symbols = project(
         &[

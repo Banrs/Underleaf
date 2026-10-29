@@ -82,6 +82,35 @@ struct EditorTests {
         #expect(text.string == "\\begin" && text.document.text == "\\begin")
     }
 
+    @Test func typingInAnEndsNameMirrorsItsBeginAndKeepsTheCaretAfterTheTypedLetters() {
+        let (editor, window) = Self.editor("\\begin{x}\n\\end{x}")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(16)
+        Self.type("ab", in: text)
+        #expect(text.string == "\\begin{xab}\n\\end{xab}" && text.document.text == text.string)
+        #expect(text.selection == .caret(20))
+    }
+
+    @Test func switchingFilesKeepsEachFilesSelectionFoldsAndUndoUnlessItsTextChanged() {
+        let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
+        defer { window.close() }
+        let text = editor.textView, undo = text.undo
+        Self.type("x", in: text)
+        text.selection = .caret(21)
+        text.foldAtCaret()
+        let (main, folded, selection) = (text.string, text.folded, text.selection)
+        #expect(folded == [NSRange(location: 17, length: 16)] && selection == .caret(16))
+        editor.open(path: "other.tex", source: SourceDocument(text: "other"))
+        let other = text.undo
+        #expect(other !== undo && text.folded.isEmpty)
+        text.selection = .caret(3)
+        editor.open(path: "main.tex", source: SourceDocument(text: main))
+        #expect(text.undo === undo && text.folded == folded && text.selection == selection)
+        editor.open(path: "other.tex", source: SourceDocument(text: "changed"))
+        #expect(text.undo !== other && text.selection == .caret(0))
+    }
+
     @Test func foldingHidesALinesBodyTheCaretStepsOverItAndAnEditInsideOpensIt() async throws {
         let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
         defer { window.close() }

@@ -61,6 +61,20 @@ fn highlighting_marks_commands_names_maths_comments_and_stray_closers() {
 }
 
 #[test]
+fn a_named_argument_is_marked_after_options_and_the_options_are_not() {
+    let text = "\\documentclass{article} \\usepackage[T1]{fontenc} \\cite[see]{knuth}";
+    let found = [
+        ("\\documentclass", "Command"),
+        ("article", "Argument"),
+        ("\\usepackage", "Command"),
+        ("fontenc", "Argument"),
+        ("\\cite", "Command"),
+        ("knuth", "Argument"),
+    ];
+    assert_eq!(kinds(&mut SourceDocument::new(text)), pairs(&found));
+}
+
+#[test]
 fn control_symbols_are_commands_in_text_and_maths() {
     let mut doc = SourceDocument::new("caf\\'e $a \\\\ b \\: c$");
     let found = [
@@ -199,6 +213,8 @@ fn an_argument_completes_what_the_command_takes() {
     assert_eq!(end[1][0], "enumerate");
     let mut doc = SourceDocument::named("@art", "refs.bib");
     assert_eq!(labels(&complete(&mut doc, 4)), json!(["@article"]));
+    let mut doc = SourceDocument::named("@a", "main.tex");
+    assert_eq!(complete(&mut doc, 2), Value::Null);
 }
 
 #[test]
@@ -303,5 +319,15 @@ fn renaming_an_environment_renames_its_end() {
     };
     doc.select(inside, false);
     typed(&mut doc, 7, 7, "enumerate");
+    assert_eq!(doc.text(), "\\begin{enumerate}\n\\item a\n\\end{enumerate}");
+}
+
+#[test]
+fn renaming_an_environment_from_its_end_renames_its_begin() {
+    let mut doc = SourceDocument::new("\\begin{itemize}\n\\item a\n\\end{itemize}");
+    for start in [9, 31] {
+        doc.select(TextRange { start, length: 0 }, false);
+    }
+    typed(&mut doc, 29, 7, "enumerate");
     assert_eq!(doc.text(), "\\begin{enumerate}\n\\item a\n\\end{enumerate}");
 }

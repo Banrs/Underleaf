@@ -414,10 +414,10 @@ impl Preview for Manager {
     }
     fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError> {
         let session = self.owned(owner)?;
+        let mut files = lock(&session.files);
         if !session.running() {
             return Ok(());
         }
-        let mut files = lock(&session.files);
         let path = session.root.join(rel);
         let message = match files.get(rel).map(|old| delta(old, text)) {
             Some((_, 0, "")) => return Ok(()),

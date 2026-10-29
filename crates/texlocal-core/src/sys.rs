@@ -51,21 +51,17 @@ pub(crate) fn trash(path: &Path) -> Result<(), CoreError> {
     Err(CoreError::internal(messages::trash_failed(said.trim())))
 }
 
-pub(crate) fn install_as_administrator(
-    tlmgr: &Path,
-    package: &str,
-    path_env: &str,
-) -> io::Result<Command> {
-    let mut command = process::command("osascript", None, path_env)?;
+pub(crate) fn install_as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Command {
+    let mut command = process::tool(Path::new("/usr/bin/osascript"), path_env);
     command
         .args(["-e", AS_ADMINISTRATOR])
         .arg(tlmgr)
         .arg(package);
-    Ok(command)
+    command
 }
 
-pub(crate) fn download(url: &str, to: &Path, path_env: &str) -> io::Result<Command> {
-    let mut command = process::command("curl", None, path_env)?;
+pub(crate) fn download(url: &str, to: &Path, path_env: &str) -> Command {
+    let mut command = process::tool(Path::new("/usr/bin/curl"), path_env);
     command
         .args(["--fail", "--location", "--silent", "--show-error"])
         .args([
@@ -79,13 +75,13 @@ pub(crate) fn download(url: &str, to: &Path, path_env: &str) -> io::Result<Comma
         .arg("--output")
         .arg(to)
         .arg(url);
-    Ok(command)
+    command
 }
 
-pub(crate) fn unpack(archive: &Path, into: &Path, path_env: &str) -> io::Result<Command> {
-    let mut command = process::command("tar", None, path_env)?;
+pub(crate) fn unpack(archive: &Path, into: &Path, path_env: &str) -> Command {
+    let mut command = process::tool(Path::new("/usr/bin/tar"), path_env);
     command.arg("-xf").arg(archive).arg("-C").arg(into);
-    Ok(command)
+    command
 }
 
 pub(crate) fn permissions(mode: u32) -> Permissions {

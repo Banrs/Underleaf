@@ -68,6 +68,9 @@ struct LayoutTests {
             app.layout = layout
             #expect(defaults.app().layout == layout)
         }
+        app.layout = .source
+        app.requestPDF(.find)
+        #expect(defaults.app().layout == .split)
     }
 
     @Test func togglingNeverHidesBothPanes() {
@@ -83,6 +86,20 @@ struct LayoutTests {
         defaults.store.set(false, forKey: DefaultsKey.showSource)
         defaults.store.set(false, forKey: DefaultsKey.showPDF)
         #expect(defaults.app().layout == .source)
+    }
+}
+
+struct OpenableTests {
+    @Test func foldersZipsAndTeXFilesOpenButPackagesDoNot() throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for name in ["plain", "b.rtfd"] {
+            try FileManager.default.createDirectory(at: folder.appending(path: name), withIntermediateDirectories: true)
+        }
+        for name in ["a.tex", "a.zip", "a.txt"] { try Data().write(to: folder.appending(path: name)) }
+        let opens = { (name: String) in AppModel.canOpen(folder.appending(path: name)) }
+        #expect(opens("plain") && opens("a.tex") && opens("a.zip"))
+        #expect(!opens("a.txt") && !opens("b.rtfd"))
     }
 }
 
@@ -158,6 +175,17 @@ struct SectionTests {
         state(.stopped, [failed], nil)
         #expect(live.needsAttention)
     }
+
+    @Test func diskConflictsQueueSoEachIsAskedOnce() {
+        let project = ProjectModel(id: "P", app: defaults.app())
+        project.handle(.conflict(Conflict(path: "a.tex", kind: .changed)))
+        project.handle(.conflict(Conflict(path: "b.tex", kind: .changed)))
+        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"])
+        project.handle(.conflict(Conflict(path: "a.tex", kind: .gone)))
+        #expect(project.conflicts == [Conflict(path: "b.tex", kind: .changed), Conflict(path: "a.tex", kind: .gone)])
+        project.answer("b.tex", .cancel)
+        #expect(project.conflicts.map(\.path) == ["a.tex"])
+    }
 }
 
 struct LaneTests {
@@ -171,6 +199,30 @@ struct LaneTests {
         lane?.cancel()
         let cancelled = (await first.value, await second.value)
         #expect(cancelled == (true, true))
+    }
+
+    @Test func movingToTheTrashUndoesAndRedoes() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "a.tex")
+        try Data("a".utf8).write(to: file)
+        let exists = { FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) }
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        var changes = 0
+        let item = UndoableTrash(original: file, name: "a.tex", undoManager: undo, trash: { (try? $0.recycle()) != nil },
+                                 changed: { changes += 1 }, failed: { _, _ in })
+        undo.beginUndoGrouping()
+        await item.moveToTrash()
+        undo.endUndoGrouping()
+        #expect(!exists() && undo.undoActionName == "Move to Trash")
+        undo.undo()
+        try await waitUntil { exists() && changes == 1 }
+        undo.redo()
+        try await waitUntil { !exists() && changes == 2 }
+        undo.undo()
+        try await waitUntil { exists() && changes == 3 }
     }
 }
 

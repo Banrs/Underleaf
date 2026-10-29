@@ -253,11 +253,12 @@ struct OutlineList: View {
 
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
+    let project: ProjectModel
     @State private var hovering = false
     @State private var line: CGFloat = 0
 
     var body: some View {
-        let open = app.outlineOpen(of: app.project)
+        let open = app.outlineOpen(of: project)
         Button { app.outlineCollapsed = open } label: {
             HStack {
                 Text("File Outline")
@@ -279,7 +280,7 @@ struct OutlineHeader: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .disabled(app.project?.isLaTeX != true)
+        .disabled(!project.isLaTeX)
         .accessibilityAddTraits(.isHeader)
         .accessibilityValue(open ? "Expanded" : "Collapsed")
     }

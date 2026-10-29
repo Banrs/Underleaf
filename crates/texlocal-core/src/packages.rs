@@ -36,7 +36,7 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
         .ok_or_else(|| CoreError::not_found(messages::no_package_has(file)))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
-        installed = run(sys::install_as_administrator(&tlmgr, &package, path_env)?).await?;
+        installed = run(sys::install_as_administrator(&tlmgr, &package, path_env)).await?;
         if installed.1.contains(sys::ADMIN_CANCELLED) {
             let message = messages::install_cancelled(&package);
             return Err(CoreError::new(crate::ErrorKind::Denied, message));

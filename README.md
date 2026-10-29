@@ -12,7 +12,7 @@ folder on your disk, compiled by the TeX installation on your Mac.
   `.zip`. A folder opens where it is, and TeXLocal keeps its own settings and build files
   elsewhere, so a git repository is left as it was.
 - See the source and the PDF side by side, or either one alone. A project opens again on the same
-  file, line, page and zoom.
+  file and line, at the same zoom.
 - Completion for commands, environments, installed packages, `\cite` keys and `\ref` labels.
   Brackets, dollar signs and environments close as you type, and the maths under the cursor shows
   in a small preview.

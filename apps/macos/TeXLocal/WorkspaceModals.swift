@@ -39,20 +39,21 @@ struct WorkspaceModals: ViewModifier {
             } message: { clash in
                 Text(clash.message)
             }
-            .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
-                   item: $project.missingFile) { path in
-                Button("Save Again") { project.answer(path, .save) }
-                Button("Discard Changes", role: .destructive) { project.answer(path, .close) }
-                Button("Cancel", role: .cancel) { project.answer(path, .cancel) }
-            } message: { path in
-                Text("Another app moved or deleted “\(path)”, which has unsaved changes here.")
-            }
-            .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "", item: $project.diskConflict) { path in
-                Button("Save Anyway") { project.answer(path, .save) }
-                Button("Revert", role: .destructive) { project.answer(path, .revert) }
-                Button("Cancel", role: .cancel) { project.answer(path, .cancel) }
-            } message: { path in
-                Text("Another app changed “\(path)” while it has unsaved changes here.")
+            .alert(project.conflicts.first.map { $0.kind == .changed ? "“\($0.path.fileName)” Changed on Disk"
+                                                                     : "“\($0.path.fileName)” Was Moved or Deleted" } ?? "",
+                   item: Binding(get: { project.conflicts.first }, set: { _ in })) { asked in
+                switch asked.kind {
+                case .changed:
+                    Button("Save Anyway") { project.answer(asked.path, .save) }
+                    Button("Revert", role: .destructive) { project.answer(asked.path, .revert) }
+                case .gone:
+                    Button("Save Again") { project.answer(asked.path, .save) }
+                    Button("Discard Changes", role: .destructive) { project.answer(asked.path, .close) }
+                }
+                Button("Cancel", role: .cancel) { project.answer(asked.path, .cancel) }
+            } message: { asked in
+                Text(asked.kind == .changed ? "Another app changed “\(asked.path)” while it has unsaved changes here."
+                     : "Another app moved or deleted “\(asked.path)”, which has unsaved changes here.")
             }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {

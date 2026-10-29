@@ -67,6 +67,7 @@ impl Engine {
 struct ProjectFile {
     #[serde(flatten)]
     settings: StoredSettings,
+    #[serde(skip_serializing_if = "StoredUi::is_default")]
     ui: StoredUi,
     #[serde(rename = "shellEscapeFor", skip_serializing_if = "Option::is_none")]
     shell_escape_for: Option<(u64, u64)>,
@@ -213,6 +214,12 @@ pub struct StoredUi {
     pub live_preview: bool,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
+}
+
+impl StoredUi {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Serialize, JsonSchema)]
