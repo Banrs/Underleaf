@@ -37,6 +37,18 @@ fn synctex_goes_from_a_line_to_its_page_and_back() {
 }
 
 #[test]
+fn a_live_synctex_keeps_the_inputs_read_after_one_has_ended() {
+    let live = b"SyncTeX Version:1\nInput:1:sub/main.tex\nInput:2:article.cls\n/2\nInput:3:part.tex\n/3\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n!100\n{1\n[1,4:4736287,46220575:26673152,41484288,0\n(1,4:8799519,8865055:22609920,469238,127139\ng3,1:10492314,8865055\n)\n]\n}1\nPostamble:\n";
+    let synctex = SyncTex::read(live.to_vec()).unwrap();
+    let inputs: Vec<(i32, &str)> = synctex.inputs().collect();
+    assert_eq!(
+        inputs,
+        [(3, "part.tex"), (2, "article.cls"), (1, "sub/main.tex")]
+    );
+    assert_eq!(synctex.forward(3, 1).first().map(|at| at.page), Some(1));
+}
+
+#[test]
 fn a_word_is_found_in_the_pdf_by_the_words_around_it() {
     let text = pages(json!([{ "page": 3, "text": "the world and the world turns", "near": [] }]));
     let hit = in_pdf("the \\emph{world} turns", 11, &text);
