@@ -15,6 +15,8 @@ use texlocal_latex::syntax::Source;
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
 const CHAPTER: &str = "\\section{Chapter}\nwords about a cat\n";
+const BROKEN: &str =
+    "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
 
 async fn project() -> Rig {
     Rig::open(&[("main.tex", MAIN), ("ch.tex", CHAPTER)]).await
@@ -630,8 +632,7 @@ async fn a_build_sends_its_sections_before_it_finishes_and_its_pdf_follows_the_m
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
-    let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
-    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
+    let rig = Rig::open_with(&[("main.tex", BROKEN)], stub_tex).await;
     let doc = rig.open_document("main.tex");
     rig.forget();
     rig.call("Compile", json!({ "auto": false }));
@@ -660,23 +661,23 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
-    let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
     let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", main)], Arc::clone(&preview)).await;
+    let rig = Rig::previewing(&[("main.tex", BROKEN)], Arc::clone(&preview)).await;
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     *preview.log.lock().unwrap() =
         "./main.tex:3: Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
     rig.forget();
-    let (path, run, changed) = ("live.pdf".into(), "done".into(), Vec::new());
     preview.send(LiveEvent::Document {
-        path,
+        path: "live.pdf".into(),
         pages: 1,
-        run,
-        changed,
+        run: "done".into(),
+        changed: Vec::new(),
     });
-    let path = "page.pdf".into();
-    preview.send(LiveEvent::Page { page: 0, path });
+    preview.send(LiveEvent::Page {
+        page: 0,
+        path: "page.pdf".into(),
+    });
     let live = rig.section("live", |l| !l["lines"]["main.tex"].is_null());
     assert_eq!(live["lines"]["main.tex"][0]["line"], 3);
     let kinds = ["shownPdf", "liveDocument", "livePage", "live"];

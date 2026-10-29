@@ -30,7 +30,7 @@ impl Compiler for Arc<Service> {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
         let started = self.compile.start(&project, &self.tool_paths().0);
         let service = Self::clone(self);
-        Box::pin(async move { service.compile.wait(&project.root, started?, auto).await })
+        Box::pin(async move { service.compile.wait(started?, auto).await })
     }
 
     fn stop_compile(&self, root: &Path) {
@@ -102,8 +102,8 @@ impl Builds {
 
     fn checks(&self) -> impl Iterator<Item = &LogItem> {
         self.checks.iter().filter(|check| {
-            let built = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
-            !self.built().any(built)
+            let same = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
+            !self.built().any(same)
         })
     }
 
@@ -214,16 +214,15 @@ impl Actor {
             let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             (!lines.is_empty()).then(|| (path.clone(), lines))
         });
-        self.builds.lines = lines.collect();
-        let builds = &self.builds;
         let build = BuildState {
             compiling: builds.compiling,
             auto: builds.compiling && builds.auto,
             outdated: builds.outdated,
             result: builds.result.clone(),
             issues: builds.listed().cloned().collect(),
-            lines: builds.lines.clone(),
+            lines: lines.collect(),
         };
+        self.builds.lines = build.lines.clone();
         self.publish(SessionSection::Build(build));
     }
 
