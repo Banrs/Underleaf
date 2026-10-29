@@ -50,7 +50,7 @@ struct EditorTests {
         let (editor, window) = Self.editor("")
         defer { window.close() }
         let text = editor.textView, undo = text.undo
-        Self.type(["\\", "s", "e", "c"], in: text)
+        Self.type("\\sec", in: text)
         let offered = try #require(text.completions.offered)
         text.completions.move(try #require(offered.items.firstIndex { $0.label == "\\section" }))
         Self.event(text) { text.doCommand(by: #selector(NSResponder.insertNewline(_:))) }
@@ -69,10 +69,10 @@ struct EditorTests {
         let (editor, window) = Self.editor("")
         defer { window.close() }
         let text = editor.textView, undo = text.undo
-        Self.type(["\\", "b", "e", "g", "i", "n"], in: text)
+        Self.type("\\begin", in: text)
         Self.event(text) { text.doCommand(by: #selector(NSResponder.insertNewline(_:))) }
         #expect(text.string == "\\begin{env}\n  \n\\end{env}" && text.selection == NSRange(location: 7, length: 3))
-        Self.type(["l", "i", "s", "t"], in: text)
+        Self.type("list", in: text)
         #expect(text.string == "\\begin{list}\n  \n\\end{list}" && text.document.text == text.string)
         undo.undo()
         #expect(text.string == "\\begin{lis}\n  \n\\end{lis}")
@@ -112,12 +112,12 @@ struct EditorTests {
         let text = editor.textView
         var composing: [Bool] = []
         text.composing = { composing.append($0) }
-        Self.type(["\\", "s"], in: text)
+        Self.type("\\s", in: text)
         #expect(text.completions.offered != nil)
         Self.event(text) { text.setMarkedText("e", selectedRange: .caret(1), replacementRange: Self.typed) }
         #expect(text.hasMarkedText() && composing == [true])
         #expect(text.completions.offered == nil && text.document.text == "\\se")
-        Self.type(["é"], in: text)
+        Self.type("é", in: text)
         #expect(!text.hasMarkedText() && composing == [true, false])
         #expect(text.string == "\\sé" && text.document.text == "\\sé")
     }
@@ -143,8 +143,8 @@ struct EditorTests {
         text.undo.endUndoGrouping()
     }
 
-    private static func type(_ keys: [String], in text: SourceTextView) {
-        for key in keys { event(text) { text.insertText(key, replacementRange: typed) } }
+    private static func type(_ keys: String, in text: SourceTextView) {
+        for key in keys { event(text) { text.insertText(String(key), replacementRange: typed) } }
     }
 
     private static func editor(_ source: String) -> (SourceEditor, NSWindow) {
