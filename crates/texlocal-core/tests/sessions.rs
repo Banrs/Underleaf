@@ -879,6 +879,22 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
+    let preview = Arc::new(FakePreview::default());
+    let files = [("sub/main.tex", MAIN), ("ch.tex", BROKEN)];
+    let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
+    let main = json!({ "patch": { "mainFile": "sub/main.tex" } });
+    rig.call("SetSettings", main);
+    rig.open_document("ch.tex");
+    rig.call("StartLive", json!({}));
+    *preview.log.lock().unwrap() =
+        "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    preview.send(LiveEvent::Done("complete".into()));
+    let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
+    assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside_it() {
     let main = "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n";
     let preview = Arc::new(FakePreview::default());

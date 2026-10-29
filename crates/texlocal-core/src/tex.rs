@@ -72,10 +72,12 @@ fn executable(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|meta| sys::executable(&meta))
 }
 
-pub(crate) fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
-    std::iter::once(dir.to_path_buf())
-        .chain(children(dir.join("bin")))
-        .find(|c| program_at(&c.join("latexmk")).is_some())
+pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
+    let bin = dir.join("bin");
+    [dir.to_path_buf(), bin.clone()]
+        .into_iter()
+        .chain(children(bin))
+        .find(|c| program_at(&c.join(program)).is_some())
 }
 
 static LATEXMK_VERSION: LazyLock<Regex> =

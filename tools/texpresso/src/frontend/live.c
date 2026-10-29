@@ -31,7 +31,7 @@ typedef struct
 {
   fz_context *ctx;
   txp_engine *eng;
-  const char *doc_path;
+  const char *root;
   const char *pdf_output;
 
   struct {
@@ -75,8 +75,8 @@ static bool poll_input(void)
 
 static fileentry_t *find_entry(live_state *l, const char *path, const char *verb)
 {
-  size_t n = strlen(l->doc_path);
-  if (strncmp(path, l->doc_path, n) == 0 && path[n] == '/')
+  size_t n = strlen(l->root);
+  if (strncmp(path, l->root, n) == 0 && path[n] == '/')
     path += n + 1;
   else if (path[0] == '/')
   {
@@ -621,16 +621,30 @@ int main(int argc, const char **argv)
     return 1;
   }
 
-  char doc_path[PATH_MAX];
+  char doc_path[PATH_MAX], root[PATH_MAX];
   if (!realpath(doc_arg, doc_path))
   {
     perror("finding document path");
     return 1;
   }
-  char *doc_name = strrchr(doc_path, '/');
-  *doc_name++ = 0;
-  if (chdir(doc_path) != 0)
-    perror("chdir to the document's folder");
+  if (!getcwd(root, sizeof root))
+  {
+    perror("finding the project's folder");
+    return 1;
+  }
+  size_t n = strlen(root);
+  const char *doc_name;
+  if (strncmp(doc_path, root, n) == 0 && doc_path[n] == '/')
+    doc_name = doc_path + n + 1;
+  else
+  {
+    char *slash = strrchr(doc_path, '/');
+    *slash = 0;
+    doc_name = slash + 1;
+    snprintf(root, sizeof root, "%s", doc_path);
+    if (chdir(root) != 0)
+      perror("chdir to the document's folder");
+  }
 
   editor_set_protocol(EDITOR_JSON);
 
@@ -645,8 +659,8 @@ int main(int argc, const char **argv)
   fz_set_warning_callback(ctx, live_mupdf_message, "warning");
   fz_set_error_callback(ctx, live_mupdf_message, "error");
   fz_register_document_handlers(ctx);
-  live_state l = {.ctx = ctx, .doc_path = doc_path, .pdf_output = pdf_output};
-  l.eng = txp_tex_live_engine(ctx, engine, inputs, doc_name, doc_path);
+  live_state l = {.ctx = ctx, .root = root, .pdf_output = pdf_output};
+  l.eng = txp_tex_live_engine(ctx, engine, inputs, doc_name, root);
 
   vstack *stack = vstack_new(ctx);
   prot_parser parser;

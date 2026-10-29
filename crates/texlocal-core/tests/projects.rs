@@ -209,6 +209,20 @@ async fn a_tex_folder_without_latexmk_is_refused() {
 }
 
 #[tokio::test]
+async fn texpressos_install_folder_is_taken_as_its_bin_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    let library = Library::new();
+    let folder = library.path("TeXpresso");
+    write(&folder, &[("bin/texpresso", "#!/bin/sh\n")]);
+    let program = folder.join("bin/texpresso");
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    let status = library
+        .call("SetTexpressoDir", json!({ "dir": folder }))
+        .await;
+    assert_eq!(status["texpressoDir"], json!(folder.join("bin")));
+}
+
+#[tokio::test]
 async fn a_zip_cannot_write_outside_its_project() {
     use std::io::Write;
     let library = Library::new();

@@ -369,7 +369,7 @@ index 5866b1b..ace0021 100644
 +
 +  // For the editor's own PDF view (txp_tex_live_engine)
 +  bool live;
-+  char *root;              // the document's folder
++  char *root;              // the folder TeX runs in
 +  struct tex_engine *pass; // a finishing pass under way (txp_tex_rerun)
 +  struct tex_engine *next; // and once it is over, the engine to go on with
 +  bool pass_failed;        // the last stopped on an error: another would too, until a change

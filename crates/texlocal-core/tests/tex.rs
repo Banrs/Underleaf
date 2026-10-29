@@ -121,6 +121,33 @@ async fn forward_sync_follows_the_live_documents_synctex() {
     rig.call("StopLive", json!({}));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs TeX and TeXpresso"]
+async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n";
+    let part = "A part at the root.\n";
+    let rig = Rig::open(&[("sub/main.tex", main), ("part.tex", part)]).await;
+    let main_file = json!({ "patch": { "mainFile": "sub/main.tex" } });
+    rig.call("SetSettings", main_file);
+    rig.call("Compile", json!({ "auto": false }));
+    rig.event("buildFinished", |_| true);
+    let build = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(build["result"]["ok"], true, "{}", build["result"]["log"]);
+    assert_eq!(build["issues"], json!([]));
+    rig.open_document("part.tex");
+    rig.call("StartLive", json!({}));
+    rig.call("LiveView", json!({ "first": 0, "last": 0 }));
+    rig.event("liveDocument", |e| e["complete"] == true);
+    let at = json!({ "file": "part.tex", "line": 1 });
+    assert_eq!(rig.call("SynctexForward", at)["page"].as_f64(), Some(1.0));
+    rig.call("LiveLog", json!({ "shown": true }));
+    let live = rig.section("live", |l| l["log"].is_string());
+    let log = live["log"].as_str().unwrap();
+    assert!(!log.lines().any(|line| line.starts_with("! ")), "{log}");
+    assert_eq!(live["failures"], json!([]));
+    rig.call("StopLive", json!({}));
+}
+
 fn first_page(pdf: &str) -> String {
     let text = Command::new("mutool")
         .args(["draw", "-F", "txt", "-o", "-", pdf, "1"])

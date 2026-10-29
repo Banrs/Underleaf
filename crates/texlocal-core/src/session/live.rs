@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -495,11 +494,10 @@ impl Actor {
         let (Some(log), Some(main)) = (self.preview.tex_log(self.id), &self.tree.main) else {
             return;
         };
-        let folder = main.rsplit_once('/').map_or("", |(folder, _)| folder);
         let files = self.tree.files.iter();
         let files: HashMap<String, &String> = files.map(|f| (paths::fold_case(f), f)).collect();
         let ours = |name: &str| {
-            let path = paths::rel_key(&Path::new(folder).join(name).to_string_lossy()).ok()?;
+            let path = paths::rel_key(name).ok()?;
             files
                 .get(&paths::fold_case(&path))
                 .map(|&file| file.clone())
