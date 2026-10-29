@@ -8,6 +8,22 @@ final class ProjectModel {
     private let listedName: String
     var name: String { store.project?.name ?? listedName }
     var settings: ProjectSettings? { store.project?.settings }
+    var mainFile: String? {
+        get { settings?.mainFile }
+        set { if let newValue { setSettings(SettingsPatch(mainFile: newValue)) } }
+    }
+    var engine: Engine? {
+        get { settings?.engine }
+        set { if let newValue { setSettings(SettingsPatch(engine: newValue)) } }
+    }
+    var shellEscape: Bool {
+        get { settings?.shellEscape ?? false }
+        set { setSettings(SettingsPatch(shellEscape: newValue)) }
+    }
+    var stopOnFirstError: Bool {
+        get { settings?.stopOnFirstError ?? false }
+        set { setSettings(SettingsPatch(stopOnFirstError: newValue)) }
+    }
     let tree = FileTree()
     private(set) var initialLoadComplete = false
     var openPath: String? { store.openFile?.path }
@@ -226,17 +242,17 @@ final class ProjectModel {
     }
 
     private func apply(_ section: SessionSection) {
-        let (before, build, live) = (store.documents, store.build, livePDF)
+        let (before, build, live, problem) = (store.documents, store.build, livePDF, store.project?.problem)
         store.apply(section)
         switch section {
-        case .project: break
+        case .project(let now):
+            if let error = now.problem, error != problem { alert(String(localized: "Couldn’t Read the Project’s Settings"), error) }
         case .tree(let nodes): tree.show(nodes)
         case .openFile: showOpenFile()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
-                let title = notSavedTitle(document.path)
-                if let app, app.alert == nil { app.alert = AppAlert(title, error) } else { notices.announce(title) }
+                alert(notSavedTitle(document.path), error)
             }
         case .outline: findHeadings()
         case .build(let now): buildChanged(now, was: build)
@@ -245,6 +261,10 @@ final class ProjectModel {
             if session != nil { showPDF() }
         case .live(let state): liveChanged(state)
         }
+    }
+
+    private func alert(_ title: String, _ message: String) {
+        if let app, app.alert == nil { app.alert = AppAlert(title, message) } else { notices.announce(title) }
     }
 
     private func showOpenFile() {
@@ -488,9 +508,9 @@ final class ProjectModel {
         return task
     }
 
-    func patchSettings(_ patch: SettingsPatch) async {
+    private func setSettings(_ patch: SettingsPatch) {
         guard let session, !closed else { return }
-        await alerting("Couldn’t Change the Project’s Settings") { try await session.call(SetSettings(patch: patch)) }
+        Task.immediate { await alerting("Couldn’t Change the Project’s Settings") { try await session.call(SetSettings(patch: patch)) } }
     }
 
     func reveal(_ heading: Heading) {

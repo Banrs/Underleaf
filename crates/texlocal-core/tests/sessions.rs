@@ -123,6 +123,68 @@ async fn a_section_is_sent_again_only_when_it_changes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_corrupt_settings_file_is_reported_at_open_and_left_as_it_is() {
+    let corrupt = |library: &Library| {
+        let root = library.project_root("P");
+        fs::write(root.join(".texlocal.json"), "{ not json").unwrap();
+    };
+    let rig = Rig::open_with(&[("main.tex", MAIN)], corrupt).await;
+    let project = rig.section("project", |_| true);
+    let problem = project["problem"].as_str().unwrap();
+    assert!(
+        problem.starts_with("“.texlocal.json” can't be read"),
+        "{problem}"
+    );
+    assert_eq!(project["settings"]["mainFile"], "main.tex");
+    let engine = json!({ "patch": { "engine": "xelatex" } });
+    assert_eq!(rig.refuse("SetSettings", engine), ErrorKind::Conflict);
+    let settings = rig.root().join(".texlocal.json");
+    assert_eq!(fs::read_to_string(&settings).unwrap(), "{ not json");
+    fs::write(&settings, r#"{ "engine": "lualatex" }"#).unwrap();
+    let fixed = rig.section("project", |p| p["problem"].is_null());
+    assert_eq!(fixed["settings"]["engine"], "lualatex");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_library_is_pushed_before_the_reply_that_changed_it_and_an_open_project_keeps_its_place()
+ {
+    let rig = project().await;
+    rig.section("outline", |o| !o.is_null());
+    rig.forget();
+    rig.ask_library("ReloadProjects", json!({})).unwrap();
+    assert_eq!(rig.said(), ["library", "reply"]);
+    assert_eq!(names(&rig.listed(|_| true), "id"), ["P"]);
+    rig.forget();
+    rig.ask_library("ReloadProjects", json!({})).unwrap();
+    let renamed = rig.ask_library("RenameProject", json!({ "id": "P", "name": "Q" }));
+    assert_eq!(renamed.unwrap_err().kind, ErrorKind::Conflict);
+    assert_eq!(rig.said(), ["reply", "reply"]);
+    let folder = rig.library.path("Thesis");
+    write(&folder, &[("main.tex", MAIN)]);
+    let opened = rig
+        .ask_library("OpenPath", json!({ "path": folder }))
+        .unwrap();
+    assert_eq!(rig.said(), ["reply", "reply", "library", "reply"]);
+    let id = opened["project"]["id"].clone();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    let forget = json!({ "id": id });
+    let refused = rig.ask_library("ForgetFolder", forget.clone()).unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Conflict);
+    assert_eq!(rig.call_to(2, "CloseProject", json!({})), true);
+    rig.ask_library("ForgetFolder", forget).unwrap();
+    assert_eq!(
+        names(&rig.listed(|l| l.as_array().unwrap().len() == 1), "id"),
+        ["P"]
+    );
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    rig.forget();
+    rig.ask_library("RenameProject", json!({ "id": "P", "name": "Q" }))
+        .unwrap();
+    assert_eq!(rig.said(), ["library", "reply"]);
+    assert_eq!(names(&rig.listed(|_| true), "id"), ["Q"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn checks_find_undefined_labels_and_unclosed_environments() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\begin{itemize}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;

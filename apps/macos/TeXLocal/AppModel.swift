@@ -67,7 +67,7 @@ struct NewProjectDraft: Identifiable {
 
 @Observable
 final class AppModel {
-    var projects: [ProjectInfo] = []
+    var projects: [ProjectInfo] { core.library.projects }
     private(set) var projectsLoaded = false
     var tex: TexStatus?
     private(set) var settingTeX = false
@@ -186,17 +186,15 @@ final class AppModel {
 
     func retryLibrary() async {
         core.reopen()
-        await refresh()
+        await reloadProjects()
         await refreshTeXStatus()
     }
 
-    func refresh() async {
+    func reloadProjects() async {
         guard core.isOpen else { return }
         do {
-            let listed = try await core.call(ListProjects())
-            var followed = false
-            for project in listed where project.missing { followed = await follow(project) || followed }
-            projects = followed ? try await core.call(ListProjects()) : listed
+            try await core.call(ReloadProjects())
+            for project in projects where project.missing { await follow(project) }
             libraryProblem = nil
         } catch {
             libraryProblem = AppAlert("Couldn’t Load Projects", error)
@@ -237,7 +235,6 @@ final class AppModel {
     func create(name: String, template: ProjectTemplate) async throws {
         let engine = defaults.string(forKey: DefaultsKey.newProjectEngine).flatMap(Engine.init(rawValue:))
         let info = try await core.call(CreateProject(name: name, template: template, engine: engine))
-        await refresh()
         Task { await open(info.id) }
     }
 
@@ -262,7 +259,6 @@ final class AppModel {
         importing.append(url)
         defer { importing.removeAll { $0 == url } }
         guard let opening = await alerting("Couldn’t Open “\(url.lastPathComponent)”", { try await openPath(url) }) else { return }
-        await refresh()
         guard alone else { return }
         importing.removeAll { $0 == url }
         let id = opening.project.id
@@ -284,15 +280,14 @@ final class AppModel {
         set { defaults.set(newValue, forKey: DefaultsKey.folderBookmarks) }
     }
 
-    private func follow(_ project: ProjectInfo) async -> Bool {
+    private func follow(_ project: ProjectInfo) async {
         var stale = false, trashed = FileManager.URLRelationship.other
         guard let bookmark = bookmarks[project.id],
-              let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale)
-        else { return false }
-        guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return false }
+              let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale),
+              (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        else { return }
         try? FileManager.default.getRelationship(&trashed, of: .trashDirectory, in: .userDomainMask, toItemAt: url)
-        guard trashed != .contains else { return false }
-        return (try? await openPath(url)) != nil
+        if trashed != .contains { _ = try? await openPath(url) }
     }
 
     func forget(_ project: ProjectInfo) async {
@@ -303,14 +298,12 @@ final class AppModel {
             bookmarks[project.id] = nil
             recentProjects.removeAll { $0 == project.id }
         }
-        await refresh()
     }
 
     func rename(_ project: ProjectInfo, to name: String) async {
         if let renamed = await renameProject(project.id, shown: project.name, to: name) {
             registerRenameUndo(current: (renamed.id, renamed.name), previous: (project.id, project.name))
         }
-        await refresh()
     }
 
     private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
@@ -325,9 +318,7 @@ final class AppModel {
         undoManager?.registerAsyncUndo(withTarget: self, actionName: String(localized: "Rename"), reversal: {
             self.registerRenameUndo(current: previous, previous: current)
         }, work: {
-            let renamed = await self.renameProject(current.id, shown: current.name, to: previous.name) != nil
-            await self.refresh()
-            return renamed
+            await self.renameProject(current.id, shown: current.name, to: previous.name) != nil
         })
     }
 
@@ -335,7 +326,6 @@ final class AppModel {
         let copy = await alerting("Couldn’t Duplicate “\(project.name)”") {
             try await core.call(DuplicateProject(id: project.id, name: String(localized: "\(project.name) copy")))
         }
-        await refresh()
         return copy?.id
     }
 
@@ -356,10 +346,10 @@ final class AppModel {
                     return false
                 }
             },
-            changed: { [weak self] in await self?.refresh() },
+            changed: { [weak self] in await self?.reloadProjects() },
             failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })
         await item.moveToTrash()
-        await refresh()
+        await reloadProjects()
     }
 
     func alerting<T>(_ title: @autoclosure () -> String, unless quiet: () -> Bool = { false },
@@ -402,7 +392,6 @@ final class AppModel {
         guard await leave(openGeneration) else { return false }
         project = nil
         dropRequests()
-        await refresh()
         return true
     }
 

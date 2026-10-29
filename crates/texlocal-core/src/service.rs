@@ -1,21 +1,26 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::Value;
 use texlocal_latex::templates::ProjectTemplate;
 
 use crate::compile::CompileManager;
+use crate::events::Queued;
 use crate::paths::Project;
 use crate::projects::{self, History, Opening, ProjectInfo};
 use crate::protocol::requests;
 use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
-use crate::texpresso::{self, Preview};
+use crate::texpresso;
 use crate::{CoreError, import, lock, sys, tinytex};
 
 const NO_TEXPRESSO: &str =
     "That folder doesn't contain the texpresso program. Choose the folder it's in.";
+const RENAME_OPEN: &str = "Close the project before renaming it.";
+const FORGET_OPEN: &str = "Close the project before removing it from the list.";
 
 pub struct Service {
     pub(crate) data_dir: PathBuf,
@@ -24,6 +29,29 @@ pub struct Service {
     pub(crate) edits: Mutex<()>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
+    pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
+    sent: Mutex<Option<String>>,
+    in_sessions: Mutex<Vec<String>>,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub(crate) enum LibrarySection {
+    Projects(Vec<ProjectInfo>),
+}
+
+pub(crate) struct InSession {
+    service: Arc<Service>,
+    id: String,
+}
+
+impl Drop for InSession {
+    fn drop(&mut self) {
+        let mut ids = lock(&self.service.in_sessions);
+        if let Some(at) = ids.iter().position(|id| *id == self.id) {
+            ids.swap_remove(at);
+        }
+    }
 }
 
 requests! {
@@ -32,7 +60,7 @@ requests! {
         SetTexpressoDir { dir: Option<PathBuf> } -> TexStatus,
         SetTexDir { dir: Option<PathBuf> } -> TexStatus,
         InstallTex {} -> TexStatus,
-        ListProjects {} -> Vec<ProjectInfo>,
+        ReloadProjects {} -> (),
         CreateProject { name: String, template: ProjectTemplate, engine: Option<Engine> } -> ProjectInfo,
         DuplicateProject { id: String, name: String } -> ProjectInfo,
         FreeProjectName {} -> String,
@@ -52,7 +80,54 @@ impl Service {
             edits: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
             histories: Mutex::default(),
+            hub: OnceLock::new(),
+            sent: Mutex::default(),
+            in_sessions: Mutex::default(),
         }
+    }
+
+    pub fn projects(&self) -> Result<Vec<ProjectInfo>, CoreError> {
+        projects::list_projects(&self.data_dir)
+    }
+
+    pub(crate) fn publish_projects(&self) -> Result<(), CoreError> {
+        let Some(hub) = self.hub.get() else {
+            return Ok(());
+        };
+        let mut sent = lock(&self.sent);
+        let section = LibrarySection::Projects(self.projects()?);
+        let said = serde_json::to_string(&section).expect("a section serialises");
+        if sent.as_ref() != Some(&said) {
+            *sent = Some(said);
+            let _ = hub.send(Queued::Library(section));
+        }
+        Ok(())
+    }
+
+    fn relist<T>(&self, done: Result<T, CoreError>) -> Result<T, CoreError> {
+        let _ = self.publish_projects();
+        done
+    }
+
+    pub(crate) fn in_session(self: &Arc<Self>, id: &str) -> InSession {
+        lock(&self.in_sessions).push(id.to_owned());
+        InSession {
+            service: Arc::clone(self),
+            id: id.to_owned(),
+        }
+    }
+
+    fn unless_open<T>(
+        &self,
+        id: &str,
+        refused: &str,
+        act: impl FnOnce() -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        let in_sessions = lock(&self.in_sessions);
+        if in_sessions.iter().any(|open| open == id) {
+            return Err(CoreError::conflict(refused));
+        }
+        act()
     }
 
     pub(crate) fn history(&self, project: &Project) -> Arc<Mutex<History>> {
@@ -97,10 +172,6 @@ impl Service {
 
     #[expect(clippy::unit_arg)]
     pub async fn call(&self, name: &str, args: Value) -> Result<Value, CoreError> {
-        let stop = |root: &Path| {
-            self.compile.stop(root);
-            self.texpresso.stop(root)
-        };
         match Library::parse(name, args)? {
             Library::CheckTex(CheckTex {}, answer) => answer(Ok(self.status().await)),
             Library::SetTexpressoDir(SetTexpressoDir { dir }, answer) => {
@@ -125,9 +196,7 @@ impl Service {
                 tinytex::install(&self.tool_paths().0).await?;
                 answer(Ok(self.status().await))
             }
-            Library::ListProjects(ListProjects {}, answer) => {
-                answer(projects::list_projects(&self.data_dir))
-            }
+            Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),
             Library::CreateProject(
                 CreateProject {
                     name,
@@ -135,29 +204,34 @@ impl Service {
                     engine,
                 },
                 answer,
-            ) => answer(projects::create_project(
+            ) => answer(self.relist(projects::create_project(
                 &self.data_dir,
                 &name,
                 template,
                 engine,
-            )),
+            ))),
             Library::DuplicateProject(DuplicateProject { id, name }, answer) => {
-                answer(import::duplicate_project(self, &id, &name))
+                answer(self.relist(import::duplicate_project(self, &id, &name)))
             }
             Library::FreeProjectName(FreeProjectName {}, answer) => {
                 answer(projects::free_project_name(&self.data_dir))
             }
             Library::RenameProject(RenameProject { id, name }, answer) => {
-                answer(self.with_project(&id, |_| {
-                    projects::rename_project(&self.data_dir, &id, &name, stop)
-                }))
+                let renamed = self.unless_open(&id, RENAME_OPEN, || {
+                    self.with_project(&id, |_| {
+                        projects::rename_project(&self.data_dir, &id, &name)
+                    })
+                });
+                answer(self.relist(renamed))
             }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
             Library::OpenPath(OpenPath { path }, answer) => {
-                answer(projects::open_path(self, &path))
+                answer(self.relist(projects::open_path(self, &path)))
             }
             Library::ForgetFolder(ForgetFolder { id }, answer) => {
-                answer(projects::forget_folder(self, &id, stop))
+                let forgotten =
+                    self.unless_open(&id, FORGET_OPEN, || projects::forget_folder(self, &id));
+                answer(self.relist(forgotten))
             }
         }
     }

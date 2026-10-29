@@ -33,6 +33,7 @@ pub(crate) struct ProjectState {
     name: String,
     root: String,
     settings: ProjectSettings,
+    problem: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -84,6 +85,7 @@ impl Actor {
             name: self.project.name(),
             root: self.project.root.to_string_lossy().into_owned(),
             settings: settings::shown(&self.project, self.tree.main.clone()),
+            problem: settings::problem(&self.project),
         };
         self.publish(SessionSection::Project(project));
     }

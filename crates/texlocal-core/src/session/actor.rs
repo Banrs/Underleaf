@@ -29,7 +29,7 @@ use crate::import::{ImportConflict, Imported};
 use crate::paths::{Project, RelPath};
 use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols};
 use crate::protocol::requests;
-use crate::service::Service;
+use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
 use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
 
@@ -150,6 +150,7 @@ pub(crate) struct Actor {
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
     pub sent: Sent,
+    in_session: Option<InSession>,
     closed: bool,
 }
 
@@ -166,6 +167,7 @@ impl Actor {
             id: project_id,
             auto_compile,
         } = opening;
+        let in_session = sessions.service.in_session(&project_id);
         let project = sessions.service.project(&project_id)?;
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
@@ -213,6 +215,7 @@ impl Actor {
             later,
             history,
             sent: Sent::default(),
+            in_session: Some(in_session),
             closed: false,
         };
         actor.publish_all(tree);
@@ -487,6 +490,8 @@ impl Actor {
         self.closed = true;
         self.live_stop();
         self.docs.clear();
+        self.in_session = None;
+        let _ = self.service.publish_projects();
         Ok(true)
     }
 }

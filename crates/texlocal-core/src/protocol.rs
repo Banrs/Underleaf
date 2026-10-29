@@ -8,7 +8,7 @@ use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 
 use crate::CoreError;
 use crate::events::SessionEvent;
-use crate::service::Library;
+use crate::service::{Library, LibrarySection};
 use crate::session::{Session, SessionSection};
 
 pub(crate) type Answer<T> = fn(Result<T, CoreError>) -> Result<Value, CoreError>;
@@ -47,7 +47,10 @@ pub fn protocol() -> Protocol {
     outbound.subschema_for::<CoreError>();
     outbound.subschema_for::<HighlightKind>();
     outbound.subschema_for::<SessionEvent>();
-    let stores = vec![outbound.subschema_for::<SessionSection>()];
+    let stores = vec![
+        outbound.subschema_for::<SessionSection>(),
+        outbound.subschema_for::<LibrarySection>(),
+    ];
     Protocol {
         requests,
         stores,

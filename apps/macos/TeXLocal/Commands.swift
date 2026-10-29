@@ -283,12 +283,9 @@ struct EnginePicker: View {
     let project: ProjectModel?
 
     var body: some View {
-        let engine = project?.settings?.engine
-        Picker("Engine", selection: Binding(get: { engine }, set: { new in
-            if let project, let new { Task.immediate { await project.patchSettings(SettingsPatch(engine: new)) } }
-        })) {
+        Picker("Engine", selection: project.map { Bindable($0).engine } ?? .constant(nil)) {
             ForEach(Engine.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
         }
-        .disabled(engine == nil)
+        .disabled(project?.engine == nil)
     }
 }

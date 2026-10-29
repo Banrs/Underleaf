@@ -22,6 +22,7 @@ final class Core {
 
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
+    let library = LibraryStore()
 
     static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
     static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
@@ -33,6 +34,7 @@ final class Core {
                 switch said {
                 case .reply(let id): pending.removeValue(forKey: id)?(json)
                 case .event(let session, let event): observers[session]?(event)
+                case .library(let section): library.apply(section)
                 }
             }
         }
@@ -129,12 +131,16 @@ final class Core {
     private nonisolated enum Said: Decodable {
         case reply(UInt64)
         case event(UInt64, Event)
+        case library(LibrarySection)
 
-        private enum Keys: CodingKey { case reply }
+        private enum Keys: CodingKey { case reply, library }
 
         init(from decoder: any Decoder) throws {
-            if let id = try decoder.container(keyedBy: Keys.self).decodeIfPresent(UInt64.self, forKey: .reply) {
+            let said = try decoder.container(keyedBy: Keys.self)
+            if let id = try said.decodeIfPresent(UInt64.self, forKey: .reply) {
                 self = .reply(id)
+            } else if let section = try said.decodeIfPresent(LibrarySection.self, forKey: .library) {
+                self = .library(section)
             } else {
                 let said = try SessionEvent(from: decoder)
                 self = .event(said.session, said.event)

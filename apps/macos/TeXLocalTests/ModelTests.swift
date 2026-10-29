@@ -94,7 +94,7 @@ struct SectionTests {
         let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
         let file = { (name: String) in TreeNode(name: name, path: name, kind: .tex, children: nil, main: name == "main.tex") }
         let sections: [SessionSection] = [
-            .project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings)),
+            .project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil)),
             .tree([file("main.tex"), TreeNode(name: "figs", path: "figs", kind: nil, children: [], main: false), file("b.tex")]),
             .documents([DocumentState(path: "b.tex", error: nil, held: .changed)]),
         ]

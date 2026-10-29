@@ -49,6 +49,10 @@ impl Library {
         made["id"].as_str().unwrap().to_owned()
     }
 
+    pub fn projects(&self) -> Value {
+        json!(self.service.projects().unwrap())
+    }
+
     pub fn project_root(&self, id: &str) -> PathBuf {
         self.service.project(id).unwrap().root
     }
@@ -156,6 +160,18 @@ impl Rig {
             .kind
     }
 
+    pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, CoreError> {
+        let id = self.asked.fetch_add(1, Ordering::Relaxed);
+        self.sessions.send(id, command, args);
+        self.reply(id)
+    }
+
+    pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
+        let listed =
+            |e: &Value| e["library"]["type"] == "projects" && matching(&e["library"]["value"]);
+        self.find(listed)["library"]["value"].take()
+    }
+
     pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
         self.sessions.send_to(id, session, command, args);
@@ -210,6 +226,7 @@ impl Rig {
     pub fn said(&self) -> Vec<String> {
         let seen = self.seen.lock().unwrap();
         let kind = |e: &Value| match &e["event"] {
+            Value::Null if e["library"].is_object() => "library".to_owned(),
             Value::Null => "reply".to_owned(),
             event if event["type"] == "section" => event["value"]["type"].as_str().unwrap().into(),
             event => event["type"].as_str().unwrap().into(),

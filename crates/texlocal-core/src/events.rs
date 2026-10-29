@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::CoreError;
+use crate::service::LibrarySection;
 use crate::session::{DiskConflict, SessionSection};
 use crate::texpresso::PageRange;
 
@@ -13,6 +14,7 @@ pub type Listener = Box<dyn Fn(&Value) + Send>;
 
 pub(crate) enum Queued {
     Event(SessionEvent),
+    Library(LibrarySection),
     Reply {
         id: u64,
         answer: Result<Value, CoreError>,
@@ -84,6 +86,7 @@ impl Hub {
                 for queued in events {
                     let said = match queued {
                         Queued::Event(event) => json!(event),
+                        Queued::Library(section) => json!({ "library": section }),
                         Queued::Reply { id, answer } => match answer {
                             Ok(ok) => json!({ "reply": id, "ok": ok }),
                             Err(err) => json!({ "reply": id, "error": err }),

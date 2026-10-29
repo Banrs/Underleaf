@@ -114,16 +114,21 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
     core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
     let (open, save) = (r#"{"id":"P","autoCompile":false}"#, r#"{"reporting":true}"#);
     let sent = [
-        (None, Some("ListProjects"), Some("{}"), Some("ok")),
+        (None, Some("ReloadProjects"), Some("{}"), Some("ok")),
         (None, Some("nope"), Some("{}"), Some("notFound")),
         (
             None,
-            Some("ListProjects"),
+            Some("ReloadProjects"),
             Some("{not json"),
             Some("invalid"),
         ),
         (None, None, None, Some("invalid")),
-        (Some(1), Some("ListProjects"), Some("{}"), Some("notFound")),
+        (
+            Some(1),
+            Some("ReloadProjects"),
+            Some("{}"),
+            Some("notFound"),
+        ),
         (Some(1), Some("OpenProject"), Some(open), Some("ok")),
         (Some(1), Some("OpenProject"), Some(open), Some("conflict")),
         (Some(1), Some("Save"), Some(save), Some("ok")),

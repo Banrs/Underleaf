@@ -130,6 +130,12 @@ pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettin
     Ok(file.settings)
 }
 
+pub fn problem(project: &Project) -> Option<String> {
+    let unreadable = |file: &Path| load::<ProjectFile>(file).err();
+    let problem = unreadable(&project.settings).or_else(|| unreadable(&project.ui));
+    problem.map(|err| err.message)
+}
+
 pub fn granted(project: &Project) -> bool {
     let granted = read_project(&project.ui).shell_escape_for;
     granted.is_some_and(|folder| identity(&project.root) == Some(folder))

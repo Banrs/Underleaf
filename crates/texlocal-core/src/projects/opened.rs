@@ -177,11 +177,7 @@ fn open_folder(
     Ok(ProjectInfo::of(id, &project(root, &store)))
 }
 
-pub fn forget_folder(
-    service: &Service,
-    id: &str,
-    stop: impl FnOnce(&Path) -> Result<(), CoreError>,
-) -> Result<(), CoreError> {
+pub fn forget_folder(service: &Service, id: &str) -> Result<(), CoreError> {
     if !is_opened(id) {
         return Err(CoreError::bad_request(
             "Only a folder opened where it is can be removed from the list.",
@@ -190,11 +186,8 @@ pub fn forget_folder(
     let store = store(&service.data_dir, id);
     let edits = lock(&service.edits);
     let known = folders(&service.data_dir);
-    let Some((_, folder)) = known.iter().find(|(known, _)| known == id) else {
+    if !known.iter().any(|(known, _)| known == id) {
         return Err(CoreError::not_found(format!("No such project: {id}")));
-    };
-    if folder.path.is_dir() {
-        stop(&folder.path)?;
     }
     fs::remove_file(store.join(FOLDER))?;
     drop(edits);

@@ -175,12 +175,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         .cloned())
 }
 
-pub fn rename_project(
-    data_dir: &Path,
-    id: &str,
-    new_name: &str,
-    before_move: impl FnOnce(&Path) -> Result<(), CoreError>,
-) -> Result<ProjectInfo, CoreError> {
+pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
     if is_opened(id) {
         return Err(CoreError::bad_request(
             "A folder opened where it is can't be renamed here.",
@@ -194,7 +189,6 @@ pub fn rename_project(
             "A project with that name already exists",
         ));
     }
-    before_move(&root)?;
     atomic::rename_exclusive(&root, &dest)?;
     Ok(ProjectInfo::read(data_dir, &clean)?)
 }

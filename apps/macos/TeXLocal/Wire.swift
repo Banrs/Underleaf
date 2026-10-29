@@ -840,14 +840,25 @@ nonisolated struct KillAll: LibraryRequest {
     static let command = "KillAll"
 }
 
+nonisolated enum LibrarySection: Decodable, Hashable, Sendable {
+    case projects([ProjectInfo])
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+}
+
+nonisolated extension LibrarySection {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        switch try wire.decode(String.self, forKey: .type) {
+        case "projects": self = .projects(try wire.decode([ProjectInfo].self, forKey: .value))
+        case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
+        }
+    }
+}
+
 nonisolated struct ListMenus: SyntaxRequest {
     typealias Reply = Menus
     static let command = "ListMenus"
-}
-
-nonisolated struct ListProjects: LibraryRequest {
-    typealias Reply = [ProjectInfo]
-    static let command = "ListProjects"
 }
 
 nonisolated struct ListVersions: SessionRequest {
@@ -1237,8 +1248,9 @@ nonisolated struct ProjectState: Decodable, Hashable, Sendable {
     var name: String
     var root: String
     var settings: ProjectSettings
+    var problem: String?
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case name, root, settings }
+    enum CodingKeys: String, CodingKey, CaseIterable { case name, root, settings, problem }
 }
 
 nonisolated extension ProjectState {
@@ -1247,6 +1259,7 @@ nonisolated extension ProjectState {
         name = try wire.decode(String.self, forKey: .name)
         root = try wire.decode(String.self, forKey: .root)
         settings = try wire.decode(ProjectSettings.self, forKey: .settings)
+        problem = try wire.decode(String?.self, forKey: .problem)
     }
 }
 
@@ -1310,6 +1323,11 @@ nonisolated extension QuickOpenItem {
 
 nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Sendable {
     case file, heading, label
+}
+
+nonisolated struct ReloadProjects: LibraryRequest {
+    typealias Reply = Done
+    static let command = "ReloadProjects"
 }
 
 nonisolated struct ReloadTree: SessionRequest {
@@ -2043,6 +2061,17 @@ final class SessionStore {
         case .build(let value): self.build = value
         case .shownPdf(let value): self.shownPdf = value
         case .live(let value): self.live = value
+        }
+    }
+}
+
+@Observable
+final class LibraryStore {
+    private(set) var projects: [ProjectInfo] = []
+
+    func apply(_ section: LibrarySection) {
+        switch section {
+        case .projects(let value): self.projects = value
         }
     }
 }

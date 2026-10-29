@@ -133,9 +133,11 @@ impl Sessions {
         watch: bool,
         listener: Listener,
     ) -> Self {
+        let hub = Hub::new(listener);
+        let _ = service.hub.set(hub.queue.clone());
         Self {
             service,
-            hub: Hub::new(listener),
+            hub,
             compiler,
             preview,
             watch,

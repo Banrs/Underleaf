@@ -9,10 +9,10 @@ struct CoreTests {
         #expect(Core.shared.isOpen)
     }
 
-    @Test func aCommandAnswersDecodedValues() async throws {
+    @Test func aCommandAnswersDecodedValuesAfterTheLibraryItChanged() async throws {
         let project = try await newProject()
-        let listed = try await Core.shared.call(ListProjects())
-        #expect(listed.contains { $0.id == project.id && $0.mainFile == "main.tex" })
+        #expect(project.mainFile == "main.tex")
+        #expect(Core.shared.library.projects.contains { $0.id == project.id })
     }
 
     @Test func aRefusalCarriesItsKind() async {
@@ -62,6 +62,27 @@ struct CoreTests {
         view.insertText("late ", replacementRange: NSRange(location: 0, length: 0))
         #expect(view.string == "theirs\n")
         #expect(await project.close().value)
+    }
+
+    @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let app = AppModel(defaults: defaults.store)
+        app.autoCompile = false
+        let project = ProjectModel(id: info.id, app: app)
+        await project.load()
+        project.engine = .xelatex
+        try await waitUntil { project.engine == .xelatex }
+        #expect(await project.close().value)
+        #expect(app.alert == nil)
+        let settings = info.path + "/.texlocal.json"
+        try "{ not json".write(toFile: settings, atomically: true, encoding: .utf8)
+        let corrupt = ProjectModel(id: info.id, app: app)
+        await corrupt.load()
+        #expect(app.alert?.title == "Couldn’t Read the Project’s Settings")
+        #expect(corrupt.engine == .pdflatex)
+        #expect(try String(contentsOfFile: settings, encoding: .utf8) == "{ not json")
+        #expect(await corrupt.close().value)
     }
 
     @Test func theStoreIsFilledBeforeTheOpenReplyAndEachReplyFollowsItsSections() async throws {
