@@ -37,7 +37,7 @@ final class TeXpressoSession {
 
     func receive(_ state: LiveState) {
         if state.phase == .starting && phase == .stopped { acknowledged = false }
-        (phase, engine, halted, failed) = (state.phase, state.engine, state.halted, state.failure != nil || state.error != nil)
-        if let log = state.log { self.log = log }
+        (phase, engine, halted, failed) = (state.phase, state.engine, state.halted, !state.failures.isEmpty)
+        if let log = state.log { self.log = (state.failures.map(\.text) + [log]).filter { !$0.isEmpty }.joined(separator: "\n\n") }
     }
 }

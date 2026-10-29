@@ -34,15 +34,15 @@ macro_rules! calls {
         pub struct $group;
 
         impl $group {
-            pub fn call($($on: $target,)? name: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+            pub fn call($($on: $target,)? name: &str, args: serde_json::Value) -> Result<serde_json::Value, $crate::message::Message> {
                 match name {
                     $(stringify!($request) => {
                         let $request { $($field),* } = serde_json::from_value(args)
-                            .map_err(|err| format!("Invalid arguments: {err}"))?;
+                            .map_err($crate::messages::invalid_arguments)?;
                         let reply: $reply = $answer;
                         Ok(serde_json::json!(reply))
                     })*
-                    _ => Err("Unknown command".to_owned()),
+                    _ => Err($crate::messages::unknown_command()),
                 }
             }
 

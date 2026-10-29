@@ -16,6 +16,7 @@ use super::opened::{self, is_opened};
 use super::skip_unreadable;
 use super::tree::{listed, walk};
 use crate::error::CoreError;
+use crate::messages;
 use crate::paths::{Project, fold_case, sanitize_name};
 use crate::settings::{Engine, SettingsPatch, read_settings, write_settings};
 use crate::{SETTINGS_FILE, atomic};
@@ -176,17 +177,13 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
 
 pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
     if is_opened(id) {
-        return Err(CoreError::bad_request(
-            "A folder opened where it is can't be renamed here.",
-        ));
+        return Err(CoreError::bad_request(messages::opened_elsewhere()));
     }
     let root = Project::find(data_dir, id)?.root;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
     if occupied(&root, &dest) {
-        return Err(CoreError::conflict(
-            "A project with that name already exists",
-        ));
+        return Err(CoreError::conflict(messages::project_exists()));
     }
     atomic::rename_exclusive(&root, &dest)?;
     Ok(ProjectInfo::read(data_dir, &clean)?)

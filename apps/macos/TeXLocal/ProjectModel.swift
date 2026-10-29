@@ -112,7 +112,7 @@ final class ProjectModel {
         for document in store.documents {
             let name = document.path.fileName
             switch (document.error, document.held) {
-            case (let error?, _): return error
+            case (let error?, _): return error.text
             case (nil, .changed): return String(localized: "Another app changed “\(name)”.")
             case (nil, .gone): return String(localized: "Another app moved or deleted “\(name)”.")
             case (nil, nil): continue
@@ -246,13 +246,13 @@ final class ProjectModel {
         store.apply(section)
         switch section {
         case .project(let now):
-            if let error = now.problem, error != problem { alert(String(localized: "Couldn’t Read the Project’s Settings"), error) }
+            if let error = now.problem, error != problem { alert(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
         case .tree(let nodes): tree.show(nodes)
         case .openFile: showOpenFile()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
-                alert(notSavedTitle(document.path), error)
+                alert(notSavedTitle(document.path), error.text)
             }
         case .outline: findHeadings()
         case .build(let now): buildChanged(now, was: build)
@@ -434,7 +434,7 @@ final class ProjectModel {
         if let snapshot = answer.snapshot, !answer.written.isEmpty {
             try await session.call(RestoreVersion(id: snapshot, paths: answer.written.map(\.file)))
         }
-        throw CoreError(kind: .conflict, message: String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
+        throw AppFailure(String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
     }
 
     @discardableResult
@@ -453,11 +453,11 @@ final class ProjectModel {
         do {
             answer = try await session.call(ApplyFix(id: fix.id))
         } catch {
-            if !closed { app?.report(error, "Couldn’t \(fix.title)") }
+            if !closed { app?.report(error, "Couldn’t \(fix.title.text)") }
             return
         }
         guard let answer, !closed else { return }
-        apply(answer.edits, named: fix.title)
+        apply(answer.edits, named: fix.title.text)
         await compile()
     }
 

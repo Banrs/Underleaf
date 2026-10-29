@@ -3,6 +3,7 @@ mod compile;
 mod error;
 mod events;
 mod import;
+pub mod messages;
 mod packages;
 mod paths;
 mod process;

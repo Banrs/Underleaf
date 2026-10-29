@@ -6,6 +6,7 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::logparse::{Fix, LogItem, Severity};
+use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextRange;
 
 use super::actor::{Actor, Later, Timer};
@@ -14,6 +15,7 @@ use super::{Document, Msg, Pending};
 use crate::CoreError;
 use crate::compile::{CompileManager, CompileResult};
 use crate::events::{BuildFinished, Event};
+use crate::messages;
 use crate::paths::{Project, disk_spelling};
 use crate::service::Service;
 use crate::settings;
@@ -41,7 +43,7 @@ impl Compiler for Arc<Service> {
         Box::pin(async move {
             tokio::task::spawn_blocking(move || CompileManager::clean(&build))
                 .await
-                .map_err(|err| CoreError::internal(err.to_string()))?
+                .map_err(|err| CoreError::internal(messages::unexpected(err)))?
         })
     }
 }
@@ -60,11 +62,11 @@ pub(crate) struct BuildState {
 pub(crate) struct IssueLine {
     line: u32,
     error: bool,
-    message: String,
-    short: String,
-    compact: Option<String>,
+    message: Message,
+    short: Message,
+    compact: Option<Message>,
     tokens: Vec<TextRange>,
-    others: Vec<String>,
+    others: Vec<Message>,
     index: Option<usize>,
 }
 
@@ -315,8 +317,8 @@ pub(super) fn issue_lines<'a>(
         let (item, others) = (items[0], &items[1..]);
         let command = item.command.as_deref();
         let compact = match command {
-            Some(command) => Some(format!("Undefined: {command}")),
-            None => (item.fix == Some(Fix::ShellEscape)).then(|| "Needs Shell Escape".to_owned()),
+            Some(command) => Some(messages::compact_undefined(command)),
+            None => (item.fix == Some(Fix::ShellEscape)).then(messages::compact_shell_escape),
         };
         let tokens = command.map_or_else(Vec::new, |command| {
             doc.with(|source| source.command_ranges(line, command))

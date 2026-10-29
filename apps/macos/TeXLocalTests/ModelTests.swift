@@ -104,7 +104,7 @@ struct SectionTests {
         #expect(project.url("b.tex")?.path(percentEncoded: false) == "/tmp/Paper/b.tex")
         #expect(project.tree.nodes.map(\.name) == ["figs", "b.tex", "main.tex"])
         #expect(project.saveFailure == "Another app changed “b.tex”.")
-        project.handle(.section(.documents([DocumentState(path: "b.tex", error: "The disk is full.", held: nil)])))
+        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: "disk_full", args: [:], text: "The disk is full."), held: nil)])))
         #expect(app.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
@@ -113,7 +113,7 @@ struct SectionTests {
         let app = AppModel(defaults: defaults.store)
         app.layout = .source
         let project = ProjectModel(id: "P", app: app)
-        let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: "Line \(line)", explain: nil, fix: nil) }
+        let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: "tex", args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
         let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
         let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box], log: "")
         let build = { (issues: [LogItem]) in

@@ -3,12 +3,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::analyze::{Facts, Heading, INPUT_DEPTH, Input, Named, Place};
 use crate::logparse::{LogItem, Severity};
+use crate::message::Message;
+use crate::messages;
 use crate::syntax::scan::{self, Group};
 use crate::syntax::{SymbolKind, Symbols, Text};
 
 pub(crate) struct Slip {
     place: Place,
-    message: String,
+    message: Message,
     kind: Kind,
 }
 
@@ -49,14 +51,11 @@ impl Structure {
             .iter()
             .rposition(|(e, _)| *e == environment);
         let Some(begun) = begun else {
-            let message = format!("\\end{{{environment}}} has no \\begin{{{environment}}}.");
+            let message = messages::end_without_begin(&environment);
             return self.slip(text, start, message, Kind::Unbegun(environment));
         };
         if let Some((open, at)) = self.environments.get(begun + 1..).and_then(<[_]>::last) {
-            let message = format!(
-                "\\begin{{{open}}} on line {} is ended by \\end{{{environment}}}.",
-                line(text, *at)
-            );
+            let message = messages::ended_by_another(open, line(text, *at), &environment);
             self.slip(text, start, message, Kind::Mismatched);
         }
         self.environments.truncate(begun);
@@ -69,8 +68,7 @@ impl Structure {
         if open {
             self.braces.push(at);
         } else if self.braces.pop().is_none() {
-            let message = "This } has nothing to close.".into();
-            self.slip(text, at, message, Kind::Unbalanced);
+            self.slip(text, at, messages::nothing_to_close(), Kind::Unbalanced);
         }
     }
 
@@ -79,10 +77,7 @@ impl Structure {
             return;
         }
         let open = &text.units[group.open..group.open + group.end.len()];
-        let message = format!(
-            "This {} is still open where the paragraph ends.",
-            String::from_utf16_lossy(open)
-        );
+        let message = messages::open_at_paragraph_end(String::from_utf16_lossy(open));
         self.slip(text, group.open, message, Kind::Unbalanced);
     }
 
@@ -91,12 +86,11 @@ impl Structure {
             self.unclosed(text, group);
         }
         for at in std::mem::take(&mut self.braces) {
-            let message = "This { is never closed.".into();
-            self.slip(text, at, message, Kind::Unbalanced);
+            self.slip(text, at, messages::never_closed(), Kind::Unbalanced);
             self.environments.clear();
         }
         for (environment, at) in std::mem::take(&mut self.environments) {
-            let message = format!("\\begin{{{environment}}} is never ended.");
+            let message = messages::never_ended(&environment);
             self.slip(text, at, message, Kind::Unended(environment));
         }
         self.slips.sort_by_key(|slip| slip.place);
@@ -107,7 +101,7 @@ impl Structure {
         self.end.is_none_or(|end| at < end)
     }
 
-    fn slip(&mut self, text: &Text, at: usize, message: String, kind: Kind) {
+    fn slip(&mut self, text: &Text, at: usize, message: Message, kind: Kind) {
         let place = Place::of(text, at..at);
         self.slips.push(Slip {
             place,
@@ -229,7 +223,10 @@ impl<'a> Walk<'a> {
     }
 }
 
-fn twice<'a>(defined: impl IntoIterator<Item = (&'a str, &'a Named)>, noun: &str) -> Vec<LogItem> {
+fn twice<'a>(
+    defined: impl IntoIterator<Item = (&'a str, &'a Named)>,
+    said: fn(&str, u32, &str) -> Message,
+) -> Vec<LogItem> {
     let mut first = HashMap::new();
     let mut twice = Vec::new();
     for (file, named) in defined.into_iter().filter(|(_, n)| literal(&n.name)) {
@@ -239,10 +236,7 @@ fn twice<'a>(defined: impl IntoIterator<Item = (&'a str, &'a Named)>, noun: &str
             }
             Entry::Occupied(entry) => {
                 let (at, line) = entry.get();
-                let message = format!(
-                    "The {noun} “{}” is defined already, on line {line} of {at}.",
-                    named.name
-                );
+                let message = said(&named.name, *line, at);
                 twice.push(warning(file, named.place.line, message));
             }
         }
@@ -250,36 +244,39 @@ fn twice<'a>(defined: impl IntoIterator<Item = (&'a str, &'a Named)>, noun: &str
     twice
 }
 
-fn warning(file: &str, line: u32, message: String) -> LogItem {
+fn warning(file: &str, line: u32, message: Message) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
 pub fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     let walk = Walk::from(symbols, main);
     let reached = || walk.files.iter().copied();
-    let undefined = |kind, noun: &str, defined: &HashSet<&str>| -> Vec<LogItem> {
+    let undefined = |kind, said: fn(&str) -> Message, defined: &HashSet<&str>| -> Vec<LogItem> {
         let uses =
             reached().flat_map(|(file, facts)| read(facts, &facts.uses).map(move |u| (file, u)));
         let uses = uses.filter(|(_, used)| used.kind == kind && literal(&used.name));
         let undefined = uses.filter(|(_, used)| !defined.contains(&*used.name));
-        let item = |(file, used): (&str, &Named)| {
-            let message = format!("No {noun} “{}” is defined.", used.name);
-            warning(file, used.place.line, message)
-        };
+        let item = |(file, used): (&str, &Named)| warning(file, used.place.line, said(&used.name));
         undefined.map(item).collect()
     };
     let packages: HashSet<&str> = reached()
         .flat_map(|(_, facts)| &facts.packages)
         .map(String::as_str)
         .collect();
-    let mut items = twice(walk.labels.iter().copied(), "label");
+    let mut items = twice(walk.labels.iter().copied(), |name, line, file| {
+        messages::label_defined_twice(name, line, file)
+    });
 
     if !packages.contains("xr") && !packages.contains("xr-hyperref") {
         let mut labels: HashSet<&str> = walk.labels.iter().map(|(_, l)| l.name.as_str()).collect();
         if packages.contains("lastpage") {
             labels.extend(["LastPage", "VeryLastPage"]);
         }
-        items.extend(undefined(SymbolKind::Label, "label", &labels));
+        items.extend(undefined(
+            SymbolKind::Label,
+            |name| messages::no_label(name),
+            &labels,
+        ));
     }
 
     let named = reached().flat_map(|(_, facts)| &facts.bibliographies);
@@ -299,13 +296,19 @@ pub fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
     let entries: Vec<(&str, &Named)> = entries
         .flat_map(|(bib, facts)| facts.citations.iter().map(move |c| (bib.as_str(), c)))
         .collect();
-    items.extend(twice(entries.iter().copied(), "citation"));
+    items.extend(twice(entries.iter().copied(), |name, line, file| {
+        messages::citation_defined_twice(name, line, file)
+    }));
     if bibliographies.iter().all(Option::is_some) {
         let bibitems = reached().flat_map(|(_, facts)| read(facts, &facts.citations));
         let mut keys: HashSet<&str> = bibitems.map(|c| c.name.as_str()).collect();
         keys.extend(entries.iter().map(|(_, c)| c.name.as_str()));
         keys.insert("*");
-        items.extend(undefined(SymbolKind::Citation, "citation", &keys));
+        items.extend(undefined(
+            SymbolKind::Citation,
+            |name| messages::no_citation(name),
+            &keys,
+        ));
     }
 
     let in_tex = |name: &str| {
@@ -319,10 +322,10 @@ pub fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
         .filter(|(_, input)| !literal(&input.name) || !in_tex(&input.name))
         .collect();
     let missing = unread.iter().filter(|(_, input)| literal(&input.name));
-    items.extend(missing.map(|(file, input)| {
-        let message = format!("No file “{}” is in the project.", input.name);
-        warning(file, input.place.line, message)
-    }));
+    items.extend(
+        missing
+            .map(|(file, input)| warning(file, input.place.line, messages::no_file(&input.name))),
+    );
 
     let slips = walk.slips.iter().filter(|(_, slip)| {
         unread.is_empty() || !matches!(slip.kind, Kind::Unbegun(_) | Kind::Unended(_))

@@ -4,6 +4,7 @@ use std::mem::{Discriminant, discriminant};
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::analyze::Analysis;
+use texlocal_latex::message::Message;
 use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::actor::Actor;
@@ -33,13 +34,13 @@ pub(crate) struct ProjectState {
     name: String,
     root: String,
     settings: ProjectSettings,
-    problem: Option<String>,
+    problem: Option<Message>,
 }
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct DocumentState {
     pub path: String,
-    pub error: Option<String>,
+    pub error: Option<Message>,
     pub held: Option<DiskConflict>,
 }
 

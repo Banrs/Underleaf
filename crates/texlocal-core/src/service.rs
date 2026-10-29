@@ -5,22 +5,19 @@ use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
+use texlocal_latex::message::Message;
 use texlocal_latex::templates::ProjectTemplate;
 
 use crate::compile::CompileManager;
 use crate::events::Queued;
+use crate::messages;
 use crate::paths::Project;
 use crate::projects::{self, History, Opening, ProjectInfo};
 use crate::protocol::requests;
 use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
 use crate::texpresso;
-use crate::{CoreError, import, lock, sys, tinytex};
-
-const NO_TEXPRESSO: &str =
-    "That folder doesn't contain the texpresso program. Choose the folder it's in.";
-const RENAME_OPEN: &str = "Close the project before renaming it.";
-const FORGET_OPEN: &str = "Close the project before removing it from the list.";
+use crate::{CoreError, import, lock, tinytex};
 
 pub struct Service {
     pub(crate) data_dir: PathBuf,
@@ -120,12 +117,12 @@ impl Service {
     fn unless_open<T>(
         &self,
         id: &str,
-        refused: &str,
+        refused: fn() -> Message,
         act: impl FnOnce() -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
         let in_sessions = lock(&self.in_sessions);
         if in_sessions.iter().any(|open| open == id) {
-            return Err(CoreError::conflict(refused));
+            return Err(CoreError::conflict(refused()));
         }
         act()
     }
@@ -179,7 +176,7 @@ impl Service {
                     .as_ref()
                     .map(|dir| tex::program_at(&dir.join("texpresso")));
                 if texpresso.is_some_and(|found| found.is_none()) {
-                    return Err(CoreError::bad_request(NO_TEXPRESSO));
+                    return Err(CoreError::bad_request(messages::no_texpresso_there()));
                 }
                 AppSettings::update(&self.data_dir, |app| app.texpresso_dir = dir)?;
                 answer(Ok(self.status().await))
@@ -188,7 +185,7 @@ impl Service {
                 let bin = dir.map(|dir| tex::tex_bin_dir(&dir).ok_or(()));
                 let bin = bin
                     .transpose()
-                    .map_err(|()| CoreError::bad_request(sys::NO_LATEXMK))?;
+                    .map_err(|()| CoreError::bad_request(messages::no_latexmk()))?;
                 AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
                 answer(Ok(self.status().await))
             }
@@ -217,7 +214,7 @@ impl Service {
                 answer(projects::free_project_name(&self.data_dir))
             }
             Library::RenameProject(RenameProject { id, name }, answer) => {
-                let renamed = self.unless_open(&id, RENAME_OPEN, || {
+                let renamed = self.unless_open(&id, messages::close_before_renaming, || {
                     self.with_project(&id, |_| {
                         projects::rename_project(&self.data_dir, &id, &name)
                     })
@@ -229,8 +226,9 @@ impl Service {
                 answer(self.relist(projects::open_path(self, &path)))
             }
             Library::ForgetFolder(ForgetFolder { id }, answer) => {
-                let forgotten =
-                    self.unless_open(&id, FORGET_OPEN, || projects::forget_folder(self, &id));
+                let forgotten = self.unless_open(&id, messages::close_before_forgetting, || {
+                    projects::forget_folder(self, &id)
+                });
                 answer(self.relist(forgotten))
             }
         }

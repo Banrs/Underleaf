@@ -26,6 +26,7 @@ use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
 use crate::CoreError;
 use crate::events::{Event, Queued, SessionEvent};
 use crate::import::{ImportConflict, Imported};
+use crate::messages;
 use crate::paths::{Project, RelPath};
 use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols};
 use crate::protocol::requests;
@@ -75,9 +76,6 @@ requests! {
         SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
     }
 }
-
-const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
-const STOPPED_UNSAVED: &str = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
 
 pub(crate) enum Later {
     Compile(bool),
@@ -284,12 +282,11 @@ impl Actor {
         self.stop_history();
         for (_, doc) in self.docs.iter_mut() {
             doc.doc.close();
-            let error = if doc.dirty() {
-                STOPPED_UNSAVED
+            doc.error = Some(if doc.dirty() {
+                messages::stopped_unsaved()
             } else {
-                STOPPED_SAVED
-            };
-            doc.error = Some(error.to_owned());
+                messages::stopped_saved()
+            });
         }
         self.publish_documents();
         rx.close();
@@ -375,7 +372,7 @@ impl Actor {
     fn command(&mut self, command: Session, reply: Reply) {
         let answer = match command {
             Session::OpenProject(_, answer) => {
-                answer(Err(CoreError::conflict("That session is open already")))
+                answer(Err(CoreError::conflict(messages::session_open())))
             }
             Session::CloseProject(CloseProject {}, answer) => {
                 return self.close(Pending { reply, answer });

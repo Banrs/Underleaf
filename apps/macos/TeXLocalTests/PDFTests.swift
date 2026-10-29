@@ -63,7 +63,7 @@ struct PDFTests {
     @Test func aLivePageWaitsForTheLiveDocumentThatCameBeforeIt() async throws {
         let defaults = TestDefaults()
         let project = ProjectModel(id: "P", app: AppModel(defaults: defaults.store))
-        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, log: nil, failure: nil, error: nil,
+        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, log: nil, failures: [],
                                                 lines: [:]))))
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 0, live: true))))
         let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")

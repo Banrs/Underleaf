@@ -9,6 +9,7 @@ use texlocal_latex::diff::{DiffLine, compare, edit_to};
 use super::Pending;
 use super::actor::Actor;
 use super::edits::DocumentEdits;
+use crate::messages;
 use crate::paths::RelPath;
 use crate::projects::{self, History, Snapshot, Taken};
 use crate::{CoreError, lf, lock, lossy_string};
@@ -63,7 +64,7 @@ impl Actor {
     pub fn history_save(&self, name: String, reply: Pending<Option<Snapshot>>) {
         let name = name.trim().to_owned();
         if name.is_empty() {
-            return reply.send(Err(CoreError::bad_request("A version needs a name.")));
+            return reply.send(Err(CoreError::bad_request(messages::version_needs_name())));
         }
         let root = self.project.root.clone();
         let save = move |history: &History| {
@@ -75,7 +76,7 @@ impl Actor {
 
     pub fn history_compare(&self, id: String, path: String, reply: Pending<Vec<DiffLine>>) {
         if !texlocal_latex::is_text(&path) {
-            let refused = CoreError::bad_request("Only a text file can be compared.");
+            let refused = CoreError::bad_request(messages::only_text_compared());
             return reply.send(Err(refused));
         }
         let edited = self.docs.get(&path).map(|doc| doc.doc.snapshot().0);
@@ -101,7 +102,7 @@ impl Actor {
         id: &str,
         paths: Option<Vec<RelPath>>,
     ) -> Result<Option<DocumentEdits>, CoreError> {
-        let open = self.texts_to_edit("restored")?;
+        let open = self.texts_to_edit()?;
         let chosen = |path: &str| {
             paths
                 .as_ref()
@@ -126,7 +127,7 @@ impl Actor {
             }
         }
         if edits.len() > 1 {
-            return Err(CoreError::conflict(super::edits::ONE_DOCUMENT));
+            return Err(CoreError::conflict(messages::one_document()));
         }
         self.snapshot_before("Before Restore")?;
         let written = self.service.with_project(&self.project_id, |project| {

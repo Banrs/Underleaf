@@ -8,6 +8,7 @@ use texlocal_latex::synctex::SyncTex;
 use texlocal_latex::wordmatch::find_in_source;
 
 use crate::error::CoreError;
+use crate::messages;
 use crate::paths::{Project, disk_spelling, source_rel};
 use crate::settings::read_settings;
 use crate::stamp::Kept;
@@ -41,9 +42,9 @@ fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, Core
         Some(live) => live.to_path_buf(),
         None => Some(read_settings(&project.settings).output(&project.build, "pdf")?)
             .filter(|pdf| pdf.exists())
-            .ok_or_else(|| CoreError::not_found("No compiled PDF yet"))?,
+            .ok_or_else(|| CoreError::not_found(messages::no_pdf_yet()))?,
     };
-    beside(&pdf).map_err(|_| CoreError::not_found("This PDF has no SyncTeX: compile it again."))
+    beside(&pdf).map_err(|_| CoreError::not_found(messages::no_synctex()))
 }
 
 fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
@@ -71,7 +72,7 @@ pub(crate) fn forward(
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
     if line < 1 {
-        return Err(CoreError::bad_request("Invalid source line"));
+        return Err(CoreError::bad_request(messages::invalid_line()));
     }
     let sync = sync_for(project, live)?;
     let tag = sync
@@ -97,7 +98,7 @@ pub(crate) fn forward(
     let mut first = matches
         .first()
         .cloned()
-        .ok_or_else(|| CoreError::not_found("Nothing in the PDF matches this line."))?;
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
     matches.sort_by(|a, b| {
         a.page
             .total_cmp(&b.page)
@@ -119,16 +120,16 @@ pub(crate) fn inverse(
     typeset: &dyn Fn(&str) -> Option<String>,
 ) -> Result<InverseLoc, CoreError> {
     if !(page.is_finite() && x.is_finite() && y.is_finite()) || page < 1.0 {
-        return Err(CoreError::bad_request("Invalid PDF location"));
+        return Err(CoreError::bad_request(messages::invalid_pdf_place()));
     }
     let root = &project.root;
     let sync = sync_for(project, live)?;
     let (name, line) = sync
         .inverse(page as i32, x as f32, y as f32)
         .and_then(|(name, line)| Some((name, u32::try_from(line).ok()?)))
-        .ok_or_else(|| CoreError::not_found("Nothing in the source matches this spot."))?;
-    let rel = source_file(root, name)
-        .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_source()))?;
+    let rel =
+        source_file(root, name).ok_or_else(|| CoreError::not_found(messages::no_source_file()))?;
     let found = click.and_then(|PageClick { text, at }| {
         let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
         let source = typeset(&rel).or_else(disk)?;

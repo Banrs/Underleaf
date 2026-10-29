@@ -6,13 +6,20 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
 use texlocal_core::session::{
     FileBuffer, LiveEvent, Pane, Preview, Project, Sessions, Sink, Status,
 };
-use texlocal_core::{CoreError, ErrorKind};
+use texlocal_core::{CoreError, ErrorKind, messages};
+
+#[derive(Debug, Deserialize)]
+pub struct Refused {
+    pub kind: ErrorKind,
+    pub message: Value,
+}
 
 pub struct Library {
     pub dir: TempDir,
@@ -58,8 +65,8 @@ impl Library {
     }
 }
 
-fn answer(command: &str, result: Result<Value, CoreError>) -> Value {
-    result.unwrap_or_else(|err| panic!("{command}: {:?} {}", err.kind, err.message))
+fn answer(command: &str, result: Result<Value, impl std::fmt::Debug>) -> Value {
+    result.unwrap_or_else(|err| panic!("{command}: {err:?}"))
 }
 
 pub fn names(list: &Value, key: &str) -> Vec<String> {
@@ -160,7 +167,7 @@ impl Rig {
             .kind
     }
 
-    pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, CoreError> {
+    pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, Refused> {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
         self.sessions.send(id, command, args);
         self.reply(id)
@@ -178,7 +185,7 @@ impl Rig {
         id
     }
 
-    pub fn reply(&self, id: u64) -> Result<Value, CoreError> {
+    pub fn reply(&self, id: u64) -> Result<Value, Refused> {
         let mut reply = self.find(|e| e["reply"] == id);
         match reply.get_mut("ok") {
             Some(ok) => Ok(ok.take()),
@@ -318,7 +325,7 @@ impl Preview for FakePreview {
     }
 
     fn live_pdf(&self, _: u64) -> Result<PathBuf, CoreError> {
-        Err(CoreError::not_found("No live PDF"))
+        Err(CoreError::not_found(messages::texpresso_unsynced()))
     }
 
     fn stop(&self, _: &Path) -> Result<(), CoreError> {

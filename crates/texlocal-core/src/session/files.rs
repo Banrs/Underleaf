@@ -8,12 +8,11 @@ use super::build::built_pdf;
 use super::watch;
 use crate::events::{DocumentRenamed, Event};
 use crate::import::{self, ImportConflict, Imported};
+use crate::messages;
 use crate::paths::{self, Project, within};
 use crate::projects::{self, RenameResult};
 use crate::settings::{self, SettingsPatch, UiPatch};
 use crate::{CoreError, zipexport};
-
-const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
 
 impl Actor {
     pub fn deleted(&mut self, path: &str, trashed: bool) {
@@ -221,7 +220,7 @@ impl Actor {
         }
         let main = settings::read_settings(&self.project.settings).main_file;
         if paths::after_entry(&main, path).is_some() {
-            return Err(CoreError::conflict(MAIN_FILE_TRASH));
+            return Err(CoreError::conflict(messages::main_file_trash()));
         }
         self.deleting.insert(path.to_owned());
         Ok(true)

@@ -10,19 +10,19 @@ use std::sync::{Arc, Mutex};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::is_text;
+use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextEdit;
 
 use super::Document;
 use super::actor::{Actor, Later, Timer};
 use super::state::DocumentState;
 use crate::events::{Conflict, Event};
+use crate::messages;
 use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
 use crate::{CoreError, lf, lock, newline};
 
-const NOT_UTF8: &str =
-    "It isn't UTF-8 text, and saving it here would change it. Convert it to UTF-8 to edit it.";
 pub(super) const MAX_EDITED: u64 = 64 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -58,7 +58,7 @@ pub(crate) struct Doc {
     pub conflict: Option<DiskConflict>,
     pub asking: Option<DiskConflict>,
     held: Option<DiskConflict>,
-    pub error: Option<String>,
+    pub error: Option<Message>,
     composing: bool,
 }
 
@@ -147,9 +147,7 @@ impl Actor {
             self.reload_tree();
         }
         if !is_text(&path) && !self.tree.files.contains(&path) {
-            return Err(CoreError::not_found(format!(
-                "“{path}” isn’t in the project."
-            )));
+            return Err(CoreError::not_found(messages::not_in_project(&path)));
         }
         self.open_file(&path)?;
         Ok(Some(path))
@@ -179,13 +177,12 @@ impl Actor {
         let abs = paths::safe_path(&self.project.root, path)?;
         let size = fs::metadata(&abs).map_err(CoreError::at(&abs))?.len();
         if size > MAX_EDITED {
-            return Err(CoreError::bad_request(format!(
-                "It's {} MB, too large to edit here. Open it in another app.",
-                size >> 20
+            return Err(CoreError::bad_request(messages::too_large_to_edit(
+                size >> 20,
             )));
         }
         let (disk, stamp) = read_disk(&abs)?;
-        let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(NOT_UTF8))?;
+        let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(messages::not_utf8()))?;
         let id = self.next_doc;
         self.next_doc += 1;
         let symbols = Arc::clone(&self.symbols);
@@ -371,7 +368,7 @@ impl Actor {
         let doc = self
             .docs
             .get_mut(path)
-            .ok_or_else(|| CoreError::not_found("The document isn't open"))?;
+            .ok_or_else(|| CoreError::not_found(messages::document_not_open()))?;
         let Some(kind) = doc.asking.or(doc.conflict) else {
             return Ok(());
         };
@@ -389,9 +386,7 @@ impl Actor {
                 return Ok(());
             }
             _ => {
-                return Err(CoreError::bad_request(
-                    "That answer doesn't fit this conflict",
-                ));
+                return Err(CoreError::bad_request(messages::answer_unfit()));
             }
         }
         self.publish_documents();

@@ -71,8 +71,8 @@ final class IssueOverlay {
         var issue = Row(line: number, band: band)
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
-        let said = [reported.message] + reported.others
-        let label = labels[number] ?? IssueLabel(reported.short, compact: reported.compact, font: font)
+        let said = ([reported.message] + reported.others).map(\.text)
+        let label = labels[number] ?? IssueLabel(reported.short.text, compact: reported.compact?.text, font: font)
         labels[number] = label
         typealias Metrics = IssueBox.Metrics
         let end = band.maxX - 1

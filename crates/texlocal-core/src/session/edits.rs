@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::analyze::{Facts, Place};
 use texlocal_latex::logparse::Fix;
+use texlocal_latex::message::Message;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
 use texlocal_latex::{FileKind, file_kind};
@@ -12,12 +13,12 @@ use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::scans::tex;
+use crate::messages;
 use crate::projects::{self, Written};
 use crate::settings::{Engine, SettingsPatch};
 use crate::{CoreError, packages};
 
-pub(super) const ONE_DOCUMENT: &str =
-    "Only one open document can be edited at once: close the others first.";
+type Said = fn(&str) -> Message;
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct ProjectEdits {
@@ -40,7 +41,7 @@ pub(crate) struct Fixed {
 
 impl Actor {
     pub fn replace(&self, query: &Query, to: &str) -> Result<ProjectEdits, CoreError> {
-        let open = self.texts_to_edit("replaced")?;
+        let open = self.texts_to_edit()?;
         let found = |_: &str, text: &str| query.places(text);
         self.edit_project(
             "Before Replace All",
@@ -57,21 +58,23 @@ impl Actor {
         from: &str,
         to: &str,
     ) -> Result<ProjectEdits, CoreError> {
-        let noun = match kind {
-            SymbolKind::Label => "label",
-            SymbolKind::Citation => "citation",
-            _ => {
-                return Err(CoreError::bad_request(
-                    "Only a label or a citation is renamed",
-                ));
-            }
+        let (bad_name, undefined, exists): (fn() -> Message, Said, Said) = match kind {
+            SymbolKind::Label => (
+                messages::bad_label_name,
+                |name| texlocal_latex::messages::no_label(name),
+                |name| messages::label_exists(name),
+            ),
+            SymbolKind::Citation => (
+                messages::bad_citation_name,
+                |name| texlocal_latex::messages::no_citation(name),
+                |name| messages::citation_exists(name),
+            ),
+            _ => return Err(CoreError::bad_request(messages::renamed_symbol_unfit())),
         };
         if to.is_empty() || to.contains(|c: char| "{}%\\,".contains(c) || c.is_whitespace()) {
-            return Err(CoreError::bad_request(format!(
-                "A {noun} can't be empty or have spaces, commas, braces, % or \\ in it."
-            )));
+            return Err(CoreError::bad_request(bad_name()));
         }
-        let open = self.texts_to_edit("renamed")?;
+        let open = self.texts_to_edit()?;
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
@@ -81,14 +84,10 @@ impl Actor {
             files.any(|facts| !syntax::definitions(facts, kind, name).is_empty())
         };
         if !defines(from) {
-            return Err(CoreError::not_found(format!(
-                "No {noun} “{from}” is defined."
-            )));
+            return Err(CoreError::not_found(undefined(from)));
         }
         if defines(to) {
-            return Err(CoreError::conflict(format!(
-                "A {noun} “{to}” exists already."
-            )));
+            return Err(CoreError::conflict(exists(to)));
         }
         let found = |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
@@ -129,7 +128,7 @@ impl Actor {
 
     fn add_package(&self, name: &str) -> Result<ProjectEdits, CoreError> {
         let main = self.tree.main.as_deref();
-        let open = self.texts_to_edit("added")?;
+        let open = self.texts_to_edit()?;
         let found = |_: &str, text: &str| {
             let facts = Facts::read(text, FileKind::Tex);
             let loaded = facts.packages.iter().any(|package| package == name);
@@ -140,14 +139,11 @@ impl Actor {
         self.edit_project("Before Adding a Package", &open, &main, &found, &line)
     }
 
-    pub fn texts_to_edit(&self, done: &str) -> Result<Vec<(String, String, u64)>, CoreError> {
+    pub fn texts_to_edit(&self) -> Result<Vec<(String, String, u64)>, CoreError> {
         let docs = self.docs.values();
         let unsettled = |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some();
         if let Some(doc) = docs.clone().find(unsettled) {
-            return Err(CoreError::conflict(format!(
-                "“{}” changed on disk, so nothing was {done}. Keep your edits or the disk’s first, then try again.",
-                doc.path
-            )));
+            return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }
         let text = |doc: &Doc| {
             let (text, version) = doc.doc.snapshot();
@@ -182,7 +178,7 @@ impl Actor {
             })
             .collect();
         if edits.len() > 1 {
-            return Err(CoreError::conflict(ONE_DOCUMENT));
+            return Err(CoreError::conflict(messages::one_document()));
         }
         let snapshot = self.snapshot_before(reason)?;
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);

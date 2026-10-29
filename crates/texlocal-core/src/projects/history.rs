@@ -12,6 +12,7 @@ use super::tree::visit_files;
 use super::{read_capped, skip_unreadable};
 use crate::atomic;
 use crate::error::CoreError;
+use crate::messages;
 use crate::paths::{Project, safe_write_path};
 
 const MINUTE: i64 = 60_000;
@@ -89,16 +90,16 @@ impl History {
     }
 
     fn read(&self, id: i64) -> Result<Version, CoreError> {
-        let gone = || CoreError::not_found("That version is no longer in the history.");
+        let gone = || CoreError::not_found(messages::version_gone());
         let bytes = skip_unreadable(fs::read(self.record(id)))?.ok_or_else(gone)?;
-        serde_json::from_slice(&bytes).map_err(|err| CoreError::internal(err.to_string()))
+        serde_json::from_slice(&bytes).map_err(|err| CoreError::internal(messages::unexpected(err)))
     }
 
     fn write(&self, id: i64, snapshot: &Version) -> Result<(), CoreError> {
         let record = self.record(id);
         fs::create_dir_all(record.parent().expect("in the snapshots folder"))?;
         let bytes = serde_json::to_vec(snapshot);
-        let bytes = bytes.map_err(|err| CoreError::internal(err.to_string()))?;
+        let bytes = bytes.map_err(|err| CoreError::internal(messages::unexpected(err)))?;
         atomic::write(&record, &bytes)?;
         Ok(())
     }
@@ -222,7 +223,7 @@ impl History {
     ) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
         let id = id
             .parse()
-            .map_err(|_| CoreError::bad_request("Bad version id"));
+            .map_err(|_| CoreError::bad_request(messages::bad_version_id()));
         let snapshot = self.read(id?)?;
         let files = snapshot.files.into_iter().filter(|(path, _)| chosen(path));
         let objects = self.objects();

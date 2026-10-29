@@ -6,6 +6,7 @@ use regex::Regex;
 use tokio::process::Command;
 
 use crate::error::CoreError;
+use crate::messages;
 use crate::process::{self, Tree, drive};
 use crate::sys;
 use crate::tex::find_tool;
@@ -22,9 +23,7 @@ const NOT_WRITABLE: &str = "don't have permission to change the installation";
 
 pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String, CoreError> {
     if !NAME.is_match(file) {
-        return Err(CoreError::bad_request(format!(
-            "“{file}” isn't a file's name."
-        )));
+        return Err(CoreError::bad_request(messages::not_a_file_name(file)));
     }
     let tlmgr = find_tool("tlmgr", path_env).ok_or_else(|| no_tlmgr(path_env))?;
     let run_tlmgr = |args: &[&str]| {
@@ -35,12 +34,12 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
     let pattern = format!("/{file}");
     let found = checked(run_tlmgr(&["search", "--global", "--file", &pattern]).await?)?;
     let package = holder(&found, &pattern)
-        .ok_or_else(|| CoreError::not_found(format!("No TeX Live package has “{file}”.")))?;
+        .ok_or_else(|| CoreError::not_found(messages::no_package_has(file)))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
         installed = run(sys::install_as_administrator(&tlmgr, &package, path_env)?).await?;
         if installed.1.contains(sys::ADMIN_CANCELLED) {
-            let message = format!("Installing “{package}” was cancelled.");
+            let message = messages::install_cancelled(&package);
             return Err(CoreError::new(crate::ErrorKind::Denied, message));
         }
     }
@@ -70,7 +69,7 @@ pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError
     if timed_out {
         return Err(CoreError::new(
             crate::ErrorKind::Unavailable,
-            "Installing took over ten minutes, and was stopped.",
+            messages::install_timed_out(),
         ));
     }
     out.push_str(&err);
@@ -81,19 +80,17 @@ pub(crate) fn checked((code, out): (i32, String)) -> Result<String, CoreError> {
     if code == 0 {
         Ok(out)
     } else if out.contains(OLDER) {
-        Err(CoreError::conflict(
-            "This TeX Live is older than the release its repository serves, and tlmgr adds packages only to that release. Update TeX Live first: tug.org/texlive/upgrade.html",
-        ))
+        Err(CoreError::conflict(messages::texlive_older()))
     } else if UNREACHABLE.is_match(&out) {
         Err(CoreError::new(
             crate::ErrorKind::Unavailable,
-            "TeX Live's package repository can't be reached. Check the internet connection, then try again.",
+            messages::repository_unreachable(),
         ))
     } else {
-        Err(CoreError::internal(format!(
-            "TeX Live's package manager failed:\n{}",
-            crate::tail(out.trim(), 2000)
-        )))
+        Err(CoreError::internal(messages::tlmgr_failed(crate::tail(
+            out.trim(),
+            2000,
+        ))))
     }
 }
 
@@ -101,9 +98,9 @@ fn no_tlmgr(path_env: &str) -> CoreError {
     CoreError::new(
         crate::ErrorKind::Unavailable,
         if find_tool("mpm", path_env).is_some() {
-            "MiKTeX installs missing packages itself as it compiles: in MiKTeX Console's Settings, choose to always install missing packages on-the-fly, then compile again."
+            messages::miktex_installs()
         } else {
-            "TeX Live's package manager, tlmgr, wasn't found with TeX."
+            messages::no_tlmgr()
         },
     )
 }

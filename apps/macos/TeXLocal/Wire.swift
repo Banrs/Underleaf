@@ -291,7 +291,7 @@ nonisolated extension Conflict {
 
 nonisolated struct CoreError: Decodable, Hashable, Sendable {
     var kind: ErrorKind
-    var message: String
+    var message: Message
 
     enum CodingKeys: String, CodingKey, CaseIterable { case kind, message }
 }
@@ -300,7 +300,7 @@ nonisolated extension CoreError {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         kind = try wire.decode(ErrorKind.self, forKey: .kind)
-        message = try wire.decode(String.self, forKey: .message)
+        message = try wire.decode(Message.self, forKey: .message)
     }
 }
 
@@ -429,7 +429,7 @@ nonisolated extension DocumentRenamed {
 
 nonisolated struct DocumentState: Decodable, Hashable, Sendable {
     var path: String
-    var error: String?
+    var error: Message?
     var held: DiskConflict?
 
     enum CodingKeys: String, CodingKey, CaseIterable { case path, error, held }
@@ -439,7 +439,7 @@ nonisolated extension DocumentState {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         path = try wire.decode(String.self, forKey: .path)
-        error = try wire.decode(String?.self, forKey: .error)
+        error = try wire.decode(Message?.self, forKey: .error)
         held = try wire.decode(DiskConflict?.self, forKey: .held)
     }
 }
@@ -553,9 +553,9 @@ nonisolated struct FindUsages: SessionRequest {
 
 nonisolated struct Fix: Decodable, Hashable, Sendable {
     var id: String
-    var title: String
-    var help: String
-    var confirm: String?
+    var title: Message
+    var help: Message
+    var confirm: Message?
 
     enum CodingKeys: String, CodingKey, CaseIterable { case id, title, help, confirm }
 }
@@ -564,9 +564,9 @@ nonisolated extension Fix {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         id = try wire.decode(String.self, forKey: .id)
-        title = try wire.decode(String.self, forKey: .title)
-        help = try wire.decode(String.self, forKey: .help)
-        confirm = try wire.decodeIfPresent(String.self, forKey: .confirm)
+        title = try wire.decode(Message.self, forKey: .title)
+        help = try wire.decode(Message.self, forKey: .help)
+        confirm = try wire.decodeIfPresent(Message.self, forKey: .confirm)
     }
 }
 
@@ -792,11 +792,11 @@ nonisolated extension InverseLoc {
 nonisolated struct IssueLine: Decodable, Hashable, Sendable {
     var line: Int
     var error: Bool
-    var message: String
-    var short: String
-    var compact: String?
+    var message: Message
+    var short: Message
+    var compact: Message?
     var tokens: [TextRange]
-    var others: [String]
+    var others: [Message]
     var index: Int?
 
     enum CodingKeys: String, CodingKey, CaseIterable { case line, error, message, short, compact, tokens, others, index }
@@ -807,11 +807,11 @@ nonisolated extension IssueLine {
         let wire = try decoder.strict(CodingKeys.self)
         line = try wire.decode(Int.self, forKey: .line)
         error = try wire.decode(Bool.self, forKey: .error)
-        message = try wire.decode(String.self, forKey: .message)
-        short = try wire.decode(String.self, forKey: .short)
-        compact = try wire.decode(String?.self, forKey: .compact)
+        message = try wire.decode(Message.self, forKey: .message)
+        short = try wire.decode(Message.self, forKey: .short)
+        compact = try wire.decode(Message?.self, forKey: .compact)
         tokens = try wire.decode([TextRange].self, forKey: .tokens)
-        others = try wire.decode([String].self, forKey: .others)
+        others = try wire.decode([Message].self, forKey: .others)
         index = try wire.decode(Int?.self, forKey: .index)
     }
 }
@@ -922,11 +922,10 @@ nonisolated struct LiveState: Decodable, Hashable, Sendable {
     var engine: Engine
     var halted: Bool
     var log: String?
-    var failure: String?
-    var error: String?
+    var failures: [Message]
     var lines: [String: [IssueLine]]
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, log, failure, error, lines }
+    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, log, failures, lines }
 }
 
 nonisolated extension LiveState {
@@ -936,8 +935,7 @@ nonisolated extension LiveState {
         engine = try wire.decode(Engine.self, forKey: .engine)
         halted = try wire.decode(Bool.self, forKey: .halted)
         log = try wire.decode(String?.self, forKey: .log)
-        failure = try wire.decode(String?.self, forKey: .failure)
-        error = try wire.decode(String?.self, forKey: .error)
+        failures = try wire.decode([Message].self, forKey: .failures)
         lines = try wire.decode([String: [IssueLine]].self, forKey: .lines)
     }
 }
@@ -954,8 +952,8 @@ nonisolated struct LogItem: Decodable, Hashable, Sendable {
     var kind: Severity
     var file: String?
     var line: Int?
-    var message: String
-    var explain: String?
+    var message: Message
+    var explain: Message?
     var fix: Fix?
 
     enum CodingKeys: String, CodingKey, CaseIterable { case kind, file, line, message, explain, fix }
@@ -967,8 +965,8 @@ nonisolated extension LogItem {
         kind = try wire.decode(Severity.self, forKey: .kind)
         file = try wire.decode(String?.self, forKey: .file)
         line = try wire.decode(Int?.self, forKey: .line)
-        message = try wire.decode(String.self, forKey: .message)
-        explain = try wire.decodeIfPresent(String.self, forKey: .explain)
+        message = try wire.decode(Message.self, forKey: .message)
+        explain = try wire.decodeIfPresent(Message.self, forKey: .explain)
         fix = try wire.decodeIfPresent(Fix.self, forKey: .fix)
     }
 }
@@ -1042,6 +1040,23 @@ nonisolated extension Menus {
         let wire = try decoder.strict(CodingKeys.self)
         templates = try wire.decode(Templates.self, forKey: .templates)
         symbolGroups = try wire.decode([SymbolGroup].self, forKey: .symbolGroups)
+    }
+}
+
+nonisolated struct Message: Decodable, Hashable, Sendable {
+    var id: String
+    var args: [String: String]
+    var text: String
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case id, args, text }
+}
+
+nonisolated extension Message {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        id = try wire.decode(String.self, forKey: .id)
+        args = try wire.decode([String: String].self, forKey: .args)
+        text = try wire.decode(String.self, forKey: .text)
     }
 }
 
@@ -1248,7 +1263,7 @@ nonisolated struct ProjectState: Decodable, Hashable, Sendable {
     var name: String
     var root: String
     var settings: ProjectSettings
-    var problem: String?
+    var problem: Message?
 
     enum CodingKeys: String, CodingKey, CaseIterable { case name, root, settings, problem }
 }
@@ -1259,7 +1274,7 @@ nonisolated extension ProjectState {
         name = try wire.decode(String.self, forKey: .name)
         root = try wire.decode(String.self, forKey: .root)
         settings = try wire.decode(ProjectSettings.self, forKey: .settings)
-        problem = try wire.decode(String?.self, forKey: .problem)
+        problem = try wire.decode(Message?.self, forKey: .problem)
     }
 }
 

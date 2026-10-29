@@ -130,11 +130,9 @@ async fn a_corrupt_settings_file_is_reported_at_open_and_left_as_it_is() {
     };
     let rig = Rig::open_with(&[("main.tex", MAIN)], corrupt).await;
     let project = rig.section("project", |_| true);
-    let problem = project["problem"].as_str().unwrap();
-    assert!(
-        problem.starts_with("“.texlocal.json” can't be read"),
-        "{problem}"
-    );
+    let problem = &project["problem"];
+    assert_eq!(problem["id"], "unreadable", "{problem}");
+    assert_eq!(problem["args"]["name"], ".texlocal.json");
     assert_eq!(project["settings"]["mainFile"], "main.tex");
     let engine = json!({ "patch": { "engine": "xelatex" } });
     assert_eq!(rig.refuse("SetSettings", engine), ErrorKind::Conflict);
