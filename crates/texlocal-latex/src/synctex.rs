@@ -1102,11 +1102,8 @@ impl SyncTex {
             _ => return FAR,
         };
         let v = i64::from(v);
-        outside(
-            hit.v,
-            v - i64::from(height).abs(),
-            v + i64::from(depth).abs(),
-        )
+        let (min, max) = (v - i64::from(height).abs(), v + i64::from(depth).abs());
+        outside(hit.v, min, max)
     }
 
     fn distance(&self, hit: Point, id: u32) -> i64 {
