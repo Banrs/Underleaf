@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::SourceDocument;
-use super::scan::{Scanner, Visit, arguments};
+use super::scan::{Scanner, Visit, braced};
 use super::scans::SPACING;
 
 impl SourceDocument {
@@ -20,18 +20,9 @@ impl SourceDocument {
         while first.0.is_none() && scanner.i < units.len() {
             scanner.run(units, scanner.i + SPACING, &[], &mut first);
         }
-        class_at(units, first.0?)
+        let (class, _) = braced(units, first.0?).0?;
+        Some(class.trim().to_owned())
     }
-}
-
-pub(crate) fn class_at(units: &[u16], name_end: usize) -> Option<String> {
-    let mut name = Vec::new();
-    let (_, closed) = arguments(units, name_end, |piece, braced| {
-        if braced {
-            name.extend_from_slice(&units[piece]);
-        }
-    });
-    closed.then(|| String::from_utf16_lossy(&name).trim().to_owned())
 }
 
 pub(crate) const LEVELS: [(&str, &str); 6] = [

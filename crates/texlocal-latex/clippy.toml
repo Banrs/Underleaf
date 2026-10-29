@@ -6,7 +6,7 @@ disallowed-methods = [
     "std::fs::write", "std::path::Path::canonicalize", "std::path::Path::exists", "std::path::Path::is_dir",
     "std::path::Path::is_file", "std::path::Path::metadata", "std::path::Path::read_dir",
     "std::process::abort", "std::process::exit", "std::thread::scope", "std::thread::sleep",
-    "std::thread::spawn",
+    "std::thread::spawn", "std::time::SystemTime::now",
 ]
 disallowed-types = [
     "std::fs::DirBuilder", "std::fs::File", "std::fs::OpenOptions", "std::process::Child",

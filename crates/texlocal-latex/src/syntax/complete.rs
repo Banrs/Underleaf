@@ -194,8 +194,8 @@ impl SourceDocument {
             let items = matching(names, typed, |n| n).into_iter();
             return offer(start, kind, items.map(|n| word(n.clone(), None)).collect());
         }
-        let whole_line = from == text.lines[line];
-        if let Some(at) = ENTRY_TYPE.captures(&before).filter(|_| whole_line) {
+        let entry = from == text.lines[line] && file_kind(&self.path) == FileKind::Bib;
+        if let Some(at) = ENTRY_TYPE.captures(&before).filter(|_| entry) {
             let at = at.get(1).unwrap();
             let names = matching(&catalog.bib_entry_types, &at.as_str()[1..], |t| t).into_iter();
             let items = names.map(|name| word(format!("@{name}"), None));

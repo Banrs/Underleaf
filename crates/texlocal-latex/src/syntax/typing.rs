@@ -219,13 +219,14 @@ impl SourceDocument {
             };
             return key(start, rest, inner + &close, caret);
         }
-        let end_tag = |(name, _)| utf16::lossy(rest).starts_with(&format!("\\end{{{name}}}"));
+        let end_tag =
+            |(name, _)| String::from_utf16_lossy(rest).starts_with(&format!("\\end{{{name}}}"));
         if begun.is_some_and(end_tag) || length == 0 && closer_after(units, start).is_some() {
             return key(start, 0, format!("{inner}\n{indented}"), caret);
         }
         let list = groups().find_map(Group::environment);
         let from = line.start + indent;
-        let content = utf16::lossy(units.get(from..start).unwrap_or_default());
+        let content = String::from_utf16_lossy(units.get(from..start).unwrap_or_default());
         let item = content.strip_prefix("\\item");
         if matches!(list, Some("itemize" | "enumerate" | "description"))
             && blank_line(rest)

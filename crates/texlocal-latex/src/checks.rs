@@ -86,7 +86,7 @@ impl Structure {
         mut self,
         text: &Text,
         open: impl Iterator<Item = &'a Group>,
-    ) -> (Vec<Slip>, Option<Place>) {
+    ) -> (Vec<Slip>, Option<usize>) {
         for group in open.filter(|group| group.delimiter().is_some()) {
             self.unclosed(text, group);
         }
@@ -99,7 +99,7 @@ impl Structure {
             self.slip(text, at, message, Kind::Unended(environment));
         }
         self.slips.sort_by_key(|slip| slip.place);
-        (self.slips, self.end.map(|end| Place::of(text, end..end)))
+        (self.slips, self.end)
     }
 
     fn read(&self, at: usize) -> bool {

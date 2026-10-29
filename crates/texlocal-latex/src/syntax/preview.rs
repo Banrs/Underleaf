@@ -9,7 +9,6 @@ use serde::Serialize;
 use super::SourceDocument;
 use super::catalog::CATALOG;
 use super::scan::{End, Group, Visit, environment_name};
-use crate::utf16;
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct MathPreview {
@@ -87,7 +86,7 @@ impl SourceDocument {
         };
         let tex = preview_tex(
             environment(&group),
-            &utf16::lossy(&units[body..close.start]),
+            &String::from_utf16_lossy(&units[body..close.start]),
         );
         (!tex.is_empty()).then(|| MathPreview {
             start: group.open as u32,

@@ -79,8 +79,9 @@ enum Mode {
 
 #[derive(Clone, Copy)]
 struct Command {
-    styles: &'static [Option<HighlightKind>],
-    brackets: usize,
+    named: bool,
+    braces: usize,
+    optional: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -89,11 +90,12 @@ struct Open {
     styled_below: Option<Command>,
 }
 
-fn open(commands: &mut Stack<Open>, styles: &'static [Option<HighlightKind>]) {
+fn open(commands: &mut Stack<Open>, named: bool) {
     commands.push(Open {
         command: Command {
-            styles,
-            brackets: 0,
+            named,
+            braces: 0,
+            optional: false,
         },
         styled_below: styled(commands),
     });
@@ -101,14 +103,15 @@ fn open(commands: &mut Stack<Open>, styles: &'static [Option<HighlightKind>]) {
 
 fn styled(commands: &Stack<Open>) -> Option<Command> {
     let top = commands.top()?;
-    (!top.command.styles.is_empty())
+    top.command
+        .named
         .then_some(top.command)
         .or(top.styled_below)
 }
 
 use HighlightKind::*;
 
-fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
+fn named(name: &[u16]) -> bool {
     let mut buf = [0; NAME];
     let name = ascii(name, &mut buf);
     let named = [
@@ -116,15 +119,7 @@ fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
         &CATALOG.ref_commands,
         &CATALOG.cite_commands,
     ];
-    if name == "documentclass" {
-        &[None, Some(Argument)]
-    } else if named.iter().any(|names| names.contains(name))
-        || matches!(name, "Bibitem" | "RBibitem")
-    {
-        &[Some(Argument)]
-    } else {
-        &[]
-    }
+    named.iter().any(|names| names.contains(name)) || matches!(name, "Bibitem" | "RBibitem")
 }
 
 fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, HighlightKind)) {
@@ -165,7 +160,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
                 state.mode = Mode::Opening(name);
             }
             _ => {
-                open(&mut state.commands, styles(name));
+                open(&mut state.commands, named(name));
                 state.mode = Mode::Arguments;
             }
         }
@@ -191,7 +186,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         state.mode = Mode::Arguments;
         None
     } else if one_of(c, "{[") {
-        open(&mut state.commands, &[]);
+        open(&mut state.commands, false);
         None
     } else if is_digit(c) {
         s.eat_while(|u| word(u) || is(u, '.'));
@@ -199,10 +194,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     } else {
         s.eat_while(|u| word(u) || is(u, '-'));
         let command = styled(&state.commands)?;
-        command
-            .brackets
-            .checked_sub(1)
-            .and_then(|argument| command.styles.get(argument).copied().flatten())
+        (command.braces == 1 && !command.optional).then_some(Argument)
     }
 }
 
@@ -253,7 +245,8 @@ fn arguments(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     let c = s.peek()?;
     if one_of(c, "{[") {
         if let Some(top) = state.commands.top_mut() {
-            top.command.brackets += 1;
+            top.command.optional = is(c, '[');
+            top.command.braces += usize::from(is(c, '{'));
         }
         s.pos += 1;
         state.mode = Mode::Normal;

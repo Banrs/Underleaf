@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::checks::{Slip, Structure, Walk};
 use crate::syntax::catalog::CATALOG;
 use crate::syntax::prose::Reading;
-use crate::syntax::scan::{Group, Scanner, Visit};
+use crate::syntax::scan::{Group, Scanner, Visit, braced};
 use crate::syntax::{SymbolKind, Symbols, Text, headings, is, letter, scan};
 use crate::{FileKind, utf16};
 
@@ -199,19 +199,21 @@ impl Facts {
             cuts,
             ..
         } = reader;
-        let (prose, len) = (prose.prose(), text.units.len());
+        let (slips, end) = structure.finish(&text, scanner.groups());
+        let (prose, len) = (prose.prose(), end.unwrap_or(text.units.len()));
         facts.words = prose.words(0..len);
         let (mut headings, mut inputs) = (facts.headings.iter_mut(), facts.inputs.iter_mut());
         for (i, &(from, heading)) in cuts.iter().enumerate() {
-            let to = cuts.get(i + 1).map_or(len, |cut| cut.0);
+            let to = cuts.get(i + 1).map_or(len, |cut| cut.0).min(len);
             let counted = if heading {
                 &mut headings.next().expect("a heading for each cut").words
             } else {
                 &mut inputs.next().expect("an input for each cut").words
             };
-            *counted = prose.words(from..to);
+            *counted = prose.words(from.min(len)..to);
         }
-        (facts.slips, facts.end) = structure.finish(&text, scanner.groups());
+        facts.slips = slips;
+        facts.end = end.map(|end| Place::of(&text, end..end));
         facts
     }
 
@@ -281,7 +283,9 @@ impl Visit for Reader<'_> {
                 facts.citations.extend(keys);
             }
             "documentclass" if facts.class.is_none() => {
-                facts.class = headings::class_at(&text.units, name_end);
+                facts.class = braced(&text.units, name_end)
+                    .0
+                    .map(|(class, _)| class.trim().to_owned());
                 facts.new_package = Some(after_line(text, name_end));
             }
             "usepackage" | "RequirePackage" => {
@@ -703,19 +707,6 @@ fn joined(folder: &str, name: &str) -> String {
         "" => name.to_owned(),
         folder => format!("{folder}/{name}"),
     }
-}
-
-fn braced(units: &[u16], name_end: usize) -> (Option<(String, Range<usize>)>, usize) {
-    let (mut text, mut span) = (Vec::new(), None);
-    let (stop, closed) = scan::arguments(units, name_end, |piece, braced| {
-        if braced {
-            text.extend_from_slice(&units[piece.clone()]);
-            span.get_or_insert(piece.clone()).end = piece.end;
-        }
-    });
-    let span = span.filter(|_| closed);
-    let found = span.map(|span| (String::from_utf16_lossy(&text), span));
-    (found, stop)
 }
 
 fn listed(units: &[u16], name_end: usize, list: bool) -> Vec<Range<usize>> {

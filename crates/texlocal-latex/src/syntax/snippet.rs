@@ -34,7 +34,7 @@ impl Field {
 pub(super) struct Snippet {
     fields: Vec<Field>,
     active: usize,
-    changed: bool,
+    typed: Option<usize>,
 }
 
 impl Snippet {
@@ -50,7 +50,7 @@ impl Snippet {
         Self {
             fields,
             active: 0,
-            changed: false,
+            typed: None,
         }
     }
 
@@ -63,17 +63,23 @@ impl Snippet {
     }
 
     pub(super) fn follow(&mut self, start: usize, end: usize, delta: i64, mirroring: bool) -> bool {
-        let typed = self.place(self.active);
-        if !mirroring {
-            if !typed.is_some_and(|typed| typed.holds(start, end)) {
+        let typed = if mirroring {
+            None
+        } else {
+            let copy = |f: &Field| f.index == self.active;
+            let Some(at) = self
+                .fields
+                .iter()
+                .position(|f| copy(f) && f.holds(start, end))
+            else {
                 return false;
-            }
-            let places = self.fields.iter().filter(|f| f.index == self.active);
-            self.changed = places.count() > 1;
-        }
+            };
+            self.typed = (self.fields.iter().filter(|f| copy(f)).count() > 1).then_some(at);
+            Some(at)
+        };
         let delta = delta as isize;
-        for field in &mut self.fields {
-            if field.holds(start, end) && (mirroring || Some(*field) == typed) {
+        for (i, field) in self.fields.iter_mut().enumerate() {
+            if field.holds(start, end) && (mirroring || Some(i) == typed) {
                 field.length = field.length.saturating_add_signed(delta);
             } else if field.start >= end {
                 field.start = field.start.saturating_add_signed(delta);
@@ -94,16 +100,15 @@ impl Snippet {
     }
 
     fn mirror(&mut self, units: &[u16]) -> Vec<TextEdit> {
-        let Some(typed) = self.place(self.active).filter(|_| self.changed) else {
+        let Some(typed) = self.typed.take().map(|at| self.fields[at]) else {
             return vec![];
         };
-        self.changed = false;
         let end = typed.end().min(units.len());
         let text = String::from_utf16_lossy(&units[typed.start.min(end)..end]);
         self.fields
             .iter()
             .rev()
-            .filter(|f| f.index == self.active && **f != typed)
+            .filter(|f| f.index == typed.index && **f != typed)
             .map(|f| splice(f.start, f.length, text.clone()))
             .collect()
     }
@@ -173,7 +178,7 @@ impl SourceDocument {
         Some(Snippet {
             fields: vec![here, there],
             active: 0,
-            changed: false,
+            typed: None,
         })
     }
 
