@@ -33,8 +33,6 @@ extension ProjectModel {
         let now = before.map { remapPath($0, from: result.from, to: result.to) }
         let moved = now != before && (openPath == before || openPath == now)
         if moved { openPath = now }
-        let mainChanged = result.mainFile != settings?.mainFile
-        settings?.mainFile = result.mainFile
         let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
         expandedFolders = Set(expandedFolders.map(remap))
         foldedHeadings = Set(foldedHeadings.map { key in key.firstIndex(of: "\t").map { remap(String(key[..<$0])) + key[$0...] } ?? key })
@@ -45,7 +43,6 @@ extension ProjectModel {
                 await open(now, focus: false, showsSource: false)
             }
         }
-        if mainChanged, !closed { mainFileChanged() }
         return result
     }
 

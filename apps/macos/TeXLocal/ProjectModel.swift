@@ -4,16 +4,19 @@ import Observation
 @Observable
 final class ProjectModel {
     let id: String
-    private(set) var name: String
-    var settings: ProjectSettings?
-    let tree: FileTree
+    let store = SessionStore()
+    private let listedName: String
+    var name: String { store.project?.name ?? listedName }
+    var settings: ProjectSettings? { store.project?.settings }
+    let tree = FileTree()
     private(set) var initialLoadComplete = false
     var openPath: String? { didSet { if openPath != oldValue { openKindChanged() } } }
     private(set) var openKind: FileKind?
-    private(set) var outline: [Heading] = []
-    private(set) var outlineTree: [OutlineNode] = []
-    private(set) var headingStyles = HeadingStyle.standard
-    var words: Int?
+    private var analysis: Analysis? { isLaTeX ? store.outline : nil }
+    var outline: [Heading] { analysis?.outline ?? [] }
+    var outlineTree: [OutlineNode] { analysis?.tree ?? [] }
+    var headingStyles: [HeadingStyle] { store.outline?.headingStyles ?? HeadingStyle.standard }
+    var words: Int? { analysis?.words }
     var cursorLine = 1
     var cursorColumn = 0
     @ObservationIgnored var topLine = 1
@@ -24,15 +27,12 @@ final class ProjectModel {
     var trail = Trail()
 
     @ObservationIgnored private(set) var session: SessionClient?
-    @ObservationIgnored private var root: URL?
+    private var root: URL? { store.project.map { URL(filePath: $0.root, directoryHint: .isDirectory) } }
     private var documents: [String: Doc] = [:]
     private struct Doc {
-        var state: DocumentState?
-        var heldReason: String?
         var lineIssues: [Int: IssueLine] = [:], liveIssues: [Int: IssueLine] = [:]
     }
     @ObservationIgnored private var composingPath: String?
-    @ObservationIgnored private var treeChanged = false
 
     var compiling = false
     var outdated = false
@@ -71,7 +71,6 @@ final class ProjectModel {
     let editor = SourceEditor()
     private(set) var sourceHasKeyboard = false
     @ObservationIgnored weak var app: AppModel?
-    @ObservationIgnored private var analysis: Analysis?
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
     @ObservationIgnored var syncTask: Task<Void, Never>?
@@ -86,15 +85,13 @@ final class ProjectModel {
 
     init(id: String, app: AppModel) {
         self.id = id
-        name = app.projects.first { $0.id == id }?.name ?? id
+        listedName = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
-        tree = FileTree()
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
             guard let self else { return }
             session?.send(LiveLog(shown: shown))
             if !shown { texpresso.logClosed() }
         }
-        tree.onChange = { [weak self] in self?.openKindChanged() }
         pdf.onVisiblePages = { [weak self] in self?.liveView($0) }
     }
 
@@ -105,7 +102,7 @@ final class ProjectModel {
     var editsText: Bool { openKind?.isText == true }
 
     private func openKindChanged() {
-        defer { showOutline() }
+        defer { findHeadings() }
         guard let openPath else { return openKind = nil }
         if let kind = tree.node(at: openPath)?.kind, kind != openKind { openKind = kind }
     }
@@ -113,9 +110,14 @@ final class ProjectModel {
     func isText(_ path: String) -> Bool { tree.node(at: path)?.kind?.isText == true }
 
     var saveFailure: String? {
-        for (path, document) in documents.sorted(by: { $0.key < $1.key }) {
-            if let error = document.state?.error { return error }
-            if document.state?.held == true { return document.heldReason ?? String(localized: "“\(path.fileName)” wasn’t saved.") }
+        for document in store.documents {
+            let name = document.path.fileName
+            switch (document.error, document.held) {
+            case (let error?, _): return error
+            case (nil, .changed): return String(localized: "Another app changed “\(name)”.")
+            case (nil, .gone): return String(localized: "Another app moved or deleted “\(name)”.")
+            case (nil, nil): continue
+            }
         }
         return nil
     }
@@ -143,9 +145,9 @@ final class ProjectModel {
     func load() async {
         connectEditor()
         let session = SessionClient { [weak self] event in self?.handle(event) }
-        let opened: SessionOpened
+        let ui: UiState
         do {
-            opened = try await session.call(OpenProject(id: id, autoCompile: app?.autoCompile ?? false))
+            ui = try await session.call(OpenProject(id: id, autoCompile: app?.autoCompile ?? false))
             guard !closed else { throw CancellationError() }
         } catch {
             session.discard()
@@ -154,15 +156,10 @@ final class ProjectModel {
             if app?.project === self { await app?.close() }
             return
         }
-        let ui = opened.ui
-        name = opened.name
-        root = URL(filePath: opened.root, directoryHint: .isDirectory)
-        settings = opened.settings
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         self.session = session
         async let pdfShown = showBuildPDF(try? await session.call(PdfPath()))
         (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
-        if !treeChanged { tree.show(opened.tree) }
         let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
         if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
         _ = await pdfShown
@@ -236,10 +233,7 @@ final class ProjectModel {
 
     private func handle(_ event: Event) {
         switch event {
-        case .document(let state): documentChanged(state)
-        case .outline(let analysis):
-            self.analysis = analysis
-            showOutline()
+        case .section(let section): apply(section)
         case .documentReload(let reloaded): reload(reloaded)
         case .documentClosed(let gone):
             documents[gone.path] = nil
@@ -258,14 +252,6 @@ final class ProjectModel {
         case .build(let state): inOrder { self.buildChanged(state) }
         case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
         case .buildCleaned: inOrder { self.buildCleaned() }
-        case .tree(let nodes):
-            treeChanged = true
-            tree.show(nodes)
-            if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
-            if let main = Self.mainMarked(in: nodes), let current = settings?.mainFile, main != current {
-                settings?.mainFile = main
-                mainFileChanged()
-            }
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
         case .live(let live): liveChanged(live.state, alert: live.alert)
@@ -273,17 +259,22 @@ final class ProjectModel {
         }
     }
 
-    private static func mainMarked(in nodes: [TreeNode]) -> String? {
-        nodes.lazy.compactMap { $0.main == true ? $0.path : mainMarked(in: $0.children ?? []) }.first
-    }
-
-    private func documentChanged(_ state: DocumentState) {
-        let before = documents[state.path]?.state
-        documents[state.path, default: Doc()].state = state
-        if !state.held { documents[state.path]?.heldReason = nil }
-        if let error = state.error, before?.error == nil {
-            let title = notSavedTitle(state.path)
-            if let app, app.alert == nil, !closed { app.alert = AppAlert(title, error) } else { notices.announce(title) }
+    private func apply(_ section: SessionSection) {
+        let (main, before) = (settings?.mainFile, store.documents)
+        store.apply(section)
+        switch section {
+        case .project: if let main, main != settings?.mainFile { mainFileChanged() }
+        case .tree(let nodes):
+            tree.show(nodes)
+            openKindChanged()
+            if let openPath, !editsText, tree.node(at: openPath) == nil { clearOpenFile() }
+        case .documents(let documents):
+            for document in documents {
+                guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
+                let title = notSavedTitle(document.path)
+                if let app, app.alert == nil { app.alert = AppAlert(title, error) } else { notices.announce(title) }
+            }
+        case .outline: findHeadings()
         }
     }
 
@@ -387,15 +378,6 @@ final class ProjectModel {
             if reporting, !closed { app?.report(error, notSavedTitle()) }
             return false
         }
-    }
-
-    private func showOutline() {
-        if isLaTeX, let analysis {
-            (outline, outlineTree, headingStyles, words) = (analysis.outline, analysis.tree, analysis.headingStyles, analysis.words)
-        } else {
-            (outline, outlineTree, words) = ([], [], nil)
-        }
-        findHeadings()
     }
 
     private func findHeadings() {
@@ -511,14 +493,12 @@ final class ProjectModel {
         }
         guard let answer, !closed else { return }
         apply(answer.edits, named: fix.title)
-        settings = answer.settings
         await compile()
     }
 
-    func answer(_ path: String, _ answer: Resolution, holding reason: String? = nil) {
+    func answer(_ path: String, _ answer: Resolution) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
-        if let reason { documents[path, default: Doc()].heldReason = reason }
         if answer == .close, openPath == path { clearOpenFile() }
         guard let session else { return }
         Task {
@@ -564,27 +544,12 @@ final class ProjectModel {
         return task
     }
 
-    @ObservationIgnored private var settingsPatches = 0
-
-    @discardableResult func patchSettings(_ patch: SettingsPatch) async -> Bool {
-        guard let session, !closed else { return false }
-        settingsPatches += 1
-        let number = settingsPatches, before = settings
-        settings?.apply(patch)
-        let latest = { number == self.settingsPatches }
-        guard let updated = await alerting("Couldn’t Change the Project’s Settings", {
-            try await session.call(SetSettings(patch: patch))
-        }) else {
-            if !closed, latest() { settings = before }
-            return false
-        }
-        guard !closed else { return false }
-        if latest() { settings = updated }
-        if updated.mainFile != before?.mainFile { mainFileChanged() }
-        return true
+    func patchSettings(_ patch: SettingsPatch) async {
+        guard let session, !closed else { return }
+        await alerting("Couldn’t Change the Project’s Settings") { try await session.call(SetSettings(patch: patch)) }
     }
 
-    func mainFileChanged() {
+    private func mainFileChanged() {
         Task { if let path = try? await session?.call(PdfPath()) { await showBuildPDF(path) } }
     }
 

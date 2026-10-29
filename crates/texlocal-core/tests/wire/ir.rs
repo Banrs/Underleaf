@@ -52,6 +52,7 @@ pub enum Way {
 pub struct Ir {
     pub defs: BTreeMap<String, Def>,
     pub requests: Vec<Request>,
+    pub stores: Vec<String>,
 }
 
 const TAKEN: &[&str] = &[
@@ -174,7 +175,25 @@ impl Ir {
         });
     }
 
+    pub fn store(&mut self, sections: &Value) {
+        let Ty::Named(name) = ty(sections) else {
+            panic!("a store's sections aren't a named enum")
+        };
+        assert!(name.ends_with("Section"), "{name} doesn't end in Section");
+        self.stores.push(name);
+    }
+
     pub fn check(&self) {
+        for store in &self.stores {
+            let def = &self.defs[store];
+            let Shape::Union(cases) = &def.shape else {
+                panic!("{store} isn't a tagged union")
+            };
+            assert!(
+                cases.iter().all(|(_, value)| value.is_some()),
+                "{store} has a case without a value"
+            );
+        }
         let mut named = Vec::new();
         for def in self.defs.values() {
             match &def.shape {

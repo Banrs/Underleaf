@@ -1,3 +1,4 @@
+use schemars::Schema;
 use schemars::generate::SchemaSettings;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -8,7 +9,7 @@ use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 use crate::CoreError;
 use crate::events::SessionEvent;
 use crate::service::Library;
-use crate::session::Session;
+use crate::session::{Session, SessionSection};
 
 pub(crate) type Answer<T> = fn(Result<T, CoreError>) -> Result<Value, CoreError>;
 
@@ -27,6 +28,7 @@ pub(crate) fn unknown() -> CoreError {
 
 pub struct Protocol {
     pub requests: Vec<Described>,
+    pub stores: Vec<Schema>,
     pub inbound: Map<String, Value>,
     pub outbound: Map<String, Value>,
 }
@@ -45,8 +47,10 @@ pub fn protocol() -> Protocol {
     outbound.subschema_for::<CoreError>();
     outbound.subschema_for::<HighlightKind>();
     outbound.subschema_for::<SessionEvent>();
+    let stores = vec![outbound.subschema_for::<SessionSection>()];
     Protocol {
         requests,
+        stores,
         inbound: inbound.take_definitions(true),
         outbound: outbound.take_definitions(true),
     }

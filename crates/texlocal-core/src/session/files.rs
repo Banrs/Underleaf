@@ -5,12 +5,12 @@ use texlocal_latex::{FileKind, file_kind};
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
 use super::documents::CloseReason;
-use super::watch::{self, TreeIndex};
+use super::watch;
 use crate::events::{DocumentRenamed, Event};
 use crate::import::{self, ImportConflict, Imported};
 use crate::paths::{self, Project, within};
 use crate::projects::{self, RenameResult};
-use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch};
+use crate::settings::{self, SettingsPatch, UiPatch};
 use crate::{CoreError, zipexport};
 
 const MAIN_FILE_TRASH: &str = "Choose a different main file before moving this to the Trash.";
@@ -85,6 +85,7 @@ impl Actor {
             if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
                 self.main_file_changed();
             }
+            self.publish_project();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
             self.after(Timer::Disk);
@@ -92,17 +93,12 @@ impl Actor {
     }
 
     pub fn reload_tree(&mut self) {
-        let Ok(tree) = projects::file_tree(&self.project) else {
-            return;
-        };
-        let index = TreeIndex::of(&tree);
-        if index == self.tree {
-            return;
+        if let Ok(tree) = projects::file_tree(&self.project)
+            && self.show_tree(tree)
+        {
+            self.after(Timer::Symbols);
+            self.live_files_changed();
         }
-        self.tree = index;
-        self.after(Timer::Symbols);
-        self.emit(Event::Tree(tree));
-        self.live_files_changed();
     }
 
     pub fn import(
@@ -156,18 +152,14 @@ impl Actor {
             let mut doc = self.docs.remove(&old).expect("listed");
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
-            doc.shown = None;
             self.docs.insert(new.clone(), doc);
             if let Some(edit) = self.last_edits.remove(&old) {
                 self.last_edits.insert(new.clone(), edit);
             }
-            let moved = DocumentRenamed {
-                from: old,
-                to: new.clone(),
-            };
+            let moved = DocumentRenamed { from: old, to: new };
             self.emit(Event::DocumentRenamed(moved));
-            self.publish_doc(&new);
         }
+        self.publish_documents();
         self.reload_tree();
         if renamed.main_file != main {
             self.main_file_changed();
@@ -175,12 +167,8 @@ impl Actor {
         Ok(Some(renamed))
     }
 
-    pub fn set_settings(
-        &mut self,
-        patch: &SettingsPatch,
-        build: bool,
-    ) -> Result<ProjectSettings, CoreError> {
-        let (updated, main_changed) = self.service.with_project(&self.project_id, |project| {
+    pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
+        let main_changed = self.service.with_project(&self.project_id, |project| {
             let main = settings::read_settings(&project.settings).main_file;
             let updated = settings::write_settings(&project.settings, patch)?;
             if let Some(on) = patch.shell_escape {
@@ -190,14 +178,15 @@ impl Actor {
             if main_changed {
                 self.preview.stop(&project.root)?;
             }
-            Ok((settings::shown(project), main_changed))
+            Ok(main_changed)
         })?;
         if main_changed {
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
-        Ok(updated)
+        self.publish_project();
+        Ok(())
     }
 
     fn main_file_changed(&mut self) {

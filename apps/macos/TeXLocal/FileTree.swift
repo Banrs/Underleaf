@@ -4,7 +4,6 @@ import Observation
 @Observable
 final class FileTree {
     private(set) var nodes: [TreeNode] = []
-    @ObservationIgnored var onChange: () -> Void = {}
 
     func node(at path: String) -> TreeNode? {
         var level = nodes
@@ -15,12 +14,7 @@ final class FileTree {
         return nil
     }
 
-    func show(_ files: [TreeNode]) {
-        let files = Self.ordered(files)
-        guard files != nodes else { return }
-        nodes = files
-        onChange()
-    }
+    func show(_ files: [TreeNode]) { nodes = Self.ordered(files) }
 
     private static func ordered(_ nodes: [TreeNode]) -> [TreeNode] {
         nodes.map { node in

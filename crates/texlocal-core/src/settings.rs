@@ -152,14 +152,14 @@ pub struct ProjectSettings {
     shell_escape: bool,
 }
 
-pub fn shown(project: &Project) -> ProjectSettings {
+pub fn shown(project: &Project, main: Option<String>) -> ProjectSettings {
     let StoredSettings {
         main_file,
         engine,
         stop_on_first_error,
     } = read_settings(&project.settings);
     ProjectSettings {
-        main_file,
+        main_file: main.unwrap_or(main_file),
         engine,
         stop_on_first_error,
         shell_escape: granted(project),

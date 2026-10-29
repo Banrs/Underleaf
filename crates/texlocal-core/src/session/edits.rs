@@ -12,9 +12,8 @@ use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::scans::tex;
-use crate::paths::Project;
 use crate::projects::{self, Written};
-use crate::settings::{self, Engine, ProjectSettings, SettingsPatch};
+use crate::settings::{Engine, SettingsPatch};
 use crate::{CoreError, packages};
 
 pub(super) const ONE_DOCUMENT: &str =
@@ -37,7 +36,6 @@ pub(crate) struct DocumentEdits {
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Fixed {
     edits: Option<DocumentEdits>,
-    settings: ProjectSettings,
 }
 
 impl Actor {
@@ -102,12 +100,12 @@ impl Actor {
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
         let edits = match fix {
             Fix::Install(file) => {
-                let (service, project) = (Arc::clone(&self.service), self.project.clone());
+                let service = Arc::clone(&self.service);
                 tokio::spawn(async move {
                     let installed = packages::install_package(&file, &service.tool_paths().0).await;
                     reply.send(match installed {
                         Err(err) if err.kind == crate::ErrorKind::Denied => Ok(None),
-                        installed => installed.map(|_| Some(fixed(None, &project))),
+                        installed => installed.map(|_| Some(Fixed { edits: None })),
                     });
                 });
                 return;
@@ -122,11 +120,11 @@ impl Actor {
                 ..SettingsPatch::default()
             }),
         };
-        reply.send(edits.map(|edits| Some(fixed(edits, &self.project))));
+        reply.send(edits.map(|edits| Some(Fixed { edits })));
     }
 
     fn patch_settings(&mut self, patch: SettingsPatch) -> Result<Option<DocumentEdits>, CoreError> {
-        self.set_settings(&patch, false).map(|_| None)
+        self.set_settings(&patch, false).map(|()| None)
     }
 
     fn add_package(&self, name: &str) -> Result<ProjectEdits, CoreError> {
@@ -197,12 +195,5 @@ impl Actor {
             written,
             snapshot,
         })
-    }
-}
-
-fn fixed(edits: Option<DocumentEdits>, project: &Project) -> Fixed {
-    Fixed {
-        edits,
-        settings: settings::shown(project),
     }
 }

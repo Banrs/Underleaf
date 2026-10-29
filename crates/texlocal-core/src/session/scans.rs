@@ -12,8 +12,8 @@ use texlocal_latex::{FileKind, file_kind};
 
 use super::actor::Actor;
 use super::documents::Shared;
+use super::state::SessionSection;
 use super::{Msg, Pending};
-use crate::events::Event;
 use crate::projects::{self, SearchGroup, Symbols};
 use crate::{CoreError, lock, tex};
 
@@ -69,10 +69,7 @@ impl Actor {
             let (symbols, checks, outline) = *scanned;
             *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
             self.checks_done(checks, edits);
-            if self.outline.as_ref() != Some(&outline) {
-                self.outline = Some(outline.clone());
-                self.emit(Event::Outline(outline));
-            }
+            self.publish(SessionSection::Outline(Some(outline)));
         }
     }
 

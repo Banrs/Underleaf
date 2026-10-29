@@ -12,7 +12,8 @@ use texlocal_latex::syntax::TextEdit;
 
 use super::Document;
 use super::actor::{Actor, Later, Timer};
-use crate::events::{Conflict, DocumentClosed, DocumentReload, DocumentState, Event, IssueLine};
+use super::state::DocumentState;
+use crate::events::{Conflict, DocumentClosed, DocumentReload, Event, IssueLine};
 use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
@@ -62,13 +63,12 @@ pub(crate) struct Doc {
     disk_stamp: Option<Stamp>,
     pub conflict: Option<DiskConflict>,
     pub asking: Option<DiskConflict>,
-    held: bool,
-    error: Option<String>,
+    held: Option<DiskConflict>,
+    pub error: Option<String>,
     pub reloads: VecDeque<Reload>,
     composing: bool,
     pub issues: Vec<IssueLine>,
     pub live_issues: Vec<IssueLine>,
-    pub shown: Option<DocumentState>,
 }
 
 impl Doc {
@@ -175,17 +175,16 @@ impl Actor {
             disk_stamp: stamp,
             conflict: None,
             asking: None,
-            held: false,
+            held: None,
             error: None,
             reloads: VecDeque::new(),
             composing: false,
             issues: Vec::new(),
             live_issues: Vec::new(),
-            shown: None,
         };
         self.docs.insert(path.to_owned(), doc);
         self.after(Timer::Symbols);
-        self.publish_doc(path);
+        self.publish_documents();
         self.mark_issues();
         self.live_issues_opened(path);
         self.live_whole(path);
@@ -202,6 +201,7 @@ impl Actor {
 
     pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
         if self.docs.remove(path).is_some() {
+            self.publish_documents();
             let path = path.to_owned();
             self.emit(Event::DocumentClosed(DocumentClosed { path, reason }));
         }
@@ -247,17 +247,6 @@ impl Actor {
             }
             Some(Reload::Disk) if self.auto_compile => self.later.push_back(Later::Compile(true)),
             _ => {}
-        }
-    }
-
-    pub fn publish_doc(&mut self, path: &str) {
-        let Some(doc) = self.docs.get_mut(path) else {
-            return;
-        };
-        let state = doc.state();
-        if doc.shown.as_ref() != Some(&state) {
-            doc.shown = Some(state.clone());
-            self.emit(Event::Document(state));
         }
     }
 
@@ -323,7 +312,7 @@ impl Actor {
                 }
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
-                    (doc.saved, doc.force, doc.held, doc.error) = (version, false, false, None);
+                    (doc.saved, doc.force, doc.held, doc.error) = (version, false, None, None);
                     self.after(Timer::Symbols);
                     self.snapshot_soon();
                     Ok(true)
@@ -333,7 +322,7 @@ impl Actor {
                     Err(err)
                 }
             };
-            self.publish_doc(path);
+            self.publish_documents();
             return result;
         }
         Ok(false)
@@ -392,7 +381,6 @@ impl Actor {
                 kind,
             };
             self.emit(Event::Conflict(asked));
-            self.publish_doc(path);
         }
     }
 
@@ -405,7 +393,7 @@ impl Actor {
             return Ok(());
         };
         match (kind, answer) {
-            (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, true),
+            (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, Some(kind)),
             (DiskConflict::Changed, Resolution::Save) => {
                 (doc.asking, doc.conflict, doc.force) = (None, None, true);
             }
@@ -423,7 +411,7 @@ impl Actor {
                 ));
             }
         }
-        self.publish_doc(path);
+        self.publish_documents();
         match answer {
             Resolution::Save => self.save_edits(true).map(drop),
             Resolution::Revert => {
@@ -469,7 +457,7 @@ impl Actor {
             Err(err) => {
                 if doc.dirty() {
                     doc.error = Some(err.message);
-                    self.publish_doc(path);
+                    self.publish_documents();
                 }
                 return;
             }

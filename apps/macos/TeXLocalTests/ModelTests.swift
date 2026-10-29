@@ -84,3 +84,28 @@ struct LayoutTests {
         #expect(AppModel(defaults: defaults.store).layout == .source)
     }
 }
+
+struct SectionTests {
+    private let defaults = TestDefaults()
+
+    @Test func theProjectReadsItsSectionsAndAnnouncesAFailedSave() {
+        let app = AppModel(defaults: defaults.store)
+        let project = ProjectModel(id: "P", app: app)
+        let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
+        let file = { (name: String) in TreeNode(name: name, path: name, kind: .tex, children: nil, main: name == "main.tex") }
+        let sections: [SessionSection] = [
+            .project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings)),
+            .tree([file("main.tex"), TreeNode(name: "figs", path: "figs", kind: nil, children: [], main: false), file("b.tex")]),
+            .documents([DocumentState(path: "b.tex", error: nil, held: .changed)]),
+        ]
+        for section in sections { project.handle(.event(.section(section))) }
+        #expect(project.name == "Paper")
+        #expect(project.settings?.mainFile == "main.tex")
+        #expect(project.url("b.tex")?.path(percentEncoded: false) == "/tmp/Paper/b.tex")
+        #expect(project.tree.nodes.map(\.name) == ["figs", "b.tex", "main.tex"])
+        #expect(project.saveFailure == "Another app changed “b.tex”.")
+        project.handle(.event(.section(.documents([DocumentState(path: "b.tex", error: "The disk is full.", held: nil)]))))
+        #expect(app.alert?.title == "“b.tex” Wasn’t Saved")
+        #expect(project.saveFailure == "The disk is full.")
+    }
+}

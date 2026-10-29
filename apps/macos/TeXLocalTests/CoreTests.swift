@@ -27,12 +27,10 @@ struct CoreTests {
         let project = try await newProject()
         var events: [Event] = []
         let session = SessionClient { if case .event(let event) = $0 { events.append(event) } }
-        let opened = try await session.call(OpenProject(id: project.id, autoCompile: false))
-        #expect(opened.settings.mainFile == "main.tex")
-        #expect(opened.tree.contains { $0.name == "main.tex" })
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
         try await session.call(OpenDocument(path: "main.tex"))
         try await waitUntil {
-            events.contains { if case .outline = $0 { true } else { false } }
+            events.contains { if case .section(.outline(_?)) = $0 { true } else { false } }
                 && events.contains { if case .checks = $0 { true } else { false } }
         }
         let document = try #require(SourceDocument(session: session.id, path: "main.tex"))
@@ -45,13 +43,16 @@ struct CoreTests {
         #expect(try await session.close())
     }
 
-    @Test func aReplyComesAfterTheEventsBeforeIt() async throws {
+    @Test func theStoreIsFilledBeforeTheOpenReplyAndEachReplyFollowsItsSections() async throws {
         let project = try await newProject(template: .blank)
-        var trees = 0
-        let session = SessionClient { if case .event(.tree) = $0 { trees += 1 } }
+        let store = SessionStore()
+        let session = SessionClient { if case .event(.section(let section)) = $0 { store.apply(section) } }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
+        #expect(store.project?.name == project.name)
+        #expect(store.project?.settings.mainFile == "main.tex")
+        #expect(store.tree.contains { $0.name == "main.tex" && $0.main })
         try await session.call(CreateEntry(folder: "", name: "new.tex", dir: false))
-        #expect(trees > 0)
+        #expect(store.tree.contains { $0.name == "new.tex" })
         #expect(try await session.close())
     }
 

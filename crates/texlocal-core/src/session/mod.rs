@@ -8,6 +8,7 @@ mod history;
 mod live;
 mod navigate;
 mod scans;
+mod state;
 mod watch;
 
 use std::collections::HashMap;
@@ -26,16 +27,18 @@ use crate::events::{Hub, Listener, Queued};
 use crate::projects::Symbols;
 use crate::protocol::Answer;
 use crate::service::Service;
+use crate::settings::UiState;
 use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
+use actor::OpenProject;
 pub(crate) use actor::Session;
-use actor::{OpenProject, SessionOpened};
 pub(crate) use build::Compiler;
 pub use document::Document;
 pub(crate) use documents::{CloseReason, DiskConflict};
 use documents::{Docs, Shared};
 pub(crate) use live::LiveState;
+pub(crate) use state::SessionSection;
 use watch::Change;
 
 pub(crate) enum Msg {
@@ -184,7 +187,7 @@ impl Sessions {
         self: &Arc<Self>,
         entry: VacantEntry<'_, u64, Open>,
         opening: OpenProject,
-        reply: Pending<SessionOpened>,
+        reply: Pending<UiState>,
     ) {
         let session = *entry.key();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -200,8 +203,8 @@ impl Sessions {
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
                     match actor::Actor::new(&sessions, session, opening, docs, tx.clone()) {
-                        Ok((actor, opened)) => {
-                            reply.send(Ok(opened));
+                        Ok((actor, ui)) => {
+                            reply.send(Ok(ui));
                             runtime.block_on(actor.run(rx));
                         }
                         Err(err) => reply.send(Err(err)),

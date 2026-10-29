@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 nonisolated protocol WireRequest: Encodable, Sendable {
     associatedtype Reply: Decodable & Sendable
@@ -474,7 +475,7 @@ nonisolated extension DocumentRenamed {
 nonisolated struct DocumentState: Decodable, Hashable, Sendable {
     var path: String
     var error: String?
-    var held: Bool
+    var held: DiskConflict?
 
     enum CodingKeys: String, CodingKey, CaseIterable { case path, error, held }
 }
@@ -484,7 +485,7 @@ nonisolated extension DocumentState {
         let wire = try decoder.strict(CodingKeys.self)
         path = try wire.decode(String.self, forKey: .path)
         error = try wire.decode(String?.self, forKey: .error)
-        held = try wire.decode(Bool.self, forKey: .held)
+        held = try wire.decode(DiskConflict?.self, forKey: .held)
     }
 }
 
@@ -525,14 +526,12 @@ nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable 
 }
 
 nonisolated enum Event: Decodable, Hashable, Sendable {
-    case document(DocumentState)
+    case section(SessionSection)
     case documentClosed(DocumentClosed)
     case documentReload(DocumentReload)
     case documentRenamed(DocumentRenamed)
     case conflict(Conflict)
     case filesChanged([String])
-    case tree([TreeNode])
-    case outline(Analysis)
     case build(BuildState)
     case buildFinished(BuildFinished)
     case buildCleaned
@@ -550,14 +549,12 @@ nonisolated extension Event {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
-        case "document": self = .document(try wire.decode(DocumentState.self, forKey: .value))
+        case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
         case "documentClosed": self = .documentClosed(try wire.decode(DocumentClosed.self, forKey: .value))
         case "documentReload": self = .documentReload(try wire.decode(DocumentReload.self, forKey: .value))
         case "documentRenamed": self = .documentRenamed(try wire.decode(DocumentRenamed.self, forKey: .value))
         case "conflict": self = .conflict(try wire.decode(Conflict.self, forKey: .value))
         case "filesChanged": self = .filesChanged(try wire.decode([String].self, forKey: .value))
-        case "tree": self = .tree(try wire.decode([TreeNode].self, forKey: .value))
-        case "outline": self = .outline(try wire.decode(Analysis.self, forKey: .value))
         case "build": self = .build(try wire.decode(BuildState.self, forKey: .value))
         case "buildFinished": self = .buildFinished(try wire.decode(BuildFinished.self, forKey: .value))
         case "buildCleaned": self = .buildCleaned
@@ -647,16 +644,14 @@ nonisolated extension Fix {
 
 nonisolated struct Fixed: Decodable, Hashable, Sendable {
     var edits: DocumentEdits?
-    var settings: ProjectSettings
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case edits, settings }
+    enum CodingKeys: String, CodingKey, CaseIterable { case edits }
 }
 
 nonisolated extension Fixed {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         edits = try wire.decode(DocumentEdits?.self, forKey: .edits)
-        settings = try wire.decode(ProjectSettings.self, forKey: .settings)
     }
 }
 
@@ -1147,7 +1142,7 @@ nonisolated struct OpenPath: LibraryRequest {
 }
 
 nonisolated struct OpenProject: SessionRequest {
-    typealias Reply = SessionOpened
+    typealias Reply = UiState
     static let command = "OpenProject"
 
     var id: String
@@ -1313,6 +1308,23 @@ nonisolated extension ProjectSettings {
     }
 }
 
+nonisolated struct ProjectState: Decodable, Hashable, Sendable {
+    var name: String
+    var root: String
+    var settings: ProjectSettings
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case name, root, settings }
+}
+
+nonisolated extension ProjectState {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        name = try wire.decode(String.self, forKey: .name)
+        root = try wire.decode(String.self, forKey: .root)
+        settings = try wire.decode(ProjectSettings.self, forKey: .settings)
+    }
+}
+
 nonisolated enum ProjectTemplate: String, Encodable, CaseIterable, Hashable, Sendable {
     case blank, article, report, beamer
 
@@ -1399,9 +1411,8 @@ nonisolated struct RenameProject: LibraryRequest {
 nonisolated struct RenameResult: Decodable, Hashable, Sendable {
     var from: String
     var to: String
-    var mainFile: String
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case from, to, mainFile }
+    enum CodingKeys: String, CodingKey, CaseIterable { case from, to }
 }
 
 nonisolated extension RenameResult {
@@ -1409,7 +1420,6 @@ nonisolated extension RenameResult {
         let wire = try decoder.strict(CodingKeys.self)
         from = try wire.decode(String.self, forKey: .from)
         to = try wire.decode(String.self, forKey: .to)
-        mainFile = try wire.decode(String.self, forKey: .mainFile)
     }
 }
 
@@ -1539,24 +1549,25 @@ nonisolated extension SessionEvent {
     }
 }
 
-nonisolated struct SessionOpened: Decodable, Hashable, Sendable {
-    var name: String
-    var root: String
-    var tree: [TreeNode]
-    var settings: ProjectSettings
-    var ui: UiState
+nonisolated enum SessionSection: Decodable, Hashable, Sendable {
+    case project(ProjectState)
+    case tree([TreeNode])
+    case documents([DocumentState])
+    case outline(Analysis?)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case name, root, tree, settings, ui }
+    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
 
-nonisolated extension SessionOpened {
+nonisolated extension SessionSection {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
-        name = try wire.decode(String.self, forKey: .name)
-        root = try wire.decode(String.self, forKey: .root)
-        tree = try wire.decode([TreeNode].self, forKey: .tree)
-        settings = try wire.decode(ProjectSettings.self, forKey: .settings)
-        ui = try wire.decode(UiState.self, forKey: .ui)
+        switch try wire.decode(String.self, forKey: .type) {
+        case "project": self = .project(try wire.decode(ProjectState.self, forKey: .value))
+        case "tree": self = .tree(try wire.decode([TreeNode].self, forKey: .value))
+        case "documents": self = .documents(try wire.decode([DocumentState].self, forKey: .value))
+        case "outline": self = .outline(try wire.decode(Analysis?.self, forKey: .value))
+        case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
+        }
     }
 }
 
@@ -1576,7 +1587,7 @@ nonisolated struct SetOptions: SessionRequest {
 }
 
 nonisolated struct SetSettings: SessionRequest {
-    typealias Reply = ProjectSettings
+    typealias Reply = Done
     static let command = "SetSettings"
 
     var patch: SettingsPatch
@@ -2062,6 +2073,23 @@ nonisolated extension Zoom {
         case .scale(let value):
             try wire.encode("scale", forKey: .type)
             try wire.encode(value, forKey: .value)
+        }
+    }
+}
+
+@Observable
+final class SessionStore {
+    private(set) var project: ProjectState?
+    private(set) var tree: [TreeNode] = []
+    private(set) var documents: [DocumentState] = []
+    private(set) var outline: Analysis?
+
+    func apply(_ section: SessionSection) {
+        switch section {
+        case .project(let value): self.project = value
+        case .tree(let value): self.tree = value
+        case .documents(let value): self.documents = value
+        case .outline(let value): self.outline = value
         }
     }
 }

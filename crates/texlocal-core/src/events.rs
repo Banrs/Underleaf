@@ -4,14 +4,12 @@ use std::sync::mpsc;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{Value, json};
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::syntax::TextRange;
 
 use crate::CoreError;
 use crate::compile::CompileResult;
-use crate::projects::TreeNode;
-use crate::session::{CloseReason, DiskConflict, LiveState};
+use crate::session::{CloseReason, DiskConflict, LiveState, SessionSection};
 use crate::texpresso::PageRange;
 
 pub type Listener = Box<dyn Fn(&Value) + Send>;
@@ -33,14 +31,12 @@ pub(crate) struct SessionEvent {
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum Event {
-    Document(DocumentState),
+    Section(SessionSection),
     DocumentClosed(DocumentClosed),
     DocumentReload(DocumentReload),
     DocumentRenamed(DocumentRenamed),
     Conflict(Conflict),
     FilesChanged(Vec<String>),
-    Tree(Vec<TreeNode>),
-    Outline(Analysis),
     Build(BuildState),
     BuildFinished(BuildFinished),
     BuildCleaned,
@@ -50,13 +46,6 @@ pub(crate) enum Event {
     LivePage(LivePage),
     LiveDocument(LiveDocument),
     LiveIssues(FileIssues),
-}
-
-#[derive(Clone, PartialEq, Serialize, JsonSchema)]
-pub(crate) struct DocumentState {
-    pub path: String,
-    pub error: Option<String>,
-    pub held: bool,
 }
 
 #[derive(Serialize, JsonSchema)]

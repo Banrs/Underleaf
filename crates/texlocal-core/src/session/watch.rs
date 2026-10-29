@@ -48,7 +48,7 @@ fn changes(event: notify::Event) -> Vec<Change> {
     paths.map(|path| Change { path, structural }).collect()
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) struct TreeIndex {
     pub files: HashSet<String>,
     pub folders: HashSet<String>,

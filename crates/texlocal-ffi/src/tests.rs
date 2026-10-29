@@ -203,7 +203,7 @@ fn session_events_reach_the_listener() {
     core.send(Some(1), Some("OpenProject"), Some(open));
     let found = (0..50)
         .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
-        .find(|event| event["event"]["type"] == "outline");
+        .find(|event| event["event"]["type"] == "section");
     assert_eq!(found.unwrap()["session"], 1);
 }
 

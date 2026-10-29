@@ -42,15 +42,6 @@ nonisolated extension NSRange {
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
 }
 
-nonisolated extension ProjectSettings {
-    mutating func apply(_ patch: SettingsPatch) {
-        mainFile = patch.mainFile ?? mainFile
-        engine = patch.engine ?? engine
-        stopOnFirstError = patch.stopOnFirstError ?? stopOnFirstError
-        shellEscape = patch.shellEscape ?? shellEscape
-    }
-}
-
 nonisolated extension LogItem {
     var isError: Bool { kind == .error }
 }

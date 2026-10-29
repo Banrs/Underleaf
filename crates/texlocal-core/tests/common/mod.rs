@@ -155,6 +155,11 @@ impl Rig {
         self.find(event)["event"]["value"].take()
     }
 
+    pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
+        self.event("section", section)["value"].take()
+    }
+
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
         if let Some(found) = self.seen.lock().unwrap().iter().find(|e| matching(e)) {
             return found.clone();
@@ -174,8 +179,17 @@ impl Rig {
     }
 
     pub fn heard(&self, kind: &str) -> bool {
+        self.said().contains(&kind.to_owned())
+    }
+
+    pub fn said(&self) -> Vec<String> {
         let seen = self.seen.lock().unwrap();
-        seen.iter().any(|e| e["event"]["type"] == kind)
+        let kind = |e: &Value| match &e["event"] {
+            Value::Null => "reply".to_owned(),
+            event if event["type"] == "section" => event["value"]["type"].as_str().unwrap().into(),
+            event => event["type"].as_str().unwrap().into(),
+        };
+        seen.iter().map(kind).collect()
     }
 
     pub fn forget(&self) {

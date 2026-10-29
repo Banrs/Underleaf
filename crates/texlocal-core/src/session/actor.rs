@@ -5,9 +5,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use notify::RecommendedWatcher;
-use schemars::JsonSchema;
-use serde::Serialize;
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::search::Query;
@@ -22,21 +19,22 @@ use super::edits::{DocumentEdits, Fixed, ProjectEdits};
 use super::live::{Live, LiveState};
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
+use super::state::Sent;
 use super::watch::{self, Change, TreeIndex};
 use super::{Compiler, Msg, Pending, Preview, Reply, Sessions};
 use crate::CoreError;
-use crate::events::{DocumentState, Event, Queued, SessionEvent};
+use crate::events::{Event, Queued, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols, TreeNode};
+use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols};
 use crate::protocol::requests;
 use crate::service::Service;
-use crate::settings::{self, ProjectSettings, SettingsPatch, UiPatch, UiState};
+use crate::settings::{self, SettingsPatch, UiPatch, UiState};
 use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
 
 requests! {
     Session {
-        OpenProject { id: String, auto_compile: bool } -> SessionOpened,
+        OpenProject { id: String, auto_compile: bool } -> UiState,
         CloseProject {} -> bool,
         SetOptions { auto_compile: bool } -> (),
         OpenDocument { path: RelPath } -> (),
@@ -60,7 +58,7 @@ requests! {
         RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> Option<DocumentEdits>,
         Rename { from: RelPath, to: String } -> Option<RenameResult>,
         CreateEntry { folder: String, name: String, dir: bool } -> String,
-        SetSettings { patch: SettingsPatch } -> ProjectSettings,
+        SetSettings { patch: SettingsPatch } -> (),
         PrepareDelete { path: RelPath } -> bool,
         Deleted { path: RelPath, trashed: bool } -> (),
         StartLive {} -> LiveState,
@@ -77,15 +75,6 @@ requests! {
         SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc,
         SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
     }
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct SessionOpened {
-    name: String,
-    root: String,
-    tree: Vec<TreeNode>,
-    settings: ProjectSettings,
-    ui: UiState,
 }
 
 const STOPPED_SAVED: &str = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
@@ -146,7 +135,6 @@ pub(crate) struct Actor {
     pub shown: u64,
     pub symbols: Arc<RwLock<Arc<Symbols>>>,
     pub symbols_seq: u64,
-    pub outline: Option<Analysis>,
     pub facts: Arc<projects::Files>,
     pub edits: u64,
     pub last_edits: HashMap<String, u64>,
@@ -161,6 +149,7 @@ pub(crate) struct Actor {
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: Arc<Mutex<History>>,
+    pub sent: Sent,
     closed: bool,
 }
 
@@ -171,7 +160,7 @@ impl Actor {
         opening: OpenProject,
         docs: Docs,
         tx: mpsc::UnboundedSender<Msg>,
-    ) -> Result<(Self, SessionOpened), CoreError> {
+    ) -> Result<(Self, UiState), CoreError> {
         let OpenProject {
             id: project_id,
             auto_compile,
@@ -182,14 +171,6 @@ impl Actor {
             .watch
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
-        let index = TreeIndex::of(&tree);
-        let opened = SessionOpened {
-            name: project.name(),
-            root: project.root.to_string_lossy().into_owned(),
-            tree,
-            settings: settings::shown(&project),
-            ui: settings::read_ui(&project.ui),
-        };
         let mut builds = Builds::default();
         builds.pdf = settings::read_settings(&project.settings)
             .output(&project.build, "pdf")
@@ -199,7 +180,7 @@ impl Actor {
             later.push_back(Later::Compile(true));
         }
         let history = sessions.service.history(&project);
-        let actor = Self {
+        let mut actor = Self {
             id,
             project_id,
             project,
@@ -213,7 +194,6 @@ impl Actor {
             shown: 0,
             symbols: Arc::default(),
             symbols_seq: 0,
-            outline: None,
             facts: Arc::default(),
             edits: 0,
             last_edits: HashMap::new(),
@@ -222,16 +202,19 @@ impl Actor {
             tex: sessions.service.tex_found.subscribe(),
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
-            tree: index,
+            tree: TreeIndex::default(),
             _watcher: watcher,
             deleting: BTreeSet::new(),
             live: Live::default(),
             later,
             history,
+            sent: Sent::default(),
             closed: false,
         };
+        actor.publish_all(tree);
         actor.snapshot_soon();
-        Ok((actor, opened))
+        let ui = settings::read_ui(&actor.project.ui);
+        Ok((actor, ui))
     }
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
@@ -282,18 +265,15 @@ impl Actor {
             self.stop_compile();
             self.live_stop();
         }));
-        for doc in self.docs.values() {
+        for (_, doc) in self.docs.iter_mut() {
             let error = if doc.dirty() {
                 STOPPED_UNSAVED
             } else {
                 STOPPED_SAVED
             };
-            let error = Some(error.to_owned());
-            self.emit(Event::Document(DocumentState {
-                error,
-                ..doc.state()
-            }));
+            doc.error = Some(error.to_owned());
         }
+        self.publish_documents();
         rx.close();
         while let Ok(message) = rx.try_recv() {
             if let Msg::Command(_, reply) = message {

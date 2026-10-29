@@ -51,6 +51,9 @@ fn wire_swift_is_generated_from_the_protocol() {
         let (call, reply) = (request.request.as_value(), request.reply.as_value());
         ir.request(request.name, request.group, call, reply);
     }
+    for store in &protocol.stores {
+        ir.store(store.as_value());
+    }
     ir.check();
     current("apps/macos/TeXLocal/Wire.swift", &swift::file(&ir));
 }
