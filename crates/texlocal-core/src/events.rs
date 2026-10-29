@@ -4,12 +4,9 @@ use std::sync::mpsc;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{Value, json};
-use texlocal_latex::logparse::LogItem;
-use texlocal_latex::syntax::TextRange;
 
 use crate::CoreError;
-use crate::compile::CompileResult;
-use crate::session::{CloseReason, DiskConflict, LiveState, SessionSection};
+use crate::session::{CloseReason, DiskConflict, SessionSection};
 use crate::texpresso::PageRange;
 
 pub type Listener = Box<dyn Fn(&Value) + Send>;
@@ -37,15 +34,10 @@ pub(crate) enum Event {
     DocumentRenamed(DocumentRenamed),
     Conflict(Conflict),
     FilesChanged(Vec<String>),
-    Build(BuildState),
     BuildFinished(BuildFinished),
-    BuildCleaned,
-    Checks(Vec<LogItem>),
-    Issues(FileIssues),
-    Live(LiveUpdate),
+    LiveAlert,
     LivePage(LivePage),
     LiveDocument(LiveDocument),
-    LiveIssues(FileIssues),
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -72,43 +64,10 @@ pub(crate) struct Conflict {
     pub kind: DiskConflict,
 }
 
-#[derive(Clone, Copy, PartialEq, Serialize, JsonSchema)]
-pub(crate) struct BuildState {
-    pub compiling: bool,
-    pub auto: bool,
-    pub outdated: bool,
-}
-
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct BuildFinished {
     pub auto: bool,
     pub announce: bool,
-    pub outdated: bool,
-    pub result: CompileResult,
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct FileIssues {
-    pub path: String,
-    pub lines: Vec<IssueLine>,
-}
-
-#[derive(Clone, PartialEq, Serialize, JsonSchema)]
-pub(crate) struct IssueLine {
-    pub line: u32,
-    pub error: bool,
-    pub message: String,
-    pub short: String,
-    pub compact: Option<String>,
-    pub tokens: Vec<TextRange>,
-    pub others: Vec<String>,
-    pub index: Option<usize>,
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct LiveUpdate {
-    pub state: LiveState,
-    pub alert: bool,
 }
 
 #[derive(Serialize, JsonSchema)]

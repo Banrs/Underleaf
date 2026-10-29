@@ -108,4 +108,30 @@ struct SectionTests {
         #expect(app.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
+
+    @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
+        let app = AppModel(defaults: defaults.store)
+        app.layout = .source
+        let project = ProjectModel(id: "P", app: app)
+        let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: "Line \(line)", explain: nil, fix: nil) }
+        let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
+        let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box], log: "")
+        let build = { (issues: [LogItem]) in
+            project.handle(.event(.section(.build(BuildState(compiling: false, auto: false, outdated: true, result: result,
+                                                                  issues: issues, lines: [:])))))
+        }
+        build([error, warning])
+        #expect(project.listed == [error, warning, box])
+        #expect((project.errorCount, project.warningCount, project.outdated) == (1, 1, true))
+        project.chooseIssue(1, focus: false, open: false)
+        build([error, warning])
+        #expect(project.chosenIssue == 1)
+        build([warning])
+        #expect(project.chosenIssue == nil)
+        let pdf = { (live: Bool) in project.handle(.event(.section(.shownPdf(ShownPdf(path: "/tmp/P/main.pdf", version: 1, live: live))))) }
+        pdf(false)
+        #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !app.showPDF)
+        pdf(true)
+        #expect(project.livePDF && app.showPDF)
+    }
 }

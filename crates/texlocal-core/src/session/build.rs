@@ -3,20 +3,24 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use texlocal_latex::logparse::{Fix, LogItem, Severity};
+use texlocal_latex::syntax::TextRange;
 
 use super::actor::{Actor, Later, Timer};
+use super::state::SessionSection;
 use super::{Document, Msg, Pending};
 use crate::CoreError;
 use crate::compile::{CompileManager, CompileResult};
-use crate::events::{BuildFinished, BuildState, Event, FileIssues, IssueLine};
-use crate::paths::Project;
-use crate::paths::disk_spelling;
+use crate::events::{BuildFinished, Event};
+use crate::paths::{Project, disk_spelling};
 use crate::service::Service;
+use crate::settings;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
-pub(crate) trait Compiler: Send + Sync {
+pub trait Compiler: Send + Sync {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>>;
     fn stop_compile(&self, root: &Path);
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
@@ -24,11 +28,9 @@ pub(crate) trait Compiler: Send + Sync {
 
 impl Compiler for Arc<Service> {
     fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
+        let started = self.compile.start(&project, &self.tool_paths().0);
         let service = Self::clone(self);
-        Box::pin(async move {
-            let tex_path = service.tool_paths().0;
-            service.compile.compile(&project, &tex_path, auto).await
-        })
+        Box::pin(async move { service.compile.wait(&project.root, started?, auto).await })
     }
 
     fn stop_compile(&self, root: &Path) {
@@ -44,6 +46,35 @@ impl Compiler for Arc<Service> {
     }
 }
 
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct BuildState {
+    compiling: bool,
+    auto: bool,
+    outdated: bool,
+    result: Option<CompileResult>,
+    issues: Vec<LogItem>,
+    lines: BTreeMap<String, Vec<IssueLine>>,
+}
+
+#[derive(Clone, Serialize, JsonSchema)]
+pub(crate) struct IssueLine {
+    line: u32,
+    error: bool,
+    message: String,
+    short: String,
+    compact: Option<String>,
+    tokens: Vec<TextRange>,
+    others: Vec<String>,
+    index: Option<usize>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct ShownPdf {
+    path: Option<String>,
+    version: u64,
+    live: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Builds {
     pub compiling: bool,
@@ -51,36 +82,45 @@ pub(crate) struct Builds {
     auto: bool,
     built: u64,
     pub waiting_for_tex: bool,
-    pub pdf: bool,
+    pub pdf: Option<String>,
+    version: u64,
     outdated: bool,
-    issues: Vec<LogItem>,
-    error_count: usize,
-    checks: Option<Vec<LogItem>>,
-    checks_shown: Option<Vec<LogItem>>,
-    checked: u64,
+    result: Option<CompileResult>,
     result_edits: u64,
+    checks: Vec<LogItem>,
+    checked: u64,
+    lines: BTreeMap<String, Vec<IssueLine>>,
     pub cleaners: Vec<Pending<()>>,
     cleaning: Option<(bool, u64)>,
-    shown: Option<BuildState>,
 }
 
 impl Builds {
+    fn built(&self) -> impl Iterator<Item = &LogItem> {
+        let result = self.result.iter();
+        result.flat_map(|result| result.errors.iter().chain(&result.warnings))
+    }
+
     fn checks(&self) -> impl Iterator<Item = &LogItem> {
-        let checks = self.checks.iter().flatten();
-        checks.filter(|check| {
+        self.checks.iter().filter(|check| {
             let built = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
-            !self.issues.iter().any(built)
+            !self.built().any(built)
         })
     }
 
     fn listed(&self) -> impl Iterator<Item = &LogItem> {
-        self.issues.iter().chain(self.checks())
+        self.built().chain(self.checks())
     }
+}
+
+pub(super) fn built_pdf(project: &Project) -> Option<String> {
+    let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
+    let pdf = pdf.ok().filter(|pdf| pdf.is_file())?;
+    Some(pdf.to_string_lossy().into_owned())
 }
 
 impl Actor {
     fn has_pdf(&self) -> bool {
-        self.builds.pdf || self.live.document_seen
+        self.builds.pdf.is_some() || self.live.document_seen
     }
 
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
@@ -132,60 +172,74 @@ impl Actor {
             let disk = || disk_spelling(&self.project.root, file).unwrap_or_else(|| file.clone());
             *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
         }
-        let builds = &mut self.builds;
-        if result.pdf.is_some() {
-            builds.pdf = true;
-            builds.outdated = self.edits != builds.built;
-        }
-        let before = builds.error_count;
-        builds.issues = result
-            .errors
-            .iter()
-            .chain(&result.warnings)
-            .cloned()
-            .collect();
-        builds.error_count = result.errors.len();
-        builds.result_edits = builds.built;
-        let auto = builds.auto;
-        let announce = !result.stopped && (!auto || builds.error_count != before);
-        let outdated = builds.outdated;
-        self.mark_issues();
-        self.publish_checks();
         if !result.stopped {
             self.live_rescan();
         }
-        self.emit(Event::BuildFinished(BuildFinished {
-            auto,
-            announce,
-            outdated,
-            result,
-        }));
-        self.builds.compiling = false;
-        if !self.builds.cleaners.is_empty() && self.builds.cleaning.is_none() {
+        let builds = &mut self.builds;
+        if let Some(pdf) = &result.pdf {
+            builds.pdf = Some(pdf.clone());
+            builds.version += u64::from(result.pdf_changed);
+            builds.outdated = self.edits != builds.built;
+        }
+        let before = builds
+            .result
+            .as_ref()
+            .map_or(0, |result| result.errors.len());
+        let auto = builds.auto;
+        let announce = !result.stopped && (!auto || result.errors.len() != before);
+        (builds.result, builds.result_edits) = (Some(result), builds.built);
+        builds.compiling = false;
+        if !builds.cleaners.is_empty() && builds.cleaning.is_none() {
             self.start_clean();
         }
         if let Some(auto) = self.builds.queued.take() {
             let _ = self.compile(auto);
         }
         self.publish_build();
+        self.publish_pdf();
+        self.emit(Event::BuildFinished(BuildFinished { auto, announce }));
     }
 
-    fn publish_build(&mut self) {
+    pub fn publish_build(&mut self) {
         let builds = &self.builds;
-        let state = BuildState {
+        let lines = self.docs.iter().filter_map(|(path, doc)| {
+            let edits = self.last_edits.get(path).copied().unwrap_or(0);
+            let built = builds.built().filter(|_| edits <= builds.result_edits);
+            let checks = builds.checks.iter().filter(|_| edits <= builds.checked);
+            let index = |line| {
+                let on =
+                    |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
+                builds.listed().position(on)
+            };
+            let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
+            (!lines.is_empty()).then(|| (path.clone(), lines))
+        });
+        self.builds.lines = lines.collect();
+        let builds = &self.builds;
+        let build = BuildState {
             compiling: builds.compiling,
             auto: builds.compiling && builds.auto,
             outdated: builds.outdated,
+            result: builds.result.clone(),
+            issues: builds.listed().cloned().collect(),
+            lines: builds.lines.clone(),
         };
-        if builds.shown != Some(state) {
-            self.builds.shown = Some(state);
-            self.emit(Event::Build(state));
-        }
+        self.publish(SessionSection::Build(build));
     }
 
-    pub fn mark_outdated(&mut self) {
-        if self.has_pdf() && !self.builds.outdated {
-            self.builds.outdated = true;
+    pub fn publish_pdf(&mut self) {
+        let shown = ShownPdf {
+            path: self.builds.pdf.clone(),
+            version: self.builds.version,
+            live: self.live.document_seen,
+        };
+        self.publish(SessionSection::ShownPdf(shown));
+    }
+
+    pub fn mark_outdated(&mut self, edited: Option<&str>) {
+        let outdated = self.has_pdf() && !self.builds.outdated;
+        self.builds.outdated |= outdated;
+        if outdated || edited.is_some_and(|path| self.builds.lines.contains_key(path)) {
             self.publish_build();
         }
     }
@@ -218,12 +272,9 @@ impl Actor {
                 self.after(Timer::Restart);
             }
             let builds = &mut self.builds;
-            (builds.pdf, builds.outdated) = (false, false);
-            (builds.issues, builds.error_count) = (Vec::new(), 0);
-            self.mark_issues();
-            self.publish_checks();
+            (builds.pdf, builds.outdated, builds.result) = (None, false, None);
             self.publish_build();
-            self.emit(Event::BuildCleaned);
+            self.publish_pdf();
         }
         let queued = self.builds.queued.take();
         if let Some(auto) = queued.or((result.is_ok() && self.auto_compile).then_some(true)) {
@@ -235,60 +286,8 @@ impl Actor {
     }
 
     pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {
-        (self.builds.checked, self.builds.checks) = (edits, Some(checks));
-        self.publish_checks();
-        self.mark_issues();
-    }
-
-    fn publish_checks(&mut self) {
-        if self.builds.checks.is_none() {
-            return;
-        }
-        let items: Vec<LogItem> = self.builds.checks().cloned().collect();
-        if self.builds.checks_shown.as_ref() != Some(&items) {
-            self.builds.checks_shown = Some(items.clone());
-            self.emit(Event::Checks(items));
-        }
-    }
-
-    pub fn clear_issues(&mut self, path: &str) {
-        if let Some(doc) = self.docs.get_mut(path)
-            && !doc.issues.is_empty()
-        {
-            doc.issues.clear();
-            let (path, lines) = (path.to_owned(), Vec::new());
-            self.emit(Event::Issues(FileIssues { path, lines }));
-        }
-    }
-
-    pub fn mark_issues(&mut self) {
-        let mut changed = Vec::new();
-        let builds = &self.builds;
-        for (path, doc) in self.docs.iter_mut() {
-            let edits = self.last_edits.get(path).copied().unwrap_or(0);
-            let built = builds
-                .issues
-                .iter()
-                .filter(|_| edits <= builds.result_edits);
-            let checks = builds.checks.iter().flatten();
-            let checks = checks.filter(|_| edits <= builds.checked);
-            let index = |line| {
-                let on =
-                    |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
-                builds.listed().position(on)
-            };
-            let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
-            if lines != doc.issues {
-                doc.issues.clone_from(&lines);
-                changed.push(FileIssues {
-                    path: path.clone(),
-                    lines,
-                });
-            }
-        }
-        for issues in changed {
-            self.emit(Event::Issues(issues));
-        }
+        (self.builds.checked, self.builds.checks) = (edits, checks);
+        self.publish_build();
     }
 }
 

@@ -10,6 +10,7 @@ use serde::Serialize;
 use texlocal_latex::logparse::{
     LogItem, Severity, latexmk_errors, parse_blg, parse_log, point_to_shell_escape,
 };
+use tokio::process::Child;
 
 use crate::error::CoreError;
 use crate::lock;
@@ -38,15 +39,18 @@ const GLOSSARY_RULES: &str = "\
         $failed } \
     tl_rule('glo', 'gls'); tl_rule('acn', 'acr'); tl_rule('nlo', 'nls'); tl_rule('aux', 'glstex');";
 
-#[derive(Debug, Default, Serialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
     pub ok: bool,
     pub stopped: bool,
     pub duration_ms: u64,
     pub pdf: Option<String>,
+    #[serde(skip)]
     pub pdf_changed: bool,
+    #[serde(skip)]
     pub errors: Vec<LogItem>,
+    #[serde(skip)]
     pub warnings: Vec<LogItem>,
     pub bad_boxes: Vec<LogItem>,
     pub log: String,
@@ -78,6 +82,11 @@ struct CompileRun {
     pdf: PathBuf,
     before: HashMap<&'static str, Stamp>,
     request_started: Instant,
+}
+
+pub struct Started {
+    run: CompileRun,
+    spawned: Option<std::io::Result<(Child, Tree)>>,
 }
 
 impl CompileRun {
@@ -135,12 +144,7 @@ impl CompileManager {
         }
     }
 
-    pub async fn compile(
-        &self,
-        project: &Project,
-        path_env: &str,
-        auto: bool,
-    ) -> Result<CompileResult, CoreError> {
+    pub fn start(&self, project: &Project, path_env: &str) -> Result<Started, CoreError> {
         let request_started = Instant::now();
         let root = &project.root;
         let (settings, trusted) = (read_settings(&project.settings), granted(project));
@@ -190,13 +194,23 @@ impl CompileManager {
             command.arg(format!("./{}", run.main_rel));
             command
         });
-        let started = self.register(root, |entry| {
+        let spawned = self.register(root, |entry| {
             entry.record = Some(run.output("fdb_latexmk"));
             command
                 .and_then(|mut command| Tree::spawn(&mut command))
                 .inspect(|(_, tree)| entry.tree = Some(tree.clone()))
         });
-        let Some(spawned) = started else {
+        Ok(Started { run, spawned })
+    }
+
+    pub async fn wait(
+        &self,
+        root: &Path,
+        started: Started,
+        auto: bool,
+    ) -> Result<CompileResult, CoreError> {
+        let Started { run, spawned } = started;
+        let Some(spawned) = spawned else {
             return Ok(stopped_before_start(&run));
         };
         let (end, output) = match spawned {

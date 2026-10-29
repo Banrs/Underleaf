@@ -28,18 +28,19 @@ use crate::projects::Symbols;
 use crate::protocol::Answer;
 use crate::service::Service;
 use crate::settings::UiState;
-use crate::texpresso::{LiveEvent, Preview};
 use crate::{CoreError, lock, paths};
 
 use actor::OpenProject;
 pub(crate) use actor::Session;
-pub(crate) use build::Compiler;
+pub use build::Compiler;
 pub use document::Document;
 pub(crate) use documents::{CloseReason, DiskConflict};
 use documents::{Docs, Shared};
-pub(crate) use live::LiveState;
 pub(crate) use state::SessionSection;
 use watch::Change;
+
+pub use crate::paths::Project;
+pub use crate::texpresso::{FileBuffer, LiveEvent, Pane, Preview, Sink, Status};
 
 pub(crate) enum Msg {
     Changed {
@@ -123,7 +124,7 @@ impl Sessions {
         Self::with_compiler(service, compiler, preview, true, listener)
     }
 
-    pub(crate) fn with_compiler(
+    pub fn with_compiler(
         service: Arc<Service>,
         compiler: Arc<dyn Compiler>,
         preview: Arc<dyn Preview>,
@@ -233,7 +234,6 @@ mod tests {
 
     use super::build::Fut;
     use super::*;
-    use crate::paths::Project;
 
     struct Panics;
 

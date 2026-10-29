@@ -24,11 +24,7 @@ extension ProjectModel {
     func stopTeXpresso() {
         guard let session else { return }
         texpresso.stopping()
-        Task {
-            if let state = try? await session.call(StopLive()), state.phase == .stopped,
-               texpresso.phase == .stopping { liveChanged(state) }
-        }
-        Task { await endLivePDF() }
+        session.send(StopLive())
     }
 
     func liveView(_ pages: ClosedRange<Int>) {
@@ -41,27 +37,15 @@ extension ProjectModel {
         session.send(LiveCaret(path: path, offset: editor.caret))
     }
 
-    func endLivePDF() async {
-        guard livePDF, !texpresso.active, !(await showBuildPDF(buildPDF?.path(percentEncoded: false), replacingLive: true)), livePDF,
-              !texpresso.active, !closed else { return }
-        shown = .none
-        pdf.clear()
-    }
-
-    func liveChanged(_ state: LiveState, alert: Bool = false) {
-        let was = texpresso.phase
-        texpresso.receive(state, alert: alert)
-        if alert { panel.show(.texpresso) }
-        if state.phase == .stopped, was != .stopped { Task { await endLivePDF() } }
+    func liveChanged(_ state: LiveState) {
+        texpresso.receive(state)
         if state.phase != .running { pdf.endLiveRun() }
+        showIssues()
     }
 
     func showLive(_ read: LiveRead) {
         guard texpresso.active, !closed else { return }
-        if case .document(_?, _, _) = read {
-            if !livePDF, app?.showPDF == false { app?.showPDF = true }
-            shown = .live
-        }
+        if case .document(_?, _, _) = read { hasPDF = true }
         pdf.showLive(read)
     }
 

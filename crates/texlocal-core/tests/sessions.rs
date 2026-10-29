@@ -4,11 +4,13 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{Library, Rig, SESSION, names, write};
+use common::{FakePreview, Library, Rig, SESSION, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
+use texlocal_core::session::LiveEvent;
 use texlocal_latex::syntax::Source;
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
@@ -122,7 +124,8 @@ async fn a_section_is_sent_again_only_when_it_changes() {
 async fn checks_find_undefined_labels_and_unclosed_environments() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\begin{itemize}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    let items = rig.event("checks", |e| e.as_array().is_some_and(|i| i.len() == 2));
+    let build = rig.section("build", |b| b["issues"].as_array().unwrap().len() == 2);
+    let items = &build["issues"];
     assert_eq!(items[0]["kind"], "warning");
     assert_eq!(items[0]["line"], 3);
     assert_eq!(items[1]["kind"], "error");
@@ -589,45 +592,111 @@ async fn a_forward_match_reads_the_open_documents_text() {
     assert_eq!(unbuilt, ErrorKind::NotFound);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_build_shows_its_pdf_and_marks_its_errors() {
-    let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
-    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    rig.open_document("main.tex");
-    rig.call("Compile", json!({ "auto": false }));
-    let finished = rig.event("buildFinished", |_| true);
-    let result = &finished["result"];
-    assert_eq!(result["ok"], false);
-    assert!(result["pdf"].as_str().unwrap().ends_with("main.pdf"));
-    assert_eq!(rig.call("PdfPath", json!({})), result["pdf"]);
-    assert_eq!(result["errors"][0]["line"], 3);
-    assert_eq!(result["errors"][0]["file"], "main.tex");
-    let issues = rig.event("issues", |e| {
-        e["lines"].as_array().is_some_and(|l| !l.is_empty())
-    });
-    assert_eq!(issues["path"], "main.tex");
-    assert_eq!(issues["lines"][0]["line"], 3);
-    assert_eq!(issues["lines"][0]["error"], true);
+fn said_of(rig: &Rig, kinds: &[&str]) -> Vec<String> {
+    let said = rig.said().into_iter();
+    said.filter(|kind| kinds.contains(&kind.as_str())).collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_clean_build_has_no_errors() {
+async fn a_build_sends_its_sections_before_it_finishes_and_its_pdf_follows_the_main_file() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
+    rig.section("outline", |o| !o.is_null());
+    rig.forget();
     rig.call("Compile", json!({ "auto": false }));
-    let started = rig.event("build", |e| e["compiling"] == true);
-    assert_eq!(started["auto"], false);
-    let finished = rig.event("buildFinished", |_| true);
-    assert_eq!(finished["result"]["ok"], true);
-    assert_eq!(finished["result"]["errors"], json!([]));
+    rig.event("buildFinished", |_| true);
+    let said = ["build", "reply", "build", "shownPdf", "buildFinished"];
+    assert_eq!(rig.said(), said);
+    let build = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(build["result"]["ok"], true);
+    assert_eq!(build["issues"], json!([]));
+    let pdf = rig.section("shownPdf", |_| true);
+    assert_eq!((&pdf["version"], &pdf["live"]), (&json!(1), &json!(false)));
+    let path = pdf["path"].clone();
+    assert!(path.as_str().unwrap().ends_with("build/main.pdf"));
+    let main_file = |main: &str| {
+        rig.forget();
+        let patch = json!({ "patch": { "mainFile": main } });
+        rig.call("SetSettings", patch);
+        rig.section("shownPdf", |_| true)["path"].take()
+    };
+    assert_eq!(main_file("ch.tex"), Value::Null);
+    assert_eq!(main_file("main.tex"), path);
+    rig.forget();
     rig.call("Clean", json!({}));
+    assert_eq!(rig.said(), ["build", "shownPdf", "reply"]);
+    assert_eq!(rig.section("build", |_| true)["result"], Value::Null);
     assert!(!rig.root().join("build").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
+    let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
+    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
+    let doc = rig.open_document("main.tex");
+    rig.forget();
+    rig.call("Compile", json!({ "auto": false }));
+    rig.event("buildFinished", |_| true);
+    let kinds = ["build", "shownPdf", "buildFinished", "reply"];
+    let said = ["build", "reply", "build", "shownPdf", "buildFinished"];
+    assert_eq!(said_of(&rig, &kinds), said);
+    let build = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(build["result"]["ok"], false);
+    let issue = &build["issues"][0];
+    assert_eq!(
+        (&issue["file"], &issue["line"]),
+        (&json!("main.tex"), &json!(3))
+    );
+    let line = &build["lines"]["main.tex"][0];
+    assert_eq!((&line["line"], &line["error"]), (&json!(3), &json!(true)));
+    assert_eq!(line["index"], 0);
+    rig.forget();
+    doc.edit(0, 0, "% more\n", None, false);
+    let edited = rig.section("build", |_| true);
+    assert_eq!(
+        (&edited["outdated"], &edited["lines"]),
+        (&json!(true), &json!({}))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
+    let main = "\\documentclass{article}\n\\begin{document}\n\\undefinedcommand\n\\end{document}\n";
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", main)], Arc::clone(&preview)).await;
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    *preview.log.lock().unwrap() =
+        "./main.tex:3: Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    rig.forget();
+    let (path, run, changed) = ("live.pdf".into(), "done".into(), Vec::new());
+    preview.send(LiveEvent::Document {
+        path,
+        pages: 1,
+        run,
+        changed,
+    });
+    let path = "page.pdf".into();
+    preview.send(LiveEvent::Page { page: 0, path });
+    let live = rig.section("live", |l| !l["lines"]["main.tex"].is_null());
+    assert_eq!(live["lines"]["main.tex"][0]["line"], 3);
+    let kinds = ["shownPdf", "liveDocument", "livePage", "live"];
+    assert_eq!(said_of(&rig, &kinds), kinds);
+    assert_eq!(rig.section("shownPdf", |_| true)["live"], true);
+    doc.edit(0, 0, "% more\n", None, false);
+    rig.section("live", |l| l["lines"]["main.tex"][0]["line"] == 4);
+    rig.forget();
+    rig.call("StopLive", json!({}));
+    let kinds = ["live", "shownPdf", "reply"];
+    assert_eq!(said_of(&rig, &kinds), ["live", "live", "shownPdf", "reply"]);
+    assert_eq!(rig.section("shownPdf", |_| true)["live"], false);
+    let stopped = rig.section("live", |l| l["phase"] == "stopped");
+    assert_eq!(stopped["lines"], json!({}));
 }
 
 async fn compiling_slowly() -> Rig {
     let main = "\\documentclass{article}\n% slowly\n\\begin{document}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
     rig.call("Compile", json!({ "auto": false }));
-    rig.event("build", |e| e["compiling"] == true);
     rig
 }
 
@@ -635,19 +704,18 @@ async fn compiling_slowly() -> Rig {
 async fn kill_all_stops_the_builds_under_way() {
     let rig = compiling_slowly().await;
     rig.library.call("KillAll", json!({})).await;
-    let finished = rig.event("buildFinished", |_| true);
-    assert_eq!(finished["result"]["stopped"], true);
+    rig.event("buildFinished", |_| true);
+    let build = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(build["result"]["stopped"], true);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_compile_stops_the_sessions_build() {
     let rig = compiling_slowly().await;
-    wait_until("latexmk never started", || {
-        rig.root().join("build").is_dir()
-    });
     rig.call("StopCompile", json!({}));
-    let finished = rig.event("buildFinished", |_| true);
-    assert_eq!(finished["result"]["stopped"], true);
+    rig.event("buildFinished", |_| true);
+    let build = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(build["result"]["stopped"], true);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -657,7 +725,7 @@ async fn turning_auto_compile_on_builds_after_a_save() {
     rig.open_document("ch.tex")
         .edit(0, 0, "% more\n", None, false);
     rig.call("Save", json!({ "reporting": true }));
-    let started = rig.event("build", |e| e["compiling"] == true);
+    let started = rig.section("build", |b| b["compiling"] == true);
     assert_eq!(started["auto"], true);
 }
 
@@ -709,8 +777,8 @@ async fn a_fix_adds_the_package_a_command_needs() {
 async fn checks_find_duplicates_missing_files_and_open_groups() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\label{a}\\label{a}\n\\cite{nokey}\n\\input{missing}\n$x\n\nnext {\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    let checks = rig.event("checks", |e| e.as_array().is_some_and(|i| i.len() == 5));
-    let lines: Vec<u64> = checks
+    let build = rig.section("build", |b| b["issues"].as_array().unwrap().len() == 5);
+    let lines: Vec<u64> = build["issues"]
         .as_array()
         .unwrap()
         .iter()

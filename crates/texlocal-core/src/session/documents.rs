@@ -13,7 +13,7 @@ use texlocal_latex::syntax::TextEdit;
 use super::Document;
 use super::actor::{Actor, Later, Timer};
 use super::state::DocumentState;
-use crate::events::{Conflict, DocumentClosed, DocumentReload, Event, IssueLine};
+use crate::events::{Conflict, DocumentClosed, DocumentReload, Event};
 use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
@@ -67,8 +67,6 @@ pub(crate) struct Doc {
     pub error: Option<String>,
     pub reloads: VecDeque<Reload>,
     composing: bool,
-    pub issues: Vec<IssueLine>,
-    pub live_issues: Vec<IssueLine>,
 }
 
 impl Doc {
@@ -179,13 +177,11 @@ impl Actor {
             error: None,
             reloads: VecDeque::new(),
             composing: false,
-            issues: Vec::new(),
-            live_issues: Vec::new(),
         };
         self.docs.insert(path.to_owned(), doc);
         self.after(Timer::Symbols);
         self.publish_documents();
-        self.mark_issues();
+        self.publish_build();
         self.live_issues_opened(path);
         self.live_whole(path);
         Ok(())
@@ -202,6 +198,8 @@ impl Actor {
     pub fn close_doc(&mut self, path: &str, reason: CloseReason) {
         if self.docs.remove(path).is_some() {
             self.publish_documents();
+            self.publish_build();
+            self.publish_live(false);
             let path = path.to_owned();
             self.emit(Event::DocumentClosed(DocumentClosed { path, reason }));
         }
@@ -214,9 +212,8 @@ impl Actor {
         let path = doc.path.clone();
         self.edits += 1;
         self.last_edits.insert(path.clone(), self.edits);
-        self.clear_issues(&path);
+        self.mark_outdated(Some(&path));
         self.live_issues_edited(&path, edit.as_ref());
-        self.mark_outdated();
         match edit {
             Some(edit) => {
                 self.after(Timer::Autosave);

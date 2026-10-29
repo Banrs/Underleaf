@@ -75,7 +75,7 @@ pub struct PageRange {
 
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
-pub(crate) trait Preview: Send + Sync {
+pub trait Preview: Send + Sync {
     fn start(
         &self,
         owner: u64,

@@ -13,10 +13,10 @@ use texlocal_latex::wordmatch::{PdfHit, PdfPage};
 use tokio::sync::{mpsc, watch as signal};
 use tokio::time::Instant;
 
-use super::build::Builds;
+use super::build::{Builds, built_pdf};
 use super::documents::{Docs, Resolution};
 use super::edits::{DocumentEdits, Fixed, ProjectEdits};
-use super::live::{Live, LiveState};
+use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::Sent;
@@ -61,8 +61,8 @@ requests! {
         SetSettings { patch: SettingsPatch } -> (),
         PrepareDelete { path: RelPath } -> bool,
         Deleted { path: RelPath, trashed: bool } -> (),
-        StartLive {} -> LiveState,
-        StopLive {} -> LiveState,
+        StartLive {} -> (),
+        StopLive {} -> (),
         LiveView { first: u32, last: u32 } -> (),
         LiveCaret { path: RelPath, offset: usize } -> (),
         LiveLog { shown: bool } -> (),
@@ -70,7 +70,6 @@ requests! {
         ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
         ExportZip { dest: PathBuf, for_arxiv: bool } -> (),
         SetUiState { patch: UiPatch } -> (),
-        PdfPath {} -> String,
         SynctexForward { file: RelPath, line: u32 } -> ForwardLoc,
         SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc,
         SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
@@ -172,11 +171,9 @@ impl Actor {
             .then(|| watch::watch(&project.root, tx.clone()))
             .flatten();
         let mut builds = Builds::default();
-        builds.pdf = settings::read_settings(&project.settings)
-            .output(&project.build, "pdf")
-            .is_ok_and(|pdf| pdf.is_file());
+        builds.pdf = built_pdf(&project);
         let mut later = VecDeque::new();
-        if auto_compile && !builds.pdf {
+        if auto_compile && builds.pdf.is_none() {
             later.push_back(Later::Compile(true));
         }
         let history = sessions.service.history(&project);
@@ -461,7 +458,6 @@ impl Actor {
                 return self.export(dest, for_arxiv, Pending { reply, answer });
             }
             Session::SetUiState(SetUiState { patch }, answer) => answer(self.write_ui(patch)),
-            Session::PdfPath(PdfPath {}, answer) => answer(self.pdf_path()),
             Session::SynctexForward(SynctexForward { file, line }, answer) => {
                 return self.synctex_forward(file.0, line, Pending { reply, answer });
             }

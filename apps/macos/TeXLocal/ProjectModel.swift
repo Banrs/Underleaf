@@ -28,29 +28,21 @@ final class ProjectModel {
 
     @ObservationIgnored private(set) var session: SessionClient?
     private var root: URL? { store.project.map { URL(filePath: $0.root, directoryHint: .isDirectory) } }
-    private var documents: [String: Doc] = [:]
-    private struct Doc {
-        var lineIssues: [Int: IssueLine] = [:], liveIssues: [Int: IssueLine] = [:]
-    }
     @ObservationIgnored private var composingPath: String?
 
-    var compiling = false
-    var outdated = false
+    var compiling: Bool { store.build?.compiling == true }
+    var outdated: Bool { store.build?.outdated == true }
+    var result: CompileResult? { store.build?.result }
+    var issues: [LogItem] { store.build?.issues ?? [] }
+    var listed: [LogItem] { store.build?.listed ?? [] }
     var fixing: Fix?
-    var result: CompileResult?
-    var checks: [LogItem] = []
     var chosenIssue: Int?
-    nonisolated enum ShownPDF: Equatable { case none, build(URL), live }
-    var shown = ShownPDF.none
-    var hasPDF: Bool { shown != .none }
-    var livePDF: Bool { shown == .live }
-    var buildPDF: URL?
+    var hasPDF = false
+    var livePDF: Bool { store.shownPdf?.live == true }
+    var buildPDF: URL? { store.shownPdf?.path.map { URL(filePath: $0) } }
     let pdf = PDFController()
     let panel = BuildPanelModel()
     let texpresso = TeXpressoSession()
-
-    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) + checks }
-    var listed: [LogItem] { issues + (result?.badBoxes ?? []) }
 
     var openURL: URL? { openPath.flatMap(url) }
     var diskConflict: String?
@@ -74,8 +66,7 @@ final class ProjectModel {
     @ObservationIgnored private var opens: Task<Void, Never>?
     @ObservationIgnored private var openRequests = 0
     @ObservationIgnored var syncTask: Task<Void, Never>?
-    @ObservationIgnored var pdfLoad: Task<Bool, Never>?
-    @ObservationIgnored private var buildLane: Task<Void, Never>?
+    @ObservationIgnored var pdfLoad: Task<Void, Never>?
     private var closing: Task<Bool, Never>?
     var isClosing: Bool { closing != nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -158,11 +149,11 @@ final class ProjectModel {
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         self.session = session
-        async let pdfShown = showBuildPDF(try? await session.call(PdfPath()))
         (panel.shown, pdf.restorePage, pdf.restoreZoom) = (ui.panel, ui.page, ui.zoom)
+        let pdfShown = showPDF()
         let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
         if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
-        _ = await pdfShown
+        await pdfShown.value
         guard !closed else { return }
         initialLoadComplete = true
         if ui.livePreview, canSwitchLivePreview { livePreview = true }
@@ -235,35 +226,24 @@ final class ProjectModel {
         switch event {
         case .section(let section): apply(section)
         case .documentReload(let reloaded): reload(reloaded)
-        case .documentClosed(let gone):
-            documents[gone.path] = nil
-            if openPath == gone.path, gone.reason != .closed { clearOpenFile() }
-        case .documentRenamed(let renamed):
-            documents[renamed.to] = documents.removeValue(forKey: renamed.from)
+        case .documentClosed(let gone): if openPath == gone.path, gone.reason != .closed { clearOpenFile() }
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path
-        case .issues(let marked):
-            documents[marked.path, default: Doc()].lineIssues = marked.byLine
-            if editor.path == marked.path { editor.textView.issues.lines = marked.byLine }
-        case .liveIssues(let marked):
-            documents[marked.path, default: Doc()].liveIssues = marked.byLine
-            if editor.path == marked.path { editor.textView.issues.live = marked.byLine }
-        case .checks(let items): inOrder { self.checks = items }
-        case .build(let state): inOrder { self.buildChanged(state) }
-        case .buildFinished(let finished): inOrder { await self.buildFinished(finished) }
-        case .buildCleaned: inOrder { self.buildCleaned() }
+        case .buildFinished(let finished): buildFinished(finished)
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
-        case .live(let live): liveChanged(live.state, alert: live.alert)
-        case .livePage, .liveDocument: break
+        case .liveAlert:
+            texpresso.alerted()
+            panel.show(.texpresso)
+        case .documentRenamed, .livePage, .liveDocument: break
         }
     }
 
     private func apply(_ section: SessionSection) {
-        let (main, before) = (settings?.mainFile, store.documents)
+        let (before, build, live) = (store.documents, store.build, livePDF)
         store.apply(section)
         switch section {
-        case .project: if let main, main != settings?.mainFile { mainFileChanged() }
+        case .project: break
         case .tree(let nodes):
             tree.show(nodes)
             openKindChanged()
@@ -275,6 +255,11 @@ final class ProjectModel {
                 if let app, app.alert == nil { app.alert = AppAlert(title, error) } else { notices.announce(title) }
             }
         case .outline: findHeadings()
+        case .build(let now): buildChanged(now, was: build)
+        case .shownPdf(let shown):
+            if shown.live, !live, app?.showPDF == false { app?.showPDF = true }
+            if session != nil { showPDF() }
+        case .live(let state): liveChanged(state)
         }
     }
 
@@ -285,8 +270,6 @@ final class ProjectModel {
             source.reload(event.text)
         }
     }
-
-    @discardableResult func inOrder(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> { enqueue(&buildLane, work) }
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
               jump: Bool = false, showsSource: Bool = true) async {
@@ -324,8 +307,7 @@ final class ProjectModel {
         guard editsText else { return }
         guard let session, let source = SourceDocument(session: session.id, path: path) else { openPath = nil; return }
         editor.open(path: path, text: source.text, source: source, focus: focus)
-        editor.textView.issues.lines = documents[path]?.lineIssues ?? [:]
-        editor.textView.issues.live = documents[path]?.liveIssues ?? [:]
+        showIssues()
     }
 
     func closeDocument(_ path: String) async {
@@ -547,10 +529,6 @@ final class ProjectModel {
     func patchSettings(_ patch: SettingsPatch) async {
         guard let session, !closed else { return }
         await alerting("Couldn’t Change the Project’s Settings") { try await session.call(SetSettings(patch: patch)) }
-    }
-
-    private func mainFileChanged() {
-        Task { if let path = try? await session?.call(PdfPath()) { await showBuildPDF(path) } }
     }
 
     func reveal(_ heading: Heading) {

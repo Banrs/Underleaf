@@ -55,8 +55,12 @@ nonisolated extension CompileResult {
     }
 }
 
-nonisolated extension FileIssues {
-    var byLine: [Int: IssueLine] { Dictionary(lines.map { ($0.line, $0) }) { $1 } }
+nonisolated extension BuildState {
+    var listed: [LogItem] { issues + (result?.badBoxes ?? []) }
+}
+
+extension [IssueLine] {
+    var byLine: [Int: IssueLine] { Dictionary(map { ($0.line, $0) }) { $1 } }
 }
 
 nonisolated extension SearchHit: Identifiable {

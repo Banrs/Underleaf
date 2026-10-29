@@ -6,7 +6,9 @@ use serde::Serialize;
 use texlocal_latex::analyze::Analysis;
 
 use super::actor::Actor;
+use super::build::{BuildState, ShownPdf};
 use super::documents::{DiskConflict, Doc};
+use super::live::LiveState;
 use super::watch::TreeIndex;
 use crate::events::Event;
 use crate::projects::TreeNode;
@@ -19,6 +21,9 @@ pub(crate) enum SessionSection {
     Tree(Vec<TreeNode>),
     Documents(Vec<DocumentState>),
     Outline(Option<Analysis>),
+    Build(BuildState),
+    ShownPdf(ShownPdf),
+    Live(LiveState),
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -53,6 +58,9 @@ impl Actor {
         self.show_tree(tree);
         self.publish_documents();
         self.publish(SessionSection::Outline(None));
+        self.publish_build();
+        self.publish_pdf();
+        self.publish_live(false);
     }
 
     pub fn show_tree(&mut self, tree: Vec<TreeNode>) -> bool {

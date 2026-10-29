@@ -4,6 +4,7 @@ use texlocal_latex::{FileKind, file_kind};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
+use super::build::built_pdf;
 use super::documents::CloseReason;
 use super::watch;
 use crate::events::{DocumentRenamed, Event};
@@ -66,7 +67,7 @@ impl Actor {
         }
         if meaning.tree || !others.is_empty() {
             self.edits += 1;
-            self.mark_outdated();
+            self.mark_outdated(None);
             if self.auto_compile {
                 self.later.push_back(Later::Compile(true));
             }
@@ -124,12 +125,6 @@ impl Actor {
         self.service.with_project(&self.project_id, write)
     }
 
-    pub fn pdf_path(&self) -> Result<String, CoreError> {
-        let settings = settings::read_settings(&self.project.settings);
-        let pdf = settings.output(&self.project.build, "pdf")?;
-        Ok(pdf.to_string_lossy().into_owned())
-    }
-
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
         if !self.save_edits(true)? {
             return Ok(None);
@@ -160,6 +155,8 @@ impl Actor {
             self.emit(Event::DocumentRenamed(moved));
         }
         self.publish_documents();
+        self.publish_build();
+        self.publish_live(false);
         self.reload_tree();
         if renamed.main_file != main {
             self.main_file_changed();
@@ -192,6 +189,8 @@ impl Actor {
     fn main_file_changed(&mut self) {
         self.reload_tree();
         self.live_follow();
+        self.builds.pdf = built_pdf(&self.project);
+        self.publish_pdf();
         let building = self.builds.compiling;
         self.stop_compile();
         if self.auto_compile || building {

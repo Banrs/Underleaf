@@ -29,10 +29,7 @@ struct CoreTests {
         let session = SessionClient { if case .event(let event) = $0 { events.append(event) } }
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         try await session.call(OpenDocument(path: "main.tex"))
-        try await waitUntil {
-            events.contains { if case .section(.outline(_?)) = $0 { true } else { false } }
-                && events.contains { if case .checks = $0 { true } else { false } }
-        }
+        try await waitUntil { events.contains { if case .section(.outline(_?)) = $0 { true } else { false } } }
         let document = try #require(SourceDocument(session: session.id, path: "main.tex"))
         let version = try #require(document.version)
         _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
@@ -51,6 +48,7 @@ struct CoreTests {
         #expect(store.project?.name == project.name)
         #expect(store.project?.settings.mainFile == "main.tex")
         #expect(store.tree.contains { $0.name == "main.tex" && $0.main })
+        #expect(store.build?.result == nil && store.shownPdf?.path == nil && store.live?.phase == .stopped)
         try await session.call(CreateEntry(folder: "", name: "new.tex", dir: false))
         #expect(store.tree.contains { $0.name == "new.tex" })
         #expect(try await session.close())
