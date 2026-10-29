@@ -40,7 +40,9 @@ extension NSView {
 class DraggedSplitView: NSSplitView {
     private(set) var dragging = false
 
-    override func mouseDown(with event: NSEvent) {
+    override func mouseDown(with event: NSEvent) { drag { super.mouseDown(with: event) } }
+
+    func drag(_ moves: () -> Void) {
         let workspace = window?.contentViewController as? WorkspaceController
         dragging = true
         workspace?.quiet(true)
@@ -49,7 +51,7 @@ class DraggedSplitView: NSSplitView {
             workspace?.quiet(false)
             workspace?.dragged(self)
         }
-        super.mouseDown(with: event)
+        moves()
     }
 }
 
