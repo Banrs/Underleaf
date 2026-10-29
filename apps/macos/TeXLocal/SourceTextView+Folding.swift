@@ -58,9 +58,7 @@ extension SourceTextView: NSTextContentStorageDelegate {
     }
 
     private func setFolds(_ ranges: [NSRange], keeping line: Int? = nil) {
-        var unique: [NSRange] = []
-        for range in ranges.sorted(by: { $0.location < $1.location }) where !unique.contains(range) { unique.append(range) }
-        let ranges = unique
+        let ranges = Set(ranges).sorted { $0.location < $1.location }
         if let line, ranges.contains(where: { $0.contains(caret) || NSIntersectionRange($0, selection).length > 0 }) {
             let end = document.lineStart(line + 1) - 1
             folded = []

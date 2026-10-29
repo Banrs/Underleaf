@@ -46,6 +46,7 @@ extension SourceTextView {
         }
         return rect.isNull ? nil : rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
     }
+
     func redrawFragments(in rects: [CGRect]) {
         guard !rects.isEmpty else { return }
         func redraw(_ view: NSView) {
