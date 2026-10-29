@@ -1,4 +1,3 @@
-use std::process::Stdio;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -64,16 +63,11 @@ fn holder(found: &str, slashed: &str) -> Option<String> {
 }
 
 pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError> {
-    let (mut child, tree) = Tree::spawn(command.stdin(Stdio::null()))?;
-    let (code, mut out, err, timed_out) = drive(&mut child, &tree, Some(TIMEOUT)).await;
-    if timed_out {
-        return Err(CoreError::new(
-            crate::ErrorKind::Unavailable,
-            messages::install_timed_out(),
-        ));
+    let (mut child, tree) = Tree::spawn(&mut command)?;
+    match drive(&mut child, &tree, Some(TIMEOUT)).await {
+        (.., true) => Err(CoreError::unavailable(messages::install_timed_out())),
+        (code, out, false) => Ok((code, out)),
     }
-    out.push_str(&err);
-    Ok((code, out))
 }
 
 pub(crate) fn checked((code, out): (i32, String)) -> Result<String, CoreError> {
@@ -82,25 +76,17 @@ pub(crate) fn checked((code, out): (i32, String)) -> Result<String, CoreError> {
     } else if out.contains(OLDER) {
         Err(CoreError::conflict(messages::texlive_older()))
     } else if UNREACHABLE.is_match(&out) {
-        Err(CoreError::new(
-            crate::ErrorKind::Unavailable,
-            messages::repository_unreachable(),
-        ))
+        Err(CoreError::unavailable(messages::repository_unreachable()))
     } else {
-        Err(CoreError::internal(messages::tlmgr_failed(crate::tail(
-            out.trim(),
-            2000,
-        ))))
+        let said = crate::tail(out.trim(), 2000);
+        Err(CoreError::internal(messages::tlmgr_failed(said)))
     }
 }
 
 fn no_tlmgr(path_env: &str) -> CoreError {
-    CoreError::new(
-        crate::ErrorKind::Unavailable,
-        if find_tool("mpm", path_env).is_some() {
-            messages::miktex_installs()
-        } else {
-            messages::no_tlmgr()
-        },
-    )
+    CoreError::unavailable(if find_tool("mpm", path_env).is_some() {
+        messages::miktex_installs()
+    } else {
+        messages::no_tlmgr()
+    })
 }

@@ -42,6 +42,9 @@ impl CoreError {
     pub fn unfit(message: Message) -> Self {
         Self::new(ErrorKind::Unfit, message)
     }
+    pub(crate) fn unavailable(message: Message) -> Self {
+        Self::new(ErrorKind::Unavailable, message)
+    }
     pub fn internal(message: Message) -> Self {
         Self::new(ErrorKind::Internal, message)
     }

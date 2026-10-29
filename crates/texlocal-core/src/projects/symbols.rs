@@ -42,12 +42,12 @@ pub fn scan_symbols(
             .collect()
     }
     let all = || files.values().map(|facts| &**facts);
-    let environments = firsts(all().flat_map(|f| &f.environments), |e| &e.name);
+    let environments = all().flat_map(|f| &f.environments).map(|e| &e.name);
     Ok(Symbols {
         citations: firsts(all().flat_map(|f| &f.citations), |c| &c.name),
         labels: firsts(all().flat_map(|f| &f.labels), |l| &l.name),
         commands: firsts(all().flat_map(|f| &f.commands), |c| &c.name),
-        environments: environments.into_iter().map(|e| e.name).collect(),
+        environments: firsts(environments, String::as_str),
         by_file: files,
         ..Symbols::default()
     })

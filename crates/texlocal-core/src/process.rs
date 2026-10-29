@@ -1,32 +1,30 @@
 use std::io;
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 
-use crate::sys;
 use crate::tex::find_tool;
+use crate::{lock, sys};
 
-pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: u64 = 1_000_000;
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
-pub(crate) struct Tree {
-    group: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
-}
+pub(crate) struct Tree(Arc<Mutex<Option<u32>>>);
 
 impl Tree {
     pub(crate) fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
         let (child, group) = sys::spawn_group(command)?;
-        let group = std::sync::Arc::new(std::sync::Mutex::new(Some(group)));
-        Ok((child, Self { group }))
+        Ok((child, Self(Arc::new(Mutex::new(Some(group))))))
     }
 
     pub(crate) fn kill(&self) {
-        if let Some(group) = *crate::lock(&self.group) {
+        if let Some(group) = *lock(&self.0) {
             sys::kill_group(group);
         }
     }
@@ -34,7 +32,7 @@ impl Tree {
     pub(crate) async fn ended(&self, child: &mut Child) -> io::Result<ExitStatus> {
         let pid = child.id().expect("not reaped yet");
         let _ = tokio::task::spawn_blocking(move || sys::wait_exited(pid)).await;
-        if let Some(group) = crate::lock(&self.group).take() {
+        if let Some(group) = lock(&self.0).take() {
             sys::kill_group(group);
         }
         child.wait().await
@@ -49,7 +47,7 @@ pub(crate) fn command(program: &str, cwd: Option<&Path>, path_env: &str) -> io::
         )
     })?;
     let mut cmd = tool(&program, path_env);
-    cmd.env("max_print_line", "10000").stdin(Stdio::null());
+    cmd.env("max_print_line", "10000");
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
@@ -59,6 +57,7 @@ pub(crate) fn command(program: &str, cwd: Option<&Path>, path_env: &str) -> io::
 pub(crate) fn tool(program: &Path, path_env: &str) -> Command {
     let mut cmd = Command::new(program);
     cmd.env("PATH", path_env)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -76,23 +75,18 @@ async fn read_capped(mut reader: impl AsyncRead + Unpin, kept: &mut Vec<u8>) {
     }
 }
 
-pub(crate) async fn run(
-    program: &str,
-    args: &[&str],
-    cwd: Option<&Path>,
-    path_env: &str,
-) -> io::Result<(i32, String)> {
-    let mut cmd = command(program, cwd, path_env)?;
+pub(crate) async fn run(program: &str, args: &[&str], path_env: &str) -> io::Result<(i32, String)> {
+    let mut cmd = command(program, None, path_env)?;
     let (mut child, tree) = Tree::spawn(cmd.args(args))?;
-    let (code, stdout, ..) = drive(&mut child, &tree, Some(PROBE_TIMEOUT)).await;
-    Ok((code, stdout))
+    let (code, output, _) = drive(&mut child, &tree, Some(PROBE_TIMEOUT)).await;
+    Ok((code, output))
 }
 
 pub(crate) async fn drive(
     child: &mut Child,
     tree: &Tree,
     timeout: Option<Duration>,
-) -> (i32, String, String, bool) {
+) -> (i32, String, bool) {
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -101,10 +95,8 @@ pub(crate) async fn drive(
             tokio::join!(read_capped(stdout, &mut out), read_capped(stderr, &mut err));
         };
         let wait = async {
-            let Some(timeout) = timeout else {
-                return (tree.ended(child).await.ok(), false);
-            };
-            match tokio::time::timeout(timeout, tree.ended(child)).await {
+            let limit = timeout.unwrap_or(Duration::MAX);
+            match tokio::time::timeout(limit, tree.ended(child)).await {
                 Ok(status) => (status.ok(), false),
                 Err(_) => {
                     tree.kill();
@@ -121,10 +113,27 @@ pub(crate) async fn drive(
             () = &mut readers => wait.await,
         }
     };
-    (
-        status.and_then(|s| s.code()).unwrap_or(-1),
-        crate::lossy_string(out),
-        crate::lossy_string(err),
-        timed_out,
-    )
+    out.append(&mut err);
+    let code = status.and_then(|s| s.code()).unwrap_or(-1);
+    (code, crate::lossy_string(out), timed_out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn sh(script: &str, timeout: Option<Duration>) -> (i32, String, bool) {
+        let mut command = command("sh", None, "/bin").unwrap();
+        let (mut child, tree) = Tree::spawn(command.args(["-c", script])).unwrap();
+        drive(&mut child, &tree, timeout).await
+    }
+
+    #[tokio::test]
+    async fn a_run_gives_its_code_and_output_then_errors_and_is_stopped_at_its_timeout() {
+        let script = "echo out; echo err >&2; exit 3";
+        assert_eq!(sh(script, None).await, (3, "out\nerr\n".into(), false));
+        let script = "echo out; echo err >&2; sleep 30";
+        let timeout = Some(Duration::from_secs(1));
+        assert_eq!(sh(script, timeout).await, (-1, "out\nerr\n".into(), true));
+    }
 }
