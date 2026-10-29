@@ -4,14 +4,12 @@ import SwiftUI
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
     private let app: AppModel
-    private let project: ProjectModel
     private let views: WorkspaceViews
     private var closingClick: Int?
     private var click: Int? { NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil } }
 
-    init(app: AppModel, project: ProjectModel, views: WorkspaceViews) {
+    init(app: AppModel, views: WorkspaceViews) {
         self.app = app
-        self.project = project
         self.views = views
         super.init()
         popover.behavior = .transient
@@ -21,7 +19,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func toggle(relativeTo item: NSToolbarItem) {
         if popover.isShown { return popover.close() }
         if let click, click == closingClick { return }
-        let content = NSHostingController(rootView: FormatPanel(app: app, project: project, views: views) { [weak self] in self?.popover.close() })
+        let content = NSHostingController(rootView: FormatPanel(app: app, views: views) { [weak self] in self?.popover.close() })
         content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
         popover.show(relativeTo: item)
@@ -33,13 +31,12 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 
 struct FormatPanel: View {
     let app: AppModel
-    let project: ProjectModel
     let views: WorkspaceViews
     let close: () -> Void
     @State private var hovered: String?
 
     var body: some View {
-        let (headings, current, styles) = (project.headingStyles, project.headingCommand, views.textStyles)
+        let (headings, current, styles) = (views.project.headingStyles, views.project.headingCommand, views.textStyles)
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach([(MenuCommand.editBold, styles.bold), (.editItalic, styles.italic), (.editUnderline, styles.underline)], id: \.0) { command, edits in
@@ -68,7 +65,7 @@ struct FormatPanel: View {
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
-        Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: project) })) {
+        Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: views.project) })) {
             Label(command.title, systemImage: command.style!.symbol)
                 .labelStyle(.iconOnly)
                 .imageScale(.large)

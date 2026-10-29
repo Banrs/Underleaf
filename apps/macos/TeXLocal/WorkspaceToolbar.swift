@@ -18,15 +18,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
     weak var workspace: WorkspaceController?
     private let app: AppModel
-    private let project: ProjectModel
     private let views: WorkspaceViews
+    private var project: ProjectModel { views.project }
     private var pdf: PDFController { views.pdf }
     private var closed = false
-    private lazy var format = FormatPopover(app: app, project: project, views: views)
+    private lazy var format = FormatPopover(app: app, views: views)
 
-    init(app: AppModel, project: ProjectModel, views: WorkspaceViews) {
+    init(app: AppModel, views: WorkspaceViews) {
         self.app = app
-        self.project = project
         self.views = views
         super.init()
         toolbar.delegate = self

@@ -277,7 +277,6 @@ final class AppModel {
         return opening
     }
 
-
     private var bookmarks: [String: Data] {
         get { defaults.dictionary(forKey: DefaultsKey.folderBookmarks) as? [String: Data] ?? [:] }
         set { defaults.set(newValue, forKey: DefaultsKey.folderBookmarks) }
@@ -406,13 +405,9 @@ final class AppModel {
         exporting = nil
     }
 
-    func leave() async -> Bool {
-        openGeneration += 1
-        return await leave(openGeneration)
-    }
-
     func quit() async -> Bool {
-        guard await leave() else { return false }
+        openGeneration += 1
+        guard await leave(openGeneration) else { return false }
         _ = try? await core.call(KillAll())
         return true
     }

@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct SaveVersionSheet: View {
@@ -136,7 +135,7 @@ struct VersionHistorySheet: View {
         let name = file?.fileName ?? ""
         switch shown {
         case .diff(let rows):
-            DiffView(rows: rows, font: SourceTextView.font(named: fontName, size: CGFloat(fontSize), dark: colorScheme == .dark))
+            DiffView(rows: rows, font: Font(SourceTextView.font(named: fontName, size: CGFloat(fontSize), dark: colorScheme == .dark)))
         case .same:
             ContentUnavailableView("No Differences", systemImage: "equal",
                                    description: Text("“\(name)” is the same now as in this version."))
@@ -194,14 +193,14 @@ struct VersionHistorySheet: View {
 
 private struct DiffView: View {
     let rows: [DiffLine]
-    let font: NSFont
+    let font: Font
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(rows.indices, id: \.self) { row(rows[$0]) }
             }
-            .font(Font(font))
+            .font(font)
             .textSelection(.enabled)
             .padding(.vertical, 6)
         }

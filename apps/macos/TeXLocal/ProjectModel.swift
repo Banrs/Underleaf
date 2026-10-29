@@ -50,9 +50,9 @@ final class ProjectModel {
     var outlineTree: [OutlineNode] { analysis?.tree ?? [] }
     var headingStyles: [HeadingStyle] { store.outline?.headingStyles ?? HeadingStyle.standard }
     var words: Int? { analysis?.words }
-    var cursorLine = 1
-    var cursorColumn = 0
-    @ObservationIgnored var topLine = 1
+    private(set) var cursorLine = 1
+    private(set) var cursorColumn = 0
+    @ObservationIgnored private var topLine = 1
     @ObservationIgnored private(set) var topHeading: Int?
     private(set) var currentHeading: Int?
     @ObservationIgnored private var currentLine = 1

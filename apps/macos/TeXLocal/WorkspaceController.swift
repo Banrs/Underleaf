@@ -3,8 +3,8 @@ import SwiftUI
 
 final class WorkspaceController: ThinSplitViewController {
     let app: AppModel
-    let project: ProjectModel
     let views: WorkspaceViews
+    var project: ProjectModel { views.project }
     var pdf: PDFController { views.pdf }
     let toolbar: WorkspaceToolbar
 
@@ -26,12 +26,11 @@ final class WorkspaceController: ThinSplitViewController {
     private var collapses: [NSKeyValueObservation] = []
     private var resizes: [NotificationCenter.ObservationToken] = []
 
-    init(app: AppModel, project: ProjectModel, views: WorkspaceViews, size: CGSize) {
+    init(app: AppModel, views: WorkspaceViews, size: CGSize) {
         self.app = app
-        self.project = project
         self.views = views
         inspectorMount = Mount(shown: app.inspectorVisible)
-        toolbar = WorkspaceToolbar(app: app, project: project, views: views)
+        toolbar = WorkspaceToolbar(app: app, views: views)
         super.init()
         toolbar.workspace = self
         if app.savesLayout {

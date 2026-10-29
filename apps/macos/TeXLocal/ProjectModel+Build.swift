@@ -26,11 +26,7 @@ extension ProjectModel {
     func buildFinished(_ finished: BuildFinished) {
         guard let result else { return }
         if !finished.auto {
-            if result.failed {
-                panel.openForFailedBuild()
-            } else if result.ok, issues.isEmpty {
-                panel.closeAfterCleanBuild()
-            }
+            if result.failed { panel.openForFailedBuild() } else if result.ok, issues.isEmpty { panel.closeAfterCleanBuild() }
             announceResult(result)
         } else if finished.announce {
             announceResult(result, queued: true)

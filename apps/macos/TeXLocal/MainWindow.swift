@@ -60,7 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         guard let project = app.workspaceProject(after: workspace?.project) else { return showHome() }
         guard workspace?.project !== project, let views, views.project === project, let window else { return }
         workspace?.close()
-        let workspace = WorkspaceController(app: app, project: project, views: views, size: window.contentLayoutRect.size)
+        let workspace = WorkspaceController(app: app, views: views, size: window.contentLayoutRect.size)
         window.toolbar = nil
         setContent(workspace)
         window.toolbar = workspace.toolbar.toolbar
