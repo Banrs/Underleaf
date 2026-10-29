@@ -78,9 +78,7 @@ extension ProjectModel {
     func exportZip(forArxiv: Bool = false) async throws -> URL {
         guard await save() else {
             let name = openPath?.fileName ?? self.name
-            throw CocoaError(.fileWriteUnknown, userInfo: [
-                NSLocalizedDescriptionKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
-            ])
+            throw AppFailure(String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."))
         }
         removeExport()
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)

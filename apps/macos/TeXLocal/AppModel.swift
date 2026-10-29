@@ -104,8 +104,8 @@ final class AppModel {
         }
     }
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
-    var showSource: Bool
-    var showPDF: Bool
+    var showSource: Bool { didSet { defaults.set(showSource, forKey: DefaultsKey.showSource) } }
+    var showPDF: Bool { didSet { defaults.set(showPDF, forKey: DefaultsKey.showPDF) } }
     var outlineCollapsed: Bool { didSet { defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
     var mainWindowIsKey = false
     var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
@@ -181,11 +181,7 @@ final class AppModel {
     func toggleSource() { showPanes(source: !showSource, pdf: showPDF || showSource) }
     func togglePDF() { showPanes(source: showSource || showPDF, pdf: !showPDF) }
 
-    private func showPanes(source: Bool, pdf: Bool) {
-        (showSource, showPDF) = (source, pdf)
-        defaults.set(source, forKey: DefaultsKey.showSource)
-        defaults.set(pdf, forKey: DefaultsKey.showPDF)
-    }
+    private func showPanes(source: Bool, pdf: Bool) { (showSource, showPDF) = (source, pdf) }
 
     func requestPDF(_ action: PDFAction) {
         showPDF = true
@@ -255,11 +251,8 @@ final class AppModel {
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
     static func canOpen(_ url: URL) -> Bool {
-        guard url.isFileURL else { return false }
-        var directory: ObjCBool = false
-        if url.hasDirectoryPath || (FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &directory)
-                                   && directory.boolValue) { return true }
-        return UTType(filenameExtension: url.pathExtension).map { type in openableTypes.contains { type.conforms(to: $0) } } ?? false
+        guard url.isFileURL, let type = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.contentTypeKey]).contentType else { return false }
+        return openableTypes.contains { type.conforms(to: $0) }
     }
 
     func open(_ urls: [URL]) async {
@@ -429,7 +422,7 @@ final class AppModel {
 
     private func leave() async -> Bool {
         guard let project else { return true }
-        if !project.closed && !project.isClosing {
+        if project.isOpen {
             guard await project.save(), !Task.isCancelled else { return false }
             project.savePlace()
         }

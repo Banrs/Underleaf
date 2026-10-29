@@ -94,7 +94,7 @@ final class WorkspaceController: ThinSplitViewController {
     private func buildSidebar(height: CGFloat) {
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = 100
-        outlineBar = accessory(hostingView(OutlineHeader()), edge: .soft)
+        outlineBar = accessory(hostingView(OutlineHeader(project: project)), edge: .soft)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
         outlineItem.minimumThickness = 80
@@ -360,5 +360,5 @@ private struct Pane<Content: View>: View {
     var mount: Mount?
     let content: Content
 
-    var body: some View { if mount?.shown ?? true { content.disabled(project.closed || project.isClosing) } }
+    var body: some View { if mount?.shown ?? true { content.disabled(!project.isOpen) } }
 }

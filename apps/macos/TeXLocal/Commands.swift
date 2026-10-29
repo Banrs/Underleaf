@@ -148,7 +148,7 @@ enum PDFAction {
 
 extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
-        guard project?.closed != true, project?.isClosing != true else { return false }
+        guard project?.isOpen != false else { return false }
         return switch command {
         case .projectNew, .projectOpen: libraryProblem == nil
         case .fileSave, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine,

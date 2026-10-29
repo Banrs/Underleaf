@@ -125,7 +125,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && !project.closed && !project.isClosing }) { [app, project, pdf] in
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && project.isOpen }) { [app, project, pdf] in
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }.disabled(!app.isEnabled(command, on: project))
             }
@@ -164,21 +164,20 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func menu(_ id: NSToolbarItem.Identifier, _ content: some View) -> NSMenu {
         NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in
-            !project.closed && !project.isClosing && (![.format, .math, .insert].contains(id) || project.sourceToolsEnabled)
+            project.isOpen && (![.format, .math, .insert].contains(id) || project.sourceToolsEnabled)
         }) { content })
     }
 
     private nonisolated struct State: Equatable {
-        let sourceTools, hasPDF, showsPDF, canShare, compiling, canCompile, open: Bool
+        let sourceTools, hasPDF, canShare, compiling, canCompile, open: Bool
         let layout: WorkspaceLayout
         let zoomLabel: String
         let canZoomIn, canZoomOut: Bool
     }
 
     private var state: State {
-        State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, showsPDF: app.showPDF,
-              canShare: project.buildPDF != nil, compiling: project.compiling,
-              canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: !project.closed && !project.isClosing, layout: app.layout,
+        State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, canShare: project.buildPDF != nil, compiling: project.compiling,
+              canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: project.isOpen, layout: app.layout,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut)
     }
 
@@ -205,7 +204,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 control.setEnabled(shown && enabled, forSegment: segment)
             }
             update(item, \.isEnabled, shown)
-            update(item, \.isHidden, !state.showsPDF)
+            update(item, \.isHidden, state.layout == .source)
         case .share:
             update(item, \.isEnabled, state.open && state.canShare)
         case .compile:
@@ -228,7 +227,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    func validateMenuItem(_ item: NSMenuItem) -> Bool { !project.closed && !project.isClosing && (item.action != #selector(compile) || state.canCompile) }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { project.isOpen && (item.action != #selector(compile) || state.canCompile) }
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
     @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func zoom(_ control: NSSegmentedControl) {

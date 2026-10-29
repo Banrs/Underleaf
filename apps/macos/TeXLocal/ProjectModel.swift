@@ -77,8 +77,7 @@ final class ProjectModel {
     let texpresso: TeXpressoSession
 
     var openURL: URL? { openPath.flatMap(url) }
-    var diskConflict: String?
-    var missingFile: String?
+    private(set) var conflicts: [Conflict] = []
     private(set) var previewVersion = 0
 
     var importClash: ImportClash?
@@ -97,7 +96,7 @@ final class ProjectModel {
     @ObservationIgnored weak var views: (any ProjectViews)?
     @ObservationIgnored var syncTask: Task<Void, Never>?
     private var closing: Task<Bool, Never>?
-    var isClosing: Bool { closing != nil }
+    var isOpen: Bool { !closed && closing == nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
@@ -198,8 +197,9 @@ final class ProjectModel {
         switch event {
         case .section(let section): apply(section)
         case .documentReload, .renamed, .livePage, .liveDocument: break
-        case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
-        case .conflict(let asked): missingFile = asked.path
+        case .conflict(let asked):
+            conflicts.removeAll { $0.path == asked.path }
+            conflicts.append(asked)
         case .buildFinished(let finished): buildFinished(finished)
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
@@ -373,8 +373,7 @@ final class ProjectModel {
     }
 
     func answer(_ path: String, _ answer: Resolution) {
-        if diskConflict == path { diskConflict = nil }
-        if missingFile == path { missingFile = nil }
+        conflicts.removeAll { $0.path == path }
         session.send(Resolve(path: path, answer: answer), else: reporting(notSavedTitle(path)))
     }
 

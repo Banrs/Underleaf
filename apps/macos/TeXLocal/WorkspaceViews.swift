@@ -17,7 +17,7 @@ final class WorkspaceViews: ProjectViews {
         project.views = self
         connect()
         watches = [
-            track({ [weak project] in project.map { $0.closed || $0.isClosing } ?? true }) { [weak self] closing in
+            track({ [weak project] in project?.isOpen != true }) { [weak self] closing in
                 self?.editor.textView.isEditable = !closing
             },
             track({ [weak project] in project?.closed ?? true }, initial: false) { [weak self] _ in
