@@ -223,25 +223,35 @@ async fn texpressos_install_folder_is_taken_as_its_bin_folder() {
 }
 
 #[tokio::test]
-async fn a_zip_cannot_write_outside_its_project() {
+async fn a_zip_opens_without_its_top_folder_litter_or_escapes() {
     use std::io::Write;
     let library = Library::new();
-    let path = library.path("evil.zip");
+    let path = library.path("Paper.zip");
     let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
     let options = zip::write::SimpleFileOptions::default();
-    zip.start_file("main.tex", options).unwrap();
-    zip.write_all(b"\\documentclass{article}").unwrap();
-    zip.start_file("../escape.tex", options).unwrap();
-    zip.write_all(b"x").unwrap();
+    let entries = [
+        "Paper/main.tex",
+        "Paper/figs/a.png",
+        "__MACOSX/Paper/._main.tex",
+        "Paper/../../escape.tex",
+        "../escape.tex",
+    ];
+    for entry in entries {
+        zip.start_file(entry, options).unwrap();
+        zip.write_all(b"x").unwrap();
+    }
     zip.finish().unwrap();
-    let opened = library
-        .service
-        .call("OpenPath", json!({ "path": path }))
-        .await;
-    assert!(!library.path("escape.tex").exists());
-    assert!(!library.path("data/escape.tex").exists());
-    if let Ok(opened) = opened {
-        let root = library.project_root(opened["project"]["id"].as_str().unwrap());
-        assert!(root.join("main.tex").is_file());
+    let opened = library.call("OpenPath", json!({ "path": path })).await;
+    let root = library.project_root(opened["project"]["id"].as_str().unwrap());
+    assert!(root.join("main.tex").is_file());
+    assert!(root.join("figs/a.png").is_file());
+    assert!(!root.join("Paper").exists());
+    assert!(!root.join("__MACOSX").exists());
+    for escaped in [
+        root.join("escape.tex"),
+        library.path("escape.tex"),
+        library.path("data/escape.tex"),
+    ] {
+        assert!(!escaped.exists(), "{escaped:?}");
     }
 }

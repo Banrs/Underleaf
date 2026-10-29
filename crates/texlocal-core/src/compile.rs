@@ -61,7 +61,6 @@ pub struct CompileResult {
 struct Running {
     stopped: bool,
     tree: Option<Tree>,
-    record: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -130,9 +129,6 @@ impl CompileManager {
         if let Some(entry) = lock(&self.running).get_mut(root) {
             entry.stopped = true;
             entry.halt();
-            if let Some(record) = entry.record.take() {
-                let _ = std::fs::remove_file(record);
-            }
         }
     }
 
@@ -197,7 +193,6 @@ impl CompileManager {
         let mut running = lock(&self.running);
         let spawned = (!self.shutdown.load(Ordering::Acquire)).then(|| {
             let entry = running.entry(root.clone()).or_default();
-            entry.record = Some(run.output("fdb_latexmk"));
             let spawned = command.and_then(|mut command| Tree::spawn(&mut command));
             spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()))
         });
@@ -228,10 +223,8 @@ impl CompileManager {
         } else {
             end
         };
-        if let Some(record) = entry.record
-            && (end != End::Exited(0) || !run.pdf.exists())
-        {
-            let _ = std::fs::remove_file(record);
+        if end != End::Exited(0) || !run.pdf.exists() {
+            let _ = std::fs::remove_file(run.output("fdb_latexmk"));
         }
         tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await

@@ -52,7 +52,7 @@ async fn unpack(temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
     if crate::sha256(&std::fs::read(&archive)?) != digest {
         return Err(CoreError::internal(messages::tinytex_mismatch()));
     }
-    match run(sys::unpack(&archive, temp, path_env)?).await? {
+    match run(sys::unpack(&archive, temp, path_env)).await? {
         (0, _) => Ok(temp.join("TinyTeX")),
         (_, out) => Err(CoreError::internal(messages::tinytex_unpack_failed(
             crate::tail(out.trim(), 2000),
@@ -81,7 +81,7 @@ fn bundle(release: &Release) -> Option<(&str, &str)> {
 }
 
 async fn fetch(url: &str, to: &Path, path_env: &str) -> Result<(), CoreError> {
-    match run(sys::download(url, to, path_env)?).await? {
+    match run(sys::download(url, to, path_env)).await? {
         (0, _) => Ok(()),
         (6 | 7, _) => Err(CoreError::unavailable(messages::github_unreachable())),
         (28, _) => Err(CoreError::unavailable(messages::tinytex_stalled())),

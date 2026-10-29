@@ -28,6 +28,7 @@ for arg in "$@"; do
   case "$arg" in -outdir=*) out="${arg#-outdir=}";; ./*) main="${arg#./}";; esac
 done
 mkdir -p "$out"
+: > "$out/${main%.tex}.fdb_latexmk"
 grep -q slowly "$main" && sleep 30
 printf '%s\n' "$@" > "$out/args"
 stem="${main%.tex}"
@@ -807,6 +808,7 @@ async fn a_build_sends_its_sections_before_it_finishes_and_its_pdf_follows_the_m
     };
     assert_eq!(main_file("ch.tex"), Value::Null);
     assert_eq!(main_file("main.tex"), path);
+    assert!(rig.root().join("build/main.fdb_latexmk").exists());
     rig.forget();
     rig.call("Clean", json!({}));
     assert_eq!(rig.said(), ["build", "shownPdf", "reply"]);
@@ -826,6 +828,7 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
     assert_eq!(said_of(&rig, &kinds), said);
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["ok"], false);
+    assert!(!rig.root().join("build/main.fdb_latexmk").exists());
     let issue = &build["issues"][0];
     assert_eq!(
         (&issue["file"], &issue["line"]),
@@ -941,6 +944,7 @@ async fn stop_compile_stops_the_sessions_build() {
     rig.event("buildFinished", |_| true);
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["stopped"], true);
+    assert!(!rig.root().join("build/main.fdb_latexmk").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]

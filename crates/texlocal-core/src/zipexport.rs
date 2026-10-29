@@ -47,7 +47,7 @@ pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Res
         writer.start_file(rel, options(Ok(SystemTime::now())))?;
         writer.write_all(bytes)?;
     }
-    writer.finish()?.sync_all()?;
+    writer.finish()?;
     Ok(())
 }
 
