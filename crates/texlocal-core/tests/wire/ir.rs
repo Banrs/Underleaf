@@ -185,8 +185,7 @@ impl Ir {
 
     pub fn check(&self) {
         for store in &self.stores {
-            let def = &self.defs[store];
-            let Shape::Union(cases) = &def.shape else {
+            let Shape::Union(cases) = &self.defs[store].shape else {
                 panic!("{store} isn't a tagged union")
             };
             assert!(

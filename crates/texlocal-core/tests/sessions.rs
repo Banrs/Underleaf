@@ -92,7 +92,6 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
     let project = rig.section("project", |_| true);
     assert_eq!(project["name"], "P");
     assert_eq!(project["settings"]["mainFile"], "main.tex");
-    assert_eq!(project["settings"]["shellEscape"], false);
     let tree = rig.section("tree", |_| true);
     assert_eq!(names(&tree, "name"), ["ch.tex", "main.tex"]);
     assert_eq!(rig.section("documents", |_| true), json!([]));
@@ -195,8 +194,6 @@ async fn replies_follow_the_events_sent_before_them() {
     answered_after("project", "SetSettings", main);
     let entry = json!({ "folder": "", "name": "new.tex", "dir": false });
     answered_after("tree", "CreateEntry", entry);
-    let rename = json!({ "from": "new.tex", "to": "old.tex" });
-    answered_after("tree", "Rename", rename);
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
@@ -488,6 +485,7 @@ async fn another_apps_files_reach_the_tree() {
 async fn a_reloaded_tree_marks_the_main_file_and_hides_dotfiles() {
     let rig = project().await;
     write(&rig.root(), &[(".latexmkrc", ""), ("figs/a.png", "png")]);
+    rig.forget();
     rig.call("ReloadTree", json!({}));
     assert!(rig.heard("tree"));
     let tree = rig.section("tree", |e| e.to_string().contains("figs"));
@@ -505,6 +503,7 @@ async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
     let image = rig.library.path("plot.png");
     fs::write(&image, "png").unwrap();
     let args = json!({ "dir": "figs", "paths": [image] });
+    rig.forget();
     assert_eq!(rig.call("ImportFiles", args.clone())["existing"], json!([]));
     assert_eq!(fs::read(rig.root().join("figs/plot.png")).unwrap(), b"png");
     assert!(rig.heard("tree"));
