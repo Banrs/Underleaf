@@ -3,7 +3,7 @@ import Foundation
 extension ProjectModel {
     var livePreview: Bool {
         get { texpresso.active }
-        set { if newValue { startTeXpresso() } else { stopTeXpresso() } }
+        set { if newValue { startTeXpresso() } else { session?.send(StopLive()) } }
     }
 
     var canSwitchLivePreview: Bool { app?.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
@@ -17,8 +17,6 @@ extension ProjectModel {
         if let caret { session.send(LiveCaret(path: caret.path, offset: caret.offset)) }
         session.send(StartLive())
     }
-
-    func stopTeXpresso() { session?.send(StopLive()) }
 
     func liveView(_ pages: ClosedRange<Int>) {
         guard let session else { return }

@@ -30,8 +30,7 @@ final class TeXpressoSession {
     }
 
     func heard(_ state: LiveState) {
-        guard state.phase != .stopped else { return }
-        used = true
+        if state.phase != .stopped { used = true }
         if state.phase == .starting { acknowledged = false }
     }
 
