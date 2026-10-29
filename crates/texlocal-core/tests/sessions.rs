@@ -720,7 +720,7 @@ async fn ui_state_is_written_before_the_close_and_keeps_what_it_is_not_given() {
     })
     .await;
     let zoom = json!({ "type": "scale", "value": 1.5 });
-    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom, "panel": true });
+    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom });
     let patch = |patch| json!({ "patch": patch });
     rig.send(SESSION, "SetUiState", patch(json!({ "place": place })));
     let folders = json!({ "expandedFolders": ["figs"] });

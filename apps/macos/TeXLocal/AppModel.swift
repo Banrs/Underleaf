@@ -4,8 +4,6 @@ import Observation
 import UniformTypeIdentifiers
 
 nonisolated enum DefaultsKey {
-    static let sidebarVisible = "sidebarVisible"
-    static let inspectorVisible = "inspectorVisible"
     static let autoCompile = "autoCompile"
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
@@ -56,6 +54,13 @@ struct ExportFile: Transferable {
     }
 }
 
+protocol AppWindow: AnyObject {
+    var undoManager: UndoManager? { get }
+    func attach(_ project: ProjectModel)
+    func performPDF(_ action: PDFAction)
+    func revealSidebar()
+}
+
 nonisolated enum WorkspaceLayout { case source, split, pdf }
 
 nonisolated enum OutlineState { case open, folded, hidden }
@@ -86,24 +91,11 @@ final class AppModel {
     var addingFiles = false
     var exporting: ExportFile?
     var searchFocusToken = 0
-    @ObservationIgnored var performPDF: ((PDFAction) -> Void)?
-    @ObservationIgnored var attachViews: (ProjectModel) -> Void = { _ in }
+    @ObservationIgnored weak var window: (any AppWindow)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
 
-    var sidebarVisible: Bool { didSet { defaults.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) } }
-    var inspectorVisible: Bool { didSet { defaults.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) } }
-    var sidebarFolded = false
-    var inspectorFolded = false
-    var sidebarShown: Bool {
-        get { sidebarVisible && !sidebarFolded }
-        set { (sidebarVisible, sidebarFolded) = (newValue, false) }
-    }
-    var inspectorShown: Bool {
-        get { inspectorVisible && !inspectorFolded }
-        set { (inspectorVisible, inspectorFolded) = (newValue, false) }
-    }
     var autoCompile: Bool {
         didSet {
             defaults.set(autoCompile, forKey: DefaultsKey.autoCompile)
@@ -124,11 +116,8 @@ final class AppModel {
         self.core = core
         self.defaults = defaults
         if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice) }
-        defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
-                                     DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
-                                     DefaultsKey.showPDF: true])
-        sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
-        inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
+        defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true,
+                                     DefaultsKey.showSource: true, DefaultsKey.showPDF: true])
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
@@ -168,18 +157,7 @@ final class AppModel {
 
     func requestPDF(_ action: PDFAction) {
         showPDF = true
-        performPDF?(action)
-    }
-
-    nonisolated enum SideColumn { case sidebar, inspector }
-
-    func sideColumn(_ column: SideColumn, shown: Bool, byWindow: Bool) {
-        switch (column, shown || !byWindow) {
-        case (.sidebar, true): sidebarShown = shown
-        case (.sidebar, false): sidebarFolded = sidebarVisible
-        case (.inspector, true): inspectorShown = shown
-        case (.inspector, false): inspectorFolded = inspectorVisible
-        }
+        window?.performPDF(action)
     }
 
     func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
@@ -331,8 +309,7 @@ final class AppModel {
         return copy?.id
     }
 
-    var undoManager: UndoManager? { undoSource() }
-    @ObservationIgnored var undoSource: () -> UndoManager? = { nil }
+    var undoManager: UndoManager? { window?.undoManager }
 
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
@@ -384,7 +361,7 @@ final class AppModel {
         recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
         let model = ProjectModel(id: id, app: self)
         project = model
-        attachViews(model)
+        window?.attach(model)
         await model.load()
     }
 

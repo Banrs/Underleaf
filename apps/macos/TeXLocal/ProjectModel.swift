@@ -15,6 +15,7 @@ protocol ProjectViews: AnyObject {
     func perform(_ command: EditorCommand)
     func perform(_ command: MenuCommand)
     func validates(_ command: MenuCommand) -> Bool
+    var inspectorShown: Bool { get }
 }
 
 @Observable
@@ -153,7 +154,7 @@ final class ProjectModel {
 
     func savePlace() {
         guard initialLoadComplete else { return }
-        let place = UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom, panel: panel.shown)
+        let place = UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom)
         saveUIState(UiPatch(place: place))
     }
 
@@ -172,7 +173,6 @@ final class ProjectModel {
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         self.session = session
-        panel.shown = ui.panel
         let pdfShown = views?.opened(ui)
         if let openPath { views?.reveal(openPath, line: openPath == ui.file ? ui.line : nil, column: nil, length: nil, atTop: false, focus: true) }
         await pdfShown?.value
@@ -343,7 +343,7 @@ final class ProjectModel {
             return
         }
         search.show(found)
-        app?.sidebarShown = true
+        app?.window?.revealSidebar()
     }
 
     func quickHelp(in path: String, at offset: Int) async -> QuickHelp? {

@@ -214,7 +214,7 @@ struct ViewsTests {
             project.views = self
         }
 
-        let hasPDF = false, zoom = Zoom.fitWidth, shownVersion = 0
+        let hasPDF = false, zoom = Zoom.fitWidth, shownVersion = 0, inspectorShown = false
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }

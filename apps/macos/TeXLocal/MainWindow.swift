@@ -2,7 +2,7 @@ import AppKit
 import PDFKit
 import SwiftUI
 
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation, AppWindow {
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
     private let app: AppModel
@@ -54,7 +54,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         }
     }
 
+    override var undoManager: UndoManager? { window?.undoManager }
     func attach(_ project: ProjectModel) { views = WorkspaceViews(project: project) }
+    func performPDF(_ action: PDFAction) { workspace?.performPDF(action) }
+    func revealSidebar() { workspace?.revealSidebar() }
+
+    override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
+        guard action == #selector(NSSplitViewController.toggleInspector(_:)) else { return super.supplementalTarget(forAction: action, sender: sender) }
+        return window?.contentViewController as? WorkspaceController
+    }
 
     private func showProject() {
         guard let project = app.workspaceProject(after: workspace?.project) else { return showHome() }

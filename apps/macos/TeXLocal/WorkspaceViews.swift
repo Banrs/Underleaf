@@ -6,6 +6,7 @@ final class WorkspaceViews: ProjectViews {
     let project: ProjectModel
     let editor = SourceEditor()
     let pdf = PDFController()
+    var inspectorShown = false
     @ObservationIgnored private(set) var liveReads: Task<Void, Never>?
     @ObservationIgnored private var followTask: Task<Void, Never>?
     @ObservationIgnored private var followsCaret = false

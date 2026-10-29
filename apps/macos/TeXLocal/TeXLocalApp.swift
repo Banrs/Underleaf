@@ -9,6 +9,7 @@ struct TeXLocalApp: App {
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
+            SidebarCommands()
         }
     }
 }
@@ -21,10 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         super.init()
         Self.shared = self
-        app.undoSource = { NSApp.mainWindow?.undoManager }
         app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
-        app.attachViews = { [unowned self] in mainWindow.attach($0) }
     }
+
+    func applicationWillFinishLaunching(_ notification: Notification) { app.window = mainWindow }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindow.start()

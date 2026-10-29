@@ -47,6 +47,7 @@ class DraggedSplitView: NSSplitView {
         defer {
             dragging = false
             workspace?.quiet(false)
+            workspace?.dragged(self)
         }
         super.mouseDown(with: event)
     }

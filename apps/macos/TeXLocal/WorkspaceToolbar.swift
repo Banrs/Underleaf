@@ -58,7 +58,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
-        item.target = workspace
         item.visibilityPriority = .high
     }
 

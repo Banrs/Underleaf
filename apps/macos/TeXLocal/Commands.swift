@@ -8,7 +8,7 @@ enum MenuCommand: CaseIterable {
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
     case editFold, editUnfold, editFoldAll, editUnfoldAll
     case pdfFind, pdfGotoPage
-    case viewToggleSidebar, viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
+    case viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
     case compileRun, compileStop, compileClean, syncForward, syncInverse, issueNext, issuePrevious
 
@@ -57,7 +57,6 @@ enum MenuCommand: CaseIterable {
         case .editRename: ("Rename…", nil)
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
-        case .viewToggleSidebar: ("Sidebar", KeyboardShortcut("s", modifiers: [.command, .control]))
         case .viewToggleSource: ("Source", KeyboardShortcut("s", modifiers: [.command, .option]))
         case .viewTogglePDF: ("PDF", KeyboardShortcut("p", modifiers: [.command, .option]))
         case .viewToggleInspector: ("Inspector", KeyboardShortcut("i", modifiers: [.command, .option]))
@@ -181,10 +180,9 @@ extension AppModel {
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
         if command == .pdfOpen, let app = Self.pdfApp { return "Open PDF in \(app)" }
         let shown: Bool? = switch command {
-        case .viewToggleSidebar: sidebarShown
         case .viewToggleSource: showSource
         case .viewTogglePDF: showPDF
-        case .viewToggleInspector: inspectorShown
+        case .viewToggleInspector: project?.views?.inspectorShown ?? false
         case .viewToggleLogs: project?.panel.shown == true
         case .viewToggleWordCount: showWordCount
         default: nil
@@ -218,11 +216,9 @@ extension AppModel {
                     try await project.exportZip(forArxiv: arxiv)
                 }
             }
-        case .projectSearch:
-            sidebarShown = true
-            searchFocusToken += 1
+        case .projectSearch: searchFocusToken += 1
         case .fileNew, .fileNewFolder:
-            sidebarShown = true
+            window?.revealSidebar()
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
@@ -236,10 +232,9 @@ extension AppModel {
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .pdfGotoPage: prompt = .gotoPage
-        case .viewToggleSidebar: sidebarShown.toggle()
         case .viewToggleSource: toggleSource()
         case .viewTogglePDF: togglePDF()
-        case .viewToggleInspector: inspectorShown.toggle()
+        case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
         case .compileRun: Task { await project?.compile() }
