@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ pub(crate) struct BuildState {
     lines: BTreeMap<String, Vec<IssueLine>>,
 }
 
-#[derive(Clone, Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct IssueLine {
     line: u32,
     error: bool,
@@ -89,7 +89,7 @@ pub(crate) struct Builds {
     result_edits: u64,
     checks: Vec<LogItem>,
     checked: u64,
-    lines: BTreeMap<String, Vec<IssueLine>>,
+    marked: BTreeSet<String>,
     pub cleaners: Vec<Pending<()>>,
     cleaning: Option<(bool, u64)>,
 }
@@ -222,7 +222,7 @@ impl Actor {
             issues: builds.listed().cloned().collect(),
             lines: lines.collect(),
         };
-        self.builds.lines = build.lines.clone();
+        self.builds.marked = build.lines.keys().cloned().collect();
         self.publish(SessionSection::Build(build));
     }
 
@@ -238,7 +238,7 @@ impl Actor {
     pub fn mark_outdated(&mut self, edited: Option<&str>) {
         let outdated = self.has_pdf() && !self.builds.outdated;
         self.builds.outdated |= outdated;
-        if outdated || edited.is_some_and(|path| self.builds.lines.contains_key(path)) {
+        if outdated || edited.is_some_and(|path| self.builds.marked.contains(path)) {
             self.publish_build();
         }
     }

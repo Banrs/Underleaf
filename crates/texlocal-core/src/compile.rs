@@ -222,15 +222,6 @@ impl CompileManager {
                 (end, output)
             }
         };
-        self.ended(run, end, output).await
-    }
-
-    async fn ended(
-        &self,
-        run: CompileRun,
-        end: End,
-        output: String,
-    ) -> Result<CompileResult, CoreError> {
         let entry = lock(&self.running).remove(&run.root).unwrap_or_default();
         let end = if entry.stopped || self.shutdown.load(Ordering::Acquire) {
             End::Stopped

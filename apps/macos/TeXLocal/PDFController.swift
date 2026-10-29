@@ -46,13 +46,13 @@ final class PDFController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
     }
 
-    @objc func pageChanged() {
+    @objc private func pageChanged() {
         guard let document = view.document else { return }
         pageCount = document.pageCount
         if let page = view.currentPage, let number = document.number(of: page) { self.page = number }
     }
 
-    var visiblePages: ClosedRange<Int>? {
+    private var visiblePages: ClosedRange<Int>? {
         guard let document = view.document, view.hasShownArea else { return nil }
         let shown = view.visiblePages.map { document.index(for: $0) }.filter { $0 != NSNotFound }
         return shown.min().flatMap { first in shown.max().map { first...$0 } }
@@ -135,7 +135,6 @@ final class PDFController: NSObject {
 
     var keptZoom: Zoom { restoreZoom ?? zoom }
 
-    @discardableResult
     func load(_ url: URL?) -> Task<Void, Never> {
         restart(&loading) { [self] in
             let document: PDFDocument? = if let url { await Self.loadDocument(url) } else { nil }
