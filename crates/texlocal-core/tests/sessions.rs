@@ -713,8 +713,7 @@ async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside
     let doc = rig.sessions.document(again, "main.tex").unwrap();
     doc.edit(0, 0, "% more\n", None, false);
     rig.call_to(again, "Save", json!({ "reporting": true }));
-    let builds = || rig.said().iter().filter(|kind| *kind == "build").count();
-    assert_eq!(builds(), 1, "only the open's build section, with no build");
+    assert_eq!(said_of(&rig, &["build"]), ["build"]);
     rig.call_to(again, "Compile", json!({ "auto": false }));
     rig.section("build", |b| b["compiling"] == true);
 }

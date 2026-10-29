@@ -269,19 +269,17 @@ impl Manager {
             .cloned()
             .ok_or_else(|| CoreError::not_found(NOT_RUNNING))
     }
-}
 
-impl Manager {
     fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
         fs::create_dir_all(&project.build)?;
-        let build = std::fs::canonicalize(&project.build)?;
+        let build = fs::canonicalize(&project.build)?;
         if let Some(previous) = lock(&self.sessions).get(&owner) {
             previous.stop(None);
         }
         let mut folder = tempfile::Builder::new();
         folder.prefix("texlocal-texpresso-");
         folder.permissions(sys::permissions(0o700));
-        let pdf = std::fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
+        let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         Ok((build, pdf))
     }
 
@@ -373,7 +371,7 @@ impl Preview for Manager {
         pane: &Pane,
         sink: Sink,
     ) -> Result<Status, CoreError> {
-        let root = std::fs::canonicalize(&project.root)?;
+        let root = fs::canonicalize(&project.root)?;
         let main = settings::read_settings(&project.settings).main_file;
         let main = paths::safe_path(&root, &main)?;
         if !main.is_file() {
@@ -511,7 +509,7 @@ impl Preview for Manager {
         Ok(pdf)
     }
     fn stop(&self, root: &Path) -> Result<(), CoreError> {
-        let root = std::fs::canonicalize(root)?;
+        let root = fs::canonicalize(root)?;
         for session in lock(&self.sessions).values().filter(|s| s.root == root) {
             session.stop(None);
         }
@@ -523,7 +521,7 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
         return program_at(Path::new(&override_path));
     }
-    find_tool("texpresso", path_env).and_then(|p| std::fs::canonicalize(p).ok())
+    find_tool("texpresso", path_env).and_then(|p| fs::canonicalize(p).ok())
 }
 
 async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<Session>) {
@@ -678,8 +676,10 @@ mod tests {
     }
 
     fn typesets(events: &[LiveEvent]) -> usize {
-        let done = events.iter().filter(|e| matches!(e, LiveEvent::Done(_)));
-        done.count()
+        events
+            .iter()
+            .filter(|e| matches!(e, LiveEvent::Done(_)))
+            .count()
     }
 
     async fn typed(manager: &Manager, at: usize, keys: &str) {
