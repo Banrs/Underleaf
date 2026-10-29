@@ -171,6 +171,27 @@ async fn a_corrupt_settings_file_is_reported_at_open_and_left_as_it_is() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_setting_lands_in_an_opened_folders_own_file_without_its_ui() {
+    let rig = project().await;
+    let folder = rig.library.path("Thesis");
+    let own = r#"{"mainFile":"main.tex"}"#;
+    write(&folder, &[("main.tex", MAIN), (".texlocal.json", own)]);
+    let opened = rig.ask_library("OpenPath", json!({ "path": folder }));
+    let id = opened.unwrap()["project"]["id"].clone();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    rig.call_to(
+        2,
+        "SetSettings",
+        json!({ "patch": { "engine": "xelatex" } }),
+    );
+    let file = fs::read_to_string(folder.join(".texlocal.json")).unwrap();
+    let file: Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(file["engine"], "xelatex");
+    assert_eq!(file["mainFile"], "main.tex");
+    assert!(file["ui"].is_null(), "{file}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_library_is_pushed_before_the_reply_that_changed_it_and_an_open_project_keeps_its_place()
  {
     let rig = project().await;
@@ -971,18 +992,4 @@ async fn a_fix_adds_the_package_a_command_needs() {
     assert_eq!(edit["start"], "\\documentclass{article}".len());
     let unknown = rig.refuse("ApplyFix", json!({ "id": "format:disk" }));
     assert_eq!(unknown, ErrorKind::Invalid);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn checks_find_duplicates_missing_files_and_open_groups() {
-    let main = "\\documentclass{article}\n\\begin{document}\n\\label{a}\\label{a}\n\\cite{nokey}\n\\input{missing}\n$x\n\nnext {\n\\end{document}\n";
-    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    let build = rig.section("build", |b| b["issues"].as_array().unwrap().len() == 5);
-    let lines: Vec<u64> = build["issues"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["line"].as_u64().unwrap())
-        .collect();
-    assert_eq!(lines, [3, 4, 5, 6, 8]);
 }

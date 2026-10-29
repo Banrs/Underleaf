@@ -30,8 +30,8 @@ struct Callback {
 unsafe impl Send for Callback {}
 
 impl Callback {
-    fn send(self, value: &Value) {
-        (self.call)(self.ctx, c_json(value.to_string()).as_ptr());
+    fn send(self, said: String) {
+        (self.call)(self.ctx, c_json(said).as_ptr());
     }
 }
 
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn tl_open(
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
-        let listen = Box::new(move |event: &Value| callback.send(event));
+        let listen = Box::new(move |said: String| callback.send(said));
         let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen));
         Some(Box::new(TlHandle { runtime, sessions }))
     })

@@ -195,7 +195,7 @@ impl Actor {
         let announce = !result.stopped && (!auto || result.errors.len() != before);
         (builds.result, builds.result_edits) = (Some(result), builds.built);
         builds.compiling = false;
-        if !builds.cleaners.is_empty() && builds.cleaning.is_none() {
+        if !builds.cleaners.is_empty() {
             self.start_clean();
         }
         if let Some(auto) = self.builds.queued.take() {

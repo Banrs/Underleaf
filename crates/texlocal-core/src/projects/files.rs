@@ -18,7 +18,7 @@ pub struct RenameResult {
     pub from: String,
     pub to: String,
     #[serde(skip)]
-    pub main_file: String,
+    pub main_moved: bool,
 }
 
 pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
@@ -159,7 +159,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     Ok(RenameResult {
         from,
         to,
-        main_file: moved_main.unwrap_or(main_file),
+        main_moved: moved_main.is_some(),
     })
 }
 

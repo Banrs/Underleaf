@@ -108,6 +108,22 @@ async fn a_folder_opens_where_it_is() {
 }
 
 #[tokio::test]
+async fn a_folder_whose_settings_file_is_a_link_gets_the_guessed_main_file() {
+    let library = Library::new();
+    let folder = library.path("Paper");
+    write(
+        &folder,
+        &[
+            ("paper.tex", "\\documentclass{article}"),
+            ("real.json", "{}"),
+        ],
+    );
+    std::os::unix::fs::symlink("real.json", folder.join(".texlocal.json")).unwrap();
+    let opened = library.call("OpenPath", json!({ "path": folder })).await;
+    assert_eq!(opened["project"]["mainFile"], "paper.tex");
+}
+
+#[tokio::test]
 async fn a_tex_file_opens_its_folder_at_that_file() {
     let library = Library::new();
     let folder = library.path("Notes");

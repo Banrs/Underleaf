@@ -132,11 +132,10 @@ impl Actor {
         if !self.save_edits(true)? {
             return Ok(None);
         }
-        let (renamed, main) = self.service.with_project(&self.project_id, |project| {
-            let main = settings::read_settings(&project.settings).main_file;
+        let renamed = self.service.with_project(&self.project_id, |project| {
             let renamed = projects::rename_entry(project, from, to)?;
             self.preview.stop(&project.root)?;
-            Ok((renamed, main))
+            Ok(renamed)
         })?;
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
         self.emit(Event::Renamed(Renamed { from, to }));
@@ -174,7 +173,7 @@ impl Actor {
         self.publish_build();
         self.publish_live(false);
         self.reload_tree();
-        if renamed.main_file != main {
+        if renamed.main_moved {
             self.main_file_changed();
         }
         Ok(Some(renamed))
@@ -215,11 +214,11 @@ impl Actor {
     }
 
     pub fn prepare_delete(&mut self, path: &str) -> Result<bool, CoreError> {
-        if !self.flush_all(true)? || !self.dirty_paths().is_empty() {
+        if !self.flush_all(true)? {
             return Ok(false);
         }
         let main = settings::read_settings(&self.project.settings).main_file;
-        if paths::after_entry(&main, path).is_some() {
+        if within(&main, path) {
             return Err(CoreError::conflict(messages::main_file_trash()));
         }
         self.deleting.insert(path.to_owned());

@@ -170,20 +170,17 @@ impl Service {
         match Library::parse(name, args)? {
             Library::CheckTex(CheckTex {}, answer) => answer(Ok(self.status().await)),
             Library::SetTexpressoDir(SetTexpressoDir { dir }, answer) => {
-                let texpresso = dir
-                    .as_ref()
-                    .map(|dir| tex::program_at(&dir.join("texpresso")));
-                if texpresso.is_some_and(|found| found.is_none()) {
+                let missing = |dir: &PathBuf| tex::program_at(&dir.join("texpresso")).is_none();
+                if dir.as_ref().is_some_and(missing) {
                     return Err(CoreError::bad_request(messages::no_texpresso_there()));
                 }
                 AppSettings::update(&self.data_dir, |app| app.texpresso_dir = dir)?;
                 answer(Ok(self.status().await))
             }
             Library::SetTexDir(SetTexDir { dir }, answer) => {
-                let bin = dir.map(|dir| tex::tex_bin_dir(&dir).ok_or(()));
-                let bin = bin
-                    .transpose()
-                    .map_err(|()| CoreError::bad_request(messages::no_latexmk()))?;
+                let no_latexmk = || CoreError::bad_request(messages::no_latexmk());
+                let bin = dir.map(|dir| tex::tex_bin_dir(&dir).ok_or_else(no_latexmk));
+                let bin = bin.transpose()?;
                 AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
                 answer(Ok(self.status().await))
             }

@@ -271,7 +271,9 @@ mod tests {
         service.call("CreateProject", made).await.unwrap();
         let (tx, heard) = channel();
         let tx = Mutex::new(tx);
-        let listener = Box::new(move |said: &Value| drop(lock(&tx).send(said.clone())));
+        let listener = Box::new(move |said: String| {
+            let _ = lock(&tx).send(serde_json::from_str::<Value>(&said).unwrap());
+        });
         let preview = Arc::clone(&service.texpresso);
         let sessions = Arc::new(Sessions::with_compiler(
             service,
