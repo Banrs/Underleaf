@@ -1,10 +1,9 @@
 #!/bin/zsh
 S=${QA_SCRATCH:?export QA_SCRATCH=<scratchpad>, set up by tools/qa/setup.sh}; R=${1:A}; D=$2; shift 2
+zmodload zsh/system
 mkdir -p $S/locks $S/logs
-while ! mkdir $S/locks/xctest 2>/dev/null; do
-  if [[ -n $(find $S/locks/xctest -maxdepth 0 -mmin +25 2>/dev/null) ]]; then rmdir $S/locks/xctest 2>/dev/null; else sleep 4; fi
-done
-trap 'rmdir $S/locks/xctest 2>/dev/null' EXIT
+: >> $S/locks/xctest.lock
+zsystem flock $S/locks/xctest.lock
 L=$S/logs/xctest-${D:t}.log
 rm -rf /tmp/texlocal-xctest
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug -destination 'platform=macOS' \
