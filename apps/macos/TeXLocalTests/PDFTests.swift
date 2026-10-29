@@ -60,7 +60,7 @@ struct PDFTests {
         #expect(try shown(view) == place)
     }
 
-    @Test func aLivePageWaitsForTheLiveDocumentThatCameBeforeIt() async throws {
+    @Test func aLivePageWaitsForTheDocumentBeforeItAndClosingCancelsTheReads() async throws {
         let defaults = TestDefaults()
         let project = ProjectModel(id: "P", app: defaults.app())
         let views = WorkspaceViews(project: project)
@@ -76,6 +76,9 @@ struct PDFTests {
         await views.liveReads?.value
         let document = try #require(views.pdf.view.document)
         #expect(document.pageCount == 2 && document.page(at: 1)?.string?.contains("typed") == true)
+        project.handle(.livePage(LivePage(page: 0, pdf: typed)))
+        #expect(await project.close().value)
+        try await waitUntil { views.liveReads?.isCancelled == true }
     }
 
     @Test func aRebuildFindsAgainInPlace() async throws {

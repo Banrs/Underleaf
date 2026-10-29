@@ -129,7 +129,8 @@ struct FilesList: View {
         return Label {
             HStack {
                 if rename.id == node.path {
-                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: { renameEnded(node) }) {
+                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/",
+                                spaceWarning: "Spaces can break \\input and \\include.", ended: { renameEnded(node) }) {
                         commitRename(node)
                     } cancel: {
                         rename.cancel()

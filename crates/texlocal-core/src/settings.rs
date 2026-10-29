@@ -221,7 +221,7 @@ pub struct StoredUi {
 pub struct UiState {
     expanded_folders: Vec<String>,
     folded_headings: Vec<String>,
-    file: Option<String>,
+    pub(crate) file: Option<String>,
     line: Option<u32>,
     zoom: Option<Zoom>,
     panel: bool,

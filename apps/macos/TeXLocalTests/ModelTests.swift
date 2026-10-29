@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import TeXLocal
 
@@ -103,6 +104,8 @@ struct SectionTests {
         #expect(project.settings?.mainFile == "main.tex")
         #expect(project.url("b.tex")?.path(percentEncoded: false) == "/tmp/Paper/b.tex")
         #expect(project.tree.nodes.map(\.name) == ["figs", "b.tex", "main.tex"])
+        project.handle(.section(.tree([file("main.tex"), file("a.tex")])))
+        #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
         project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: "disk_full", args: [:], text: "The disk is full."), held: nil)])))
         #expect(app.alert?.title == "“b.tex” Wasn’t Saved")
@@ -134,6 +137,51 @@ struct SectionTests {
         pdf(true)
         #expect(project.livePDF && app.showPDF)
     }
+
+    @Test func liveStateIsTheStoresAndAFailureNeedsAttentionUntilItsLogCloses() {
+        let project = ProjectModel(id: "P", app: defaults.app())
+        let live = project.texpresso
+        let state = { (phase: LivePhase, failures: [Message], log: String?) in
+            project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, log: log, failures: failures, lines: [:]))))
+        }
+        state(.stopped, [], nil)
+        #expect(live.phase == .stopped && !live.used && live.log.isEmpty && !live.needsAttention)
+        state(.running, [], "Output written.")
+        #expect(live.active && live.used && live.log == "Output written." && String(localized: live.title) == "Live Preview On")
+        let failed = Message(id: "texpresso_failed", args: [:], text: "TeXpresso stopped.")
+        state(.stopped, [failed], nil)
+        project.handle(.liveAlert)
+        #expect(live.needsAttention && live.log == "TeXpresso stopped." && project.panel.showsLiveLog)
+        live.logClosed()
+        #expect(!live.needsAttention && String(localized: live.title) == "Live Preview Stopped")
+        state(.starting, [], nil)
+        state(.stopped, [failed], nil)
+        #expect(live.needsAttention)
+    }
+}
+
+struct LaneTests {
+    @Test func cancellingALaneCancelsWhatIsQueuedInIt() async {
+        var lane: Task<Bool, Never>?
+        let first = enqueue(&lane) {
+            try? await Task.sleep(for: .seconds(5))
+            return Task.isCancelled
+        }
+        let second = enqueue(&lane) { Task.isCancelled }
+        lane?.cancel()
+        let cancelled = (await first.value, await second.value)
+        #expect(cancelled == (true, true))
+    }
+}
+
+struct FieldTests {
+    @Test func aNameFieldWarnsOfASpaceOnlyWhileTheNameHasOne() {
+        let height = { (name: String) in
+            NSHostingView(rootView: RenameField(text: .constant(name), spaceWarning: "Spaces can break \\input and \\include.",
+                                                ended: {}, commit: {}, cancel: {})).fittingSize.height
+        }
+        #expect(height("my notes.tex") > height("notes.tex"))
+    }
 }
 
 struct ViewsTests {
@@ -145,12 +193,13 @@ struct ViewsTests {
         app.autoCompile = false
         let project = ProjectModel(id: info.id, app: app)
         let views = Views(project)
+        try #"{ "ui": { "file": "main.tex", "line": 3 } }"#.write(toFile: info.path + "/.texlocal.json", atomically: true, encoding: .utf8)
         await project.load()
         #expect(views.ui != nil && project.initialLoadComplete)
         #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
         await project.renameEntry("untitled.tex", to: "notes.tex")
         #expect(views.shown == ["main.tex", "untitled.tex", "notes.tex"])
-        #expect(views.revealed == ["main.tex", "untitled.tex"])
+        #expect(views.revealed == ["main.tex:3", "untitled.tex"])
         #expect(views.moved == ["untitled.tex", "notes.tex"])
         #expect(await project.close().value)
     }
@@ -176,7 +225,9 @@ struct ViewsTests {
             return nil
         }
 
-        func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) { revealed.append(path) }
+        func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
+            revealed.append(path + (line.map { ":\($0)" } ?? ""))
+        }
         func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
         func moved(from: String, to: String) { moved += [from, to] }
         func trashed(_ path: String) {}

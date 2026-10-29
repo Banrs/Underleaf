@@ -3,18 +3,23 @@ import Observation
 
 @Observable
 final class TeXpressoSession {
-    private(set) var phase = LivePhase.stopped {
-        didSet { if phase != .stopped { used = true } }
-    }
-    private var failed = false
-    private(set) var halted = false
-    private(set) var engine: Engine?
-    private(set) var log = ""
+    private let store: SessionStore
     private(set) var used = false
     private var acknowledged = false
 
+    init(store: SessionStore) { self.store = store }
+
+    var phase: LivePhase { store.live?.phase ?? .stopped }
+    var engine: Engine? { store.live?.engine }
     var active: Bool { phase == .starting || phase == .running }
-    var needsAttention: Bool { halted || !acknowledged && failed }
+    private var halted: Bool { store.live?.halted == true }
+    var needsAttention: Bool { halted || !acknowledged && store.live?.failures.isEmpty == false }
+
+    var log: String {
+        guard let live = store.live else { return "" }
+        return (live.failures.map(\.text) + [live.log ?? ""]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     var title: LocalizedStringResource {
         switch phase {
         case .stopped: needsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
@@ -24,20 +29,13 @@ final class TeXpressoSession {
         }
     }
 
-    func starting() {
-        phase = .starting
-        acknowledged = false
+    func heard(_ state: LiveState) {
+        guard state.phase != .stopped else { return }
+        used = true
+        if state.phase == .starting { acknowledged = false }
     }
-
-    func stopping() { if active { phase = .stopping } }
 
     func logClosed() { if phase == .stopped { acknowledged = true } }
 
     func alerted() { acknowledged = false }
-
-    func receive(_ state: LiveState) {
-        if state.phase == .starting && phase == .stopped { acknowledged = false }
-        (phase, engine, halted, failed) = (state.phase, state.engine, state.halted, !state.failures.isEmpty)
-        if let log = state.log { self.log = (state.failures.map(\.text) + [log]).filter { !$0.isEmpty }.joined(separator: "\n\n") }
-    }
 }

@@ -14,16 +14,11 @@ extension ProjectModel {
 
     func startTeXpresso() {
         guard !closed, let session, texpresso.phase == .stopped else { return }
-        texpresso.starting()
-        liveCaret()
+        if let caret { session.send(LiveCaret(path: caret.path, offset: caret.offset)) }
         session.send(StartLive())
     }
 
-    func stopTeXpresso() {
-        guard let session else { return }
-        texpresso.stopping()
-        session.send(StopLive())
-    }
+    func stopTeXpresso() { session?.send(StopLive()) }
 
     func liveView(_ pages: ClosedRange<Int>) {
         guard let session else { return }

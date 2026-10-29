@@ -20,6 +20,7 @@ final class WorkspaceViews: ProjectViews {
                 self?.editor.textView.isEditable = !closing
             },
             track({ [weak project] in project?.closed ?? true }, initial: false) { [weak self] _ in
+                self?.liveReads?.cancel()
                 self?.followTask?.cancel()
                 self?.pdf.loading?.cancel()
             },
@@ -83,6 +84,7 @@ final class WorkspaceViews: ProjectViews {
 
     func opened(_ ui: UiState) -> Task<Void, Never>? {
         pdf.restoreZoom = ui.zoom
+        showOpenFile()
         return showPDF()
     }
 
@@ -188,7 +190,7 @@ final class WorkspaceViews: ProjectViews {
 
     private func showLive(_ live: LiveDocument) {
         _ = enqueue(&liveReads) { [self] in
-            guard let document = await PDFController.loadDocument(URL(filePath: live.path)), showsLive else { return }
+            guard !Task.isCancelled, let document = await PDFController.loadDocument(URL(filePath: live.path)), showsLive else { return }
             pdf.show(document)
             if followsCaret { followCaret() }
         }
@@ -196,7 +198,7 @@ final class WorkspaceViews: ProjectViews {
 
     private func showLive(_ live: LivePage) {
         _ = enqueue(&liveReads) { [self] in
-            guard let page = await PDFController.loadPage(live.pdf), showsLive else { return }
+            guard !Task.isCancelled, let page = await PDFController.loadPage(live.pdf), showsLive else { return }
             pdf.show(page, at: live.page)
         }
     }

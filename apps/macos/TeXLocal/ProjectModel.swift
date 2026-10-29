@@ -20,7 +20,7 @@ protocol ProjectViews: AnyObject {
 @Observable
 final class ProjectModel {
     let id: String
-    let store = SessionStore()
+    let store: SessionStore
     private let core: Core
     private let listedName: String
     var name: String { store.project?.name ?? listedName }
@@ -41,7 +41,7 @@ final class ProjectModel {
         get { settings?.stopOnFirstError ?? false }
         set { setSettings(SettingsPatch(stopOnFirstError: newValue)) }
     }
-    let tree = FileTree()
+    let tree: FileTree
     private(set) var initialLoadComplete = false
     var openPath: String? { store.openFile?.path }
     var openKind: FileKind? { store.openFile?.kind }
@@ -75,7 +75,7 @@ final class ProjectModel {
     var livePDF: Bool { store.shownPdf?.live == true }
     var buildPDF: URL? { store.shownPdf?.path.map { URL(filePath: $0) } }
     let panel = BuildPanelModel()
-    let texpresso = TeXpressoSession()
+    let texpresso: TeXpressoSession
 
     var openURL: URL? { openPath.flatMap(url) }
     var diskConflict: String?
@@ -106,6 +106,8 @@ final class ProjectModel {
 
     init(id: String, app: AppModel) {
         self.id = id
+        let store = SessionStore()
+        (self.store, tree, texpresso) = (store, FileTree(store: store), TeXpressoSession(store: store))
         core = app.core
         listedName = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
@@ -172,8 +174,7 @@ final class ProjectModel {
         self.session = session
         panel.shown = ui.panel
         let pdfShown = views?.opened(ui)
-        let restored = ui.file.flatMap { tree.node(at: $0) == nil ? nil : $0 }
-        if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : ui.line, showsSource: false) }
+        if let openPath { views?.reveal(openPath, line: openPath == ui.file ? ui.line : nil, column: nil, length: nil, atTop: false, focus: true) }
         await pdfShown?.value
         guard !closed else { return }
         initialLoadComplete = true
@@ -232,7 +233,7 @@ final class ProjectModel {
         switch section {
         case .project(let now):
             if let error = now.problem, error != problem { alert(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
-        case .tree(let nodes): tree.show(nodes)
+        case .tree: break
         case .openFile, .outline: findHeadings()
         case .documents(let documents):
             for document in documents {
@@ -242,7 +243,7 @@ final class ProjectModel {
         case .build(let now): buildChanged(now, was: build)
         case .shownPdf(let shown):
             if shown.live, !live, app?.showPDF == false { app?.showPDF = true }
-        case .live(let state): texpresso.receive(state)
+        case .live(let state): texpresso.heard(state)
         }
     }
 
@@ -251,9 +252,9 @@ final class ProjectModel {
     }
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
-              jump: Bool = false, showsSource: Bool = true) async {
+              jump: Bool = false) async {
         guard let session else { return }
-        if showsSource { app?.showSource = true }
+        app?.showSource = true
         if jump, let from = caretPlace { trail.jumped(from: from) }
         let opened: String?
         do {
