@@ -29,7 +29,7 @@ pub(crate) struct SessionEvent {
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum Event {
     Section(SessionSection),
-    DocumentReload(DocumentReload),
+    DocumentReload(String),
     DocumentRenamed(DocumentRenamed),
     Conflict(Conflict),
     FilesChanged(Vec<String>),
@@ -37,11 +37,6 @@ pub(crate) enum Event {
     LiveAlert,
     LivePage(LivePage),
     LiveDocument(LiveDocument),
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct DocumentReload {
-    pub path: String,
 }
 
 #[derive(Serialize, JsonSchema)]

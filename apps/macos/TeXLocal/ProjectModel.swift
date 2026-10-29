@@ -210,7 +210,7 @@ final class ProjectModel {
         guard !closed else { return }
         switch event {
         case .section(let section): apply(section)
-        case .documentReload(let reloaded): reload(reloaded.path)
+        case .documentReload(let path): reload(path)
         case .documentRenamed(let renamed): if editor.path == renamed.from { editor.path = renamed.to }
         case .conflict(let asked) where asked.kind == .changed: diskConflict = asked.path
         case .conflict(let asked): missingFile = asked.path

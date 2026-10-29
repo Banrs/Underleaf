@@ -15,7 +15,7 @@ use texlocal_latex::syntax::TextEdit;
 use super::Document;
 use super::actor::{Actor, Later, Timer};
 use super::state::DocumentState;
-use crate::events::{Conflict, DocumentReload, Event};
+use crate::events::{Conflict, Event};
 use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
@@ -41,7 +41,7 @@ pub(crate) enum Resolution {
     Close,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reload {
     Disk,
     Revert,
@@ -138,8 +138,7 @@ impl Actor {
     }
 
     pub fn open(&mut self, path: &str) -> Result<Option<String>, CoreError> {
-        self.opened += 1;
-        if self.opened < self.opens.load(Ordering::Relaxed) {
+        if self.opens.fetch_sub(1, Ordering::Relaxed) > 1 {
             return Ok(None);
         }
         let path =
@@ -426,10 +425,7 @@ impl Actor {
         self.touched(path, None);
         self.after(Timer::Symbols);
         self.live_whole(path);
-        let reloaded = DocumentReload {
-            path: path.to_owned(),
-        };
-        self.emit(Event::DocumentReload(reloaded));
+        self.emit(Event::DocumentReload(path.to_owned()));
         let saved = match reason {
             Reload::Revert => self.save_doc(path, true, false).unwrap_or(false),
             Reload::Disk => true,

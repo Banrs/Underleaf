@@ -496,7 +496,7 @@ async fn a_change_on_disk_reloads_a_document_without_edits_and_its_old_view_is_r
     let doc = rig.open_document("ch.tex");
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    rig.event("documentReload", |e| e["path"] == "ch.tex");
+    rig.event("documentReload", |e| e == "ch.tex");
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
     assert!(doc.edit(0, 0, "stale ", None, false).is_none());
     let shown = rig.sessions.document(SESSION, "ch.tex").unwrap();
@@ -533,7 +533,7 @@ async fn revert_takes_the_disks_text() {
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     rig.event("conflict", |e| e["path"] == "ch.tex");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
-    rig.event("documentReload", |e| e["path"] == "ch.tex");
+    rig.event("documentReload", |e| e == "ch.tex");
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),

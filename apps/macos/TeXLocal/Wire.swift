@@ -412,19 +412,6 @@ nonisolated extension DocumentEdits {
     }
 }
 
-nonisolated struct DocumentReload: Decodable, Hashable, Sendable {
-    var path: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path }
-}
-
-nonisolated extension DocumentReload {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-    }
-}
-
 nonisolated struct DocumentRenamed: Decodable, Hashable, Sendable {
     var from: String
     var to: String
@@ -495,7 +482,7 @@ nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable 
 
 nonisolated enum Event: Decodable, Hashable, Sendable {
     case section(SessionSection)
-    case documentReload(DocumentReload)
+    case documentReload(String)
     case documentRenamed(DocumentRenamed)
     case conflict(Conflict)
     case filesChanged([String])
@@ -512,7 +499,7 @@ nonisolated extension Event {
         let wire = try decoder.strict(CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
-        case "documentReload": self = .documentReload(try wire.decode(DocumentReload.self, forKey: .value))
+        case "documentReload": self = .documentReload(try wire.decode(String.self, forKey: .value))
         case "documentRenamed": self = .documentRenamed(try wire.decode(DocumentRenamed.self, forKey: .value))
         case "conflict": self = .conflict(try wire.decode(Conflict.self, forKey: .value))
         case "filesChanged": self = .filesChanged(try wire.decode([String].self, forKey: .value))
