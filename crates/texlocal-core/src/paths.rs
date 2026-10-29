@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::Deserialize;
 pub(crate) use texlocal_latex::fold_case;
-
 use texlocal_latex::message::Message;
 
 use crate::error::CoreError;

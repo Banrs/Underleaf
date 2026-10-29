@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
+use texlocal_latex::message::Message;
 use texlocal_latex::templates::ProjectTemplate;
 
 use crate::compile::CompileManager;
@@ -17,7 +18,6 @@ use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
 use crate::texpresso;
 use crate::{CoreError, import, lock, tinytex};
-use texlocal_latex::message::Message;
 
 pub struct Service {
     pub(crate) data_dir: PathBuf,

@@ -4,6 +4,7 @@ use std::mem::{Discriminant, discriminant};
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::analyze::Analysis;
+use texlocal_latex::message::Message;
 use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::actor::Actor;
@@ -14,7 +15,6 @@ use super::watch::TreeIndex;
 use crate::events::Event;
 use crate::projects::TreeNode;
 use crate::settings::{self, ProjectSettings};
-use texlocal_latex::message::Message;
 
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]

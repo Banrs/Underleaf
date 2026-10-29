@@ -4,6 +4,7 @@ use std::path::Path;
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::logparse::{LogItem, parse_live_log};
+use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextEdit;
 use texlocal_latex::{is_text, utf16};
 
@@ -17,7 +18,6 @@ use crate::projects::read_capped;
 use crate::settings::{self, Engine};
 use crate::texpresso::{FileBuffer, LiveEvent, Pane};
 use crate::{CoreError, paths};
-use texlocal_latex::message::Message;
 
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 

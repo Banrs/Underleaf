@@ -13,6 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use texlocal_latex::diff::delta;
+use texlocal_latex::message::Message;
 use texlocal_latex::utf16::byte_offset;
 
 use crate::messages;
@@ -20,7 +21,6 @@ use crate::paths::{self, Project};
 use crate::process::{self, Tree};
 use crate::tex::{find_tool, program_at};
 use crate::{CoreError, lock, settings, sys, tail};
-use texlocal_latex::message::Message;
 
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_LOG: usize = 16 * 1024 * 1024;

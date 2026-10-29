@@ -6,12 +6,12 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use texlocal_latex::message::Message;
 
 use crate::atomic;
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, identity, safe_rel_file};
-use texlocal_latex::message::Message;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

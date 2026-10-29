@@ -6,6 +6,7 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::logparse::{Fix, LogItem, Severity};
+use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextRange;
 
 use super::actor::{Actor, Later, Timer};
@@ -18,7 +19,6 @@ use crate::messages;
 use crate::paths::{Project, disk_spelling};
 use crate::service::Service;
 use crate::settings;
-use texlocal_latex::message::Message;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 

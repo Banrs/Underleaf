@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::analyze::{Facts, Place};
 use texlocal_latex::logparse::Fix;
+use texlocal_latex::message::Message;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
 use texlocal_latex::{FileKind, file_kind};
@@ -16,7 +17,6 @@ use crate::messages;
 use crate::projects::{self, Written};
 use crate::settings::{Engine, SettingsPatch};
 use crate::{CoreError, packages};
-use texlocal_latex::message::Message;
 
 type Said = fn(&str) -> Message;
 

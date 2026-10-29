@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::is_text;
+use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextEdit;
 
 use super::Document;
@@ -21,7 +22,6 @@ use crate::paths::{self, within};
 use crate::projects;
 use crate::stamp::Stamp;
 use crate::{CoreError, lf, lock, newline};
-use texlocal_latex::message::Message;
 
 pub(super) const MAX_EDITED: u64 = 64 << 20;
 
