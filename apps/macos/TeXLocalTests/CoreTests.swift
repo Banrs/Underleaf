@@ -61,6 +61,10 @@ struct CoreTests {
         view.load(main)
         view.insertText("late ", replacementRange: NSRange(location: 0, length: 0))
         #expect(view.string == "theirs\n")
+        let undo = editor.textView.undo
+        await project.renameEntry("main.tex", to: "thesis.tex")
+        await project.renameEntry("untitled.tex", to: "notes.tex")
+        #expect(editor.path == "notes.tex" && editor.textView.undo === undo && Array(editor.kept.keys) == ["thesis.tex"])
         #expect(await project.close().value)
         try await waitUntil { !views.editor.textView.isEditable }
     }

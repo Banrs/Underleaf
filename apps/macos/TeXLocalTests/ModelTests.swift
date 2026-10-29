@@ -242,6 +242,7 @@ struct ViewsTests {
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }
+            if case .renamed(let renamed) = event { moved += [renamed.from, renamed.to] }
         }
 
         func opened(_ ui: UiState) -> Task<Void, Never>? {
@@ -253,7 +254,6 @@ struct ViewsTests {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
         func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
-        func moved(from: String, to: String) { moved += [from, to] }
         func trashed(_ path: String) {}
         func beep() {}
         func perform(_ command: EditorCommand) {}

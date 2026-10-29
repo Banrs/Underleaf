@@ -478,7 +478,7 @@ async fn a_new_entry_is_numbered_past_a_taken_name() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn renaming_the_open_main_file_sends_its_event_and_sections_before_the_reply() {
+async fn a_rename_sends_its_paths_and_the_open_files_sections_before_the_reply() {
     let rig = project().await;
     rig.open_document("main.tex");
     rig.section("outline", |o| !o.is_null());
@@ -487,7 +487,7 @@ async fn renaming_the_open_main_file_sends_its_event_and_sections_before_the_rep
     assert_eq!(renamed["to"], "thesis.tex");
     assert!(rig.root().join("thesis.tex").is_file());
     let said = [
-        "documentRenamed",
+        "renamed",
         "documents",
         "tree",
         "project",
@@ -495,11 +495,17 @@ async fn renaming_the_open_main_file_sends_its_event_and_sections_before_the_rep
         "reply",
     ];
     assert_eq!(rig.said(), said);
+    let renamed = rig.event("renamed", |_| true);
+    assert_eq!(renamed, json!({ "from": "main.tex", "to": "thesis.tex" }));
     let project = rig.section("project", |_| true);
     assert_eq!(project["settings"]["mainFile"], "thesis.tex");
     let documents = rig.section("documents", |_| true);
     assert_eq!(names(&documents, "path"), ["thesis.tex"]);
     assert_eq!(rig.section("openFile", |_| true)["path"], "thesis.tex");
+    rig.forget();
+    rig.call("Rename", json!({ "from": "ch.tex", "to": "parts/ch.tex" }));
+    let renamed = rig.event("renamed", |_| true);
+    assert_eq!(renamed, json!({ "from": "ch.tex", "to": "parts/ch.tex" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]

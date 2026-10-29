@@ -412,21 +412,6 @@ nonisolated extension DocumentEdits {
     }
 }
 
-nonisolated struct DocumentRenamed: Decodable, Hashable, Sendable {
-    var from: String
-    var to: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case from, to }
-}
-
-nonisolated extension DocumentRenamed {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        from = try wire.decode(String.self, forKey: .from)
-        to = try wire.decode(String.self, forKey: .to)
-    }
-}
-
 nonisolated struct DocumentState: Decodable, Hashable, Sendable {
     var path: String
     var error: Message?
@@ -483,7 +468,7 @@ nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable 
 nonisolated enum Event: Decodable, Hashable, Sendable {
     case section(SessionSection)
     case documentReload(String)
-    case documentRenamed(DocumentRenamed)
+    case renamed(Renamed)
     case conflict(Conflict)
     case filesChanged([String])
     case buildFinished(BuildFinished)
@@ -500,7 +485,7 @@ nonisolated extension Event {
         switch try wire.decode(String.self, forKey: .type) {
         case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
         case "documentReload": self = .documentReload(try wire.decode(String.self, forKey: .value))
-        case "documentRenamed": self = .documentRenamed(try wire.decode(DocumentRenamed.self, forKey: .value))
+        case "renamed": self = .renamed(try wire.decode(Renamed.self, forKey: .value))
         case "conflict": self = .conflict(try wire.decode(Conflict.self, forKey: .value))
         case "filesChanged": self = .filesChanged(try wire.decode([String].self, forKey: .value))
         case "buildFinished": self = .buildFinished(try wire.decode(BuildFinished.self, forKey: .value))
@@ -1388,6 +1373,21 @@ nonisolated struct RenameSymbol: SessionRequest {
     var kind: SymbolKind
     var from: String
     var to: String
+}
+
+nonisolated struct Renamed: Decodable, Hashable, Sendable {
+    var from: String
+    var to: String
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case from, to }
+}
+
+nonisolated extension Renamed {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        from = try wire.decode(String.self, forKey: .from)
+        to = try wire.decode(String.self, forKey: .to)
+    }
 }
 
 nonisolated struct RenderMath: SyntaxRequest {

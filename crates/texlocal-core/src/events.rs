@@ -32,7 +32,7 @@ pub(crate) struct SessionEvent {
 pub(crate) enum Event {
     Section(SessionSection),
     DocumentReload(String),
-    DocumentRenamed(DocumentRenamed),
+    Renamed(Renamed),
     Conflict(Conflict),
     FilesChanged(Vec<String>),
     BuildFinished(BuildFinished),
@@ -42,7 +42,7 @@ pub(crate) enum Event {
 }
 
 #[derive(Serialize, JsonSchema)]
-pub(crate) struct DocumentRenamed {
+pub(crate) struct Renamed {
     pub from: String,
     pub to: String,
 }

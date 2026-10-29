@@ -3,7 +3,7 @@ import SwiftUI
 
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
-    let scrollView = NSScrollView()
+    let scrollView = ScrollView()
     var onCursor: (Int, Int) -> Void = { _, _ in }
     var onScroll: (Int) -> Void = { _ in }
     var onEdit: () -> Void = {}
@@ -19,8 +19,16 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
     var focusWhenShown = false
 
-    private var scrolling: NotificationCenter.ObservationToken?
     let changes = EditorChanges()
+
+    final class ScrollView: NSScrollView {
+        var scrolled: () -> Void = {}
+
+        override func reflectScrolledClipView(_ clip: NSClipView) {
+            super.reflectScrolledClipView(clip)
+            scrolled()
+        }
+    }
 
     override init() {
         super.init()
@@ -51,9 +59,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.documentView = text
-        let clip = scrollView.contentView
-        clip.postsBoundsChangedNotifications = true
-        scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in
+        scrollView.scrolled = { [weak self] in
             self?.textView.scrolled()
             self?.reportTop()
         }

@@ -26,7 +26,6 @@ extension ProjectModel {
         guard to != from, let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
             try await session.call(Rename(from: from, to: to))
         }), let result = renamed else { return nil }
-        views?.moved(from: result.from, to: result.to)
         trail.moved(result.from, to: result.to)
         let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
         expandedFolders = Set(expandedFolders.map(remap))
