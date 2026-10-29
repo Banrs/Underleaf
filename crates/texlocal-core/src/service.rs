@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -23,12 +23,11 @@ pub struct Service {
     pub(crate) data_dir: PathBuf,
     pub(crate) compile: CompileManager,
     pub(crate) texpresso: Arc<texpresso::Manager>,
-    pub(crate) edits: Mutex<()>,
+    pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
     pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
     sent: Mutex<Sent<LibrarySection>>,
-    in_sessions: Mutex<Vec<String>>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -44,9 +43,9 @@ pub(crate) struct InSession {
 
 impl Drop for InSession {
     fn drop(&mut self) {
-        let mut ids = lock(&self.service.in_sessions);
-        if let Some(at) = ids.iter().position(|id| *id == self.id) {
-            ids.swap_remove(at);
+        let mut open = lock(&self.service.library);
+        if let Some(at) = open.iter().position(|(id, _)| *id == self.id) {
+            open.swap_remove(at);
         }
     }
 }
@@ -74,12 +73,11 @@ impl Service {
             data_dir,
             compile: CompileManager::default(),
             texpresso: Arc::default(),
-            edits: Mutex::default(),
+            library: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
             histories: Mutex::default(),
             hub: OnceLock::new(),
             sent: Mutex::default(),
-            in_sessions: Mutex::default(),
         }
     }
 
@@ -104,25 +102,39 @@ impl Service {
         done
     }
 
-    pub(crate) fn in_session(self: &Arc<Self>, id: &str) -> InSession {
-        lock(&self.in_sessions).push(id.to_owned());
-        InSession {
+    pub(crate) fn in_session(
+        self: &Arc<Self>,
+        id: &str,
+        root: &Path,
+    ) -> Result<InSession, CoreError> {
+        let mut library = lock(&self.library);
+        let overlaps = library
+            .iter()
+            .find(|(_, at)| at.starts_with(root) || root.starts_with(at));
+        if let Some((open, at)) = overlaps {
+            return Err(CoreError::conflict(if open == id {
+                messages::project_open()
+            } else {
+                messages::shares_folder(at.file_name().unwrap_or_default().display())
+            }));
+        }
+        library.push((id.to_owned(), root.to_owned()));
+        Ok(InSession {
             service: Arc::clone(self),
             id: id.to_owned(),
-        }
+        })
     }
 
-    fn unless_open<T>(
+    pub(crate) fn unless_open(
         &self,
         id: &str,
         refused: fn() -> Message,
-        act: impl FnOnce() -> Result<T, CoreError>,
-    ) -> Result<T, CoreError> {
-        let in_sessions = lock(&self.in_sessions);
-        if in_sessions.iter().any(|open| open == id) {
+    ) -> Result<MutexGuard<'_, Vec<(String, PathBuf)>>, CoreError> {
+        let library = lock(&self.library);
+        if library.iter().any(|(open, _)| open == id) {
             return Err(CoreError::conflict(refused()));
         }
-        act()
+        Ok(library)
     }
 
     pub(crate) fn history(&self, project: &Project) -> Arc<Mutex<History>> {
@@ -138,15 +150,6 @@ impl Service {
 
     pub fn project(&self, id: &str) -> Result<Project, CoreError> {
         Project::find(&self.data_dir, id)
-    }
-
-    pub(crate) fn with_project<T>(
-        &self,
-        id: &str,
-        use_project: impl FnOnce(&Project) -> Result<T, CoreError>,
-    ) -> Result<T, CoreError> {
-        let _guard = lock(&self.edits);
-        use_project(&self.project(id)?)
     }
 
     async fn status(&self) -> TexStatus {
@@ -208,11 +211,9 @@ impl Service {
                 answer(projects::free_project_name(&self.data_dir))
             }
             Library::RenameProject(RenameProject { id, name }, answer) => {
-                let renamed = self.unless_open(&id, messages::close_before_renaming, || {
-                    self.with_project(&id, |_| {
-                        projects::rename_project(&self.data_dir, &id, &name)
-                    })
-                });
+                let renamed = self
+                    .unless_open(&id, messages::close_before_renaming)
+                    .and_then(|_library| projects::rename_project(&self.data_dir, &id, &name));
                 answer(self.relist(renamed))
             }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
@@ -220,10 +221,7 @@ impl Service {
                 answer(self.relist(projects::open_path(self, &path)))
             }
             Library::ForgetFolder(ForgetFolder { id }, answer) => {
-                let forgotten = self.unless_open(&id, messages::close_before_forgetting, || {
-                    projects::forget_folder(self, &id)
-                });
-                answer(self.relist(forgotten))
+                answer(self.relist(projects::forget_folder(self, &id)))
             }
         }
     }

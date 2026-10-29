@@ -130,9 +130,7 @@ impl Actor {
             return Err(CoreError::conflict(messages::one_document()));
         }
         self.snapshot_before("Before Restore")?;
-        let written = self.service.with_project(&self.project_id, |project| {
-            projects::put_back(&project.root, others)
-        })?;
+        let written = projects::put_back(&self.project.root, others)?;
         if !written.is_empty() {
             self.reload_tree();
         }

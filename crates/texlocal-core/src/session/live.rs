@@ -180,11 +180,9 @@ impl Actor {
     }
 
     fn remember_live(&self, on: bool) {
-        let _ = self.service.with_project(&self.project_id, |project| {
-            settings::store_ui(&project.ui, |ui| {
-                ui.live_preview = on;
-                Ok(())
-            })
+        let _ = settings::store_ui(&self.project.ui, |ui| {
+            ui.live_preview = on;
+            Ok(())
         });
     }
 

@@ -211,6 +211,18 @@ impl Rig {
         self.event("section", section)["value"].take()
     }
 
+    pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        let event = |e: &Value| {
+            e["session"] == session && e["event"]["type"] == kind && matching(&e["event"]["value"])
+        };
+        self.find(event)["event"]["value"].take()
+    }
+
+    pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
+        self.event_in(session, "section", section)["value"].take()
+    }
+
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
         if let Some(found) = self.seen.lock().unwrap().iter().find(|e| matching(e)) {
             return found.clone();

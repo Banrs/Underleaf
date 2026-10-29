@@ -119,7 +119,6 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
-    pub project_id: String,
     pub project: Project,
     pub service: Arc<Service>,
     pub compiler: Arc<dyn Compiler>,
@@ -166,8 +165,8 @@ impl Actor {
             id: project_id,
             auto_compile,
         } = opening;
-        let in_session = sessions.service.in_session(&project_id);
         let project = sessions.service.project(&project_id)?;
+        let in_session = sessions.service.in_session(&project_id, &project.root)?;
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch
@@ -186,7 +185,6 @@ impl Actor {
         let history = sessions.service.history(&project);
         let mut actor = Self {
             id,
-            project_id,
             project,
             service: Arc::clone(&sessions.service),
             compiler: Arc::clone(&sessions.compiler),
@@ -289,6 +287,7 @@ impl Actor {
             });
         }
         self.publish_documents();
+        self.in_session = None;
         rx.close();
         while let Ok(message) = rx.try_recv() {
             if let Msg::Command(_, reply) = message {

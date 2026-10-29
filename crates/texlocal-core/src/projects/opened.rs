@@ -145,7 +145,7 @@ fn open_folder(
     if files > MAX_FILES {
         return Err(CoreError::bad_request(messages::too_many_files(name)));
     }
-    let _edits = lock(&service.edits);
+    let _library = lock(&service.library);
     let folder = Folder {
         path: root.to_path_buf(),
         identity: identity(root),
@@ -183,12 +183,12 @@ pub fn forget_folder(service: &Service, id: &str) -> Result<(), CoreError> {
         return Err(CoreError::bad_request(messages::only_opened_forgotten()));
     }
     let store = store(&service.data_dir, id);
-    let edits = lock(&service.edits);
+    let library = service.unless_open(id, messages::close_before_forgetting)?;
     let known = folders(&service.data_dir);
     if !known.iter().any(|(known, _)| known == id) {
         return Err(CoreError::not_found(messages::no_such_project(id)));
     }
     fs::remove_file(store.join(FOLDER))?;
-    drop(edits);
+    drop(library);
     Ok(fs::remove_dir_all(store)?)
 }

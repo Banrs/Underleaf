@@ -9,7 +9,7 @@ use super::watch;
 use crate::events::{Event, Renamed};
 use crate::import::{self, ImportConflict, Imported};
 use crate::messages;
-use crate::paths::{self, Project, within};
+use crate::paths::{self, within};
 use crate::projects::{self, RenameResult};
 use crate::settings::{self, SettingsPatch, UiPatch};
 use crate::{CoreError, zipexport};
@@ -37,9 +37,7 @@ impl Actor {
         dir: bool,
     ) -> Result<String, CoreError> {
         let path = paths::in_folder(folder, name);
-        let made = self.service.with_project(&self.project_id, |project| {
-            projects::create_free(&project.root, &path, dir)
-        })?;
+        let made = projects::create_free(&self.project.root, &path, dir)?;
         self.reload_tree();
         Ok(made)
     }
@@ -111,7 +109,7 @@ impl Actor {
         paths: &[PathBuf],
         conflict: Option<ImportConflict>,
     ) -> Result<Imported, CoreError> {
-        let imported = import::import_files(&self.service, &self.project_id, dir, paths, conflict)?;
+        let imported = import::import_files(&self.project, dir, paths, conflict)?;
         self.reload_tree();
         Ok(imported)
     }
@@ -124,19 +122,15 @@ impl Actor {
     }
 
     pub fn write_ui(&self, patch: UiPatch) -> Result<(), CoreError> {
-        let write = |project: &Project| settings::write_ui(&project.ui, patch);
-        self.service.with_project(&self.project_id, write)
+        settings::write_ui(&self.project.ui, patch)
     }
 
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
         if !self.save_edits(true)? {
             return Ok(None);
         }
-        let renamed = self.service.with_project(&self.project_id, |project| {
-            let renamed = projects::rename_entry(project, from, to)?;
-            self.preview.stop(&project.root)?;
-            Ok(renamed)
-        })?;
+        let renamed = projects::rename_entry(&self.project, from, to)?;
+        self.preview.stop(&self.project.root)?;
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
         self.emit(Event::Renamed(Renamed { from, to }));
         self.live_follow();
@@ -180,18 +174,16 @@ impl Actor {
     }
 
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
-        let main_changed = self.service.with_project(&self.project_id, |project| {
-            let main = settings::read_settings(&project.settings).main_file;
-            let updated = settings::write_settings(&project.settings, patch)?;
-            if let Some(on) = patch.shell_escape {
-                settings::grant(project, on)?;
-            }
-            let main_changed = updated.main_file != main;
-            if main_changed {
-                self.preview.stop(&project.root)?;
-            }
-            Ok(main_changed)
-        })?;
+        let project = &self.project;
+        let main = settings::read_settings(&project.settings).main_file;
+        let updated = settings::write_settings(&project.settings, patch)?;
+        if let Some(on) = patch.shell_escape {
+            settings::grant(project, on)?;
+        }
+        let main_changed = updated.main_file != main;
+        if main_changed {
+            self.preview.stop(&project.root)?;
+        }
         if main_changed {
             self.main_file_changed();
         } else if build && self.auto_compile {
