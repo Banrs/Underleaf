@@ -100,6 +100,29 @@ struct CoreTests {
         #expect(try await session.close())
     }
 
+    @Test func aClosedSessionRefusesCallsDropsALateReplyAndCancelsItsTasks() async throws {
+        let project = try await newProject(template: .blank)
+        let session = SessionClient(core: .shared)
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
+        var cancelled = false
+        session.task {
+            try? await Task.sleep(for: .seconds(10))
+            cancelled = Task.isCancelled
+        }
+        let late = Task.immediate { try await session.call(Save(reporting: true)) }
+        session.discard()
+        await #expect(throws: CancellationError.self) { try await late.value }
+        await #expect(throws: CancellationError.self) { try await session.call(Save(reporting: true)) }
+        try await waitUntil { cancelled }
+        #expect(session.closed && session.source("main.tex") == nil)
+        #expect(try await session.close())
+    }
+
+    @Test func aSessionTheCoreNeverOpenedClosesAtOnce() async throws {
+        let session = SessionClient(core: .shared)
+        #expect(try await session.close() && session.closed)
+    }
+
     @Test func theWireFixturesRoundTripAndItsRejectsAreRefused() throws {
         let object = { (data: Data) in try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) as? NSObject }
         for (type, json) in wireSamples {

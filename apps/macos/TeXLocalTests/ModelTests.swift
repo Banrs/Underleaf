@@ -184,6 +184,25 @@ struct FieldTests {
     }
 }
 
+struct SwitchTests {
+    private let defaults = TestDefaults()
+
+    @Test func anOpenSupersedesOneStillLeavingTheProjectBeforeIt() async throws {
+        let (first, second, third) = (try await newProject(), try await newProject(), try await newProject())
+        let app = defaults.app()
+        app.autoCompile = false
+        await app.open(first.id)
+        let left = try #require(app.project)
+        let superseded = Task { await app.open(second.id) }
+        let latest = Task { await app.open(third.id) }
+        _ = (await superseded.value, await latest.value)
+        #expect(app.project?.id == third.id && app.project?.initialLoadComplete == true && left.closed)
+        #expect(Array(app.recentProjects.prefix(2)) == [third.id, first.id])
+        #expect(await app.close())
+        #expect(app.project == nil)
+    }
+}
+
 struct ViewsTests {
     private let defaults = TestDefaults()
 
@@ -202,6 +221,11 @@ struct ViewsTests {
         #expect(views.revealed == ["main.tex:3", "untitled.tex"])
         #expect(views.moved == ["untitled.tex", "notes.tex"])
         #expect(await project.close().value)
+        #expect(await project.createEntry(in: "", directory: false) == nil)
+        #expect(await project.save())
+        project.engine = .xelatex
+        await project.compile()
+        #expect(app.alert == nil && views.shown.count == 3)
     }
 
     private final class Views: ProjectViews {

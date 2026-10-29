@@ -52,16 +52,17 @@ final class WorkspaceViews: ProjectViews {
         }
         text.forwardSync = { [weak self] quietly in
             guard let project = self?.project, project.hasPDF, project.isLaTeX, !quietly || project.app?.showPDF == true else { return nil }
-            return { Task { await project.forwardSync(quietly: quietly) } }
+            return { project.session.task { await project.forwardSync(quietly: quietly) } }
         }
         text.openDefinition = { [weak self] place in
-            Task { await self?.project.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
+            guard let project = self?.project else { return }
+            project.session.task { await project.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
         }
         text.quickHelp = { [weak self] in self?.quickHelp(at: $0) }
         pdf.onVisiblePages = { [weak self] in self?.project.liveView($0) }
         pdf.view.onInverse = { [weak self] page, point, click, quietly in
             guard let project = self?.project, !quietly || project.app?.showSource == true else { return }
-            Task { await project.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
+            project.session.task { await project.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
         }
     }
 
@@ -76,7 +77,7 @@ final class WorkspaceViews: ProjectViews {
         case .section(.live(let state)):
             if state.phase != .running { followsCaret = false }
             showIssues()
-        case .section(.shownPdf): if project.session != nil { showPDF() }
+        case .section(.shownPdf): showPDF()
         case .documentReload(let path): reload(path)
         case .documentRenamed(let renamed): if editor.path == renamed.from { editor.path = renamed.to }
         case .buildFinished(let finished): built(finished)
@@ -88,8 +89,7 @@ final class WorkspaceViews: ProjectViews {
 
     func opened(_ ui: UiState) -> Task<Void, Never>? {
         pdf.restoreZoom = ui.zoom
-        showOpenFile()
-        return showPDF()
+        return pdf.loading
     }
 
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
@@ -116,7 +116,8 @@ final class WorkspaceViews: ProjectViews {
         case .editShiftRight: editor.textView.shiftLines(1)
         case .editShiftLeft: editor.textView.shiftLines(-1)
         case .jumpToDefinition: editor.jumpToDefinition()
-        case .findUsages: if let path = editor.path { Task { [caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
+        case .findUsages:
+            if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
         case .editRename: project.app?.prompt = editor.renamable.map(Prompt.rename)
         default: break
         }
@@ -143,7 +144,7 @@ final class WorkspaceViews: ProjectViews {
         case .find: find()
         case let .reveal(loc, source): pdf.reveal(loc, from: source)
         case .inverseFromView:
-            if case let (page, point)? = pdf.sourcePoint() { Task { await project.inverseSync(page: page, x: point.x, y: point.y) } }
+            if case let (page, point)? = pdf.sourcePoint() { project.session.task { [project] in await project.inverseSync(page: page, x: point.x, y: point.y) } }
         }
     }
 
@@ -155,9 +156,8 @@ final class WorkspaceViews: ProjectViews {
     func focusEditor() { editor.focus() }
 
     private func showOpenFile() {
-        guard let file = project.store.openFile, file.kind.isText, let session = project.session,
-              editor.path != file.path || !editor.textView.document.editable,
-              let source = SourceDocument(session: session, path: file.path) else { return }
+        guard let file = project.store.openFile, file.kind.isText, editor.path != file.path || !editor.textView.document.editable,
+              let source = SourceDocument(session: project.session, path: file.path) else { return }
         editor.open(path: file.path, source: source)
         showIssues()
     }
@@ -168,20 +168,20 @@ final class WorkspaceViews: ProjectViews {
         editor.textView.issues.live = project.store.live?.lines[path]?.byLine ?? [:]
     }
 
-    @discardableResult private func showPDF() -> Task<Void, Never>? {
-        guard let shown = project.store.shownPdf, !shown.live else { return nil }
-        return pdf.load(shown.path.map { URL(filePath: $0) })
+    private func showPDF() {
+        guard let shown = project.store.shownPdf, !shown.live else { return }
+        _ = pdf.load(shown.path.map { URL(filePath: $0) })
     }
 
     private func reload(_ path: String) {
-        guard editor.path == path, let session = project.session, let source = SourceDocument(session: session, path: path) else { return }
+        guard editor.path == path, let source = SourceDocument(session: project.session, path: path) else { return }
         editor.reload(source)
     }
 
     private func built(_ finished: BuildFinished) {
         guard let result = project.result else { return }
         if result.ok, !project.outdated, project.isLaTeX, let app = project.app, app.showPDF, app.syncAfterCompile {
-            Task { [loading = pdf.loading, project] in
+            project.session.task { [loading = pdf.loading, project] in
                 await loading?.value
                 await project.forwardSync(quietly: true)
             }
@@ -207,10 +207,10 @@ final class WorkspaceViews: ProjectViews {
     }
 
     private func followCaret() {
-        guard let session = project.session, let path = project.openPath, project.isLaTeX else { return }
+        guard let path = project.openPath, project.isLaTeX else { return }
         let line = editor.currentLine
         _ = restart(&followTask) { [self] in
-            guard let loc = try? await session.call(SynctexForward(file: path, line: line)), !Task.isCancelled, !project.closed,
+            guard let loc = try? await project.session.call(SynctexForward(file: path, line: line)), !Task.isCancelled,
                   project.livePDF, project.openPath == path else { return }
             followsCaret = false
             pdf.follow(loc)
@@ -219,7 +219,7 @@ final class WorkspaceViews: ProjectViews {
 
     private func quickHelp(at offset: Int) {
         guard let path = editor.path else { return }
-        Task {
+        project.session.task { [self] in
             guard let help = await project.quickHelp(in: path, at: offset), editor.path == path else { return }
             editor.textView.showQuickHelp(help, at: offset)
         }
@@ -240,6 +240,6 @@ final class WorkspaceViews: ProjectViews {
         }
         guard project.tree.node(at: path) != nil else { return nil }
         if let insert = project.includeGraphics(path) { return .insert(insert) }
-        return .open { [project] in Task { await project.open(path) } }
+        return .open { [project] in project.session.task { await project.open(path) } }
     }
 }

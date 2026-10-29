@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import os
 import TeXLocalCore
 
@@ -118,17 +119,18 @@ final class Core {
         }
     }
 
-    func send<R: SessionRequest>(_ request: R, in session: UInt64) {
-        let logged = { (error: any Error) in
+    func send<R: SessionRequest>(_ request: R, in session: UInt64, failed: @escaping (any Error) -> Void) {
+        let failed = { (error: any Error) in
             Self.log.error("\(R.command, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            failed(error)
         }
         do {
             let (handle, json) = try prepared(request)
             ask({ tl_session_send(handle, $0, session, R.command, json) }) { envelope in
-                do { let _: R.Reply = try Self.decoded(R.command, envelope) } catch { logged(error) }
+                do { let _: R.Reply = try Self.decoded(R.command, envelope) } catch { failed(error) }
             }
         } catch {
-            logged(error)
+            failed(error)
         }
     }
 
@@ -168,39 +170,77 @@ final class Core {
     private var observers: [UInt64: (Event) -> Void] = [:]
     private var numbered: UInt64 = 0
 
-    func observe(_ observer: @escaping (Event) -> Void) -> UInt64 {
+    func session() -> UInt64 {
         numbered += 1
-        observers[numbered] = observer
         return numbered
     }
+
+    func observe(_ session: UInt64, _ observer: @escaping (Event) -> Void) { observers[session] = observer }
 
     func forget(_ session: UInt64) { observers[session] = nil }
 }
 
+@Observable
 final class SessionClient {
     let id: UInt64
-    private let core: Core
+    private(set) var closed = false
+    @ObservationIgnored var heard: (Event) -> Void
+    @ObservationIgnored private let core: Core
+    @ObservationIgnored private var tasks: [Int: Task<Void, Never>] = [:]
+    @ObservationIgnored private var started = 0
 
-    init(core: Core, _ observer: @escaping (Event) -> Void) {
-        self.core = core
-        id = core.observe(observer)
+    init(core: Core, _ heard: @escaping (Event) -> Void = { _ in }) {
+        (self.core, self.heard, id) = (core, heard, core.session())
+        core.observe(id) { [weak self] in self?.heard($0) }
     }
 
     @discardableResult
-    func call<R: SessionRequest>(_ request: R) async throws -> R.Reply { try await core.call(request, in: id) }
+    func call<R: SessionRequest>(_ request: R) async throws -> R.Reply {
+        guard !closed else { throw CancellationError() }
+        do {
+            let reply = try await core.call(request, in: id)
+            guard !closed else { throw CancellationError() }
+            return reply
+        } catch {
+            throw closed ? CancellationError() : error
+        }
+    }
 
-    func send<R: SessionRequest>(_ request: R) { core.send(request, in: id) }
+    func send<R: SessionRequest>(_ request: R, else failed: @escaping (any Error) -> Void = { _ in }) {
+        guard !closed else { return }
+        core.send(request, in: id) { [weak self] in if self?.closed == false { failed($0) } }
+    }
 
-    func source(_ path: String) -> OpaquePointer? { core.source(session: id, path: path) }
+    func source(_ path: String) -> OpaquePointer? { closed ? nil : core.source(session: id, path: path) }
+
+    func task(_ work: @escaping @MainActor () async -> Void) {
+        guard !closed else { return }
+        started += 1
+        let number = started
+        tasks[number] = Task { [weak self] in
+            await work()
+            self?.tasks[number] = nil
+        }
+    }
 
     func close() async throws -> Bool {
-        guard try await call(CloseProject()) else { return false }
-        core.forget(id)
+        do {
+            guard try await call(CloseProject()) else { return false }
+        } catch let error as CoreError where error.message.id == "no_such_session" {
+        } catch is CancellationError {}
+        end()
         return true
     }
 
     func discard() {
-        core.forget(id)
         send(CloseProject())
+        end()
+    }
+
+    private func end() {
+        closed = true
+        core.forget(id)
+        tasks.values.forEach { $0.cancel() }
+        tasks = [:]
     }
 }

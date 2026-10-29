@@ -3,17 +3,15 @@ import Foundation
 
 extension ProjectModel {
     func compile() async {
-        guard let session, !closed, app?.tex?.available == true else { return }
+        guard app?.tex?.available == true else { return }
         await alerting(notSavedTitle()) { try await session.call(Compile(auto: false)) }
     }
 
     func stopCompile() {
-        guard compiling, let session else { return }
-        session.send(StopCompile())
+        if compiling { session.send(StopCompile()) }
     }
 
     func cleanBuildFolder() async {
-        guard let session, !closed else { return }
         await alerting("Couldn’t Clean the Build Folder") { try await session.call(Clean()) }
     }
 
@@ -46,7 +44,7 @@ extension ProjectModel {
         chosenIssue = place
         let issues = listed
         guard open, let place, issues.indices.contains(place), let file = issues[place].file else { return }
-        Task { await self.open(file, line: issues[place].line, focus: focus, jump: true) }
+        session.task { [self] in await self.open(file, line: issues[place].line, focus: focus, jump: true) }
     }
 
     func goToIssue(next: Bool) {

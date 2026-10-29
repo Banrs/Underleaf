@@ -3,9 +3,9 @@ import Foundation
 extension ProjectModel {
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled folder" : "untitled.tex"
-        guard let session, let made = await alerting("Couldn’t Create “\(name)”", {
+        guard let made = await alerting("Couldn’t Create “\(name)”", {
             try await session.call(CreateEntry(folder: folder, name: name, dir: directory))
-        }), !closed else { return nil }
+        }) else { return nil }
         if !directory { await open(made, focus: false) }
         return made
     }
@@ -23,10 +23,9 @@ extension ProjectModel {
     }
 
     private func performRename(_ from: String, to: String) async -> RenameResult? {
-        guard to != from, let session, !closed else { return nil }
-        guard let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
+        guard to != from, let renamed = await alerting("Couldn’t Rename “\(from.fileName)”", {
             try await session.call(Rename(from: from, to: to))
-        }), let result = renamed, !closed else { return nil }
+        }), let result = renamed else { return nil }
         views?.moved(from: result.from, to: result.to)
         trail.moved(result.from, to: result.to)
         let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
@@ -40,19 +39,17 @@ extension ProjectModel {
         let item = UndoableTrash(
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in _ = try? await self?.session?.call(ReloadTree()) },
+            changed: { [weak self] in _ = try? await self?.session.call(ReloadTree()) },
             failed: { [weak self] title, error in self?.app?.report(title, error) })
         trashed.append(item)
         await item.moveToTrash()
     }
 
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
-        guard let session, !closed else { return false }
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
         do {
-            guard try await session.call(PrepareDelete(path: path)), !closed else { return false }
+            guard try await session.call(PrepareDelete(path: path)) else { return false }
         } catch {
-            guard !closed else { return false }
             app?.report(title, error)
             return false
         }
@@ -79,7 +76,6 @@ extension ProjectModel {
     }
 
     func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
-        guard let session else { return }
         let request = ImportFiles(dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
         do {
             let clashes = try await session.call(request).existing.map(\.path)
@@ -90,7 +86,6 @@ extension ProjectModel {
     }
 
     func exportZip(forArxiv: Bool = false) async throws -> URL {
-        guard let session else { throw CancellationError() }
         guard await save() else {
             let name = openPath?.fileName ?? self.name
             throw CocoaError(.fileWriteUnknown, userInfo: [

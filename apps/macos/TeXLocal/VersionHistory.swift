@@ -155,9 +155,8 @@ struct VersionHistorySheet: View {
     }
 
     private func list() async {
-        guard let session = project.session else { return }
         do {
-            let listed = try await session.call(ListVersions())
+            let listed = try await project.session.call(ListVersions())
             snapshots = listed
             chosen = listed.first?.id
         } catch {
@@ -167,10 +166,10 @@ struct VersionHistorySheet: View {
 
     private func compare() async {
         (shown, restorable) = (nil, false)
-        guard let session = project.session, let chosen, let file else { return }
+        guard let chosen, let file else { return }
         let rows: [DiffLine]
         do {
-            rows = try await session.call(CompareVersion(id: chosen, path: file))
+            rows = try await project.session.call(CompareVersion(id: chosen, path: file))
         } catch {
             if !Task.isCancelled { shown = .failed(error.localizedDescription) }
             return

@@ -54,10 +54,9 @@ final class OpenQuickly: NSPanel {
     }
 
     private func search(_ query: String) {
-        guard let session = project.session else { return }
         searching?.cancel()
-        searching = Task {
-            guard let items = try? await session.call(QuickOpen(query: query)), !Task.isCancelled else { return }
+        searching = Task { [project] in
+            guard let items = try? await project.session.call(QuickOpen(query: query)), !Task.isCancelled else { return }
             rows.items = items
             var frame = self.frame
             let height = Self.fieldHeight + (items.isEmpty ? 0 : CGFloat(min(items.count, Self.shownRows)) * Self.rowHeight

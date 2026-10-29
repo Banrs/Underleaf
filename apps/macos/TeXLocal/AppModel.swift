@@ -362,12 +362,11 @@ final class AppModel {
         await reloadProjects()
     }
 
-    func alerting<T>(_ title: @autoclosure () -> String, unless quiet: () -> Bool = { false },
-                     _ work: () async throws -> T) async -> T? {
+    func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
         do {
             return try await work()
         } catch {
-            if !quiet() { report(title(), error) }
+            report(title(), error)
             return nil
         }
     }
@@ -377,9 +376,11 @@ final class AppModel {
         alert = AppAlert(title, message)
     }
 
-    func report(_ title: String, _ error: any Error) { report(title, error.localizedDescription) }
+    func report(_ title: String, _ error: any Error) {
+        if !(error is CancellationError) { report(title, error.localizedDescription) }
+    }
 
-    @ObservationIgnored private var openGeneration = 0
+    @ObservationIgnored private var switching: Task<Bool, Never>?
     private(set) var opening: String?
     private(set) var importing: [URL] = []
     var isOpening: Bool { opening != nil || !importing.isEmpty }
@@ -387,28 +388,30 @@ final class AppModel {
 
     func open(_ id: String) async {
         guard project?.id != id || project?.closed == true else { return }
-        openGeneration += 1
-        let generation = openGeneration
         opening = id
         defer { if opening == id { opening = nil } }
-        guard await leave(generation) else { return }
-        dropRequests()
-        undoManager?.removeAllActions()
-        recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
-        let model = ProjectModel(id: id, app: self)
-        project = model
-        window?.attach(model)
-        await model.load()
+        _ = await restart(&switching) { [self] in
+            guard await leave() else { return false }
+            dropRequests()
+            undoManager?.removeAllActions()
+            recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
+            let model = ProjectModel(id: id, app: self)
+            project = model
+            window?.attach(model)
+            await model.load()
+            return true
+        }.value
     }
 
     @discardableResult
     func close() async -> Bool {
-        openGeneration += 1
-        guard project != nil else { return true }
-        guard await leave(openGeneration) else { return false }
-        project = nil
-        dropRequests()
-        return true
+        await restart(&switching) { [self] in
+            guard project != nil else { return true }
+            guard await leave() else { return false }
+            project = nil
+            dropRequests()
+            return true
+        }.value
     }
 
     private func dropRequests() {
@@ -419,18 +422,17 @@ final class AppModel {
     }
 
     func quit() async -> Bool {
-        openGeneration += 1
-        guard await leave(openGeneration) else { return false }
+        guard await restart(&switching, leave).value else { return false }
         _ = try? await core.call(KillAll())
         return true
     }
 
-    private func leave(_ generation: Int) async -> Bool {
+    private func leave() async -> Bool {
         guard let project else { return true }
         if !project.closed && !project.isClosing {
-            guard await project.save(), generation == openGeneration else { return false }
+            guard await project.save(), !Task.isCancelled else { return false }
             project.savePlace()
         }
-        return await project.close().value && generation == openGeneration
+        return await project.close().value && !Task.isCancelled
     }
 }

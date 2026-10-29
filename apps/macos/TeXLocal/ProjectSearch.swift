@@ -27,11 +27,11 @@ final class ProjectSearch {
         (searched.query, query) = (found.name, found.name)
     }
 
-    func run(in session: SessionClient?) async {
+    func run(in session: SessionClient) async {
         let asked = asked
         guard asked.query != usages?.name else { return }
         var found: [SearchGroup]?, why: String?
-        if isSearching, let session {
+        if isSearching {
             do {
                 found = try await session.call(Search(query: asked.query, matchCase: asked.matchCase, wholeWord: asked.wholeWords))
             } catch {

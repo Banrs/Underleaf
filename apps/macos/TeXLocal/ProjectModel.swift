@@ -22,7 +22,7 @@ protocol ProjectViews: AnyObject {
 final class ProjectModel {
     let id: String
     let store: SessionStore
-    private let core: Core
+    let session: SessionClient
     private let listedName: String
     var name: String { store.project?.name ?? listedName }
     var settings: ProjectSettings? { store.project?.settings }
@@ -61,7 +61,6 @@ final class ProjectModel {
     @ObservationIgnored private(set) var caret: (path: String, offset: Int)?
     var trail = Trail()
 
-    @ObservationIgnored private(set) var session: SessionClient?
     private var root: URL? { store.project.map { URL(filePath: $0.root, directoryHint: .isDirectory) } }
     @ObservationIgnored private var composingPath: String?
 
@@ -103,21 +102,24 @@ final class ProjectModel {
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
     @ObservationIgnored var trashed: [UndoableTrash] = []
     @ObservationIgnored var exportFolder: URL?
-    private(set) var closed = false
+    var closed: Bool { session.closed }
 
     init(id: String, app: AppModel) {
         self.id = id
         let store = SessionStore()
         (self.store, tree, texpresso) = (store, FileTree(store: store), TeXpressoSession(store: store))
-        core = app.core
+        session = SessionClient(core: app.core)
         listedName = app.projects.first { $0.id == id }?.name ?? id
         self.app = app
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
             guard let self else { return }
-            session?.send(LiveLog(shown: shown))
+            session.send(LiveLog(shown: shown))
             if !shown { texpresso.logClosed() }
         }
+        session.heard = { [weak self] in self?.handle($0) }
     }
+
+    isolated deinit { liveLogWatch?.cancel() }
 
     var isLaTeX: Bool { openKind == .tex }
     var sourceToolsEnabled: Bool { isLaTeX && app?.showSource == true }
@@ -147,36 +149,27 @@ final class ProjectModel {
 
     @discardableResult
     func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
-        await app?.alerting(title(), unless: { closed }, work) ?? nil
+        await app?.alerting(title(), work) ?? nil
     }
 
     let notices = ProjectNotices()
 
-    func savePlace() {
-        guard initialLoadComplete else { return }
-        let place = UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom)
-        saveUIState(UiPatch(place: place))
-    }
+    func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom))) }
 
     func load() async {
-        let session = SessionClient(core: core) { [weak self] event in self?.handle(event) }
         let ui: UiState
         do {
             ui = try await session.call(OpenProject(id: id, autoCompile: app?.autoCompile ?? false))
-            guard !closed else { throw CancellationError() }
         } catch {
             session.discard()
-            guard !closed else { return }
             app?.report("Couldn’t Open “\(name)”", error)
             if app?.project === self { await app?.close() }
             return
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
-        self.session = session
         let pdfShown = views?.opened(ui)
         if let openPath { views?.reveal(openPath, line: openPath == ui.file ? ui.line : nil, column: nil, length: nil, atTop: false, focus: true) }
         await pdfShown?.value
-        guard !closed else { return }
         initialLoadComplete = true
     }
 
@@ -200,18 +193,13 @@ final class ProjectModel {
         findHeadings()
     }
 
-    func autoCompileChanged() {
-        guard let session, !closed else { return }
-        session.send(SetOptions(autoCompile: app?.autoCompile ?? false))
-    }
+    func autoCompileChanged() { session.send(SetOptions(autoCompile: app?.autoCompile ?? false)) }
 
     private func saveUIState(_ patch: UiPatch) {
-        guard !closed else { return }
-        session?.send(SetUiState(patch: patch))
+        if initialLoadComplete { session.send(SetUiState(patch: patch)) }
     }
 
     func handle(_ event: Event) {
-        guard !closed else { return }
         switch event {
         case .section(let section): apply(section)
         case .documentReload, .documentRenamed, .livePage, .liveDocument: break
@@ -249,22 +237,21 @@ final class ProjectModel {
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
               jump: Bool = false) async {
-        guard let session else { return }
         app?.showSource = true
         if jump, let from = caretPlace { trail.jumped(from: from) }
         let opened: String?
         do {
             opened = try await session.call(Open(path: path))
         } catch {
-            if !closed { app?.report("Couldn’t Open “\(path.fileName)”", error) }
+            app?.report("Couldn’t Open “\(path.fileName)”", error)
             return
         }
-        guard let opened, opened == openPath, editsText, !closed else { return }
+        guard let opened, opened == openPath, editsText else { return }
         views?.reveal(opened, line: line, column: column, length: length, atTop: atTop, focus: focus)
     }
 
     func composing(_ composing: Bool, in path: String?) {
-        guard let session, let path = composing ? path : composingPath else { return }
+        guard let path = composing ? path : composingPath else { return }
         composingPath = composing ? path : nil
         session.send(Composing(path: path, composing: composing))
     }
@@ -281,7 +268,7 @@ final class ProjectModel {
     func copyFigure(_ url: URL) async -> String? {
         let folder = openPath?.parentFolder ?? ""
         let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
-        guard let session, let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
+        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
         else { return nil }
         let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
         guard tree.node(at: path) != nil else { return nil }
@@ -292,12 +279,11 @@ final class ProjectModel {
 
     @discardableResult
     func save(reporting: Bool = true) async -> Bool {
-        guard let session, !closed else { return true }
         do {
             return try await session.call(Save(reporting: reporting))
         } catch {
-            if reporting, !closed { app?.report(notSavedTitle(), error) }
-            return false
+            if reporting { app?.report(notSavedTitle(), error) }
+            return error is CancellationError
         }
     }
 
@@ -317,11 +303,10 @@ final class ProjectModel {
     }
 
     func replaceAll() async {
-        guard let session else { return }
         let asked = search.searched
         let replace = Replace(query: asked.query, replacement: search.replacement, matchCase: asked.matchCase, wholeWord: asked.wholeWords)
         guard let answer = await alerting("Couldn’t Replace “\(asked.query)”", {
-            try await editProject(replace, in: session, named: String(localized: "Replace"))
+            try await editProject(replace, named: String(localized: "Replace"))
         }) else { return }
         let count = (answer.edits?.edits.count ?? 0) + answer.written.reduce(0) { $0 + $1.count }
         let files = answer.written.count + (answer.edits == nil ? 0 : 1)
@@ -331,7 +316,7 @@ final class ProjectModel {
     }
 
     func findUsages(in path: String, at offset: Int) async {
-        guard let session, let found = await alerting("Couldn’t Find Usages", {
+        guard let found = await alerting("Couldn’t Find Usages", {
             try await session.call(FindUsages(path: path, offset: offset))
         }) else { return }
         guard let found else {
@@ -343,7 +328,7 @@ final class ProjectModel {
     }
 
     func quickHelp(in path: String, at offset: Int) async -> QuickHelp? {
-        guard let session, let answer = await alerting("Couldn’t Show Quick Help", {
+        guard let answer = await alerting("Couldn’t Show Quick Help", {
             try await session.call(LookUp(path: path, offset: offset))
         }) else { return nil }
         if answer == nil { views?.beep() }
@@ -362,22 +347,19 @@ final class ProjectModel {
     }
 
     func renameSymbol(_ symbol: Definition, to name: String) async throws {
-        guard let session else { return }
-        try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), in: session, named: String(localized: "Rename"))
+        try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), named: String(localized: "Rename"))
     }
 
     func saveVersion(named name: String) async throws {
-        guard let session else { return }
         if let saved = try await session.call(SaveVersion(name: name)) { notices.note(String(localized: "Saved Version “\(saved.title)”")) }
     }
 
     func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
-        guard let session else { return }
         apply(try await session.call(RestoreVersion(id: snapshot.id, paths: paths)), named: String(localized: "Restore"))
     }
 
     @discardableResult
-    private func editProject<R: SessionRequest>(_ request: R, in session: SessionClient, named name: String) async throws -> ProjectEdits
+    private func editProject<R: SessionRequest>(_ request: R, named name: String) async throws -> ProjectEdits
         where R.Reply == ProjectEdits {
         let answer = try await session.call(request)
         if apply(answer.edits, named: name) { return answer }
@@ -394,17 +376,16 @@ final class ProjectModel {
     }
 
     func run(_ fix: Fix) async {
-        guard let session else { return }
         fixing = fix
         defer { fixing = nil }
         let answer: Fixed?
         do {
             answer = try await session.call(ApplyFix(id: fix.id))
         } catch {
-            if !closed { app?.report("Couldn’t \(fix.title.text)", error) }
+            app?.report("Couldn’t \(fix.title.text)", error)
             return
         }
-        guard let answer, !closed else { return }
+        guard let answer else { return }
         apply(answer.edits, named: fix.title.text)
         await compile()
     }
@@ -412,37 +393,26 @@ final class ProjectModel {
     func answer(_ path: String, _ answer: Resolution) {
         if diskConflict == path { diskConflict = nil }
         if missingFile == path { missingFile = nil }
-        guard let session else { return }
-        Task {
-            await alerting(notSavedTitle(path)) {
-                try await session.call(Resolve(path: path, answer: answer))
-            }
-        }
+        session.send(Resolve(path: path, answer: answer), else: reporting(notSavedTitle(path)))
     }
 
     @discardableResult
     func close() -> Task<Bool, Never> {
         if let closing { return closing }
-        guard !closed else { return Task { true } }
         let task = Task { [self] in
             defer { closing = nil }
-            if let session {
-                do {
-                    guard try await session.close() else { return false }
-                } catch {
-                    app?.report(notSavedTitle(), error)
-                    return false
-                }
+            do {
+                guard try await session.close() else { return false }
+            } catch {
+                app?.report(notSavedTitle(), error)
+                return false
             }
-            closed = true
             let undo = app?.undoManager
             undo?.removeAllActions(withTarget: self)
             for item in trashed { undo?.removeAllActions(withTarget: item) }
             trashed = []
             removeExport()
             notices.cancel()
-            syncTask?.cancel()
-            liveLogWatch?.cancel()
             return true
         }
         closing = task
@@ -450,12 +420,13 @@ final class ProjectModel {
     }
 
     private func setSettings(_ patch: SettingsPatch) {
-        guard let session, !closed else { return }
-        Task.immediate { await alerting("Couldn’t Change the Project’s Settings") { try await session.call(SetSettings(patch: patch)) } }
+        session.send(SetSettings(patch: patch), else: reporting("Couldn’t Change the Project’s Settings"))
     }
+
+    private func reporting(_ title: String) -> (any Error) -> Void { { [weak self] in self?.app?.report(title, $0) } }
 
     func reveal(_ heading: Heading) {
         guard heading.file != openPath || cursorLine != heading.line || topLine != heading.line else { return }
-        Task { await open(heading.file, line: heading.line, atTop: true, focus: false, jump: true) }
+        session.task { [self] in await open(heading.file, line: heading.line, atTop: true, focus: false, jump: true) }
     }
 }
