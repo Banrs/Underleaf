@@ -93,7 +93,7 @@ struct WindowTests {
         #expect(await app.close())
     }
 
-    @Test func theToolbarFollowsTheLayoutAndTheColumnsWidths() async throws {
+    @Test func theToolbarFollowsTheLayoutAndTheColumnsWidthsAtOnceWhileADividerIsDragged() async throws {
         let app = defaults.app()
         let views = WorkspaceViews(project: ProjectModel(id: "P", app: app))
         let workspace = WorkspaceController(app: app, views: views, size: CGSize(width: 1400, height: 800))
@@ -110,13 +110,24 @@ struct WindowTests {
         app.layout = .split
         try await waitUntil { !format.isHidden }
 
-        let columns = workspace.columns.splitView
-        columns.setPosition(columns.bounds.width, ofDividerAt: 0)
-        window.layoutIfNeeded()
+        let columns = try #require(workspace.columns.splitView as? DraggedSplitView)
+        func move(to position: CGFloat) {
+            columns.setPosition(position, ofDividerAt: 0)
+            window.layoutIfNeeded()
+        }
+        move(to: columns.bounds.width)
         #expect(workspace.toolbar.compactCompile)
-        columns.setPosition(ColumnMetrics.paneMinimum, ofDividerAt: 0)
-        window.layoutIfNeeded()
+        workspace.quiet(true)
+        move(to: ColumnMetrics.paneMinimum)
+        #expect(workspace.toolbar.compactCompile)
+        workspace.quiet(false)
         #expect(!workspace.toolbar.compactCompile)
+        columns.drag {
+            move(to: columns.bounds.width)
+            #expect(workspace.toolbar.compactCompile)
+            move(to: ColumnMetrics.paneMinimum)
+            #expect(!workspace.toolbar.compactCompile)
+        }
     }
 
     @Test func aSearchFieldHandsReturnArrowsAndEscapeToItsActions() {
