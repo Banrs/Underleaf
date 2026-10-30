@@ -241,10 +241,12 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
     use serde_json::json;
+    use tokio::sync::Notify;
 
     use super::build::Fut;
     use super::*;
@@ -263,9 +265,38 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct Holds {
+        builds: AtomicUsize,
+        done: Arc<Notify>,
+    }
+
+    impl Compiler for Holds {
+        fn compile(&self, _: Project, _: bool) -> Fut<Result<CompileResult, CoreError>> {
+            self.builds.fetch_add(1, Ordering::Relaxed);
+            let done = Arc::clone(&self.done);
+            Box::pin(async move {
+                done.notified().await;
+                Ok(CompileResult::default())
+            })
+        }
+
+        fn stop_compile(&self, _: &Path) {}
+
+        fn clean(&self, _: PathBuf) -> Fut<Result<(), CoreError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
     type Heard = std::sync::mpsc::Receiver<Value>;
 
     async fn panicking() -> (Arc<Sessions>, Heard, tempfile::TempDir) {
+        compiling_with(Arc::new(Panics)).await
+    }
+
+    async fn compiling_with(
+        compiler: Arc<dyn Compiler>,
+    ) -> (Arc<Sessions>, Heard, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let service = Arc::new(Service::new(dir.path().into()));
         let made = json!({ "name": "P", "template": "blank" });
@@ -276,19 +307,27 @@ mod tests {
             let _ = lock(&tx).send(serde_json::from_str(&said).unwrap());
         });
         let preview = Arc::clone(&service.texpresso);
-        let sessions = Sessions::with_compiler(service, Arc::new(Panics), preview, false, listener);
+        let sessions = Sessions::with_compiler(service, compiler, preview, false, listener);
         (Arc::new(sessions), heard, dir)
     }
 
-    fn replied_within(heard: &Heard, id: u64, wait: Duration) -> Option<Value> {
+    fn heard_within(
+        heard: &Heard,
+        wait: Duration,
+        matching: impl Fn(&Value) -> bool,
+    ) -> Option<Value> {
         let deadline = std::time::Instant::now() + wait;
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             let said = heard.recv_timeout(left).ok()?;
-            if said["reply"] == id {
+            if matching(&said) {
                 return Some(said);
             }
         }
+    }
+
+    fn replied_within(heard: &Heard, id: u64, wait: Duration) -> Option<Value> {
+        heard_within(heard, wait, |said| said["reply"] == id)
     }
 
     fn replied(heard: &Heard, id: u64) -> Value {
@@ -317,6 +356,68 @@ mod tests {
             let said = replied(&heard, id);
             assert_eq!(said["error"]["kind"], "internal", "{said}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stopped_session_saves_what_it_can_and_says_so_of_each_document() {
+        let (sessions, heard, dir) = panicking().await;
+        let root = dir.path().join("P");
+        fs::write(root.join("ch.tex"), "chapter\n").unwrap();
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0);
+        let typed = |path| {
+            sessions
+                .document(1, path)
+                .unwrap()
+                .edit(0, 0, "% typed\n", None, false)
+        };
+        typed("main.tex");
+        fs::set_permissions(root.join("main.tex"), fs::Permissions::from_mode(0o444)).unwrap();
+        sessions.send_to(1, 1, "Open", json!({ "path": "ch.tex" }));
+        assert_eq!(replied(&heard, 1)["ok"], "ch.tex");
+        typed("ch.tex");
+        sessions.send_to(2, 1, "Clean", json!({}));
+        let marked = |said: &Value| {
+            let section = &said["event"]["value"];
+            let ids = section["value"].as_array().into_iter().flatten();
+            let ids: Vec<_> = ids.map(|doc| &doc["error"]["id"]).collect();
+            section["type"] == "documents" && ids == ["stopped_saved", "stopped_unsaved"]
+        };
+        heard_within(&heard, Duration::from_secs(10), marked).expect("each document marked");
+        let disk = |path| fs::read_to_string(root.join(path)).unwrap();
+        assert_eq!(disk("ch.tex"), "% typed\nchapter\n");
+        assert!(!disk("main.tex").starts_with("% typed"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn commands_after_a_close_are_refused_and_every_close_waits_for_the_build() {
+        let holds = Arc::new(Holds::default());
+        let (sessions, heard, _dir) = compiling_with(Arc::clone(&holds) as _).await;
+        let asked = [
+            ("OpenProject", json!({ "id": "P", "autoCompile": false })),
+            ("Compile", json!({ "auto": false })),
+            ("CloseProject", json!({})),
+            ("Compile", json!({ "auto": false })),
+            ("Open", json!({ "path": "main.tex" })),
+            ("CloseProject", json!({})),
+        ];
+        for (id, (command, args)) in (0..).zip(asked) {
+            sessions.send_to(id, 1, command, args);
+        }
+        for id in [0, 1] {
+            assert!(replied(&heard, id).get("ok").is_some());
+        }
+        for id in [3, 4] {
+            let said = replied(&heard, id);
+            assert_eq!(said["error"]["kind"], "notFound", "{said}");
+        }
+        assert!(sessions.document(1, "main.tex").is_none());
+        holds.done.notify_one();
+        for id in [2, 5] {
+            assert_eq!(replied(&heard, id)["ok"], true);
+        }
+        assert_eq!(holds.builds.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -103,7 +103,7 @@ pub trait Preview: Send + Sync {
     fn stop_request(&self, owner: u64) -> Status;
     fn live_text(&self, owner: u64, rel: &str) -> Option<String>;
     fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError>;
-    fn stop(&self, root: &Path) -> Result<(), CoreError>;
+    fn restart(&self, owner: u64);
 }
 
 struct Output {
@@ -503,12 +503,10 @@ impl Preview for Manager {
         }
         Ok(pdf)
     }
-    fn stop(&self, root: &Path) -> Result<(), CoreError> {
-        let root = fs::canonicalize(root)?;
-        for session in lock(&self.sessions).values().filter(|s| s.root == root) {
+    fn restart(&self, owner: u64) {
+        if let Ok(session) = self.owned(owner) {
             session.stop(None);
         }
-        Ok(())
     }
 }
 

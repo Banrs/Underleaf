@@ -203,6 +203,36 @@ async fn a_setting_lands_in_an_opened_folders_own_file_without_its_ui() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_setting_that_landed_is_shown_before_the_grant_that_failed_is_reported() {
+    let rig = project().await;
+    let folder = rig.library.path("Thesis");
+    let own = r#"{"mainFile":"main.tex"}"#;
+    let files = [
+        ("main.tex", MAIN),
+        ("ch.tex", CHAPTER),
+        (".texlocal.json", own),
+    ];
+    write(&folder, &files);
+    let opened = rig
+        .ask_library("OpenPath", json!({ "path": folder }))
+        .unwrap();
+    let id = opened["project"]["id"].as_str().unwrap();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    let ui = rig.library.service.project(id).unwrap().ui;
+    fs::write(&ui, "{}").unwrap();
+    fs::set_permissions(&ui, fs::Permissions::from_mode(0o444)).unwrap();
+    rig.forget();
+    let patch = json!({ "patch": { "mainFile": "ch.tex", "shellEscape": true } });
+    let refused = rig.reply(rig.send(2, "SetSettings", patch)).unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Denied);
+    let said = ["project", "reply"];
+    assert_eq!(said_of(&rig, &said), said);
+    let project = rig.section_in(2, "project", |_| true);
+    assert_eq!(project["settings"]["mainFile"], "ch.tex");
+    assert_eq!(project["settings"]["shellEscape"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_library_is_pushed_before_the_reply_that_changed_it_and_an_open_project_keeps_its_place()
  {
     let rig = project().await;

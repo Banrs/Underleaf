@@ -112,6 +112,12 @@ impl Timer {
     }
 }
 
+enum Lifecycle {
+    Open(InSession),
+    Closing(InSession, Vec<Pending<bool>>),
+    Closed,
+}
+
 enum Wake {
     Message(Msg),
     Deadline,
@@ -148,9 +154,7 @@ pub(crate) struct Actor {
     pub history: Arc<Mutex<History>>,
     pub writes_history: Arc<AtomicBool>,
     pub sent: Sent<SessionSection>,
-    in_session: Option<InSession>,
-    closing: Option<Pending<bool>>,
-    closed: bool,
+    lifecycle: Lifecycle,
 }
 
 impl Actor {
@@ -213,9 +217,7 @@ impl Actor {
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
             sent: Sent::default(),
-            in_session: Some(in_session),
-            closing: None,
-            closed: false,
+            lifecycle: Lifecycle::Open(in_session),
         };
         actor.reopen(ui.file.clone());
         actor.publish_all(tree);
@@ -242,7 +244,7 @@ impl Actor {
             if step.is_err() {
                 return self.stopped(&mut rx);
             }
-            if self.closed {
+            if matches!(self.lifecycle, Lifecycle::Closed) {
                 return;
             }
             let deadline = self.timers.values().min().copied();
@@ -271,7 +273,6 @@ impl Actor {
     }
 
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
-        self.closed = true;
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.flush_all(false);
             self.stop_compile();
@@ -287,7 +288,9 @@ impl Actor {
             });
         }
         self.publish_documents();
-        self.in_session = None;
+        for close in self.end() {
+            close.send(Err(super::stopped()));
+        }
         rx.close();
         while let Ok(message) = rx.try_recv() {
             if let Msg::Command(_, reply) = message {
@@ -307,6 +310,17 @@ impl Actor {
     }
 
     fn handle(&mut self, message: Msg) {
+        if let Lifecycle::Closing(_, closes) = &mut self.lifecycle {
+            return match message {
+                Msg::Command(Session::CloseProject(_, answer), reply) => {
+                    closes.push(Pending { reply, answer });
+                }
+                Msg::Command(_, reply) => reply.send(Err(super::gone())),
+                Msg::BuildDone(result) => self.build_done(result),
+                Msg::Cleaned(result) => self.cleaned(result),
+                _ => {}
+            };
+        }
         match message {
             Msg::Changed { doc, version, edit } => self.changed(doc, version, &edit),
             Msg::Command(command, reply) => self.command(command, reply),
@@ -352,7 +366,7 @@ impl Actor {
 
     fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
-            if self.closed || self.closing.is_some() {
+            if !matches!(self.lifecycle, Lifecycle::Open(_)) {
                 self.later.clear();
                 return;
             }
@@ -493,26 +507,40 @@ impl Actor {
 
     fn close(&mut self, reply: Pending<bool>) {
         match self.flush_all(true) {
-            Ok(true) => self.closing = Some(reply),
+            Ok(true) => {}
             flushed => return reply.send(flushed),
         }
+        let Lifecycle::Open(held) = std::mem::replace(&mut self.lifecycle, Lifecycle::Closed)
+        else {
+            unreachable!("a closing session queues its closes")
+        };
+        self.lifecycle = Lifecycle::Closing(held, vec![reply]);
         self.stop_compile();
         self.live_stop();
         self.docs.clear();
+        self.timers.clear();
         self.close_when_idle();
     }
 
     pub fn close_when_idle(&mut self) {
-        if self.builds.busy() {
+        if self.builds.busy() || !matches!(self.lifecycle, Lifecycle::Closing(..)) {
             return;
         }
-        let Some(reply) = self.closing.take() else {
-            return;
-        };
         self.stop_history();
-        self.closed = true;
-        self.in_session = None;
+        let closes = self.end();
         let _ = self.service.publish_projects();
-        reply.send(Ok(true));
+        for close in closes {
+            close.send(Ok(true));
+        }
+    }
+
+    fn end(&mut self) -> Vec<Pending<bool>> {
+        match std::mem::replace(&mut self.lifecycle, Lifecycle::Closed) {
+            Lifecycle::Closing(held, closes) => {
+                drop(held);
+                closes
+            }
+            _ => Vec::new(),
+        }
     }
 }

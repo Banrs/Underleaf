@@ -386,7 +386,5 @@ impl Preview for FakePreview {
         Err(CoreError::not_found(messages::texpresso_unsynced()))
     }
 
-    fn stop(&self, _: &Path) -> Result<(), CoreError> {
-        Ok(())
-    }
+    fn restart(&self, _: u64) {}
 }
