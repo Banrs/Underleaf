@@ -40,16 +40,16 @@ impl Scan {
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct OutlineNode {
-    pub(crate) index: usize,
-    pub(crate) heading: Heading,
-    pub(crate) fold_key: String,
-    pub(crate) words: usize,
+struct OutlineNode {
+    index: usize,
+    heading: Heading,
+    fold_key: String,
+    words: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) children: Option<Vec<Self>>,
+    children: Option<Vec<Self>>,
 }
 
-pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
+fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
     fn nest(
         outline: &[Heading],
         next: &mut usize,
@@ -93,9 +93,9 @@ pub struct Analysis {
     pub outline: Vec<Heading>,
     #[serde(skip)]
     pub files: Vec<String>,
-    pub(crate) tree: Vec<OutlineNode>,
-    pub(crate) words: usize,
-    pub(crate) heading_styles: Vec<headings::HeadingStyle>,
+    tree: Vec<OutlineNode>,
+    words: usize,
+    heading_styles: Vec<headings::HeadingStyle>,
 }
 
 pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis {
@@ -119,7 +119,7 @@ pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis
     }
 }
 
-pub(crate) const INPUT_DEPTH: usize = 15;
+const INPUT_DEPTH: usize = 15;
 
 fn literal(name: &str) -> bool {
     !name.is_empty() && !name.contains(['\\', '#'])
@@ -131,18 +131,18 @@ fn read<'a>(facts: &'a Facts, names: &'a [Named]) -> impl Iterator<Item = &'a Na
         .filter(|n| facts.end.is_none_or(|end| n.place < end))
 }
 
-pub(crate) struct Walk<'a> {
+struct Walk<'a> {
     scan: &'a Scan,
-    pub(crate) files: Vec<(&'a str, &'a Facts)>,
+    files: Vec<(&'a str, &'a Facts)>,
     labels: Vec<(&'a str, &'a Named)>,
     slips: Vec<(&'a str, &'a Slip)>,
     missing: Vec<(&'a str, &'a Input)>,
-    pub(crate) outline: Vec<Heading>,
-    pub(crate) words: usize,
+    outline: Vec<Heading>,
+    words: usize,
 }
 
 impl<'a> Walk<'a> {
-    pub(crate) fn from(scan: &'a Scan, file: &str) -> Self {
+    fn from(scan: &'a Scan, file: &str) -> Self {
         let mut walk = Self {
             scan,
             files: Vec::new(),

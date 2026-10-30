@@ -559,7 +559,7 @@ pub(crate) enum Kind {
 }
 
 #[derive(Default)]
-pub(crate) struct Structure {
+struct Structure {
     environments: Vec<(String, usize)>,
     braces: Vec<usize>,
     slips: Vec<Slip>,
@@ -567,7 +567,7 @@ pub(crate) struct Structure {
 }
 
 impl Structure {
-    pub(crate) fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
+    fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
         if !matches!(name, "begin" | "end") || !self.braces.is_empty() || !self.read(start) {
             return;
         }
@@ -597,7 +597,7 @@ impl Structure {
         self.environments.truncate(begun);
     }
 
-    pub(crate) fn brace(&mut self, text: &Text, at: usize, open: bool) {
+    fn brace(&mut self, text: &Text, at: usize, open: bool) {
         if !self.read(at) {
             return;
         }
@@ -608,7 +608,7 @@ impl Structure {
         }
     }
 
-    pub(crate) fn unclosed(&mut self, text: &Text, group: &Group) {
+    fn unclosed(&mut self, text: &Text, group: &Group) {
         if !self.read(group.open) {
             return;
         }
@@ -618,7 +618,7 @@ impl Structure {
         self.slip(text, group.open, message, Kind::Unbalanced);
     }
 
-    pub(crate) fn finish<'a>(
+    fn finish<'a>(
         mut self,
         text: &Text,
         open: impl Iterator<Item = &'a Group>,
