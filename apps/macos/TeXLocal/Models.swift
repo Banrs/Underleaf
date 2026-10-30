@@ -123,3 +123,35 @@ func remapPath(_ path: String, from: String, to: String) -> String {
     if path.hasPrefix(from + "/") { return to + path.dropFirst(from.count) }
     return path
 }
+
+enum SyntaxTheme: String, CaseIterable, Identifiable {
+    case overleaf
+    case texstudio
+    case system
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overleaf: "Overleaf"
+        case .texstudio: "TeXstudio"
+        case .system: "System"
+        }
+    }
+}
+
+nonisolated enum PDFPaper: String, CaseIterable, Identifiable {
+    case white, dark, auto
+
+    var id: Self { self }
+
+    var title: LocalizedStringResource {
+        switch self {
+        case .white: "White"
+        case .dark: "Dark"
+        case .auto: "Match Appearance"
+        }
+    }
+}
+
+enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }

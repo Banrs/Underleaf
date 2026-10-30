@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }
-
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
 
