@@ -93,8 +93,7 @@ private struct GoToSheet: View {
         DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number != nil) {
             if let number { go(number) }
         } fields: {
-            TextField(noun, text: $text, prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
-                .focused($focused)
+            DialogField(label: noun, text: $text, prompt: limit().map { "1–\($0)" } ?? "\(noun) number", focus: $focused)
         }
         .defaultFocus($focused, true)
     }
@@ -115,8 +114,7 @@ private struct RenameSheet: View {
         DialogSheet(title: "Rename “\(name)”", action: "Rename", enabled: !text.isEmpty && text != name) {
             try await rename(text)
         } fields: {
-            TextField("New Name", text: $text)
-                .focused($focused)
+            DialogField(label: "New Name", text: $text, focus: $focused)
         }
         .defaultFocus($focused, true)
     }
