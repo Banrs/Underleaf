@@ -79,7 +79,10 @@ fn wait_until(why: &str, done: impl Fn() -> bool) {
 
 fn zip_names(path: &Path) -> Vec<String> {
     let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
-    let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let mut names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.unwrap().into_owned())
+        .collect();
     names.sort();
     let _ = archive.by_index(0).unwrap().read(&mut [0; 1]);
     names

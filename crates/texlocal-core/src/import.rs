@@ -201,7 +201,8 @@ impl Opened {
         let mut files = Vec::new();
         for i in 0..zip.len() {
             let entry = zip.by_index_raw(i)?;
-            let name = entry.name().replace('\\', "/");
+            let Ok(name) = entry.name() else { continue };
+            let name = name.replace('\\', "/");
             let segments = match normalize_segments(&name, messages::path_escapes) {
                 Ok(s) if entry.is_file() && !s.is_empty() && !name.contains('\0') => s,
                 _ => continue,

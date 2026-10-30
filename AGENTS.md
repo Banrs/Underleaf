@@ -36,8 +36,8 @@ Ask in order; the first yes decides.
 - `zsh tools/qa/typecheck.sh`
 - `tools/qa/xctest.sh . $QA_SCRATCH/dd-xctest`
 
-The two target checks need `rustup target add wasm32-unknown-unknown aarch64-apple-ios`. The QA scripts need
-`zsh tools/qa/setup.sh <scratch>` once, then `export QA_SCRATCH=<scratch>`.
+`rust-toolchain.toml` pins the toolchain with its components and targets, and rustup installs it on first use. The
+QA scripts need `zsh tools/qa/setup.sh <scratch>` once, then `export QA_SCRATCH=<scratch>`.
 
 The real-TeX tests, `cargo test -p texlocal-core -- --ignored`, need TeX on the `PATH` and, for Live Preview, a
 TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly.

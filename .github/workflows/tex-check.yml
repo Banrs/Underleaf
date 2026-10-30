@@ -4,11 +4,27 @@ on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
-  push:
-    branches: ['claude/tex-check/**']
+  pull_request:
+    paths:
+      - 'crates/texlocal-core/src/compile.rs'
+      - 'crates/texlocal-core/src/packages.rs'
+      - 'crates/texlocal-core/src/process.rs'
+      - 'crates/texlocal-core/src/synctex.rs'
+      - 'crates/texlocal-core/src/tex.rs'
+      - 'crates/texlocal-core/src/texpresso.rs'
+      - 'crates/texlocal-core/src/tinytex.rs'
+      - 'crates/texlocal-core/src/session/build.rs'
+      - 'crates/texlocal-core/src/session/live.rs'
+      - 'crates/texlocal-core/tests/tex.rs'
+      - 'tools/texpresso/**'
+      - '.github/workflows/tex-check.yml'
 
 permissions:
   contents: read
+
+concurrency:
+  group: tex-check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -17,6 +33,7 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
+      TINYTEX: v2026.10
       TEX_PACKAGES: glossaries nomencl makeindex koma-script synctex
       TEXPRESSO: ${{ github.workspace }}/.texpresso
     steps:
@@ -26,23 +43,14 @@ jobs:
         run: |
           brew install pkgconf mupdf icu4c harfbuzz graphite2
           echo "versions=$(brew list --versions mupdf icu4c harfbuzz graphite2 | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
-      - name: TinyTeX release
-        id: tinytex
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/rstudio/tinytex-releases/releases/latest > "$RUNNER_TEMP/tinytex-release.json"
-          echo "tag=$(jq -r .tag_name "$RUNNER_TEMP/tinytex-release.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         id: tex
         with:
           path: ~/TinyTeX
-          key: tinytex-${{ steps.tinytex.outputs.tag }}-${{ env.TEX_PACKAGES }}
+          key: tinytex-${{ env.TINYTEX }}-${{ env.TEX_PACKAGES }}
       - if: steps.tex.outputs.cache-hit != 'true'
-        env:
-          TAG: ${{ steps.tinytex.outputs.tag }}
         run: |
-          curl -fsSL "https://github.com/rstudio/tinytex-releases/releases/download/$TAG/TinyTeX-1-darwin-$TAG.tar.xz" | tar -xf - -C ~
+          curl -fsSL "https://github.com/rstudio/tinytex-releases/releases/download/$TINYTEX/TinyTeX-1-darwin-$TINYTEX.tar.xz" | tar -xf - -C ~
           ~/TinyTeX/bin/universal-darwin/tlmgr update --self
           ~/TinyTeX/bin/universal-darwin/tlmgr install $TEX_PACKAGES
       - run: echo ~/TinyTeX/bin/universal-darwin >> "$GITHUB_PATH"
@@ -50,17 +58,16 @@ jobs:
         id: texpresso
         with:
           path: ${{ env.TEXPRESSO }}
-          key: texpresso-${{ steps.brew.outputs.versions }}-${{ steps.tinytex.outputs.tag }}-${{ hashFiles('tools/texpresso/**') }}
+          key: texpresso-${{ steps.brew.outputs.versions }}-${{ env.TINYTEX }}-${{ hashFiles('tools/texpresso/**') }}
       - if: steps.texpresso.outputs.cache-hit != 'true'
         run: |
           tools/texpresso/build.sh "$RUNNER_TEMP/texpresso-source"
           NO_LINK=1 tools/texpresso/install.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           key: tex-check
-      - run: cargo test -p texlocal-core -- --ignored --nocapture
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - run: cargo test --locked -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso
