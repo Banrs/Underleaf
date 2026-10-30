@@ -200,14 +200,14 @@ extension View {
 }
 
 private struct ActionsOffer<ID: Hashable>: ViewModifier {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     let id: ID?
     let actions: (ID) -> ItemActions?
 
     func body(content: Content) -> some View {
         let present = id.flatMap { actions($0) == nil ? nil : $0 }
         content
-            .onChange(of: present, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
-            .onDisappear { app.chosenItem = nil }
+            .onChange(of: present, initial: true) { _, id in window.chosenItem = id.flatMap(actions) }
+            .onDisappear { window.chosenItem = nil }
     }
 }

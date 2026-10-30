@@ -19,8 +19,8 @@ struct WindowTests {
     }
 
     @Test func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore() async throws {
-        let app = defaults.app()
-        let views = WorkspaceViews(project: ProjectModel(id: "P", app: app))
+        let window = defaults.window(), app = window.app
+        let views = WorkspaceViews(project: ProjectModel(id: "P", window: window))
         let text = views.editor.textView
         #expect(!views.pdf.view.darkPaper && text.isContinuousSpellCheckingEnabled)
         app.paper = .dark
@@ -29,21 +29,20 @@ struct WindowTests {
         #expect(!app.spellCheck)
     }
 
-    @Test func anErrorShowsOnTheWindowAndOneThatComesWhileItIsUpIsOnlyAnnounced() async throws {
-        let app = defaults.app()
-        let controller = MainWindowController(app: app)
-        let window = try #require(controller.window)
+    @Test func anErrorShowsOnItsWindowAndOneThatComesWhileItIsUpIsOnlyAnnounced() async throws {
+        let controller = MainWindowController(app: defaults.app())
+        let (model, window) = (controller.model, try #require(controller.window))
         window.orderFront(nil)
         defer { window.close() }
-        app.report("Couldn’t Open “a.tex”", "It’s gone.")
-        app.report("Couldn’t Open “b.tex”", CocoaError(.fileNoSuchFile))
-        #expect(app.alert?.title == "Couldn’t Open “a.tex”" && app.alert?.message == "It’s gone.")
+        model.report("Couldn’t Open “a.tex”", "It’s gone.")
+        model.report("Couldn’t Open “b.tex”", CocoaError(.fileNoSuchFile))
+        #expect(model.alert?.title == "Couldn’t Open “a.tex”" && model.alert?.message == "It’s gone.")
         try await waitUntil { window.attachedSheet != nil }
-        app.alert = nil
+        model.alert = nil
         try await waitUntil { window.attachedSheet == nil }
-        app.report("Couldn’t Open “b.tex”", CocoaError(.fileNoSuchFile))
-        #expect(app.alert?.title == "Couldn’t Open “b.tex”")
-        app.alert = nil
+        model.report("Couldn’t Open “b.tex”", CocoaError(.fileNoSuchFile))
+        #expect(model.alert?.title == "Couldn’t Open “b.tex”")
+        model.alert = nil
     }
 
     @Test func sheetsArePresentedFromTheWindowOnHomeAndInAProject() async throws {
@@ -51,22 +50,21 @@ struct WindowTests {
         let app = defaults.app()
         app.autoCompile = false
         let controller = MainWindowController(app: app)
-        app.window = controller
-        let window = try #require(controller.window)
+        let (model, window) = (controller.model, try #require(controller.window))
         window.orderFront(nil)
         defer { window.close() }
-        app.newProjectDraft = NewProjectDraft(template: .article, name: "Draft")
+        model.newProjectDraft = NewProjectDraft(template: .article, name: "Draft")
         try await waitUntil { window.attachedSheet != nil }
-        app.newProjectDraft = nil
+        model.newProjectDraft = nil
         try await waitUntil { window.attachedSheet == nil }
 
-        await app.open(info.id)
+        await model.open(info.id)
         try await waitUntil { controller.workspace != nil }
-        app.prompt = .gotoLine
+        model.prompt = .gotoLine
         try await waitUntil { window.attachedSheet != nil }
-        app.prompt = nil
+        model.prompt = nil
         try await waitUntil { window.attachedSheet == nil }
-        #expect(await app.close())
+        #expect(await model.close())
     }
 
     @Test func findInProjectFocusesTheSearchOnHomeAndInAProject() async throws {
@@ -74,29 +72,77 @@ struct WindowTests {
         let app = defaults.app()
         app.autoCompile = false
         let controller = MainWindowController(app: app)
-        app.window = controller
-        let window = try #require(controller.window)
+        let (model, window) = (controller.model, try #require(controller.window))
         window.orderFront(nil)
         defer { window.close() }
         try await waitUntil { window.toolbar?.items.contains { $0 is NSSearchToolbarItem } == true }
         controller.focusSearch()
         try await waitUntil { window.firstResponder is NSTextView }
 
-        await app.open(info.id)
+        await model.open(info.id)
         try await waitUntil { controller.workspace != nil }
         let sidebar = try #require(controller.workspace?.splitViewItems.first)
         sidebar.isCollapsed = true
-        app.perform(.projectSearch, on: app.project)
+        model.perform(.projectSearch, on: model.project)
         try await waitUntil {
             ((window.firstResponder as? NSText)?.delegate as? NSSearchField)?.placeholderString == "Search Project" && !sidebar.isCollapsed
         }
-        #expect(await app.close())
+        #expect(await model.close())
+    }
+
+    @Test func anotherProjectOpensInATabBesideTheWindowAndAnOpenOneComesForward() async throws {
+        let (first, second) = (try await newProject(), try await newProject())
+        let app = defaults.app()
+        app.autoCompile = false
+        app.newWindow = { MainWindowController.tab(app: app, beside: $0).model }
+        let controller = MainWindowController(app: app)
+        let window = try #require(controller.window)
+        window.tabbingIdentifier = UUID().uuidString
+        controller.showWindow(nil)
+        defer { for model in app.windows { (model.controller as? MainWindowController)?.window?.close() } }
+        await controller.model.open(first.id)
+        await controller.model.open(second.id)
+        let tab = try #require(app.window(showing: second.id)?.controller as? MainWindowController)
+        #expect(window.tabbedWindows?.count == 2 && window.tabGroup?.selectedWindow === tab.window)
+        try await waitUntil { window.tab.title == first.name && tab.window?.tab.title == second.name }
+        await tab.model.open(first.id)
+        #expect(window.tabGroup?.selectedWindow === window && app.windows.count == 2)
+        controller.newWindowForTab(nil)
+        #expect(window.tabbedWindows?.count == 3 && app.windows.contains { $0.project == nil })
+        for model in app.windows { #expect(await model.close()) }
+    }
+
+    @Test func closingAWindowSavesAndClosesItsProjectAndARestoredOneOpensItAgain() async throws {
+        let info = try await newProject()
+        let app = defaults.app()
+        app.autoCompile = false
+        let controller = MainWindowController(app: app)
+        let window = try #require(controller.window)
+        controller.showWindow(nil)
+        await controller.model.open(info.id)
+        let project = try #require(controller.model.project)
+        let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% kept\n", changing: nil, mirroring: false)
+        let state = NSKeyedArchiver(requiringSecureCoding: true)
+        controller.window(window, willEncodeRestorableState: state)
+        window.performClose(nil)
+        try await waitUntil { !window.isVisible }
+        #expect(project.closed && app.windows.isEmpty)
+        #expect(try String(contentsOfFile: info.path + "/main.tex", encoding: .utf8).hasPrefix("% kept\n"))
+
+        let restored = MainWindowController(app: app)
+        let again = try #require(restored.window)
+        defer { again.close() }
+        restored.window(again, didDecodeRestorableState: try NSKeyedUnarchiver(forReadingFrom: state.encodedData))
+        await restored.model.reopen()
+        #expect(restored.model.project?.id == info.id && restored.model.project?.isOpen == true)
+        #expect(await restored.model.close())
     }
 
     @Test func theToolbarFollowsTheLayoutAndTheColumnsWidthsAtOnceWhileADividerIsDragged() async throws {
-        let app = defaults.app()
-        let views = WorkspaceViews(project: ProjectModel(id: "P", app: app))
-        let workspace = WorkspaceController(app: app, views: views, size: CGSize(width: 1400, height: 800))
+        let model = defaults.window()
+        let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
+        let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -105,9 +151,9 @@ struct WindowTests {
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
         let format = try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == .format })
-        app.layout = .pdf
+        model.layout = .pdf
         try await waitUntil { format.isHidden }
-        app.layout = .split
+        model.layout = .split
         try await waitUntil { !format.isHidden }
 
         let columns = try #require(workspace.columns.splitView as? DraggedSplitView)

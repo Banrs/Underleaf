@@ -15,7 +15,7 @@ extension ProjectModel {
     }
 
     private func registerRenameUndo(from: String, to: String, action: String) {
-        app?.undoManager?.registerAsyncUndo(withTarget: self, actionName: action, reversal: {
+        window?.undoManager?.registerAsyncUndo(withTarget: self, actionName: action, reversal: {
             self.registerRenameUndo(from: to, to: from, action: action)
         }, work: {
             await self.performRename(to, to: from) != nil
@@ -36,10 +36,10 @@ extension ProjectModel {
     func deleteEntry(_ path: String) async {
         guard let original = url(path) else { return }
         let item = UndoableTrash(
-            original: original, name: path.fileName, undoManager: app?.undoManager,
+            original: original, name: path.fileName, undoManager: window?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
             changed: { [weak self] in _ = try? await self?.session.call(ReloadTree()) },
-            failed: { [weak self] title, error in self?.app?.report(title, error) })
+            failed: { [weak self] title, error in self?.window?.report(title, error) })
         trashed.append(item)
         await item.moveToTrash()
     }
@@ -51,7 +51,7 @@ extension ProjectModel {
             try item.recycle()
         } catch {
             session.send(Deleted(path: path, trashed: false))
-            app?.report(title, error)
+            window?.report(title, error)
             return false
         }
         session.send(Deleted(path: path, trashed: true))

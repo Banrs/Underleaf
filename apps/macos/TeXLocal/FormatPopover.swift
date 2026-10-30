@@ -3,13 +3,13 @@ import SwiftUI
 
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
-    private let app: AppModel
+    private let window: WindowModel
     private let views: WorkspaceViews
     private var closingClick: Int?
     private var click: Int? { NSApp.currentEvent.flatMap { [.leftMouseDown, .leftMouseUp].contains($0.type) ? $0.eventNumber : nil } }
 
-    init(app: AppModel, views: WorkspaceViews) {
-        self.app = app
+    init(window: WindowModel, views: WorkspaceViews) {
+        self.window = window
         self.views = views
         super.init()
         popover.behavior = .transient
@@ -19,7 +19,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     func toggle(relativeTo item: NSToolbarItem) {
         if popover.isShown { return popover.close() }
         if let click, click == closingClick { return }
-        let content = NSHostingController(rootView: FormatPanel(app: app, views: views) { [weak self] in self?.popover.close() })
+        let content = NSHostingController(rootView: FormatPanel(window: window, views: views) { [weak self] in self?.popover.close() })
         content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
         popover.show(relativeTo: item)
@@ -30,7 +30,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 }
 
 struct FormatPanel: View {
-    let app: AppModel
+    let window: WindowModel
     let views: WorkspaceViews
     let close: () -> Void
     @State private var hovered: String?
@@ -65,7 +65,7 @@ struct FormatPanel: View {
     private var separator: some View { Rectangle().fill(.separator).frame(height: 0.5) }
 
     private func toggle(_ command: MenuCommand, on: Bool) -> some View {
-        Toggle(isOn: Binding(get: { on }, set: { _ in app.perform(command, on: views.project) })) {
+        Toggle(isOn: Binding(get: { on }, set: { _ in window.perform(command, on: views.project) })) {
             Label(command.title, systemImage: command.style!.symbol)
                 .labelStyle(.iconOnly)
                 .imageScale(.large)

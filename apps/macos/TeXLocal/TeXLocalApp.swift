@@ -17,18 +17,24 @@ struct TeXLocalApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) static weak var shared: AppDelegate?
     let app = AppModel(core: .shared)
-    private(set) lazy var mainWindow = MainWindowController(app: app)
 
     override init() {
         super.init()
         Self.shared = self
         app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
+        app.newWindow = { [app] in MainWindowController.tab(app: app, beside: $0).model }
     }
 
-    func applicationWillFinishLaunching(_ notification: Notification) { app.window = mainWindow }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        mainWindow.start()
+        if app.windows.isEmpty { app.openWindow(beside: nil) }
+        guard app.core.isOpen else { return }
+        Task { [app] in
+            async let tex: Void = app.refreshTeXStatus()
+            await app.reloadProjects()
+            await tex
+            for window in app.windows { await window.reopen() }
+            if let id = app.launchProject.take() { await app.front.open(id) }
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -38,27 +44,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        Task { await app.open(urls.filter(AppModel.canOpen)) }
+        Task { await app.front.open(urls.filter(AppModel.canOpen)) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
+        if !flag { app.front.controller?.show() }
         return true
     }
 
-    private lazy var dockMenu = DockMenu(app: app) { [unowned self] in
-        NSApp.activate()
-        mainWindow.showWindow(nil)
-    }
+    private lazy var dockMenu = DockMenu(app: app)
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockMenu.menu }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        Task {
-            let left = await app.quit()
-            if !left, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
-            sender.reply(toApplicationShouldTerminate: left)
-        }
+        Task { sender.reply(toApplicationShouldTerminate: await app.quit()) }
         return .terminateLater
     }
 
@@ -67,12 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 final class DockMenu: NSObject {
     private let app: AppModel
-    private let show: () -> Void
 
-    init(app: AppModel, show: @escaping () -> Void) {
-        self.app = app
-        self.show = show
-    }
+    init(app: AppModel) { self.app = app }
 
     var menu: NSMenu {
         let menu = NSMenu()
@@ -86,13 +81,17 @@ final class DockMenu: NSObject {
         return menu
     }
 
-    @objc private func newProject() {
-        show()
-        app.newProject()
+    private func shown() -> WindowModel {
+        NSApp.activate()
+        let window = app.front
+        window.controller?.show()
+        return window
     }
 
+    @objc private func newProject() { shown().newProject() }
+
     @objc private func open(_ item: NSMenuItem) {
-        show()
-        Task { await app.open(item.representedObject as! String) }
+        let window = shown()
+        Task { await window.open(item.representedObject as! String) }
     }
 }

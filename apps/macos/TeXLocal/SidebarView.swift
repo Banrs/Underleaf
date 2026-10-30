@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct FilesList: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     @State private var selection: String?
@@ -15,9 +15,9 @@ struct FilesList: View {
                 .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
         .searching(project)
-        .onChange(of: app.newEntry, initial: true) { _, entry in
+        .onChange(of: window.newEntry, initial: true) { _, entry in
             guard let entry, !project.closed else { return }
-            app.newEntry = nil
+            window.newEntry = nil
             create(entry)
         }
     }
@@ -47,7 +47,7 @@ struct FilesList: View {
                         Text("Create a file, or drag files here from the Finder.")
                     } actions: {
                         Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
-                        Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
+                        Button(MenuCommand.fileUpload.title) { window.perform(.fileUpload, on: project) }
                     }
                 }
             }
@@ -72,7 +72,7 @@ struct FilesList: View {
                 Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
                 Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: "")) }
                 Divider()
-                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
+                Button(MenuCommand.fileUpload.title) { window.perform(.fileUpload, on: project) }
             }
             .onChange(of: selection) { _, path in
                 if let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false {
@@ -166,7 +166,7 @@ struct FilesList: View {
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
         guard !name.contains("/") else {
-            app.report("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
+            window.report("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
             return
         }
         let folder = node.path.parentFolder
@@ -252,14 +252,14 @@ struct OutlineList: View {
 }
 
 struct OutlineHeader: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     let project: ProjectModel
     @State private var hovering = false
     @State private var line: CGFloat = 0
 
     var body: some View {
-        let open = app.outlineOpen(of: project)
-        Button { app.outlineCollapsed = open } label: {
+        let open = window.outlineOpen(of: project)
+        Button { window.outlineCollapsed = open } label: {
             HStack {
                 Text("File Outline")
                 Spacer()

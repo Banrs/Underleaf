@@ -25,7 +25,7 @@ final class WorkspaceViews: ProjectViews {
                 self?.followTask?.cancel()
                 self?.pdf.loading?.cancel()
             },
-            track({ [weak project] in project?.app?.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
+            track({ [weak project] in project?.window?.app.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
         ]
     }
 
@@ -37,10 +37,10 @@ final class WorkspaceViews: ProjectViews {
         }
         editor.onEdit = { [weak self] in if let self, project.livePDF { followsCaret = true } }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
-        editor.command = { [weak self] in if let project = self?.project { project.app?.perform($0, on: project) } }
+        editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }
         let text = editor.textView
-        text.isContinuousSpellCheckingEnabled = project.app?.spellCheck ?? true
-        text.spellCheckToggled = { [weak self] in self?.project.app?.spellCheck = $0 }
+        text.isContinuousSpellCheckingEnabled = project.window?.app.spellCheck ?? true
+        text.spellCheckToggled = { [weak self] in self?.project.window?.app.spellCheck = $0 }
         text.composing = { [weak self] in if let self { project.composing($0, in: editor.path) } }
         text.keyboardChanged = { [weak self] in self?.project.sourceHasKeyboard = $0 }
         text.fileDrop = { [weak self] in self?.dropped($0) }
@@ -50,7 +50,7 @@ final class WorkspaceViews: ProjectViews {
             return project.outline.filter { $0.file == project.openPath }.map { ($0.line, $0.title) }
         }
         text.forwardSync = { [weak self] quietly in
-            guard let project = self?.project, project.hasPDF, project.isLaTeX, !quietly || project.app?.showPDF == true else { return nil }
+            guard let project = self?.project, project.hasPDF, project.isLaTeX, !quietly || project.window?.showPDF == true else { return nil }
             return { project.session.task { await project.forwardSync(quietly: quietly) } }
         }
         text.openDefinition = { [weak self] place in
@@ -60,7 +60,7 @@ final class WorkspaceViews: ProjectViews {
         text.quickHelp = { [weak self] in self?.quickHelp(at: $0) }
         pdf.onVisiblePages = { [weak self] in self?.project.liveView($0) }
         pdf.view.onInverse = { [weak self] page, point, click, quietly in
-            guard let project = self?.project, !quietly || project.app?.showSource == true else { return }
+            guard let project = self?.project, !quietly || project.window?.showSource == true else { return }
             project.session.task { await project.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
         }
     }
@@ -116,7 +116,7 @@ final class WorkspaceViews: ProjectViews {
         case .jumpToDefinition: editor.jumpToDefinition()
         case .findUsages:
             if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
-        case .editRename: project.app?.prompt = editor.renamable.map(Prompt.rename)
+        case .editRename: project.window?.prompt = editor.renamable.map(Prompt.rename)
         default: break
         }
     }
@@ -179,7 +179,7 @@ final class WorkspaceViews: ProjectViews {
 
     private func built(_ finished: BuildFinished) {
         guard let result = project.result else { return }
-        if result.ok, !project.outdated, project.isLaTeX, let app = project.app, app.showPDF, app.syncAfterCompile {
+        if result.ok, !project.outdated, project.isLaTeX, let window = project.window, window.showPDF, window.app.syncAfterCompile {
             project.session.task { [loading = pdf.loading, project] in
                 await loading?.value
                 await project.forwardSync(quietly: true)

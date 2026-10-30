@@ -62,30 +62,33 @@ struct PathTests {
 struct LayoutTests {
     private let defaults = TestDefaults()
 
-    @Test func theLayoutIsKeptInTheDefaults() {
+    @Test func eachWindowKeepsItsLayoutAndANewOneStartsFromTheLastChosen() {
         let app = defaults.app()
+        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
         for layout in [WorkspaceLayout.source, .pdf, .split] {
-            app.layout = layout
-            #expect(defaults.app().layout == layout)
+            window.layout = layout
+            #expect(defaults.window().layout == layout && other.layout == .split)
         }
-        app.layout = .source
-        app.requestPDF(.find)
-        #expect(defaults.app().layout == .split)
+        window.layout = .source
+        window.requestPDF(.find)
+        #expect(defaults.window().layout == .split)
+        window.outlineCollapsed = true
+        #expect(defaults.window().outlineCollapsed && !other.outlineCollapsed)
     }
 
     @Test func togglingNeverHidesBothPanes() {
-        let app = defaults.app()
-        app.layout = .source
-        app.toggleSource()
-        #expect(app.layout == .pdf)
-        app.togglePDF()
-        #expect(app.layout == .source)
+        let window = defaults.window()
+        window.layout = .source
+        window.toggleSource()
+        #expect(window.layout == .pdf)
+        window.togglePDF()
+        #expect(window.layout == .source)
     }
 
     @Test func oldDefaultsHidingBothShowTheSource() {
         defaults.store.set(false, forKey: DefaultsKey.showSource)
         defaults.store.set(false, forKey: DefaultsKey.showPDF)
-        #expect(defaults.app().layout == .source)
+        #expect(defaults.window().layout == .source)
     }
 }
 
@@ -107,8 +110,8 @@ struct SectionTests {
     private let defaults = TestDefaults()
 
     @Test func theProjectReadsItsSectionsAndAnnouncesAFailedSave() {
-        let app = defaults.app()
-        let project = ProjectModel(id: "P", app: app)
+        let window = defaults.window()
+        let project = ProjectModel(id: "P", window: window)
         let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
         let file = { (name: String) in TreeNode(name: name, path: name, kind: .tex, children: nil, main: name == "main.tex") }
         let sections: [SessionSection] = [
@@ -125,14 +128,14 @@ struct SectionTests {
         #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
         project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: "disk_full", args: [:], text: "The disk is full."), held: nil)])))
-        #expect(app.alert?.title == "“b.tex” Wasn’t Saved")
+        #expect(window.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
 
     @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
-        let app = defaults.app()
-        app.layout = .source
-        let project = ProjectModel(id: "P", app: app)
+        let window = defaults.window()
+        window.layout = .source
+        let project = ProjectModel(id: "P", window: window)
         let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: "tex", args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
         let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
         let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box], log: "")
@@ -150,13 +153,13 @@ struct SectionTests {
         #expect(project.chosenIssue == nil)
         let pdf = { (live: Bool) in project.handle(.section(.shownPdf(ShownPdf(path: "/tmp/P/main.pdf", version: 1, live: live)))) }
         pdf(false)
-        #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !app.showPDF)
+        #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !window.showPDF)
         pdf(true)
-        #expect(project.livePDF && app.showPDF)
+        #expect(project.livePDF && window.showPDF)
     }
 
     @Test func liveStateIsTheStoresAndAFailureNeedsAttentionUntilItsLogCloses() {
-        let project = ProjectModel(id: "P", app: defaults.app())
+        let project = ProjectModel(id: "P", window: defaults.window())
         let live = project.texpresso
         let state = { (phase: LivePhase, failures: [Message], log: String?) in
             project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, log: log, failures: failures, lines: [:]))))
@@ -177,7 +180,7 @@ struct SectionTests {
     }
 
     @Test func diskConflictsQueueSoEachIsAskedOnce() {
-        let project = ProjectModel(id: "P", app: defaults.app())
+        let project = ProjectModel(id: "P", window: defaults.window())
         project.handle(.conflict(Conflict(path: "a.tex", kind: .changed)))
         project.handle(.conflict(Conflict(path: "b.tex", kind: .changed)))
         #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"])
@@ -271,19 +274,75 @@ private struct Renaming: View {
 struct SwitchTests {
     private let defaults = TestDefaults()
 
-    @Test func anOpenSupersedesOneStillLeavingTheProjectBeforeIt() async throws {
-        let (first, second, third) = (try await newProject(), try await newProject(), try await newProject())
+    @Test func anOpenFromHomeSupersedesOneNotYetUnderWay() async throws {
+        let (first, second) = (try await newProject(), try await newProject())
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let superseded = Task { await window.open(first.id) }
+        let latest = Task { await window.open(second.id) }
+        _ = (await superseded.value, await latest.value)
+        #expect(window.project?.id == second.id && window.project?.initialLoadComplete == true)
+        #expect(window.app.recentProjects == [second.id] && window.app.windows.count == 1)
+        #expect(await window.close())
+        #expect(window.project == nil)
+    }
+
+    @Test func aProjectOpensInOneWindowAndAnotherInAWindowOfItsOwn() async throws {
+        let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
         app.autoCompile = false
-        await app.open(first.id)
-        let left = try #require(app.project)
-        let superseded = Task { await app.open(second.id) }
-        let latest = Task { await app.open(third.id) }
-        _ = (await superseded.value, await latest.value)
-        #expect(app.project?.id == third.id && app.project?.initialLoadComplete == true && left.closed)
-        #expect(Array(app.recentProjects.prefix(2)) == [third.id, first.id])
-        #expect(await app.close())
-        #expect(app.project == nil)
+        let window = WindowModel(app: app)
+        await window.open(first.id)
+        await window.open(second.id)
+        let other = try #require(app.window(showing: second.id))
+        #expect(other !== window && window.project?.id == first.id && app.windows.count == 2)
+        await other.open(first.id)
+        #expect(app.windows.count == 2 && other.project?.id == second.id)
+        #expect(!app.canChange(first) && !app.canChange(second))
+        #expect(await window.close() && other.project?.isOpen == true)
+        #expect(app.canChange(first) && !app.canChange(second))
+        #expect(await other.close())
+    }
+
+    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsed() {
+        let app = defaults.app()
+        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
+        #expect(app.main == nil && app.front === window)
+        other.isKey = true
+        #expect(app.main === other && app.front === other)
+        (other.isKey, window.isKey) = (false, true)
+        #expect(app.main === window && app.windows.first === window)
+        window.isKey = false
+        #expect(app.main == nil && app.front === window)
+        window.windowClosed()
+        #expect(app.front === other)
+    }
+
+    @Test func aProjectWhoseSessionTheCoreNoLongerHasClosesWithNothingToSave() async {
+        let window = defaults.window()
+        let project = ProjectModel(id: "P", window: window)
+        window.project = project
+        #expect(await window.end() && project.closed && window.alert == nil)
+    }
+
+    @Test func quitLeavesEveryProjectOpenWhileOneHasADocumentItCantSave() async throws {
+        let (first, second) = (try await newProject(), try await newProject())
+        let app = defaults.app()
+        app.autoCompile = false
+        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
+        await window.open(first.id)
+        await other.open(second.id)
+        let held = try #require(other.project)
+        let document = try #require(SourceDocument(session: held.session, path: "main.tex"))
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
+        try await Task.sleep(for: .milliseconds(300))
+        try "theirs\n".write(toFile: second.path + "/main.tex", atomically: true, encoding: .utf8)
+        try await waitUntil { !held.conflicts.isEmpty }
+        #expect(await !app.quit())
+        #expect(window.project?.isOpen == true && held.isOpen && held.conflicts.map(\.path) == ["main.tex"])
+        held.answer("main.tex", .revert)
+        #expect(await app.quit())
+        #expect(window.project?.closed == true && held.closed)
     }
 }
 
@@ -292,9 +351,9 @@ struct ViewsTests {
 
     @Test func aProjectOnItsCoreTellsItsViewsWhatTheStoreShows() async throws {
         let info = try await newProject()
-        let app = defaults.app()
-        app.autoCompile = false
-        let project = ProjectModel(id: info.id, app: app)
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try #"{ "ui": { "file": "main.tex", "line": 3 } }"#.write(toFile: info.path + "/.texlocal.json", atomically: true, encoding: .utf8)
         await project.load()
@@ -310,7 +369,7 @@ struct ViewsTests {
         #expect(await project.save())
         project.engine = .xelatex
         await project.compile()
-        #expect(app.alert == nil && views.shown.count == 3)
+        #expect(window.alert == nil && views.shown.count == 3)
     }
 
     private final class Views: ProjectViews {

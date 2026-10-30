@@ -92,7 +92,7 @@ final class ProjectModel {
     let search = ProjectSearch()
 
     var sourceHasKeyboard = false
-    @ObservationIgnored weak var app: AppModel?
+    @ObservationIgnored weak var window: WindowModel?
     @ObservationIgnored weak var views: (any ProjectViews)?
     @ObservationIgnored var syncTask: Task<Void, Never>?
     private var closing: Task<Bool, Never>?
@@ -102,13 +102,13 @@ final class ProjectModel {
     @ObservationIgnored var exportFolder: URL?
     var closed: Bool { session.closed }
 
-    init(id: String, app: AppModel) {
+    init(id: String, window: WindowModel) {
         self.id = id
         let store = SessionStore()
         (self.store, tree, texpresso) = (store, FileTree(store: store), TeXpressoSession(store: store))
-        session = SessionClient(core: app.core)
-        listedName = app.projects.first { $0.id == id }?.name ?? id
-        self.app = app
+        session = SessionClient(core: window.app.core)
+        listedName = window.app.projects.first { $0.id == id }?.name ?? id
+        self.window = window
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
             guard let self else { return }
             session.send(LiveLog(shown: shown))
@@ -120,7 +120,7 @@ final class ProjectModel {
     isolated deinit { liveLogWatch?.cancel() }
 
     var isLaTeX: Bool { openKind == .tex }
-    var sourceToolsEnabled: Bool { isLaTeX && app?.showSource == true }
+    var sourceToolsEnabled: Bool { isLaTeX && window?.showSource == true }
 
     var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
     var editsText: Bool { openKind?.isText == true }
@@ -147,7 +147,7 @@ final class ProjectModel {
 
     @discardableResult
     func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
-        await app?.alerting(title(), work) ?? nil
+        await window?.alerting(title(), work) ?? nil
     }
 
     let notices = ProjectNotices()
@@ -157,11 +157,11 @@ final class ProjectModel {
     func load() async {
         let ui: UiState
         do {
-            ui = try await session.call(OpenProject(id: id, autoCompile: app?.autoCompile ?? false))
+            ui = try await session.call(OpenProject(id: id, autoCompile: window?.app.autoCompile ?? false))
         } catch {
             session.discard()
-            app?.report("Couldn’t Open “\(name)”", error)
-            if app?.project === self { await app?.close() }
+            window?.report("Couldn’t Open “\(name)”", error)
+            if window?.project === self { await window?.close() }
             return
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
@@ -189,7 +189,7 @@ final class ProjectModel {
         findHeadings()
     }
 
-    func autoCompileChanged() { session.send(SetOptions(autoCompile: app?.autoCompile ?? false)) }
+    func autoCompileChanged() { session.send(SetOptions(autoCompile: window?.app.autoCompile ?? false)) }
 
     private func saveUIState(_ patch: UiPatch) { if initialLoadComplete { session.send(SetUiState(patch: patch)) } }
 
@@ -215,24 +215,24 @@ final class ProjectModel {
         store.apply(section)
         switch section {
         case .project(let now):
-            if let error = now.problem, error != problem { app?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
+            if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
         case .tree: break
         case .openFile, .outline: findHeadings()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
-                app?.report(notSavedTitle(document.path), error.text)
+                window?.report(notSavedTitle(document.path), error.text)
             }
         case .build(let now): buildChanged(now, was: build)
         case .shownPdf(let shown):
-            if shown.live, !live, app?.showPDF == false { app?.showPDF = true }
+            if shown.live, !live, window?.showPDF == false { window?.showPDF = true }
         case .live(let state): texpresso.heard(state)
         }
     }
 
     func open(_ path: String, line: Int? = nil, column: Int? = nil, length: Int? = nil, atTop: Bool = false, focus: Bool = true,
               jump: Bool = false) async {
-        app?.showSource = true
+        window?.showSource = true
         if jump, let from = caretPlace { trail.jumped(from: from) }
         guard let opened = await alerting("Couldn’t Open “\(path.fileName)”", { try await session.call(Open(path: path)) }) ?? nil,
               opened == openPath, editsText else { return }
@@ -270,8 +270,10 @@ final class ProjectModel {
     func save(reporting: Bool = true) async -> Bool {
         do {
             return try await session.call(Save(reporting: reporting))
+        } catch let error as CoreError where error.message.id == "no_such_session" {
+            return true
         } catch {
-            if reporting { app?.report(notSavedTitle(), error) }
+            if reporting { window?.report(notSavedTitle(), error) }
             return error is CancellationError
         }
     }
@@ -313,7 +315,7 @@ final class ProjectModel {
             return
         }
         search.show(found)
-        app?.window?.revealSidebar()
+        window?.controller?.revealSidebar()
     }
 
     func quickHelp(in path: String, at offset: Int) async -> QuickHelp? {
@@ -385,10 +387,10 @@ final class ProjectModel {
             do {
                 guard try await session.close() else { return false }
             } catch {
-                app?.report(notSavedTitle(), error)
+                window?.report(notSavedTitle(), error)
                 return false
             }
-            let undo = app?.undoManager
+            let undo = window?.undoManager
             undo?.removeAllActions(withTarget: self)
             for item in trashed { undo?.removeAllActions(withTarget: item) }
             trashed = []
@@ -404,7 +406,7 @@ final class ProjectModel {
         session.send(SetSettings(patch: patch), else: reporting("Couldn’t Change the Project’s Settings"))
     }
 
-    private func reporting(_ title: String) -> (any Error) -> Void { { [weak self] in self?.app?.report(title, $0) } }
+    private func reporting(_ title: String) -> (any Error) -> Void { { [weak self] in self?.window?.report(title, $0) } }
 
     func reveal(_ heading: Heading) {
         guard heading.file != openPath || cursorLine != heading.line || topLine != heading.line else { return }

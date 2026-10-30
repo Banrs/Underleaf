@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 final class WorkspaceController: ThinSplitViewController {
-    let app: AppModel
+    let window: WindowModel
+    private var app: AppModel { window.app }
     let views: WorkspaceViews
     var project: ProjectModel { views.project }
     var pdf: PDFController { views.pdf }
@@ -22,10 +23,10 @@ final class WorkspaceController: ThinSplitViewController {
     private var quietScrollViews: [NSScrollView] = []
     private var watches: [Task<Void, Never>] = []
 
-    init(app: AppModel, views: WorkspaceViews, size: CGSize) {
-        self.app = app
+    init(window: WindowModel, views: WorkspaceViews, size: CGSize) {
+        self.window = window
         self.views = views
-        toolbar = WorkspaceToolbar(app: app, views: views)
+        toolbar = WorkspaceToolbar(window: window, views: views)
         super.init()
         toolbar.workspace = self
         if app.savesLayout {
@@ -57,8 +58,8 @@ final class WorkspaceController: ThinSplitViewController {
         super.viewDidAppear()
         guard !appeared else { return }
         appeared = true
-        sourceItem.isCollapsed = !app.showSource
-        pdfItem.isCollapsed = !app.showPDF
+        sourceItem.isCollapsed = !window.showSource
+        pdfItem.isCollapsed = !window.showPDF
         fitColumns()
     }
 
@@ -69,7 +70,7 @@ final class WorkspaceController: ThinSplitViewController {
     }
 
     private func fitColumns() {
-        let both = app.showSource && app.showPDF
+        let both = window.showSource && window.showPDF
         let area = both ? 2 * ColumnMetrics.paneMinimum + columns.splitView.dividerThickness : ColumnMetrics.paneMinimum
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
     }
@@ -84,7 +85,7 @@ final class WorkspaceController: ThinSplitViewController {
         let source = edges(sourceItem), area = edges(areaItem)
         let leading = max(source.minX, ColumnMetrics.windowControls)
         let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
-        let tools = trailing - leading - ColumnMetrics.sourceTools + (app.showSource ? 0 : ColumnMetrics.editingTools)
+        let tools = trailing - leading - ColumnMetrics.sourceTools + (window.showSource ? 0 : ColumnMetrics.editingTools)
         let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
             : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
         let compact = room < ColumnMetrics.compile
@@ -103,7 +104,7 @@ final class WorkspaceController: ThinSplitViewController {
         sidebar.addSplitViewItem(filesItem)
         sidebar.addSplitViewItem(outlineItem)
         sidebar.view.frame.size.width = inspectorItem.minimumThickness
-        if app.outlineState(of: project) != .open { outlineItem.isCollapsed = true }
+        if window.outlineState(of: project) != .open { outlineItem.isCollapsed = true }
         sidebar.header = outlineBar
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
@@ -128,7 +129,7 @@ final class WorkspaceController: ThinSplitViewController {
         sourceItem.minimumThickness = ColumnMetrics.paneMinimum
         let pdfPane = NSViewController()
         pdfPane.view = NSView(frame: NSRect(x: 0, y: 0, width: pdfWidth, height: 0))
-        let empty = NSHostingView(rootView: Pane(project: project, content: PDFEmptyState(project: project)).environment(app))
+        let empty = NSHostingView(rootView: Pane(project: project, content: PDFEmptyState(project: project)).environment(app).environment(window))
         empty.sizingOptions = []
         pdfEmpty = empty
         for pane in [pdf.view, empty] as [NSView] {
@@ -193,14 +194,15 @@ final class WorkspaceController: ThinSplitViewController {
     }
 
     private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mount: Mount? = nil) -> NSViewController {
-        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content).environment(app).environment(views))
+        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content)
+            .environment(app).environment(window).environment(views))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
         return host
     }
 
     private func hostingView(_ content: some View) -> NSHostingView<some View> {
-        let host = NSHostingView(rootView: Pane(project: project, content: content).environment(app).environment(views))
+        let host = NSHostingView(rootView: Pane(project: project, content: content).environment(app).environment(window).environment(views))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -218,11 +220,11 @@ final class WorkspaceController: ThinSplitViewController {
     }
 
     private func watch() {
-        let app = app, project = project, pdf = pdf
+        let window = window, project = project, pdf = pdf
         watches = [
-            track({ [app.showSource, app.showPDF] }) { [weak self] _ in self?.showPanes() },
+            track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
-            track({ app.outlineState(of: project) }) { [weak self] state in
+            track({ window.outlineState(of: project) }) { [weak self] state in
                 guard let self else { return }
                 setHidden(outlineBar, state == .hidden)
                 setCollapsed(outlineItem, state != .open)
@@ -240,15 +242,15 @@ final class WorkspaceController: ThinSplitViewController {
         Task.immediate {
             await NSAnimationContext.runAnimationGroup { context in
                 if !animates { context.duration = 0 }
-                sourceItem.animator().isCollapsed = !app.showSource
-                pdfItem.animator().isCollapsed = !app.showPDF
+                sourceItem.animator().isCollapsed = !window.showSource
+                pdfItem.animator().isCollapsed = !window.showPDF
             }
             quiet(false)
         }
         if let responder = view.window?.firstResponder as? NSView {
-            if !app.showSource, responder.isDescendant(of: sourceItem.viewController.view) {
+            if !window.showSource, responder.isDescendant(of: sourceItem.viewController.view) {
                 view.window?.makeFirstResponder(pdf.view)
-            } else if !app.showPDF, responder.isDescendant(of: pdfItem.viewController.view) {
+            } else if !window.showPDF, responder.isDescendant(of: pdfItem.viewController.view) {
                 views.focusEditor()
             }
         }

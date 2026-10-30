@@ -173,6 +173,18 @@ extension AppModel {
         isEnabled(command, on: project) && (!command.editsSelection || project?.sourceHasKeyboard == true)
     }
 
+    func shortcut(_ command: MenuCommand, on project: ProjectModel?) -> KeyboardShortcut? {
+        switch (command, project) {
+        case (.projectNew, nil): MenuCommand.fileNew.shortcut
+        case (.fileNew, nil): nil
+        default: command.shortcut
+        }
+    }
+
+    var canPreviewLive: Bool { tex?.texpresso != nil }
+}
+
+extension WindowModel {
     private static let pdfApp = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
         .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
 
@@ -183,22 +195,14 @@ extension AppModel {
         case .viewTogglePDF: showPDF
         case .viewToggleInspector: project?.views?.inspectorShown ?? false
         case .viewToggleLogs: project?.panel.shown == true
-        case .viewToggleWordCount: showWordCount
+        case .viewToggleWordCount: app.showWordCount
         default: nil
         }
         return shown.map { "\($0 ? "Hide" : "Show") \(command.title)" } ?? command.title
     }
 
-    func shortcut(_ command: MenuCommand, on project: ProjectModel?) -> KeyboardShortcut? {
-        switch (command, project) {
-        case (.projectNew, nil): MenuCommand.fileNew.shortcut
-        case (.fileNew, nil): nil
-        default: command.shortcut
-        }
-    }
-
     func perform(_ command: MenuCommand, on project: ProjectModel?) {
-        guard isEnabled(command, on: project) else { return }
+        guard app.isEnabled(command, on: project) else { return }
         switch command.action {
         case .edit(let edit)?: project?.views?.perform(edit)
         case .pdf(let action)?: requestPDF(action)
@@ -215,9 +219,9 @@ extension AppModel {
                     try await project.exportZip(forArxiv: arxiv)
                 }
             }
-        case .projectSearch: window?.focusSearch()
+        case .projectSearch: controller?.focusSearch()
         case .fileNew, .fileNewFolder:
-            window?.revealSidebar()
+            controller?.revealSidebar()
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
@@ -235,7 +239,7 @@ extension AppModel {
         case .viewTogglePDF: togglePDF()
         case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         case .viewToggleLogs: project?.panel.shown.toggle()
-        case .viewToggleWordCount: showWordCount.toggle()
+        case .viewToggleWordCount: app.showWordCount.toggle()
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .compileClean: Task { await project?.cleanBuildFolder() }
@@ -245,8 +249,6 @@ extension AppModel {
         default: break
         }
     }
-
-    var canPreviewLive: Bool { tex?.texpresso != nil }
 }
 
 struct EnginePicker: View {

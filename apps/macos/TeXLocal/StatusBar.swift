@@ -6,7 +6,7 @@ enum BarMetrics {
 }
 
 struct StatusBar: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     let project: ProjectModel
 
     var body: some View {
@@ -19,7 +19,7 @@ struct StatusBar: View {
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
-        .contextMenu { Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) } }
+        .contextMenu { Button(window.title(.viewToggleWordCount, on: project)) { window.perform(.viewToggleWordCount, on: project) } }
     }
 
     fileprivate enum Detail { case full, symbols, short }
@@ -37,7 +37,7 @@ struct StatusBar: View {
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            if app.showSource && project.editsText || PagePlace.shows(project, app) { Divider().frame(height: 12) }
+            if window.showSource && project.editsText || PagePlace.shows(project, window) { Divider().frame(height: 12) }
             PanelToggle(project: project)
         }
     }
@@ -135,13 +135,13 @@ private struct SaveStatus: View {
 }
 
 private struct CaretPlace: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     let project: ProjectModel
     let detail: StatusBar.Detail
 
     var body: some View {
-        if app.showSource, project.editsText {
-            Button { app.perform(.editGotoLine, on: project) } label: {
+        if window.showSource, project.editsText {
+            Button { window.perform(.editGotoLine, on: project) } label: {
                 place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
                       short: "\(project.cursorLine):\(project.cursorColumn + 1)",
                       spoken: "Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
@@ -152,14 +152,14 @@ private struct CaretPlace: View {
 }
 
 private struct WordCount: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     let detail: StatusBar.Detail
     @State private var selectedWords: Int?
 
     var body: some View {
-        if detail == .full, app.showSource, project.editsText, app.showWordCount, let words = project.words {
+        if detail == .full, window.showSource, project.editsText, window.app.showWordCount, let words = project.words {
             Group {
                 if let selectedWords {
                     Text("\(selectedWords) of ^[\(words) word](inflect: true)")
@@ -180,17 +180,17 @@ private struct WordCount: View {
 }
 
 private struct PagePlace: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
     let detail: StatusBar.Detail
 
-    static func shows(_ project: ProjectModel, _ app: AppModel) -> Bool { app.showPDF && project.hasPDF }
+    static func shows(_ project: ProjectModel, _ window: WindowModel) -> Bool { window.showPDF && project.hasPDF }
 
     var body: some View {
-        if Self.shows(project, app) {
+        if Self.shows(project, window) {
             freshness
-            Button { app.perform(.pdfGotoPage, on: project) } label: {
+            Button { window.perform(.pdfGotoPage, on: project) } label: {
                 let (page, count) = (views.pdf.page, views.pdf.pageCount)
                 place(detail, "Page \(page) of \(count)", short: "\(page)/\(count)", spoken: "Page \(page) of \(count)")
             }
@@ -204,18 +204,18 @@ private struct PagePlace: View {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
-        } else if project.outdated, !project.livePDF, !app.autoCompile {
-            Button { app.perform(.compileRun, on: project) } label: {
+        } else if project.outdated, !project.livePDF, !window.app.autoCompile {
+            Button { window.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
             }
             .help("The PDF is older than the source; compile to refresh it")
-            .disabled(!app.isEnabled(.compileRun, on: project))
+            .disabled(!window.app.isEnabled(.compileRun, on: project))
         }
     }
 }
 
 private struct PanelToggle: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     let project: ProjectModel
 
@@ -228,7 +228,7 @@ private struct PanelToggle: View {
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
-        .help(app.title(.viewToggleLogs, on: project))
+        .help(window.title(.viewToggleLogs, on: project))
     }
 }
 
