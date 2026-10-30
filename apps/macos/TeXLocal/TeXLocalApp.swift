@@ -21,13 +21,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         super.init()
         Self.shared = self
+        NSWindow.allowsAutomaticWindowTabbing = false
         app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
-        app.newWindow = { [app] in MainWindowController.tab(app: app, beside: $0).model }
+        app.newWindow = { [app] id in id.map { MainWindowController(app: app, project: $0).model } ?? HomeWindowController(app: app).model }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if app.windows.isEmpty { app.openWindow(beside: nil) }
-        guard app.core.isOpen else { return }
+        guard app.core.isOpen else {
+            for window in app.windows { window.controller?.close() }
+            app.showHome()
+            return
+        }
+        if app.windows.isEmpty { app.showHome() }
         Task { [app] in
             async let tex: Void = app.refreshTeXStatus()
             await app.reloadProjects()
@@ -81,17 +86,16 @@ final class DockMenu: NSObject {
         return menu
     }
 
-    private func shown() -> WindowModel {
+    @objc private func newProject() {
         NSApp.activate()
         let window = app.front
         window.controller?.show()
-        return window
+        window.newProject()
     }
 
-    @objc private func newProject() { shown().newProject() }
-
     @objc private func open(_ item: NSMenuItem) {
-        let window = shown()
-        Task { await window.open(item.representedObject as! String) }
+        NSApp.activate()
+        let (window, id) = (app.front, item.representedObject as! String)
+        Task { await window.open(id) }
     }
 }

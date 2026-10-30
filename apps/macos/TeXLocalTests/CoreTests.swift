@@ -48,7 +48,7 @@ struct CoreTests {
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), editor = views.editor
-        await project.load()
+        try await project.load()
         #expect(project.openPath == "main.tex" && editor.path == "main.tex")
         try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
@@ -76,7 +76,7 @@ struct CoreTests {
         let window = defaults.window()
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
-        await project.load()
+        try await project.load()
         project.engine = .xelatex
         try await waitUntil { project.engine == .xelatex }
         #expect(await project.close().value)
@@ -84,7 +84,7 @@ struct CoreTests {
         let settings = info.path + "/.texlocal.json"
         try "{ not json".write(toFile: settings, atomically: true, encoding: .utf8)
         let corrupt = ProjectModel(id: info.id, window: window)
-        await corrupt.load()
+        try await corrupt.load()
         #expect(window.alert?.title == "Couldn’t Read the Project’s Settings")
         #expect(corrupt.engine == .pdflatex)
         #expect(try String(contentsOfFile: settings, encoding: .utf8) == "{ not json")

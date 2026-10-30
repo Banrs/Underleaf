@@ -294,40 +294,33 @@ private struct Renaming: View {
 struct SwitchTests {
     private let defaults = TestDefaults()
 
-    @Test func anOpenFromHomeSupersedesOneNotYetUnderWay() async throws {
-        let (first, second) = (try await newProject(), try await newProject())
-        let window = defaults.window()
-        window.app.autoCompile = false
-        let superseded = Task { await window.open(first.id) }
-        let latest = Task { await window.open(second.id) }
-        _ = (await superseded.value, await latest.value)
-        #expect(window.project?.id == second.id && window.project?.initialLoadComplete == true)
-        #expect(window.app.recentProjects == [second.id] && window.app.windows.count == 1)
-        #expect(await window.close())
-        #expect(window.project == nil)
-    }
-
-    @Test func aProjectOpensInOneWindowAndAnotherInAWindowOfItsOwn() async throws {
+    @Test func eachProjectOpensInAWindowOfItsOwnOnceEvenWhenOpenedTwiceAtOnceAndHomeNeverHoldsOne() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
         app.autoCompile = false
-        let window = WindowModel(app: app)
-        await window.open(first.id)
+        let home = app.showHome()
+        async let opened: Void = home.open(first.id)
+        async let again: Void = home.open(first.id)
+        _ = await (opened, again)
+        let window = try #require(app.window(showing: first.id))
+        #expect(app.windows.count == 2 && window.project?.initialLoadComplete == true && home.project == nil)
         await window.open(second.id)
         let other = try #require(app.window(showing: second.id))
-        #expect(other !== window && window.project?.id == first.id && app.windows.count == 2)
+        #expect(other !== window && window.project?.id == first.id && app.windows.count == 3 && app.recentProjects == [second.id, first.id])
         await other.open(first.id)
-        #expect(app.windows.count == 2 && other.project?.id == second.id)
+        #expect(app.windows.count == 3 && other.project?.id == second.id)
         #expect(!app.canChange(first) && !app.canChange(second))
         #expect(await window.close() && other.project?.isOpen == true)
         #expect(app.canChange(first) && !app.canChange(second))
         #expect(await other.close())
     }
 
-    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsed() {
+    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
         let app = defaults.app()
-        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
-        #expect(app.main == nil && app.front === window)
+        let home = app.front
+        #expect(app.main == nil && app.home === home && app.showHome() === home && app.windows.count == 1)
+        let (window, other) = (app.openWindow("A"), app.openWindow("B"))
+        #expect(app.front === home)
         other.isKey = true
         #expect(app.main === other && app.front === other)
         (other.isKey, window.isKey) = (false, true)
@@ -362,21 +355,21 @@ struct SwitchTests {
         let info = try await newProject()
         let app = defaults.app()
         app.autoCompile = false
-        let (home, other) = (WindowModel(app: app), WindowModel(app: app))
-        await other.open(info.id)
+        let home = app.showHome()
+        await home.open(info.id)
         await home.delete(info)
         #expect(FileManager.default.fileExists(atPath: info.path) && home.alert != nil)
-        #expect(await other.close())
+        #expect(await app.window(showing: info.id)?.close() == true)
     }
 
     @Test func quitLeavesEveryProjectOpenWhileOneHasADocumentItCantSave() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
         app.autoCompile = false
-        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
-        await window.open(first.id)
-        await other.open(second.id)
-        let held = try #require(other.project)
+        let home = app.showHome()
+        await home.open(first.id)
+        await home.open(second.id)
+        let (window, held) = (try #require(app.window(showing: first.id)), try #require(app.window(showing: second.id)?.project))
         let document = try #require(SourceDocument(session: held.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
         try await Task.sleep(for: .milliseconds(300))
@@ -400,7 +393,7 @@ struct ViewsTests {
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try #"{ "ui": { "file": "main.tex", "line": 3 } }"#.write(toFile: info.path + "/.texlocal.json", atomically: true, encoding: .utf8)
-        await project.load()
+        try await project.load()
         #expect(views.ui != nil && project.initialLoadComplete)
         #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
         #expect(await project.createEntry(in: "", directory: true) == "untitled-folder")

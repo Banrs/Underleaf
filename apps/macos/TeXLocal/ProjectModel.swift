@@ -157,15 +157,13 @@ final class ProjectModel {
 
     func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom))) }
 
-    func load() async {
+    func load() async throws {
         let ui: UiState
         do {
             ui = try await session.call(OpenProject(id: id, autoCompile: window?.app.autoCompile ?? false))
         } catch {
             session.discard()
-            window?.report("Couldn’t Open “\(name)”", error)
-            if window?.project === self { await window?.close() }
-            return
+            throw error
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         let pdfShown = views?.opened(ui)

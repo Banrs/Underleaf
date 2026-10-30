@@ -7,133 +7,84 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static var kept: [MainWindowController] = []
 
     let model: WindowModel
-    private var app: AppModel { model.app }
-    private var home: NSViewController?
+    private let views: WorkspaceViews
+    private var project: ProjectModel { views.project }
     private(set) var workspace: WorkspaceController?
-    private var views: WorkspaceViews?
     private var watches: [Task<Void, Never>] = []
-    private var titleWatch: Task<Void, Never>?
     private let findEditor = FindPassingTextView()
 
-    init(app: AppModel) {
-        model = WindowModel(app: app)
+    init(app: AppModel, project id: String) {
+        let model = WindowModel(app: app)
+        let views = WorkspaceViews(project: ProjectModel(id: id, window: model))
+        model.project = views.project
+        (self.model, self.views) = (model, views)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.identifier = Self.identifier
         window.restorationClass = Self.self
         window.isReleasedWhenClosed = false
-        window.tabbingMode = .preferred
-        window.tabbingIdentifier = "TeXLocal"
+        window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
         window.autorecalculatesKeyViewLoop = true
+        window.contentMinSize = ColumnMetrics.contentMinimum
+        window.backgroundColor = .untintedTextBackground
         super.init(window: window)
         window.delegate = self
         model.controller = self
         Self.kept.append(self)
         findEditor.isFieldEditor = true
-        showHome()
         window.center()
         window.setFrameAutosaveName("Main Window")
-        let model = model
+        let project = views.project
         watches = [
-            track({ [model, weak self] in model.workspaceProject(after: self?.workspace?.project).map { ObjectIdentifier($0) } }) {
-                [weak self] _ in self?.showProject()
-            },
-            track({ [model] in model.project?.id }) { [weak self] _ in self?.window?.invalidateRestorableState() },
-            track({ [model] in model.project?.saveFailure != nil }) { [weak self] in self?.window?.isDocumentEdited = $0 },
+            track({ project.initialLoadComplete }) { [weak self] _ in self?.showWorkspace() },
+            track({ project.store.project?.name ?? "" }) { [weak self] in self?.window?.title = $0 },
+            track({ project.openPath?.fileName ?? "" }) { [weak self] in self?.window?.subtitle = $0 },
+            track({ project.url("") }) { [weak self] in self?.window?.representedURL = $0 },
+            track({ project.saveFailure != nil }) { [weak self] in self?.window?.isDocumentEdited = $0 },
         ]
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    @discardableResult
-    static func tab(app: AppModel, beside: WindowModel?) -> MainWindowController {
-        let controller = MainWindowController(app: app)
-        if let window = controller.window, let group = (beside?.controller as? MainWindowController)?.window {
-            window.tabbingIdentifier = group.tabbingIdentifier
-            group.addTabbedWindow(window, ordered: .above)
+    func show() {
+        if let window, !window.isVisible, !window.isMiniaturized,
+           let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
+            window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
-        controller.showWindow(nil)
-        return controller
+        showWorkspace()
+        showWindow(nil)
     }
-
-    override func newWindowForTab(_ sender: Any?) { Self.tab(app: app, beside: model) }
-
-    func show() { showWindow(nil) }
 
     override var undoManager: UndoManager? { window?.undoManager }
-    func attach(_ project: ProjectModel) { views = WorkspaceViews(project: project) }
     func performPDF(_ action: PDFAction) { workspace?.performPDF(action) }
     func revealSidebar() { workspace?.revealSidebar() }
-
-    func focusSearch() {
-        if let workspace { return workspace.focusSearch() }
-        window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first?.beginSearchInteraction()
-    }
+    func focusSearch() { workspace?.focusSearch() }
 
     override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
         guard action == #selector(NSSplitViewController.toggleInspector(_:)) else { return super.supplementalTarget(forAction: action, sender: sender) }
         return window?.contentViewController as? WorkspaceController
     }
 
-    private func showProject() {
-        guard let project = model.workspaceProject(after: workspace?.project) else { return showHome() }
-        guard workspace?.project !== project, let views, views.project === project, let window else { return }
-        workspace?.close()
+    private func showWorkspace() {
+        guard workspace == nil, project.initialLoadComplete, let window else { return }
         let workspace = WorkspaceController(window: model, views: views, size: window.contentLayoutRect.size)
-        window.toolbar = nil
-        setContent(workspace, project: project)
-        window.toolbar = workspace.toolbar.toolbar
-        window.contentMinSize = ColumnMetrics.contentMinimum
-        window.backgroundColor = .untintedTextBackground
-        self.workspace = workspace
-        home = nil
-        titleWatch?.cancel()
-        titleWatch = track({ [project] in project.openPath }) { [weak self, project] path in
-            guard let window = self?.window else { return }
-            window.title = path?.fileName ?? project.name
-            window.subtitle = path == nil ? "" : project.name
-            window.representedURL = path.flatMap { project.url($0) }
-            window.tab.title = project.name
-        }
-    }
-
-    private func showHome() {
-        if model.project == nil { views = nil }
-        guard home == nil || workspace != nil, let window else { return }
-        titleWatch?.cancel()
-        workspace?.close()
-        workspace = nil
-        window.toolbar = nil
-        window.backgroundColor = .windowBackgroundColor
-        window.subtitle = ""
-        window.representedURL = nil
-        window.tab.title = nil
-        let home = NSHostingController(rootView: HomeView()
-            .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
-            .environment(app)
-            .environment(model))
-        home.sceneBridgingOptions = [.title, .toolbars]
-        setContent(home, project: nil)
-        self.home = home
-    }
-
-    private func setContent(_ controller: NSViewController, project: ProjectModel?) {
-        guard let window else { return }
-        controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
+        workspace.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         let modals = NSHostingView(rootView: WindowModals(window: model, project: project).environment(views))
         modals.sizingOptions = []
-        controller.view.addSubview(modals)
-        window.contentViewController = controller
+        workspace.view.addSubview(modals)
+        window.contentViewController = workspace
+        window.toolbar = workspace.toolbar.toolbar
+        self.workspace = workspace
     }
 
     func windowDidBecomeKey(_ notification: Notification) { model.isKey = true }
     func windowDidResignKey(_ notification: Notification) { model.isKey = false }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard model.shownProject != nil || model.isOpening else { return true }
-        Task { if await model.end() { sender.close() } }
+        guard model.shownProject != nil else { return true }
+        Task { await model.close() }
         return false
     }
 
@@ -141,13 +92,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         model.isKey = false
         model.windowClosed()
         watches.forEach { $0.cancel() }
-        titleWatch?.cancel()
         workspace?.close()
         Self.kept.removeAll { $0 === self }
     }
 
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
-        guard let field = client as? NSTextField, field === workspace?.pdf.find.field.field else { return nil }
+        guard let field = client as? NSTextField, field === views.pdf.find.field.field else { return nil }
         return findEditor
     }
 
@@ -158,20 +108,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     private func findAction(for sender: Any?) -> (() -> Void)? {
-        guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag)
-        else { return nil }
-        guard let workspace, !workspace.project.closed else {
-            guard home != nil, action == .showFindInterface else { return nil }
-            return { [weak self] in self?.focusSearch() }
-        }
-        let model = model
-        let (project, pdf) = (workspace.project, workspace.pdf)
+        guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag),
+              workspace != nil, !project.closed else { return nil }
+        let (model, project, pdf) = (model, project, views.pdf)
         guard model.showPDF, !model.showSource || pdfPagesHaveKeyboard || pdf.find.field.hasFocus else {
             guard project.editsText else {
                 guard action == .showFindInterface, project.hasPDF else { return nil }
                 return { model.requestPDF(.find) }
             }
-            let editor = workspace.views.editor
+            let editor = views.editor
             guard editor.textView.validateUserInterfaceItem(item) else { return nil }
             return {
                 editor.focus()
@@ -193,23 +138,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         }
     }
 
-    private var pdfPagesHaveKeyboard: Bool {
-        guard let pdf = workspace?.pdf else { return false }
-        return (window?.firstResponder as? NSView)?.isDescendant(of: pdf.view) == true
-    }
+    private var pdfPagesHaveKeyboard: Bool { (window?.firstResponder as? NSView)?.isDescendant(of: views.pdf.view) == true }
 
     static func restoreWindow(withIdentifier identifier: NSUserInterfaceItemIdentifier, state: NSCoder,
                               completionHandler: @escaping (NSWindow?, (any Error)?) -> Void) {
-        let app = identifier == Self.identifier ? AppDelegate.shared?.app : nil
-        completionHandler(app.flatMap { MainWindowController(app: $0).window }, nil)
+        guard identifier == Self.identifier, let app = AppDelegate.shared?.app,
+              let id = state.decodeObject(of: NSString.self, forKey: projectKey) as String? else { return completionHandler(nil, nil) }
+        completionHandler(MainWindowController(app: app, project: id).window, nil)
     }
 
     func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
-        if let id = model.project?.id { state.encode(id as NSString, forKey: Self.projectKey) }
-    }
-
-    func window(_ window: NSWindow, didDecodeRestorableState state: NSCoder) {
-        model.restored = state.decodeObject(of: NSString.self, forKey: Self.projectKey) as String?
+        state.encode(project.id as NSString, forKey: Self.projectKey)
     }
 
     private static let projectKey = "project"

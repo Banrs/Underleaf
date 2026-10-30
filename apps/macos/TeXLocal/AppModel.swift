@@ -57,11 +57,11 @@ struct ExportFile: Transferable {
 
 protocol AppWindow: AnyObject {
     var undoManager: UndoManager? { get }
-    func attach(_ project: ProjectModel)
     func performPDF(_ action: PDFAction)
     func revealSidebar()
     func focusSearch()
     func show()
+    func close()
 }
 
 nonisolated enum WorkspaceLayout { case source, split, pdf }
@@ -86,7 +86,8 @@ final class AppModel {
     private(set) var libraryProblem: AppAlert?
     private(set) var windows: [WindowModel] = []
     var main: WindowModel? { windows.first(where: \.isKey) }
-    @ObservationIgnored var newWindow: ((WindowModel?) -> WindowModel)?
+    var home: WindowModel? { windows.first { $0.project == nil } }
+    @ObservationIgnored var newWindow: ((String?) -> WindowModel)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
@@ -147,19 +148,33 @@ final class AppModel {
 
     func opened(_ window: WindowModel) { windows.append(window) }
 
-    func closed(_ window: WindowModel) { windows.removeAll { $0 === window } }
+    func closed(_ window: WindowModel) {
+        windows.removeAll { $0 === window }
+        if window.project != nil, !windows.contains(where: { $0.project != nil }) { showHome() }
+    }
 
     func cameForward(_ window: WindowModel) {
         guard windows.first !== window, let at = windows.firstIndex(where: { $0 === window }) else { return }
         windows.insert(windows.remove(at: at), at: 0)
     }
 
-    var front: WindowModel { main ?? windows.first ?? openWindow(beside: nil) }
+    var front: WindowModel { main ?? windows.first ?? showHome() }
 
     @discardableResult
-    func openWindow(beside window: WindowModel?) -> WindowModel { newWindow?(window) ?? WindowModel(app: self) }
+    func showHome() -> WindowModel {
+        let home = home ?? openWindow(nil)
+        home.controller?.show()
+        return home
+    }
 
-    func window(showing id: String) -> WindowModel? { windows.first { $0.shownProject?.id == id || $0.opening == id } }
+    func openWindow(_ id: String?) -> WindowModel {
+        if let newWindow { return newWindow(id) }
+        let window = WindowModel(app: self)
+        window.project = id.map { ProjectModel(id: $0, window: window) }
+        return window
+    }
+
+    func window(showing id: String) -> WindowModel? { windows.first { $0.shownProject?.id == id } }
 
     func canChange(_ project: ProjectInfo) -> Bool { !project.opened && window(showing: project.id) == nil }
 
@@ -269,7 +284,7 @@ final class AppModel {
         }
         for window in windows {
             guard await window.end() else {
-                for ended in windows where ended.project?.closed == true { await ended.close() }
+                for ended in windows where ended.project?.closed == true { ended.controller?.close() }
                 window.controller?.show()
                 return false
             }

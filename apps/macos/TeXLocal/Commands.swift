@@ -211,7 +211,7 @@ extension WindowModel {
         switch command {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
-        case .projectClose: Task { await close() }
+        case .projectClose: Task { if await close() { app.showHome() } }
         case .projectExport, .projectExportArxiv:
             let arxiv = command == .projectExportArxiv
             if let project {
