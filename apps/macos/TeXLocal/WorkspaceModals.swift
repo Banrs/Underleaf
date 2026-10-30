@@ -95,6 +95,7 @@ private struct GoToSheet: View {
         } fields: {
             TextField(noun, text: $text, prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
                 .focused($focused)
+                .dialogField(noun)
         }
         .defaultFocus($focused, true)
     }
@@ -117,6 +118,7 @@ private struct RenameSheet: View {
         } fields: {
             TextField("New Name", text: $text)
                 .focused($focused)
+                .dialogField("New Name")
         }
         .defaultFocus($focused, true)
     }

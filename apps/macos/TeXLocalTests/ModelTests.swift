@@ -252,6 +252,24 @@ struct FieldTests {
         }
         try await waitUntil { rename.name == "renamed.tex" }
     }
+
+    @Test func aDialogFieldShowsATypedSpaceAtOnce() async throws {
+        let defaults = TestDefaults()
+        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: NewProjectSheet(draft: NewProjectDraft(template: .blank, name: "water"))
+            .environment(defaults.app()))
+        window.makeKeyAndOrderFront(nil)
+        try await waitUntil { window.firstResponder is NSTextView }
+        let editor = try #require(window.firstResponder as? NSTextView)
+        editor.insertText(" ", replacementRange: NSRange(location: 5, length: 0))
+        let caret = { editor.firstRect(forCharacterRange: NSRange(location: $0, length: 0), actualRange: nil).minX }
+        let field = try #require(editor.delegate as? NSTextField)
+        let text = window.convertToScreen(field.convert(field.cell!.titleRect(forBounds: field.bounds), to: nil))
+        #expect(editor.string == "water ")
+        #expect(caret(6) > caret(5))
+        #expect(caret(6) <= text.maxX)
+    }
 }
 
 private final class KeyWindow: NSWindow {

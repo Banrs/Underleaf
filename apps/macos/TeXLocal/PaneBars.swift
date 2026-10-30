@@ -164,6 +164,12 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
+extension View {
+    func dialogField(_ label: String) -> some View {
+        LabeledContent(label) { labelsHidden().multilineTextAlignment(.leading) }
+    }
+}
+
 struct FailureText: View {
     let text: String
 

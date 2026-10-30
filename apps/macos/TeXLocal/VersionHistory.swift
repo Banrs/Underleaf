@@ -13,6 +13,7 @@ struct SaveVersionSheet: View {
         } fields: {
             TextField("Name", text: $name)
                 .focused($focused)
+                .dialogField("Name")
         }
         .defaultFocus($focused, true)
     }

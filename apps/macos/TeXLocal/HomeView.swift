@@ -249,6 +249,7 @@ struct NewProjectSheet: View {
         } fields: {
             TextField("Name", text: $draft.name, prompt: Text("Required"))
                 .focused($nameFocused)
+                .dialogField("Name")
             Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)
