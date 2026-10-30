@@ -443,13 +443,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
         }
         super.mouseDown(with: event)
-        if isDoubleClick(event), !selectsCommandName { forwardSync(true)?() }
-    }
-
-    private var selectsCommandName: Bool {
-        let selection = selectedRange(), text = string as NSString
-        return selection.location > 0 && text.character(at: selection.location - 1) == 0x5C
-            || selection.length > 0 && text.character(at: selection.location) == 0x5C
+        if isDoubleClick(event), !document.selectsCommand(selectedRange()) { forwardSync(true)?() }
     }
 
     private func release(of down: NSEvent) -> NSEvent? {

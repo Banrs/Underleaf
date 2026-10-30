@@ -42,6 +42,14 @@ nonisolated protocol SourceRequest: WireRequest {}
 
 nonisolated protocol SyntaxRequest: WireRequest {}
 
+nonisolated struct AcceptCompletion: SourceRequest {
+    typealias Reply = Insertion?
+    static let command = "AcceptCompletion"
+
+    var index: Int
+    var caret: Int
+}
+
 nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
@@ -1490,6 +1498,13 @@ nonisolated extension SearchHit {
         match = try wire.decode(String.self, forKey: .match)
         after = try wire.decode(String.self, forKey: .after)
     }
+}
+
+nonisolated struct SelectsCommand: SourceRequest {
+    typealias Reply = Bool
+    static let command = "SelectsCommand"
+
+    var selection: TextRange
 }
 
 nonisolated struct SessionEvent: Decodable, Hashable, Sendable {

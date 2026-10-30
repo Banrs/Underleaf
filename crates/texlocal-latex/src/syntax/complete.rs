@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::scan::{self, Group, Scanner};
-use super::{INDENT, SourceDocument, Text, catalog, indentation};
+use super::{INDENT, Insertion, SourceDocument, Text, catalog, edit, indentation};
 use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
@@ -147,7 +147,26 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    pub(crate) fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
+    pub(crate) fn complete(&mut self, caret: u32, explicit: bool) -> Option<&Completions> {
+        self.typing.offered = self.completions(caret, explicit);
+        self.typing.offered.as_ref()
+    }
+
+    pub(crate) fn accept_completion(&mut self, index: u32, caret: u32) -> Option<Insertion> {
+        let Completions { start, items, .. } = self.typing.offered.take()?;
+        let caret = caret.min(self.text.len());
+        let item = items
+            .into_iter()
+            .nth(index as usize)
+            .filter(|_| start <= caret)?;
+        Some(Insertion {
+            caret: start + utf16::len(&item.text) as u32,
+            edit: edit(start, caret - start, item.text),
+            fields: item.fields,
+        })
+    }
+
+    fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         let from = text.lines[line].max(caret.saturating_sub(250));

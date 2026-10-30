@@ -4,6 +4,7 @@ use std::ops::Range;
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use super::complete::Completions;
 use super::scan::{End, Group, Scanner, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
@@ -33,6 +34,7 @@ pub(crate) enum Completing {
 pub(crate) struct Typing {
     pub(super) closers: BTreeSet<usize>,
     pub(super) snippet: Option<Snippet>,
+    pub(super) offered: Option<Completions>,
     pending: Option<(usize, usize)>,
 }
 

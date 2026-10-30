@@ -19,6 +19,7 @@ struct EditorTests {
         #expect(document.folds() == [Fold(line: 1, end: 3)])
         #expect(document.toggleComment([NSRange(location: 0, length: 0)]).first?.text == "% ")
         #expect(document.words(in: NSRange(location: 16, length: 15)) == 2)
+        #expect(document.selectsCommand(NSRange(location: 1, length: 7)) && !document.selectsCommand(NSRange(location: 9, length: 5)))
     }
 
     @Test func textStylesSayHowToTakeAStyleOff() {

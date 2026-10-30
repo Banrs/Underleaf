@@ -172,6 +172,23 @@ fn tab_indents_every_selected_line() {
 }
 
 #[test]
+fn a_selection_is_a_commands_name_after_a_backslash_that_is_not_escaped() {
+    let mut doc = SourceDocument::new("\\section{a} \\\\word");
+    let mut selects = |start: u32, length: u32| {
+        let selection = json!({ "start": start, "length": length });
+        run(
+            &mut doc,
+            "SelectsCommand",
+            json!({ "selection": selection }),
+        )
+    };
+    assert_eq!(selects(1, 7), true);
+    assert_eq!(selects(0, 1), true);
+    assert_eq!(selects(9, 1), false);
+    assert_eq!(selects(14, 4), false);
+}
+
+#[test]
 fn a_section_folds_to_the_next_heading() {
     let mut doc = SourceDocument::new("\\section{A}\ntext\n\\section{B}\nmore\n");
     assert_eq!(

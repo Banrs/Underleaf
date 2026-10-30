@@ -220,6 +220,29 @@ fn an_argument_completes_what_the_command_takes() {
 }
 
 #[test]
+fn a_completion_is_accepted_from_the_list_offered_over_what_was_typed_since() {
+    let mut doc = SourceDocument::new("a \\fr");
+    let offered = complete(&mut doc, 5);
+    let accept = |doc: &mut SourceDocument, index: u32, caret: u32| {
+        run(
+            doc,
+            "AcceptCompletion",
+            json!({ "index": index, "caret": caret }),
+        )
+    };
+    doc.apply_edit(5, 0, "a", None, false);
+    let accepted = accept(&mut doc, 0, 6);
+    let edit = json!({ "start": 2, "length": 4, "text": "\\frac{}{}" });
+    assert_eq!((&accepted["edit"], &accepted["caret"]), (&edit, &json!(11)));
+    assert_eq!(accepted["fields"], offered["items"][0]["fields"]);
+    assert_eq!(accept(&mut doc, 0, 6), Value::Null);
+    complete(&mut doc, 6);
+    assert_eq!(accept(&mut doc, 999, 6), Value::Null);
+    complete(&mut doc, 6);
+    assert_eq!(accept(&mut doc, 0, 1), Value::Null);
+}
+
+#[test]
 fn words_leave_out_commands_names_maths_and_comments() {
     let text = "See \\cite{knuth} and \\ref{fig} on $x^2$ % a note\n";
     let mut doc = SourceDocument::new(text);

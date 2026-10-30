@@ -97,6 +97,7 @@ fn args(rng: &mut Rng, call: &str, len: usize) -> Value {
     let (at, selection, selections) = (rng.offset(len), rng.range(len), rng.ranges(len));
     match call {
         "Complete" => json!({ "caret": at, "explicit": rng.chance(2) }),
+        "AcceptCompletion" => json!({ "index": rng.below(4), "caret": at }),
         "ToggleComment" | "DuplicateLines" | "DeleteLines" => json!({ "selections": selections }),
         "SetHeading" => {
             json!({ "caret": at, "command": rng.pick(&["section", "chapter", "", "bogus"]) })
@@ -108,7 +109,9 @@ fn args(rng: &mut Rng, call: &str, len: usize) -> Value {
             json!({ "command": rng.pick(&["\\alpha", "\\frac{#{}}{#{}}", ""]), "selection": selection })
         }
         "MathAt" => json!({ "caret": at }),
-        "StylesAt" | "Words" | "InsertNewline" => json!({ "selection": selection }),
+        "StylesAt" | "Words" | "InsertNewline" | "SelectsCommand" => {
+            json!({ "selection": selection })
+        }
         "CodeRanges" => {
             json!({ "selection": selection, "checker": rng.pick(&["spelling", "writingTools"]) })
         }

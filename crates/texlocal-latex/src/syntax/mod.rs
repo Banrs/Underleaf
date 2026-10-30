@@ -247,6 +247,13 @@ impl SourceDocument {
         found
     }
 
+    pub(crate) fn selects_command(&self, selection: TextRange) -> bool {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        let units = &self.text.units;
+        let backslash = |at: usize| is(units[at], '\\') && !escaped(units, at);
+        start > 0 && backslash(start - 1) || end > start && backslash(start)
+    }
+
     pub fn reset_typing(&mut self) {
         self.typing = typing::Typing::default();
     }
