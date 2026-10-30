@@ -148,6 +148,23 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     rig.call("StopLive", json!({}));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs TeX and TeXpresso"]
+async fn a_live_edit_to_an_input_after_a_compile_typesets_and_places_its_error() {
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n";
+    let part = "A part.\n";
+    let (rig, build) = built(&[("main.tex", main), ("part.tex", part)]).await;
+    assert_eq!(build["result"]["ok"], true, "{}", build["result"]["log"]);
+    let doc = rig.open_document("part.tex");
+    rig.call("StartLive", json!({}));
+    rig.call("LiveView", json!({ "first": 0, "last": 0 }));
+    rig.event("liveDocument", |e| e["complete"] == true);
+    doc.edit(part.len() as u32, 0, "\\undefinedcommand\n", None, false);
+    let live = rig.section("live", |l| !l["lines"]["part.tex"].is_null());
+    assert_eq!(live["lines"]["part.tex"][0]["line"], 2);
+    rig.call("StopLive", json!({}));
+}
+
 fn first_page(pdf: &str) -> String {
     let text = Command::new("mutool")
         .args(["draw", "-F", "txt", "-o", "-", pdf, "1"])
