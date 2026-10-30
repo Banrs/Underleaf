@@ -51,7 +51,7 @@ final class WorkspaceViews: ProjectViews {
         }
         text.forwardSync = { [weak self] quietly in
             guard let project = self?.project, project.hasPDF, project.isLaTeX, !quietly || project.window?.showPDF == true else { return nil }
-            return { project.session.task { await project.forwardSync(quietly: quietly) } }
+            return { project.session.task { await project.forwardSync(quietly: quietly, wordOnly: quietly) } }
         }
         text.openDefinition = { [weak self] place in
             guard let project = self?.project else { return }

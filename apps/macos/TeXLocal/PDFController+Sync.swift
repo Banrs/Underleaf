@@ -43,7 +43,7 @@ extension PDFController {
         revealing = Task {
             let hit = try? await source.session.call(match)
             guard !Task.isCancelled, view.document === document, read.allSatisfy({ document.number(of: $0) != nil }),
-                  !source.quietly || hit != nil else { return }
+                  !source.wordOnly || hit != nil else { return }
             showFound(loc, on: located, hit: hit)
         }
     }

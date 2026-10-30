@@ -148,6 +148,25 @@ struct PDFTests {
         #expect(view.mark == nil && view.currentSelection == nil)
     }
 
+    @Test(arguments: [false, true])
+    func aSyncWithNoWordFallsBackToItsBoxUnlessItNeedsAWord(_ wordOnly: Bool) async throws {
+        let controller = PDFController(), view = controller.view
+        let window = onScreen(controller)
+        defer { window.close() }
+        controller.show(try textPDF(count: 6))
+        let start = try shown(view)
+        let far = ForwardLoc(page: 5, h: 72, v: 300, width: 100, height: 10, matches: [])
+        let source = SyncSource(session: SessionClient(core: .shared), file: "main.tex", line: 1, column: 0, wordOnly: wordOnly)
+        controller.reveal(far, from: source)
+        await controller.revealing?.value
+        if wordOnly {
+            #expect(try shown(view) == start && view.mark == nil)
+        } else {
+            let mark = try #require(view.mark)
+            #expect(mark.page === view.document?.page(at: 4) && view.shownRect.contains(view.convert(mark.rect, from: mark.page)))
+        }
+    }
+
     private func textPDF(_ pages: [String]) throws -> PDFDocument {
         let document = PDFDocument()
         for text in pages {
