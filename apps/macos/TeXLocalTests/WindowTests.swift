@@ -183,13 +183,13 @@ struct WindowTests {
         try mouse(.leftMouseDragged, at: columns.bounds.width)
         #expect(columns.dragging && workspace.toolbar.compactCompile)
         workspace.quiet(true)
-        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 10)
+        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 20)
         #expect(workspace.toolbar.compactCompile)
         workspace.quiet(false)
-        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum)
+        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 10)
         try await waitUntil(timeout: .seconds(1)) { !workspace.toolbar.compactCompile }
         #expect(columns.dragging)
-        try mouse(.leftMouseUp, at: ColumnMetrics.paneMinimum)
+        try mouse(.leftMouseUp, at: ColumnMetrics.paneMinimum + 10)
         try await waitUntil { !columns.dragging }
     }
 
