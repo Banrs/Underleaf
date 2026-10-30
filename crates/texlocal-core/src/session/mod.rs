@@ -17,7 +17,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::project::{Analysis, Scan};
 use texlocal_latex::syntax::TextEdit;
@@ -134,6 +134,7 @@ impl Sessions {
     ) -> Self {
         let hub = Hub::new(listener);
         let _ = service.hub.set(hub.queue.clone());
+        tokio::spawn(service.call("CheckTex", json!({})));
         Self {
             service,
             hub,
@@ -153,15 +154,9 @@ impl Sessions {
     }
 
     pub fn send(&self, id: u64, command: &str, args: Value) {
-        let (service, name, reply) = (
-            Arc::clone(&self.service),
-            command.to_owned(),
-            self.reply(id),
-        );
+        let (call, reply) = (self.service.call(command, args), self.reply(id));
         let runtime = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || {
-            reply.send(runtime.block_on(service.call(&name, args)));
-        });
+        tokio::task::spawn_blocking(move || reply.send(runtime.block_on(call)));
     }
 
     pub fn send_to(self: &Arc<Self>, id: u64, session: u64, command: &str, args: Value) {
@@ -245,7 +240,6 @@ mod tests {
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
-    use serde_json::json;
     use tokio::sync::Notify;
 
     use super::build::Fut;

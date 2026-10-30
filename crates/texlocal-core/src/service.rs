@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use texlocal_latex::message::Message;
 use texlocal_latex::templates::ProjectTemplate;
+use tokio::sync::oneshot;
 
 use crate::compile::CompileManager;
 use crate::events::{Queued, Sent};
@@ -25,6 +26,7 @@ pub struct Service {
     pub(crate) texpresso: Arc<texpresso::Manager>,
     pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
+    tex_queue: Mutex<Option<oneshot::Receiver<()>>>,
     histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
     pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
     sent: Mutex<Sent<LibrarySection>>,
@@ -75,6 +77,7 @@ impl Service {
             texpresso: Arc::default(),
             library: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
+            tex_queue: Mutex::default(),
             histories: Mutex::default(),
             hub: OnceLock::new(),
             sent: Mutex::default(),
@@ -154,6 +157,17 @@ impl Service {
         Project::find(&self.data_dir, id)
     }
 
+    fn tex_turn(&self) -> impl Future<Output = oneshot::Sender<()>> + use<> {
+        let (turn, next) = oneshot::channel();
+        let before = lock(&self.tex_queue).replace(next);
+        async move {
+            if let Some(before) = before {
+                let _ = before.await;
+            }
+            turn
+        }
+    }
+
     async fn status(&self) -> TexStatus {
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
@@ -170,9 +184,30 @@ impl Service {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
+    pub fn call(
+        self: &Arc<Self>,
+        name: &str,
+        args: Value,
+    ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
+        let request = Library::parse(name, args);
+        let tex = matches!(
+            request,
+            Ok(Library::CheckTex(..) | Library::SetTexpressoDir(..) | Library::SetTexDir(..))
+        );
+        let turn = tex.then(|| self.tex_turn());
+        let service = Arc::clone(self);
+        async move {
+            let _turn = match turn {
+                Some(turn) => Some(turn.await),
+                None => None,
+            };
+            service.run(request?).await
+        }
+    }
+
     #[expect(clippy::unit_arg)]
-    pub async fn call(&self, name: &str, args: Value) -> Result<Value, CoreError> {
-        match Library::parse(name, args)? {
+    async fn run(&self, request: Library) -> Result<Value, CoreError> {
+        match request {
             Library::CheckTex(CheckTex {}, answer) => answer(Ok(self.status().await)),
             Library::SetTexpressoDir(SetTexpressoDir { dir }, answer) => {
                 let none_there = || CoreError::bad_request(messages::no_texpresso_there());
@@ -190,6 +225,7 @@ impl Service {
             }
             Library::InstallTex(InstallTex {}, answer) => {
                 tinytex::install(&self.tool_paths().0).await?;
+                let _turn = self.tex_turn().await;
                 answer(Ok(self.status().await))
             }
             Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),

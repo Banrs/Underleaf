@@ -48,25 +48,24 @@ fi
 printf 'Output written on %s.pdf (1 page).\n' "$stem" > "$out/$stem.log"
 "#;
 
+fn program(path: &Path, script: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, script).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn app_settings(library: &Library, settings: Value) {
+    let file = library.path("data/.texlocal-app.json");
+    fs::write(file, settings.to_string()).unwrap();
+}
+
 fn stub_tex(library: &Library) {
     let tex = library.path("tex");
-    let bin = tex.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    fs::create_dir(tex.join("texmf-dist")).unwrap();
+    fs::create_dir_all(tex.join("texmf-dist")).unwrap();
     let ls_r = "./tex/latex/base:\narticle.cls\nsample2e.tex\n";
     fs::write(tex.join("texmf-dist/ls-R"), ls_r).unwrap();
-    let latexmk = bin.join("latexmk");
-    fs::write(&latexmk, LATEXMK).unwrap();
-    fs::set_permissions(&latexmk, fs::Permissions::from_mode(0o755)).unwrap();
-    let service = std::sync::Arc::clone(&library.service);
-    std::thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(service.call("SetTexDir", json!({ "dir": bin })))
-            .unwrap();
-    })
-    .join()
-    .unwrap();
+    program(&tex.join("bin/latexmk"), LATEXMK);
+    app_settings(library, json!({ "texDir": tex.join("bin") }));
 }
 
 fn wait_until(why: &str, done: impl Fn() -> bool) {
@@ -1167,6 +1166,37 @@ async fn turning_auto_compile_on_builds_after_a_save() {
     rig.call("Save", json!({ "reporting": true }));
     let started = rig.section("build", |b| b["compiling"] == true);
     assert_eq!(started["auto"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tex_is_looked_for_at_start_so_an_auto_build_waits_on_no_client() {
+    let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
+    rig.call("CloseProject", json!({}));
+    let auto = json!({ "id": rig.id, "autoCompile": true });
+    rig.call_to(2, "OpenProject", auto);
+    let started = rig.section_in(2, "build", |b| b["compiling"] == true);
+    assert_eq!(started["auto"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found() {
+    let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], |library| {
+        stub_tex(library);
+        program(
+            &library.path("slow/latexmk"),
+            "#!/bin/sh\nsleep 1\nexit 1\n",
+        );
+        app_settings(library, json!({ "texDir": library.path("slow") }));
+    })
+    .await;
+    let checked = rig.send_library("CheckTex", json!({}));
+    let set = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("tex/bin") }));
+    let first = rig.find(|e| e["reply"] == checked || e["reply"] == set);
+    assert_eq!(first["reply"], checked);
+    assert_eq!(rig.reply(set).unwrap()["available"], true);
+    rig.call("SetOptions", json!({ "autoCompile": true }));
+    rig.call("SetSettings", json!({ "patch": {} }));
+    rig.section("build", |b| b["compiling"] == true);
 }
 
 #[tokio::test(flavor = "multi_thread")]
