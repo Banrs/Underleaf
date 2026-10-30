@@ -61,10 +61,13 @@ impl Actor {
         self.beside(History::list, reply);
     }
 
-    pub fn history_save(&self, name: String, reply: Pending<Option<Snapshot>>) {
+    pub fn history_save(&mut self, name: String, reply: Pending<Option<Snapshot>>) {
         let name = name.trim().to_owned();
         if name.is_empty() {
             return reply.send(Err(CoreError::bad_request(messages::version_needs_name())));
+        }
+        if let Err(err) = self.save_first() {
+            return reply.send(Err(err));
         }
         let root = self.project.root.clone();
         let save = move |history: &History| {

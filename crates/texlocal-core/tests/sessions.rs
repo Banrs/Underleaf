@@ -660,6 +660,71 @@ async fn a_named_version_is_listed_compared_and_restored() {
     assert_eq!(empty, ErrorKind::Invalid);
 }
 
+fn replace_cat() -> Value {
+    json!({ "query": "cat", "replacement": "dog", "matchCase": false, "wholeWord": false })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_a_snapshot_and_an_export_hold_the_edits_not_yet_saved() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    rig.call("Composing", json!({ "path": "ch.tex", "composing": true }));
+    let holds_the_edits = |id: &Value| {
+        let rows = rig.call("CompareVersion", json!({ "id": id, "path": "ch.tex" }));
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["type"] == "same")
+    };
+    doc.edit(0, 0, "% one\n", None, false);
+    let draft = rig.call("SaveVersion", json!({ "name": "Draft" }));
+    assert!(holds_the_edits(&draft["id"]));
+    doc.edit(0, 0, "% two\n", None, false);
+    let replaced = rig.call("Replace", replace_cat());
+    assert!(holds_the_edits(&replaced["snapshot"]));
+    doc.edit(0, 0, "% three\n", None, false);
+    let dest = rig.library.path("P.zip");
+    rig.call("ExportZip", json!({ "dest": dest, "forArxiv": false }));
+    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+    let mut exported = String::new();
+    let mut chapter = archive.by_name("ch.tex").unwrap();
+    chapter.read_to_string(&mut exported).unwrap();
+    assert_eq!(exported, format!("% three\n% two\n% one\n{CHAPTER}"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_a_snapshot_or_an_export_is_refused_while_edits_cant_be_saved() {
+    let rig = project().await;
+    let dest = rig.library.path("P.zip");
+    let asked = [
+        ("SaveVersion", json!({ "name": "Draft" })),
+        ("Replace", replace_cat()),
+        ("ExportZip", json!({ "dest": dest, "forArxiv": false })),
+    ];
+    let refusals = || {
+        asked
+            .clone()
+            .map(|(command, args)| rig.refuse(command, args))
+    };
+    let main = rig.root().join("main.tex");
+    let doc = rig.open_document("main.tex");
+    fs::set_permissions(&main, fs::Permissions::from_mode(0o444)).unwrap();
+    doc.edit(0, 0, "% typed\n", None, false);
+    assert_eq!(refusals(), [ErrorKind::Denied; 3]);
+    fs::set_permissions(&main, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::write(&main, "theirs\n").unwrap();
+    assert_eq!(refusals(), [ErrorKind::Conflict; 3]);
+    let versions = rig.call("ListVersions", json!({}));
+    let auto = |version: &Value| version["name"].is_null() && version["reason"].is_null();
+    assert!(versions.as_array().unwrap().iter().all(auto));
+    assert_eq!(
+        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
+        CHAPTER
+    );
+    assert!(!dest.exists());
+    rig.call("Resolve", json!({ "path": "main.tex", "answer": "revert" }));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_change_and_bad_ones_are_refused() {
     let rig = project().await;

@@ -58,6 +58,7 @@ texlocal_latex::messages! {
     document_not_open = "The document isn't open";
     answer_unfit = "That answer doesn't fit this conflict";
     changed_on_disk(path) = "“{path}” changed on disk, so nothing was changed. Keep your edits or the disk’s first, then try again.";
+    edits_unsaved = "Some edits aren’t saved, so they’d be left out. Save them, then try again.";
     one_document = "Only one open document can be edited at once: close the others first.";
     not_utf8_file(path) = "“{path}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it.";
     too_large_to_keep(path) = "“{path}” is too large for the version history to keep, so nothing was changed, as it couldn’t be put back.";

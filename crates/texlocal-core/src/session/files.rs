@@ -114,7 +114,10 @@ impl Actor {
         Ok(imported)
     }
 
-    pub fn export(&self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
+    pub fn export(&mut self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
+        if let Err(err) = self.save_first() {
+            return reply.send(Err(err));
+        }
         let project = self.project.clone();
         tokio::task::spawn_blocking(move || {
             reply.send(zipexport::export_zip(&project, &dest, for_arxiv));

@@ -354,6 +354,14 @@ impl Actor {
             .all(|(path, doc)| only.is_some_and(|only| only != path) || !doc.dirty()))
     }
 
+    pub fn save_first(&mut self) -> Result<(), CoreError> {
+        if self.flush_all(true)? {
+            Ok(())
+        } else {
+            Err(CoreError::conflict(messages::edits_unsaved()))
+        }
+    }
+
     pub fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {
         let edited = !self.dirty_paths().is_empty();
         let saved = self.flush_all(reporting)?;

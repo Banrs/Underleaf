@@ -40,7 +40,7 @@ pub(crate) struct Fixed {
 }
 
 impl Actor {
-    pub fn replace(&self, query: &Query, to: &str) -> Result<ProjectEdits, CoreError> {
+    pub fn replace(&mut self, query: &Query, to: &str) -> Result<ProjectEdits, CoreError> {
         let open = self.texts_to_edit()?;
         let found = |_: &str, text: &str| query.places(text);
         self.edit_project(
@@ -53,7 +53,7 @@ impl Actor {
     }
 
     pub fn rename_symbol(
-        &self,
+        &mut self,
         kind: SymbolKind,
         from: &str,
         to: &str,
@@ -126,9 +126,9 @@ impl Actor {
         self.set_settings(&patch, false).map(|()| None)
     }
 
-    fn add_package(&self, name: &str) -> Result<ProjectEdits, CoreError> {
-        let main = self.tree.main.as_deref();
+    fn add_package(&mut self, name: &str) -> Result<ProjectEdits, CoreError> {
         let open = self.texts_to_edit()?;
+        let main = self.tree.main.as_deref();
         let found = |_: &str, text: &str| {
             let facts = Facts::read(text, FileKind::Tex);
             let loaded = facts.packages.iter().any(|package| package == name);
@@ -139,17 +139,17 @@ impl Actor {
         self.edit_project("Before Adding a Package", &open, &main, &found, &line)
     }
 
-    pub fn texts_to_edit(&self) -> Result<Vec<(String, String, u64)>, CoreError> {
-        let docs = self.docs.values();
+    pub fn texts_to_edit(&mut self) -> Result<Vec<(String, String, u64)>, CoreError> {
         let unsettled = |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some();
-        if let Some(doc) = docs.clone().find(unsettled) {
+        if let Some(doc) = self.docs.values().find(unsettled) {
             return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }
+        self.save_first()?;
         let text = |doc: &Doc| {
             let (text, version) = doc.doc.snapshot();
             (doc.path.clone(), text, version)
         };
-        Ok(docs.map(text).collect())
+        Ok(self.docs.values().map(text).collect())
     }
 
     fn edit_project(
