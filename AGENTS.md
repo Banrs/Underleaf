@@ -33,14 +33,17 @@ Ask in order; the first yes decides.
 - `cargo test --workspace`
 - `cargo check -p texlocal-latex --target wasm32-unknown-unknown`
 - `cargo check -p texlocal-core --target aarch64-apple-ios`
+- `CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime cargo test -p texlocal-latex --target wasm32-wasip1`
 - `zsh tools/qa/typecheck.sh`
 - `tools/qa/xctest.sh . $QA_SCRATCH/dd-xctest`
 
-The two target checks need `rustup target add wasm32-unknown-unknown aarch64-apple-ios`. The QA scripts need
-`zsh tools/qa/setup.sh <scratch>` once, then `export QA_SCRATCH=<scratch>`.
+`rust-toolchain.toml` pins the toolchain with its components and targets, and rustup installs it on first use. The
+wasm test needs `brew install wasmtime` once. The QA scripts need `zsh tools/qa/setup.sh <scratch>` once, then
+`export QA_SCRATCH=<scratch>`.
 
 The real-TeX tests, `cargo test -p texlocal-core -- --ignored`, need TeX on the `PATH` and, for Live Preview, a
-TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly.
+TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly and
+on pull requests that touch TeX code.
 
 `zsh tools/qa/build.sh` builds the QA app, and `$QA_SCRATCH/qa/qa` drives it for checking by eye what no test can.
 
@@ -50,6 +53,7 @@ TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpr
   `tools/qa` builds, with its own data.
 - Install only when asked: TeXpresso first (`tools/texpresso/build.sh`, then
   `tools/texpresso/install.sh tools/texpresso/source/build`), since the app needs the TeXpresso of its own
-  checkout, then `zsh tools/install-mac.sh`. `zsh tools/install-mac.sh --dev` instead builds a branch as
+  checkout, then `zsh tools/install-mac.sh`. Pass `--link` to `install.sh` only when the user asks for
+  `/opt/homebrew/bin/texpresso` to link to it. `zsh tools/install-mac.sh --dev` instead builds a branch as
   `~/Applications/TeXLocal Dev.app`, with its own bundle identifier, preferences and projects folder,
   `~/TeXLocal Dev`, leaving the installed app as it is.

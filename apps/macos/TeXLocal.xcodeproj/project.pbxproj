@@ -19,6 +19,7 @@
 /* Begin PBXFileReference section */
 		639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeXLocalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1C0FFEE0A55E7500000C001 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -53,6 +54,7 @@
 			children = (
 				828D4CA0BCC36654846EAE79 /* TeXLocal */,
 				6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */,
+				A1C0FFEE0A55E7500000C001 /* Version.xcconfig */,
 				4AACD0AA9786B91F34A573C0 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -367,12 +369,12 @@
 		};
 		E7DA4BF3B9007896C624FEDD /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A1C0FFEE0A55E7500000C001 /* Version.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -385,7 +387,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"$(SRCROOT)/../../target/release/libtexlocal_ffi.a",
 					"-liconv",
@@ -400,12 +401,12 @@
 		};
 		FECB5F4341ED04EE776B7C69 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A1C0FFEE0A55E7500000C001 /* Version.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -418,7 +419,6 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"$(SRCROOT)/../../target/debug/libtexlocal_ffi.a",
 					"-liconv",

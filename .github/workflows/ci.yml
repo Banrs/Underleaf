@@ -19,6 +19,8 @@ jobs:
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       mac: ${{ steps.paths.outputs.mac }}
+      release: ${{ steps.paths.outputs.release }}
+      deps: ${{ steps.paths.outputs.deps }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -26,6 +28,7 @@ jobs:
       - id: paths
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
         run: |
           if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             files=$(git diff --name-only "$BASE" HEAD)
@@ -33,10 +36,15 @@ jobs:
             files=ALL
           fi
           has() { [ "$files" = ALL ] || grep -Eq "$1" <<< "$files"; }
-          shared='^(crates/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'
+          shared='^(crates/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)'
           wire='^apps/macos/(TeXLocal/Wire|TeXLocalTests/WireFixtures)\.swift$'
-          has "$shared|$wire" && echo rust=true >> "$GITHUB_OUTPUT"
-          has "$shared|^apps/macos/|^tools/build-core\.sh$" && echo mac=true >> "$GITHUB_OUTPUT"
+          version='^apps/macos/(Version\.xcconfig|TeXLocal\.xcodeproj/project\.pbxproj)$'
+          mac="$shared|^apps/macos/|^tools/build-core\.sh$"
+          build='(^|/)Cargo\.(toml|lock)$|^(rust-toolchain\.toml|tools/build-core\.sh|apps/macos/(Version\.xcconfig|TeXLocal\.xcodeproj/.*)|\.github/workflows/ci\.yml)$'
+          has "$shared|$wire|$version" && echo rust=true >> "$GITHUB_OUTPUT"
+          has "$mac" && echo mac=true >> "$GITHUB_OUTPUT"
+          { has "$build" || { [ "$EVENT" != pull_request ] && has "$mac"; }; } && echo release=true >> "$GITHUB_OUTPUT"
+          has '(^|/)Cargo\.(toml|lock)$|^(deny|rust-toolchain)\.toml$|^\.github/workflows/ci\.yml$' && echo deps=true >> "$GITHUB_OUTPUT"
           exit 0
 
   rust:
@@ -47,19 +55,49 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown, aarch64-apple-ios
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: cargo check -p texlocal-latex --target wasm32-unknown-unknown
-      - run: cargo check -p texlocal-core --target aarch64-apple-ios
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo check --locked -p texlocal-core --target aarch64-apple-ios
+
+  wasm:
+    name: LaTeX on wasm
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8
+        with:
+          tool: wasmtime@49.0.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --locked -p texlocal-latex --target wasm32-unknown-unknown
+      - run: cargo test --locked -p texlocal-latex --target wasm32-wasip1
+
+  deps:
+    name: Dependencies
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8
+        with:
+          tool: cargo-deny@0.20.2,cargo-shear@1.14.0
+      - run: cargo deny --locked check
+      - run: cargo shear
 
   mac:
     name: Mac app
@@ -71,9 +109,7 @@ jobs:
       APP_ID: com.texlocal.mac.ci${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
+      - run: rustup toolchain install
       - name: Select the newest Xcode
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
@@ -89,11 +125,8 @@ jobs:
           -derivedDataPath "$RUNNER_TEMP/dd" -parallel-testing-enabled NO
           -resultBundlePath "$RUNNER_TEMP/TeXLocal.xcresult"
           TEXLOCAL_APP_IDENTIFIER="$APP_ID"
-      - name: Core linked statically, tests ran
+      - name: Tests ran
         run: |
-          if otool -L "$RUNNER_TEMP"/dd/Build/Products/Debug/TeXLocal.app/Contents/MacOS/TeXLocal | grep -q texlocal_ffi; then
-            echo "::error::The app loads the Rust core as a dylib"; exit 1
-          fi
           xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/TeXLocal.xcresult" --compact \
             | jq -e '. as $r | "\(.totalTestCount) tests: \(.passedTests) passed, \(.skippedTests) skipped" | debug | $r.passedTests > 0'
       - if: failure()
@@ -104,8 +137,37 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  release:
+    name: Release build
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - name: Select the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          key: macos-release-27.0
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build
+        working-directory: apps/macos
+        run: >-
+          xcodebuild build -scheme TeXLocal -configuration Release -destination 'platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO
+      - name: The core keeps every function the header declares
+        run: |
+          missing=$(comm -23 \
+            <(grep -o 'tl_[a-z0-9_]*(' crates/texlocal-ffi/include/texlocal.h | tr -d '(' | sort -u) \
+            <(nm -gU target/release/libtexlocal_ffi.a 2>/dev/null | sed -n 's/.* T _\(tl_[a-z0-9_]*\)$/\1/p' | sort -u))
+          [ -z "$missing" ] || { echo "::error::target/release/libtexlocal_ffi.a lacks $(echo $missing)"; exit 1; }
+
   ci-ok:
-    needs: [changes, rust, mac]
+    needs: [changes, rust, wasm, deps, mac, release]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -70,7 +70,7 @@
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "TEXLOCAL_DATA"
-            value = "/tmp/texlocal-xctest"
+            value = "$(OBJROOT)/xctest-data"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

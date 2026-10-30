@@ -272,3 +272,12 @@ fn a_panic_answers_an_error_and_a_new_source_survives_one() {
     assert_eq!(source_text(source), text);
     unsafe { tl_source_free(source) };
 }
+
+#[test]
+fn the_app_has_the_crates_version_from_one_place() {
+    let config = include_str!("../../../apps/macos/Version.xcconfig");
+    let version = concat!("MARKETING_VERSION = ", env!("CARGO_PKG_VERSION"));
+    assert!(config.lines().any(|line| line == version), "{config}");
+    let project = include_str!("../../../apps/macos/TeXLocal.xcodeproj/project.pbxproj");
+    assert!(!project.contains("MARKETING_VERSION"));
+}

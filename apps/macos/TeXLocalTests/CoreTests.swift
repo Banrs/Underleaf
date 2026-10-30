@@ -4,8 +4,9 @@ import Testing
 
 @Suite(.serialized)
 struct CoreTests {
-    @Test func theLibraryIsTheTestOne() {
-        #expect(Core.libraryFolder.path(percentEncoded: false).hasPrefix("/tmp/texlocal-xctest"))
+    @Test func theLibraryIsTheTestOne() throws {
+        let data = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        #expect(Core.libraryFolder == URL(filePath: data, directoryHint: .isDirectory))
         #expect(Core.shared.isOpen)
     }
 

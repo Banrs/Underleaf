@@ -3,7 +3,9 @@ name = "texlocal-ffi"
 description = "C ABI over texlocal-core's commands and sessions and texlocal-latex's editor, for the Mac app"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [lib]
 name = "texlocal_ffi"
