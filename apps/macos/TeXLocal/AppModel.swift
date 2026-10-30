@@ -89,6 +89,7 @@ final class AppModel {
     var home: WindowModel? { windows.first { $0.project == nil } }
     @ObservationIgnored var newWindow: ((String?) -> WindowModel)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }
+    @ObservationIgnored var pdfAppName: String?
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
 

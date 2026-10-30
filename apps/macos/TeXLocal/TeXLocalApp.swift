@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct TeXLocalApp: App {
@@ -23,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.shared = self
         NSWindow.allowsAutomaticWindowTabbing = false
         app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
+        app.pdfAppName = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
+            .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
         app.newWindow = { [app] id in id.map { MainWindowController(app: app, project: $0).model } ?? HomeWindowController(app: app).model }
     }
 

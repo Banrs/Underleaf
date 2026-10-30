@@ -185,11 +185,8 @@ extension AppModel {
 }
 
 extension WindowModel {
-    private static let pdfApp = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
-        .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
-
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
-        if command == .pdfOpen, let app = Self.pdfApp { return "Open PDF in \(app)" }
+        if command == .pdfOpen, let name = app.pdfAppName { return "Open PDF in \(name)" }
         let shown: Bool? = switch command {
         case .viewToggleSource: showSource
         case .viewTogglePDF: showPDF
@@ -227,17 +224,15 @@ extension WindowModel {
         case .fileSave: Task { await project?.save() }
         case .fileSaveVersion: prompt = .saveVersion
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
-        case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .fileBrowseVersions: prompt = .versionHistory
-        case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
-        case .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition, .findUsages, .editRename:
+        case .openQuickly, .pdfOpen, .viewToggleInspector, .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition,
+             .findUsages, .editRename:
             project?.views?.perform(command)
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .pdfGotoPage: prompt = .gotoPage
         case .viewToggleSource: toggleSource()
         case .viewTogglePDF: togglePDF()
-        case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: app.showWordCount.toggle()
         case .compileRun: Task { await project?.compile() }

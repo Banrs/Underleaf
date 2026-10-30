@@ -117,6 +117,9 @@ final class WorkspaceViews: ProjectViews {
         case .findUsages:
             if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
         case .editRename: project.window?.prompt = editor.renamable.map(Prompt.rename)
+        case .openQuickly: OpenQuickly.show(for: project)
+        case .pdfOpen: if let url = project.buildPDF { NSWorkspace.shared.open(url) }
+        case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         default: break
         }
     }
