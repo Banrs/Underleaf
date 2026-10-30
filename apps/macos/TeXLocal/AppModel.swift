@@ -61,6 +61,7 @@ protocol AppWindow: AnyObject {
     func performPDF(_ action: PDFAction)
     func revealSidebar()
     func focusSearch()
+    func show()
 }
 
 nonisolated enum WorkspaceLayout { case source, split, pdf }
@@ -82,17 +83,10 @@ final class AppModel {
     var tex: TexStatus?
     private(set) var settingTeX = false
     private(set) var installingTeX = false
-    var project: ProjectModel?
-    var alert: AppAlert?
     private(set) var libraryProblem: AppAlert?
-
-    var newProjectDraft: NewProjectDraft?
-    var prompt: Prompt?
-    var newEntry: NewEntry?
-    var openingProject = false
-    var addingFiles = false
-    var exporting: ExportFile?
-    @ObservationIgnored weak var window: (any AppWindow)?
+    private(set) var windows: [WindowModel] = []
+    var main: WindowModel? { windows.first(where: \.isKey) }
+    @ObservationIgnored var newWindow: ((WindowModel?) -> WindowModel)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
@@ -100,16 +94,10 @@ final class AppModel {
     var autoCompile: Bool {
         didSet {
             defaults.set(autoCompile, forKey: DefaultsKey.autoCompile)
-            project?.autoCompileChanged()
+            for window in windows { window.project?.autoCompileChanged() }
         }
     }
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
-    var showSource: Bool { didSet { defaults.set(showSource, forKey: DefaultsKey.showSource) } }
-    var showPDF: Bool { didSet { defaults.set(showPDF, forKey: DefaultsKey.showPDF) } }
-    var outlineCollapsed: Bool { didSet { defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
-    var mainWindowIsKey = false
-    var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
-    var chosenItem: ItemActions?
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
 
@@ -126,6 +114,7 @@ final class AppModel {
     var paper: PDFPaper { didSet { defaults.set(paper.rawValue, forKey: DefaultsKey.pdfPaper) } }
     var settingsPane: SettingsPane { didSet { defaults.set(settingsPane.rawValue, forKey: DefaultsKey.settingsPane) } }
     @ObservationIgnored var buildPanelHeight: Double { didSet { defaults.set(buildPanelHeight, forKey: DefaultsKey.buildPanelHeight) } }
+    @ObservationIgnored var launchProject: String?
 
     init(core: Core, defaults: UserDefaults = .standard) {
         self.core = core
@@ -140,9 +129,6 @@ final class AppModel {
         }
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
-        showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
-        showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
-        outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
         fontName = defaults.string(forKey: DefaultsKey.editorFontName) ?? ""
@@ -159,38 +145,26 @@ final class AppModel {
         buildPanelHeight = defaults.double(forKey: DefaultsKey.buildPanelHeight)
     }
 
-    func newProject(_ template: ProjectTemplate = .article) {
-        guard libraryProblem == nil else { return }
-        Task {
-            let free = try? await core.call(FreeProjectName())
-            newProjectDraft = NewProjectDraft(template: template, name: free ?? "Untitled")
-        }
+    func opened(_ window: WindowModel) { windows.append(window) }
+
+    func closed(_ window: WindowModel) { windows.removeAll { $0 === window } }
+
+    func cameForward(_ window: WindowModel) {
+        guard windows.first !== window, let at = windows.firstIndex(where: { $0 === window }) else { return }
+        windows.insert(windows.remove(at: at), at: 0)
     }
 
-    func outlineOpen(of project: ProjectModel?) -> Bool { project?.isLaTeX == true && !outlineCollapsed }
+    var front: WindowModel { main ?? windows.first ?? openWindow(beside: nil) }
 
-    func outlineState(of project: ProjectModel) -> OutlineState {
-        project.search.isSearching ? .hidden : outlineOpen(of: project) ? .open : .folded
-    }
+    @discardableResult
+    func openWindow(beside window: WindowModel?) -> WindowModel { newWindow?(window) ?? WindowModel(app: self) }
 
-    var layout: WorkspaceLayout {
-        get { showSource ? (showPDF ? .split : .source) : .pdf }
-        set { showPanes(source: newValue != .pdf, pdf: newValue != .source) }
-    }
+    func window(showing id: String) -> WindowModel? { windows.first { $0.shownProject?.id == id || $0.opening == id } }
 
-    func toggleSource() { showPanes(source: !showSource, pdf: showPDF || showSource) }
-    func togglePDF() { showPanes(source: showSource || showPDF, pdf: !showPDF) }
+    func canChange(_ project: ProjectInfo) -> Bool { !project.opened && window(showing: project.id) == nil }
 
-    private func showPanes(source: Bool, pdf: Bool) { (showSource, showPDF) = (source, pdf) }
-
-    func requestPDF(_ action: PDFAction) {
-        showPDF = true
-        window?.performPDF(action)
-    }
-
-    func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
-        guard let project else { return nil }
-        return project.initialLoadComplete ? project : shown
+    func visited(_ id: String) {
+        recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
     }
 
     @ObservationIgnored private var texCheck: Task<Void, Never>?
@@ -243,11 +217,6 @@ final class AppModel {
         }
     }
 
-    func create(name: String, template: ProjectTemplate) async throws {
-        let info = try await core.call(CreateProject(name: name, template: template, engine: newProjectEngine))
-        Task { await open(info.id) }
-    }
-
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
     static func canOpen(_ url: URL) -> Bool {
@@ -255,23 +224,7 @@ final class AppModel {
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    func open(_ urls: [URL]) async {
-        for url in urls { await open(url, alone: urls.count == 1) }
-    }
-
-    func open(_ url: URL, alone: Bool = true) async {
-        guard !importing.contains(url) else { return }
-        importing.append(url)
-        defer { importing.removeAll { $0 == url } }
-        guard let opening = await alerting("Couldn’t Open “\(url.lastPathComponent)”", { try await openPath(url) }) else { return }
-        guard alone else { return }
-        importing.removeAll { $0 == url }
-        let id = opening.project.id
-        await open(id)
-        if let file = opening.file, let project, project.id == id { await project.open(file) }
-    }
-
-    private func openPath(_ url: URL) async throws -> Opening {
+    func openPath(_ url: URL) async throws -> Opening {
         let opening = try await core.call(OpenPath(path: url.path(percentEncoded: false)))
         if opening.project.opened {
             bookmarks[opening.project.id] = try? opening.project.folder.bookmarkData()
@@ -294,138 +247,33 @@ final class AppModel {
         if trashed != .contains { _ = try? await openPath(url) }
     }
 
-    func forget(_ project: ProjectInfo) async {
-        let forgotten = await alerting("Couldn’t Remove “\(project.name)” from the List") {
-            try await core.call(ForgetFolder(id: project.id))
-        }
-        if forgotten != nil {
-            bookmarks[project.id] = nil
-            recentProjects.removeAll { $0 == project.id }
-        }
+    func forget(_ project: ProjectInfo) async throws {
+        try await core.call(ForgetFolder(id: project.id))
+        bookmarks[project.id] = nil
+        recentProjects.removeAll { $0 == project.id }
     }
 
-    func rename(_ project: ProjectInfo, to name: String) async {
-        if let renamed = await renameProject(project.id, shown: project.name, to: name) {
-            registerRenameUndo(current: (renamed.id, renamed.name), previous: (project.id, project.name))
-        }
-    }
-
-    private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
-        await alerting("Couldn’t Rename “\(shown)”") {
-            let renamed = try await core.call(RenameProject(id: id, name: name))
-            recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
-            return renamed
-        }
-    }
-
-    private func registerRenameUndo(current: (id: String, name: String), previous: (id: String, name: String)) {
-        undoManager?.registerAsyncUndo(withTarget: self, actionName: String(localized: "Rename"), reversal: {
-            self.registerRenameUndo(current: previous, previous: current)
-        }, work: {
-            await self.renameProject(current.id, shown: current.name, to: previous.name) != nil
-        })
-    }
-
-    func duplicate(_ project: ProjectInfo) async -> String? {
-        let copy = await alerting("Couldn’t Duplicate “\(project.name)”") {
-            try await core.call(DuplicateProject(id: project.id, name: String(localized: "\(project.name) copy")))
-        }
-        return copy?.id
-    }
-
-    var undoManager: UndoManager? { window?.undoManager }
-
-    func delete(_ project: ProjectInfo) async {
-        let failure = "Couldn’t Move “\(project.name)” to the Trash"
-        let item = UndoableTrash(
-            original: project.folder, name: project.name, undoManager: undoManager,
-            trash: { [weak self] item in
-                do {
-                    try item.recycle()
-                    self?.recentProjects.removeAll { $0 == project.id }
-                    return true
-                } catch {
-                    self?.report(failure, error)
-                    return false
-                }
-            },
-            changed: { [weak self] in await self?.reloadProjects() },
-            failed: { [weak self] title, error in self?.report(title, error) })
-        await item.moveToTrash()
-        await reloadProjects()
-    }
-
-    func alerting<T>(_ title: @autoclosure () -> String, _ work: () async throws -> T) async -> T? {
-        do {
-            return try await work()
-        } catch {
-            report(title(), error)
-            return nil
-        }
-    }
-
-    func report(_ title: String, _ message: String) {
-        guard alert == nil else { return AccessibilityNotification.Announcement(title).post() }
-        alert = AppAlert(title, message)
-    }
-
-    func report(_ title: String, _ error: any Error) {
-        if !(error is CancellationError) { report(title, error.localizedDescription) }
-    }
-
-    @ObservationIgnored private var switching: Task<Bool, Never>?
-    private(set) var opening: String?
-    private(set) var importing: [URL] = []
-    var isOpening: Bool { opening != nil || !importing.isEmpty }
-    @ObservationIgnored var launchProject: String?
-
-    func open(_ id: String) async {
-        guard project?.id != id || project?.closed == true else { return }
-        opening = id
-        defer { if opening == id { opening = nil } }
-        _ = await restart(&switching) { [self] in
-            guard await leave() else { return false }
-            dropRequests()
-            undoManager?.removeAllActions()
-            recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
-            let model = ProjectModel(id: id, app: self)
-            project = model
-            window?.attach(model)
-            await model.load()
-            return true
-        }.value
-    }
-
-    @discardableResult
-    func close() async -> Bool {
-        await restart(&switching) { [self] in
-            guard project != nil else { return true }
-            guard await leave() else { return false }
-            project = nil
-            dropRequests()
-            return true
-        }.value
-    }
-
-    private func dropRequests() {
-        prompt = nil
-        newEntry = nil
-        addingFiles = false
-        exporting = nil
+    func rename(_ id: String, to name: String) async throws -> ProjectInfo {
+        let renamed = try await core.call(RenameProject(id: id, name: name))
+        recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
+        return renamed
     }
 
     func quit() async -> Bool {
-        guard await restart(&switching, leave).value else { return false }
+        for window in windows where window.project?.isOpen == true {
+            guard await window.project?.saveBeforeLeaving() != false else {
+                window.controller?.show()
+                return false
+            }
+        }
+        for window in windows {
+            guard await window.end() else {
+                for ended in windows where ended.project?.closed == true { await ended.close() }
+                window.controller?.show()
+                return false
+            }
+        }
         _ = try? await core.call(KillAll())
         return true
-    }
-
-    private func leave() async -> Bool {
-        guard let project else { return true }
-        if project.isOpen {
-            guard await project.save(), !Task.isCancelled else { return false }
-            project.savePlace()
-        }
-        return await project.close().value && !Task.isCancelled
     }
 }

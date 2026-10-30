@@ -287,6 +287,40 @@ async fn two_sessions_save_at_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_project_or_a_folder_in_or_around_it_opens_in_one_session_at_a_time() {
+    let rig = project().await;
+    let open = |id: &Value| json!({ "id": id, "autoCompile": false });
+    let refused = |session, id: &Value| {
+        let refused = rig.reply(rig.send(session, "OpenProject", open(id)));
+        let refused = refused.unwrap_err();
+        assert_eq!(refused.kind, ErrorKind::Conflict);
+        refused.message
+    };
+    let id = json!(rig.id);
+    assert_eq!(refused(2, &id)["id"], "project_open");
+    assert_eq!(rig.call("Open", json!({ "path": "ch.tex" })), "ch.tex");
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    rig.call_to(3, "OpenProject", open(&id));
+    assert_eq!(
+        rig.call_to(3, "Open", json!({ "path": "main.tex" })),
+        "main.tex"
+    );
+    let folder = rig.library.path("Papers");
+    write(&folder, &[("main.tex", MAIN), ("thesis/main.tex", MAIN)]);
+    let [outer, inner] = [folder.clone(), folder.join("thesis")].map(|path| {
+        let opened = rig.ask_library("OpenPath", json!({ "path": path }));
+        opened.unwrap()["project"]["id"].clone()
+    });
+    rig.call_to(4, "OpenProject", open(&inner));
+    let around = refused(5, &outer);
+    assert_eq!(around["id"], "shares_folder");
+    assert_eq!(around["args"]["name"], "thesis");
+    assert_eq!(rig.call_to(4, "CloseProject", json!({})), true);
+    rig.call_to(5, "OpenProject", open(&outer));
+    assert_eq!(refused(6, &inner)["args"]["name"], "Papers");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn replies_follow_the_events_sent_before_them() {
     let rig = project().await;
     let answered_after = |kind: &str, command: &str, args: Value| {
@@ -356,6 +390,7 @@ async fn the_open_file_is_one_at_a_time_and_a_closed_documents_edits_are_refused
 #[tokio::test(flavor = "multi_thread")]
 async fn an_open_that_a_later_one_supersedes_is_dropped() {
     let rig = project().await;
+    assert_eq!(rig.call("CloseProject", json!({})), true);
     rig.forget();
     let again = 2;
     let open = json!({ "id": rig.id, "autoCompile": false });

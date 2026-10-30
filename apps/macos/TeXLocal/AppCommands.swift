@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AppCommands: Commands {
     let app: AppModel
-    private var project: ProjectModel? { app.commandProject }
+    private var project: ProjectModel? { app.main?.shownProject }
 
     private func items(_ commands: MenuCommand...) -> some View {
         ForEach(commands, id: \.self) { CommandItem(app: app, command: $0) }
@@ -10,10 +10,13 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            items(.projectNew, .fileNew, .fileNewFolder, .projectOpen)
+            items(.projectNew, .fileNew, .fileNewFolder)
+            Button("New Tab") { app.openWindow(beside: app.main) }
+                .keyboardShortcut("t")
+            items(.projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
-                    Button(recent.name, systemImage: "text.document") { Task { await app.open(recent.id) } }
+                    Button(recent.name, systemImage: "text.document") { Task { await app.front.open(recent.id) } }
                     .labelStyle(.titleAndIcon)
                 }
                 Divider()
@@ -30,7 +33,7 @@ struct AppCommands: Commands {
             Divider()
             items(.projectClose)
             Divider()
-            ItemMenuItems(actions: app.mainWindowIsKey ? app.chosenItem : nil, trashShortcut: KeyboardShortcut(.delete))
+            ItemMenuItems(actions: app.main?.chosenItem, trashShortcut: KeyboardShortcut(.delete))
                 .labelStyle(.titleAndIcon)
         }
         CommandGroup(replacing: .importExport) {
@@ -57,12 +60,13 @@ struct AppCommands: Commands {
             Menu("Section Level") { SectionLevelItems(project: project) }
         }
         CommandGroup(replacing: .sidebar) {
-            Button(app.outlineOpen(of: project) ? "Hide File Outline" : "Show File Outline") {
-                app.outlineCollapsed.toggle()
-                if !app.outlineCollapsed { app.window?.revealSidebar() }
+            Button(app.main?.outlineOpen(of: project) == true ? "Hide File Outline" : "Show File Outline") {
+                guard let window = app.main else { return }
+                window.outlineCollapsed.toggle()
+                if !window.outlineCollapsed { window.controller?.revealSidebar() }
             }
             .disabled(project?.isLaTeX != true || project?.search.isSearching == true)
-            Menu("Editor Layout") { WorkspaceLayoutPicker(app: app) }.disabled(project == nil)
+            Menu("Editor Layout") { if let window = app.main { WorkspaceLayoutPicker(window: window) } }.disabled(project == nil)
             items(.viewToggleSource, .viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()
             items(.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage)
@@ -80,7 +84,7 @@ struct AppCommands: Commands {
         }
         CommandMenu("Insert") {
             MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut,
-                          inlineMathEnabled: app.isEnabledInMenuBar(.editMath, on: project)) { app.perform(.editMath, on: project) }
+                          inlineMathEnabled: app.isEnabledInMenuBar(.editMath, on: project)) { app.main?.perform(.editMath, on: project) }
             Divider()
             InsertMenuItems(project: project)
         }
@@ -108,13 +112,13 @@ private struct CommandItem: View {
     let command: MenuCommand
 
     var body: some View {
-        let project = app.commandProject
-        Button { app.perform(command, on: project) } label: {
-            let title = app.title(command, on: project)
+        let window = app.main, project = window?.shownProject
+        Button { (window ?? app.front).perform(command, on: project) } label: {
+            let title = window?.title(command, on: project) ?? command.title
             if let symbol = command.style?.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
         .labelStyle(.titleAndIcon)
-        .keyboardShortcut(app.shortcut(command, on: app.project))
+        .keyboardShortcut(app.shortcut(command, on: window?.project))
         .disabled(!app.isEnabledInMenuBar(command, on: project))
     }
 }
@@ -123,7 +127,7 @@ private struct LivePreviewItem: View {
     let app: AppModel
 
     var body: some View {
-        let project = app.commandProject
+        let project = app.main?.shownProject
         Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
             .disabled(project?.canSwitchLivePreview != true)
     }
@@ -133,7 +137,7 @@ private struct BuildOptionItems: View {
     let app: AppModel
 
     var body: some View {
-        let project = app.commandProject
+        let project = app.main?.shownProject
         option("Shell Escape", project, \.shellEscape)
         option("Stop on First Error", project, \.stopOnFirstError)
     }
@@ -149,7 +153,7 @@ private struct SetMainFileItem: View {
     let app: AppModel
 
     var body: some View {
-        let project = app.commandProject
+        let project = app.main?.shownProject
         Button("Set as Main File") {
             if let project, let path = project.openPath { project.mainFile = path }
         }

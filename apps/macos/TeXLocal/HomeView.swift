@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
@@ -11,26 +12,26 @@ struct HomeView: View {
 
     var body: some View {
         Group { if let problem = app.libraryProblem { unavailable(problem) } else { list } }
-        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await app.open(urls) } }
+        .fileDrop(accepts: { app.libraryProblem == nil && AppModel.canOpen($0) }) { urls in Task { await window.open(urls) } }
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button("Open", systemImage: "folder") { app.openingProject = true }
+                Button("Open", systemImage: "folder") { window.openingProject = true }
                     .help("Open a folder, .tex file or .zip as a project")
                     .disabled(app.libraryProblem != nil)
-                Button("New Project", systemImage: "plus") { app.newProject() }
+                Button("New Project", systemImage: "plus") { window.newProject() }
                     .help("Name a project and choose its template")
                     .disabled(app.libraryProblem != nil)
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
-        .task(id: app.opening) {
+        .task(id: window.opening) {
             if !copied { do { try await Task.sleep(for: .milliseconds(300)) } catch { return } }
-            slowOpening = app.opening
+            slowOpening = window.opening
         }
-        .task(id: app.importing) {
+        .task(id: window.importing) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            slowImports = app.importing
+            slowImports = window.importing
         }
     }
 
@@ -50,7 +51,7 @@ struct HomeView: View {
                     ProjectLabel(detail: Text("Opening…"), progress: "Opening") { Text(url.lastPathComponent).font(.headline) }
                 }
                 ForEach(shown) { project in
-                    ProjectRow(project: project, working: project.id == app.opening && (project.id == slowOpening || copied),
+                    ProjectRow(project: project, working: project.id == window.opening && (project.id == slowOpening || copied),
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { noProjects.frame(maxWidth: .infinity).selectionDisabled() }
@@ -60,24 +61,25 @@ struct HomeView: View {
         .listStyle(.inset)
         .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
             if let project = app.projects.first(where: { ids.contains($0.id) }) {
-                Button("Open") { Task { await app.open(project.id) } }
+                Button("Open") { Task { await window.open(project.id) } }
                 Divider()
                 if project.opened {
                     Button { actions(project).showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
                         .disabled(project.missing)
                     Divider()
-                    Button { Task { await app.forget(project) } } label: { Label("Remove from List", systemImage: "minus.circle") }
+                    Button { Task { await window.forget(project) } } label: { Label("Remove from List", systemImage: "minus.circle") }
+                        .disabled(app.window(showing: project.id) != nil)
                 } else {
-                    Button { Task { if let copy = await app.duplicate(project) { selection = copy } } } label: {
+                    Button { Task { if let copy = await window.duplicate(project) { selection = copy } } } label: {
                         Label("Duplicate", systemImage: "plus.square.on.square")
                     }
                     ItemMenuItems(actions: actions(project))
                 }
             }
-        } primaryAction: { ids in if let id = ids.first { Task { await app.open(id) } } }
+        } primaryAction: { ids in if let id = ids.first { Task { await window.open(id) } } }
         .onKeyPress(.return) {
             guard rename.id == nil, let id = selection else { return .ignored }
-            Task { await app.open(id) }
+            Task { await window.open(id) }
             return .handled
         }
         .focused($listFocused)
@@ -86,16 +88,17 @@ struct HomeView: View {
     }
 
     private func actions(_ project: ProjectInfo) -> ItemActions {
-        ItemActions(rename: project.opened ? nil : { rename.begin(project.id, name: project.name) },
-                    showInFinder: { NSWorkspace.shared.activateFileViewerSelecting([project.folder]) },
-                    moveToTrash: project.opened ? nil : { Task { await app.delete(project) } })
+        let changes = app.canChange(project)
+        return ItemActions(rename: changes ? { rename.begin(project.id, name: project.name) } : nil,
+                           showInFinder: { NSWorkspace.shared.activateFileViewerSelecting([project.folder]) },
+                           moveToTrash: changes ? { Task { await window.delete(project) } } : nil)
     }
 
     private var templates: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: TemplateCard.width, maximum: TemplateCard.width), spacing: 4, alignment: .top)],
                   alignment: .leading, spacing: 4) {
             ForEach(ProjectTemplate.allCases) { template in
-                Button { app.newProject(template) } label: { TemplateCard(template: template) }
+                Button { window.newProject(template) } label: { TemplateCard(template: template) }
                 .buttonStyle(TemplateButtonStyle())
                 .help("Start a project from the \(template.title) template")
             }
@@ -104,12 +107,12 @@ struct HomeView: View {
 
     private func commitRename(_ project: ProjectInfo) {
         guard let name = rename.end(project.id, from: project.name) else { return }
-        Task { await app.rename(project, to: name) }
+        Task { await window.rename(project, to: name) }
     }
 
-    private var copying: [URL] { query.isEmpty ? slowImports.filter(app.importing.contains) : [] }
+    private var copying: [URL] { query.isEmpty ? slowImports.filter(window.importing.contains) : [] }
 
-    private var copied: Bool { slowImports.contains { !app.importing.contains($0) } }
+    private var copied: Bool { slowImports.contains { !window.importing.contains($0) } }
 
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
@@ -134,7 +137,7 @@ struct HomeView: View {
             } description: {
                 Text("Choose a template above, or open or drop a folder, .tex file or .zip.")
             } actions: {
-                Button("Open…") { app.openingProject = true }
+                Button("Open…") { window.openingProject = true }
             }
         }
     }
@@ -236,7 +239,7 @@ private struct TemplateButtonStyle: ButtonStyle {
 }
 
 struct NewProjectSheet: View {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @State var draft: NewProjectDraft
     @FocusState private var nameFocused: Bool
 
@@ -245,7 +248,7 @@ struct NewProjectSheet: View {
     var body: some View {
         DialogSheet(title: "New Project", message: "Saved in \(Core.libraryPath).",
                     action: "Create", enabled: !trimmed.isEmpty) {
-            try await app.create(name: trimmed, template: draft.template)
+            try await window.create(name: trimmed, template: draft.template)
         } fields: {
             DialogField(label: "Name", text: $draft.name, prompt: "Required", focus: $nameFocused)
             Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }

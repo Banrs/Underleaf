@@ -43,9 +43,9 @@ struct CoreTests {
     @Test func theEditorFollowsTheOpenFileAndItsReloadsAndAClosedDocumentRefusesEdits() async throws {
         let info = try await newProject()
         let defaults = TestDefaults()
-        let app = defaults.app()
-        app.autoCompile = false
-        let project = ProjectModel(id: info.id, app: app)
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), editor = views.editor
         await project.load()
         #expect(project.openPath == "main.tex" && editor.path == "main.tex")
@@ -72,19 +72,19 @@ struct CoreTests {
     @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
-        let app = defaults.app()
-        app.autoCompile = false
-        let project = ProjectModel(id: info.id, app: app)
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
         await project.load()
         project.engine = .xelatex
         try await waitUntil { project.engine == .xelatex }
         #expect(await project.close().value)
-        #expect(app.alert == nil)
+        #expect(window.alert == nil)
         let settings = info.path + "/.texlocal.json"
         try "{ not json".write(toFile: settings, atomically: true, encoding: .utf8)
-        let corrupt = ProjectModel(id: info.id, app: app)
+        let corrupt = ProjectModel(id: info.id, window: window)
         await corrupt.load()
-        #expect(app.alert?.title == "Couldn’t Read the Project’s Settings")
+        #expect(window.alert?.title == "Couldn’t Read the Project’s Settings")
         #expect(corrupt.engine == .pdflatex)
         #expect(try String(contentsOfFile: settings, encoding: .utf8) == "{ not json")
         #expect(await corrupt.close().value)

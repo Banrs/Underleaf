@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PDFEmptyState: View {
     @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     let project: ProjectModel
 
     var body: some View {
@@ -29,7 +30,7 @@ struct PDFEmptyState: View {
             } actions: {
                 Button("Install TinyTeX") {
                     Task {
-                        do { try await app.installTeX() } catch { app.report("Couldn’t Install TinyTeX", error) }
+                        do { try await app.installTeX() } catch { window.report("Couldn’t Install TinyTeX", error) }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -58,7 +59,7 @@ struct PDFEmptyState: View {
             } description: {
                 Text("Compile to preview your document.")
             } actions: {
-                Button("Compile") { app.perform(.compileRun, on: project) }
+                Button("Compile") { window.perform(.compileRun, on: project) }
                     .buttonStyle(.borderedProminent)
                     .disabled(!app.isEnabled(.compileRun, on: project))
             }

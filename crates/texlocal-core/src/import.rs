@@ -12,7 +12,7 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::messages;
-use crate::paths::{self, after_entry, fold_case, in_folder, normalize_segments, rel_key};
+use crate::paths::{self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key};
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, write_settings};
@@ -60,8 +60,7 @@ const ENGINE_PACKAGES: [(Engine, &[&str]); 2] = [
 ];
 
 pub(crate) fn import_files(
-    service: &Service,
-    id: &str,
+    project: &Project,
     dir: &str,
     paths: &[PathBuf],
     conflict: Option<ImportConflict>,
@@ -86,8 +85,8 @@ pub(crate) fn import_files(
             )?;
         }
     }
-    let root = service.project(id)?.root;
-    let (rels, taken) = validate(&root, dir, files.iter().map(|(path, _)| path.as_str()))?;
+    let root = &project.root;
+    let (rels, taken) = validate(root, dir, files.iter().map(|(path, _)| path.as_str()))?;
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
@@ -98,7 +97,7 @@ pub(crate) fn import_files(
             Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
             _ => path,
         };
-        save(service, id, &root, &in_folder(dir, &path), &source, replace)?;
+        save(project, &in_folder(dir, &path), &source, replace)?;
     }
     Ok(Imported { existing })
 }
@@ -166,14 +165,8 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
     }
 }
 
-fn save(
-    service: &Service,
-    id: &str,
-    root: &Path,
-    rel: &str,
-    source: &Path,
-    replace: bool,
-) -> Result<(), CoreError> {
+fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<(), CoreError> {
+    let root = &project.root;
     let abs = paths::safe_write_path(root, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
     let (mut file, temp) = atomic::create_temp(folder.unwrap_or(root))?;
@@ -181,20 +174,16 @@ fn save(
     io::copy(&mut origin, &mut file)?;
     file.sync_all()?;
     drop(file);
-    service.with_project(id, |project| {
-        let root = &project.root;
-        let abs = paths::safe_write_path(root, rel)?;
-        if let Some(taken) = occupant(root, &rel_key(rel)?) {
-            if !replace {
-                return Err(CoreError::conflict(messages::exists_already(taken)));
-            }
-            projects::discard_replaced(project, &taken)?;
+    if let Some(taken) = occupant(root, &rel_key(rel)?) {
+        if !replace {
+            return Err(CoreError::conflict(messages::exists_already(taken)));
         }
-        fs::create_dir_all(abs.parent().unwrap_or(root))?;
-        atomic::rename_exclusive(&temp, &abs)?;
-        let _ = temp.keep();
-        Ok(())
-    })
+        projects::discard_replaced(project, &taken)?;
+    }
+    fs::create_dir_all(abs.parent().unwrap_or(root))?;
+    atomic::rename_exclusive(&temp, &abs)?;
+    let _ = temp.keep();
+    Ok(())
 }
 
 struct Opened {

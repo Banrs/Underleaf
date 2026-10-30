@@ -50,4 +50,6 @@ TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpr
   `tools/qa` builds, with its own data.
 - Install only when asked: TeXpresso first (`tools/texpresso/build.sh`, then
   `tools/texpresso/install.sh tools/texpresso/source/build`), since the app needs the TeXpresso of its own
-  checkout, then `zsh tools/install-mac.sh`.
+  checkout, then `zsh tools/install-mac.sh`. `zsh tools/install-mac.sh --dev` instead builds a branch as
+  `~/Applications/TeXLocal Dev.app`, with its own bundle identifier, preferences and projects folder,
+  `~/TeXLocal Dev`, leaving the installed app as it is.

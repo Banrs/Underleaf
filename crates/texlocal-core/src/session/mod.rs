@@ -239,7 +239,8 @@ impl Sessions {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::mpsc::channel;
     use std::time::Duration;
@@ -263,8 +264,9 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_panicking_compiler_fails_every_pending_command() {
+    type Heard = std::sync::mpsc::Receiver<Value>;
+
+    async fn panicking() -> (Arc<Sessions>, Heard, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let service = Arc::new(Service::new(dir.path().into()));
         let made = json!({ "name": "P", "template": "blank" });
@@ -272,16 +274,31 @@ mod tests {
         let (tx, heard) = channel();
         let tx = Mutex::new(tx);
         let listener = Box::new(move |said: String| {
-            let _ = lock(&tx).send(serde_json::from_str::<Value>(&said).unwrap());
+            let _ = lock(&tx).send(serde_json::from_str(&said).unwrap());
         });
         let preview = Arc::clone(&service.texpresso);
-        let sessions = Arc::new(Sessions::with_compiler(
-            service,
-            Arc::new(Panics),
-            preview,
-            false,
-            listener,
-        ));
+        let sessions = Sessions::with_compiler(service, Arc::new(Panics), preview, false, listener);
+        (Arc::new(sessions), heard, dir)
+    }
+
+    fn replied_within(heard: &Heard, id: u64, wait: Duration) -> Option<Value> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let said = heard.recv_timeout(left).ok()?;
+            if said["reply"] == id {
+                return Some(said);
+            }
+        }
+    }
+
+    fn replied(heard: &Heard, id: u64) -> Value {
+        replied_within(heard, id, Duration::from_secs(10)).expect("a reply")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panicking_compiler_fails_every_pending_command() {
+        let (sessions, heard, _dir) = panicking().await;
         let open = json!({ "id": "P", "autoCompile": false });
         sessions.send_to(0, 1, "OpenProject", open);
         let pending = [
@@ -296,20 +313,47 @@ mod tests {
         for (id, (command, args)) in (1..).zip(pending) {
             sessions.send_to(id, 1, command, args);
         }
-        let mut replies = BTreeMap::new();
-        while replies.len() <= 4 {
-            let said = heard.recv_timeout(Duration::from_secs(10)).unwrap();
-            if let Some(id) = said["reply"].as_u64() {
-                replies.insert(id, said);
-            }
-        }
-        assert!(replies[&0]["ok"].is_object());
+        assert!(replied(&heard, 0)["ok"].is_object());
         for id in 1..=4 {
-            assert_eq!(
-                replies[&id]["error"]["kind"], "internal",
-                "{}",
-                replies[&id]
-            );
+            let said = replied(&heard, id);
+            assert_eq!(said["error"]["kind"], "internal", "{said}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_close_or_a_failed_open_is_answered_only_once_its_project_is_free() {
+        let (sessions, heard, dir) = panicking().await;
+        let open = |id: &str| json!({ "id": id, "autoCompile": false });
+        for (session, stops) in [(1, false), (2, true)] {
+            let asked = session * 10;
+            sessions.send_to(asked, session, "OpenProject", open("P"));
+            assert!(replied(&heard, asked)["ok"].is_object());
+            let registry = lock(&sessions.service.library);
+            if stops {
+                sessions.send_to(asked + 1, session, "Compile", json!({ "auto": false }));
+            }
+            sessions.send_to(asked + 2, session, "CloseProject", json!({}));
+            let early = replied_within(&heard, asked + 2, Duration::from_millis(300));
+            assert_eq!(
+                early, None,
+                "the close was answered before the project was free"
+            );
+            drop(registry);
+            replied(&heard, asked + 2);
+        }
+        let root = dir.path().join("P");
+        let mode = |mode| fs::set_permissions(&root, fs::Permissions::from_mode(mode)).unwrap();
+        mode(0);
+        sessions.send_to(30, 3, "OpenProject", open("P"));
+        let unreadable = replied(&heard, 30);
+        mode(0o755);
+        sessions.send_to(40, 4, "OpenProject", open("Q"));
+        let unknown = replied(&heard, 40);
+        for refused in [unreadable, unknown] {
+            assert!(refused["error"].is_object(), "{refused}");
+        }
+        assert!(lock(&sessions.service.library).is_empty());
+        sessions.send_to(50, 5, "OpenProject", open("P"));
+        assert!(replied(&heard, 50)["ok"].is_object());
     }
 }

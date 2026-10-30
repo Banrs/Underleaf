@@ -19,6 +19,8 @@ nonisolated final class TestDefaults {
 
     @MainActor func app() -> AppModel { AppModel(core: .shared, defaults: store) }
 
+    @MainActor func window() -> WindowModel { WindowModel(app: app()) }
+
     deinit { UserDefaults.standard.removePersistentDomain(forName: name) }
 }
 

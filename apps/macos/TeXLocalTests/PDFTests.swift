@@ -71,7 +71,7 @@ struct PDFTests {
 
     @Test func aLivePageWaitsForTheDocumentBeforeItAndClosingCancelsTheReads() async throws {
         let defaults = TestDefaults()
-        let project = ProjectModel(id: "P", app: defaults.app())
+        let project = ProjectModel(id: "P", window: defaults.window())
         let views = WorkspaceViews(project: project)
         project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, log: nil, failures: [],
                                                 lines: [:]))))

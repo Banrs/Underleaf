@@ -13,6 +13,8 @@ folder on your disk, compiled by the TeX installation on your Mac.
   elsewhere, so a git repository is left as it was.
 - See the source and the PDF side by side, or either one alone. A project opens again on the same
   file and line, at the same zoom.
+- Open several projects at once, each in its own window tab. A project opens in one window at a time,
+  and opening it again brings its window forward.
 - Completion for commands, environments, installed packages, `\cite` keys and `\ref` labels.
   Brackets, dollar signs and environments close as you type, and the maths under the cursor shows
   in a small preview.

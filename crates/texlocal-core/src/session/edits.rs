@@ -182,9 +182,7 @@ impl Actor {
         }
         let snapshot = self.snapshot_before(reason)?;
         let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
-        let written = self.service.with_project(&self.project_id, |project| {
-            projects::replace_in_files(&project.root, &others, found, to)
-        })?;
+        let written = projects::replace_in_files(&self.project.root, &others, found, to)?;
         Ok(ProjectEdits {
             edits: edits.pop(),
             written,

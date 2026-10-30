@@ -9,14 +9,14 @@ struct PaneTests {
 
     @Test func theStandardActionsCollapseAndRestoreTheSidebarAndTheInspectorFromAnywhereInTheWindow() async throws {
         let defaults = TestDefaults()
-        let app = defaults.app()
-        let (window, workspace) = open(app)
+        let model = defaults.window()
+        let (window, workspace) = open(model)
         defer { workspace.close(); window.close() }
         let (sidebar, inspector) = (try #require(workspace.splitViewItems.first), try #require(workspace.splitViewItems.last))
         let editor = workspace.views.editor.textView
         #expect(sidebar.behavior == .sidebar && !sidebar.isCollapsed)
         #expect(inspector.behavior == .inspector && inspector.isCollapsed && forms(in: inspector) == 0)
-        #expect(app.title(.viewToggleInspector, on: workspace.project) == "Show Inspector")
+        #expect(model.title(.viewToggleInspector, on: workspace.project) == "Show Inspector")
 
         #expect(editor.tryToPerform(Self.toggleSidebar, with: nil))
         try await waitUntil { sidebar.isCollapsed }
@@ -26,11 +26,11 @@ struct PaneTests {
         try await waitUntil { sidebar.isCollapsed }
 
         #expect(editor.tryToPerform(Self.toggleInspector, with: nil))
-        #expect(forms(in: inspector) > 0 && app.title(.viewToggleInspector, on: workspace.project) == "Hide Inspector")
+        #expect(forms(in: inspector) > 0 && model.title(.viewToggleInspector, on: workspace.project) == "Hide Inspector")
         try await waitUntil { !inspector.isCollapsed }
         #expect(editor.tryToPerform(Self.toggleInspector, with: nil))
         try await waitUntil { inspector.isCollapsed }
-        #expect(app.title(.viewToggleInspector, on: workspace.project) == "Show Inspector")
+        #expect(model.title(.viewToggleInspector, on: workspace.project) == "Show Inspector")
 
         let items = NSApp.mainMenu?.items.flatMap { $0.submenu?.items ?? [] } ?? []
         let item = try #require(items.first { $0.action == Self.toggleSidebar })
@@ -39,7 +39,7 @@ struct PaneTests {
 
     @Test func draggingTheBuildPanelShutOrOpenIsWhatTheProjectShows() throws {
         let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.app())
+        let (window, workspace) = open(defaults.window())
         defer { workspace.close(); window.close() }
         let area = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController)
         let panel = try #require(area.splitViewItems.last)
@@ -60,10 +60,10 @@ struct PaneTests {
         let kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         defer { for (key, value) in zip(keys, kept) { UserDefaults.standard.set(value, forKey: key) } }
         keys.forEach(UserDefaults.standard.removeObject(forKey:))
-        let app = AppModel(core: .shared)
-        #expect(app.savesLayout)
+        let model = WindowModel(app: AppModel(core: .shared))
+        #expect(model.app.savesLayout)
 
-        let (window, workspace) = open(app)
+        let (window, workspace) = open(model)
         #expect([workspace.splitView, workspace.columns.splitView].map(\.autosaveName) == ["Workspace 2", "Columns"])
         let (sidebar, inspector) = (try #require(workspace.splitViewItems.first), try #require(workspace.splitViewItems.last))
         (sidebar.isCollapsed, inspector.isCollapsed) = (true, false)
@@ -73,7 +73,7 @@ struct PaneTests {
         workspace.close()
         window.close()
 
-        let (again, restored) = open(app)
+        let (again, restored) = open(model)
         defer { restored.close(); again.close() }
         let (sidebarAgain, inspectorAgain) = (try #require(restored.splitViewItems.first), try #require(restored.splitViewItems.last))
         #expect(sidebarAgain.isCollapsed && !inspectorAgain.isCollapsed && forms(in: inspectorAgain) > 0)
@@ -82,10 +82,9 @@ struct PaneTests {
 
     @Test func theWindowControllerPassesTheInspectorToggleToTheWorkspaceItShows() throws {
         let defaults = TestDefaults()
-        let app = defaults.app()
-        let controller = MainWindowController(app: app)
+        let controller = MainWindowController(app: defaults.app())
         #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) == nil)
-        let (window, workspace) = open(app)
+        let (window, workspace) = open(controller.model)
         defer { workspace.close(); window.close() }
         controller.window = window
         window.contentViewController = workspace
@@ -94,9 +93,9 @@ struct PaneTests {
         #expect(controller.undoManager != nil && controller.undoManager === window.undoManager)
     }
 
-    private func open(_ app: AppModel) -> (NSWindow, WorkspaceController) {
-        let views = WorkspaceViews(project: ProjectModel(id: "P", app: app))
-        let workspace = WorkspaceController(app: app, views: views, size: CGSize(width: 1400, height: 800))
+    private func open(_ model: WindowModel) -> (NSWindow, WorkspaceController) {
+        let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
+        let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

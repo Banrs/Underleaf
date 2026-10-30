@@ -3,7 +3,7 @@ mod common;
 use std::path::Path;
 use std::process::Command;
 
-use common::Rig;
+use common::{Rig, SESSION, write};
 use serde_json::json;
 
 const ARTICLE: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nA first paragraph of words.\n\nSee section~\\ref{sec:intro} and \\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
@@ -193,4 +193,60 @@ async fn the_live_contents_read_as_the_compiled_ones() {
     let log = log.as_str().unwrap();
     assert!(!log.lines().any(|line| line.starts_with("! ")), "{log}");
     rig.call("StopLive", json!({}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs TeX and TeXpresso"]
+async fn two_projects_compile_and_preview_at_once() {
+    let first =
+        "\\documentclass{article}\n\\begin{document}\nThe first project.\n\\end{document}\n";
+    let second = "\\documentclass{article}\n\\begin{document}\nThe second project.\n\\newpage\nIts second page.\n\\end{document}\n";
+    let rig = Rig::open(&[("main.tex", first)]).await;
+    let other = rig.library.create("Q", "blank").await;
+    write(&rig.library.project_root(&other), &[("main.tex", second)]);
+    let both = [SESSION, 2];
+    rig.call_to(
+        2,
+        "OpenProject",
+        json!({ "id": other, "autoCompile": false }),
+    );
+    for session in both {
+        rig.call_to(session, "Compile", json!({ "auto": false }));
+    }
+    for session in both {
+        let build = rig.section_in(session, "build", |b| !b["result"].is_null());
+        assert_eq!(build["result"]["ok"], true, "{}", build["result"]["log"]);
+    }
+    let page = |session: u64, line: u32| {
+        let at = json!({ "file": "main.tex", "line": line });
+        rig.call_to(session, "SynctexForward", at)["page"].as_f64()
+    };
+    assert_eq!(
+        [page(2, 5), page(SESSION, 3), page(2, 5)],
+        [Some(2.0), Some(1.0), Some(2.0)]
+    );
+    for session in both {
+        rig.call_to(session, "Open", json!({ "path": "main.tex" }));
+        rig.call_to(session, "StartLive", json!({}));
+        rig.call_to(session, "LiveView", json!({ "first": 0, "last": 0 }));
+    }
+    for session in both {
+        rig.event_in(session, "liveDocument", |e| e["complete"] == true);
+    }
+    rig.forget();
+    let doc = rig.sessions.document(SESSION, "main.tex").unwrap();
+    doc.edit(
+        first.find("\\end").unwrap() as u32,
+        0,
+        "More words.\n",
+        None,
+        false,
+    );
+    let live = rig.event_in(SESSION, "livePage", |p| p["page"] == 0);
+    assert!(live["pdf"].as_str().unwrap().starts_with("JVBER"), "a PDF");
+    assert_eq!([page(2, 5), page(SESSION, 3)], [Some(2.0), Some(1.0)]);
+    for session in both {
+        rig.call_to(session, "StopLive", json!({}));
+        rig.section_in(session, "live", |l| l["phase"] == "stopped");
+    }
 }

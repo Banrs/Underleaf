@@ -17,22 +17,22 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     let toolbar = NSToolbar(identifier: "Workspace 6")
     var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
     weak var workspace: WorkspaceController?
-    private let app: AppModel
+    private let window: WindowModel
     private let views: WorkspaceViews
     private var project: ProjectModel { views.project }
     private var pdf: PDFController { views.pdf }
     private var watch: Task<Void, Never>?
-    private lazy var format = FormatPopover(app: app, views: views)
+    private lazy var format = FormatPopover(window: window, views: views)
 
-    init(app: AppModel, views: WorkspaceViews) {
-        self.app = app
+    init(window: WindowModel, views: WorkspaceViews) {
+        self.window = window
         self.views = views
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsDisplayModeCustomization = false
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = app.savesLayout
+        toolbar.autosavesConfiguration = window.app.savesLayout
         watch = track({ [weak self] in self?.state }) { [weak self] in if let state = $0 { self?.apply(state) } }
     }
 
@@ -81,16 +81,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.target = self
             item.action = #selector(showFormat)
             item.menuFormRepresentation = NSMenuItem(title: item.label, action: nil, keyEquivalent: "")
-            item.menuFormRepresentation?.submenu = menu(id, Group { [app, project] in
+            item.menuFormRepresentation?.submenu = menu(id, Group { [window, project] in
                 ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
-                    Button(command.title, systemImage: command.style!.symbol) { app.perform(command, on: project) }
+                    Button(command.title, systemImage: command.style!.symbol) { window.perform(command, on: project) }
                 }
                 Divider()
                 SectionLevelItems(project: project)
             })
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [app, project] in
-                app.perform(.editMath, on: project)
+            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [window, project] in
+                window.perform(.editMath, on: project)
             })
         case .insert:
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))
@@ -108,7 +108,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             form.target = self
             item.menuFormRepresentation = form
         case .layout:
-            item = menuItem(id, "Editor Layout", app.layout.symbol, WorkspaceLayoutPicker(app: app))
+            item = menuItem(id, "Editor Layout", window.layout.symbol, WorkspaceLayoutPicker(window: window))
             item.toolTip = "Choose Source Only, Source & PDF, or PDF Only"
         case .share:
             let share = ShareItem(itemIdentifier: id)
@@ -125,9 +125,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
-        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && project.isOpen }) { [app, project, pdf] in
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF && project.isOpen }) { [window, project, pdf] in
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
-                Button(command.title) { app.perform(command, on: project) }.disabled(!app.isEnabled(command, on: project))
+                Button(command.title) { window.perform(command, on: project) }.disabled(!window.app.isEnabled(command, on: project))
             }
             Divider()
             ScaleMenuItems(pdf: pdf)
@@ -177,7 +177,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private var state: State {
         State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, canShare: project.buildPDF != nil, compiling: project.compiling,
-              canCompile: project.compiling || app.isEnabled(.compileRun, on: project), open: project.isOpen, layout: app.layout,
+              canCompile: project.compiling || window.app.isEnabled(.compileRun, on: project), open: project.isOpen, layout: window.layout,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut)
     }
 
@@ -233,8 +233,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func zoom(_ control: NSSegmentedControl) {
         if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }
     }
-    @objc private func back() { app.perform(.projectClose, on: project) }
-    @objc private func compile() { app.perform(project.compiling ? .compileStop : .compileRun, on: project) }
+    @objc private func back() { window.perform(.projectClose, on: project) }
+    @objc private func compile() { window.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
     private func compileButton(_ state: State) -> CompileButton {
         CompileButton(compiling: state.compiling, compact: compactCompile, enabled: state.open && state.canCompile) { [weak self] in self?.compile() }
@@ -260,10 +260,10 @@ extension WorkspaceLayout {
 }
 
 struct WorkspaceLayoutPicker: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
 
     var body: some View {
-        Picker("Editor Layout", selection: $app.layout) {
+        Picker("Editor Layout", selection: $window.layout) {
             ForEach([WorkspaceLayout.source, .split, .pdf], id: \.self) { layout in
                 Label(layout.title, systemImage: layout.symbol).tag(layout)
             }

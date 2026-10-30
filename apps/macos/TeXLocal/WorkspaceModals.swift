@@ -2,32 +2,32 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct WorkspaceModals: ViewModifier {
-    @Environment(AppModel.self) private var app
+    @Environment(WindowModel.self) private var window
     @Environment(WorkspaceViews.self) private var views
     @Bindable var project: ProjectModel
 
     func body(content: Content) -> some View {
-        @Bindable var app = app
+        @Bindable var window = window
         content
             .background {
                 Color.clear
-                    .fileImporter(isPresented: Binding(get: { app.addingFiles && !project.closed }, set: { app.addingFiles = $0 }),
+                    .fileImporter(isPresented: Binding(get: { window.addingFiles && !project.closed }, set: { window.addingFiles = $0 }),
                                   allowedContentTypes: [.item, .folder],
                                   allowsMultipleSelection: true) { result in
                         switch result {
                         case .success(let urls): Task { await project.importFiles(urls) }
-                        case .failure(let error): app.report("Couldn’t Add the Files", error)
+                        case .failure(let error): window.report("Couldn’t Add the Files", error)
                         }
                     }
                     .fileDialogConfirmationLabel("Add")
             }
             .background {
                 Color.clear
-                    .fileExporter(isPresented: Binding(get: { app.exporting != nil }, set: { if !$0 { app.exporting = nil } }),
-                                  item: app.exporting,
-                                  contentTypes: app.exporting.map { [$0.type] } ?? [],
-                                  defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
-                        if case .failure(let error) = result { app.report("Couldn’t Save “\(name)”", error) }
+                    .fileExporter(isPresented: Binding(get: { window.exporting != nil }, set: { if !$0 { window.exporting = nil } }),
+                                  item: window.exporting,
+                                  contentTypes: window.exporting.map { [$0.type] } ?? [],
+                                  defaultFilename: window.exporting?.name) { [name = window.exporting?.name ?? ""] result in
+                        if case .failure(let error) = result { window.report("Couldn’t Save “\(name)”", error) }
                     }
                     .fileExporterFilenameLabel("Export As:")
                     .fileDialogConfirmationLabel("Export")
@@ -55,11 +55,18 @@ struct WorkspaceModals: ViewModifier {
                 Text(asked.kind == .changed ? "Another app changed “\(asked.path)” while it has unsaved changes here."
                      : "Another app moved or deleted “\(asked.path)”, which has unsaved changes here.")
             }
-            .sheet(item: $app.prompt) { prompt in
+            .alert("Close “\(project.name)” Without Saving?", isPresented: Binding(get: { project.askingToDiscard != nil }, set: { _ in })) {
+                Button("Close Without Saving", role: .destructive) { project.answerDiscard(true) }
+                Button("Cancel", role: .cancel) { project.answerDiscard(false) }
+            } message: {
+                let files = (project.askingToDiscard ?? []).map { "“\($0.fileName)”" }.formatted(.list(type: .and))
+                Text("TeXLocal stopped after an internal error and couldn’t save \(files). Copy out what you need first.")
+            }
+            .sheet(item: $window.prompt) { prompt in
                 switch prompt {
                 case .gotoPage:
                     GoToSheet(noun: "Page", limit: { views.pdf.pageCount > 0 ? views.pdf.pageCount : nil }) {
-                        app.requestPDF(.goToPage($0))
+                        window.requestPDF(.goToPage($0))
                     }
                 case .gotoLine:
                     GoToSheet(noun: "Line", limit: { views.lineCount }) { line in
