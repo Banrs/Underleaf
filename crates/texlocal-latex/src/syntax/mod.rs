@@ -48,7 +48,7 @@ pub struct TextEdit {
 impl TextRange {
     fn bounds(self) -> (usize, usize) {
         let start = self.start as usize;
-        (start, start + self.length as usize)
+        (start, start.saturating_add(self.length as usize))
     }
 }
 
