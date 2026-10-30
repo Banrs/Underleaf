@@ -357,7 +357,7 @@ final class ProjectModel {
         await open(to.path, line: to.line)
     }
 
-    func renameSymbol(_ symbol: Definition, to name: String) async throws {
+    func renameSymbol(_ symbol: SymbolName, to name: String) async throws {
         try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), named: String(localized: "Rename"))
     }
 

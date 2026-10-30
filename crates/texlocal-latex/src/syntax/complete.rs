@@ -5,7 +5,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::scan::{Group, Scanner};
+use super::scan::{self, Group, Scanner};
 use super::{INDENT, SourceDocument, Text, catalog, indentation};
 use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
@@ -124,6 +124,12 @@ pub(crate) struct Completions {
     pub(crate) start: u32,
     pub(crate) kind: SymbolKind,
     pub(crate) items: Vec<Completion>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct SymbolName {
+    kind: SymbolKind,
+    name: String,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -269,12 +275,39 @@ impl SourceDocument {
         (!places.is_empty()).then_some(Definition { kind, name, places })
     }
 
+    pub(crate) fn symbol(&self, at: u32) -> Option<SymbolName> {
+        let text = &self.text;
+        let line = text.line_index(at.min(text.len()));
+        let blank = |&index: &usize| scan::blank_line(text.line(index));
+        let first = line.saturating_sub(PARAGRAPH);
+        let first = (first..line)
+            .rev()
+            .find(blank)
+            .map_or(first, |blank| blank + 1);
+        let last = (line + 1..text.lines.len()).take(PARAGRAPH).find(blank);
+        let window = (line + PARAGRAPH).min(text.lines.len() - 1);
+        let end = last.map_or_else(|| text.bounds(window).end, |last| text.lines[last] as usize);
+        let paragraph = utf16::lossy(&text.units[text.lines[first] as usize..end]);
+        let own = Facts::read(&paragraph, file_kind(&self.path));
+        let (kind, name, _) = self.symbol_in(&own, first, at)?;
+        Some(SymbolName { kind, name })
+    }
+
     pub fn symbol_at(&self, own: &Facts, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
+        self.symbol_in(own, 0, at)
+    }
+
+    fn symbol_in(
+        &self,
+        own: &Facts,
+        first: usize,
+        at: u32,
+    ) -> Option<(SymbolKind, String, Option<String>)> {
         let (text, at) = (&self.text, at.min(self.text.len()));
         let line = text.line_index(at);
         let column = at - text.lines[line];
         let holds = |place: &Place| {
-            place.line as usize == line + 1
+            place.line as usize + first == line + 1
                 && (place.column..=place.column + place.length).contains(&column)
         };
         let found = |rel: &str| self.symbols.spelt(rel);
@@ -368,6 +401,8 @@ fn graphic(name: &str, found: impl Fn(&str) -> Option<String>) -> Option<String>
         .iter()
         .find_map(|ext| found(&format!("{name}{ext}")))
 }
+
+const PARAGRAPH: usize = 32;
 
 const GRAPHICS: [&str; 6] = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps"];
 

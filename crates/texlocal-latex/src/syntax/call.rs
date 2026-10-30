@@ -1,5 +1,5 @@
 use super::catalog::{Menus, menus};
-use super::complete::{Completions, Definition, SnippetField};
+use super::complete::{Completions, Definition, SnippetField, SymbolName};
 use super::edit::{Change, TextStyle, include_graphics, map_selections};
 use super::folds::Fold;
 use super::headings::{HeadingStyle, heading_styles};
@@ -27,6 +27,7 @@ calls! {
         InsertNewline { selection: TextRange } -> Keystroke = doc.insert_newline(selection);
         Partner { at: u32 } -> Option<u32> = doc.partner(at);
         DefinitionAt { at: u32 } -> Option<Definition> = doc.definition(at);
+        SymbolAt { at: u32 } -> Option<SymbolName> = doc.symbol(at);
         StartSnippet { fields: Vec<SnippetField>, at: u32 } -> Option<TextRange> = doc.start_snippet(&fields, at);
         EndSnippet {} -> bool = doc.end_snippet();
         InsertTab { selections: Vec<TextRange>, step: i64 } -> Tabbing = doc.tab(&selections, step);

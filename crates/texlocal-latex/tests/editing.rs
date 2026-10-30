@@ -189,6 +189,26 @@ fn a_reference_leads_to_its_label() {
 }
 
 #[test]
+fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
+    let text = "Intro \\ref{one}.\n\n\\label{fig:a} see \\cite{knuth,\n  lamport} é\n\nPlain \\input{ch} text.";
+    let mut doc = SourceDocument::named(text, "main.tex");
+    let whole = Facts::read(text, file_kind("main.tex"));
+    for at in 0..=text.encode_utf16().count() as u32 {
+        let read = doc
+            .symbol_at(&whole, at)
+            .map(|(kind, name, _)| json!({ "kind": kind, "name": name }));
+        let answer = run(&mut doc, "SymbolAt", json!({ "at": at }));
+        assert_eq!(answer, read.unwrap_or_default(), "at {at}");
+    }
+    let at = |find: &str| json!({ "at": text.find(find).unwrap() + 1 });
+    let label = json!({ "kind": "label", "name": "fig:a" });
+    assert_eq!(run(&mut doc, "SymbolAt", at("fig:a")), label);
+    let lamport = json!({ "kind": "citation", "name": "lamport" });
+    assert_eq!(run(&mut doc, "SymbolAt", at("lamport")), lamport);
+    assert_eq!(run(&mut doc, "SymbolAt", at("Intro")), Value::Null);
+}
+
+#[test]
 fn the_projects_symbols_reach_the_engine_as_data() {
     let files = [
         ("ch.tex", "\\label{sum} \\newcommand{\\R}{\\mathbb{R}}"),

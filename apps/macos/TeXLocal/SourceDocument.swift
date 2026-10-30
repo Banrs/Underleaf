@@ -79,6 +79,7 @@ final class SourceDocument {
     func folds() -> [Fold] { call(Folds()) ?? [] }
     func words(in range: NSRange) -> Int { call(Words(selection: TextRange(range))) ?? 0 }
     func definition(at offset: Int) -> Definition? { call(DefinitionAt(at: offset)) ?? nil }
+    func symbol(at offset: Int) -> SymbolName? { call(SymbolAt(at: offset)) ?? nil }
 
     var text: String {
         var count = 0
