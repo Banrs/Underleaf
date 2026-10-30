@@ -5,12 +5,15 @@ protocol ProjectViews: AnyObject {
     var hasPDF: Bool { get }
     var zoom: Zoom { get }
     var shownVersion: Int { get }
+    var pdfLoading: Task<Void, Never>? { get }
     func heard(_ event: Event)
-    func opened(_ ui: UiState) -> Task<Void, Never>?
+    func opened(_ ui: UiState)
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool)
     func apply(_ edits: DocumentEdits, named name: String) -> Bool
+    func follow(_ loc: ForwardLoc)
     func trashed(_ path: String)
     func beep()
+    func requestAttention()
     func perform(_ command: EditorCommand)
     func perform(_ command: MenuCommand)
     func validates(_ command: MenuCommand) -> Bool
@@ -98,6 +101,8 @@ final class ProjectModel {
     @ObservationIgnored weak var window: WindowModel?
     @ObservationIgnored weak var views: (any ProjectViews)?
     @ObservationIgnored var syncTask: Task<Void, Never>?
+    @ObservationIgnored var followTask: Task<Void, Never>?
+    @ObservationIgnored var followsCaret = false
     private var closing: Task<Bool, Never>?
     var isOpen: Bool { !closed && closing == nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -166,9 +171,9 @@ final class ProjectModel {
             throw error
         }
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
-        let pdfShown = views?.opened(ui)
+        views?.opened(ui)
         if let openPath { views?.reveal(openPath, line: openPath == ui.file ? ui.line : nil, column: nil, length: nil, atTop: false, focus: true) }
-        await pdfShown?.value
+        await views?.pdfLoading?.value
         initialLoadComplete = true
     }
 
@@ -227,7 +232,9 @@ final class ProjectModel {
         case .build(let now): buildChanged(now, was: build)
         case .shownPdf(let shown):
             if shown.live, !live, window?.showPDF == false { window?.showPDF = true }
-        case .live(let state): texpresso.heard(state)
+        case .live(let state):
+            texpresso.heard(state)
+            if state.phase != .running { followsCaret = false }
         }
     }
 

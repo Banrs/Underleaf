@@ -8,6 +8,8 @@ extension ProjectModel {
 
     var canSwitchLivePreview: Bool { window?.app.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
 
+    var showsLive: Bool { !closed && texpresso.active && livePDF }
+
     var liveEngine: String? {
         texpresso.engine.flatMap { engine in livePDF && engine != settings?.engine ? engine.title : nil }
     }
@@ -27,6 +29,21 @@ extension ProjectModel {
         session.send(LiveCaret(path: caret.path, offset: caret.offset))
     }
 
+    func edited() { if livePDF { followsCaret = true } }
+
+    func liveDocumentShown() {
+        guard followsCaret, let path = openPath, isLaTeX else { return }
+        let line = cursorLine
+        _ = restart(&followTask) { [self] in
+            guard let loc = try? await session.call(SynctexForward(file: path, line: line)), !Task.isCancelled,
+                  livePDF, openPath == path else { return }
+            followsCaret = false
+            views?.follow(loc)
+        }
+    }
+
+    func canSyncForward(quietly: Bool = false) -> Bool { hasPDF && isLaTeX && (!quietly || window?.showPDF == true) }
+
     func forwardSync(quietly: Bool = false, wordOnly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column) = (cursorLine, cursorColumn)
@@ -45,6 +62,7 @@ extension ProjectModel {
     }
 
     func inverseSync(page: Int, x: Double, y: Double, click: PageClick? = nil, quietly: Bool = false) async {
+        guard !quietly || window?.showSource == true else { return }
         await restart(&syncTask) { [self] in
             do {
                 let loc = try await session.call(SynctexInverse(page: Double(page), x: x, y: y, click: click))

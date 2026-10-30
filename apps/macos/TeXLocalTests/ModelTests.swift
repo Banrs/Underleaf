@@ -409,34 +409,132 @@ struct ViewsTests {
         #expect(window.alert == nil && views.shown.count == 3)
     }
 
+    @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() {
+        let window = defaults.window()
+        window.app.syncAfterCompile = true
+        let project = ProjectModel(id: "P", window: window)
+        let views = Views(project)
+        let build = { (ok: Bool, outdated: Bool) in
+            let result = CompileResult(ok: ok, stopped: false, durationMs: 0, pdf: nil, badBoxes: [], log: "")
+            project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: outdated, result: result, issues: [], lines: [:]))))
+        }
+        build(true, false)
+        #expect(!project.syncsAfterBuild)
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        #expect(project.syncsAfterBuild)
+        build(true, true)
+        #expect(!project.syncsAfterBuild)
+        build(true, false)
+        window.layout = .source
+        #expect(!project.syncsAfterBuild)
+        window.layout = .split
+        window.app.syncAfterCompile = false
+        #expect(!project.syncsAfterBuild)
+        build(false, false)
+        project.handle(.buildFinished(BuildFinished(auto: true, announce: true)))
+        #expect(views.attention == 0)
+        project.handle(.buildFinished(BuildFinished(auto: false, announce: false)))
+        #expect(views.attention == 1 && project.panel.shown)
+    }
+
+    @Test func aDoubleClickSyncsOnlyToAPaneThatShows() async {
+        let window = defaults.window()
+        let project = ProjectModel(id: "P", window: window)
+        let views = Views(project)
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        #expect(!project.canSyncForward())
+        views.hasPDF = true
+        window.layout = .source
+        #expect(project.canSyncForward() && !project.canSyncForward(quietly: true))
+        window.layout = .split
+        #expect(project.canSyncForward(quietly: true))
+        window.layout = .pdf
+        await project.inverseSync(page: 0, x: 0, y: 0, quietly: true)
+        #expect(project.syncTask == nil)
+        await project.inverseSync(page: 0, x: 0, y: 0)
+        #expect(project.syncTask != nil)
+    }
+
+    @Test func editsWhileTheLivePDFShowsFollowTheCaretUntilLivePreviewStops() async {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let live = { (phase: LivePhase) in
+            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, log: nil, failures: [], lines: [:]))))
+        }
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        live(.running)
+        project.edited()
+        project.liveDocumentShown()
+        #expect(!project.followsCaret && !project.showsLive && project.followTask == nil)
+        project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 1, live: true))))
+        project.edited()
+        #expect(project.followsCaret && project.showsLive)
+        project.liveDocumentShown()
+        #expect(project.followTask != nil)
+        live(.stopping)
+        #expect(!project.followsCaret && !project.showsLive)
+        live(.running)
+        #expect(await project.close().value && !project.showsLive)
+    }
+
+    @Test func clickingAnIssueInTheTextChoosesItOrShowsTheLivePreviewLog() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let message = Message(id: "tex", args: [:], text: "Undefined control sequence.")
+        let lines = { (line: Int, index: Int?) in
+            ["main.tex": [IssueLine(line: line, error: true, message: message, short: message, compact: nil, tokens: [], others: [], index: index)]]
+        }
+        project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: false, result: nil, issues: [], lines: lines(3, 1)))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, log: nil, failures: [], lines: lines(5, nil)))))
+        project.issueClicked(atLine: 5, in: "main.tex")
+        #expect(project.panel.showsLiveLog && project.chosenIssue == nil)
+        project.issueClicked(atLine: 3, in: "main.tex")
+        #expect(project.panel.tab == .issues && project.chosenIssue == 1)
+        project.panel.shown = false
+        project.issueClicked(atLine: 3, in: "other.tex")
+        #expect(!project.panel.shown)
+    }
+
+    @Test func aDroppedFigureIsIncludedOrCopiedInAndAProjectFileOpens() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
+        let file = { (name: String, kind: FileKind) in TreeNode(name: name, path: name, kind: kind, children: nil, main: false) }
+        project.handle(.section(.project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil))))
+        project.handle(.section(.tree([file("main.tex", .tex), file("plot.png", .image), file("refs.bib", .bib)])))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        let drop = { (path: String) in project.dropAction(for: URL(filePath: path)) }
+        #expect(drop("/tmp/Paper/plot.png") == .insert("\\includegraphics{plot.png}") && drop("/tmp/Paper/refs.bib") == .open("refs.bib"))
+        #expect(drop("/tmp/Paper/gone.png") == nil && drop("/Users/me/shot.png") == .copy && drop("/Users/me/notes.txt") == nil)
+        project.handle(.section(.openFile(OpenFile(path: "refs.bib", kind: .bib))))
+        #expect(drop("/tmp/Paper/plot.png") == .open("plot.png") && drop("/Users/me/shot.png") == nil)
+    }
+
     private final class Views: ProjectViews {
         private let project: ProjectModel
         var ui: UiState?
         var shown: [String] = [], revealed: [String] = [], moved: [String] = []
+        var hasPDF = false, attention = 0
 
         init(_ project: ProjectModel) {
             self.project = project
             project.views = self
         }
 
-        let hasPDF = false, zoom = Zoom.fitWidth, shownVersion = 0, inspectorShown = false
+        let zoom = Zoom.fitWidth, shownVersion = 0, inspectorShown = false, pdfLoading: Task<Void, Never>? = nil
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }
             if case .renamed(let renamed) = event { moved += [renamed.from, renamed.to] }
         }
 
-        func opened(_ ui: UiState) -> Task<Void, Never>? {
-            self.ui = ui
-            return nil
-        }
+        func opened(_ ui: UiState) { self.ui = ui }
 
         func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
         func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
+        func follow(_ loc: ForwardLoc) {}
         func trashed(_ path: String) {}
         func beep() {}
+        func requestAttention() { attention += 1 }
         func perform(_ command: EditorCommand) {}
         func perform(_ command: MenuCommand) {}
         func validates(_ command: MenuCommand) -> Bool { false }

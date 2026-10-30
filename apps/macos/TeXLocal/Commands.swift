@@ -163,7 +163,7 @@ extension AppModel {
         case .pdfSave, .pdfOpen, .filePrint: project?.buildPDF != nil
         case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
-        case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
+        case .syncForward: project?.canSyncForward() == true
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
         default: project != nil
         }

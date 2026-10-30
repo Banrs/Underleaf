@@ -21,13 +21,28 @@ extension ProjectModel {
         if build.listed != was?.listed { chosenIssue = nil }
     }
 
+    var syncsAfterBuild: Bool {
+        result?.ok == true && !outdated && isLaTeX && window?.showPDF == true && window?.app.syncAfterCompile == true
+    }
+
     func buildFinished(_ finished: BuildFinished) {
         guard let result else { return }
         if !finished.auto {
-            if result.failed { panel.openForFailedBuild() } else if result.ok, issues.isEmpty { panel.closeAfterCleanBuild() }
+            if result.failed {
+                panel.openForFailedBuild()
+                views?.requestAttention()
+            } else if result.ok, issues.isEmpty {
+                panel.closeAfterCleanBuild()
+            }
             announceResult(result)
         } else if finished.announce {
             announceResult(result, queued: true)
+        }
+        if syncsAfterBuild {
+            session.task { [self, loading = views?.pdfLoading] in
+                await loading?.value
+                await forwardSync(quietly: true)
+            }
         }
     }
 
@@ -45,6 +60,15 @@ extension ProjectModel {
         let issues = listed
         guard open, let place, issues.indices.contains(place), let file = issues[place].file else { return }
         session.task { [self] in await self.open(file, line: issues[place].line, focus: focus, jump: true) }
+    }
+
+    func issueClicked(atLine line: Int, in path: String) {
+        if let index = store.build?.lines[path]?.byLine[line]?.index {
+            panel.show(.issues)
+            chooseIssue(index, focus: false, open: false)
+        } else if store.live?.lines[path]?.byLine[line] != nil {
+            panel.show(.texpresso)
+        }
     }
 
     func goToIssue(next: Bool) {
