@@ -45,7 +45,7 @@ pub enum SymbolKind {
     File,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Symbols {
     pub files: Vec<String>,
@@ -79,7 +79,7 @@ impl Symbols {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Installed {
     pub packages: Vec<String>,
     pub classes: Vec<String>,
@@ -154,14 +154,11 @@ impl SourceDocument {
 
     pub(crate) fn accept_completion(&mut self, index: u32, caret: u32) -> Option<Insertion> {
         let Completions { start, items, .. } = self.typing.offered.take()?;
-        let caret = caret.min(self.text.len());
-        let item = items
-            .into_iter()
-            .nth(index as usize)
-            .filter(|_| start <= caret)?;
+        let typed = caret.min(self.text.len()).checked_sub(start)?;
+        let item = items.into_iter().nth(index as usize)?;
         Some(Insertion {
             caret: start + utf16::len(&item.text) as u32,
-            edit: edit(start, caret - start, item.text),
+            edit: edit(start, typed, item.text),
             fields: item.fields,
         })
     }

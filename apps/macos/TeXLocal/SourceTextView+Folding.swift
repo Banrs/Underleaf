@@ -14,7 +14,7 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return found
     }
 
-    func hidden(_ fold: Fold) -> NSRange { FoldSet.hidden(fold, in: document, length: length) }
+    func hidden(_ fold: Fold) -> NSRange { fold.hidden(in: document, length: length) }
 
     var foldedLines: [Int: NSRange] { folds.headers(in: document) }
 

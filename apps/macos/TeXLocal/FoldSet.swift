@@ -5,12 +5,6 @@ struct FoldSet: Equatable {
 
     init(_ ranges: [NSRange] = []) { self.ranges = Set(ranges).sorted { $0.location < $1.location } }
 
-    static func hidden(_ fold: Fold, in document: SourceDocument, length: Int) -> NSRange {
-        let start = document.lineStart(fold.line + 1)
-        let end = fold.end < document.lineCount ? document.lineStart(fold.end + 1) : length
-        return NSRange(location: start, length: end - start)
-    }
-
     var isEmpty: Bool { ranges.isEmpty }
 
     func hides(_ offset: Int) -> Bool { ranges.contains { $0.contains(offset) } }
@@ -40,5 +34,13 @@ struct FoldSet: Equatable {
         }
         ranges.removeAll { $0.contains(new.location) || $0.contains(NSMaxRange(new)) && NSMaxRange(new) > $0.location }
         return nil
+    }
+}
+
+extension Fold {
+    func hidden(in document: SourceDocument, length: Int) -> NSRange {
+        let start = document.lineStart(line + 1)
+        let end = self.end < document.lineCount ? document.lineStart(self.end + 1) : length
+        return NSRange(location: start, length: end - start)
     }
 }

@@ -11,7 +11,7 @@ struct EditorTests {
 
     @Test func theCoresAnswersDecode() throws {
         let document = SourceDocument(text: "\\section{Intro}\nSome $x^2$ text\n\\sec")
-        let completions = try #require(document.completions(caret: 36, explicit: false))
+        let completions = try #require(document.complete(caret: 36, explicit: false))
         #expect(completions.items.contains { $0.label == "\\section" })
         let heading = try #require(document.setHeading(caret: 3, command: "subsection"))
         #expect(heading.edit.text == "\\subsection{Intro}")
@@ -49,9 +49,8 @@ struct EditorTests {
 
     @Test func foldsMoveWithEditsBeforeThemOpenOnEditsInsideAndStepTheCaretOverThemBothWays() {
         let document = SourceDocument(text: "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
-        let fold = FoldSet.hidden(Fold(line: 1, end: 3), in: document, length: 51)
-        #expect(fold == NSRange(location: 16, length: 16))
-        #expect(FoldSet.hidden(Fold(line: 4, end: 5), in: document, length: 51) == NSRange(location: 46, length: 5))
+        let fold = Fold(line: 1, end: 3).hidden(in: document, length: 51)
+        #expect(fold == NSRange(location: 16, length: 16) && Fold(line: 4, end: 5).hidden(in: document, length: 51) == NSRange(location: 46, length: 5))
         let folds = FoldSet([fold, fold])
         #expect(folds.ranges == [fold] && folds.headers(in: document) == [1: fold] && folds.hides(16) && !folds.hides(32))
         #expect(folds.caret(on: 1, hiding: .caret(20), in: document) == .caret(15))

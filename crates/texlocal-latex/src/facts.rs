@@ -64,7 +64,7 @@ pub struct Facts {
     pub(crate) end: Option<Place>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Definitions {
     pub labels: Vec<Named>,
     pub citations: Vec<Named>,
@@ -72,9 +72,7 @@ pub struct Definitions {
     pub environments: Vec<Named>,
 }
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -114,7 +112,7 @@ pub struct FilePlace {
     pub length: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Named {
     pub(crate) kind: SymbolKind,
     pub name: String,
@@ -122,7 +120,7 @@ pub struct Named {
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Defined {
     pub name: String,
     pub(crate) arguments: usize,

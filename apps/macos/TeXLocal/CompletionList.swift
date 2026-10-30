@@ -31,7 +31,7 @@ final class CompletionList {
 
     func complete(explicit: Bool) {
         guard editor.isEditable, editor.selection.length == 0, editor.selections.count == 1, !editor.hasMarkedText(),
-              let found = editor.document.completions(caret: editor.caret, explicit: explicit), !found.items.isEmpty
+              let found = editor.document.complete(caret: editor.caret, explicit: explicit), !found.items.isEmpty
         else { return close() }
         offered = found
         show(reload: true)

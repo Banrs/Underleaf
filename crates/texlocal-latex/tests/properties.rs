@@ -143,8 +143,8 @@ fn args(rng: &mut Rng, call: &str, len: usize) -> Value {
 }
 
 fn calls() -> Vec<&'static str> {
-    let mut generator = schemars::SchemaGenerator::default();
-    let described = Source::describe(&mut generator, &mut schemars::SchemaGenerator::default());
+    let schemas = schemars::SchemaGenerator::default;
+    let described = Source::describe(&mut schemas(), &mut schemas());
     described.into_iter().map(|call| call.name).collect()
 }
 
@@ -172,18 +172,17 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
             SourceDocument::named(&utf16::lossy(&model), rng.pick(&["main.tex", "refs.bib"]));
         for step in 0..200 {
             let len = model.len();
-            let mut edits = Vec::new();
-            if rng.chance(2) {
+            let edit = if rng.chance(2) {
                 let start = rng.below(len + 1);
                 let length = rng.below(len - start + 1).min(rng.below(6));
-                edits.push(json!({ "start": start, "length": length, "text": rng.text(3) }));
+                Some(json!({ "start": start, "length": length, "text": rng.text(3) }))
             } else {
                 let call = *rng.pick(&calls);
                 let answer = Source::call(&mut doc, call, args(&mut rng, call, len));
                 let edit = answer.ok().and_then(|answer| answer.get("edit").cloned());
-                edits.extend(edit.filter(Value::is_object));
-            }
-            for edit in edits {
+                edit.filter(Value::is_object)
+            };
+            if let Some(edit) = edit {
                 for mirror in apply(&mut doc, &mut model, &edit, false) {
                     apply(&mut doc, &mut model, &mirror, true);
                 }
