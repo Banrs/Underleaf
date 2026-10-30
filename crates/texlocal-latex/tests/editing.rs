@@ -281,6 +281,16 @@ fn maths_renders_as_svg_or_nothing() {
         json!({ "tex": "\\frac{", "display": false, "size": 13 }),
     );
     assert_eq!(broken, Value::Null);
+    let drawn = |tex: &str| {
+        free(
+            "RenderMath",
+            json!({ "tex": tex, "display": false, "size": 13 }),
+        )
+    };
+    assert!(drawn("\\alpha + \\text{é}")["svg"].is_string());
+    for tex in ["\\text{中}", "😀", "x + \\text{Ω😀}"] {
+        assert_eq!(drawn(tex), Value::Null, "{tex}");
+    }
 }
 
 #[test]

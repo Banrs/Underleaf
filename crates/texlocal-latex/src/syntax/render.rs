@@ -1,3 +1,4 @@
+use ratex_font_loader::FontLoadPlan;
 use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_lexer::token::Token;
 use ratex_parser::macro_expander::{MacroDefinition, MacroExpander};
@@ -16,6 +17,8 @@ pub(crate) struct MathSvg {
 }
 
 const MAX_EM: f64 = 1000.0;
+
+const SYSTEM_FONTS: [&str; 3] = ["CJK-Regular", "CJK-Fallback", "Emoji-Fallback"];
 
 fn optional(gullet: &mut MacroExpander) -> ParseResult<Vec<Token>> {
     let name = gullet.pop_token();
@@ -60,6 +63,13 @@ fn display_list(tex: &str, display: bool) -> Option<DisplayList> {
 }
 
 fn svg(list: &DisplayList, size: f64) -> Option<String> {
+    let fonts = FontLoadPlan::for_display_items(&list.items).all();
+    if fonts
+        .iter()
+        .any(|font| SYSTEM_FONTS.contains(&font.as_str()))
+    {
+        return None;
+    }
     let options = SvgOptions {
         font_size: size,
         padding: 0.0,
@@ -68,7 +78,7 @@ fn svg(list: &DisplayList, size: f64) -> Option<String> {
         font_dir: String::new(),
     };
     let svg = render_to_svg_with_color_syntax(list, &options, SvgColorSyntax::Rgb);
-    let undrawable = ["<text", "<image", "inf", "NaN"];
+    let undrawable = ["<text", "inf", "NaN"];
     (!undrawable.iter().any(|bad| svg.contains(bad))).then_some(svg)
 }
 
