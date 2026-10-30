@@ -185,6 +185,8 @@ pub struct SettingsPatch {
 pub(crate) struct AppSettings {
     pub tex_dir: Option<PathBuf>,
     pub texpresso_dir: Option<PathBuf>,
+    #[serde(flatten)]
+    rest: Map<String, Value>,
 }
 
 const APP_SETTINGS_FILE: &str = ".texlocal-app.json";

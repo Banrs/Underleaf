@@ -1200,6 +1200,28 @@ async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_had() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        stub_tex(library);
+        program(&library.path("texpresso/texpresso"), "#!/bin/sh\n");
+        app_settings(library, json!({ "later": true }));
+    })
+    .await;
+    let (texpresso, tex) = (rig.library.path("texpresso"), rig.library.path("tex/bin"));
+    let sent = [
+        rig.send_library("SetTexpressoDir", json!({ "dir": texpresso })),
+        rig.send_library("SetTexDir", json!({ "dir": tex })),
+    ];
+    for id in sent {
+        rig.reply(id).unwrap();
+    }
+    let file = fs::read(rig.library.path("data/.texlocal-app.json")).unwrap();
+    let stored: Value = serde_json::from_slice(&file).unwrap();
+    let expected = json!({ "later": true, "texDir": tex, "texpressoDir": texpresso });
+    assert_eq!(stored, expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn autosave_waits_while_text_is_composed() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
