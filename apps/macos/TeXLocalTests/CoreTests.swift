@@ -123,6 +123,21 @@ struct CoreTests {
         #expect(try await session.close())
     }
 
+    @Test func aCallMadeWhileTheCloseWaitsOnABuildEndsQuietly() async throws {
+        let project = try await newProject(template: .blank)
+        let latexmk = "#!/bin/sh\n[ \"$1\" = -version ] || { : > started; exec sleep 30; }\n"
+        FileManager.default.createFile(atPath: project.path + "/latexmk", contents: Data(latexmk.utf8), attributes: [.posixPermissions: 0o755])
+        let session = SessionClient(core: .shared)
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
+        try await Core.shared.call(SetTexDir(dir: project.path))
+        try await session.call(Compile(auto: false))
+        try await waitUntil { FileManager.default.fileExists(atPath: project.path + "/started") }
+        try await Core.shared.call(SetTexDir(dir: nil))
+        let closing = Task.immediate { try await session.close() }
+        await #expect(throws: CancellationError.self) { try await session.call(Save(reporting: true)) }
+        #expect(try await closing.value && session.closed)
+    }
+
     @Test func aSessionTheCoreNeverOpenedClosesAtOnce() async throws {
         let session = SessionClient(core: .shared)
         #expect(try await session.close() && session.closed)
