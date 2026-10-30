@@ -257,11 +257,11 @@ struct FieldTests {
     }
 
     @Test func aDialogFieldKeepsItsTextAtTheRightAndShowsATypedSpaceAtOnce() async throws {
-        let defaults = TestDefaults()
+        let defaults = TestDefaults(), model = defaults.window()
         let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: NewProjectSheet(draft: NewProjectDraft(template: .blank, name: "water"))
-            .environment(defaults.app()))
+            .environment(model.app).environment(model))
         window.makeKeyAndOrderFront(nil)
         try await waitUntil { window.firstResponder is NSTextView }
         let editor = try #require(window.firstResponder as? NSTextView)
