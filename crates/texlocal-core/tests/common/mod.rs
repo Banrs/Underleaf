@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
@@ -92,6 +93,8 @@ pub struct Rig {
     events: Receiver<Value>,
     seen: Mutex<Vec<Value>>,
     asked: AtomicU64,
+    sent: Mutex<HashMap<u64, (u64, String)>>,
+    open: Mutex<BTreeSet<u64>>,
 }
 
 pub const SESSION: u64 = 1;
@@ -147,6 +150,8 @@ impl Rig {
             events,
             seen: Mutex::default(),
             asked: AtomicU64::default(),
+            sent: Mutex::default(),
+            open: Mutex::default(),
         };
         rig.call("OpenProject", json!({ "id": rig.id, "autoCompile": false }));
         rig
@@ -184,16 +189,26 @@ impl Rig {
 
     pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
+        self.sent
+            .lock()
+            .unwrap()
+            .insert(id, (session, command.to_owned()));
         self.sessions.send_to(id, session, command, args);
         id
     }
 
     pub fn reply(&self, id: u64) -> Result<Value, Refused> {
         let mut reply = self.find(|e| e["reply"] == id);
-        match reply.get_mut("ok") {
-            Some(ok) => Ok(ok.take()),
-            None => Err(serde_json::from_value(reply["error"].take()).unwrap()),
+        let ok = reply.get_mut("ok").map(Value::take);
+        if let (Some(ok), Some((session, command))) = (&ok, self.sent.lock().unwrap().remove(&id)) {
+            let mut open = self.open.lock().unwrap();
+            match command.as_str() {
+                "OpenProject" => open.insert(session),
+                "CloseProject" if *ok == true => open.remove(&session),
+                _ => false,
+            };
         }
+        ok.ok_or_else(|| serde_json::from_value(reply["error"].take()).unwrap())
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
@@ -259,6 +274,34 @@ impl Rig {
     pub fn forget(&self) {
         self.seen.lock().unwrap().clear();
         while self.events.try_recv().is_ok() {}
+    }
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let opening: Vec<u64> = (self.sent.lock().unwrap().iter())
+            .filter(|(_, (_, command))| command == "OpenProject")
+            .map(|(id, _)| *id)
+            .collect();
+        for id in opening {
+            let _ = self.reply(id);
+        }
+        let open = std::mem::take(&mut *self.open.lock().unwrap());
+        for session in open {
+            let closed = self.reply(self.send(session, "CloseProject", json!({})));
+            assert!(
+                matches!(closed, Ok(Value::Bool(true))),
+                "session {session} closes at the end of the test: {closed:?}"
+            );
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Arc::strong_count(&self.sessions) > 1 {
+            assert!(Instant::now() < deadline, "the session threads end");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
