@@ -220,7 +220,8 @@ final class AppModel {
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
     static func canOpen(_ url: URL) -> Bool {
-        guard url.isFileURL, let type = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.contentTypeKey]).contentType else { return false }
+        guard url.isFileURL else { return false }
+        guard let type = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.contentTypeKey]).contentType else { return true }
         return openableTypes.contains { type.conforms(to: $0) }
     }
 

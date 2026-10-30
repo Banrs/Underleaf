@@ -743,10 +743,9 @@ case "press":
     let double = takeFlag("--double"), rowRole = takeOpt("--row-control")
     guard let t = args.first else { fail("usage: qa press <text> [--index n]") }
     if let rowRole {
-        let root = pickWindow(nil)
-        guard let label = search(t, roots: [root], role: "AXStaticText").max(by: { $0.rank < $1.rank })?.el.frame else {
-            fail("no label '\(t)'")
-        }
+        let labels = roots.flatMap { root in search(t, roots: [root], role: "AXStaticText").map { (root, $0) } }
+        guard let found = labels.max(by: { $0.1.rank < $1.1.rank }), let label = found.1.el.frame else { fail("no label '\(t)'") }
+        let root = found.0
         var best: (AXUIElement, CGFloat)?
         walk(root) { el, _, _ in
             if el.role == rowRole, let f = el.frame, abs(f.midY - label.midY) < (best?.1 ?? 12) {

@@ -93,7 +93,7 @@ struct LayoutTests {
 }
 
 struct OpenableTests {
-    @Test func foldersZipsAndTeXFilesOpenButPackagesDoNot() throws {
+    @Test func foldersZipsAndTeXFilesOpenButPackagesDoNotAndAMissingOneIsLeftToTheOpenToReport() throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
         for name in ["plain", "b.rtfd"] {
@@ -101,7 +101,7 @@ struct OpenableTests {
         }
         for name in ["a.tex", "a.zip", "a.txt"] { try Data().write(to: folder.appending(path: name)) }
         let opens = { (name: String) in AppModel.canOpen(folder.appending(path: name)) }
-        #expect(opens("plain") && opens("a.tex") && opens("a.zip"))
+        #expect(opens("plain") && opens("a.tex") && opens("a.zip") && opens("gone.tex"))
         #expect(!opens("a.txt") && !opens("b.rtfd"))
     }
 }
