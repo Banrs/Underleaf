@@ -39,19 +39,36 @@ extension NSView {
 
 class DraggedSplitView: NSSplitView {
     private(set) var dragging = false
+    private weak var workspace: WorkspaceController?
+    private var dragEnd: Task<Void, Never>?
 
-    override func mouseDown(with event: NSEvent) { drag { super.mouseDown(with: event) } }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        NotificationCenter.default.addObserver(self, selector: #selector(willResize), name: NSSplitView.willResizeSubviewsNotification, object: self)
+    }
 
-    func drag(_ moves: () -> Void) {
-        let workspace = window?.contentViewController as? WorkspaceController
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var panning: Bool {
+        gestureRecognizers.contains { $0 is NSPanGestureRecognizer && [.began, .changed].contains($0.state) }
+    }
+
+    @objc private func willResize(_ note: Notification) {
+        guard !dragging, panning else { return }
         dragging = true
+        workspace = window?.contentViewController as? WorkspaceController
         workspace?.quiet(true)
-        defer {
+        endDrag()
+    }
+
+    private func endDrag() {
+        restart(&dragEnd, after: .milliseconds(50)) { [weak self] in
+            guard let self else { return }
+            guard !panning else { return endDrag() }
             dragging = false
             workspace?.quiet(false)
             workspace?.dragged(self)
         }
-        moves()
     }
 }
 
@@ -94,10 +111,19 @@ final class SidebarSplitViewController: ThinSplitViewController {
 }
 
 final class ColumnsSplitView: DraggedSplitView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        NotificationCenter.default.addObserver(self, selector: #selector(fitToolbar), name: NSSplitView.didResizeSubviewsNotification, object: self)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     override func layout() {
         super.layout()
-        (window?.contentViewController as? WorkspaceController)?.fitToolbar()
+        fitToolbar()
     }
+
+    @objc private func fitToolbar() { (window?.contentViewController as? WorkspaceController)?.fitToolbar() }
 
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
