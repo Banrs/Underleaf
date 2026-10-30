@@ -5,12 +5,13 @@ use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::{self, FilePlace};
+use texlocal_latex::facts::FilePlace;
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::syntax::catalog::CATALOG;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
+use texlocal_latex::{bib, project};
 
 use super::Pending;
 use super::actor::Actor;
@@ -67,7 +68,7 @@ impl Actor {
                 return reply.send(Ok(items));
             }
             if let Some(main) = main {
-                let analysis = analyze::analyze_project(&symbols, Some(&main), None);
+                let analysis = project::analyze(&symbols, Some(&main), None);
                 items.extend(analysis.outline.into_iter().map(|heading| {
                     let path = heading.file;
                     QuickOpenItem {
@@ -141,7 +142,7 @@ impl Actor {
             };
             let detail = match (kind, &defined) {
                 (SymbolKind::Citation, Some((file, _))) => {
-                    let entry = text(file).and_then(|text| analyze::bib_entry(&text, &name));
+                    let entry = text(file).and_then(|text| bib::entry(&text, &name));
                     Some(entry.unwrap_or_default())
                 }
                 (SymbolKind::Label, Some(_)) => {

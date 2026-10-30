@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use texlocal_latex::analyze::{self, Facts, Place};
-use texlocal_latex::checks;
+use texlocal_latex::facts::{self, Facts, Place};
 use texlocal_latex::syntax::{Installed, Symbols};
 use texlocal_latex::{FileKind, file_kind};
+use texlocal_latex::{bib, project};
 
 fn project(files: &[(&str, &str)], installed: &[&str]) -> Symbols {
     let read = |&(name, text): &(&str, &str)| {
@@ -25,7 +25,7 @@ fn project(files: &[(&str, &str)], installed: &[&str]) -> Symbols {
 }
 
 fn found(symbols: &Symbols) -> Vec<(String, u32, String)> {
-    let items = checks::check(symbols, "main.tex").into_iter();
+    let items = project::check(symbols, "main.tex").into_iter();
     let item =
         |i: texlocal_latex::logparse::LogItem| (i.file.unwrap(), i.line.unwrap(), i.message.text);
     items.map(item).collect()
@@ -154,7 +154,7 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
         ],
         &[],
     );
-    let analysis = analyze::analyze_project(&symbols, Some("main.tex"), None);
+    let analysis = project::analyze(&symbols, Some("main.tex"), None);
     assert_eq!(analysis.files, ["main.tex", "ch.tex"]);
     let outline = serde_json::to_value(&analysis).unwrap();
     assert_eq!(titles(&outline["tree"]), ["One", "Three"]);
@@ -164,32 +164,32 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
     let tree = &outline["tree"];
     let words = [&tree[0], &tree[0]["children"][0], &tree[1]].map(|node| &node["words"]);
     assert_eq!(words, [7, 3, 2]);
-    let lone = analyze::analyze_project(&symbols, Some("main.tex"), Some("lone.tex"));
+    let lone = project::analyze(&symbols, Some("main.tex"), Some("lone.tex"));
     assert_eq!(lone.files, ["lone.tex"]);
-    let shown = analyze::analyze_project(&symbols, Some("main.tex"), Some("ch.tex"));
+    let shown = project::analyze(&symbols, Some("main.tex"), Some("ch.tex"));
     assert_eq!(shown.files, ["main.tex", "ch.tex"]);
 }
 
 #[test]
 fn a_bib_entry_reads_as_authors_title_year_and_where() {
     let bib = "@book{knuth,\n  author = {Knuth, Donald E. and Lamport, Leslie},\n  title = {The {TeX}book},\n  year = 1984,\n  publisher = {Addison-Wesley}\n}\n";
-    let entry = analyze::bib_entry(bib, "knuth");
+    let entry = bib::entry(bib, "knuth");
     assert_eq!(
         entry.as_deref(),
         Some("Donald E. Knuth, Leslie Lamport\nThe TeXbook\n1984\nAddison-Wesley")
     );
-    assert_eq!(analyze::bib_entry(bib, "lamport"), None);
+    assert_eq!(bib::entry(bib, "lamport"), None);
 }
 
 #[test]
 fn magic_comments_name_the_root_and_program_near_the_top() {
     let text = "% !TeX root = ../main.tex\n%!TEX TS-program = xelatex\n% !TeX root = other.tex\n";
-    let found = analyze::magic_comments(text);
+    let found = facts::magic_comments(text);
     assert_eq!(found, (Some("../main.tex".into()), Some("xelatex".into())));
     let late = format!(
         "{}% !TeX root = main.tex\n",
-        "\n".repeat(analyze::MAGIC_LINES)
+        "\n".repeat(facts::MAGIC_LINES)
     );
-    assert_eq!(analyze::magic_comments(&late), (None, None));
-    assert_eq!(analyze::magic_comments("% TeX root = x"), (None, None));
+    assert_eq!(facts::magic_comments(&late), (None, None));
+    assert_eq!(facts::magic_comments("% TeX root = x"), (None, None));
 }

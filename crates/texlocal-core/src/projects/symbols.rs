@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
-use texlocal_latex::analyze::Facts;
+use texlocal_latex::facts::Facts;
 pub use texlocal_latex::syntax::Symbols;
 use texlocal_latex::{FileKind, file_kind, fold_case};
 

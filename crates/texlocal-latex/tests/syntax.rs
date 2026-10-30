@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use common::{apply, caret, run};
 use serde_json::{Value, json};
-use texlocal_latex::analyze::Facts;
+use texlocal_latex::facts::Facts;
 use texlocal_latex::syntax::{Installed, SourceDocument, Symbols, TextRange};
 use texlocal_latex::{file_kind, utf16};
 

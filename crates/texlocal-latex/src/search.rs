@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::analyze::Place;
+use crate::facts::Place;
 use crate::utf16;
 
 const WORD_START: i64 = 8;

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use texlocal_latex::analyze::{self, Facts};
+use texlocal_latex::facts::{self, Facts};
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
 use zip::ZipArchive;
@@ -268,8 +268,8 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
     let Ok(file) = File::open(file) else {
         return (None, None);
     };
-    let lines = io::BufReader::new(file).lines().take(analyze::MAGIC_LINES);
-    analyze::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
+    let lines = io::BufReader::new(file).lines().take(facts::MAGIC_LINES);
+    facts::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
 }
 
 pub(crate) fn guessed_settings(

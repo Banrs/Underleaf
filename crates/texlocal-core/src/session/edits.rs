@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::{Facts, Place};
+use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::message::Message;
 use texlocal_latex::search::Query;

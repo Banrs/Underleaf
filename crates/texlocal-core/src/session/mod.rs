@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::logparse::LogItem;
+use texlocal_latex::project::Analysis;
 use texlocal_latex::syntax::TextEdit;
 use tokio::sync::{mpsc, oneshot};
 

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use texlocal_latex::analyze::Facts;
+use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
 use texlocal_latex::syntax::{SourceDocument, TextEdit, TextRange};
 use texlocal_latex::utf16;

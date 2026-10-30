@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::scan::{Group, Scanner};
 use super::{INDENT, SourceDocument, Text, catalog, indentation};
-use crate::analyze::{Defined, Facts, FilePlace, Input, Named, Place};
+use crate::facts::{Defined, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
 

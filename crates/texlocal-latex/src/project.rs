@@ -1,124 +1,97 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::analyze::{Facts, Heading, INPUT_DEPTH, Input, Named, Place};
+use schemars::JsonSchema;
+use serde::Serialize;
+
+use crate::facts::{Facts, Heading, Input, Kind, Named, Slip};
 use crate::logparse::{LogItem, Severity};
 use crate::message::Message;
 use crate::messages;
-use crate::syntax::scan::{self, Group};
-use crate::syntax::{SymbolKind, Symbols, Text};
+use crate::syntax::{SymbolKind, Symbols, headings};
 
-pub(crate) struct Slip {
-    place: Place,
-    message: Message,
-    kind: Kind,
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OutlineNode {
+    pub(crate) index: usize,
+    pub(crate) heading: Heading,
+    pub(crate) fold_key: String,
+    pub(crate) words: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) children: Option<Vec<Self>>,
 }
 
-#[derive(PartialEq, Eq)]
-enum Kind {
-    Mismatched,
-    Unbegun(String),
-    Unended(String),
-    Unbalanced,
+pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
+    fn nest(
+        outline: &[Heading],
+        next: &mut usize,
+        above: Option<usize>,
+        seen: &mut HashMap<String, usize>,
+    ) -> Vec<OutlineNode> {
+        let mut nodes = Vec::new();
+        while let Some(heading) = outline.get(*next)
+            && above.is_none_or(|depth| heading.depth > depth)
+        {
+            let index = *next;
+            *next += 1;
+            let file = &heading.file;
+            let title = if heading.untitled {
+                "(untitled)"
+            } else {
+                &heading.title
+            };
+            let key = format!("{file}\t{}:{title}", heading.depth);
+            let count = seen.entry(key.clone()).or_default();
+            *count += 1;
+            let fold_key = format!("{key}#{count}");
+            let children = nest(outline, next, Some(heading.depth), seen);
+            nodes.push(OutlineNode {
+                index,
+                heading: heading.clone(),
+                fold_key,
+                words: heading.words + children.iter().map(|c| c.words).sum::<usize>(),
+                children: (!children.is_empty()).then_some(children),
+            });
+        }
+        nodes
+    }
+    nest(outline, &mut 0, None, &mut HashMap::new())
 }
 
-#[derive(Default)]
-pub(crate) struct Structure {
-    environments: Vec<(String, usize)>,
-    braces: Vec<usize>,
-    slips: Vec<Slip>,
-    end: Option<usize>,
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Analysis {
+    #[serde(skip)]
+    pub outline: Vec<Heading>,
+    #[serde(skip)]
+    pub files: Vec<String>,
+    pub(crate) tree: Vec<OutlineNode>,
+    pub(crate) words: usize,
+    pub(crate) heading_styles: Vec<headings::HeadingStyle>,
 }
 
-impl Structure {
-    pub(crate) fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
-        if !matches!(name, "begin" | "end") || !self.braces.is_empty() || !self.read(start) {
-            return;
-        }
-        let Some((environment, _)) = scan::environment_name(&text.units, name_end) else {
-            return;
-        };
-        let environment = String::from_utf16_lossy(environment).trim().to_owned();
-        if name == "begin" {
-            self.environments.push((environment, start));
-            return;
-        }
-        if environment == "document" {
-            self.end = Some(start);
-        }
-        let begun = self
-            .environments
+pub fn analyze(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {
+    let mut walk = Walk::from(symbols, main.unwrap_or_default());
+    if let Some(shown) = shown
+        && !walk.files.iter().any(|(file, _)| *file == shown)
+    {
+        walk = Walk::from(symbols, shown);
+    }
+    let class = main.and_then(|main| symbols.by_file.get(main)?.class.as_deref());
+    Analysis {
+        tree: outline_tree(&walk.outline),
+        words: walk.words,
+        heading_styles: headings::heading_styles(class),
+        files: walk
+            .files
             .iter()
-            .rposition(|(e, _)| *e == environment);
-        let Some(begun) = begun else {
-            let message = messages::end_without_begin(&environment);
-            return self.slip(text, start, message, Kind::Unbegun(environment));
-        };
-        if let Some((open, at)) = self.environments.get(begun + 1..).and_then(<[_]>::last) {
-            let message = messages::ended_by_another(open, line(text, *at), &environment);
-            self.slip(text, start, message, Kind::Mismatched);
-        }
-        self.environments.truncate(begun);
-    }
-
-    pub(crate) fn brace(&mut self, text: &Text, at: usize, open: bool) {
-        if !self.read(at) {
-            return;
-        }
-        if open {
-            self.braces.push(at);
-        } else if self.braces.pop().is_none() {
-            self.slip(text, at, messages::nothing_to_close(), Kind::Unbalanced);
-        }
-    }
-
-    pub(crate) fn unclosed(&mut self, text: &Text, group: &Group) {
-        if !self.read(group.open) {
-            return;
-        }
-        let width = group.delimiter().unwrap_or_default();
-        let open = &text.units[group.open..group.open + width];
-        let message = messages::open_at_paragraph_end(String::from_utf16_lossy(open));
-        self.slip(text, group.open, message, Kind::Unbalanced);
-    }
-
-    pub(crate) fn finish<'a>(
-        mut self,
-        text: &Text,
-        open: impl Iterator<Item = &'a Group>,
-    ) -> (Vec<Slip>, Option<usize>) {
-        for group in open.filter(|group| group.delimiter().is_some()) {
-            self.unclosed(text, group);
-        }
-        for at in std::mem::take(&mut self.braces) {
-            self.slip(text, at, messages::never_closed(), Kind::Unbalanced);
-            self.environments.clear();
-        }
-        for (environment, at) in std::mem::take(&mut self.environments) {
-            let message = messages::never_ended(&environment);
-            self.slip(text, at, message, Kind::Unended(environment));
-        }
-        self.slips.sort_by_key(|slip| slip.place);
-        (self.slips, self.end)
-    }
-
-    fn read(&self, at: usize) -> bool {
-        self.end.is_none_or(|end| at < end)
-    }
-
-    fn slip(&mut self, text: &Text, at: usize, message: Message, kind: Kind) {
-        let place = Place::of(text, at..at);
-        self.slips.push(Slip {
-            place,
-            message,
-            kind,
-        });
+            .map(|(file, _)| (*file).to_owned())
+            .collect(),
+        outline: walk.outline,
     }
 }
 
-fn line(text: &Text, at: usize) -> u32 {
-    text.line_index(at as u32) as u32 + 1
-}
+pub(crate) const INPUT_DEPTH: usize = 15;
 
 fn literal(name: &str) -> bool {
     !name.is_empty() && !name.contains(['\\', '#'])

@@ -3,9 +3,9 @@ use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::{self, Analysis, Facts};
-use texlocal_latex::checks;
+use texlocal_latex::facts::Facts;
 use texlocal_latex::logparse::LogItem;
+use texlocal_latex::project::{self, Analysis};
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
@@ -47,9 +47,8 @@ impl Actor {
                 };
                 let checks = main
                     .as_deref()
-                    .map_or_else(Vec::new, |main| checks::check(&symbols, main));
-                let analysis =
-                    analyze::analyze_project(&symbols, main.as_deref(), shown.as_deref());
+                    .map_or_else(Vec::new, |main| project::check(&symbols, main));
+                let analysis = project::analyze(&symbols, main.as_deref(), shown.as_deref());
                 Box::new((symbols, checks, analysis))
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
