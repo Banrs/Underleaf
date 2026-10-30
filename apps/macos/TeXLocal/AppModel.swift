@@ -159,7 +159,7 @@ final class AppModel {
     @discardableResult
     func openWindow(beside window: WindowModel?) -> WindowModel { newWindow?(window) ?? WindowModel(app: self) }
 
-    func window(showing id: String) -> WindowModel? { windows.first { $0.shows(id) } }
+    func window(showing id: String) -> WindowModel? { windows.first { $0.shownProject?.id == id || $0.opening == id } }
 
     func canChange(_ project: ProjectInfo) -> Bool { !project.opened && window(showing: project.id) == nil }
 

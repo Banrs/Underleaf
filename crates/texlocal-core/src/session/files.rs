@@ -180,11 +180,8 @@ impl Actor {
         if let Some(on) = patch.shell_escape {
             settings::grant(project, on)?;
         }
-        let main_changed = updated.main_file != main;
-        if main_changed {
-            self.preview.stop(&project.root)?;
-        }
-        if main_changed {
+        if updated.main_file != main {
+            self.preview.stop(&self.project.root)?;
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));

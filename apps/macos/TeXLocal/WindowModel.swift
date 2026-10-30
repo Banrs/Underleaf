@@ -34,8 +34,6 @@ final class WindowModel {
 
     var shownProject: ProjectModel? { project?.closed == false ? project : nil }
 
-    func shows(_ id: String) -> Bool { shownProject?.id == id || opening == id }
-
     func newProject(_ template: ProjectTemplate = .article) {
         guard app.libraryProblem == nil else { return }
         Task {
