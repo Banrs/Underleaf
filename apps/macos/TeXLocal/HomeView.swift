@@ -247,9 +247,7 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty) {
             try await app.create(name: trimmed, template: draft.template)
         } fields: {
-            TextField("Name", text: $draft.name, prompt: Text("Required"))
-                .focused($nameFocused)
-                .dialogField("Name")
+            DialogField(label: "Name", text: $draft.name, prompt: "Required", focus: $nameFocused)
             Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
         .defaultFocus($nameFocused, true)

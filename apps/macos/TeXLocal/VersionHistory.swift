@@ -11,9 +11,7 @@ struct SaveVersionSheet: View {
                     action: "Save", enabled: !trimmed.isEmpty) {
             try await project.saveVersion(named: trimmed)
         } fields: {
-            TextField("Name", text: $name)
-                .focused($focused)
-                .dialogField("Name")
+            DialogField(label: "Name", text: $name, prompt: "Required", focus: $focused)
         }
         .defaultFocus($focused, true)
     }

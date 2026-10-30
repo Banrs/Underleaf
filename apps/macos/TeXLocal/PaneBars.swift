@@ -164,9 +164,24 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
-extension View {
-    func dialogField(_ label: String) -> some View {
-        LabeledContent(label) { labelsHidden().multilineTextAlignment(.leading) }
+struct DialogField: View {
+    let label: String
+    @Binding var text: String
+    var prompt = ""
+    let focus: FocusState<Bool>.Binding
+
+    var body: some View {
+        let fit = typeset(text.isEmpty ? prompt : text, in: .systemFont(ofSize: NSFont.systemFontSize)).width
+        HStack {
+            Text(label)
+                .accessibilityHidden(true)
+            TextField(label, text: $text, prompt: Text(prompt))
+                .labelsHidden()
+                .multilineTextAlignment(.leading)
+                .focused(focus)
+                .frame(idealWidth: 0, maxWidth: fit.rounded(.up))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
     }
 }
 
