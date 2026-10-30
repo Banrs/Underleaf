@@ -9,7 +9,7 @@ fi
 APP=$D/Build/Products/Release/TeXLocal.app
 
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath $D TEXLOCAL_APP_IDENTIFIER=$ID CODE_SIGNING_ALLOWED=NO build > $D.log 2>&1 \
+  -destination 'platform=macOS' -derivedDataPath $D TEXLOCAL_APP_IDENTIFIER=$ID CURRENT_PROJECT_VERSION=$(git -C $R rev-list --count HEAD) CODE_SIGNING_ALLOWED=NO build > $D.log 2>&1 \
   || { grep -E "error:" $D.log | sort -u | tail -20; echo "build failed: $D.log"; exit 1; }
 if [[ $NAME != TeXLocal ]]; then
   for key in CFBundleName CFBundleDisplayName; do plutil -replace $key -string $NAME $APP/Contents/Info.plist; done

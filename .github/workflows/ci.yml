@@ -38,9 +38,10 @@ jobs:
           has() { [ "$files" = ALL ] || grep -Eq "$1" <<< "$files"; }
           shared='^(crates/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)'
           wire='^apps/macos/(TeXLocal/Wire|TeXLocalTests/WireFixtures)\.swift$'
+          version='^apps/macos/(Version\.xcconfig|TeXLocal\.xcodeproj/project\.pbxproj)$'
           mac="$shared|^apps/macos/|^tools/build-core\.sh$"
-          build='(^|/)Cargo\.(toml|lock)$|^(rust-toolchain\.toml|tools/build-core\.sh|apps/macos/TeXLocal\.xcodeproj/.*|\.github/workflows/ci\.yml)$'
-          has "$shared|$wire" && echo rust=true >> "$GITHUB_OUTPUT"
+          build='(^|/)Cargo\.(toml|lock)$|^(rust-toolchain\.toml|tools/build-core\.sh|apps/macos/(Version\.xcconfig|TeXLocal\.xcodeproj/.*)|\.github/workflows/ci\.yml)$'
+          has "$shared|$wire|$version" && echo rust=true >> "$GITHUB_OUTPUT"
           has "$mac" && echo mac=true >> "$GITHUB_OUTPUT"
           { has "$build" || { [ "$EVENT" != pull_request ] && has "$mac"; }; } && echo release=true >> "$GITHUB_OUTPUT"
           has '(^|/)Cargo\.(toml|lock)$|^(deny|rust-toolchain)\.toml$|^\.github/workflows/ci\.yml$' && echo deps=true >> "$GITHUB_OUTPUT"

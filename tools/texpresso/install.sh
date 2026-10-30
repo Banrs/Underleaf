@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 fail() { echo "install.sh: $*" >&2; exit 1; }
-BUILD=$(CDPATH= cd -- "${1:?usage: install.sh <build folder> [destination]}" && pwd)
+LINK=
+[ "${1:-}" = --link ] && { LINK=1; shift; }
+BUILD=$(CDPATH= cd -- "${1:?usage: install.sh [--link] <build folder> [destination]}" && pwd)
 DEST=${2:-"$HOME/Library/Application Support/TeXLocal/TeXpresso"}
 DEST=${DEST%/}
 for file in texpresso texpresso-xetex; do
@@ -49,9 +51,9 @@ if [ -d "$DEST/cache" ] && cmp -s "$DEST/libexec/texpresso-xetex" "$STAGE/libexe
 if [ -e "$DEST" ]; then OLD=$(mktemp -d "$DEST.old.XXXXXX"); mv "$DEST" "$OLD/previous"; fi
 mv "$STAGE" "$DEST" || fail "could not move the installation into $DEST"
 if [ -n "$KEEP" ]; then mv "$OLD/previous/cache" "$DEST/cache" || true; fi
-if [ -n "${NO_LINK:-}" ]; then
-  echo "Installed $DEST. Choose it in TeXLocal's Settings › Live Preview: /opt/homebrew/bin/texpresso is as it was."
-else
+if [ -n "$LINK" ]; then
   ln -sf "$DEST/bin/texpresso" /opt/homebrew/bin/texpresso
   echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. TeXLocal's Settings can stay on Automatic."
+else
+  echo "Installed $DEST. Choose it in TeXLocal's Settings › Live Preview, or install again with --link to link /opt/homebrew/bin/texpresso to it."
 fi

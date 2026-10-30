@@ -59,14 +59,15 @@ needed), then run:
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 tools/texpresso/build.sh
-tools/texpresso/install.sh tools/texpresso/source/build
+tools/texpresso/install.sh --link tools/texpresso/source/build
 zsh tools/install-mac.sh
 ```
 
-The first two build TeXpresso with Underleaf's patch, for Live Preview, and install it. The last builds
-TeXLocal, copies it to `/Applications` and opens it. To update, pull and run all three again, since TeXLocal
-needs the TeXpresso from its own checkout. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press
-Run.
+The first two build TeXpresso with Underleaf's patch, for Live Preview, and install it, linking
+`/opt/homebrew/bin/texpresso` to it. To keep a TeXpresso you have there, leave out `--link` and choose
+`~/Library/Application Support/TeXLocal/TeXpresso` in Settings › Live Preview. The last builds TeXLocal, copies
+it to `/Applications` and opens it. To update, pull and run all three again, since TeXLocal needs the TeXpresso
+from its own checkout. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
 
 ## Live Preview
 
