@@ -122,6 +122,7 @@ final class WindowModel {
 
     func delete(_ project: ProjectInfo) async {
         let failure = "Couldn’t Move “\(project.name)” to the Trash"
+        guard app.canChange(project) else { return report(failure, "Close the project before moving it to the Trash.") }
         let item = UndoableTrash(
             original: project.folder, name: project.name, undoManager: undoManager,
             trash: { [weak self] item in
@@ -219,7 +220,7 @@ final class WindowModel {
     private func leave() async -> Bool {
         guard let project else { return true }
         if project.isOpen {
-            guard await project.save(), !Task.isCancelled else { return false }
+            guard await project.saveBeforeLeaving(), !Task.isCancelled else { return false }
             project.savePlace()
         }
         return await project.close().value && !Task.isCancelled

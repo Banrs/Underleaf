@@ -261,13 +261,14 @@ final class AppModel {
 
     func quit() async -> Bool {
         for window in windows where window.project?.isOpen == true {
-            guard await window.project?.save() != false else {
+            guard await window.project?.saveBeforeLeaving() != false else {
                 window.controller?.show()
                 return false
             }
         }
         for window in windows {
             guard await window.end() else {
+                for ended in windows where ended.project?.closed == true { await ended.close() }
                 window.controller?.show()
                 return false
             }

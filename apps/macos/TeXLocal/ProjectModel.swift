@@ -78,6 +78,9 @@ final class ProjectModel {
 
     var openURL: URL? { openPath.flatMap(url) }
     private(set) var conflicts: [Conflict] = []
+    private(set) var askingToDiscard: [String]?
+    @ObservationIgnored private var discardAnswer: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var discarded = false
     private(set) var previewVersion = 0
 
     var importClash: ImportClash?
@@ -271,11 +274,28 @@ final class ProjectModel {
         do {
             return try await session.call(Save(reporting: reporting))
         } catch let error as CoreError where error.message.id == "no_such_session" {
-            return true
+            return discarded || lostEdits.isEmpty
         } catch {
             if reporting { window?.report(notSavedTitle(), error) }
             return error is CancellationError
         }
+    }
+
+    private var lostEdits: [String] { store.documents.filter { $0.error?.id == "stopped_unsaved" }.map(\.path) }
+
+    func saveBeforeLeaving() async -> Bool {
+        if await save() { return true }
+        let lost = lostEdits
+        guard !lost.isEmpty, discardAnswer == nil else { return false }
+        window?.controller?.show()
+        askingToDiscard = lost
+        discarded = await withCheckedContinuation { discardAnswer = $0 }
+        return discarded
+    }
+
+    func answerDiscard(_ discard: Bool) {
+        askingToDiscard = nil
+        discardAnswer.take()?.resume(returning: discard)
     }
 
     private func findHeadings() {

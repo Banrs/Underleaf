@@ -132,7 +132,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     func windowDidResignKey(_ notification: Notification) { model.isKey = false }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard model.project?.isOpen == true || model.isOpening else { return true }
+        guard model.shownProject != nil || model.isOpening else { return true }
         Task { if await model.end() { sender.close() } }
         return false
     }

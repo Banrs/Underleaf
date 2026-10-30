@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
 
 use schemars::JsonSchema;
@@ -105,9 +105,10 @@ impl Service {
     pub(crate) fn in_session(
         self: &Arc<Self>,
         id: &str,
-        root: &Path,
-    ) -> Result<InSession, CoreError> {
+    ) -> Result<(Project, InSession), CoreError> {
         let mut library = lock(&self.library);
+        let project = self.project(id)?;
+        let root = &project.root;
         let overlaps = library
             .iter()
             .find(|(_, at)| at.starts_with(root) || root.starts_with(at));
@@ -118,11 +119,12 @@ impl Service {
                 messages::shares_folder(at.file_name().unwrap_or_default().display())
             }));
         }
-        library.push((id.to_owned(), root.to_owned()));
-        Ok(InSession {
+        library.push((id.to_owned(), root.clone()));
+        let in_session = InSession {
             service: Arc::clone(self),
             id: id.to_owned(),
-        })
+        };
+        Ok((project, in_session))
     }
 
     pub(crate) fn unless_open(

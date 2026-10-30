@@ -165,8 +165,7 @@ impl Actor {
             id: project_id,
             auto_compile,
         } = opening;
-        let project = sessions.service.project(&project_id)?;
-        let in_session = sessions.service.in_session(&project_id, &project.root)?;
+        let (project, in_session) = sessions.service.in_session(&project_id)?;
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch

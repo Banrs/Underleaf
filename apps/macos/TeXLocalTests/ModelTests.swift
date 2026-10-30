@@ -318,11 +318,35 @@ struct SwitchTests {
         #expect(app.front === other)
     }
 
-    @Test func aProjectWhoseSessionTheCoreNoLongerHasClosesWithNothingToSave() async {
+    @Test func aStoppedProjectClosesAtOnceWithNothingUnsavedAndOtherwiseOnlyOnceItsEditsAreLetGo() async throws {
         let window = defaults.window()
-        let project = ProjectModel(id: "P", window: window)
-        window.project = project
-        #expect(await window.end() && project.closed && window.alert == nil)
+        let saved = ProjectModel(id: "P", window: window)
+        window.project = saved
+        #expect(await window.end() && saved.closed && window.alert == nil)
+
+        let lost = ProjectModel(id: "Q", window: window)
+        window.project = lost
+        let stopped = Message(id: "stopped_unsaved", args: [:], text: "Copy them out.")
+        lost.handle(.section(.documents([DocumentState(path: "main.tex", error: stopped, held: nil)])))
+        let kept = Task { await window.end() }
+        try await waitUntil { lost.askingToDiscard == ["main.tex"] }
+        lost.answerDiscard(false)
+        #expect(await !kept.value && lost.isOpen && lost.askingToDiscard == nil)
+        let quitting = Task { await window.app.quit() }
+        try await waitUntil { lost.askingToDiscard != nil }
+        lost.answerDiscard(true)
+        #expect(await quitting.value && lost.closed)
+    }
+
+    @Test func aProjectOpenInAnotherWindowIsntMovedToTheTrash() async throws {
+        let info = try await newProject()
+        let app = defaults.app()
+        app.autoCompile = false
+        let (home, other) = (WindowModel(app: app), WindowModel(app: app))
+        await other.open(info.id)
+        await home.delete(info)
+        #expect(FileManager.default.fileExists(atPath: info.path) && home.alert != nil)
+        #expect(await other.close())
     }
 
     @Test func quitLeavesEveryProjectOpenWhileOneHasADocumentItCantSave() async throws {
