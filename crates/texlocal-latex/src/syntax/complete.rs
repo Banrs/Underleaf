@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::scan::{Group, Scanner};
 use super::{INDENT, SourceDocument, Text, catalog, indentation};
-use crate::facts::{Defined, Facts, FilePlace, Input, Named, Place};
+use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
 
@@ -28,7 +28,7 @@ pub(crate) struct Completion {
     pub(crate) detail: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SymbolKind {
     #[schemars(title = "Command")]
@@ -45,14 +45,11 @@ pub enum SymbolKind {
     File,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct Symbols {
-    pub citations: Vec<Named>,
-    pub labels: Vec<Named>,
-    pub commands: Vec<Defined>,
-    pub environments: Vec<String>,
     pub files: Vec<String>,
-    pub by_file: BTreeMap<String, Arc<Facts>>,
+    pub by_file: BTreeMap<String, Arc<Definitions>>,
     pub installed: Arc<Installed>,
 }
 
@@ -62,9 +59,27 @@ impl Symbols {
         let mut files = self.files.iter();
         files.find(|file| fold_case(file) == rel).cloned()
     }
+
+    pub fn labels(&self) -> impl Iterator<Item = &Named> {
+        self.by_file.values().flat_map(|defined| &defined.labels)
+    }
+
+    pub(crate) fn commands(&self) -> impl Iterator<Item = &Defined> {
+        self.by_file.values().flat_map(|defined| &defined.commands)
+    }
+
+    fn firsts<'a, T>(
+        &'a self,
+        list: impl Fn(&'a Definitions) -> &'a [T],
+        name: impl Fn(&T) -> &str,
+    ) -> Vec<&'a T> {
+        let mut seen = HashSet::new();
+        let all = self.by_file.values().flat_map(|defined| list(defined));
+        all.filter(|item| seen.insert(name(item))).collect()
+    }
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Installed {
     pub packages: Vec<String>,
     pub classes: Vec<String>,
@@ -148,21 +163,27 @@ impl SourceDocument {
             let installed = &self.symbols.installed;
             let (names, kind): (&[String], _) = match &c[1] {
                 c if catalog.cite_commands.contains(c) => {
-                    let cited = cited(&self.symbols.citations, typed);
+                    let citations = self.symbols.firsts(|d| &d.citations, |c| &c.name);
+                    let cited = cited(&citations, typed);
                     return offer(start, SymbolKind::Citation, described(cited));
                 }
                 c if catalog.ref_commands.contains(c) => {
-                    let labels = matching(&self.symbols.labels, typed, |l| &l.name);
-                    return offer(start, SymbolKind::Label, described(labels));
+                    let labels = self.symbols.firsts(|d| &d.labels, |l| &l.name);
+                    let labels = matching(&labels, typed, |l| &l.name).into_iter().copied();
+                    return offer(start, SymbolKind::Label, described(labels.collect()));
                 }
                 "begin" | "end" => {
                     let at = from as usize + utf16::len(&before[..c.get(0).unwrap().start()]);
                     let scanner = (&c[1] == "end").then(|| self.scanned_to(at));
                     let mut groups = scanner.iter().flat_map(Scanner::groups);
                     let open = groups.find_map(Group::environment);
-                    let own = &self.symbols.environments;
-                    let others = catalog.environments.iter().filter(|e| !own.contains(e));
-                    let rest = own.iter().chain(others).map(String::as_str);
+                    let own = self.symbols.firsts(|d| &d.environments, |e| &e.name);
+                    let own: Vec<&str> = own.iter().map(|e| e.name.as_str()).collect();
+                    let others = catalog.environments.iter().map(String::as_str);
+                    let rest = own
+                        .iter()
+                        .copied()
+                        .chain(others.filter(|e| !own.contains(e)));
                     let rest = rest.filter(|&e| Some(e) != open);
                     listed = open.into_iter().chain(rest).map(str::to_owned).collect();
                     (&listed, SymbolKind::Environment)
@@ -211,8 +232,8 @@ impl SourceDocument {
                 detail: None,
             }
         };
-        let own = &self.symbols.commands;
-        let mut items: Vec<Completion> = matching(own, m.as_str(), |c| &c.name)
+        let own = self.symbols.firsts(|d| &d.commands, |c| &c.name);
+        let mut items: Vec<Completion> = matching(&own, m.as_str(), |c| &c.name)
             .into_iter()
             .map(|c| {
                 complete(
@@ -262,7 +283,9 @@ impl SourceDocument {
             return Some((SymbolKind::File, input.name.clone(), file));
         }
         let uses = own.uses.iter().rev();
-        let mut names = uses.chain(&own.labels).chain(&own.citations);
+        let mut names = uses
+            .chain(&own.defined.labels)
+            .chain(&own.defined.citations);
         let named = names.find(|named| holds(&named.place))?;
         let file = (named.kind == SymbolKind::File)
             .then(|| graphic(&named.name, found))
@@ -273,29 +296,30 @@ impl SourceDocument {
     pub fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
         let others = self.symbols.by_file.iter();
         let others = others.filter(|(file, _)| **file != self.path);
-        let mut files: Vec<(&str, &Facts)> =
-            others.map(|(file, facts)| (&**file, &**facts)).collect();
-        files.push((&self.path, own));
+        let mut files: Vec<(&str, &Definitions)> = others
+            .map(|(file, defined)| (&**file, &**defined))
+            .collect();
+        files.push((&self.path, &own.defined));
         files.sort_by_key(|&(file, _)| file);
-        let places = files.into_iter().flat_map(|(file, facts)| {
-            let places = definitions(facts, kind, name).into_iter();
+        let places = files.into_iter().flat_map(|(file, defined)| {
+            let places = definitions(defined, kind, name).into_iter();
             places.map(move |at| (file.to_owned(), at))
         });
         places.collect()
     }
 }
 
-pub fn definitions(facts: &Facts, kind: SymbolKind, name: &str) -> Vec<Place> {
+pub fn definitions(defined: &Definitions, kind: SymbolKind, name: &str) -> Vec<Place> {
     let named = |list: &[Named]| -> Vec<Place> {
         let list = list.iter().filter(|named| named.name == name);
         list.map(|named| named.place).collect()
     };
     match kind {
-        SymbolKind::Label => named(&facts.labels),
-        SymbolKind::Citation => named(&facts.citations),
-        SymbolKind::Environment => named(&facts.environments),
+        SymbolKind::Label => named(&defined.labels),
+        SymbolKind::Citation => named(&defined.citations),
+        SymbolKind::Environment => named(&defined.environments),
         _ => {
-            let commands = facts.commands.iter().filter(|c| c.name == name);
+            let commands = defined.commands.iter().filter(|c| c.name == name);
             commands.map(|c| c.place).collect()
         }
     }
@@ -323,7 +347,7 @@ pub fn usages(
             .uses
             .iter()
             .filter(|used| used.kind == kind && used.name == name);
-        let mut places = definitions(facts, kind, name);
+        let mut places = definitions(&facts.defined, kind, name);
         places.extend(used.map(|used| used.place));
         places
     };
@@ -403,15 +427,19 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
     exact
 }
 
-fn cited<'a>(citations: &'a [Named], typed: &str) -> Vec<&'a Named> {
+fn cited<'a>(citations: &[&'a Named], typed: &str) -> Vec<&'a Named> {
     let found = finder(typed);
-    let mut cited = matching(citations, typed, |c| &c.name);
-    let others = citations.iter().filter(|c| !found(&c.name, At::Start));
+    let starts = matching(citations, typed, |c| &c.name).into_iter().copied();
+    let others = citations
+        .iter()
+        .copied()
+        .filter(|c| !found(&c.name, At::Start));
     let (keys, others): (Vec<_>, Vec<_>) = others.partition(|c| found(&c.name, At::Anywhere));
-    cited.extend(keys);
     let detailed = |c: &&Named| c.detail.as_deref().is_some_and(|d| found(d, At::Word));
-    cited.extend(others.into_iter().filter(detailed));
-    cited
+    starts
+        .chain(keys)
+        .chain(others.into_iter().filter(detailed))
+        .collect()
 }
 
 pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {

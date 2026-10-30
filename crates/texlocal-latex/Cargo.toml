@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 regex = "1.12.1"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 ratex-layout = "=0.1.14"
 ratex-lexer = "=0.1.14"

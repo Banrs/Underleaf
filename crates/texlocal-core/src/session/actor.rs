@@ -8,6 +8,7 @@ use std::time::Duration;
 use notify::RecommendedWatcher;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
+use texlocal_latex::project::Scan;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
@@ -27,7 +28,7 @@ use crate::events::{Event, Queued, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols};
+use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
@@ -129,7 +130,7 @@ pub(crate) struct Actor {
     pub next_doc: u64,
     pub open: Option<String>,
     pub opens: Arc<AtomicU64>,
-    pub symbols: Arc<RwLock<Arc<Symbols>>>,
+    pub symbols: Arc<RwLock<Arc<Scan>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
     pub edits: u64,

@@ -78,10 +78,10 @@ impl Actor {
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
-        let symbols = projects::scan_symbols(&self.project.root, &self.facts, &texts.collect())?;
+        let read = projects::scan_facts(&self.project.root, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
-            let mut files = symbols.by_file.values();
-            files.any(|facts| !syntax::definitions(facts, kind, name).is_empty())
+            let mut files = read.values();
+            files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
         };
         if !defines(from) {
             return Err(CoreError::not_found(undefined(from)));

@@ -1,5 +1,6 @@
 mod common;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use common::{apply, caret, run};
@@ -150,7 +151,7 @@ fn a_command_completes_from_the_project_before_the_catalogue() {
     let mut doc = SourceDocument::new("\\newcommand{\\vect}[1]{\\mathbf{#1}}\n\\ve");
     let facts = Facts::read(&doc.text(), file_kind("main.tex"));
     doc.set_symbols(Arc::new(Symbols {
-        commands: facts.commands,
+        by_file: BTreeMap::from([("main.tex".into(), facts.defined)]),
         ..Symbols::default()
     }));
     let answer = complete(&mut doc, 38);
@@ -185,8 +186,10 @@ fn an_argument_completes_what_the_command_takes() {
         Facts::read(bib, file_kind("refs.bib")),
     );
     let symbols = Arc::new(Symbols {
-        labels: tex.labels,
-        citations: bib.citations,
+        by_file: BTreeMap::from([
+            ("main.tex".into(), tex.defined),
+            ("refs.bib".into(), bib.defined),
+        ]),
         files: ["main.tex", "ch/intro.tex", "fig.png"]
             .map(String::from)
             .to_vec(),
@@ -194,7 +197,6 @@ fn an_argument_completes_what_the_command_takes() {
             packages: vec!["amsmath".into(), "amsthm".into(), "graphicx".into()],
             ..Installed::default()
         }),
-        ..Symbols::default()
     });
     let offered = |text: &str| {
         let mut doc = SourceDocument::new(text);

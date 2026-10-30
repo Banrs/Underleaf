@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -8,7 +9,34 @@ use crate::facts::{Facts, Heading, Input, Kind, Named, Slip};
 use crate::logparse::{LogItem, Severity};
 use crate::message::Message;
 use crate::messages;
-use crate::syntax::{SymbolKind, Symbols, headings};
+use crate::syntax::{Installed, SymbolKind, Symbols, headings};
+
+#[derive(Default)]
+pub struct Scan {
+    pub facts: BTreeMap<String, Arc<Facts>>,
+    pub symbols: Arc<Symbols>,
+}
+
+impl Scan {
+    pub fn new(
+        facts: BTreeMap<String, Arc<Facts>>,
+        files: Vec<String>,
+        installed: Arc<Installed>,
+    ) -> Self {
+        let by_file = facts
+            .iter()
+            .map(|(file, facts)| (file.clone(), Arc::clone(&facts.defined)));
+        let symbols = Symbols {
+            files,
+            by_file: by_file.collect(),
+            installed,
+        };
+        Self {
+            facts,
+            symbols: Arc::new(symbols),
+        }
+    }
+}
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -70,14 +98,14 @@ pub struct Analysis {
     pub(crate) heading_styles: Vec<headings::HeadingStyle>,
 }
 
-pub fn analyze(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {
-    let mut walk = Walk::from(symbols, main.unwrap_or_default());
+pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis {
+    let mut walk = Walk::from(scan, main.unwrap_or_default());
     if let Some(shown) = shown
         && !walk.files.iter().any(|(file, _)| *file == shown)
     {
-        walk = Walk::from(symbols, shown);
+        walk = Walk::from(scan, shown);
     }
-    let class = main.and_then(|main| symbols.by_file.get(main)?.class.as_deref());
+    let class = main.and_then(|main| scan.facts.get(main)?.class.as_deref());
     Analysis {
         tree: outline_tree(&walk.outline),
         words: walk.words,
@@ -104,7 +132,7 @@ fn read<'a>(facts: &'a Facts, names: &'a [Named]) -> impl Iterator<Item = &'a Na
 }
 
 pub(crate) struct Walk<'a> {
-    symbols: &'a Symbols,
+    scan: &'a Scan,
     pub(crate) files: Vec<(&'a str, &'a Facts)>,
     labels: Vec<(&'a str, &'a Named)>,
     slips: Vec<(&'a str, &'a Slip)>,
@@ -114,9 +142,9 @@ pub(crate) struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    pub(crate) fn from(symbols: &'a Symbols, file: &str) -> Self {
+    pub(crate) fn from(scan: &'a Scan, file: &str) -> Self {
         let mut walk = Self {
-            symbols,
+            scan,
             files: Vec::new(),
             labels: Vec::new(),
             slips: Vec::new(),
@@ -129,11 +157,11 @@ impl<'a> Walk<'a> {
     }
 
     fn read(&mut self, file: &str, within: &str, depth: usize) {
-        let symbols = self.symbols;
+        let scan = self.scan;
         if depth == INPUT_DEPTH {
             return;
         }
-        let Some((file, facts)) = symbols.by_file.get_key_value(file) else {
+        let Some((file, facts)) = scan.facts.get_key_value(file) else {
             return;
         };
         let file = file.as_str();
@@ -141,7 +169,7 @@ impl<'a> Walk<'a> {
             return;
         }
         self.files.push((file, facts));
-        let mut labels = read(facts, &facts.labels).peekable();
+        let mut labels = read(facts, &facts.defined.labels).peekable();
         let mut slips = facts.slips.iter().peekable();
         let headings = &facts.headings;
         let read_headings = headings
@@ -167,7 +195,7 @@ impl<'a> Walk<'a> {
             let before = input.before.min(read_headings);
             self.outline.extend(headings[at..before].iter().map(placed));
             at = before;
-            match input.resolve(file, within, |rel| symbols.spelt(rel)) {
+            match input.resolve(file, within, |rel| scan.symbols.spelt(rel)) {
                 Some((input, within)) => self.read(&input, &within, depth + 1),
                 None => self.missing.push((file, input)),
             }
@@ -226,8 +254,8 @@ fn warning(file: &str, line: u32, message: Message) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
-pub fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
-    let walk = Walk::from(symbols, main);
+pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
+    let (walk, symbols) = (Walk::from(scan, main), &scan.symbols);
     let reached = || walk.files.iter().copied();
     let undefined = |kind, said: fn(&str) -> Message, defined: &HashSet<&str>| -> Vec<LogItem> {
         let uses =
@@ -270,15 +298,21 @@ pub fn check(symbols: &Symbols, main: &str) -> Vec<LogItem> {
         .iter()
         .flatten()
         .filter(|bib| seen.insert(*bib));
-    let entries = bibs.filter_map(|bib| symbols.by_file.get_key_value(bib));
+    let entries = bibs.filter_map(|bib| scan.facts.get_key_value(bib));
     let entries: Vec<(&str, &Named)> = entries
-        .flat_map(|(bib, facts)| facts.citations.iter().map(move |c| (bib.as_str(), c)))
+        .flat_map(|(bib, facts)| {
+            facts
+                .defined
+                .citations
+                .iter()
+                .map(move |c| (bib.as_str(), c))
+        })
         .collect();
     items.extend(twice(entries.iter().copied(), |name, line, file| {
         messages::citation_defined_twice(name, line, file)
     }));
     if bibliographies.iter().all(Option::is_some) {
-        let bibitems = reached().flat_map(|(_, facts)| read(facts, &facts.citations));
+        let bibitems = reached().flat_map(|(_, facts)| read(facts, &facts.defined.citations));
         let mut keys: HashSet<&str> = bibitems.map(|c| c.name.as_str()).collect();
         keys.extend(entries.iter().map(|(_, c)| c.name.as_str()));
         keys.insert("*");

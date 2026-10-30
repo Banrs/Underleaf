@@ -1,9 +1,9 @@
 use std::ops::Range;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::bib;
 use crate::message::Message;
@@ -54,10 +54,7 @@ pub struct Facts {
     pub(crate) headings: Vec<Heading>,
     pub(crate) inputs: Vec<Input>,
     pub words: usize,
-    pub labels: Vec<Named>,
-    pub citations: Vec<Named>,
-    pub commands: Vec<Defined>,
-    pub environments: Vec<Named>,
+    pub defined: Arc<Definitions>,
     pub(crate) uses: Vec<Named>,
     pub(crate) class: Option<String>,
     pub packages: Vec<String>,
@@ -67,7 +64,17 @@ pub struct Facts {
     pub(crate) end: Option<Place>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Definitions {
+    pub labels: Vec<Named>,
+    pub citations: Vec<Named>,
+    pub commands: Vec<Defined>,
+    pub environments: Vec<Named>,
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -107,7 +114,7 @@ pub struct FilePlace {
     pub length: u32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Named {
     pub(crate) kind: SymbolKind,
     pub name: String,
@@ -115,7 +122,7 @@ pub struct Named {
     pub detail: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Defined {
     pub name: String,
     pub(crate) arguments: usize,
@@ -174,6 +181,7 @@ impl Facts {
         let mut reader = Reader {
             text: &text,
             facts: Self::default(),
+            defined: Definitions::default(),
             prose: Reading::whole(&text),
             structure: Structure::default(),
             title: None,
@@ -184,6 +192,7 @@ impl Facts {
         scanner.run(&text.units, text.units.len(), &[], &mut reader);
         let Reader {
             mut facts,
+            defined,
             prose,
             structure,
             cuts,
@@ -202,13 +211,14 @@ impl Facts {
             };
             *counted = prose.words(from.min(len)..to);
         }
+        facts.defined = Arc::new(defined);
         facts.slips = slips;
         facts.end = end.map(|end| Place::of(&text, end..end));
         facts
     }
 
     fn read_bib(source: &str, text: &Text) -> Self {
-        let mut facts = Self::default();
+        let (mut facts, mut defined) = (Self::default(), Definitions::default());
         let (mut byte, mut unit) = (0, 0);
         let mut cited = |at: Range<usize>| {
             unit += utf16::len(&source[byte..at.start]);
@@ -222,7 +232,7 @@ impl Facts {
                 continue;
             }
             let start = entry.get_match().end();
-            facts.citations.push(Named {
+            defined.citations.push(Named {
                 detail: bib::detail(&bib::fields(body)),
                 ..cited(entry.get(2).expect("an entry has a key").range())
             });
@@ -234,6 +244,7 @@ impl Facts {
                 facts.uses.push(cited(at));
             }
         }
+        facts.defined = Arc::new(defined);
         facts
     }
 }
@@ -241,6 +252,7 @@ impl Facts {
 struct Reader<'a> {
     text: &'a Text,
     facts: Facts,
+    defined: Definitions,
     prose: Reading<'a>,
     structure: Structure,
     title: Option<(usize, String)>,
@@ -273,7 +285,7 @@ impl Visit for Reader<'_> {
             "bibitem" => {
                 let keys = listed(&text.units, name_end, false).into_iter();
                 let keys = keys.map(|at| named(text, SymbolKind::Citation, at));
-                facts.citations.extend(keys);
+                self.defined.citations.extend(keys);
             }
             "documentclass" if facts.class.is_none() => {
                 facts.class = braced(&text.units, name_end)
@@ -294,7 +306,7 @@ impl Visit for Reader<'_> {
                 let command = defined(text, name, name_end);
                 let command = command
                     .filter(|d| d.name.starts_with('\\') && (name != "def" || d.tex.is_some()));
-                facts.commands.extend(command);
+                self.defined.commands.extend(command);
             }
             "newenvironment" => {
                 let environment =
@@ -305,7 +317,7 @@ impl Visit for Reader<'_> {
                     place,
                     detail: None,
                 });
-                facts.environments.extend(environment);
+                self.defined.environments.extend(environment);
             }
             "input" | "include" | "subfile" | "import" | "subimport" => {
                 if let Some((name, folder, at)) = input(&text.units, name, name_end) {
@@ -384,7 +396,7 @@ impl Reader<'_> {
                     ..named(text, SymbolKind::Label, at)
                 });
                 let labels = labels.filter(|label| !label.name.ends_with(':'));
-                self.facts.labels.extend(labels);
+                self.defined.labels.extend(labels);
                 return;
             }
             _ => return,

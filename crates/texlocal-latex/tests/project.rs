@@ -2,30 +2,28 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use texlocal_latex::facts::{self, Facts, Place};
-use texlocal_latex::syntax::{Installed, Symbols};
+use texlocal_latex::project::Scan;
+use texlocal_latex::syntax::Installed;
 use texlocal_latex::{FileKind, file_kind};
 use texlocal_latex::{bib, project};
 
-fn project(files: &[(&str, &str)], installed: &[&str]) -> Symbols {
+fn project(files: &[(&str, &str)], installed: &[&str]) -> Scan {
     let read = |&(name, text): &(&str, &str)| {
         (
             name.to_owned(),
             Arc::new(Facts::read(text, file_kind(name))),
         )
     };
-    Symbols {
-        files: files.iter().map(|(name, _)| (*name).to_owned()).collect(),
-        by_file: files.iter().map(read).collect(),
-        installed: Arc::new(Installed {
-            inputs: installed.iter().map(|&input| input.to_owned()).collect(),
-            ..Installed::default()
-        }),
-        ..Symbols::default()
-    }
+    let installed = Installed {
+        inputs: installed.iter().map(|&input| input.to_owned()).collect(),
+        ..Installed::default()
+    };
+    let names = files.iter().map(|(name, _)| (*name).to_owned()).collect();
+    Scan::new(files.iter().map(read).collect(), names, Arc::new(installed))
 }
 
-fn found(symbols: &Symbols) -> Vec<(String, u32, String)> {
-    let items = project::check(symbols, "main.tex").into_iter();
+fn found(scan: &Scan) -> Vec<(String, u32, String)> {
+    let items = project::check(scan, "main.tex").into_iter();
     let item =
         |i: texlocal_latex::logparse::LogItem| (i.file.unwrap(), i.line.unwrap(), i.message.text);
     items.map(item).collect()
@@ -52,13 +50,13 @@ See \\ref{intro}, \\ref{nowhere}, \\cite{known} and \\cite{unknown}.
 fn checks_find_twice_defined_and_undefined_names_and_missing_files() {
     let ch = "\\section{Chapter}\\label{intro}\n";
     let refs = "@article{known, title={A}}\n";
-    let symbols = project(
+    let scan = project(
         &[("main.tex", MAIN), ("ch.tex", ch), ("refs.bib", refs)],
         &["size10"],
     );
     let item = |file: &str, line, message: &str| (file.to_owned(), line, message.to_owned());
     assert_eq!(
-        found(&symbols),
+        found(&scan),
         [
             item(
                 "ch.tex",
@@ -74,8 +72,8 @@ fn checks_find_twice_defined_and_undefined_names_and_missing_files() {
 
 #[test]
 fn checks_trust_inputs_tex_has_and_skip_citations_without_their_bib() {
-    let symbols = project(&[("main.tex", MAIN), ("ch.tex", "")], &[]);
-    let found = found(&symbols);
+    let scan = project(&[("main.tex", MAIN), ("ch.tex", "")], &[]);
+    let found = found(&scan);
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].2, "No label “nowhere” is defined.");
 }
@@ -120,11 +118,12 @@ fn facts_read_names_packages_and_commands() {
     let text = "\\usepackage{amsmath,graphicx}\n\\newcommand{\\vect}[1]{\\mathbf{#1}}\n\\begin{document}\n\\label{eq}\n\\section{The \\emph{Start}}\\label{start}\n\\caption{A cat} \\label{cat}\n";
     let facts = Facts::read(text, FileKind::Tex);
     assert_eq!(facts.packages, ["amsmath", "graphicx"]);
-    let commands: Vec<&str> = facts.commands.iter().map(|c| c.name.as_str()).collect();
+    let defined = &facts.defined;
+    let commands: Vec<&str> = defined.commands.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(commands, ["\\vect"]);
-    assert_eq!(facts.labels[0].name, "eq");
-    assert_eq!(facts.labels[0].place.line, 4);
-    let details: Vec<_> = facts.labels.iter().map(|l| l.detail.as_deref()).collect();
+    assert_eq!(defined.labels[0].name, "eq");
+    assert_eq!(defined.labels[0].place.line, 4);
+    let details: Vec<_> = defined.labels.iter().map(|l| l.detail.as_deref()).collect();
     assert_eq!(details, [None, Some("The Start"), Some("A cat")]);
     let end_of_line_1 = Place {
         line: 1,
@@ -136,9 +135,10 @@ fn facts_read_names_packages_and_commands() {
         "@book{a, title={A}}\n@comment{b,}\n@misc{c,}\n@article{d, author={Knuth, Donald and Leslie Lamport and Other, A}, year=1984}",
         FileKind::Bib,
     );
-    let keys: Vec<&str> = bib.citations.iter().map(|c| c.name.as_str()).collect();
+    let citations = &bib.defined.citations;
+    let keys: Vec<&str> = citations.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(keys, ["a", "c", "d"]);
-    let details: Vec<_> = bib.citations.iter().map(|c| c.detail.as_deref()).collect();
+    let details: Vec<_> = citations.iter().map(|c| c.detail.as_deref()).collect();
     assert_eq!(details, [Some("A"), None, Some("Knuth et al. · 1984")]);
 }
 
@@ -146,7 +146,7 @@ fn facts_read_names_packages_and_commands() {
 fn the_outline_nests_headings_across_inputs_and_counts_words() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\section{One}\nA b c.\n\\subsection{Two}\nD e.\n\\input{ch}\n\\end{document}\nNotes after the end.\n";
     let ch = "\\section{Three}\nF.\n";
-    let symbols = project(
+    let scan = project(
         &[
             ("main.tex", main),
             ("ch.tex", ch),
@@ -154,7 +154,7 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
         ],
         &[],
     );
-    let analysis = project::analyze(&symbols, Some("main.tex"), None);
+    let analysis = project::analyze(&scan, Some("main.tex"), None);
     assert_eq!(analysis.files, ["main.tex", "ch.tex"]);
     let outline = serde_json::to_value(&analysis).unwrap();
     assert_eq!(titles(&outline["tree"]), ["One", "Three"]);
@@ -164,9 +164,9 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
     let tree = &outline["tree"];
     let words = [&tree[0], &tree[0]["children"][0], &tree[1]].map(|node| &node["words"]);
     assert_eq!(words, [7, 3, 2]);
-    let lone = project::analyze(&symbols, Some("main.tex"), Some("lone.tex"));
+    let lone = project::analyze(&scan, Some("main.tex"), Some("lone.tex"));
     assert_eq!(lone.files, ["lone.tex"]);
-    let shown = project::analyze(&symbols, Some("main.tex"), Some("ch.tex"));
+    let shown = project::analyze(&scan, Some("main.tex"), Some("ch.tex"));
     assert_eq!(shown.files, ["main.tex", "ch.tex"]);
 }
 

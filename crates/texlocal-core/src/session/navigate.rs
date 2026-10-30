@@ -46,7 +46,7 @@ pub(crate) struct QuickHelp {
 
 impl Actor {
     pub fn quick_open(&self, query: String, reply: Pending<Vec<QuickOpenItem>>) {
-        let symbols = Arc::clone(&self.symbols.read().unwrap_or_else(PoisonError::into_inner));
+        let scan = Arc::clone(&self.symbols.read().unwrap_or_else(PoisonError::into_inner));
         let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
         tokio::task::spawn_blocking(move || {
             let mut items: Vec<QuickOpenItem> = files
@@ -68,7 +68,7 @@ impl Actor {
                 return reply.send(Ok(items));
             }
             if let Some(main) = main {
-                let analysis = project::analyze(&symbols, Some(&main), None);
+                let analysis = project::analyze(&scan, Some(&main), None);
                 items.extend(analysis.outline.into_iter().map(|heading| {
                     let path = heading.file;
                     QuickOpenItem {
@@ -80,10 +80,10 @@ impl Actor {
                     }
                 }));
                 for file in analysis.files {
-                    let Some(facts) = symbols.by_file.get(&file) else {
+                    let Some(facts) = scan.facts.get(&file) else {
                         continue;
                     };
-                    items.extend(facts.labels.iter().map(|label| QuickOpenItem {
+                    items.extend(facts.defined.labels.iter().map(|label| QuickOpenItem {
                         kind: QuickOpenKind::Label,
                         title: label.name.clone(),
                         detail: label.detail.clone().unwrap_or_default(),
@@ -149,7 +149,7 @@ impl Actor {
                     let number = aux.ok().and_then(|aux| numbered(&aux, &name));
                     let number = number.unwrap_or_else(|| "Compile to number it".to_owned());
                     let symbols = doc.symbols();
-                    let mut labels = own.labels.iter().chain(&symbols.labels);
+                    let mut labels = own.defined.labels.iter().chain(symbols.labels());
                     let what = labels.find(|label| label.name == name);
                     Some(match what.and_then(|label| label.detail.as_ref()) {
                         Some(what) => format!("{number}\n{what}"),

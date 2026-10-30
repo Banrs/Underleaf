@@ -1,8 +1,13 @@
 mod common;
 
+use std::sync::Arc;
+
 use common::{apply, caret, run};
 use serde_json::{Value, json};
-use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
+use texlocal_latex::facts::Facts;
+use texlocal_latex::file_kind;
+use texlocal_latex::project::Scan;
+use texlocal_latex::syntax::{Source, SourceDocument, Symbols, Syntax};
 
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
@@ -181,6 +186,41 @@ fn a_reference_leads_to_its_label() {
     let answer = run(&mut doc, "DefinitionAt", json!({ "at": 15 }));
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
+}
+
+#[test]
+fn the_projects_symbols_reach_the_engine_as_data() {
+    let files = [
+        ("ch.tex", "\\label{sum} \\newcommand{\\R}{\\mathbb{R}}"),
+        ("main.tex", "\\ref{sum} $\\R$"),
+        ("refs.bib", "@book{knuth, title={TAOCP}}"),
+    ];
+    let read = files.map(|(file, text)| {
+        (
+            file.to_owned(),
+            Arc::new(Facts::read(text, file_kind(file))),
+        )
+    });
+    let names = files.map(|(file, _)| file.to_owned()).to_vec();
+    let symbols = Scan::new(read.into(), names, Arc::default()).symbols;
+    let sent: Symbols = serde_json::from_str(&serde_json::to_string(&symbols).unwrap()).unwrap();
+    assert_eq!(sent, *symbols);
+    let mut doc = SourceDocument::named(files[1].1, "main.tex");
+    doc.set_symbols(Arc::new(sent));
+    let answer = run(&mut doc, "DefinitionAt", json!({ "at": 6 }));
+    assert_eq!(
+        answer["places"],
+        json!([{ "file": "ch.tex", "line": 1, "column": 7, "length": 3 }])
+    );
+    let math = run(&mut doc, "MathAt", json!({ "caret": 13 }));
+    assert!(math["tex"].as_str().unwrap().starts_with("\\def\\R{"));
+    doc.edit(0, 16, "\\cite{");
+    let cited = run(
+        &mut doc,
+        "Complete",
+        json!({ "caret": 6, "explicit": false }),
+    );
+    assert_eq!(cited["items"][0]["label"], "knuth");
 }
 
 #[test]
