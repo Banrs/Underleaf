@@ -31,6 +31,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func show(_ text: String) {
         loading = true
+        mirrorEdits = []
         breakUndoCoalescing()
         fragments.removeAll(keepingCapacity: true)
         issues.place()
@@ -263,6 +264,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func unmarkText() {
         super.unmarkText()
         markedTextChanged()
+        mirror()
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -383,7 +385,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func didChangeText() {
         super.didChangeText()
-        guard !mirroring, !mirrorEdits.isEmpty else { return }
+        mirror()
+    }
+
+    private func mirror() {
+        guard !mirroring, !mirrorEdits.isEmpty, !hasMarkedText() else { return }
         let edits = mirrorEdits, kept = document.map(selections, through: edits)
         mirrorEdits = []
         mirroring = true

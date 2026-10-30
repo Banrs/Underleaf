@@ -151,6 +151,19 @@ struct EditorTests {
         #expect(text.string == "\\sé" && text.document.text == "\\sé")
     }
 
+    @Test(arguments: [(8, 9), (16, 18)], [false, true])
+    func composingInAnEnvironmentsNameMirrorsItOnceTheCompositionCommits(_ place: (caret: Int, after: Int), _ unmarking: Bool) {
+        let (editor, window) = Self.editor("\\begin{x}\n\\end{x}")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(place.caret)
+        Self.event(text) { text.setMarkedText(unmarking ? "é" : "´", selectedRange: .caret(1), replacementRange: Self.typed) }
+        #expect(text.markedRange() == NSRange(location: place.caret, length: 1) && text.document.text == text.string)
+        if unmarking { Self.event(text) { text.unmarkText() } } else { Self.type("é", in: text) }
+        #expect(!text.hasMarkedText() && text.string == "\\begin{xé}\n\\end{xé}" && text.document.text == text.string)
+        #expect(text.selection == .caret(place.after))
+    }
+
     @Test func scrollingReportsTheTopLine() throws {
         let (editor, window) = Self.editor((1...200).map { "line \($0)" }.joined(separator: "\n"))
         defer { window.close() }
