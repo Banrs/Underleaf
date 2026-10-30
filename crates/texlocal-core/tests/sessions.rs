@@ -29,9 +29,16 @@ for arg in "$@"; do
 done
 mkdir -p "$out"
 : > "$out/${main%.tex}.fdb_latexmk"
-grep -q slowly "$main" && sleep 30
-printf '%s\n' "$@" > "$out/args"
 stem="${main%.tex}"
+if grep -q slowly "$main"; then
+  echo partial > "$out/$stem.aux"
+  grep -q 'slowly over' "$main" && echo partial > "$out/$stem.pdf"
+  sleep 30 &
+  echo $! > "$out/child"
+  : > "$out/started"
+  wait
+fi
+printf '%s\n' "$@" > "$out/args"
 printf '%%PDF-1.4\n' > "$out/$stem.pdf"
 line=$(grep -n 'undefinedcommand' "$main" | head -1 | cut -d: -f1)
 if [ -n "$line" ]; then
@@ -980,6 +987,65 @@ async fn stop_compile_stops_the_sessions_build() {
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["stopped"], true);
     assert!(!rig.root().join("build/main.fdb_latexmk").exists());
+}
+
+fn running(build: &Path) -> bool {
+    let child = fs::read_to_string(build.join("child")).unwrap();
+    let alive = std::process::Command::new("kill")
+        .args(["-0", child.trim()])
+        .stderr(std::process::Stdio::null())
+        .status();
+    alive.unwrap().success()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_building() {
+    let main = "\\documentclass{article}\n% slowly over\n\\begin{document}\n\\end{document}\n";
+    let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
+    let other = rig.library.create("Other", "blank").await;
+    let other_build = rig.library.project_root(&other).join("build");
+    write(&rig.library.project_root(&other), &[("main.tex", main)]);
+    rig.call_to(
+        2,
+        "OpenProject",
+        json!({ "id": other, "autoCompile": false }),
+    );
+    rig.call("Compile", json!({ "auto": false }));
+    rig.call_to(2, "Compile", json!({ "auto": false }));
+    let build = rig.root().join("build");
+    wait_until("both builds start", || {
+        build.join("started").exists() && other_build.join("started").exists()
+    });
+    rig.call("StopCompile", json!({}));
+    rig.event_in(SESSION, "buildFinished", |_| true);
+    let result = &rig.section_in(SESSION, "build", |b| !b["result"].is_null())["result"];
+    assert_eq!(result["stopped"], true);
+    for partial in ["main.aux", "main.pdf"] {
+        assert!(!build.join(partial).exists(), "{partial} is discarded");
+    }
+    wait_until("the build's own processes end", || !running(&build));
+    assert!(running(&other_build), "the other project still builds");
+    assert!(other_build.join("main.aux").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_build_keeps_the_last_pdf_it_did_not_touch() {
+    let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
+    rig.call("Compile", json!({ "auto": false }));
+    rig.section("build", |b| b["result"]["ok"] == true);
+    let main = "\\documentclass{article}\n% slowly\n\\begin{document}\n\\end{document}\n";
+    write(&rig.root(), &[("main.tex", main)]);
+    rig.forget();
+    rig.call("Compile", json!({ "auto": false }));
+    let build = rig.root().join("build");
+    wait_until("the build starts", || build.join("started").exists());
+    rig.call("StopCompile", json!({}));
+    rig.section("build", |b| b["result"]["stopped"] == true);
+    assert!(!build.join("main.aux").exists());
+    assert_eq!(
+        fs::read_to_string(build.join("main.pdf")).unwrap(),
+        "%PDF-1.4\n"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
