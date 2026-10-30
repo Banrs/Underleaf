@@ -49,15 +49,7 @@ extension SourceTextView {
         return value
     }
 
-    func offset(_ location: any NSTextLocation) -> Int {
-        guard let storage = textLayoutManager?.textContentManager else { return 0 }
-        return storage.offset(from: storage.documentRange.location, to: location)
-    }
+    func offset(_ location: any NSTextLocation) -> Int { textLayoutManager?.textContentManager?.offset(of: location) ?? 0 }
 
-    func textRange(_ range: NSRange) -> NSTextRange? {
-        guard let storage = textLayoutManager?.textContentManager,
-              let start = storage.location(storage.documentRange.location, offsetBy: range.location),
-              let end = storage.location(start, offsetBy: range.length) else { return nil }
-        return NSTextRange(location: start, end: end)
-    }
+    func textRange(_ range: NSRange) -> NSTextRange? { textLayoutManager?.textContentManager?.textRange(of: range) }
 }

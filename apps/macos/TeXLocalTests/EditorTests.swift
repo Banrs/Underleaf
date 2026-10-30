@@ -47,6 +47,52 @@ struct EditorTests {
         #expect(document.text == "shown")
     }
 
+    @Test func foldsMoveWithEditsBeforeThemOpenOnEditsInsideAndStepTheCaretOverThemBothWays() {
+        let document = SourceDocument(text: "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
+        let fold = FoldSet.hidden(Fold(line: 1, end: 3), in: document, length: 51)
+        #expect(fold == NSRange(location: 16, length: 16))
+        #expect(FoldSet.hidden(Fold(line: 4, end: 5), in: document, length: 51) == NSRange(location: 46, length: 5))
+        let folds = FoldSet([fold, fold])
+        #expect(folds.ranges == [fold] && folds.headers(in: document) == [1: fold] && folds.hides(16) && !folds.hides(32))
+        #expect(folds.caret(on: 1, hiding: .caret(20), in: document) == .caret(15))
+        #expect(folds.caret(on: 1, hiding: .caret(40), in: document) == nil)
+        let edits: [(NSRange, Int, NSRange?)] = [(.caret(2), 1, NSRange(location: 17, length: 16)), (NSRange(location: 33, length: 2), -2, fold),
+                                                 (.caret(32), 1, fold), (.caret(20), 1, nil), (NSRange(location: 15, length: 1), -1, nil)]
+        for (old, delta, kept) in edits {
+            var edited = folds
+            #expect(edited.edited(old, delta: delta) == (kept == nil) && edited.ranges == (kept.map { [$0] } ?? []))
+        }
+        var stepped = folds
+        #expect(stepped.moved(from: .caret(15), to: .caret(16), stepping: true) == .caret(32))
+        #expect(stepped.moved(from: .caret(32), to: .caret(31), stepping: true) == .caret(15) && stepped == folds)
+        #expect(stepped.moved(from: .caret(15), to: .caret(20), stepping: false) == nil && stepped.isEmpty)
+    }
+
+    @Test func theEditSyncHoldsAMirrorWhileTheNameIsComposedAndTheMirrorsEchoAsksForNoMore() {
+        let document = SourceDocument(text: "\\begin{x}\n\\end{x}")
+        let text = NSMutableString(string: document.text)
+        var sync = EditSync()
+        document.select(.caret(8), mirroring: false)
+        sync.willChange([.caret(8)], to: ["é"])
+        text.insert("é", at: 8)
+        #expect(sync.edited(NSRange(location: 8, length: 1), delta: 1, in: text, of: document) == .caret(8))
+        #expect(sync.mirror(composing: true).isEmpty)
+        #expect(sync.mirror(composing: false) == [TextEdit(start: 16, length: 1, text: "xé")])
+        sync.mirroring = true
+        text.replaceCharacters(in: NSRange(location: 16, length: 1), with: "xé")
+        _ = sync.edited(NSRange(location: 16, length: 2), delta: 1, in: text, of: document)
+        sync.mirroring = false
+        #expect(sync.mirror(composing: false).isEmpty && document.text == text as String)
+    }
+
+    @Test func offsetsAndRangesConvertThroughTheTextContent() throws {
+        let content = NSTextContentStorage()
+        content.attributedString = NSAttributedString(string: "ab\ncdé")
+        let range = try #require(content.textRange(of: NSRange(location: 1, length: 4)))
+        #expect(content.offset(of: range.location) == 1 && content.offset(of: range.endLocation) == 5)
+        #expect(content.textRange(of: NSRange(location: 7, length: 0)) == nil)
+    }
+
     @Test func aCompletionReplacesWhatWasTypedFillsItsFieldAndUndoesBackToIt() throws {
         let (editor, window) = Self.editor("")
         defer { window.close() }
@@ -100,14 +146,14 @@ struct EditorTests {
         Self.type("x", in: text)
         text.selection = .caret(21)
         text.foldAtCaret()
-        let (main, folded, selection) = (text.string, text.folded, text.selection)
+        let (main, folded, selection) = (text.string, text.folds.ranges, text.selection)
         #expect(folded == [NSRange(location: 17, length: 16)] && selection == .caret(16))
         editor.open(path: "other.tex", source: SourceDocument(text: "other"))
         let other = text.undo
-        #expect(other !== undo && text.folded.isEmpty)
+        #expect(other !== undo && text.folds.isEmpty)
         text.selection = .caret(3)
         editor.open(path: "main.tex", source: SourceDocument(text: main))
-        #expect(text.undo === undo && text.folded == folded && text.selection == selection)
+        #expect(text.undo === undo && text.folds.ranges == folded && text.selection == selection)
         editor.open(path: "other.tex", source: SourceDocument(text: "changed"))
         #expect(text.undo !== other && text.selection == .caret(0))
     }
@@ -118,22 +164,22 @@ struct EditorTests {
         let text = editor.textView
         text.selection = .caret(20)
         text.foldAtCaret()
-        #expect(text.folded == [NSRange(location: 16, length: 16)])
+        #expect(text.folds.ranges == [NSRange(location: 16, length: 16)])
         #expect(text.selection == .caret(15))
         #expect(Self.paragraphs(text) == ["\\begin{itemize}\n", "\\end{itemize}\n", "after"])
         text.doCommand(by: #selector(NSResponder.moveRight(_:)))
         #expect(text.selection == .caret(32))
-        #expect(text.folded.count == 1)
+        #expect(text.folds.ranges.count == 1)
         text.doCommand(by: #selector(NSResponder.moveLeft(_:)))
         #expect(text.selection == .caret(15))
-        #expect(text.folded.count == 1)
+        #expect(text.folds.ranges.count == 1)
         text.apply([TextEdit(.caret(20), "x")], named: "Edit", selecting: [.caret(0)])
-        #expect(text.folded.isEmpty)
+        #expect(text.folds.isEmpty)
         try await waitUntil { Self.paragraphs(text).count == 5 }
         text.foldAll()
-        #expect(text.folded.count == 1)
+        #expect(text.folds.ranges.count == 1)
         text.unfoldAll()
-        #expect(text.folded.isEmpty)
+        #expect(text.folds.isEmpty)
     }
 
     @Test func markedTextIsComposedInTheCoresCopyAndOffersNoCompletionsUntilItIsCommitted() {

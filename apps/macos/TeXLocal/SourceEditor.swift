@@ -9,7 +9,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var onEdit: () -> Void = {}
 
     var path: String?
-    var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?, folded: [NSRange])] = [:]
+    var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?, folds: FoldSet)] = [:]
 
     var shown = false {
         didSet {

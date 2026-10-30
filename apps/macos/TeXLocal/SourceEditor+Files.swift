@@ -3,14 +3,14 @@ import AppKit
 extension SourceEditor {
     func open(path: String, source: SourceDocument) {
         if let current = self.path {
-            kept[current] = (textView.source as String, textView.undo, textView.selection, textView.shownTop, textView.folded)
+            kept[current] = (textView.source as String, textView.undo, textView.selection, textView.shownTop, textView.folds)
         }
         self.path = path
         textView.load(source)
         let prior = kept[path].flatMap { textView.source.isEqual(to: $0.text) ? $0 : nil }
         textView.undo = prior?.undo ?? UndoManager()
-        if let folded = prior?.folded, !folded.isEmpty {
-            textView.folded = folded
+        if let folds = prior?.folds, !folds.isEmpty {
+            textView.folds = folds
             textView.relayOutFolds()
         }
         textView.selection = prior?.selection ?? .caret(0)
