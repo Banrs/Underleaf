@@ -164,6 +164,23 @@ struct EditorTests {
         #expect(text.selection == .caret(place.after))
     }
 
+    @Test func aReplaceAllsCoalescedEditKeepsTheCoresCopyEqualToTheShownTextThroughUndo() {
+        let (editor, window) = Self.editor("a b a b")
+        defer { window.close() }
+        let text = editor.textView
+        let found = [NSRange(location: 0, length: 1), NSRange(location: 4, length: 1)]
+        Self.event(text) {
+            guard text.shouldChangeText(inRanges: found.map(NSValue.init(range:)), replacementStrings: ["xy", "xy"]) else { return }
+            text.textStorage?.beginEditing()
+            for range in found.reversed() { text.textStorage?.replaceCharacters(in: range, with: "xy") }
+            text.textStorage?.endEditing()
+            text.didChangeText()
+        }
+        #expect(text.string == "xy b xy b" && text.document.text == text.string)
+        text.undo.undo()
+        #expect(text.string == "a b a b" && text.document.text == text.string)
+    }
+
     @Test func scrollingReportsTheTopLine() throws {
         let (editor, window) = Self.editor((1...200).map { "line \($0)" }.joined(separator: "\n"))
         defer { window.close() }
