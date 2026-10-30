@@ -27,7 +27,7 @@ extension ProjectModel {
         session.send(LiveCaret(path: caret.path, offset: caret.offset))
     }
 
-    func forwardSync(quietly: Bool = false) async {
+    func forwardSync(quietly: Bool = false, wordOnly: Bool = false) async {
         guard let path = openPath else { return }
         let (line, column) = (cursorLine, cursorColumn)
         let request = SynctexForward(file: path, line: line)
@@ -37,7 +37,7 @@ extension ProjectModel {
             do {
                 let loc = try await session.call(request)
                 guard !Task.isCancelled, openPath == path, views?.shownVersion == shown else { return }
-                window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, quietly: quietly)))
+                window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, wordOnly: wordOnly)))
             } catch {
                 if !quietly, !Task.isCancelled { reportSync(error, "Couldn’t Find This Line in the PDF") }
             }

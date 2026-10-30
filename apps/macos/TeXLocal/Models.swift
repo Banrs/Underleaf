@@ -110,7 +110,7 @@ nonisolated struct SyncSource: Sendable {
     let session: SessionClient
     let file: String
     let line, column: Int
-    var quietly = false
+    var wordOnly = false
 }
 
 nonisolated extension Snapshot: Identifiable {

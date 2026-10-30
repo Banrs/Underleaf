@@ -90,7 +90,7 @@ final class WorkspaceController: ThinSplitViewController {
             : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
         let compact = room < ColumnMetrics.compile
         let dragged = splitViews.contains { ($0 as? DraggedSplitView)?.dragging == true }
-        if compact || dragged || quieting == 0 { toolbar.compactCompile = compact }
+        if compact || quieting == (dragged ? 1 : 0) { toolbar.compactCompile = compact }
     }
 
     private func buildSidebar(height: CGFloat) {

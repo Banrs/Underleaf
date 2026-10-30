@@ -93,7 +93,7 @@ struct LayoutTests {
 }
 
 struct OpenableTests {
-    @Test func foldersZipsAndTeXFilesOpenButPackagesDoNot() throws {
+    @Test func foldersZipsAndTeXFilesOpenButPackagesDoNotAndAMissingOneIsLeftToTheOpenToReport() throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
         for name in ["plain", "b.rtfd"] {
@@ -101,7 +101,7 @@ struct OpenableTests {
         }
         for name in ["a.tex", "a.zip", "a.txt"] { try Data().write(to: folder.appending(path: name)) }
         let opens = { (name: String) in AppModel.canOpen(folder.appending(path: name)) }
-        #expect(opens("plain") && opens("a.tex") && opens("a.zip"))
+        #expect(opens("plain") && opens("a.tex") && opens("a.zip") && opens("gone.tex"))
         #expect(!opens("a.txt") && !opens("b.rtfd"))
     }
 }
@@ -257,11 +257,11 @@ struct FieldTests {
     }
 
     @Test func aDialogFieldKeepsItsTextAtTheRightAndShowsATypedSpaceAtOnce() async throws {
-        let defaults = TestDefaults()
+        let defaults = TestDefaults(), model = defaults.window()
         let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: NewProjectSheet(draft: NewProjectDraft(template: .blank, name: "water"))
-            .environment(defaults.app()))
+            .environment(model.app).environment(model))
         window.makeKeyAndOrderFront(nil)
         try await waitUntil { window.firstResponder is NSTextView }
         let editor = try #require(window.firstResponder as? NSTextView)
