@@ -17,7 +17,7 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 type Held = Mutex<Option<sys::Group>>;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct Tree(Arc<Held>);
 
 #[derive(Default)]

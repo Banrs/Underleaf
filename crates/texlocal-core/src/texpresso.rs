@@ -580,6 +580,8 @@ fn apply_message(session: &Session, mut message: Value) {
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
+    use tokio::io::AsyncReadExt;
+
     use super::*;
     use crate::settings::AppSettings;
     use crate::tex::tool_paths;
@@ -599,6 +601,72 @@ mod tests {
         for (i, key) in keys.char_indices() {
             assert!(run.edit("main.tex", at + i, 0, &key.to_string()));
             tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
+    fn listening(dir: &Path) -> (Arc<Session>, Receiver<LiveEvent>) {
+        let (tx, events) = channel();
+        let sink: Sink = Box::new(move |event| drop(tx.send(event)));
+        let pdf = dir.join("live/live.pdf");
+        let (session, _) = Session::new(dir.into(), pdf, HashMap::new(), sink, Tree::default());
+        (session, events)
+    }
+
+    #[test]
+    fn the_output_follows_offsets_before_at_and_past_its_end_and_keeps_its_newest_bytes() {
+        let mut out = Output {
+            max: 8,
+            ..Output::default()
+        };
+        out.append(0, b"abcdef");
+        out.append(4, b"XYZ");
+        assert_eq!((out.base, out.text()), (0, "abcdXYZ".into()));
+        out.append(7, b"123");
+        assert_eq!((out.base, out.text()), (2, "cdXYZ123".into()));
+        out.append(20, b"far");
+        out.truncate(21);
+        assert_eq!((out.base, out.text()), (20, "f".into()));
+        out.append(1, b"near");
+        assert_eq!((out.base, out.text()), (1, "near".into()));
+        let mut log = Output {
+            max: MAX_LOG,
+            ..Output::default()
+        };
+        log.append(0, &vec![b'a'; MAX_OUTPUT + 1]);
+        assert_eq!((log.base, log.text().len()), (0, MAX_OUTPUT));
+    }
+
+    #[tokio::test]
+    async fn a_message_split_between_reads_is_applied_whole_after_the_handshake() {
+        let dir = tempfile::tempdir().unwrap();
+        let (session, events) = listening(dir.path());
+        let first: &[u8] = b"[\"live\",3]\n[\"append\",\"log\",0,\"This is \"]\n[\"page\",0,\"JV";
+        let second: &[u8] = b"BER\"]\nnot json\n[\"append\",\"log\",8,\"TeX\"]\n[\"append\",\"out\",0,\"o\"]\n[\"done\",\"complete\"]\n";
+        read_output(first.chain(second), Arc::clone(&session), true).await;
+        let page = LiveEvent::Page {
+            page: 0,
+            pdf: "JVBER".into(),
+        };
+        let done = LiveEvent::Done("complete".into());
+        let heard: Vec<_> = events.try_iter().collect();
+        use LiveEvent::Log;
+        assert_eq!(heard, [Log, page, Log, Log, done]);
+        assert_eq!(session.log(), "This is TeX\n\no");
+        assert_eq!(session.tex_log().as_deref(), Some("This is TeX"));
+    }
+
+    #[tokio::test]
+    async fn output_without_the_handshake_or_with_another_version_ends_the_preview_once() {
+        for output in [
+            &b"[\"page\",0,\"JV\"]\n"[..],
+            b"[\"live\",2]\n[\"done\",\"x\"]\n",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (session, events) = listening(dir.path());
+            read_output(output, Arc::clone(&session), true).await;
+            let heard: Vec<_> = events.try_iter().collect();
+            assert_eq!(heard, [LiveEvent::Ended(Some(messages::live_unpatched()))]);
+            assert!(!session.running());
         }
     }
 
