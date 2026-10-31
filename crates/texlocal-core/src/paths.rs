@@ -103,6 +103,18 @@ pub(crate) fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
+pub(crate) fn relative(root: &Path, path: &Path) -> Option<String> {
+    let rest = path.strip_prefix(root).ok()?;
+    let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
+    Some(parts?.join("/"))
+}
+
+pub(crate) fn utf8_name(path: &Path) -> Result<&str, CoreError> {
+    let name = path.file_name().unwrap_or_default();
+    name.to_str()
+        .ok_or_else(|| CoreError::bad_request(messages::not_utf8_name(path.display())))
+}
+
 pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
     let mut rest = path;
     for (i, name) in entry.split('/').enumerate() {
@@ -198,4 +210,26 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
         spelt.push(found);
     }
     path.is_file().then(|| spelt.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    use super::*;
+
+    #[test]
+    fn a_path_inside_the_root_is_joined_with_slashes_and_one_that_isnt_utf8_is_refused() {
+        let root = Path::new("/project");
+        let nested = root.join("a").join("b.tex");
+        assert_eq!(relative(root, &nested).as_deref(), Some("a/b.tex"));
+        assert_eq!(relative(root, root).as_deref(), Some(""));
+        assert_eq!(relative(root, Path::new("/elsewhere/b.tex")), None);
+        let latin1 = root.join(OsStr::from_bytes(b"caf\xe9")).join("b.tex");
+        assert_eq!(relative(root, &latin1), None);
+        let refused = utf8_name(latin1.parent().unwrap()).unwrap_err();
+        assert_eq!(refused.kind, crate::ErrorKind::Invalid);
+        assert_eq!(utf8_name(&nested).unwrap(), "b.tex");
+    }
 }

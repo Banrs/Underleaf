@@ -11,7 +11,7 @@ use super::tree::visit_files;
 use crate::atomic::{self, Flush};
 use crate::error::{CoreError, ErrorKind};
 use crate::messages;
-use crate::paths::{Project, identity};
+use crate::paths::{Project, identity, utf8_name};
 use crate::service::Service;
 use crate::settings::write_settings;
 use crate::{BUILD_DIR, SETTINGS_FILE, import, lock};
@@ -108,20 +108,25 @@ pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
         return Ok(Opening { project, file });
     }
     let real = fs::canonicalize(path)?;
-    let name = real.file_name().unwrap_or_default().to_string_lossy();
-    let (project, file) = if meta.is_dir() {
-        (open_folder(service, &real, None)?, None)
-    } else if file_kind(&name) != FileKind::Tex {
+    if meta.is_dir() {
+        let project = open_folder(service, &real, None)?;
+        return Ok(Opening {
+            project,
+            file: None,
+        });
+    }
+    let name = utf8_name(&real)?;
+    let (project, file) = if file_kind(name) != FileKind::Tex {
         (import::import_project(service, path)?, None)
     } else {
         let folder = real.parent().expect("a file's folder");
-        let project = match open_folder(service, folder, Some(&name)) {
+        let project = match open_folder(service, folder, Some(name)) {
             Err(refused) if refused.kind == ErrorKind::Invalid => {
                 import::import_project(service, path)?
             }
             opened => opened?,
         };
-        (project, Some(name.into_owned()))
+        (project, Some(name.to_owned()))
     };
     Ok(Opening { project, file })
 }

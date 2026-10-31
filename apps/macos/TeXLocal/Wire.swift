@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "a39d5b12783d86dd81dba01266a4e9f7872f0952ed5b305dd2e0df4f1dcfe020"
+nonisolated let protocolDigest = "6716ff164f222e4ad48d88927f051d99f7e50c00477a52749f93af06bf88d43d"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -1227,6 +1227,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case changedOnDisk = "changed_on_disk"
     case editsUnsaved = "edits_unsaved"
     case oneDocument = "one_document"
+    case notUtf8Name = "not_utf8_name"
     case notUtf8File = "not_utf8_file"
     case tooLargeToKeep = "too_large_to_keep"
     case renamedSymbolUnfit = "renamed_symbol_unfit"

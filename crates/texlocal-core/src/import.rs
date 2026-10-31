@@ -67,10 +67,10 @@ pub(crate) fn import_files(
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
     for abs in paths {
-        let name = abs.file_name().unwrap_or_default().to_string_lossy();
+        let name = paths::utf8_name(abs)?;
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
         if meta.is_file() {
-            files.push((name.into_owned(), abs.clone()));
+            files.push((name.to_owned(), abs.clone()));
         } else if meta.is_dir() {
             walk(
                 abs,
@@ -78,7 +78,7 @@ pub(crate) fn import_files(
                 true,
                 &mut |entry| {
                     if !entry.dir && !entry.link {
-                        files.push((in_folder(&name, &entry.rel), entry.path.clone()));
+                        files.push((in_folder(name, &entry.rel), entry.path.clone()));
                     }
                     Ok(true)
                 },
@@ -245,7 +245,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         })?;
         return Opened::of_zip(stem, zip);
     }
-    let path = file_name(src);
+    let path = paths::utf8_name(src)?.to_owned();
     if file_kind(&path) != FileKind::Tex {
         return Err(CoreError::bad_request(messages::not_a_project(&path)));
     }

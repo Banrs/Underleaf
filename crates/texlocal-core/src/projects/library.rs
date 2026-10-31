@@ -81,7 +81,9 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
     for entry in fs::read_dir(data_dir)? {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
         if !name.starts_with('.') && entry.file_type()?.is_dir() {
             projects.extend(skip_unreadable(ProjectInfo::read(data_dir, &name))?);
         }
@@ -151,7 +153,9 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     let mut tex = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
         if entry.file_type()?.is_file()
             && file_kind(&name) == FileKind::Tex
             && !name.starts_with('-')
@@ -211,7 +215,7 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
     let segments = |rest: &Path| -> Option<Vec<String>> {
         (rest.components())
             .map(|part| match part {
-                Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                Component::Normal(name) => name.to_str().map(str::to_owned),
                 _ => None,
             })
             .collect()

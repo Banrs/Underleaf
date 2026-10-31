@@ -67,6 +67,7 @@ texlocal_latex::messages! {
     changed_on_disk(path) = "“{path}” changed on disk, so nothing was changed. Keep your edits or the disk’s first, then try again.";
     edits_unsaved = "Some edits aren’t saved, so they’d be left out. Save them, then try again.";
     one_document = "Only one open document can be edited at once: close the others first.";
+    not_utf8_name(path) = "The name of “{path}” isn't UTF-8, so it can't be copied as it is. Rename it, then try again.";
     not_utf8_file(path) = "“{path}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it.";
     too_large_to_keep(path) = "“{path}” is too large for the version history to keep, so nothing was changed, as it couldn’t be put back.";
     renamed_symbol_unfit = "Only a label or a citation is renamed";
