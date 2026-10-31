@@ -685,8 +685,8 @@ async fn renaming_the_open_file_to_another_kind_closes_or_opens_its_document() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     let rig = project().await;
-    rig.open_document("ch.tex")
-        .edit(0, 0, "% mine\n", None, false);
+    let chapter = rig.open_document("ch.tex");
+    chapter.edit(0, 0, "% mine\n", None, false);
     let refused = rig.refuse("Trash", json!({ "path": "main.tex" }));
     assert_eq!(refused, ErrorKind::Conflict);
     let trashed = rig.call("Trash", json!({ "path": "ch.tex" }));
@@ -1026,12 +1026,11 @@ async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_ope
     let place = json!({ "patch": { "place": { "file": "ch.tex" } } });
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
     rig.call("SetUiState", place);
-    let refused = rig.ask_library("TrashProject", json!({ "id": "P" }));
+    let trash = json!({ "id": "P" });
+    let refused = rig.ask_library("TrashProject", trash.clone());
     assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
     rig.call("CloseProject", json!({}));
-    let trashed = rig
-        .ask_library("TrashProject", json!({ "id": "P" }))
-        .unwrap();
+    let trashed = rig.ask_library("TrashProject", trash).unwrap();
     rig.listed(|projects| projects.as_array().unwrap().is_empty());
     rig.ask_library("ReloadProjects", json!({})).unwrap();
     let back = json!({ "id": "P", "trashed": trashed });
@@ -1044,8 +1043,7 @@ async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_ope
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_copy_keeps_the_place_but_not_the_grant_and_a_new_project_at_a_gone_ones_name_starts_afresh()
- {
+async fn a_copy_keeps_the_place_not_the_grant_and_a_new_project_at_a_gone_name_starts_afresh() {
     let rig = project().await;
     let place = json!({ "patch": { "place": { "file": "ch.tex" } } });
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));

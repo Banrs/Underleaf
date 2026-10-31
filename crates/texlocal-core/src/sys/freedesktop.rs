@@ -58,11 +58,8 @@ fn escaped(path: &Path) -> String {
         true => char::from(byte).to_string(),
         false => format!("%{byte:02X}"),
     };
-    path.as_os_str()
-        .as_encoded_bytes()
-        .iter()
-        .map(escape)
-        .collect()
+    let bytes = path.as_os_str().as_encoded_bytes();
+    bytes.iter().map(escape).collect()
 }
 
 #[cfg(test)]
