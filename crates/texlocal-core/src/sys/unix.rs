@@ -58,7 +58,7 @@ pub(crate) fn identity(_: &Path, meta: &Metadata) -> io::Result<(u64, u64)> {
     Ok((meta.dev(), meta.ino()))
 }
 
-pub(crate) fn executable(path: &Path) -> bool {
+fn executable(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
 }
 

@@ -314,7 +314,7 @@ mod tests {
         compiler: Arc<dyn Compiler>,
     ) -> (Arc<Sessions>, Heard, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let service = Arc::new(Service::new(dir.path().into(), dir.path().into()));
+        let service = Arc::new(Service::new(dir.path().into(), dir.path().into(), None));
         let made = json!({ "name": "P", "template": "blank" });
         service.call("CreateProject", made).await.unwrap();
         let (tx, heard) = channel();

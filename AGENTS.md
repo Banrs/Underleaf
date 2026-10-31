@@ -50,15 +50,14 @@ The real-TeX tests, `cargo test -p texlocal-core -- --ignored`, need TeX on the 
 TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly and
 on pull requests that touch TeX code.
 
-`zsh tools/qa/build.sh` builds the QA app, and `$QA_SCRATCH/qa/qa` drives it for checking by eye what no test can.
+`zsh tools/qa/build.sh` builds the QA app, bundling the TeXpresso build in `$TEXPRESSO_BUILD` (by default
+`tools/texpresso/source/build`), and `$QA_SCRATCH/qa/qa` drives it for checking by eye what no test can.
 
 ## Rules
 
 - Never run tests or UI checks against the installed app or `~/TeXLocal`. Use the QA app that
   `tools/qa` builds, with its own data.
-- Install only when asked: TeXpresso first (`tools/texpresso/build.sh`, then
-  `tools/texpresso/install.sh tools/texpresso/source/build`), since the app needs the TeXpresso of its own
-  checkout, then `zsh tools/install-mac.sh`. Pass `--link` to `install.sh` only when the user asks for
-  `/opt/homebrew/bin/texpresso` to link to it. `zsh tools/install-mac.sh --dev` instead builds a branch as
+- Install only when asked: `tools/texpresso/build.sh`, then `zsh tools/install-mac.sh`, which puts that
+  TeXpresso inside the app. `zsh tools/install-mac.sh --dev` instead builds a branch as
   `~/Applications/TeXLocal Dev.app`, with its own bundle identifier, preferences and projects folder,
   `~/TeXLocal Dev`, leaving the installed app as it is.

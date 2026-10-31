@@ -62,7 +62,7 @@ jobs:
       - if: steps.texpresso.outputs.cache-hit != 'true'
         run: |
           tools/texpresso/build.sh "$RUNNER_TEMP/texpresso-source"
-          tools/texpresso/install.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
+          zsh tools/texpresso/bundle.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
@@ -70,4 +70,4 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       - run: cargo test --locked --no-fail-fast -p texlocal-core -- --ignored --nocapture
         env:
-          TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso
+          TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/Helpers/texpresso

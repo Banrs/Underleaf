@@ -55,6 +55,8 @@ final class Core {
         URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "TeXLocal", directoryHint: .isDirectory)
     }
 
+    static let helpersFolder = Bundle.main.bundleURL.appending(path: "Contents/Helpers", directoryHint: .isDirectory)
+
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
     let library = LibraryStore()
@@ -86,7 +88,9 @@ final class Core {
 
     private static func open() -> OpaquePointer? {
         libraryFolder.withUnsafeFileSystemRepresentation { data in
-            stateFolder.withUnsafeFileSystemRepresentation { tl_open(data, $0, listener, nil) }
+            stateFolder.withUnsafeFileSystemRepresentation { state in
+                helpersFolder.withUnsafeFileSystemRepresentation { tl_open(data, state, $0, listener, nil) }
+            }
         }
     }
 

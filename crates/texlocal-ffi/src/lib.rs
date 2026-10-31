@@ -45,6 +45,7 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
 pub unsafe extern "C" fn tl_open(
     data_dir: *const c_char,
     state_dir: *const c_char,
+    helpers_dir: *const c_char,
     listener: Option<extern "C" fn(*mut c_void, *const c_char)>,
     ctx: *mut c_void,
 ) -> *mut TlHandle {
@@ -52,6 +53,7 @@ pub unsafe extern "C" fn tl_open(
     let (Some(dir), Some(state), Some(call)) = (path(data_dir), path(state_dir), listener) else {
         return std::ptr::null_mut();
     };
+    let helpers = path(helpers_dir);
     let callback = Callback { call, ctx };
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
@@ -60,7 +62,10 @@ pub unsafe extern "C" fn tl_open(
         let listen = Box::new(move |said: String| callback.send(said));
         let sessions = {
             let _entered = runtime.enter();
-            Arc::new(Sessions::new(Arc::new(Service::new(dir, state)), listen))
+            Arc::new(Sessions::new(
+                Arc::new(Service::new(dir, state, helpers)),
+                listen,
+            ))
         };
         sessions.log_panics();
         Some(Box::new(TlHandle { runtime, sessions }))
