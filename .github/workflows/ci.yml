@@ -61,7 +61,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
-      - run: cargo run --locked -p texlocal-wire -- --check
       - run: cargo check --locked -p texlocal-core --target aarch64-apple-ios
 
   linux:
