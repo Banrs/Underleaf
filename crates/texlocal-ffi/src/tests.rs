@@ -264,19 +264,6 @@ fn syntax_commands_need_no_source() {
 }
 
 #[test]
-fn each_message_id_is_in_one_catalog() {
-    let catalogs = [
-        texlocal_latex::messages::CATALOG,
-        texlocal_core::messages::CATALOG,
-        messages::CATALOG,
-    ];
-    let mut ids: Vec<&str> = catalogs.concat().iter().map(|(id, _)| *id).collect();
-    ids.sort_unstable();
-    let twice: Vec<&[&str]> = ids.windows(2).filter(|pair| pair[0] == pair[1]).collect();
-    assert!(twice.is_empty(), "{twice:?}");
-}
-
-#[test]
 fn a_panic_answers_an_error_and_a_new_source_survives_one() {
     let source = own(|| panic!("a broken editor"));
     assert_eq!(source_text(source), "");

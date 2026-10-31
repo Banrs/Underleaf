@@ -1,14 +1,19 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 pub struct Message {
+    #[schemars(schema_with = "id")]
     pub id: &'static str,
     pub args: BTreeMap<&'static str, String>,
     pub text: String,
+}
+
+fn id(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "$ref": "#/$defs/MessageID" })
 }
 
 impl fmt::Display for Message {

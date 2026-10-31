@@ -55,11 +55,15 @@ pub fn protocol() -> Protocol {
         outbound.subschema_for::<SessionSection>(),
         outbound.subschema_for::<LibrarySection>(),
     ];
+    let ids = [messages::CATALOG, crate::messages::CATALOG].concat();
+    let ids: Vec<&str> = ids.into_iter().map(|(id, _)| id).collect();
+    let mut outbound = outbound.take_definitions(true);
+    outbound.insert("MessageID".into(), json!({ "type": "string", "enum": ids }));
     Protocol {
         requests,
         stores,
         inbound: inbound.take_definitions(true),
-        outbound: outbound.take_definitions(true),
+        outbound,
     }
 }
 

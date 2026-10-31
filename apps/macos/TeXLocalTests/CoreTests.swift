@@ -220,7 +220,7 @@ struct CoreTests {
             return
         }
         #expect(try ok.answer.get() == "main.tex")
-        #expect(throws: CoreError.self) { try refused.answer.get() }
+        #expect { try refused.answer.get() } throws: { ($0 as? CoreError)?.message.id == .noSuchSession }
         #expect(event.event == .liveAlert && log.level == .fault)
         #expect(stopped.event == .section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
         #expect(tex.available && tex.latexmkVersion == "4.86" && tex.texDir == nil)

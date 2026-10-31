@@ -2,6 +2,11 @@ texlocal_latex::messages! {
     io_error(error) = "{error}";
     unexpected(error) = "{error}";
     at_path(path, error) = "“{path}”: {error}";
+    invalid_command = "Invalid command";
+    unreadable_arguments = "Invalid arguments";
+    invalid_json(error) = "Invalid JSON: {error}";
+    no_source = "No source";
+    not_editable = "The document isn’t open for editing";
     no_such_session = "No such session";
     session_open = "That session is open already";
     project_open = "That project is open already.";

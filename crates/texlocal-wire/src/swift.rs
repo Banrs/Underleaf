@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use crate::fixtures::{Fixture, Fixtures};
-use crate::ir::{Def, Field, Ir, PAYLOAD, Request, Shape, Ty};
+use crate::ir::{Def, Field, Ir, PAYLOAD, Request, Shape, Ty, case};
 
 const PREAMBLE: &str = r#"import Foundation
 import Observation
@@ -306,8 +306,15 @@ fn store(out: &mut String, sections: &str, ir: &Ir, generic: &BTreeSet<&str>) {
 fn enumeration(out: &mut String, name: &str, def: &Def, units: &[(String, Option<String>)]) {
     let codable = conformances(def).replace(", Hashable", ", CaseIterable, Hashable");
     writeln!(out, "nonisolated enum {name}: String, {codable} {{").unwrap();
-    let cases: Vec<String> = units.iter().map(|(unit, _)| ident(unit)).collect();
-    writeln!(out, "    case {}", cases.join(", ")).unwrap();
+    let cases: Vec<String> = (units.iter())
+        .map(|(unit, _)| match case(unit, name) {
+            case if case != *unit => format!("{} = \"{unit}\"", ident(&case)),
+            case => ident(&case),
+        })
+        .collect();
+    let valued = cases.iter().any(|case| case.contains(" = "));
+    let between = if valued { "\n    case " } else { ", " };
+    writeln!(out, "    case {}", cases.join(between)).unwrap();
     if units.iter().all(|(_, title)| title.is_some()) {
         out.push_str("\n    var title: String {\n        switch self {\n");
         for (unit, title) in units {

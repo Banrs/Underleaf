@@ -274,6 +274,13 @@ fn member_name(name: &str, of: &str) -> String {
     name.into()
 }
 
+pub fn case(unit: &str, of: &str) -> String {
+    let mut words = unit.split('_');
+    let first = words.next().unwrap_or_default().to_owned();
+    let rest = words.map(|word| word[..1].to_uppercase() + &word[1..]);
+    member_name(&(first + &rest.collect::<String>()), of)
+}
+
 fn object(schema: &Value) -> &Map<String, Value> {
     let Value::Object(schema) = schema else {
         panic!("an untyped value: {schema}")
@@ -386,10 +393,10 @@ fn shape(name: &str, schema: &Value, way: Way) -> Shape {
             let Some(Value::Array(units)) = schema.get("enum") else {
                 panic!("{name} is a string, not a struct or an enum")
             };
-            let units = units
-                .iter()
-                .map(|unit| (member_name(unit.as_str().unwrap(), name), None));
-            Shape::Units(units.collect())
+            let units: Vec<_> = units.iter().map(|unit| unit.as_str().unwrap()).collect();
+            let cases: BTreeSet<_> = units.iter().map(|unit| case(unit, name)).collect();
+            assert!(cases.len() == units.len(), "{name} has a case twice");
+            Shape::Units(units.into_iter().map(|unit| (unit.into(), None)).collect())
         }
         Some(kind) if kind == "object" => fields(name, schema, way),
         _ => panic!("{name} is neither a struct nor an enum"),

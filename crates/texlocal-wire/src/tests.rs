@@ -141,6 +141,13 @@ fn the_generator_refuses_what_swift_would_read_differently() {
     struct Payload {
         payload: u32,
     }
+    #[derive(JsonSchema)]
+    enum Twice {
+        #[serde(rename = "a_b")]
+        A,
+        #[serde(rename = "aB")]
+        B,
+    }
     let cases = [
         (refused::<Loose>(), "untyped"),
         (refused::<Pair>(), "isn't written for"),
@@ -155,6 +162,7 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         (refused::<Skipped>(), "left out"),
         (refused::<Hex>(), "encoded as \"base16\""),
         (refused::<Payload>(), "Payload is a type's name"),
+        (refused::<Twice>(), "a case twice"),
     ];
     for (panic, expected) in cases {
         assert!(
