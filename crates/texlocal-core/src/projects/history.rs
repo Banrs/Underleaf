@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::ErrorKind;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::files::{Planned, inside, write_all};
 use super::tree::visit_files;
 use super::{read_capped, skip_unreadable};
-use crate::atomic;
+use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, safe_write_path};
@@ -59,11 +61,23 @@ pub(crate) struct History {
     dir: PathBuf,
 }
 
+pub(crate) type Job = Box<dyn FnOnce(&History) + Send>;
+
 impl History {
-    pub fn of(project: &Project) -> Self {
-        Self {
+    pub fn queue(project: &Project) -> mpsc::Sender<Job> {
+        let (queue, jobs) = mpsc::channel::<Job>();
+        let history = Self {
             dir: project.history.clone(),
-        }
+        };
+        std::thread::Builder::new()
+            .name("texlocal-history".into())
+            .spawn(move || {
+                for job in jobs {
+                    let _ = catch_unwind(AssertUnwindSafe(|| job(&history)));
+                }
+            })
+            .expect("the history's thread starts");
+        queue
     }
 
     fn objects(&self) -> PathBuf {
@@ -99,7 +113,7 @@ impl History {
         fs::create_dir_all(record.parent().expect("in the snapshots folder"))?;
         let bytes = serde_json::to_vec(snapshot);
         let bytes = bytes.map_err(|err| CoreError::internal(messages::unexpected(err)))?;
-        atomic::write(&record, &bytes)?;
+        atomic::write(&record, &bytes, Flush::Full)?;
         Ok(())
     }
 
@@ -114,7 +128,7 @@ impl History {
             let object = objects.join(&hash);
             if !object.exists() {
                 fs::create_dir_all(&objects)?;
-                atomic::write(&object, &bytes)?;
+                atomic::write(&object, &bytes, Flush::Ordered)?;
             }
             files.insert(rel.to_owned(), hash);
             Ok(true)

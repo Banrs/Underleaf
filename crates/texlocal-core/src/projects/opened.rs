@@ -8,12 +8,13 @@ use texlocal_latex::{FileKind, file_kind};
 use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
 use super::tree::visit_files;
+use crate::atomic::{self, Flush};
 use crate::error::{CoreError, ErrorKind};
 use crate::messages;
 use crate::paths::{Project, identity};
 use crate::service::Service;
 use crate::settings::write_settings;
-use crate::{BUILD_DIR, SETTINGS_FILE, atomic, import, lock};
+use crate::{BUILD_DIR, SETTINGS_FILE, import, lock};
 
 const STORE: &str = ".opened";
 const FOLDER: &str = "folder.json";
@@ -172,7 +173,7 @@ fn open_folder(
     };
     let record = serde_json::to_vec_pretty(&folder);
     let record = record.map_err(|err| CoreError::bad_request(messages::unexpected(err)))?;
-    atomic::write(&store.join(FOLDER), &record)?;
+    atomic::write(&store.join(FOLDER), &record, Flush::Full)?;
     made.map(tempfile::TempDir::keep);
     let id = format!(".{}", store.file_name().unwrap_or_default().display());
     Ok(ProjectInfo::of(id, &project(root, &store)))

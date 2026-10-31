@@ -196,9 +196,8 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(messages::not_utf8()))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        let symbols = Arc::clone(&self.symbols);
         let doc = Doc {
-            doc: Document::new(id, path, &text, self.tx.clone(), symbols),
+            doc: Document::new(id, path, &text, self.tx.clone(), Arc::clone(&self.scan)),
             path: path.to_owned(),
             saved: 0,
             force: false,
@@ -352,6 +351,14 @@ impl Actor {
             .docs
             .iter()
             .all(|(path, doc)| only.is_some_and(|only| only != path) || !doc.dirty()))
+    }
+
+    pub fn save_first(&mut self) -> Result<(), CoreError> {
+        if self.flush_all(true)? {
+            Ok(())
+        } else {
+            Err(CoreError::conflict(messages::edits_unsaved()))
+        }
     }
 
     pub fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {

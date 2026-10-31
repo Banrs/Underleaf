@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use notify::RecommendedWatcher;
@@ -28,7 +28,7 @@ use crate::events::{Event, Queued, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot};
+use crate::projects::{self, Job, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
@@ -112,6 +112,12 @@ impl Timer {
     }
 }
 
+enum Lifecycle {
+    Open(InSession),
+    Closing(InSession, Vec<Pending<bool>>),
+    Closed,
+}
+
 enum Wake {
     Message(Msg),
     Deadline,
@@ -120,6 +126,7 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
+    pub children: u64,
     pub project: Project,
     pub service: Arc<Service>,
     pub compiler: Arc<dyn Compiler>,
@@ -130,7 +137,7 @@ pub(crate) struct Actor {
     pub next_doc: u64,
     pub open: Option<String>,
     pub opens: Arc<AtomicU64>,
-    pub symbols: Arc<RwLock<Arc<Scan>>>,
+    pub scan: Arc<RwLock<Arc<Scan>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
     pub edits: u64,
@@ -145,12 +152,11 @@ pub(crate) struct Actor {
     pub deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub history: Arc<Mutex<History>>,
+    pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
+    pub befores: usize,
     pub sent: Sent<SessionSection>,
-    in_session: Option<InSession>,
-    closing: Option<Pending<bool>>,
-    closed: bool,
+    lifecycle: Lifecycle,
 }
 
 impl Actor {
@@ -185,6 +191,7 @@ impl Actor {
         let history = sessions.service.history(&project);
         let mut actor = Self {
             id,
+            children: sessions.service.processes.owner(),
             project,
             service: Arc::clone(&sessions.service),
             compiler: Arc::clone(&sessions.compiler),
@@ -195,7 +202,7 @@ impl Actor {
             next_doc: 1,
             open: None,
             opens,
-            symbols: Arc::default(),
+            scan: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
             edits: 0,
@@ -212,10 +219,9 @@ impl Actor {
             later,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
+            befores: 0,
             sent: Sent::default(),
-            in_session: Some(in_session),
-            closing: None,
-            closed: false,
+            lifecycle: Lifecycle::Open(in_session),
         };
         actor.reopen(ui.file.clone());
         actor.publish_all(tree);
@@ -242,7 +248,7 @@ impl Actor {
             if step.is_err() {
                 return self.stopped(&mut rx);
             }
-            if self.closed {
+            if matches!(self.lifecycle, Lifecycle::Closed) {
                 return;
             }
             let deadline = self.timers.values().min().copied();
@@ -271,7 +277,6 @@ impl Actor {
     }
 
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
-        self.closed = true;
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.flush_all(false);
             self.stop_compile();
@@ -287,11 +292,15 @@ impl Actor {
             });
         }
         self.publish_documents();
-        self.in_session = None;
+        for close in self.end() {
+            close.send(Err(super::stopped()));
+        }
         rx.close();
         while let Ok(message) = rx.try_recv() {
-            if let Msg::Command(_, reply) = message {
-                reply.send(Err(super::stopped()));
+            match message {
+                Msg::Command(_, reply) => reply.send(Err(super::stopped())),
+                Msg::Snapshotted(finish) => finish(self),
+                _ => {}
             }
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
@@ -307,6 +316,21 @@ impl Actor {
     }
 
     fn handle(&mut self, message: Msg) {
+        if let Lifecycle::Closing(_, closes) = &mut self.lifecycle {
+            return match message {
+                Msg::Command(Session::CloseProject(_, answer), reply) => {
+                    closes.push(Pending { reply, answer });
+                }
+                Msg::Command(_, reply) => reply.send(Err(super::gone())),
+                Msg::BuildDone(result) => self.build_done(result),
+                Msg::Cleaned(result) => self.cleaned(result),
+                Msg::Snapshotted(finish) => {
+                    finish(self);
+                    self.close_when_idle();
+                }
+                _ => {}
+            };
+        }
         match message {
             Msg::Changed { doc, version, edit } => self.changed(doc, version, &edit),
             Msg::Command(command, reply) => self.command(command, reply),
@@ -314,6 +338,7 @@ impl Actor {
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
             Msg::Live(generation, event) => self.live_event(generation, event),
+            Msg::Snapshotted(finish) => finish(self),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
                 self.soon(Timer::Fs);
@@ -352,7 +377,7 @@ impl Actor {
 
     fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
-            if self.closed || self.closing.is_some() {
+            if !matches!(self.lifecycle, Lifecycle::Open(_)) {
                 self.later.clear();
                 return;
             }
@@ -418,9 +443,13 @@ impl Actor {
                     whole_word,
                 },
                 answer,
-            ) => answer(self.replace(&Query::new(&query, match_case, whole_word), &replacement)),
+            ) => {
+                let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
+                return self.before("Before Replace All", replace, Pending { reply, answer });
+            }
             Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
-                answer(self.rename_symbol(kind, &from, &to))
+                let rename = self.rename_symbol(kind, from, to);
+                return self.before("Before Rename", rename, Pending { reply, answer });
             }
             Session::ApplyFix(ApplyFix { id }, answer) => {
                 return self.fix(id, Pending { reply, answer });
@@ -435,7 +464,7 @@ impl Actor {
                 return self.history_compare(id, path.0, Pending { reply, answer });
             }
             Session::RestoreVersion(RestoreVersion { id, paths }, answer) => {
-                answer(self.history_restore(&id, paths))
+                return self.history_restore(id, paths, Pending { reply, answer });
             }
             Session::Rename(Rename { from, to }, answer) => answer(self.rename(&from.0, &to)),
             Session::CreateEntry(CreateEntry { folder, name, dir }, answer) => {
@@ -493,26 +522,44 @@ impl Actor {
 
     fn close(&mut self, reply: Pending<bool>) {
         match self.flush_all(true) {
-            Ok(true) => self.closing = Some(reply),
+            Ok(true) => {}
             flushed => return reply.send(flushed),
         }
+        let Lifecycle::Open(held) = std::mem::replace(&mut self.lifecycle, Lifecycle::Closed)
+        else {
+            unreachable!("a closing session queues its closes")
+        };
+        self.lifecycle = Lifecycle::Closing(held, vec![reply]);
         self.stop_compile();
         self.live_stop();
         self.docs.clear();
+        self.timers.clear();
         self.close_when_idle();
     }
 
     pub fn close_when_idle(&mut self) {
-        if self.builds.busy() {
+        if self.builds.busy()
+            || self.befores > 0
+            || !matches!(self.lifecycle, Lifecycle::Closing(..))
+        {
             return;
         }
-        let Some(reply) = self.closing.take() else {
-            return;
-        };
         self.stop_history();
-        self.closed = true;
-        self.in_session = None;
+        let closes = self.end();
         let _ = self.service.publish_projects();
-        reply.send(Ok(true));
+        for close in closes {
+            close.send(Ok(true));
+        }
+    }
+
+    fn end(&mut self) -> Vec<Pending<bool>> {
+        self.service.processes.end(self.children);
+        match std::mem::replace(&mut self.lifecycle, Lifecycle::Closed) {
+            Lifecycle::Closing(held, closes) => {
+                drop(held);
+                closes
+            }
+            _ => Vec::new(),
+        }
     }
 }

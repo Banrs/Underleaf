@@ -186,6 +186,7 @@ final class SessionClient {
     private(set) var closed = false
     @ObservationIgnored var heard: (Event) -> Void
     @ObservationIgnored private let core: Core
+    @ObservationIgnored private var closing = false
     @ObservationIgnored private var tasks: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored private var started = 0
 
@@ -202,13 +203,17 @@ final class SessionClient {
             guard !closed else { throw CancellationError() }
             return reply
         } catch {
-            throw closed ? CancellationError() : error
+            throw ended(error) ? CancellationError() : error
         }
     }
 
     func send<R: SessionRequest>(_ request: R, else failed: @escaping (any Error) -> Void = { _ in }) {
         guard !closed else { return }
-        core.send(request, in: id) { [weak self] in if self?.closed == false { failed($0) } }
+        core.send(request, in: id) { [weak self] in if self?.ended($0) == false { failed($0) } }
+    }
+
+    private func ended(_ error: any Error) -> Bool {
+        closed || closing && (error as? CoreError)?.message.id == "no_such_session"
     }
 
     func source(_ path: String) -> OpaquePointer? { closed ? nil : core.source(session: id, path: path) }
@@ -224,9 +229,10 @@ final class SessionClient {
     }
 
     func close() async throws -> Bool {
+        closing = true
+        defer { closing = false }
         do {
             guard try await call(CloseProject()) else { return false }
-        } catch let error as CoreError where error.message.id == "no_such_session" {
         } catch is CancellationError {}
         end()
         return true

@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::syntax::Installed;
 
-use crate::process::run;
+use crate::process::{Processes, run};
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
 use crate::sys;
@@ -94,8 +94,8 @@ pub struct TexStatus {
     pub texpresso_dir: Option<String>,
 }
 
-pub async fn tex_available(path_env: &str) -> TexStatus {
-    let Ok((0, stdout)) = run("latexmk", &["-version"], path_env).await else {
+pub(crate) async fn tex_available(processes: &Processes, path_env: &str) -> TexStatus {
+    let Ok((0, stdout)) = run(processes, "latexmk", &["-version"], path_env).await else {
         return TexStatus::default();
     };
     TexStatus {

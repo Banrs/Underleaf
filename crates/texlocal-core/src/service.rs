@@ -7,12 +7,14 @@ use serde::Serialize;
 use serde_json::Value;
 use texlocal_latex::message::Message;
 use texlocal_latex::templates::ProjectTemplate;
+use tokio::sync::oneshot;
 
 use crate::compile::CompileManager;
 use crate::events::{Queued, Sent};
 use crate::messages;
 use crate::paths::Project;
-use crate::projects::{self, History, Opening, ProjectInfo};
+use crate::process::Processes;
+use crate::projects::{self, History, Job, Opening, ProjectInfo};
 use crate::protocol::requests;
 use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
@@ -21,11 +23,13 @@ use crate::{CoreError, import, lock, tinytex};
 
 pub struct Service {
     pub(crate) data_dir: PathBuf,
+    pub(crate) processes: Arc<Processes>,
     pub(crate) compile: CompileManager,
     pub(crate) texpresso: Arc<texpresso::Manager>,
     pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
-    histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
+    tex_queue: Mutex<Option<oneshot::Receiver<()>>>,
+    histories: Mutex<HashMap<PathBuf, mpsc::Sender<Job>>>,
     pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
     sent: Mutex<Sent<LibrarySection>>,
 }
@@ -69,12 +73,15 @@ requests! {
 
 impl Service {
     pub fn new(data_dir: PathBuf) -> Self {
+        let processes = Arc::new(Processes::default());
         Self {
             data_dir,
-            compile: CompileManager::default(),
-            texpresso: Arc::default(),
+            compile: CompileManager::new(Arc::clone(&processes)),
+            texpresso: Arc::new(texpresso::Manager::new(Arc::clone(&processes))),
+            processes,
             library: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
+            tex_queue: Mutex::default(),
             histories: Mutex::default(),
             hub: OnceLock::new(),
             sent: Mutex::default(),
@@ -139,26 +146,37 @@ impl Service {
         Ok(library)
     }
 
-    pub(crate) fn history(&self, project: &Project) -> Arc<Mutex<History>> {
+    pub(crate) fn history(&self, project: &Project) -> mpsc::Sender<Job> {
         let mut histories = lock(&self.histories);
         let history = histories.entry(project.history.clone());
-        Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
+        history.or_insert_with(|| History::queue(project)).clone()
     }
 
     fn kill_all(&self) {
-        self.compile.kill_all();
-        self.texpresso.kill_all();
+        self.processes.kill_all();
+        self.texpresso.stop_all();
     }
 
     pub fn project(&self, id: &str) -> Result<Project, CoreError> {
         Project::find(&self.data_dir, id)
     }
 
+    fn tex_turn(&self) -> impl Future<Output = oneshot::Sender<()>> + use<> {
+        let (turn, next) = oneshot::channel();
+        let before = lock(&self.tex_queue).replace(next);
+        async move {
+            if let Some(before) = before {
+                let _ = before.await;
+            }
+            turn
+        }
+    }
+
     async fn status(&self) -> TexStatus {
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
-        let mut found = tex::tex_available(&tex_path).await;
+        let mut found = tex::tex_available(&self.processes, &tex_path).await;
         found.texpresso = shown(texpresso::discover(&texpresso_path));
         found.tex_dir = shown(app.tex_dir);
         found.texpresso_dir = shown(app.texpresso_dir);
@@ -170,9 +188,30 @@ impl Service {
         tex::tool_paths(&AppSettings::read(&self.data_dir))
     }
 
+    pub fn call(
+        self: &Arc<Self>,
+        name: &str,
+        args: Value,
+    ) -> impl Future<Output = Result<Value, CoreError>> + Send + use<> {
+        let request = Library::parse(name, args);
+        let tex = matches!(
+            request,
+            Ok(Library::CheckTex(..) | Library::SetTexpressoDir(..) | Library::SetTexDir(..))
+        );
+        let turn = tex.then(|| self.tex_turn());
+        let service = Arc::clone(self);
+        async move {
+            let _turn = match turn {
+                Some(turn) => Some(turn.await),
+                None => None,
+            };
+            service.run(request?).await
+        }
+    }
+
     #[expect(clippy::unit_arg)]
-    pub async fn call(&self, name: &str, args: Value) -> Result<Value, CoreError> {
-        match Library::parse(name, args)? {
+    async fn run(&self, request: Library) -> Result<Value, CoreError> {
+        match request {
             Library::CheckTex(CheckTex {}, answer) => answer(Ok(self.status().await)),
             Library::SetTexpressoDir(SetTexpressoDir { dir }, answer) => {
                 let none_there = || CoreError::bad_request(messages::no_texpresso_there());
@@ -189,7 +228,8 @@ impl Service {
                 answer(Ok(self.status().await))
             }
             Library::InstallTex(InstallTex {}, answer) => {
-                tinytex::install(&self.tool_paths().0).await?;
+                tinytex::install(&self.processes, &self.tool_paths().0).await?;
+                let _turn = self.tex_turn().await;
                 answer(Ok(self.status().await))
             }
             Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),

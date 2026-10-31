@@ -58,7 +58,10 @@ pub unsafe extern "C" fn tl_open(
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
         let listen = Box::new(move |said: String| callback.send(said));
-        let sessions = Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen));
+        let sessions = {
+            let _entered = runtime.enter();
+            Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen))
+        };
         Some(Box::new(TlHandle { runtime, sessions }))
     })
     .flatten()

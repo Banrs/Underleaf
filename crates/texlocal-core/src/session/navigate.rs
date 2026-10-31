@@ -46,7 +46,7 @@ pub(crate) struct QuickHelp {
 
 impl Actor {
     pub fn quick_open(&self, query: String, reply: Pending<Vec<QuickOpenItem>>) {
-        let scan = Arc::clone(&self.symbols.read().unwrap_or_else(PoisonError::into_inner));
+        let scan = Arc::clone(&self.scan.read().unwrap_or_else(PoisonError::into_inner));
         let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
         tokio::task::spawn_blocking(move || {
             let mut items: Vec<QuickOpenItem> = files

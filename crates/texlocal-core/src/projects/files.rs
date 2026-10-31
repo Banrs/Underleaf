@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{SettingsPatch, move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
-use crate::{atomic, sys};
+use crate::sys;
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +50,7 @@ pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreErro
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreError> {
     abs.parent()
         .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| atomic::write(abs, contents))
+        .and_then(|()| atomic::write(abs, contents, Flush::Full))
         .map_err(|err| write_error(abs, err))
 }
 

@@ -27,7 +27,7 @@ struct Cell {
     id: u64,
     text: Mutex<Text>,
     tx: mpsc::UnboundedSender<Msg>,
-    symbols: Arc<RwLock<Arc<Scan>>>,
+    scan: Arc<RwLock<Arc<Scan>>>,
 }
 
 #[derive(Clone)]
@@ -39,7 +39,7 @@ impl Document {
         path: &str,
         text: &str,
         tx: mpsc::UnboundedSender<Msg>,
-        symbols: Arc<RwLock<Arc<Scan>>>,
+        scan: Arc<RwLock<Arc<Scan>>>,
     ) -> Self {
         let source = SourceDocument::named(text, path);
         let text = Mutex::new(Text {
@@ -48,12 +48,7 @@ impl Document {
             closed: false,
             behind: false,
         });
-        Self(Arc::new(Cell {
-            id,
-            text,
-            tx,
-            symbols,
-        }))
+        Self(Arc::new(Cell { id, text, tx, scan }))
     }
 
     pub fn edit(
@@ -134,7 +129,7 @@ impl Document {
     }
 
     pub(crate) fn symbols(&self) -> Arc<Symbols> {
-        let scan = self.0.symbols.read();
+        let scan = self.0.scan.read();
         Arc::clone(&scan.unwrap_or_else(PoisonError::into_inner).symbols)
     }
 

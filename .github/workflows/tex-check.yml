@@ -68,6 +68,6 @@ jobs:
         with:
           key: tex-check
           save-if: ${{ github.event_name != 'pull_request' }}
-      - run: cargo test --locked -p texlocal-core -- --ignored --nocapture
+      - run: cargo test --locked --no-fail-fast -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/bin/texpresso

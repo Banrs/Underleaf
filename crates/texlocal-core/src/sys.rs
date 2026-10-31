@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::process::{Child, Command};
 
+use crate::atomic::Flush;
 use crate::error::CoreError;
 use crate::messages;
 use crate::process;
@@ -96,6 +97,16 @@ pub(crate) fn executable(meta: &Metadata) -> bool {
     meta.is_file() && meta.mode() & 0o111 != 0
 }
 
+pub(crate) fn flush(file: &File, flush: Flush) -> io::Result<()> {
+    match flush {
+        Flush::Full => file.sync_all(),
+        Flush::Ordered => match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } {
+            -1 => Err(io::Error::last_os_error()),
+            _ => Ok(()),
+        },
+    }
+}
+
 pub(crate) fn copy_xattrs(from: &Path, to: &File) {
     if let Ok(from) = File::open(from) {
         unsafe {
@@ -171,7 +182,18 @@ pub(crate) fn local_time(time: SystemTime) -> Option<(u16, u8, u8, u8, u8, u8)> 
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
+
     use super::*;
+
+    #[tokio::test]
+    async fn a_child_starts_with_the_signals_the_app_ignores_back_at_their_defaults() {
+        let ignored = unsafe { libc::signal(libc::SIGUSR1, libc::SIG_IGN) };
+        let mut command = process::command("sh", None, "/bin").unwrap();
+        let ran = command.args(["-c", "kill -USR1 $$"]).status().await;
+        unsafe { libc::signal(libc::SIGUSR1, ignored) };
+        assert_eq!(ran.unwrap().signal(), Some(libc::SIGUSR1));
+    }
 
     #[test]
     fn latexmkrc_is_found_in_the_config_folder_then_home() {

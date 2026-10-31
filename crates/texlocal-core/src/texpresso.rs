@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -18,7 +17,7 @@ use texlocal_latex::utf16::byte_offset;
 
 use crate::messages;
 use crate::paths::{self, Project};
-use crate::process::{self, Tree};
+use crate::process::{self, Processes, Tree};
 use crate::tex::{find_tool, program_at};
 use crate::{CoreError, lock, settings, sys, tail};
 
@@ -103,7 +102,7 @@ pub trait Preview: Send + Sync {
     fn stop_request(&self, owner: u64) -> Status;
     fn live_text(&self, owner: u64, rel: &str) -> Option<String>;
     fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError>;
-    fn stop(&self, root: &Path) -> Result<(), CoreError>;
+    fn restart(&self, owner: u64);
 }
 
 struct Output {
@@ -245,19 +244,25 @@ fn remove_pdf_folder(pdf: &Path) {
 
 #[derive(Default)]
 pub struct Manager {
+    processes: Arc<Processes>,
     sessions: Mutex<HashMap<u64, Arc<Session>>>,
-    shutdown: AtomicBool,
 }
 
 impl Drop for Manager {
     fn drop(&mut self) {
-        self.kill_all();
+        self.stop_all();
     }
 }
 
 impl Manager {
-    pub fn kill_all(&self) {
-        self.shutdown.store(true, Ordering::Release);
+    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+        Self {
+            processes,
+            sessions: Mutex::default(),
+        }
+    }
+
+    pub fn stop_all(&self) {
         for session in lock(&self.sessions).values() {
             session.stop(None);
         }
@@ -306,11 +311,7 @@ impl Manager {
                 ..State::default()
             }),
         });
-        let mut sessions = lock(&self.sessions);
-        if self.shutdown.load(Ordering::Acquire) {
-            session.stop(None);
-        }
-        sessions.insert(owner, Arc::clone(&session));
+        lock(&self.sessions).insert(owner, Arc::clone(&session));
         (session, queued)
     }
 }
@@ -353,7 +354,6 @@ fn command(
         .current_dir(root)
         .stdin(Stdio::piped())
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    sys::default_signals(&mut command);
     command
 }
 
@@ -388,7 +388,7 @@ impl Preview for Manager {
         };
         let (build, pdf) = self.prepare(owner, project)?;
         let mut command = command(&executable, path_env, &build, &main, &root, &pdf);
-        let (mut child, tree) = match Tree::spawn(&mut command) {
+        let (mut child, tree) = match self.processes.spawn(None, &mut command) {
             Ok(spawned) => spawned,
             Err(err) => {
                 remove_pdf_folder(&pdf);
@@ -503,12 +503,10 @@ impl Preview for Manager {
         }
         Ok(pdf)
     }
-    fn stop(&self, root: &Path) -> Result<(), CoreError> {
-        let root = fs::canonicalize(root)?;
-        for session in lock(&self.sessions).values().filter(|s| s.root == root) {
+    fn restart(&self, owner: u64) {
+        if let Ok(session) = self.owned(owner) {
             session.stop(None);
         }
-        Ok(())
     }
 }
 
@@ -721,23 +719,27 @@ mod tests {
         let path = tool_paths(&AppSettings::default()).1;
         let status = manager.start(1, &project, &files, &path, &pane, sink);
         assert!(status.unwrap().running);
-        assert!(typesets(&heard(&events, Duration::from_secs(5))) > 0);
+        let mut started = std::iter::from_fn(|| events.recv_timeout(Duration::from_secs(120)).ok());
+        assert!(started.any(|event| matches!(event, LiveEvent::Done(_))));
+        heard(&events, Duration::from_secs(5));
 
         typed(&manager, text.find("A sentence").unwrap(), "abcdefgh").await;
         let typing: Vec<_> = events.try_iter().collect();
         assert_eq!(typesets(&typing), 0, "only the page in view while typing");
-        let pages = typing.iter().filter_map(|e| match e {
-            LiveEvent::Page { page, .. } => Some(*page),
-            _ => None,
-        });
+        let settling = heard(&events, Duration::from_secs(5));
+        let pages = (typing.iter().chain(&settling))
+            .take_while(|e| !matches!(e, LiveEvent::Done(_)))
+            .filter_map(|e| match e {
+                LiveEvent::Page { page, .. } => Some(*page),
+                _ => None,
+            });
         let pages: Vec<u32> = pages.collect();
         assert!(
             !pages.is_empty() && pages.iter().all(|&page| page == 0),
             "{pages:?}"
         );
-        let settled = typesets(&heard(&events, Duration::from_secs(5)));
         assert!(
-            (1..=3).contains(&settled),
+            (1..=3).contains(&typesets(&settling)),
             "the rest once, then at most two passes"
         );
 

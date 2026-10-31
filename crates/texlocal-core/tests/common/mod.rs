@@ -176,9 +176,13 @@ impl Rig {
     }
 
     pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, Refused> {
+        self.reply(self.send_library(command, args))
+    }
+
+    pub fn send_library(&self, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
         self.sessions.send(id, command, args);
-        self.reply(id)
+        id
     }
 
     pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
@@ -386,7 +390,5 @@ impl Preview for FakePreview {
         Err(CoreError::not_found(messages::texpresso_unsynced()))
     }
 
-    fn stop(&self, _: &Path) -> Result<(), CoreError> {
-        Ok(())
-    }
+    fn restart(&self, _: u64) {}
 }

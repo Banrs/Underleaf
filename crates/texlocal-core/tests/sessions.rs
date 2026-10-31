@@ -48,25 +48,24 @@ fi
 printf 'Output written on %s.pdf (1 page).\n' "$stem" > "$out/$stem.log"
 "#;
 
+fn program(path: &Path, script: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, script).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn app_settings(library: &Library, settings: Value) {
+    let file = library.path("data/.texlocal-app.json");
+    fs::write(file, settings.to_string()).unwrap();
+}
+
 fn stub_tex(library: &Library) {
     let tex = library.path("tex");
-    let bin = tex.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    fs::create_dir(tex.join("texmf-dist")).unwrap();
+    fs::create_dir_all(tex.join("texmf-dist")).unwrap();
     let ls_r = "./tex/latex/base:\narticle.cls\nsample2e.tex\n";
     fs::write(tex.join("texmf-dist/ls-R"), ls_r).unwrap();
-    let latexmk = bin.join("latexmk");
-    fs::write(&latexmk, LATEXMK).unwrap();
-    fs::set_permissions(&latexmk, fs::Permissions::from_mode(0o755)).unwrap();
-    let service = std::sync::Arc::clone(&library.service);
-    std::thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(service.call("SetTexDir", json!({ "dir": bin })))
-            .unwrap();
-    })
-    .join()
-    .unwrap();
+    program(&tex.join("bin/latexmk"), LATEXMK);
+    app_settings(library, json!({ "texDir": tex.join("bin") }));
 }
 
 fn wait_until(why: &str, done: impl Fn() -> bool) {
@@ -200,6 +199,36 @@ async fn a_setting_lands_in_an_opened_folders_own_file_without_its_ui() {
     assert_eq!(file["engine"], "xelatex");
     assert_eq!(file["mainFile"], "main.tex");
     assert!(file["ui"].is_null(), "{file}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_setting_that_landed_is_shown_before_the_grant_that_failed_is_reported() {
+    let rig = project().await;
+    let folder = rig.library.path("Thesis");
+    let own = r#"{"mainFile":"main.tex"}"#;
+    let files = [
+        ("main.tex", MAIN),
+        ("ch.tex", CHAPTER),
+        (".texlocal.json", own),
+    ];
+    write(&folder, &files);
+    let opened = rig
+        .ask_library("OpenPath", json!({ "path": folder }))
+        .unwrap();
+    let id = opened["project"]["id"].as_str().unwrap();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    let ui = rig.library.service.project(id).unwrap().ui;
+    fs::write(&ui, "{}").unwrap();
+    fs::set_permissions(&ui, fs::Permissions::from_mode(0o444)).unwrap();
+    rig.forget();
+    let patch = json!({ "patch": { "mainFile": "ch.tex", "shellEscape": true } });
+    let refused = rig.reply(rig.send(2, "SetSettings", patch)).unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Denied);
+    let said = ["project", "reply"];
+    assert_eq!(said_of(&rig, &said), said);
+    let project = rig.section_in(2, "project", |_| true);
+    assert_eq!(project["settings"]["mainFile"], "ch.tex");
+    assert_eq!(project["settings"]["shellEscape"], false);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -461,7 +490,13 @@ async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
         fs::read_to_string(rig.root().join("main.tex")).unwrap(),
         "cat\n"
     );
-    assert!(replaced["snapshot"].is_string());
+    let before = json!({ "id": replaced["snapshot"], "path": "ch.tex" });
+    let rows = rig.call("CompareVersion", before);
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .contains(&json!({ "type": "removed", "value": "cat cat" }))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -628,6 +663,71 @@ async fn a_named_version_is_listed_compared_and_restored() {
     );
     let empty = rig.refuse("SaveVersion", json!({ "name": " " }));
     assert_eq!(empty, ErrorKind::Invalid);
+}
+
+fn replace_cat() -> Value {
+    json!({ "query": "cat", "replacement": "dog", "matchCase": false, "wholeWord": false })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_a_snapshot_and_an_export_hold_the_edits_not_yet_saved() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    rig.call("Composing", json!({ "path": "ch.tex", "composing": true }));
+    let holds_the_edits = |id: &Value| {
+        let rows = rig.call("CompareVersion", json!({ "id": id, "path": "ch.tex" }));
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["type"] == "same")
+    };
+    doc.edit(0, 0, "% one\n", None, false);
+    let draft = rig.call("SaveVersion", json!({ "name": "Draft" }));
+    assert!(holds_the_edits(&draft["id"]));
+    doc.edit(0, 0, "% two\n", None, false);
+    let replaced = rig.call("Replace", replace_cat());
+    assert!(holds_the_edits(&replaced["snapshot"]));
+    doc.edit(0, 0, "% three\n", None, false);
+    let dest = rig.library.path("P.zip");
+    rig.call("ExportZip", json!({ "dest": dest, "forArxiv": false }));
+    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+    let mut exported = String::new();
+    let mut chapter = archive.by_name("ch.tex").unwrap();
+    chapter.read_to_string(&mut exported).unwrap();
+    assert_eq!(exported, format!("% three\n% two\n% one\n{CHAPTER}"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_a_snapshot_or_an_export_is_refused_while_edits_cant_be_saved() {
+    let rig = project().await;
+    let dest = rig.library.path("P.zip");
+    let asked = [
+        ("SaveVersion", json!({ "name": "Draft" })),
+        ("Replace", replace_cat()),
+        ("ExportZip", json!({ "dest": dest, "forArxiv": false })),
+    ];
+    let refusals = || {
+        asked
+            .clone()
+            .map(|(command, args)| rig.refuse(command, args))
+    };
+    let main = rig.root().join("main.tex");
+    let doc = rig.open_document("main.tex");
+    fs::set_permissions(&main, fs::Permissions::from_mode(0o444)).unwrap();
+    doc.edit(0, 0, "% typed\n", None, false);
+    assert_eq!(refusals(), [ErrorKind::Denied; 3]);
+    fs::set_permissions(&main, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::write(&main, "theirs\n").unwrap();
+    assert_eq!(refusals(), [ErrorKind::Conflict; 3]);
+    let versions = rig.call("ListVersions", json!({}));
+    let auto = |version: &Value| version["name"].is_null() && version["reason"].is_null();
+    assert!(versions.as_array().unwrap().iter().all(auto));
+    assert_eq!(
+        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
+        CHAPTER
+    );
+    assert!(!dest.exists());
+    rig.call("Resolve", json!({ "path": "main.tex", "answer": "revert" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -973,13 +1073,56 @@ async fn compiling_slowly() -> Rig {
     rig
 }
 
+const SLEEPS: &str = "#!/bin/sh\necho $$ > \"$0.pid\"\nexec sleep 30\n";
+
+fn alive(pid: &Path) -> bool {
+    let pid = fs::read_to_string(pid).unwrap();
+    let alive = std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(std::process::Stdio::null())
+        .status();
+    alive.unwrap().success()
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn kill_all_stops_the_builds_under_way() {
+async fn kill_all_ends_every_child_and_starts_none_after() {
     let rig = compiling_slowly().await;
+    program(&rig.library.path("tex/bin/tlmgr"), SLEEPS);
+    program(&rig.library.path("slow/latexmk"), SLEEPS);
+    let (build, tlmgr, probe) = (
+        rig.root().join("build/child"),
+        rig.library.path("tex/bin/tlmgr.pid"),
+        rig.library.path("slow/latexmk.pid"),
+    );
+    let install = rig.send(SESSION, "ApplyFix", json!({ "id": "install:x.sty" }));
+    wait_until("the install starts", || tlmgr.exists());
+    let checked = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("slow") }));
+    wait_until("the probe starts", || build.exists() && probe.exists());
     rig.library.call("KillAll", json!({})).await;
-    rig.event("buildFinished", |_| true);
-    let build = rig.section("build", |b| !b["result"].is_null());
-    assert_eq!(build["result"]["stopped"], true);
+    wait_until("every child ends", || {
+        ![&build, &tlmgr, &probe]
+            .map(|pid| alive(pid))
+            .contains(&true)
+    });
+    let built = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(built["result"]["stopped"], true);
+    assert!(rig.reply(install).is_err());
+    assert_eq!(rig.reply(checked).unwrap()["available"], false);
+    fs::remove_file(&probe).unwrap();
+    rig.ask_library("CheckTex", json!({})).unwrap();
+    assert!(!probe.exists(), "a probe started after KillAll");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_a_project_ends_the_install_it_started() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    program(&rig.library.path("tex/bin/tlmgr"), SLEEPS);
+    let tlmgr = rig.library.path("tex/bin/tlmgr.pid");
+    let install = rig.send(SESSION, "ApplyFix", json!({ "id": "install:x.sty" }));
+    wait_until("the install starts", || tlmgr.exists());
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    wait_until("the install ends", || !alive(&tlmgr));
+    assert!(rig.reply(install).is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -990,15 +1133,6 @@ async fn stop_compile_stops_the_sessions_build() {
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["stopped"], true);
     assert!(!rig.root().join("build/main.fdb_latexmk").exists());
-}
-
-fn running(build: &Path) -> bool {
-    let child = fs::read_to_string(build.join("child")).unwrap();
-    let alive = std::process::Command::new("kill")
-        .args(["-0", child.trim()])
-        .stderr(std::process::Stdio::null())
-        .status();
-    alive.unwrap().success()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1026,8 +1160,13 @@ async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_buildi
     for partial in ["main.aux", "main.pdf"] {
         assert!(!build.join(partial).exists(), "{partial} is discarded");
     }
-    wait_until("the build's own processes end", || !running(&build));
-    assert!(running(&other_build), "the other project still builds");
+    wait_until("the build's own processes end", || {
+        !alive(&build.join("child"))
+    });
+    assert!(
+        alive(&other_build.join("child")),
+        "the other project still builds"
+    );
     assert!(other_build.join("main.aux").exists());
 }
 
@@ -1072,6 +1211,57 @@ async fn turning_auto_compile_on_builds_after_a_save() {
     rig.call("Save", json!({ "reporting": true }));
     let started = rig.section("build", |b| b["compiling"] == true);
     assert_eq!(started["auto"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tex_is_looked_for_at_start_so_an_auto_build_waits_on_no_client() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    rig.call("CloseProject", json!({}));
+    let auto = json!({ "id": rig.id, "autoCompile": true });
+    rig.call_to(2, "OpenProject", auto);
+    let started = rig.section_in(2, "build", |b| b["compiling"] == true);
+    assert_eq!(started["auto"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        stub_tex(library);
+        let slow = library.path("slow");
+        program(&slow.join("latexmk"), "#!/bin/sh\nsleep 1\nexit 1\n");
+        app_settings(library, json!({ "texDir": slow }));
+    })
+    .await;
+    let checked = rig.send_library("CheckTex", json!({}));
+    let set = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("tex/bin") }));
+    let first = rig.find(|e| e["reply"] == checked || e["reply"] == set);
+    assert_eq!(first["reply"], checked);
+    assert_eq!(rig.reply(set).unwrap()["available"], true);
+    rig.call("SetOptions", json!({ "autoCompile": true }));
+    rig.call("SetSettings", json!({ "patch": {} }));
+    rig.section("build", |b| b["compiling"] == true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_had() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        stub_tex(library);
+        program(&library.path("texpresso/texpresso"), "#!/bin/sh\n");
+        app_settings(library, json!({ "later": true }));
+    })
+    .await;
+    let (texpresso, tex) = (rig.library.path("texpresso"), rig.library.path("tex/bin"));
+    let sent = [
+        rig.send_library("SetTexpressoDir", json!({ "dir": texpresso })),
+        rig.send_library("SetTexDir", json!({ "dir": tex })),
+    ];
+    for id in sent {
+        rig.reply(id).unwrap();
+    }
+    let file = fs::read(rig.library.path("data/.texlocal-app.json")).unwrap();
+    let stored: Value = serde_json::from_slice(&file).unwrap();
+    let expected = json!({ "later": true, "texDir": tex, "texpressoDir": texpresso });
+    assert_eq!(stored, expected);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -114,7 +114,10 @@ impl Actor {
         Ok(imported)
     }
 
-    pub fn export(&self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
+    pub fn export(&mut self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
+        if let Err(err) = self.save_first() {
+            return reply.send(Err(err));
+        }
         let project = self.project.clone();
         tokio::task::spawn_blocking(move || {
             reply.send(zipexport::export_zip(&project, &dest, for_arxiv));
@@ -130,7 +133,7 @@ impl Actor {
             return Ok(None);
         }
         let renamed = projects::rename_entry(&self.project, from, to)?;
-        self.preview.stop(&self.project.root)?;
+        self.preview.restart(self.id);
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
         self.emit(Event::Renamed(Renamed { from, to }));
         self.live_follow();
@@ -177,17 +180,15 @@ impl Actor {
         let project = &self.project;
         let main = settings::read_settings(&project.settings).main_file;
         let updated = settings::write_settings(&project.settings, patch)?;
-        if let Some(on) = patch.shell_escape {
-            settings::grant(project, on)?;
-        }
+        let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if updated.main_file != main {
-            self.preview.stop(&self.project.root)?;
+            self.preview.restart(self.id);
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
         }
         self.publish_project();
-        Ok(())
+        granted.unwrap_or(Ok(()))
     }
 
     fn main_file_changed(&mut self) {
