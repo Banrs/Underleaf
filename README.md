@@ -59,21 +59,18 @@ needed), then run:
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 tools/texpresso/build.sh
-tools/texpresso/install.sh --link tools/texpresso/source/build
 zsh tools/install-mac.sh
 ```
 
-The first two build TeXpresso with Underleaf's patch, for Live Preview, and install it, linking
-`/opt/homebrew/bin/texpresso` to it. To keep a TeXpresso you have there, leave out `--link` and choose
-`~/Library/Application Support/TeXLocal/TeXpresso` in Settings › Live Preview. The last builds TeXLocal, copies
-it to `/Applications` and opens it. To update, pull and run all three again, since TeXLocal needs the TeXpresso
-from its own checkout. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
+The first builds TeXpresso with Underleaf's patch, for Live Preview. The second builds TeXLocal with that
+TeXpresso inside, copies it to `/Applications` and opens it. To update, pull and run both again. You can also
+open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
 
 ## Live Preview
 
-Live Preview, which is experimental, typesets as you type with the TeXpresso you installed above. Turn it on
-from the Compile menu or the project's inspector. If you keep TeXpresso somewhere else, choose its folder in
-Settings › Live Preview.
+Live Preview, which is experimental, typesets as you type with the TeXpresso inside TeXLocal. Turn it on from
+the Compile menu or the project's inspector. To use another TeXpresso, choose its folder in Settings › Live
+Preview.
 
 ## Projects and security
 
@@ -91,5 +88,12 @@ personal `~/.latexmkrc` is always read.
 
 MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under TeXpresso's own MIT
 licence, and the maths previews are drawn with [RaTeX](https://crates.io/crates/ratex-layout) and
-KaTeX's fonts, which are under the SIL Open Font License. Report bugs in
-[Issues](https://github.com/Banrs/Underleaf/issues).
+KaTeX's fonts, which are under the SIL Open Font License.
+
+The app also carries TeXpresso and the libraries it links from Homebrew, each under its own licence. MuPDF and
+jbig2dec are under the AGPL-3.0, so the TeXpresso inside the app, which links them, is too; its source is
+TeXpresso's with the patch in `tools/texpresso`. GLib and gettext's libintl are under the LGPL-2.1, FreeType under
+the FreeType License, and the rest under permissive licences such as MIT, BSD, Apache-2.0 and Unicode's. TeXLocal
+runs TeXpresso as a separate program.
+
+Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues).
