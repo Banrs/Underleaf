@@ -23,7 +23,7 @@ use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::{Lifecycle, Stopped};
 use super::watch::{self, Change, TreeIndex};
-use super::{Compiler, Msg, Pending, Preview, Reply, SessionSection, Sessions};
+use super::{Compiler, Msg, OnActor, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
 use crate::events::{Event, Said, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
@@ -157,6 +157,7 @@ pub(crate) struct Actor {
     pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
     pub snapshots: usize,
+    pub queued: VecDeque<OnActor>,
     pub sent: Sent<SessionSection>,
     stage: Stage,
 }
@@ -223,6 +224,7 @@ impl Actor {
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
             snapshots: 0,
+            queued: VecDeque::new(),
             sent: Sent::default(),
             stage: Stage::Open(in_session),
         };
@@ -309,6 +311,9 @@ impl Actor {
                 Msg::Snapshotted(finish) => finish(self),
                 _ => {}
             }
+        }
+        while let Some(queued) = self.queued.pop_front() {
+            queued(self);
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(Err(super::stopped()));

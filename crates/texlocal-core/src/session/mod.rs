@@ -61,8 +61,10 @@ pub(crate) enum Msg {
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
-    Snapshotted(Box<dyn FnOnce(&mut actor::Actor) + Send>),
+    Snapshotted(OnActor),
 }
+
+pub(crate) type OnActor = Box<dyn FnOnce(&mut actor::Actor) + Send>;
 
 pub(crate) struct Reply(Option<(u64, std::sync::mpsc::Sender<Said>)>);
 
@@ -576,13 +578,24 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_version_asked_while_a_replace_waits_on_the_history_holds_its_writes() {
+        let (sessions, heard, _dir, release) = replacing_while_the_history_is_held().await;
+        sessions.send_to(2, 1, "SaveVersion", json!({ "name": "Draft" }));
+        drop(release);
+        assert!(replied(&heard, 1).is_ok());
+        let changed = replied(&heard, 2).unwrap()["changed"].take();
+        assert_eq!(changed, json!([{ "path": "ch.tex", "change": "changed" }]));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn what_waits_on_the_history_when_its_session_stops_is_answered_as_stopped() {
         let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
         sessions.send_to(2, 1, "SaveVersion", json!({ "name": "Draft" }));
-        sessions.send_to(3, 1, "Compile", json!({ "auto": false }));
-        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "internal");
+        sessions.send_to(3, 1, "SaveVersion", json!({ "name": "Final" }));
+        sessions.send_to(4, 1, "Compile", json!({ "auto": false }));
+        assert_eq!(replied(&heard, 4).unwrap_err()["kind"], "internal");
         drop(release);
-        for id in [1, 2] {
+        for id in [1, 2, 3] {
             let refused = replied(&heard, id).unwrap_err();
             assert_eq!(refused["message"]["id"], "session_stopped", "{refused}");
         }

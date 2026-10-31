@@ -105,6 +105,13 @@ impl Actor {
         then: impl FnOnce(&mut Self, U) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
+        if self.snapshots > 0 {
+            let queued = move |actor: &mut Self| actor.then_on_actor(job, then, reply);
+            return self.queued.push_back(Box::new(queued));
+        }
+        if !self.writes_history.load(Ordering::Acquire) {
+            return reply.send(Err(super::stopped()));
+        }
         self.snapshots += 1;
         let tx = self.tx.clone();
         let job = move |history: &History| {
@@ -119,6 +126,9 @@ impl Actor {
                     }
                     _ => Err(super::stopped()),
                 });
+                if let Some(next) = actor.queued.pop_front() {
+                    next(actor);
+                }
             };
             let _ = tx.send(Msg::Snapshotted(Box::new(finish)));
         });
