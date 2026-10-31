@@ -18,7 +18,8 @@ use texlocal_latex::utf16::byte_offset;
 use crate::messages;
 use crate::paths::{self, Project};
 use crate::process::{self, Processes, Tree};
-use crate::tex::{find_tool, program_at};
+use crate::stamp::Stamp;
+use crate::tex::find_tool;
 use crate::{CoreError, lock, settings, sys, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
@@ -312,9 +313,9 @@ fn remove_pdf_folder(pdf: &Path) {
     }
 }
 
-#[derive(Default)]
 pub struct Manager {
     processes: Arc<Processes>,
+    cache: PathBuf,
     sessions: Mutex<Vec<Weak<Session>>>,
 }
 
@@ -325,9 +326,10 @@ impl Drop for Manager {
 }
 
 impl Manager {
-    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+    pub(crate) fn new(processes: Arc<Processes>, cache: PathBuf) -> Self {
         Self {
             processes,
+            cache,
             sessions: Mutex::default(),
         }
     }
@@ -364,6 +366,7 @@ fn opening(
 fn command(
     executable: &Path,
     path_env: &str,
+    cache: &Path,
     build: &Path,
     main: &Path,
     root: &Path,
@@ -376,8 +379,22 @@ fn command(
         .arg(main)
         .current_dir(root)
         .stdin(Stdio::piped())
+        .env("XDG_CACHE_HOME", cache)
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
     command
+}
+
+fn engine_cache(root: &Path, executable: &Path) -> PathBuf {
+    let key = Stamp::at(&executable.with_file_name("texpresso-xetex")).map_or_else(
+        |_| "unknown".into(),
+        |s| format!("{}-{}", s.size, s.modified),
+    );
+    for old in fs::read_dir(root).into_iter().flatten().flatten() {
+        if old.file_name() != *key {
+            let _ = fs::remove_dir_all(old.path());
+        }
+    }
+    root.join(key)
 }
 
 impl Preview for Manager {
@@ -406,7 +423,8 @@ impl Preview for Manager {
         folder.prefix("texlocal-texpresso-");
         sys::private(&mut folder);
         let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
-        let mut command = command(&executable, path_env, &build, &main, &root, &pdf);
+        let cache = engine_cache(&self.cache, &executable);
+        let mut command = command(&executable, path_env, &cache, &build, &main, &root, &pdf);
         let (mut child, tree) = self.processes.spawn(None, &mut command).map_err(|err| {
             remove_pdf_folder(&pdf);
             CoreError::internal(messages::texpresso_unstarted(err))
@@ -435,9 +453,6 @@ impl Preview for Manager {
 }
 
 pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
-    if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
-        return program_at(Path::new(&override_path));
-    }
     find_tool("texpresso", path_env).and_then(|p| fs::canonicalize(p).ok())
 }
 
@@ -670,6 +685,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn texpresso_is_looked_for_in_the_chosen_folder_then_the_apps_own_then_the_path() {
+        let [chosen, helpers] = ["/chosen", "/helpers"].map(PathBuf::from);
+        let mut app = AppSettings::default();
+        app.texpresso_dir = Some(chosen.clone());
+        let dirs = |path: String| std::env::split_paths(&path).collect::<Vec<_>>();
+        let path = dirs(tool_paths(&AppSettings::default(), None).1);
+        let found = dirs(tool_paths(&app, Some(&helpers)).1);
+        assert_eq!(found, [&[chosen, helpers][..], &path].concat());
+    }
+
+    #[test]
+    fn each_engine_keeps_its_own_cache_and_drops_the_last_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, texpresso) = (dir.path().join("cache"), dir.path().join("texpresso"));
+        fs::write(dir.path().join("texpresso-xetex"), "one").unwrap();
+        let first = engine_cache(&root, &texpresso);
+        fs::create_dir_all(&first).unwrap();
+        assert_eq!(engine_cache(&root, &texpresso), first);
+        fs::write(dir.path().join("texpresso-xetex"), "other").unwrap();
+        assert_ne!(engine_cache(&root, &texpresso), first);
+        assert!(!first.exists());
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs TeX and TeXpresso"]
     async fn typing_typesets_the_view_then_the_rest_once_it_settles() {
@@ -697,7 +736,7 @@ mod tests {
         };
         let (tx, events) = channel();
         let sink: Sink = Box::new(move |event| drop(tx.send(event)));
-        let manager = Manager::default();
+        let manager = Manager::new(Arc::default(), dir.path().join("cache"));
         let files = [FileBuffer {
             path: "main.tex".into(),
             text: text.clone(),
@@ -706,7 +745,9 @@ mod tests {
             view: Some((0, 0)),
             caret: None,
         };
-        let path = tool_paths(&AppSettings::default()).1;
+        let helpers = std::env::var_os("TEXLOCAL_TEXPRESSO")
+            .and_then(|program| Some(Path::new(&program).parent()?.to_path_buf()));
+        let path = tool_paths(&AppSettings::default(), helpers.as_ref()).1;
         let run = manager.start(&project, &files, &path, &pane, sink).unwrap();
         let mut started = std::iter::from_fn(|| events.recv_timeout(Duration::from_secs(120)).ok());
         assert!(started.any(|event| matches!(event, LiveEvent::Done(_))));

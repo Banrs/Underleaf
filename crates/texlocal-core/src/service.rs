@@ -24,6 +24,7 @@ use crate::{CoreError, import, lock, tinytex};
 pub struct Service {
     pub(crate) data_dir: PathBuf,
     pub(crate) state_dir: PathBuf,
+    helpers: Option<PathBuf>,
     pub(crate) processes: Arc<Processes>,
     pub(crate) compile: CompileManager,
     pub(crate) texpresso: Arc<texpresso::Manager>,
@@ -77,14 +78,16 @@ requests! {
 }
 
 impl Service {
-    pub fn new(data_dir: PathBuf, state_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, state_dir: PathBuf, helpers: Option<PathBuf>) -> Self {
         paths::move_device_state(&data_dir, &state_dir);
         let processes = Arc::new(Processes::default());
+        let cache = state_dir.join(".texpresso");
         Self {
             data_dir,
             state_dir,
+            helpers,
             compile: CompileManager::new(Arc::clone(&processes)),
-            texpresso: Arc::new(texpresso::Manager::new(Arc::clone(&processes))),
+            texpresso: Arc::new(texpresso::Manager::new(Arc::clone(&processes), cache)),
             processes,
             library: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
@@ -203,7 +206,7 @@ impl Service {
 
     async fn status(&self) -> TexStatus {
         let app = AppSettings::read(&self.state_dir);
-        let (tex_path, texpresso_path) = tex::tool_paths(&app);
+        let (tex_path, texpresso_path) = tex::tool_paths(&app, self.helpers.as_ref());
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
         let mut found = tex::tex_available(&self.processes, &tex_path).await;
         found.texpresso = shown(texpresso::discover(&texpresso_path));
@@ -215,7 +218,7 @@ impl Service {
     }
 
     pub(crate) fn tool_paths(&self) -> (String, String) {
-        tex::tool_paths(&AppSettings::read(&self.state_dir))
+        tex::tool_paths(&AppSettings::read(&self.state_dir), self.helpers.as_ref())
     }
 
     pub fn call(

@@ -33,7 +33,9 @@ impl Library {
         let (data, state) = (dir.path().join("data"), dir.path().join("state"));
         std::fs::create_dir(&data).unwrap();
         std::fs::create_dir(&state).unwrap();
-        let service = Arc::new(Service::new(data, state));
+        let helpers = std::env::var_os("TEXLOCAL_TEXPRESSO")
+            .and_then(|program| Some(Path::new(&program).parent()?.to_path_buf()));
+        let service = Arc::new(Service::new(data, state, helpers));
         Self { dir, service }
     }
 

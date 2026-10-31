@@ -32,7 +32,15 @@ impl Core {
         let path = |dir: &tempfile::TempDir| c(dir.path().to_str().unwrap());
         let (data_dir, state_dir) = (path(&dir), path(&state));
         let ctx = (&raw const *sender).cast_mut().cast::<c_void>();
-        let handle = unsafe { tl_open(data_dir.as_ptr(), state_dir.as_ptr(), Some(collect), ctx) };
+        let handle = unsafe {
+            tl_open(
+                data_dir.as_ptr(),
+                state_dir.as_ptr(),
+                ptr::null(),
+                Some(collect),
+                ctx,
+            )
+        };
         assert!(!handle.is_null());
         Self {
             handle,
@@ -117,7 +125,9 @@ fn version(source: *mut TlSource) -> Option<u64> {
 #[test]
 fn opening_needs_two_folders_and_a_listener() {
     let dir = c("/tmp");
-    let open = |data, state, listener| unsafe { tl_open(data, state, listener, ptr::null_mut()) };
+    let open = |data, state, listener| unsafe {
+        tl_open(data, state, ptr::null(), listener, ptr::null_mut())
+    };
     assert!(open(ptr::null(), dir.as_ptr(), Some(collect)).is_null());
     assert!(open(dir.as_ptr(), ptr::null(), Some(collect)).is_null());
     assert!(open(dir.as_ptr(), dir.as_ptr(), None).is_null());
