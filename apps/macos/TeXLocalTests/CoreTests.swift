@@ -70,6 +70,28 @@ struct CoreTests {
         try await waitUntil { !views.editor.textView.isEditable }
     }
 
+    @Test func theEditorAppliesEditsOnlyToTheVersionOfTheFileItShows() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
+        let views = WorkspaceViews(project: project), text = views.editor.textView
+        try await project.load()
+        let stale = try #require(text.document.version)
+        text.insertText("% mine\n", replacementRange: NSRange(location: 0, length: 0))
+        let (shown, version) = (text.string, try #require(text.document.version))
+        let edits = { (path: String, version: UInt64) in
+            DocumentEdits(path: path, version: version, edits: [TextEdit(start: 0, length: 7, text: "% theirs\n")])
+        }
+        #expect(version != stale && !views.apply(edits("main.tex", stale), named: "Restore"))
+        #expect(!views.apply(edits("other.tex", version), named: "Restore"))
+        #expect(text.string == shown && text.document.version == version)
+        #expect(views.apply(edits("main.tex", version), named: "Restore"))
+        #expect(text.string.hasPrefix("% theirs\n"))
+        #expect(await project.close().value)
+    }
+
     @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()

@@ -371,7 +371,9 @@ final class ProjectModel {
     }
 
     func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
-        apply(try await session.call(RestoreVersion(id: snapshot.id, paths: paths)), named: String(localized: "Restore"))
+        guard apply(try await session.call(RestoreVersion(id: snapshot.id, paths: paths)), named: String(localized: "Restore")) else {
+            throw AppFailure(String(localized: "The file shown changed meanwhile, so it wasn’t restored. Try again."))
+        }
     }
 
     @discardableResult
@@ -382,10 +384,11 @@ final class ProjectModel {
         if let snapshot = answer.snapshot, !answer.written.isEmpty {
             try await session.call(RestoreVersion(id: snapshot, paths: answer.written.map(\.file)))
         }
-        throw AppFailure(String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
+        throw Self.unchanged
     }
 
-    @discardableResult
+    private static let unchanged = AppFailure(String(localized: "The file shown changed meanwhile, so nothing was changed. Try again."))
+
     private func apply(_ edits: DocumentEdits?, named name: String) -> Bool {
         guard let edits else { return true }
         return views?.apply(edits, named: name) ?? false
@@ -394,8 +397,11 @@ final class ProjectModel {
     func run(_ fix: Fix) async {
         fixing = fix
         defer { fixing = nil }
-        guard let answer = await alerting("Couldn’t \(fix.title.text)", { try await session.call(ApplyFix(id: fix.id)) }) ?? nil else { return }
-        apply(answer.edits, named: fix.title.text)
+        guard await alerting("Couldn’t \(fix.title.text)", {
+            guard let fixed = try await session.call(ApplyFix(id: fix.id)) else { return false }
+            guard apply(fixed.edits, named: fix.title.text) else { throw Self.unchanged }
+            return true
+        }) == true else { return }
         await compile()
     }
 

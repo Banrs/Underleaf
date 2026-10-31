@@ -409,6 +409,30 @@ struct ViewsTests {
         #expect(window.alert == nil && views.shown.count == 3)
     }
 
+    @Test func aRestoreOrAFixTheEditorRefusesSaysSoAndTheFixDoesntCompile() async throws {
+        let info = try await newProject()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        window.app.tex = TexStatus(available: true, latexmkVersion: nil, texDir: nil, found: nil, texpresso: nil, texpressoDir: nil)
+        let project = ProjectModel(id: info.id, window: window)
+        let views = Views(project)
+        try await project.load()
+        let snapshot = try #require(try await project.session.call(SaveVersion(name: "First")))
+        let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
+        await #expect {
+            try await project.restoreVersion(snapshot, paths: nil)
+        } throws: {
+            $0.localizedDescription == "The file shown changed meanwhile, so it wasn’t restored. Try again."
+        }
+        let text = Message(id: "fix", args: [:], text: "Add the Package")
+        await project.run(Fix(id: "package:texlocal", title: text, help: text, confirm: nil))
+        #expect(window.alert?.message == "The file shown changed meanwhile, so nothing was changed. Try again.")
+        #expect(views.refused == ["main.tex", "main.tex"])
+        #expect(!project.compiling && project.result == nil)
+        #expect(await project.close().value)
+    }
+
     @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() {
         let window = defaults.window()
         window.app.syncAfterCompile = true
@@ -510,7 +534,7 @@ struct ViewsTests {
     private final class Views: ProjectViews {
         private let project: ProjectModel
         var ui: UiState?
-        var shown: [String] = [], revealed: [String] = [], moved: [String] = []
+        var shown: [String] = [], revealed: [String] = [], moved: [String] = [], refused: [String] = []
         var hasPDF = false, attention = 0
 
         init(_ project: ProjectModel) {
@@ -530,7 +554,10 @@ struct ViewsTests {
         func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
-        func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
+        func apply(_ edits: DocumentEdits, named name: String) -> Bool {
+            refused.append(edits.path)
+            return false
+        }
         func follow(_ loc: ForwardLoc) {}
         func trashed(_ path: String) {}
         func beep() {}
