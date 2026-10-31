@@ -129,7 +129,7 @@ final class IssueOverlay {
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {
-                (issue.error ? NSColor.systemRed : .systemYellow).withAlphaComponent(IssueBox.tint).setFill()
+                IssueBox.tint(error: issue.error).setFill()
                 NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
             }
             NSColor.systemRed.setFill()
