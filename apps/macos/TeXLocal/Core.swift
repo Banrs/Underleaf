@@ -185,7 +185,7 @@ final class Core {
 final class SessionClient {
     let id: UInt64
     private(set) var closed = false
-    @ObservationIgnored private(set) var lifecycle: Lifecycle?
+    @ObservationIgnored private var lifecycle: Lifecycle?
     @ObservationIgnored var heard: (Event) -> Void
     @ObservationIgnored private let core: Core
     @ObservationIgnored private var tasks: [Int: Task<Void, Never>] = [:]

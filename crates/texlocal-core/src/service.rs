@@ -97,8 +97,7 @@ impl Service {
     pub(crate) fn publish_projects(&self) -> Result<(), CoreError> {
         if self.hub.get().is_some() {
             let mut sent = lock(&self.sent);
-            let projects = LibrarySection::Projects(self.projects()?);
-            self.publish(&mut sent, projects);
+            self.publish(&mut sent, LibrarySection::Projects(self.projects()?));
         }
         Ok(())
     }
