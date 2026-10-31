@@ -90,10 +90,8 @@ MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under T
 licence, and the maths previews are drawn with [RaTeX](https://crates.io/crates/ratex-layout) and
 KaTeX's fonts, which are under the SIL Open Font License.
 
-The app also carries TeXpresso and the libraries it links from Homebrew, each under its own licence. MuPDF and
-jbig2dec are under the AGPL-3.0, so the TeXpresso inside the app, which links them, is too; its source is
-TeXpresso's with the patch in `tools/texpresso`. GLib and gettext's libintl are under the LGPL-2.1, FreeType under
-the FreeType License, and the rest under permissive licences such as MIT, BSD, Apache-2.0 and Unicode's. TeXLocal
-runs TeXpresso as a separate program.
+The app also carries TeXpresso and the Homebrew libraries it links. MuPDF and jbig2dec are under the AGPL-3.0,
+so the TeXpresso inside the app is too; its source is TeXpresso's with the patch in `tools/texpresso`. GLib and
+libintl are under the LGPL-2.1, FreeType under its own licence, and the rest under permissive licences.
 
 Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues).
