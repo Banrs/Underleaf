@@ -1014,7 +1014,8 @@ async fn a_renamed_project_keeps_its_place_and_grant() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_copy_keeps_the_place_but_not_the_grant_and_a_gone_projects_are_swept_at_a_reload() {
+async fn a_copy_keeps_the_place_but_not_the_grant_and_a_new_project_at_a_gone_ones_name_starts_afresh()
+ {
     let rig = project().await;
     let place = json!({ "patch": { "place": { "file": "ch.tex" } } });
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
@@ -1030,6 +1031,9 @@ async fn a_copy_keeps_the_place_but_not_the_grant_and_a_gone_projects_are_swept_
     rig.call_to(2, "CloseProject", json!({}));
     fs::remove_dir_all(rig.library.path("data/P copy")).unwrap();
     rig.ask_library("ReloadProjects", json!({})).unwrap();
+    assert!(copied.exists());
+    let made = json!({ "name": "P copy", "template": "blank" });
+    rig.ask_library("CreateProject", made).unwrap();
     assert!(!copied.exists() && rig.library.path("state/.ui/P.json").exists());
 }
 

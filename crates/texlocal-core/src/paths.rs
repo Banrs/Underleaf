@@ -60,7 +60,7 @@ impl Project {
     }
 }
 
-pub(crate) const UI_DIR: &str = ".ui";
+const UI_DIR: &str = ".ui";
 
 pub(crate) fn ui_file(state_dir: &Path, name: &str) -> PathBuf {
     state_dir.join(UI_DIR).join(format!("{name}.json"))

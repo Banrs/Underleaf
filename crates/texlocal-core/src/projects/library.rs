@@ -1,6 +1,5 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
-use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
@@ -18,10 +17,10 @@ use super::skip_unreadable;
 use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, UI_DIR, fold_case, sanitize_name, ui_file};
+use crate::paths::{Project, fold_case, sanitize_name, ui_file};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
-use crate::{SETTINGS_FILE, atomic, lock};
+use crate::{SETTINGS_FILE, atomic};
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -130,6 +129,7 @@ pub(crate) fn new_project(
             },
         )
         .expect("a free name")?;
+    let _ = fs::remove_file(ui_file(&service.state_dir, &id));
     Ok(ProjectInfo::read(service, &id)?)
 }
 
@@ -193,20 +193,6 @@ pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<Project
     atomic::rename_exclusive(&project.root, &dest)?;
     let _ = fs::rename(&project.ui, ui_file(&service.state_dir, &clean));
     Ok(ProjectInfo::read(service, &clean)?)
-}
-
-pub(crate) fn sweep_ui(service: &Service) {
-    let _library = lock(&service.library);
-    let Ok(files) = fs::read_dir(service.state_dir.join(UI_DIR)) else {
-        return;
-    };
-    let gone = |name: &OsStr| !service.data_dir.join(name).is_dir();
-    for file in files.flatten() {
-        let path = file.path();
-        if path.extension().is_some_and(|ext| ext == "json") && path.file_stem().is_some_and(gone) {
-            let _ = fs::remove_file(path);
-        }
-    }
 }
 
 fn real_path(path: &Path) -> PathBuf {
