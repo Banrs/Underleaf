@@ -350,26 +350,27 @@ pub(crate) fn include_graphics(path: &str, into: &str) -> Option<String> {
 }
 
 pub(crate) fn map_selections(edits: &[TextEdit], selections: &[TextRange]) -> Vec<TextRange> {
-    let map = |position: usize| {
+    let map = |position: u64| {
         let (mut added, mut removed) = (0, 0);
         for e in edits {
-            let inserted = utf16::len(&e.text);
-            let (start, end) = (e.start as usize, (e.start + e.length) as usize);
-            if end <= position {
+            let inserted = utf16::len(&e.text) as u64;
+            let (start, length) = (u64::from(e.start), u64::from(e.length));
+            if start + length <= position {
                 added += inserted;
-                removed += e.length as usize;
+                removed += length;
             } else if start < position {
-                return start + added - removed + inserted;
+                return (start + added + inserted).saturating_sub(removed);
             }
         }
-        position + added - removed
+        (position + added).saturating_sub(removed)
     };
     selections
         .iter()
         .map(|selection| {
-            let (start, end) = selection.bounds();
+            let start = u64::from(selection.start);
             let from = map(start);
-            span(from, map(end) - from)
+            let to = map(start + u64::from(selection.length));
+            span(from as usize, to.saturating_sub(from) as usize)
         })
         .collect()
 }

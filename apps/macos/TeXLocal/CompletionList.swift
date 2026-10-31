@@ -31,7 +31,7 @@ final class CompletionList {
 
     func complete(explicit: Bool) {
         guard editor.isEditable, editor.selection.length == 0, editor.selections.count == 1, !editor.hasMarkedText(),
-              let found = editor.document.completions(caret: editor.caret, explicit: explicit), !found.items.isEmpty
+              let found = editor.document.complete(caret: editor.caret, explicit: explicit), !found.items.isEmpty
         else { return close() }
         offered = found
         show(reload: true)
@@ -49,13 +49,9 @@ final class CompletionList {
     func accept() { accept(rows.selection) }
 
     private func accept(_ index: Int) {
-        let caret = editor.caret
-        guard let offered, offered.items.indices.contains(index), caret >= offered.start else { return close() }
-        let item = offered.items[index]
+        guard offered != nil else { return }
         close()
-        let edit = TextEdit(NSRange(location: offered.start, length: caret - offered.start), item.text)
-        let inserted = Insertion(edit: edit, caret: offered.start + (item.text as NSString).length, fields: item.fields)
-        editor.insert(inserted, named: String(localized: "Completion"))
+        editor.insert(editor.document.acceptCompletion(index, caret: editor.caret), named: String(localized: "Completion"))
     }
 
     private func show(reload: Bool) {

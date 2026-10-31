@@ -1012,6 +1012,7 @@ name = "texlocal-latex"
 version = "0.2.0"
 dependencies = [
  "flate2",
+ "ratex-font-loader",
  "ratex-layout",
  "ratex-lexer",
  "ratex-parser",

@@ -19,14 +19,13 @@ struct Core {
     events: Receiver<Value>,
     asked: Cell<u64>,
     _dir: tempfile::TempDir,
-    _sender: Box<Sender<Value>>,
 }
 
 impl Core {
     fn open() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let (sender, events) = channel();
-        let sender = Box::new(sender);
+        let sender = Box::leak(Box::new(sender));
         let path = c(dir.path().to_str().unwrap());
         let ctx = (&raw const *sender).cast_mut().cast::<c_void>();
         let handle = unsafe { tl_open(path.as_ptr(), Some(collect), ctx) };
@@ -36,7 +35,6 @@ impl Core {
             events,
             asked: Cell::default(),
             _dir: dir,
-            _sender: sender,
         }
     }
 

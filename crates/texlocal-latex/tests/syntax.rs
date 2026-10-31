@@ -1,10 +1,11 @@
 mod common;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use common::{apply, caret, run};
 use serde_json::{Value, json};
-use texlocal_latex::analyze::Facts;
+use texlocal_latex::facts::Facts;
 use texlocal_latex::syntax::{Installed, SourceDocument, Symbols, TextRange};
 use texlocal_latex::{file_kind, utf16};
 
@@ -150,7 +151,7 @@ fn a_command_completes_from_the_project_before_the_catalogue() {
     let mut doc = SourceDocument::new("\\newcommand{\\vect}[1]{\\mathbf{#1}}\n\\ve");
     let facts = Facts::read(&doc.text(), file_kind("main.tex"));
     doc.set_symbols(Arc::new(Symbols {
-        commands: facts.commands,
+        by_file: BTreeMap::from([("main.tex".into(), facts.defined)]),
         ..Symbols::default()
     }));
     let answer = complete(&mut doc, 38);
@@ -185,8 +186,10 @@ fn an_argument_completes_what_the_command_takes() {
         Facts::read(bib, file_kind("refs.bib")),
     );
     let symbols = Arc::new(Symbols {
-        labels: tex.labels,
-        citations: bib.citations,
+        by_file: BTreeMap::from([
+            ("main.tex".into(), tex.defined),
+            ("refs.bib".into(), bib.defined),
+        ]),
         files: ["main.tex", "ch/intro.tex", "fig.png"]
             .map(String::from)
             .to_vec(),
@@ -194,7 +197,6 @@ fn an_argument_completes_what_the_command_takes() {
             packages: vec!["amsmath".into(), "amsthm".into(), "graphicx".into()],
             ..Installed::default()
         }),
-        ..Symbols::default()
     });
     let offered = |text: &str| {
         let mut doc = SourceDocument::new(text);
@@ -215,6 +217,29 @@ fn an_argument_completes_what_the_command_takes() {
     assert_eq!(labels(&complete(&mut doc, 4)), json!(["@article"]));
     let mut doc = SourceDocument::named("@a", "main.tex");
     assert_eq!(complete(&mut doc, 2), Value::Null);
+}
+
+#[test]
+fn a_completion_is_accepted_from_the_list_offered_over_what_was_typed_since() {
+    let mut doc = SourceDocument::new("a \\fr");
+    let offered = complete(&mut doc, 5);
+    let accept = |doc: &mut SourceDocument, index: u32, caret: u32| {
+        run(
+            doc,
+            "AcceptCompletion",
+            json!({ "index": index, "caret": caret }),
+        )
+    };
+    doc.apply_edit(5, 0, "a", None, false);
+    let accepted = accept(&mut doc, 0, 6);
+    let edit = json!({ "start": 2, "length": 4, "text": "\\frac{}{}" });
+    assert_eq!((&accepted["edit"], &accepted["caret"]), (&edit, &json!(11)));
+    assert_eq!(accepted["fields"], offered["items"][0]["fields"]);
+    assert_eq!(accept(&mut doc, 0, 6), Value::Null);
+    complete(&mut doc, 6);
+    assert_eq!(accept(&mut doc, 999, 6), Value::Null);
+    complete(&mut doc, 6);
+    assert_eq!(accept(&mut doc, 0, 1), Value::Null);
 }
 
 #[test]

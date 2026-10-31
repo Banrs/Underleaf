@@ -18,14 +18,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::logparse::LogItem;
+use texlocal_latex::project::{Analysis, Scan};
 use texlocal_latex::syntax::TextEdit;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener, Queued};
-use crate::projects::Symbols;
 use crate::protocol::Answer;
 use crate::service::Service;
 use crate::settings::UiState;
@@ -55,7 +54,7 @@ pub(crate) enum Msg {
     Symbols {
         seq: u64,
         edits: u64,
-        result: Result<Box<(Symbols, Vec<LogItem>, Analysis)>, CoreError>,
+        result: Result<Box<(Scan, Vec<LogItem>, Analysis)>, CoreError>,
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),

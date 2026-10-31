@@ -3,9 +3,9 @@ use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::{self, Analysis, Facts};
-use texlocal_latex::checks;
+use texlocal_latex::facts::Facts;
 use texlocal_latex::logparse::LogItem;
+use texlocal_latex::project::{self, Analysis, Scan};
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
@@ -14,7 +14,7 @@ use super::actor::Actor;
 use super::documents::Shared;
 use super::state::SessionSection;
 use super::{Msg, Pending};
-use crate::projects::{self, SearchGroup, Symbols};
+use crate::projects::{self, SearchGroup};
 use crate::{CoreError, lock, tex};
 
 #[derive(Serialize, JsonSchema)]
@@ -37,20 +37,15 @@ impl Actor {
         );
         let shown = self.open.clone();
         tokio::task::spawn_blocking(move || {
-            let symbols = projects::scan_symbols(&root, &facts, &texts(&docs));
+            let read = projects::scan_facts(&root, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
-            let result = symbols.map(|symbols| {
-                let symbols = Symbols {
-                    files,
-                    installed,
-                    ..symbols
-                };
+            let result = read.map(|read| {
+                let scan = Scan::new(read, files, installed);
                 let checks = main
                     .as_deref()
-                    .map_or_else(Vec::new, |main| checks::check(&symbols, main));
-                let analysis =
-                    analyze::analyze_project(&symbols, main.as_deref(), shown.as_deref());
-                Box::new((symbols, checks, analysis))
+                    .map_or_else(Vec::new, |main| project::check(&scan, main));
+                let analysis = project::analyze(&scan, main.as_deref(), shown.as_deref());
+                Box::new((scan, checks, analysis))
             });
             let _ = tx.send(Msg::Symbols { seq, edits, result });
         });
@@ -60,13 +55,13 @@ impl Actor {
         &mut self,
         seq: u64,
         edits: u64,
-        result: Result<Box<(Symbols, Vec<LogItem>, Analysis)>, CoreError>,
+        result: Result<Box<(Scan, Vec<LogItem>, Analysis)>, CoreError>,
     ) {
         if let Ok(scanned) = result
             && seq == self.symbols_seq
         {
-            let (symbols, checks, outline) = *scanned;
-            *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(symbols);
+            let (scan, checks, outline) = *scanned;
+            *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
             self.checks_done(checks, edits);
             self.publish(SessionSection::Outline(Some(outline)));
         }

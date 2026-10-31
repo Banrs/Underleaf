@@ -1,5 +1,5 @@
 use super::catalog::{Menus, menus};
-use super::complete::{Completions, Definition, SnippetField};
+use super::complete::{Completions, Definition, SnippetField, SymbolName};
 use super::edit::{Change, TextStyle, include_graphics, map_selections};
 use super::folds::Fold;
 use super::headings::{HeadingStyle, heading_styles};
@@ -13,7 +13,8 @@ use crate::protocol::calls;
 
 calls! {
     Source(doc: &mut SourceDocument) {
-        Complete { caret: u32, explicit: bool } -> Option<Completions> = doc.completions(caret, explicit);
+        Complete { caret: u32, explicit: bool } -> Option<&Completions> = doc.complete(caret, explicit);
+        AcceptCompletion { index: u32, caret: u32 } -> Option<Insertion> = doc.accept_completion(index, caret);
         ToggleComment { selections: Vec<TextRange> } -> Vec<TextEdit> = doc.toggle_comment(&selections);
         SetHeading { caret: u32, command: String } -> Insertion = doc.set_heading(caret, &command);
         InsertBlock { id: String, selection: TextRange } -> Option<Insertion> = doc.insert_block(&id, selection);
@@ -26,7 +27,9 @@ calls! {
         DeleteBackward { selection: TextRange, auto_pair: bool } -> Keystroke = doc.delete_backward(selection, auto_pair);
         InsertNewline { selection: TextRange } -> Keystroke = doc.insert_newline(selection);
         Partner { at: u32 } -> Option<u32> = doc.partner(at);
+        SelectsCommand { selection: TextRange } -> bool = doc.selects_command(selection);
         DefinitionAt { at: u32 } -> Option<Definition> = doc.definition(at);
+        SymbolAt { at: u32 } -> Option<SymbolName> = doc.symbol(at);
         StartSnippet { fields: Vec<SnippetField>, at: u32 } -> Option<TextRange> = doc.start_snippet(&fields, at);
         EndSnippet {} -> bool = doc.end_snippet();
         InsertTab { selections: Vec<TextRange>, step: i64 } -> Tabbing = doc.tab(&selections, step);

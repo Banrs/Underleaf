@@ -1,14 +1,14 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use texlocal_latex::analyze::Facts;
+use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
-use texlocal_latex::syntax::{SourceDocument, TextEdit, TextRange};
+use texlocal_latex::project::Scan;
+use texlocal_latex::syntax::{SourceDocument, Symbols, TextEdit, TextRange};
 use texlocal_latex::utf16;
 use tokio::sync::mpsc;
 
 use super::Msg;
 use crate::lock;
-use crate::projects::Symbols;
 
 struct Text {
     source: SourceDocument,
@@ -27,7 +27,7 @@ struct Cell {
     id: u64,
     text: Mutex<Text>,
     tx: mpsc::UnboundedSender<Msg>,
-    symbols: Arc<RwLock<Arc<Symbols>>>,
+    symbols: Arc<RwLock<Arc<Scan>>>,
 }
 
 #[derive(Clone)]
@@ -39,7 +39,7 @@ impl Document {
         path: &str,
         text: &str,
         tx: mpsc::UnboundedSender<Msg>,
-        symbols: Arc<RwLock<Arc<Symbols>>>,
+        symbols: Arc<RwLock<Arc<Scan>>>,
     ) -> Self {
         let source = SourceDocument::named(text, path);
         let text = Mutex::new(Text {
@@ -134,8 +134,8 @@ impl Document {
     }
 
     pub(crate) fn symbols(&self) -> Arc<Symbols> {
-        let symbols = self.0.symbols.read();
-        Arc::clone(&symbols.unwrap_or_else(PoisonError::into_inner))
+        let scan = self.0.symbols.read();
+        Arc::clone(&scan.unwrap_or_else(PoisonError::into_inner).symbols)
     }
 
     pub(crate) fn id(&self) -> u64 {

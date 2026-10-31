@@ -125,7 +125,7 @@ enum MenuCommand: CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoLine, gotoPage, rename(Definition), saveVersion, versionHistory
+    case gotoLine, gotoPage, rename(SymbolName), saveVersion, versionHistory
 
     var id: Self { self }
 }

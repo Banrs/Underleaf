@@ -42,6 +42,14 @@ nonisolated protocol SourceRequest: WireRequest {}
 
 nonisolated protocol SyntaxRequest: WireRequest {}
 
+nonisolated struct AcceptCompletion: SourceRequest {
+    typealias Reply = Insertion?
+    static let command = "AcceptCompletion"
+
+    var index: Int
+    var caret: Int
+}
+
 nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
@@ -1492,6 +1500,13 @@ nonisolated extension SearchHit {
     }
 }
 
+nonisolated struct SelectsCommand: SourceRequest {
+    typealias Reply = Bool
+    static let command = "SelectsCommand"
+
+    var selection: TextRange
+}
+
 nonisolated struct SessionEvent: Decodable, Hashable, Sendable {
     var session: UInt64
     var event: Event
@@ -1698,6 +1713,13 @@ nonisolated extension Symbol {
     }
 }
 
+nonisolated struct SymbolAt: SourceRequest {
+    typealias Reply = SymbolName?
+    static let command = "SymbolAt"
+
+    var at: Int
+}
+
 nonisolated struct SymbolGroup: Decodable, Hashable, Sendable {
     var title: String
     var symbols: [Symbol]
@@ -1725,6 +1747,21 @@ nonisolated enum SymbolKind: String, Codable, CaseIterable, Hashable, Sendable {
         case .entryType: "Entry Type"
         case .file: "File"
         }
+    }
+}
+
+nonisolated struct SymbolName: Decodable, Hashable, Sendable {
+    var kind: SymbolKind
+    var name: String
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case kind, name }
+}
+
+nonisolated extension SymbolName {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        kind = try wire.decode(SymbolKind.self, forKey: .kind)
+        name = try wire.decode(String.self, forKey: .name)
     }
 }
 

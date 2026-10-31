@@ -65,7 +65,8 @@ final class SourceDocument {
         (call(CodeRanges(selection: TextRange(range), checker: checker)) ?? []).map(\.range)
     }
 
-    func completions(caret: Int, explicit: Bool) -> Completions? { call(Complete(caret: caret, explicit: explicit)) ?? nil }
+    func complete(caret: Int, explicit: Bool) -> Completions? { call(Complete(caret: caret, explicit: explicit)) ?? nil }
+    func acceptCompletion(_ index: Int, caret: Int) -> Insertion? { call(AcceptCompletion(index: index, caret: caret)) ?? nil }
     func toggleComment(_ selections: [NSRange]) -> [TextEdit] { call(ToggleComment(selections: selections.map(TextRange.init))) ?? [] }
     func setHeading(caret: Int, command: String) -> Insertion? { call(SetHeading(caret: caret, command: command)) }
     func insertBlock(_ id: String, replacing selection: NSRange) -> Insertion? {
@@ -79,6 +80,7 @@ final class SourceDocument {
     func folds() -> [Fold] { call(Folds()) ?? [] }
     func words(in range: NSRange) -> Int { call(Words(selection: TextRange(range))) ?? 0 }
     func definition(at offset: Int) -> Definition? { call(DefinitionAt(at: offset)) ?? nil }
+    func symbol(at offset: Int) -> SymbolName? { call(SymbolAt(at: offset)) ?? nil }
 
     var text: String {
         var count = 0
@@ -100,6 +102,8 @@ final class SourceDocument {
     }
 
     func partner(of at: Int) -> Int? { call(Partner(at: at)) ?? nil }
+
+    func selectsCommand(_ selection: NSRange) -> Bool { call(SelectsCommand(selection: TextRange(selection))) ?? false }
 
     func startSnippet(_ fields: [SnippetField], at: Int) -> NSRange? { (call(StartSnippet(fields: fields, at: at)) ?? nil)?.range }
 

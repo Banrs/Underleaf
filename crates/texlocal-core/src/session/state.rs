@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::message::Message;
+use texlocal_latex::project::Analysis;
 use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::actor::Actor;

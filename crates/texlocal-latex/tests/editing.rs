@@ -1,8 +1,13 @@
 mod common;
 
+use std::sync::Arc;
+
 use common::{apply, caret, run};
 use serde_json::{Value, json};
-use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
+use texlocal_latex::facts::Facts;
+use texlocal_latex::file_kind;
+use texlocal_latex::project::Scan;
+use texlocal_latex::syntax::{Source, SourceDocument, Symbols, Syntax};
 
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
@@ -167,6 +172,23 @@ fn tab_indents_every_selected_line() {
 }
 
 #[test]
+fn a_selection_is_a_commands_name_after_a_backslash_that_is_not_escaped() {
+    let mut doc = SourceDocument::new("\\section{a} \\\\word");
+    let mut selects = |start: u32, length: u32| {
+        let selection = json!({ "start": start, "length": length });
+        run(
+            &mut doc,
+            "SelectsCommand",
+            json!({ "selection": selection }),
+        )
+    };
+    assert_eq!(selects(1, 7), true);
+    assert_eq!(selects(0, 1), true);
+    assert_eq!(selects(9, 1), false);
+    assert_eq!(selects(14, 4), false);
+}
+
+#[test]
 fn a_section_folds_to_the_next_heading() {
     let mut doc = SourceDocument::new("\\section{A}\ntext\n\\section{B}\nmore\n");
     assert_eq!(
@@ -181,6 +203,61 @@ fn a_reference_leads_to_its_label() {
     let answer = run(&mut doc, "DefinitionAt", json!({ "at": 15 }));
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
+}
+
+#[test]
+fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
+    let text = "Intro \\ref{one}.\n\n\\label{fig:a} see \\cite{knuth,\n  lamport} é\n\nPlain \\input{ch} text.";
+    let mut doc = SourceDocument::named(text, "main.tex");
+    let whole = Facts::read(text, file_kind("main.tex"));
+    for at in 0..=text.encode_utf16().count() as u32 {
+        let read = doc
+            .symbol_at(&whole, at)
+            .map(|(kind, name, _)| json!({ "kind": kind, "name": name }));
+        let answer = run(&mut doc, "SymbolAt", json!({ "at": at }));
+        assert_eq!(answer, read.unwrap_or_default(), "at {at}");
+    }
+    let at = |find: &str| json!({ "at": text.find(find).unwrap() + 1 });
+    let label = json!({ "kind": "label", "name": "fig:a" });
+    assert_eq!(run(&mut doc, "SymbolAt", at("fig:a")), label);
+    let lamport = json!({ "kind": "citation", "name": "lamport" });
+    assert_eq!(run(&mut doc, "SymbolAt", at("lamport")), lamport);
+    assert_eq!(run(&mut doc, "SymbolAt", at("Intro")), Value::Null);
+}
+
+#[test]
+fn the_projects_symbols_reach_the_engine_as_data() {
+    let files = [
+        ("ch.tex", "\\label{sum} \\newcommand{\\R}{\\mathbb{R}}"),
+        ("main.tex", "\\ref{sum} $\\R$"),
+        ("refs.bib", "@book{knuth, title={TAOCP}}"),
+    ];
+    let read = files.map(|(file, text)| {
+        (
+            file.to_owned(),
+            Arc::new(Facts::read(text, file_kind(file))),
+        )
+    });
+    let names = files.map(|(file, _)| file.to_owned()).to_vec();
+    let symbols = Scan::new(read.into(), names, Arc::default()).symbols;
+    let sent: Symbols = serde_json::from_str(&serde_json::to_string(&symbols).unwrap()).unwrap();
+    assert_eq!(sent, *symbols);
+    let mut doc = SourceDocument::named(files[1].1, "main.tex");
+    doc.set_symbols(Arc::new(sent));
+    let answer = run(&mut doc, "DefinitionAt", json!({ "at": 6 }));
+    assert_eq!(
+        answer["places"],
+        json!([{ "file": "ch.tex", "line": 1, "column": 7, "length": 3 }])
+    );
+    let math = run(&mut doc, "MathAt", json!({ "caret": 13 }));
+    assert!(math["tex"].as_str().unwrap().starts_with("\\def\\R{"));
+    doc.edit(0, 16, "\\cite{");
+    let cited = run(
+        &mut doc,
+        "Complete",
+        json!({ "caret": 6, "explicit": false }),
+    );
+    assert_eq!(cited["items"][0]["label"], "knuth");
 }
 
 #[test]
@@ -221,6 +298,16 @@ fn maths_renders_as_svg_or_nothing() {
         json!({ "tex": "\\frac{", "display": false, "size": 13 }),
     );
     assert_eq!(broken, Value::Null);
+    let drawn = |tex: &str| {
+        free(
+            "RenderMath",
+            json!({ "tex": tex, "display": false, "size": 13 }),
+        )
+    };
+    assert!(drawn("\\alpha + \\text{é}")["svg"].is_string());
+    for tex in ["\\text{中}", "😀", "x + \\text{Ω😀}"] {
+        assert_eq!(drawn(tex), Value::Null, "{tex}");
+    }
 }
 
 #[test]
