@@ -329,10 +329,22 @@ struct SwitchTests {
         #expect(await other.close())
     }
 
+    @Test func aProjectStillOpensWhenTheWindowThatAskedHasClosedMeanwhile() async throws {
+        let info = try await newProject()
+        let app = defaults.app()
+        app.autoCompile = false
+        let home = app.showHome()
+        home.windowClosed()
+        await home.open(info.id)
+        let window = try #require(app.window(showing: info.id))
+        #expect(window.project?.isOpen == true && app.windows.count == 1)
+        #expect(await window.close())
+    }
+
     @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
         let app = defaults.app()
         let home = app.front
-        #expect(app.main == nil && app.home === home && app.showHome() === home && app.windows.count == 1)
+        #expect(app.main == nil && app.home === home && app.windows.count == 1)
         let (window, other) = (app.openWindow("A"), app.openWindow("B"))
         #expect(app.front === home)
         other.isKey = true

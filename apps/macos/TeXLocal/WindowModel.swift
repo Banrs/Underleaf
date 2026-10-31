@@ -16,7 +16,6 @@ final class WindowModel {
     var chosenItem: ItemActions?
     var isKey = false { didSet { if isKey { app.cameForward(self) } } }
     @ObservationIgnored weak var controller: (any AppWindow)?
-    @ObservationIgnored private var ended = false
 
     var showSource: Bool { didSet { app.defaults.set(showSource, forKey: DefaultsKey.showSource) } }
     var showPDF: Bool { didSet { app.defaults.set(showPDF, forKey: DefaultsKey.showPDF) } }
@@ -159,7 +158,6 @@ final class WindowModel {
     private(set) var importing: [URL] = []
 
     func open(_ id: String) async {
-        guard !ended else { return }
         let window = app.window(showing: id) ?? app.openWindow(id)
         guard await window.load() else { return }
         window.controller?.show()
@@ -197,10 +195,7 @@ final class WindowModel {
 
     func end() async -> Bool { await restart(&ending, leave).value }
 
-    func windowClosed() {
-        ended = true
-        app.closed(self)
-    }
+    func windowClosed() { app.closed(self) }
 
     private func leave() async -> Bool {
         guard let project else { return true }
