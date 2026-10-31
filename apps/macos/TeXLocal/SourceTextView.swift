@@ -120,6 +120,20 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         updateGutterWidth()
     }
 
+    func textContentStorage(_ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange) -> NSTextParagraph? {
+        guard let text = textContentStorage.textStorage?.attributedSubstring(from: range), text.length > 0,
+              let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
+              let style = (text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+        else { return nil }
+        let indent = text.string.prefix { $0 == " " || $0 == "\t" }
+        guard !indent.isEmpty else { return nil }
+        let width = { (text: String) in (text as NSString).size(withAttributes: [.font: font, .paragraphStyle: style]).width }
+        style.headIndent = min(width(String(indent)), 20 * width(" "))
+        let paragraph = NSMutableAttributedString(attributedString: text)
+        paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))
+        return NSTextParagraph(attributedString: paragraph)
+    }
+
     static func font(named name: String, size: CGFloat, dark: Bool) -> NSFont {
         (name.isEmpty ? nil : NSFontManager.shared.font(withFamily: name, traits: [], weight: 5, size: size))
             ?? .monospacedSystemFont(ofSize: size, weight: dark ? .medium : .regular)
