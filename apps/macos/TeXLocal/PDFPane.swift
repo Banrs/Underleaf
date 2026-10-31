@@ -87,7 +87,7 @@ struct PDFFindBar: View {
             Text(label)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .layoutPriority(-1)
+                .layoutPriority(1)
             Button("Done") { find.close() }
         }
         .lineLimit(1)

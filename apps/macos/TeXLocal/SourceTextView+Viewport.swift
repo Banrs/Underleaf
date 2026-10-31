@@ -58,6 +58,9 @@ extension SourceTextView {
 
     override func textViewportLayoutController(_ controller: NSTextViewportLayoutController,
                                                configureRenderingSurfaceFor fragment: NSTextLayoutFragment) {
+        if fragmentColours.object(forKey: fragment) == nil, let manager = textLayoutManager {
+            manager.renderingAttributesValidator?(manager, fragment)
+        }
         super.textViewportLayoutController(controller, configureRenderingSurfaceFor: fragment)
         fragments.append((offset(fragment.rangeInElement.location), fragment))
     }
