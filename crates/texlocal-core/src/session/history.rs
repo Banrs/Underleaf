@@ -14,10 +14,10 @@ use crate::paths::RelPath;
 use crate::projects::{self, History, Snapshot, Taken};
 use crate::{CoreError, lf, lossy_string};
 
-pub(crate) type Then<T> =
+pub(super) type Then<T> =
     Box<dyn FnOnce(&mut Actor, Option<String>) -> Result<T, CoreError> + Send>;
 
-pub(super) fn now() -> i64 {
+fn now() -> i64 {
     let since = SystemTime::now().duration_since(UNIX_EPOCH);
     since.map_or(0, |since| since.as_millis() as i64)
 }
@@ -45,37 +45,33 @@ impl Actor {
         let _ = drained.recv();
     }
 
-    pub fn beside<T: 'static>(
+    fn beside<T: 'static>(
         &self,
-        job: Result<impl FnOnce(&History) -> Result<T, CoreError> + Send + 'static, CoreError>,
+        job: impl FnOnce(&History) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
-        match job {
-            Ok(job) => self.off_thread(job, |done| {
-                reply.send(done.unwrap_or_else(|| Err(super::gone())));
-            }),
-            Err(err) => reply.send(Err(err)),
-        }
+        self.off_thread(job, |done| {
+            reply.send(done.unwrap_or_else(|| Err(super::gone())));
+        });
     }
 
     pub fn history_list(&self, reply: Pending<Vec<Snapshot>>) {
-        self.beside(Ok(History::list), reply);
+        self.beside(History::list, reply);
     }
 
     pub fn history_save(&mut self, name: String, reply: Pending<Option<Snapshot>>) {
         let name = name.trim().to_owned();
-        let save = if name.is_empty() {
-            Err(CoreError::bad_request(messages::version_needs_name()))
-        } else {
-            self.save_first()
-        };
+        if name.is_empty() {
+            return reply.send(Err(CoreError::bad_request(messages::version_needs_name())));
+        }
+        if let Err(err) = self.save_first() {
+            return reply.send(Err(err));
+        }
         let root = self.project.root.clone();
-        let save = save.map(|()| {
-            move |history: &History| {
-                history.take(&root, now(), Taken::Named(name))?;
-                Ok(history.list()?.into_iter().next())
-            }
-        });
+        let save = move |history: &History| {
+            history.take(&root, now(), Taken::Named(name))?;
+            Ok(history.list()?.into_iter().next())
+        };
         self.beside(save, reply);
     }
 
@@ -99,7 +95,7 @@ impl Actor {
                 &new,
             ))
         };
-        self.beside(Ok(compared), reply);
+        self.beside(compared, reply);
     }
 
     fn then_on_actor<U: Send + 'static, T: 'static>(
@@ -128,9 +124,10 @@ impl Actor {
             Err(err) => return reply.send(Err(err)),
         };
         let root = self.project.root.clone();
-        let take = move |history: &History| history.take(&root, now(), Taken::Before(reason));
-        let then =
-            move |actor: &mut Self, id: Option<i64>| then(actor, id.map(|id| id.to_string()));
+        let take = move |history: &History| {
+            let id = history.take(&root, now(), Taken::Before(reason))?;
+            Ok(id.map(|id| id.to_string()))
+        };
         self.then_on_actor(take, then, reply);
     }
 

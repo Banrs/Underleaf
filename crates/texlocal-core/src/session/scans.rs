@@ -61,7 +61,7 @@ impl Actor {
             && seq == self.symbols_seq
         {
             let (scan, checks, outline) = *scanned;
-            *self.symbols.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
+            *self.scan.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
             self.checks_done(checks, edits);
             self.publish(SessionSection::Outline(Some(outline)));
         }

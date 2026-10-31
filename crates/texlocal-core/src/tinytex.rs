@@ -35,13 +35,8 @@ async fn install_into(processes: &Processes, root: &Path, path_env: &str) -> Res
         .tempdir_in(parent)?;
     let unpacked = unpack(processes, temp.path(), path_env).await?;
     tlmgr(processes, &unpacked, path_env, &["update", "--self"]).await?;
-    tlmgr(
-        processes,
-        &unpacked,
-        path_env,
-        &["install", "beamer", "makeindex"],
-    )
-    .await?;
+    let packages = ["install", "beamer", "makeindex"];
+    tlmgr(processes, &unpacked, path_env, &packages).await?;
     std::fs::rename(&unpacked, root)?;
     let postaction = ["postaction", "install", "script", "xetex"];
     tlmgr(processes, root, path_env, &postaction).await

@@ -125,7 +125,9 @@ impl CompileManager {
     pub fn stop(&self, root: &Path) {
         if let Some(entry) = lock(&self.running).get_mut(root) {
             entry.stopped = true;
-            entry.halt();
+            if let Some(tree) = &entry.tree {
+                tree.kill();
+            }
         }
     }
 
@@ -221,14 +223,6 @@ impl CompileManager {
         tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
             .map_err(|err| CoreError::internal(messages::unexpected(err)))
-    }
-}
-
-impl Running {
-    fn halt(&self) {
-        if let Some(tree) = &self.tree {
-            tree.kill();
-        }
     }
 }
 

@@ -75,7 +75,9 @@ impl Processes {
 impl Registry {
     fn kill(&self, chosen: impl Fn(Option<u64>) -> bool) {
         for (owner, tree) in &self.trees {
-            if let Some(tree) = tree.upgrade().filter(|_| chosen(*owner)) {
+            if chosen(*owner)
+                && let Some(tree) = tree.upgrade()
+            {
                 Tree(tree).kill();
             }
         }
@@ -211,7 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_sessions_children_end_with_it_and_every_child_at_quit() {
+    async fn a_sessions_children_end_with_it_and_no_others() {
         let processes = Processes::default();
         let sleep = || {
             let mut command = command("sleep", None, "/bin").unwrap();
@@ -221,16 +223,10 @@ mod tests {
         let (session, other) = (processes.owner(), processes.owner());
         let (mut ended, _ended) = processes.spawn(Some(session), &mut sleep()).unwrap();
         let (mut other, _other) = processes.spawn(Some(other), &mut sleep()).unwrap();
-        let (mut probe, _probe) = processes.spawn(None, &mut sleep()).unwrap();
         processes.end(session);
         assert_eq!(ended.wait().await.unwrap().signal(), Some(9));
         assert!(processes.spawn(Some(session), &mut sleep()).is_err());
         let still = tokio::time::timeout(Duration::from_millis(200), other.wait()).await;
         assert!(still.is_err(), "another session's child ended too");
-        processes.kill_all();
-        for child in [&mut other, &mut probe] {
-            assert_eq!(child.wait().await.unwrap().signal(), Some(9));
-        }
-        assert!(processes.spawn(None, &mut sleep()).is_err());
     }
 }

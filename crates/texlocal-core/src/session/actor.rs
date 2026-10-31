@@ -126,7 +126,7 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
-    pub owner: u64,
+    pub children: u64,
     pub project: Project,
     pub service: Arc<Service>,
     pub compiler: Arc<dyn Compiler>,
@@ -137,7 +137,7 @@ pub(crate) struct Actor {
     pub next_doc: u64,
     pub open: Option<String>,
     pub opens: Arc<AtomicU64>,
-    pub symbols: Arc<RwLock<Arc<Scan>>>,
+    pub scan: Arc<RwLock<Arc<Scan>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
     pub edits: u64,
@@ -190,7 +190,7 @@ impl Actor {
         let history = sessions.service.history(&project);
         let mut actor = Self {
             id,
-            owner: sessions.service.processes.owner(),
+            children: sessions.service.processes.owner(),
             project,
             service: Arc::clone(&sessions.service),
             compiler: Arc::clone(&sessions.compiler),
@@ -201,7 +201,7 @@ impl Actor {
             next_doc: 1,
             open: None,
             opens,
-            symbols: Arc::default(),
+            scan: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
             edits: 0,
@@ -542,7 +542,7 @@ impl Actor {
     }
 
     fn end(&mut self) -> Vec<Pending<bool>> {
-        self.service.processes.end(self.owner);
+        self.service.processes.end(self.children);
         match std::mem::replace(&mut self.lifecycle, Lifecycle::Closed) {
             Lifecycle::Closing(held, closes) => {
                 drop(held);
