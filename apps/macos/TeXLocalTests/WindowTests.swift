@@ -180,6 +180,7 @@ struct WindowTests {
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
         let format = try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == .format })
+        #expect(workspace.toolbar.toolbar.items.allSatisfy { !$0.isNavigational })
         model.layout = .pdf
         try await waitUntil { format.isHidden }
         model.layout = .split
