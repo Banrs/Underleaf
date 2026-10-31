@@ -4,6 +4,7 @@ import SwiftUI
 final class IssueOverlay {
     struct Row {
         let line: Int
+        let error: Bool
         let band: CGRect
         var message: (view: IssueMessageView, rect: CGRect, cut: Bool)?
         var tip: String?
@@ -68,7 +69,7 @@ final class IssueOverlay {
                      of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> Row? {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)
-        var issue = Row(line: number, band: band)
+        var issue = Row(line: number, error: reported.error, band: band)
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = ([reported.message] + reported.others).map(\.text)
@@ -128,7 +129,7 @@ final class IssueOverlay {
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {
-                NSColor.tertiarySystemFill.setFill()
+                (issue.error ? NSColor.systemRed : .systemYellow).withAlphaComponent(IssueBox.tint).setFill()
                 NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
             }
             NSColor.systemRed.setFill()

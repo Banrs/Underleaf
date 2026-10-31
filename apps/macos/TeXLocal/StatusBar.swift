@@ -69,7 +69,7 @@ private struct BuildStatus: View {
                     badge(project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
                           "xmark.octagon.fill")
                 }
-            } else {
+            } else if !project.hasPDF {
                 Text("No Build Yet")
             }
             if project.errorCount > 0, project.result?.failed != true {
