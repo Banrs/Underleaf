@@ -23,7 +23,7 @@ struct Field {
 
 impl Field {
     fn end(&self) -> usize {
-        self.start + self.length
+        self.start.saturating_add(self.length)
     }
 
     fn holds(&self, start: usize, end: usize) -> bool {
@@ -43,7 +43,7 @@ impl Snippet {
             .iter()
             .map(|f| Field {
                 index: f.index as usize,
-                start: at + f.start as usize,
+                start: at.saturating_add(f.start as usize),
                 length: f.length as usize,
             })
             .collect();

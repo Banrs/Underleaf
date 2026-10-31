@@ -31,12 +31,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func show(_ text: String) {
         loading = true
+        sync = EditSync()
         breakUndoCoalescing()
         fragments.removeAll(keepingCapacity: true)
         issues.place()
         inputContext?.discardMarkedText()
         unmarkText()
-        folded = []
+        folds = FoldSet()
         foldCache = nil
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
@@ -49,25 +50,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         staleColours = 0
     }
 
-    private var changing: NSRange?
+    private var sync = EditSync()
 
     override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
         guard document.editable, super.shouldChangeText(inRanges: affectedRanges, replacementStrings: replacementStrings) else {
             return false
         }
-        changing = affectedRanges.count == 1 && replacementStrings != nil ? affectedRanges[0].rangeValue : nil
+        sync.willChange(affectedRanges.map(\.rangeValue), to: replacementStrings)
         return true
     }
 
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
-        let old = NSRange(location: edited.location, length: edited.length - delta)
-        mirrorEdits = document.edit(old, with: textStorage.mutableString.substring(with: edited), changing: changing, mirroring: mirroring)
-        foldsEdited(old, delta: delta)
+        let old = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
+        foldCache = nil
+        if folds.edited(old, delta: delta) { Task { self.relayOutFolds() } }
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
-        changing = nil
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
     }
 
@@ -142,7 +142,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
     var partnerMark: NSRange?
     var partnerDrawn: NSRect?
-    var folded: [NSRange] = []
+    var folds = FoldSet()
     var foldCache: [Int: Fold]?
     var foldMarks: [(rect: CGRect, range: NSRange)] = []
     var gutterHovered = false
@@ -167,13 +167,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let old = selectedRange()
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
-        if let over = selectionMoved(from: old) {
+        let shown = folds
+        if let over = folds.moved(from: old, to: selectedRange(), stepping: stepping) {
             super.setSelectedRanges([NSValue(range: over)], affinity: affinity, stillSelecting: stillSelecting)
         }
+        if folds != shown { relayOutFolds() }
         if !typing { completions.close() }
         if partnerMark != nil { mark(nil) }
         previewMath()
-        document.select(selectedRange(), mirroring: mirroring)
+        document.select(selectedRange(), mirroring: sync.mirroring)
         redrawLineAndGutter()
     }
 
@@ -263,6 +265,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func unmarkText() {
         super.unmarkText()
         markedTextChanged()
+        mirror()
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -378,20 +381,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         super.doCommand(by: selector)
     }
 
-    private var mirroring = false
-    private var mirrorEdits: [TextEdit] = []
-
     override func didChangeText() {
         super.didChangeText()
-        guard !mirroring, !mirrorEdits.isEmpty else { return }
-        let edits = mirrorEdits, kept = document.map(selections, through: edits)
-        mirrorEdits = []
-        mirroring = true
+        mirror()
+    }
+
+    private func mirror() {
+        let edits = sync.mirror(composing: hasMarkedText())
+        guard !edits.isEmpty else { return }
+        let kept = document.map(selections, through: edits)
+        sync.mirroring = true
         for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
             textStorage?.replaceCharacters(in: edit.range, with: edit.text)
             super.didChangeText()
         }
-        mirroring = false
+        sync.mirroring = false
         setSelectedRanges(kept.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
         breakUndoCoalescing()
     }
@@ -437,13 +441,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
         }
         super.mouseDown(with: event)
-        if isDoubleClick(event), !selectsCommandName { forwardSync(true)?() }
-    }
-
-    private var selectsCommandName: Bool {
-        let selection = selectedRange(), text = string as NSString
-        return selection.location > 0 && text.character(at: selection.location - 1) == 0x5C
-            || selection.length > 0 && text.character(at: selection.location) == 0x5C
+        if isDoubleClick(event), !document.selectsCommand(selectedRange()) { forwardSync(true)?() }
     }
 
     private func release(of down: NSEvent) -> NSEvent? {

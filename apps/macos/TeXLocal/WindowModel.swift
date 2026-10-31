@@ -16,8 +16,6 @@ final class WindowModel {
     var chosenItem: ItemActions?
     var isKey = false { didSet { if isKey { app.cameForward(self) } } }
     @ObservationIgnored weak var controller: (any AppWindow)?
-    @ObservationIgnored var restored: String?
-    @ObservationIgnored private var ended = false
 
     var showSource: Bool { didSet { app.defaults.set(showSource, forKey: DefaultsKey.showSource) } }
     var showPDF: Bool { didSet { app.defaults.set(showPDF, forKey: DefaultsKey.showPDF) } }
@@ -68,11 +66,6 @@ final class WindowModel {
         controller?.performPDF(action)
     }
 
-    func workspaceProject(after shown: ProjectModel?) -> ProjectModel? {
-        guard let project else { return nil }
-        return project.initialLoadComplete ? project : shown
-    }
-
     var undoManager: UndoManager? { controller?.undoManager }
 
     func open(_ urls: [URL]) async {
@@ -88,7 +81,7 @@ final class WindowModel {
         importing.removeAll { $0 == url }
         let id = opening.project.id
         await open(id)
-        if let file = opening.file, let project = app.window(showing: id)?.project, project.id == id { await project.open(file) }
+        if let file = opening.file, let project = app.window(showing: id)?.project { await project.open(file) }
     }
 
     func forget(_ project: ProjectInfo) async {
@@ -121,24 +114,19 @@ final class WindowModel {
     }
 
     func delete(_ project: ProjectInfo) async {
-        let failure = "Couldn’t Move “\(project.name)” to the Trash"
-        guard app.canChange(project) else { return report(failure, "Close the project before moving it to the Trash.") }
-        let item = UndoableTrash(
-            original: project.folder, name: project.name, undoManager: undoManager,
-            trash: { [weak self] item in
-                do {
-                    try item.recycle()
-                    self?.app.recentProjects.removeAll { $0 == project.id }
-                    return true
-                } catch {
-                    self?.report(failure, error)
-                    return false
-                }
-            },
-            changed: { [weak self] in await self?.app.reloadProjects() },
-            failed: { [weak self] title, error in self?.report(title, error) })
+        let item = UndoableTrash(undoManager: undoManager, trash: { [weak self] in
+            guard let self, let trashed = await alerting("Couldn’t Move “\(project.name)” to the Trash", {
+                try await app.core.call(TrashProject(id: project.id))
+            }) else { return nil }
+            app.recentProjects.removeAll { $0 == project.id }
+            return trashed
+        }, putBack: { [weak self] trashed in
+            guard let self else { return false }
+            return await alerting("Couldn’t Put “\(project.name)” Back") {
+                try await app.core.call(PutBackProject(id: project.id, trashed: trashed))
+            } != nil
+        })
         await item.moveToTrash()
-        await app.reloadProjects()
     }
 
     @discardableResult
@@ -160,62 +148,49 @@ final class WindowModel {
         if !(error is CancellationError) { report(title, error.localizedDescription) }
     }
 
-    @ObservationIgnored private var switching: Task<Bool, Never>?
-    private(set) var opening: String?
+    @ObservationIgnored private var loading: Task<Bool, Never>?
+    @ObservationIgnored private var ending: Task<Bool, Never>?
     private(set) var importing: [URL] = []
-    var isOpening: Bool { opening != nil || !importing.isEmpty }
 
     func open(_ id: String) async {
-        if let shown = app.window(showing: id) {
-            shown.controller?.show()
-            return
+        let window = app.window(showing: id) ?? app.openWindow(id)
+        guard await window.load() else { return }
+        window.controller?.show()
+        app.home?.controller?.close()
+    }
+
+    func load() async -> Bool {
+        guard let project else { return false }
+        let loading = self.loading ?? Task { [self] in
+            app.visited(project.id)
+            do {
+                try await project.load()
+                return true
+            } catch {
+                controller?.close()
+                app.front.report("Couldn’t Open “\(project.name)”", error)
+                return false
+            }
         }
-        guard !ended else { return }
-        guard shownProject == nil || opening != nil else { return await app.openWindow(beside: self).open(id) }
-        opening = id
-        defer { if opening == id { opening = nil } }
-        _ = await restart(&switching) { [self] in
-            guard await leave(), !Task.isCancelled else { return false }
-            dropRequests()
-            undoManager?.removeAllActions()
-            app.visited(id)
-            let model = ProjectModel(id: id, window: self)
-            project = model
-            controller?.attach(model)
-            await model.load()
-            return true
-        }.value
+        self.loading = loading
+        return await loading.value && project.isOpen
     }
 
     func reopen() async {
-        guard let id = restored.take(), app.projects.contains(where: { $0.id == id }), project == nil, !isOpening else { return }
-        await open(id)
+        guard let project else { return }
+        if app.projects.contains(where: { $0.id == project.id }) { _ = await load() } else { await close() }
     }
 
     @discardableResult
     func close() async -> Bool {
-        await restart(&switching) { [self] in
-            guard project != nil else { return true }
-            guard await leave() else { return false }
-            project = nil
-            dropRequests()
-            return true
-        }.value
+        guard await end() else { return false }
+        controller?.close()
+        return true
     }
 
-    func end() async -> Bool { await restart(&switching, leave).value }
+    func end() async -> Bool { await restart(&ending, leave).value }
 
-    func windowClosed() {
-        ended = true
-        app.closed(self)
-    }
-
-    private func dropRequests() {
-        prompt = nil
-        newEntry = nil
-        addingFiles = false
-        exporting = nil
-    }
+    func windowClosed() { app.closed(self) }
 
     private func leave() async -> Bool {
         guard let project else { return true }

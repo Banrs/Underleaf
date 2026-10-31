@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use schemars::JsonSchema;
@@ -16,7 +15,7 @@ use crate::error::CoreError;
 use crate::lock;
 use crate::messages;
 use crate::paths::{Project, safe_rel_file};
-use crate::process::{self, Tree, drive};
+use crate::process::{self, Processes, Tree, drive};
 use crate::settings::{granted, read_settings};
 use crate::stamp::Stamp;
 use crate::sys;
@@ -54,6 +53,7 @@ pub struct CompileResult {
     #[serde(skip)]
     pub warnings: Vec<LogItem>,
     pub bad_boxes: Vec<LogItem>,
+    #[serde(skip)]
     pub log: String,
 }
 
@@ -63,10 +63,9 @@ struct Running {
     tree: Option<Tree>,
 }
 
-#[derive(Default)]
 pub struct CompileManager {
+    processes: Arc<Processes>,
     running: Mutex<HashMap<PathBuf, Running>>,
-    shutdown: AtomicBool,
 }
 
 #[derive(PartialEq)]
@@ -87,7 +86,7 @@ struct CompileRun {
 
 pub struct Started {
     run: CompileRun,
-    spawned: Option<std::io::Result<(Child, Tree)>>,
+    spawned: std::io::Result<(Child, Tree)>,
 }
 
 impl CompileRun {
@@ -96,8 +95,7 @@ impl CompileRun {
     }
 
     fn wrote(&self, ext: &str) -> bool {
-        std::fs::metadata(self.output(ext))
-            .is_ok_and(|meta| self.before.get(ext) != Some(&Stamp::of(&meta)))
+        Stamp::at(&self.output(ext)).is_ok_and(|now| self.before.get(ext) != Some(&now))
     }
 
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
@@ -117,18 +115,19 @@ impl CompileRun {
 }
 
 impl CompileManager {
-    pub fn kill_all(&self) {
-        let running = lock(&self.running);
-        self.shutdown.store(true, Ordering::Release);
-        for entry in running.values() {
-            entry.halt();
+    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+        Self {
+            processes,
+            running: Mutex::default(),
         }
     }
 
     pub fn stop(&self, root: &Path) {
         if let Some(entry) = lock(&self.running).get_mut(root) {
             entry.stopped = true;
-            entry.halt();
+            if let Some(tree) = &entry.tree {
+                tree.kill();
+            }
         }
     }
 
@@ -150,10 +149,9 @@ impl CompileManager {
             )));
         }
         let pdf = settings.output(&project.build, "pdf")?;
-        let before = STAMPED.into_iter().filter_map(|ext| {
-            let meta = std::fs::metadata(pdf.with_extension(ext)).ok()?;
-            Some((ext, Stamp::of(&meta)))
-        });
+        let before = STAMPED
+            .into_iter()
+            .filter_map(|ext| Some((ext, Stamp::at(&pdf.with_extension(ext)).ok()?)));
         let run = CompileRun {
             root: root.clone(),
             before: before.collect(),
@@ -191,19 +189,14 @@ impl CompileManager {
             command
         });
         let mut running = lock(&self.running);
-        let spawned = (!self.shutdown.load(Ordering::Acquire)).then(|| {
-            let entry = running.entry(root.clone()).or_default();
-            let spawned = command.and_then(|mut command| Tree::spawn(&mut command));
-            spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()))
-        });
+        let entry = running.entry(root.clone()).or_default();
+        let spawned = command.and_then(|mut command| self.processes.spawn(None, &mut command));
+        let spawned = spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()));
         Ok(Started { run, spawned })
     }
 
     pub async fn wait(&self, started: Started, auto: bool) -> Result<CompileResult, CoreError> {
         let Started { run, spawned } = started;
-        let Some(spawned) = spawned else {
-            return Ok(stopped_before_start(&run));
-        };
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
             Ok((mut child, tree)) => {
@@ -218,7 +211,7 @@ impl CompileManager {
             }
         };
         let entry = lock(&self.running).remove(&run.root).unwrap_or_default();
-        let end = if entry.stopped || self.shutdown.load(Ordering::Acquire) {
+        let end = if entry.stopped || self.processes.quit() {
             End::Stopped
         } else {
             end
@@ -229,23 +222,6 @@ impl CompileManager {
         tokio::task::spawn_blocking(move || finish(&run, &end, output))
             .await
             .map_err(|err| CoreError::internal(messages::unexpected(err)))
-    }
-}
-
-impl Running {
-    fn halt(&self) {
-        if let Some(tree) = &self.tree {
-            tree.kill();
-        }
-    }
-}
-
-fn stopped_before_start(run: &CompileRun) -> CompileResult {
-    CompileResult {
-        stopped: true,
-        duration_ms: run.request_started.elapsed().as_millis() as u64,
-        log: "The build was stopped before it started.".to_string(),
-        ..CompileResult::default()
     }
 }
 

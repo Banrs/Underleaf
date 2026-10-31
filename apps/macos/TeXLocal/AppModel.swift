@@ -57,11 +57,11 @@ struct ExportFile: Transferable {
 
 protocol AppWindow: AnyObject {
     var undoManager: UndoManager? { get }
-    func attach(_ project: ProjectModel)
     func performPDF(_ action: PDFAction)
     func revealSidebar()
     func focusSearch()
     func show()
+    func close()
 }
 
 nonisolated enum WorkspaceLayout { case source, split, pdf }
@@ -80,14 +80,16 @@ final class AppModel {
     let core: Core
     var projects: [ProjectInfo] { core.library.projects }
     private(set) var projectsLoaded = false
-    var tex: TexStatus?
+    var tex: TexStatus? { core.library.tex }
     private(set) var settingTeX = false
     private(set) var installingTeX = false
     private(set) var libraryProblem: AppAlert?
     private(set) var windows: [WindowModel] = []
     var main: WindowModel? { windows.first(where: \.isKey) }
-    @ObservationIgnored var newWindow: ((WindowModel?) -> WindowModel)?
+    var home: WindowModel? { windows.first { $0.project == nil } }
+    @ObservationIgnored var newWindow: ((String?) -> WindowModel)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }
+    @ObservationIgnored var pdfAppName: String?
     @ObservationIgnored let defaults: UserDefaults
     var savesLayout: Bool { defaults === UserDefaults.standard }
 
@@ -119,7 +121,7 @@ final class AppModel {
     init(core: Core, defaults: UserDefaults = .standard) {
         self.core = core
         self.defaults = defaults
-        if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice) }
+        if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open TeXLocal’s Folders", Core.advice()) }
         defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
                                      DefaultsKey.showPDF: true, DefaultsKey.editorFontSize: 13, DefaultsKey.editorLineNumbers: true,
                                      DefaultsKey.editorAutoPair: true, DefaultsKey.editorAutoComplete: true,
@@ -147,19 +149,33 @@ final class AppModel {
 
     func opened(_ window: WindowModel) { windows.append(window) }
 
-    func closed(_ window: WindowModel) { windows.removeAll { $0 === window } }
+    func closed(_ window: WindowModel) {
+        windows.removeAll { $0 === window }
+        if window.project != nil, !windows.contains(where: { $0.project != nil }) { showHome() }
+    }
 
     func cameForward(_ window: WindowModel) {
         guard windows.first !== window, let at = windows.firstIndex(where: { $0 === window }) else { return }
         windows.insert(windows.remove(at: at), at: 0)
     }
 
-    var front: WindowModel { main ?? windows.first ?? openWindow(beside: nil) }
+    var front: WindowModel { main ?? windows.first ?? showHome() }
 
     @discardableResult
-    func openWindow(beside window: WindowModel?) -> WindowModel { newWindow?(window) ?? WindowModel(app: self) }
+    func showHome() -> WindowModel {
+        let home = home ?? openWindow(nil)
+        home.controller?.show()
+        return home
+    }
 
-    func window(showing id: String) -> WindowModel? { windows.first { $0.shownProject?.id == id || $0.opening == id } }
+    func openWindow(_ id: String?) -> WindowModel {
+        if let newWindow { return newWindow(id) }
+        let window = WindowModel(app: self)
+        window.project = id.map { ProjectModel(id: $0, window: window) }
+        return window
+    }
+
+    func window(showing id: String) -> WindowModel? { windows.first { $0.shownProject?.id == id } }
 
     func canChange(_ project: ProjectInfo) -> Bool { !project.opened && window(showing: project.id) == nil }
 
@@ -167,12 +183,9 @@ final class AppModel {
         recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
     }
 
-    @ObservationIgnored private var texCheck: Task<Void, Never>?
-
     func retryLibrary() async {
         core.reopen()
         await reloadProjects()
-        await refreshTeXStatus()
     }
 
     func reloadProjects() async {
@@ -187,13 +200,7 @@ final class AppModel {
         projectsLoaded = true
     }
 
-    func refreshTeXStatus() async {
-        guard !settingTeX else { return }
-        await restart(&texCheck) { [self] in
-            let status = try? await core.call(CheckTex())
-            if !Task.isCancelled, let status { tex = status }
-        }.value
-    }
+    func refreshTeXStatus() async { _ = try? await core.call(CheckTex()) }
 
     func setTeXFolder(_ path: String?, texpresso: Bool) async throws {
         if texpresso { try await setTeX(SetTexpressoDir(dir: path)) } else { try await setTeX(SetTexDir(dir: path)) }
@@ -205,16 +212,10 @@ final class AppModel {
         try await setTeX(InstallTex())
     }
 
-    private func setTeX<R: LibraryRequest>(_ request: R) async throws where R.Reply == TexStatus {
+    private func setTeX<R: LibraryRequest>(_ request: R) async throws {
         settingTeX = true
-        texCheck?.cancel()
         defer { settingTeX = false }
-        do {
-            tex = try await core.call(request)
-        } catch {
-            Task { await refreshTeXStatus() }
-            throw error
-        }
+        try await core.call(request)
     }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
@@ -269,7 +270,7 @@ final class AppModel {
         }
         for window in windows {
             guard await window.end() else {
-                for ended in windows where ended.project?.closed == true { await ended.close() }
+                for ended in windows where ended.project?.closed == true { ended.controller?.close() }
                 window.controller?.show()
                 return false
             }

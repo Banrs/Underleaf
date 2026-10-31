@@ -196,9 +196,8 @@ impl Actor {
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(messages::not_utf8()))?;
         let id = self.next_doc;
         self.next_doc += 1;
-        let symbols = Arc::clone(&self.symbols);
         let doc = Doc {
-            doc: Document::new(id, path, &text, self.tx.clone(), symbols),
+            doc: Document::new(id, path, &text, self.tx.clone(), Arc::clone(&self.scan)),
             path: path.to_owned(),
             saved: 0,
             force: false,
@@ -267,14 +266,13 @@ impl Actor {
 
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
         for _ in 0..2 {
-            let deleting = self.deleting(path);
             let Some(doc) = self.docs.get_mut(path) else {
                 return Ok(true);
             };
             if !doc.dirty() {
                 return Ok(true);
             }
-            if deleting || doc.asking.is_some() || autosave && doc.composing {
+            if doc.asking.is_some() || autosave && doc.composing {
                 return Ok(false);
             }
             if let Some(kind) = doc.conflict {
@@ -352,6 +350,14 @@ impl Actor {
             .docs
             .iter()
             .all(|(path, doc)| only.is_some_and(|only| only != path) || !doc.dirty()))
+    }
+
+    pub fn save_first(&mut self) -> Result<(), CoreError> {
+        if self.flush_all(true)? {
+            Ok(())
+        } else {
+            Err(CoreError::conflict(messages::edits_unsaved()))
+        }
     }
 
     pub fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {
@@ -498,7 +504,7 @@ impl Actor {
 }
 
 fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
-    let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
+    let now = Stamp::at(abs).ok();
     match (stamp, now) {
         (Some(stamp), Some(now)) if stamp == now => {
             stamp.modified % 1_000_000_000 != 0
@@ -510,7 +516,7 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
 }
 
 fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError> {
-    let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
+    let stamp = Stamp::at(path).ok();
     let disk = String::from_utf8(fs::read(path)?).ok().map(|text| {
         let newline = newline(&text);
         (lf(text), newline)

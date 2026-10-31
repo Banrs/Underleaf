@@ -5,12 +5,13 @@ use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::{self, FilePlace};
+use texlocal_latex::facts::FilePlace;
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::syntax::catalog::CATALOG;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
+use texlocal_latex::{bib, project};
 
 use super::Pending;
 use super::actor::Actor;
@@ -45,7 +46,7 @@ pub(crate) struct QuickHelp {
 
 impl Actor {
     pub fn quick_open(&self, query: String, reply: Pending<Vec<QuickOpenItem>>) {
-        let symbols = Arc::clone(&self.symbols.read().unwrap_or_else(PoisonError::into_inner));
+        let scan = Arc::clone(&self.scan.read().unwrap_or_else(PoisonError::into_inner));
         let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
         tokio::task::spawn_blocking(move || {
             let mut items: Vec<QuickOpenItem> = files
@@ -67,7 +68,7 @@ impl Actor {
                 return reply.send(Ok(items));
             }
             if let Some(main) = main {
-                let analysis = analyze::analyze_project(&symbols, Some(&main), None);
+                let analysis = project::analyze(&scan, Some(&main), None);
                 items.extend(analysis.outline.into_iter().map(|heading| {
                     let path = heading.file;
                     QuickOpenItem {
@@ -79,10 +80,10 @@ impl Actor {
                     }
                 }));
                 for file in analysis.files {
-                    let Some(facts) = symbols.by_file.get(&file) else {
+                    let Some(facts) = scan.facts.get(&file) else {
                         continue;
                     };
-                    items.extend(facts.labels.iter().map(|label| QuickOpenItem {
+                    items.extend(facts.defined.labels.iter().map(|label| QuickOpenItem {
                         kind: QuickOpenKind::Label,
                         title: label.name.clone(),
                         detail: label.detail.clone().unwrap_or_default(),
@@ -141,14 +142,14 @@ impl Actor {
             };
             let detail = match (kind, &defined) {
                 (SymbolKind::Citation, Some((file, _))) => {
-                    let entry = text(file).and_then(|text| analyze::bib_entry(&text, &name));
+                    let entry = text(file).and_then(|text| bib::entry(&text, &name));
                     Some(entry.unwrap_or_default())
                 }
                 (SymbolKind::Label, Some(_)) => {
                     let number = aux.ok().and_then(|aux| numbered(&aux, &name));
                     let number = number.unwrap_or_else(|| "Compile to number it".to_owned());
                     let symbols = doc.symbols();
-                    let mut labels = own.labels.iter().chain(&symbols.labels);
+                    let mut labels = own.defined.labels.iter().chain(symbols.labels());
                     let what = labels.find(|label| label.name == name);
                     Some(match what.and_then(|label| label.detail.as_ref()) {
                         Some(what) => format!("{number}\n{what}"),
@@ -181,7 +182,8 @@ impl Actor {
 impl Actor {
     fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
         let shown = self.live.active() && self.live.document_seen;
-        shown.then(|| self.preview.live_pdf(self.id)).transpose()
+        let run = self.live.run.as_ref().filter(|_| shown);
+        run.map(|run| run.pdf()).transpose()
     }
 
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
@@ -202,10 +204,10 @@ impl Actor {
         reply: Pending<InverseLoc>,
     ) {
         let (live, project) = (self.live_pdf(), self.project.clone());
-        let (preview, id) = (Arc::clone(&self.preview), self.id);
+        let run = self.live.run.clone();
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
-                let typeset = |rel: &str| live.as_ref().and_then(|_| preview.live_text(id, rel));
+                let typeset = |rel: &str| live.as_ref().and(run.as_ref())?.text(rel);
                 synctex::inverse(&project, page, x, y, click, live.as_deref(), &typeset)
             }));
         });

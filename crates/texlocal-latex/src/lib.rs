@@ -1,9 +1,10 @@
-pub mod analyze;
-pub mod checks;
+pub mod bib;
 pub mod diff;
+pub mod facts;
 pub mod logparse;
 pub mod message;
 pub mod messages;
+pub mod project;
 pub mod protocol;
 pub mod search;
 pub mod synctex;

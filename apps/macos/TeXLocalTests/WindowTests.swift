@@ -30,7 +30,7 @@ struct WindowTests {
     }
 
     @Test func anErrorShowsOnItsWindowAndOneThatComesWhileItIsUpIsOnlyAnnounced() async throws {
-        let controller = MainWindowController(app: defaults.app())
+        let controller = HomeWindowController(app: defaults.app())
         let (model, window) = (controller.model, try #require(controller.window))
         window.orderFront(nil)
         defer { window.close() }
@@ -45,98 +45,134 @@ struct WindowTests {
         model.alert = nil
     }
 
-    @Test func sheetsArePresentedFromTheWindowOnHomeAndInAProject() async throws {
+    @Test func sheetsArePresentedFromTheProjectsWindowAndAProjectWindow() async throws {
         let info = try await newProject()
-        let app = defaults.app()
-        app.autoCompile = false
-        let controller = MainWindowController(app: app)
-        let (model, window) = (controller.model, try #require(controller.window))
-        window.orderFront(nil)
-        defer { window.close() }
-        model.newProjectDraft = NewProjectDraft(template: .article, name: "Draft")
-        try await waitUntil { window.attachedSheet != nil }
-        model.newProjectDraft = nil
-        try await waitUntil { window.attachedSheet == nil }
+        let app = windowedApp()
+        let home = app.showHome()
+        let homeWindow = try #require(window(of: home))
+        home.newProjectDraft = NewProjectDraft(template: .article, name: "Draft")
+        try await waitUntil { homeWindow.attachedSheet != nil }
+        home.newProjectDraft = nil
+        try await waitUntil { homeWindow.attachedSheet == nil }
 
-        await model.open(info.id)
-        try await waitUntil { controller.workspace != nil }
+        await home.open(info.id)
+        let model = try #require(app.window(showing: info.id)), window = try #require(window(of: model))
         model.prompt = .gotoLine
         try await waitUntil { window.attachedSheet != nil }
         model.prompt = nil
         try await waitUntil { window.attachedSheet == nil }
-        #expect(await model.close())
+        await close(app)
     }
 
-    @Test func findInProjectFocusesTheSearchOnHomeAndInAProject() async throws {
+    @Test func findFocusesTheSearchInTheProjectsWindowAndInAProject() async throws {
         let info = try await newProject()
-        let app = defaults.app()
-        app.autoCompile = false
-        let controller = MainWindowController(app: app)
-        let (model, window) = (controller.model, try #require(controller.window))
-        window.orderFront(nil)
-        defer { window.close() }
-        try await waitUntil { window.toolbar?.items.contains { $0 is NSSearchToolbarItem } == true }
-        controller.focusSearch()
-        try await waitUntil { window.firstResponder is NSTextView }
+        let app = windowedApp()
+        let home = app.showHome()
+        let homeWindow = try #require(window(of: home))
+        try await waitUntil { homeWindow.toolbar?.items.contains { $0 is NSSearchToolbarItem } == true }
+        home.controller?.focusSearch()
+        try await waitUntil { homeWindow.firstResponder is NSTextView }
 
-        await model.open(info.id)
-        try await waitUntil { controller.workspace != nil }
-        let sidebar = try #require(controller.workspace?.splitViewItems.first)
+        await home.open(info.id)
+        let model = try #require(app.window(showing: info.id)), window = try #require(window(of: model))
+        let sidebar = try #require((model.controller as? MainWindowController)?.workspace?.splitViewItems.first)
         sidebar.isCollapsed = true
         model.perform(.projectSearch, on: model.project)
         try await waitUntil {
             ((window.firstResponder as? NSText)?.delegate as? NSSearchField)?.placeholderString == "Search Project" && !sidebar.isCollapsed
         }
-        #expect(await model.close())
+        await close(app)
     }
 
-    @Test func anotherProjectOpensInATabBesideTheWindowAndAnOpenOneComesForward() async throws {
+    @Test func eachProjectOpensInAWindowOfItsOwnThatNeverTabsAndOpeningItAgainBringsItForward() async throws {
         let (first, second) = (try await newProject(), try await newProject())
-        let app = defaults.app()
-        app.autoCompile = false
-        app.newWindow = { MainWindowController.tab(app: app, beside: $0).model }
-        let controller = MainWindowController(app: app)
-        let window = try #require(controller.window)
-        window.tabbingIdentifier = UUID().uuidString
-        controller.showWindow(nil)
-        defer { for model in app.windows { (model.controller as? MainWindowController)?.window?.close() } }
-        await controller.model.open(first.id)
-        await controller.model.open(second.id)
-        let tab = try #require(app.window(showing: second.id)?.controller as? MainWindowController)
-        #expect(window.tabbedWindows?.count == 2 && window.tabGroup?.selectedWindow === tab.window)
-        try await waitUntil { window.tab.title == first.name && tab.window?.tab.title == second.name }
-        await tab.model.open(first.id)
-        #expect(window.tabGroup?.selectedWindow === window && app.windows.count == 2)
-        controller.newWindowForTab(nil)
-        #expect(window.tabbedWindows?.count == 3 && app.windows.contains { $0.project == nil })
-        for model in app.windows { #expect(await model.close()) }
+        let app = windowedApp()
+        let home = app.showHome()
+        let homeWindow = try #require(window(of: home))
+        #expect(homeWindow.isVisible && homeWindow.tabbingMode == .disallowed && homeWindow.isExcludedFromWindowsMenu && !homeWindow.isRestorable)
+        await home.open(first.id)
+        #expect(!homeWindow.isVisible && app.home == nil)
+        let one = try #require(app.window(showing: first.id))
+        let screen = try #require(window(of: one)?.screen?.visibleFrame)
+        window(of: one)?.setFrame(NSRect(x: screen.minX, y: screen.maxY - 600, width: 800, height: 600), display: false)
+        await one.open(second.id)
+        let two = try #require(app.window(showing: second.id))
+        let windows = try [one, two].map { try #require(window(of: $0)) }
+        #expect(app.windows.count == 2 && windows.allSatisfy { $0.isVisible && $0.tabbingMode == .disallowed && $0.tabbedWindows == nil })
+        #expect(windows.map(\.title) == [first.name, second.name] && windows.allSatisfy { $0.subtitle == "main.tex" })
+        #expect(windows[1].frame.minX > windows[0].frame.minX && windows[1].frame.maxY < windows[0].frame.maxY)
+        #expect(windows[1].orderedIndex < windows[0].orderedIndex)
+        await two.open(first.id)
+        #expect(app.windows.count == 2 && windows[0].orderedIndex < windows[1].orderedIndex)
+
+        let items = NSApp.mainMenu?.items.flatMap { $0.submenu.map(Self.items) ?? [] } ?? []
+        let tabs = [#selector(NSWindow.mergeAllWindows(_:)), #selector(NSWindow.moveTabToNewWindow(_:)), #selector(NSWindow.toggleTabBar(_:)),
+                    #selector(NSWindow.toggleTabOverview(_:)), #selector(NSWindow.selectNextTab(_:)), #selector(NSWindow.selectPreviousTab(_:)),
+                    #selector(NSResponder.newWindowForTab(_:))]
+        #expect(!NSWindow.allowsAutomaticWindowTabbing && !items.contains { $0.action.map(tabs.contains) == true || $0.title == "New Tab" })
+        let projects = try #require(items.first { $0.title == "Projects" })
+        #expect(projects.keyEquivalent == "1" && projects.keyEquivalentModifierMask == [.command, .shift])
+        await close(app)
+    }
+
+    @Test func theProjectsWindowIsSingleAndShowsWhenTheLastProjectWindowClosesOrAProjectCloses() async throws {
+        let (first, second) = (try await newProject(), try await newProject())
+        let app = windowedApp()
+        let home = app.showHome()
+        #expect(app.showHome() === home && app.windows.count == 1)
+        await home.open(first.id)
+        await app.front.open(second.id)
+        let (one, two) = (try #require(app.window(showing: first.id)), try #require(app.window(showing: second.id)))
+        #expect(app.home == nil)
+        two.perform(.projectClose, on: two.project)
+        try await waitUntil { app.home != nil }
+        #expect(two.project?.closed == true && app.windows.count == 2 && window(of: app.home)?.isVisible == true)
+        app.home?.controller?.close()
+        #expect(app.home == nil)
+        #expect(await one.close())
+        let again = try #require(app.home)
+        #expect(app.windows.count == 1 && window(of: again)?.isVisible == true)
+
+        await again.open("No Such Project")
+        #expect(app.windows.count == 1 && app.home === again && again.alert?.title == "Couldn’t Open “No Such Project”")
+        await close(app)
     }
 
     @Test func closingAWindowSavesAndClosesItsProjectAndARestoredOneOpensItAgain() async throws {
         let info = try await newProject()
-        let app = defaults.app()
-        app.autoCompile = false
-        let controller = MainWindowController(app: app)
-        let window = try #require(controller.window)
-        controller.showWindow(nil)
-        await controller.model.open(info.id)
-        let project = try #require(controller.model.project)
+        let app = windowedApp()
+        await app.showHome().open(info.id)
+        let controller = try #require(app.window(showing: info.id)?.controller as? MainWindowController)
+        let (window, project) = (try #require(controller.window), try #require(controller.model.project))
         let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% kept\n", changing: nil, mirroring: false)
         let state = NSKeyedArchiver(requiringSecureCoding: true)
         controller.window(window, willEncodeRestorableState: state)
         window.performClose(nil)
         try await waitUntil { !window.isVisible }
-        #expect(project.closed && app.windows.isEmpty)
+        #expect(project.closed && app.windows.count == 1 && app.home != nil)
         #expect(try String(contentsOfFile: info.path + "/main.tex", encoding: .utf8).hasPrefix("% kept\n"))
+        await close(app)
 
-        let restored = MainWindowController(app: app)
-        let again = try #require(restored.window)
-        defer { again.close() }
-        restored.window(again, didDecodeRestorableState: try NSKeyedUnarchiver(forReadingFrom: state.encodedData))
-        await restored.model.reopen()
-        #expect(restored.model.project?.id == info.id && restored.model.project?.isOpen == true)
-        #expect(await restored.model.close())
+        func restore(_ data: Data) throws -> MainWindowController? {
+            var restored: NSWindow?
+            MainWindowController.restoreWindow(withIdentifier: MainWindowController.identifier,
+                                               state: try NSKeyedUnarchiver(forReadingFrom: data)) { window, _ in restored = window }
+            return restored?.windowController as? MainWindowController
+        }
+        #expect(try restore(NSKeyedArchiver(requiringSecureCoding: true).encodedData) == nil)
+        let again = try #require(try restore(state.encodedData))
+        await again.model.reopen()
+        #expect(again.model.project?.id == info.id && again.model.project?.isOpen == true)
+        try await waitUntil { again.workspace != nil }
+        #expect(await again.model.close())
+
+        let missing = NSKeyedArchiver(requiringSecureCoding: true)
+        missing.encode("No Such Project" as NSString, forKey: "project")
+        let gone = try #require(try restore(missing.encodedData)).model
+        #expect(await gone.project?.saveBeforeLeaving() == true)
+        await gone.reopen()
+        #expect(gone.project?.closed == true && !gone.app.windows.contains { $0 === gone } && gone.alert == nil)
     }
 
     @Test func theToolbarFollowsTheLayoutAndTheColumnsWidthsAtOnceWhileADividerIsDragged() async throws {
@@ -151,6 +187,7 @@ struct WindowTests {
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
         let format = try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == .format })
+        #expect(workspace.toolbar.toolbar.items.allSatisfy { !$0.isNavigational })
         model.layout = .pdf
         try await waitUntil { format.isHidden }
         model.layout = .split
@@ -209,4 +246,20 @@ struct WindowTests {
         #expect(!coordinator.control(NSSearchField(), textView: NSTextView(), doCommandBy: #selector(NSResponder.moveLeft(_:))))
         #expect(heard == ["move 1", "move -1", "step 1", "close"])
     }
+
+    private func windowedApp() -> AppModel {
+        let app = defaults.app()
+        app.autoCompile = false
+        app.newWindow = { [app] id in id.map { MainWindowController(app: app, project: $0).model } ?? HomeWindowController(app: app).model }
+        return app
+    }
+
+    private func window(of model: WindowModel?) -> NSWindow? { (model?.controller as? NSWindowController)?.window }
+
+    private func close(_ app: AppModel) async {
+        for model in app.windows where model.project != nil { #expect(await model.close()) }
+        app.home?.controller?.close()
+    }
+
+    private static func items(_ menu: NSMenu) -> [NSMenuItem] { menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) } }
 }

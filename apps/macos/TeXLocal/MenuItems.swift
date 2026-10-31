@@ -95,3 +95,38 @@ struct InsertMenuItems: View {
         .disabled(project?.sourceToolsEnabled != true)
     }
 }
+
+struct ItemMenuItems: View {
+    let actions: ItemActions?
+    var trashShortcut: KeyboardShortcut?
+
+    var body: some View {
+        Button { actions?.rename?() } label: { Label("Rename", systemImage: "pencil") }
+            .disabled(actions?.rename == nil)
+        Button { actions?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
+            .disabled(actions == nil)
+        Divider()
+        Button { actions?.moveToTrash?() } label: { Label("Move to Trash", systemImage: "trash") }
+            .keyboardShortcut(trashShortcut)
+            .disabled(actions?.moveToTrash == nil)
+    }
+}
+
+extension View {
+    func offersActions<ID: Hashable>(for id: ID?, _ actions: @escaping (ID) -> ItemActions?) -> some View {
+        modifier(ActionsOffer(id: id, actions: actions))
+    }
+}
+
+private struct ActionsOffer<ID: Hashable>: ViewModifier {
+    @Environment(WindowModel.self) private var window
+    let id: ID?
+    let actions: (ID) -> ItemActions?
+
+    func body(content: Content) -> some View {
+        let present = id.flatMap { actions($0) == nil ? nil : $0 }
+        content
+            .onChange(of: present, initial: true) { _, id in window.chosenItem = id.flatMap(actions) }
+            .onDisappear { window.chosenItem = nil }
+    }
+}

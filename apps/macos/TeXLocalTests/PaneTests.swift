@@ -82,7 +82,7 @@ struct PaneTests {
 
     @Test func theWindowControllerPassesTheInspectorToggleToTheWorkspaceItShows() throws {
         let defaults = TestDefaults()
-        let controller = MainWindowController(app: defaults.app())
+        let controller = MainWindowController(app: defaults.app(), project: "P")
         #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) == nil)
         let (window, workspace) = open(controller.model)
         defer { workspace.close(); window.close() }

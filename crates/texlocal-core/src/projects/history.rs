@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::ErrorKind;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::files::{Planned, inside, write_all};
 use super::tree::visit_files;
 use super::{read_capped, skip_unreadable};
-use crate::atomic;
+use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, safe_write_path};
@@ -21,14 +23,31 @@ pub(super) const MAX_KEPT: u64 = 20 << 20;
 
 pub(crate) enum Taken {
     Auto,
-    Before(&'static str),
+    Before(Reason),
     Named(String),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Reason {
+    #[serde(alias = "Before Replace All")]
+    #[schemars(title = "Before Replace All")]
+    ReplaceAll,
+    #[serde(alias = "Before Rename")]
+    #[schemars(title = "Before Rename")]
+    Rename,
+    #[serde(alias = "Before Adding a Package")]
+    #[schemars(title = "Before Adding a Package")]
+    AddPackage,
+    #[serde(alias = "Before Restore")]
+    #[schemars(title = "Before Restore")]
+    Restore,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Version {
     name: Option<String>,
-    reason: Option<String>,
+    reason: Option<Reason>,
     files: BTreeMap<String, String>,
 }
 
@@ -37,7 +56,7 @@ pub struct Snapshot {
     id: String,
     time: i64,
     name: Option<String>,
-    reason: Option<String>,
+    reason: Option<Reason>,
     changed: Vec<ChangedFile>,
 }
 
@@ -59,11 +78,23 @@ pub(crate) struct History {
     dir: PathBuf,
 }
 
+pub(crate) type Job = Box<dyn FnOnce(&History) + Send>;
+
 impl History {
-    pub fn of(project: &Project) -> Self {
-        Self {
+    pub fn queue(project: &Project) -> mpsc::Sender<Job> {
+        let (queue, jobs) = mpsc::channel::<Job>();
+        let history = Self {
             dir: project.history.clone(),
-        }
+        };
+        std::thread::Builder::new()
+            .name("texlocal-history".into())
+            .spawn(move || {
+                for job in jobs {
+                    let _ = catch_unwind(AssertUnwindSafe(|| job(&history)));
+                }
+            })
+            .expect("the history's thread starts");
+        queue
     }
 
     fn objects(&self) -> PathBuf {
@@ -99,7 +130,7 @@ impl History {
         fs::create_dir_all(record.parent().expect("in the snapshots folder"))?;
         let bytes = serde_json::to_vec(snapshot);
         let bytes = bytes.map_err(|err| CoreError::internal(messages::unexpected(err)))?;
-        atomic::write(&record, &bytes)?;
+        atomic::write(&record, &bytes, Flush::Full)?;
         Ok(())
     }
 
@@ -114,7 +145,7 @@ impl History {
             let object = objects.join(&hash);
             if !object.exists() {
                 fs::create_dir_all(&objects)?;
-                atomic::write(&object, &bytes)?;
+                atomic::write(&object, &bytes, Flush::Ordered)?;
             }
             files.insert(rel.to_owned(), hash);
             Ok(true)
@@ -144,7 +175,7 @@ impl History {
             (taken, _) => {
                 let (name, reason) = match taken {
                     Taken::Auto => (None, None),
-                    Taken::Before(reason) => (None, Some(reason.to_owned())),
+                    Taken::Before(reason) => (None, Some(reason)),
                     Taken::Named(name) => (Some(name), None),
                 };
                 let snapshot = Version {
@@ -309,5 +340,18 @@ mod tests {
         let mut objects: Vec<_> = objects.map(|entry| entry.unwrap().file_name()).collect();
         objects.sort_unstable();
         assert_eq!(objects, ["day", "hour", "named", "recent"]);
+    }
+
+    #[test]
+    fn an_old_records_reason_reads_as_its_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = History {
+            dir: dir.path().into(),
+        };
+        let old = r#"{"name":null,"reason":"Before Restore","files":{}}"#;
+        fs::create_dir_all(history.dir.join("snapshots")).unwrap();
+        fs::write(history.record(1), old).unwrap();
+        let listed = serde_json::to_value(history.list().unwrap()).unwrap();
+        assert_eq!(listed[0]["reason"], "restore");
     }
 }

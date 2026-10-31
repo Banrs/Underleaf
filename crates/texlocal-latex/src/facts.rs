@@ -1,33 +1,23 @@
-use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::checks::{Slip, Structure, Walk};
+use crate::bib;
+use crate::message::Message;
+use crate::messages;
 use crate::syntax::catalog::CATALOG;
+use crate::syntax::headings::plain_title;
 use crate::syntax::prose::Reading;
 use crate::syntax::scan::{Group, Scanner, Visit, braced};
-use crate::syntax::{SymbolKind, Symbols, Text, headings, is, letter, scan};
+use crate::syntax::{SymbolKind, Text, headings, is, letter, scan};
 use crate::{FileKind, utf16};
 
-static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\\(?:texorpdfstring|label|index|footnote|begin|end)\s*\{").unwrap()
-});
-static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\\(?:emph|text(?:bf|it|sl|sc|tt|sf|rm|up|md|normal)|underline|em|bf|it|sl|sc|tt|sf|rm|normalfont|(?:bf|md)series|(?:it|sl|sc|up)shape|(?:rm|sf|tt)family)(?-u:\b)\s*").unwrap()
-});
-static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
-static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
-static BIB_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
 static MAGIC_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*%\s*!\s*TeX\s+(root|(?:TS-)?program)\s*=\s*(.*?)\s*$").unwrap()
 });
-static CROSSREF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?i)(?:^|,)\s*crossref\s*=\s*[{"]?\s*([^\s,{}"]+)"#).unwrap());
 
 #[derive(Clone, Serialize, JsonSchema)]
 pub struct Heading {
@@ -64,10 +54,7 @@ pub struct Facts {
     pub(crate) headings: Vec<Heading>,
     pub(crate) inputs: Vec<Input>,
     pub words: usize,
-    pub labels: Vec<Named>,
-    pub citations: Vec<Named>,
-    pub commands: Vec<Defined>,
-    pub environments: Vec<Named>,
+    pub defined: Arc<Definitions>,
     pub(crate) uses: Vec<Named>,
     pub(crate) class: Option<String>,
     pub packages: Vec<String>,
@@ -77,7 +64,15 @@ pub struct Facts {
     pub(crate) end: Option<Place>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Definitions {
+    pub labels: Vec<Named>,
+    pub citations: Vec<Named>,
+    pub commands: Vec<Defined>,
+    pub environments: Vec<Named>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -117,7 +112,7 @@ pub struct FilePlace {
     pub length: u32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Named {
     pub(crate) kind: SymbolKind,
     pub name: String,
@@ -125,7 +120,7 @@ pub struct Named {
     pub detail: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Defined {
     pub name: String,
     pub(crate) arguments: usize,
@@ -184,6 +179,7 @@ impl Facts {
         let mut reader = Reader {
             text: &text,
             facts: Self::default(),
+            defined: Definitions::default(),
             prose: Reading::whole(&text),
             structure: Structure::default(),
             title: None,
@@ -194,6 +190,7 @@ impl Facts {
         scanner.run(&text.units, text.units.len(), &[], &mut reader);
         let Reader {
             mut facts,
+            defined,
             prose,
             structure,
             cuts,
@@ -212,13 +209,14 @@ impl Facts {
             };
             *counted = prose.words(from.min(len)..to);
         }
+        facts.defined = Arc::new(defined);
         facts.slips = slips;
         facts.end = end.map(|end| Place::of(&text, end..end));
         facts
     }
 
     fn read_bib(source: &str, text: &Text) -> Self {
-        let mut facts = Self::default();
+        let (mut facts, mut defined) = (Self::default(), Definitions::default());
         let (mut byte, mut unit) = (0, 0);
         let mut cited = |at: Range<usize>| {
             unit += utf16::len(&source[byte..at.start]);
@@ -226,21 +224,25 @@ impl Facts {
             let units = unit..unit + utf16::len(&source[at]);
             named(text, SymbolKind::Citation, units)
         };
-        for (entry, body) in entries(source) {
+        for (entry, body) in bib::entries(source) {
             let kind = entry[1].to_ascii_lowercase();
             if matches!(kind.as_str(), "comment" | "string" | "preamble") {
                 continue;
             }
             let start = entry.get_match().end();
-            facts.citations.push(Named {
-                detail: detail(&fields(body)),
+            defined.citations.push(Named {
+                detail: bib::detail(&bib::fields(body)),
                 ..cited(entry.get(2).expect("an entry has a key").range())
             });
-            if let Some(parent) = CROSSREF.captures(body).and_then(|parent| parent.get(1)) {
+            if let Some(parent) = bib::CROSSREF
+                .captures(body)
+                .and_then(|parent| parent.get(1))
+            {
                 let at = start + parent.start()..start + parent.end();
                 facts.uses.push(cited(at));
             }
         }
+        facts.defined = Arc::new(defined);
         facts
     }
 }
@@ -248,6 +250,7 @@ impl Facts {
 struct Reader<'a> {
     text: &'a Text,
     facts: Facts,
+    defined: Definitions,
     prose: Reading<'a>,
     structure: Structure,
     title: Option<(usize, String)>,
@@ -280,7 +283,7 @@ impl Visit for Reader<'_> {
             "bibitem" => {
                 let keys = listed(&text.units, name_end, false).into_iter();
                 let keys = keys.map(|at| named(text, SymbolKind::Citation, at));
-                facts.citations.extend(keys);
+                self.defined.citations.extend(keys);
             }
             "documentclass" if facts.class.is_none() => {
                 facts.class = braced(&text.units, name_end)
@@ -301,7 +304,7 @@ impl Visit for Reader<'_> {
                 let command = defined(text, name, name_end);
                 let command = command
                     .filter(|d| d.name.starts_with('\\') && (name != "def" || d.tex.is_some()));
-                facts.commands.extend(command);
+                self.defined.commands.extend(command);
             }
             "newenvironment" => {
                 let environment =
@@ -312,7 +315,7 @@ impl Visit for Reader<'_> {
                     place,
                     detail: None,
                 });
-                facts.environments.extend(environment);
+                self.defined.environments.extend(environment);
             }
             "input" | "include" | "subfile" | "import" | "subimport" => {
                 if let Some((name, folder, at)) = input(&text.units, name, name_end) {
@@ -391,7 +394,7 @@ impl Reader<'_> {
                     ..named(text, SymbolKind::Label, at)
                 });
                 let labels = labels.filter(|label| !label.name.ends_with(':'));
-                self.facts.labels.extend(labels);
+                self.defined.labels.extend(labels);
                 return;
             }
             _ => return,
@@ -413,95 +416,6 @@ fn named(text: &Text, kind: SymbolKind, at: Range<usize>) -> Named {
     }
 }
 
-fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>, &str)> {
-    let mut found = BIB_KEY.captures_iter(source).peekable();
-    std::iter::from_fn(move || {
-        let entry = found.next()?;
-        let next = found
-            .peek()
-            .map_or(source.len(), |next| next.get_match().start());
-        let body = &source[entry.get_match().end()..next];
-        Some((entry, body))
-    })
-}
-
-fn fields(body: &str) -> Vec<(String, String)> {
-    let (mut fields, mut name, mut value) = (Vec::new(), String::new(), None::<String>);
-    let (mut depth, mut quoted) = (0_usize, false);
-    for c in body.chars() {
-        let top = depth == 0 && !quoted;
-        match (c, value.as_mut()) {
-            ('}' | ')', _) if top => break,
-            (',', _) if top => {
-                fields.extend(value.take().map(|value| (name.clone(), value)));
-                name.clear();
-            }
-            ('=', None) => value = Some(String::new()),
-            (c, None) if !c.is_whitespace() => name.push(c.to_ascii_lowercase()),
-            (_, None) => {}
-            ('"', Some(_)) if depth == 0 => quoted = !quoted,
-            ('{', Some(text)) => {
-                if !top {
-                    text.push(c);
-                }
-                depth += 1;
-            }
-            ('}', Some(text)) => {
-                depth = depth.saturating_sub(1);
-                if depth > 0 || quoted {
-                    text.push(c);
-                }
-            }
-            (c, Some(_)) if top && (c == '#' || c.is_whitespace()) => {}
-            (c, Some(text)) => text.push(c),
-        }
-    }
-    fields.extend(value.map(|value| (name, value)));
-    fields
-}
-
-fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    let (_, value) = fields.iter().find(|(n, _)| n == name)?;
-    Some(value)
-}
-
-fn authors(fields: &[(String, String)], name: impl Fn(&str) -> Option<String>) -> Vec<String> {
-    let Some(authors) = field(fields, "author") else {
-        return Vec::new();
-    };
-    let authors = SPACES.replace_all(authors, " ");
-    parted(&authors, " and ")
-        .into_iter()
-        .filter_map(name)
-        .collect()
-}
-
-fn year(fields: &[(String, String)]) -> Option<String> {
-    let date = || field(fields, "date").and_then(|date| date.get(..4));
-    field(fields, "year").or_else(date).and_then(plain_title)
-}
-
-fn detail(fields: &[(String, String)]) -> Option<String> {
-    let field = |name| field(fields, name);
-    let last = |name: &str| {
-        let name = name.trim();
-        let last = match parted(name, ",").as_slice() {
-            [last, _, ..] => *last,
-            _ => *parted(name, " ").last().expect("a part at least"),
-        };
-        plain_title(last)
-    };
-    let authors = match authors(fields, last).as_slice() {
-        [] => None,
-        [one] => Some(one.clone()),
-        [one, two] => Some(format!("{one} and {two}")),
-        [one, ..] => Some(format!("{one} et al.")),
-    };
-    let parts = [authors, year(fields), field("title").and_then(plain_title)];
-    let parts: Vec<String> = parts.into_iter().flatten().collect();
-    (!parts.is_empty()).then(|| parts.join(" · "))
-}
-
 pub const MAGIC_LINES: usize = 20;
 
 pub fn magic_comments(text: &str) -> (Option<String>, Option<String>) {
@@ -517,132 +431,6 @@ pub fn magic_comments(text: &str) -> (Option<String>, Option<String>) {
     }
     found
 }
-
-pub fn bib_entry(source: &str, key: &str) -> Option<String> {
-    let (_, body) = entries(source).find(|(entry, _)| &entry[2] == key)?;
-    let fields = fields(body);
-    let field = |name| field(&fields, name);
-    let author = |name: &str| match parted(name.trim(), ",").as_slice() {
-        [last, first, ..] => plain_title(&format!("{first} {last}")),
-        _ => plain_title(name),
-    };
-    let authors = authors(&fields, author).join(", ");
-    let published = ["journal", "publisher", "booktitle"]
-        .into_iter()
-        .find_map(field);
-    let lines = [
-        Some(authors).filter(|authors| !authors.is_empty()),
-        field("title").and_then(plain_title),
-        year(&fields),
-        published.and_then(plain_title),
-    ];
-    Some(lines.into_iter().flatten().collect::<Vec<_>>().join("\n"))
-}
-
-fn parted<'a>(text: &'a str, at: &str) -> Vec<&'a str> {
-    let (mut parts, mut depth, mut from) = (Vec::new(), 0_usize, 0);
-    for (i, c) in text.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            _ if depth == 0
-                && i >= from
-                && text
-                    .get(i..i + at.len())
-                    .is_some_and(|s| s.eq_ignore_ascii_case(at)) =>
-            {
-                parts.push(&text[from..i]);
-                from = i + at.len();
-            }
-            _ => {}
-        }
-    }
-    parts.push(&text[from..]);
-    parts
-}
-
-#[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OutlineNode {
-    pub(crate) index: usize,
-    pub(crate) heading: Heading,
-    pub(crate) fold_key: String,
-    pub(crate) words: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) children: Option<Vec<Self>>,
-}
-
-pub(crate) fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
-    fn nest(
-        outline: &[Heading],
-        next: &mut usize,
-        above: Option<usize>,
-        seen: &mut HashMap<String, usize>,
-    ) -> Vec<OutlineNode> {
-        let mut nodes = Vec::new();
-        while let Some(heading) = outline.get(*next)
-            && above.is_none_or(|depth| heading.depth > depth)
-        {
-            let index = *next;
-            *next += 1;
-            let file = &heading.file;
-            let title = if heading.untitled {
-                "(untitled)"
-            } else {
-                &heading.title
-            };
-            let key = format!("{file}\t{}:{title}", heading.depth);
-            let count = seen.entry(key.clone()).or_default();
-            *count += 1;
-            let fold_key = format!("{key}#{count}");
-            let children = nest(outline, next, Some(heading.depth), seen);
-            nodes.push(OutlineNode {
-                index,
-                heading: heading.clone(),
-                fold_key,
-                words: heading.words + children.iter().map(|c| c.words).sum::<usize>(),
-                children: (!children.is_empty()).then_some(children),
-            });
-        }
-        nodes
-    }
-    nest(outline, &mut 0, None, &mut HashMap::new())
-}
-
-#[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct Analysis {
-    #[serde(skip)]
-    pub outline: Vec<Heading>,
-    #[serde(skip)]
-    pub files: Vec<String>,
-    pub(crate) tree: Vec<OutlineNode>,
-    pub(crate) words: usize,
-    pub(crate) heading_styles: Vec<headings::HeadingStyle>,
-}
-
-pub fn analyze_project(symbols: &Symbols, main: Option<&str>, shown: Option<&str>) -> Analysis {
-    let mut walk = Walk::from(symbols, main.unwrap_or_default());
-    if let Some(shown) = shown
-        && !walk.files.iter().any(|(file, _)| *file == shown)
-    {
-        walk = Walk::from(symbols, shown);
-    }
-    let class = main.and_then(|main| symbols.by_file.get(main)?.class.as_deref());
-    Analysis {
-        tree: outline_tree(&walk.outline),
-        words: walk.words,
-        heading_styles: headings::heading_styles(class),
-        files: walk
-            .files
-            .iter()
-            .map(|(file, _)| (*file).to_owned())
-            .collect(),
-        outline: walk.outline,
-    }
-}
-
-pub(crate) const INPUT_DEPTH: usize = 15;
 
 fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
     let units = &text.units;
@@ -754,23 +542,114 @@ fn input(units: &[u16], command: &str, name_end: usize) -> Option<(String, Folde
     Some((name.trim().to_owned(), folder, at))
 }
 
-fn plain_title(title: &str) -> Option<String> {
-    let mut rest = title;
-    let mut title = String::new();
-    while let Some(m) = TITLE_DROP.find(rest) {
-        title.push_str(&rest[..m.start()]);
-        rest = &rest[m.end()..];
-        if let Some(close) = scan::closing_brace(rest) {
-            rest = &rest[close + 1..];
-        } else {
-            title.push_str(m.as_str());
+pub(crate) struct Slip {
+    pub(crate) place: Place,
+    pub(crate) message: Message,
+    pub(crate) kind: Kind,
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) enum Kind {
+    Mismatched,
+    Unbegun(String),
+    Unended(String),
+    Unbalanced,
+}
+
+#[derive(Default)]
+struct Structure {
+    environments: Vec<(String, usize)>,
+    braces: Vec<usize>,
+    slips: Vec<Slip>,
+    end: Option<usize>,
+}
+
+impl Structure {
+    fn command(&mut self, text: &Text, name: &str, start: usize, name_end: usize) {
+        if !matches!(name, "begin" | "end") || !self.braces.is_empty() || !self.read(start) {
+            return;
+        }
+        let Some((environment, _)) = scan::environment_name(&text.units, name_end) else {
+            return;
+        };
+        let environment = String::from_utf16_lossy(environment).trim().to_owned();
+        if name == "begin" {
+            self.environments.push((environment, start));
+            return;
+        }
+        if environment == "document" {
+            self.end = Some(start);
+        }
+        let begun = self
+            .environments
+            .iter()
+            .rposition(|(e, _)| *e == environment);
+        let Some(begun) = begun else {
+            let message = messages::end_without_begin(&environment);
+            return self.slip(text, start, message, Kind::Unbegun(environment));
+        };
+        if let Some((open, at)) = self.environments.get(begun + 1..).and_then(<[_]>::last) {
+            let message = messages::ended_by_another(open, line(text, *at), &environment);
+            self.slip(text, start, message, Kind::Mismatched);
+        }
+        self.environments.truncate(begun);
+    }
+
+    fn brace(&mut self, text: &Text, at: usize, open: bool) {
+        if !self.read(at) {
+            return;
+        }
+        if open {
+            self.braces.push(at);
+        } else if self.braces.pop().is_none() {
+            self.slip(text, at, messages::nothing_to_close(), Kind::Unbalanced);
         }
     }
-    title.push_str(rest);
-    let title = TITLE_STYLE.replace_all(&title, "");
-    let title = TITLE_BRACE.replace_all(&title, "$1");
-    match SPACES.replace_all(&title, " ").trim_matches(' ') {
-        "" => None,
-        title => Some(title.into()),
+
+    fn unclosed(&mut self, text: &Text, group: &Group) {
+        if !self.read(group.open) {
+            return;
+        }
+        let width = group.delimiter().unwrap_or_default();
+        let open = &text.units[group.open..group.open + width];
+        let message = messages::open_at_paragraph_end(String::from_utf16_lossy(open));
+        self.slip(text, group.open, message, Kind::Unbalanced);
     }
+
+    fn finish<'a>(
+        mut self,
+        text: &Text,
+        open: impl Iterator<Item = &'a Group>,
+    ) -> (Vec<Slip>, Option<usize>) {
+        for group in open.filter(|group| group.delimiter().is_some()) {
+            self.unclosed(text, group);
+        }
+        for at in std::mem::take(&mut self.braces) {
+            self.slip(text, at, messages::never_closed(), Kind::Unbalanced);
+            self.environments.clear();
+        }
+        for (environment, at) in std::mem::take(&mut self.environments) {
+            let message = messages::never_ended(&environment);
+            self.slip(text, at, message, Kind::Unended(environment));
+        }
+        self.slips.sort_by_key(|slip| slip.place);
+        (self.slips, self.end)
+    }
+
+    fn read(&self, at: usize) -> bool {
+        self.end.is_none_or(|end| at < end)
+    }
+
+    fn slip(&mut self, text: &Text, at: usize, message: Message, kind: Kind) {
+        let place = Place::of(text, at..at);
+        self.slips.push(Slip {
+            place,
+            message,
+            kind,
+        });
+    }
+}
+
+fn line(text: &Text, at: usize) -> u32 {
+    text.line_index(at as u32) as u32 + 1
 }

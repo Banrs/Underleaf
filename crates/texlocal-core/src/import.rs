@@ -5,17 +5,19 @@ use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use texlocal_latex::analyze::{self, Facts};
+use texlocal_latex::facts::{self, Facts};
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::messages;
-use crate::paths::{self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key};
+use crate::paths::{
+    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file,
+};
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
-use crate::settings::{Engine, SettingsPatch, write_settings};
+use crate::settings::{Engine, SettingsPatch, copy_ui, new_settings};
 use crate::zipexport::left_out;
 use crate::{CoreError, SETTINGS_FILE, atomic};
 
@@ -67,10 +69,10 @@ pub(crate) fn import_files(
 ) -> Result<Imported, CoreError> {
     let mut files = Vec::new();
     for abs in paths {
-        let name = abs.file_name().unwrap_or_default().to_string_lossy();
+        let name = paths::utf8_name(abs)?;
         let meta = fs::metadata(abs).map_err(CoreError::at(abs))?;
         if meta.is_file() {
-            files.push((name.into_owned(), abs.clone()));
+            files.push((name.to_owned(), abs.clone()));
         } else if meta.is_dir() {
             walk(
                 abs,
@@ -78,7 +80,7 @@ pub(crate) fn import_files(
                 true,
                 &mut |entry| {
                     if !entry.dir && !entry.link {
-                        files.push((in_folder(&name, &entry.rel), entry.path.clone()));
+                        files.push((in_folder(name, &entry.rel), entry.path.clone()));
                     }
                     Ok(true)
                 },
@@ -245,7 +247,7 @@ fn open(src: &Path) -> Result<Opened, CoreError> {
         })?;
         return Opened::of_zip(stem, zip);
     }
-    let path = file_name(src);
+    let path = paths::utf8_name(src)?.to_owned();
     if file_kind(&path) != FileKind::Tex {
         return Err(CoreError::bad_request(messages::not_a_project(&path)));
     }
@@ -268,8 +270,8 @@ fn magic_comments(file: &Path) -> (Option<String>, Option<String>) {
     let Ok(file) = File::open(file) else {
         return (None, None);
     };
-    let lines = io::BufReader::new(file).lines().take(analyze::MAGIC_LINES);
-    analyze::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
+    let lines = io::BufReader::new(file).lines().take(facts::MAGIC_LINES);
+    facts::magic_comments(&lines.map_while(Result::ok).collect::<Vec<_>>().join("\n"))
 }
 
 pub(crate) fn guessed_settings(
@@ -325,7 +327,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         return Err(CoreError::bad_request(messages::no_tex(file_name(src))));
     }
 
-    projects::new_project(&service.data_dir, &base, |root| {
+    projects::new_project(service, &base, |root| {
         write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
         if settings.main_file.is_none() {
@@ -333,8 +335,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
             fs::write(root.join(file), content)?;
             settings.main_file = Some(file.into());
         }
-        write_settings(&root.join(SETTINGS_FILE), &settings)?;
-        Ok(())
+        new_settings(&root.join(SETTINGS_FILE), &settings)
     })
 }
 
@@ -385,19 +386,22 @@ pub(crate) fn duplicate_project(
     if projects::is_opened(id) {
         return Err(CoreError::conflict(messages::opened_not_duplicated()));
     }
-    let root = service.project(id)?.root;
+    let source = service.project(id)?;
+    let root = &source.root;
     let mut files = Vec::new();
-    walk(&root, &|rel| !left_out(rel), true, &mut |entry| {
+    walk(root, &|rel| !left_out(rel), true, &mut |entry| {
         if !entry.dir {
             files.push((entry.rel.clone(), Source::File(entry.path.clone())));
         }
         Ok(true)
     })?;
-    projects::new_project(&service.data_dir, name, |copy| {
+    let copy = projects::new_project(service, name, |copy| {
         write_files(copy, &files, None)?;
         match fs::copy(root.join(SETTINGS_FILE), copy.join(SETTINGS_FILE)) {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
             copied => Ok(copied.map(drop)?),
         }
-    })
+    })?;
+    copy_ui(&source, &ui_file(&service.state_dir, &copy.id));
+    Ok(copy)
 }

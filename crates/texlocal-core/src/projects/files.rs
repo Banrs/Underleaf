@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, after_entry, rel_key, safe_path, safe_write_path, same_entry};
 use crate::settings::{SettingsPatch, move_ui, read_settings, write_settings};
 use crate::stamp::Stamp;
-use crate::{atomic, sys};
+use crate::sys;
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +50,7 @@ pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreErro
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<Stamp, CoreError> {
     abs.parent()
         .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| atomic::write(abs, contents))
+        .and_then(|()| atomic::write(abs, contents, Flush::Full))
         .map_err(|err| write_error(abs, err))
 }
 
@@ -143,7 +144,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     atomic::rename_exclusive(&src, &dest)?;
     if let Some(main_file) = &moved_main
         && let Err(err) = write_settings(
-            &project.settings,
+            project,
             &SettingsPatch {
                 main_file: Some(main_file.clone()),
                 ..SettingsPatch::default()
@@ -167,7 +168,18 @@ pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreE
     if is_under(&read_settings(&project.settings).main_file, rel) {
         return Err(CoreError::conflict(messages::main_file_inside()));
     }
-    sys::trash(&safe_path(&project.root, rel)?)
+    sys::trash(&safe_path(&project.root, rel)?).map(drop)
+}
+
+pub(crate) fn untrash(trashed: &Path, to: &Path) -> Result<(), CoreError> {
+    fs::create_dir_all(to.parent().unwrap_or(to))?;
+    sys::untrash(trashed, to).map_err(|err| match err.kind() {
+        ErrorKind::AlreadyExists => {
+            let name = to.file_name().unwrap_or_default().to_string_lossy();
+            CoreError::conflict(messages::exists_already(name))
+        }
+        _ => err.into(),
+    })
 }
 
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {

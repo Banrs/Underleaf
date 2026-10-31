@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -12,11 +13,10 @@ use super::actor::{Actor, Later, Timer};
 use super::build::{IssueLine, issue_lines};
 use super::state::SessionSection;
 use crate::events::{Event, LiveDocument, LivePage};
-use crate::messages;
+use crate::paths;
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
-use crate::texpresso::{FileBuffer, LiveEvent, Pane};
-use crate::{CoreError, paths};
+use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane};
 
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 
@@ -27,7 +27,6 @@ pub(crate) enum LivePhase {
     Stopped,
     Starting,
     Running,
-    Stopping,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -51,10 +50,8 @@ pub(crate) struct Live {
     pending: BTreeMap<String, Option<String>>,
     synced: HashSet<String>,
     sent: HashMap<String, u64>,
-    rejected: BTreeMap<String, Message>,
     failure: Option<Message>,
-    reported: Vec<Message>,
-    error: Option<Message>,
+    reported: Option<Message>,
     log_shown: bool,
     halted: bool,
     view: Option<(u32, u32)>,
@@ -68,6 +65,7 @@ pub(crate) struct Live {
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
+    pub run: Option<Arc<dyn LiveRun>>,
 }
 
 impl Live {
@@ -75,16 +73,20 @@ impl Live {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
     }
 
+    fn running(&self) -> Option<Arc<dyn LiveRun>> {
+        self.run
+            .clone()
+            .filter(|_| self.phase == LivePhase::Running)
+    }
+
     fn fits(&self, path: &str) -> bool {
         self.phase == LivePhase::Running && !self.pending.contains_key(path)
     }
 
-    fn failures(&self) -> Vec<Message> {
-        let rejected = self.rejected.iter();
-        let rejected = rejected.map(|(path, error)| messages::live_rejected(path, error));
-        let mut failures: Vec<Message> = self.failure.iter().cloned().chain(rejected).collect();
-        failures.extend(self.error.clone().filter(|error| !failures.contains(error)));
-        failures
+    fn stop(&mut self) {
+        if let Some(run) = self.run.take() {
+            run.stop();
+        }
     }
 }
 
@@ -100,19 +102,12 @@ impl Actor {
             phase: live.phase,
             engine: Engine::Xelatex,
             halted: live.halted,
-            log: live.log_shown.then(|| self.live_log()),
-            failures: live.failures(),
+            log: live
+                .log_shown
+                .then(|| live.run.as_ref().map(|run| run.log()).unwrap_or_default()),
+            failures: live.failure.iter().cloned().collect(),
             lines: lines.collect(),
         }
-    }
-
-    fn live_log(&self) -> String {
-        let Ok(status) = self.preview.status(self.id) else {
-            return String::new();
-        };
-        let texts = [status.log, status.output];
-        let texts: Vec<String> = texts.into_iter().filter(|text| !text.is_empty()).collect();
-        texts.join("\n\n")
     }
 
     pub fn publish_live(&mut self, alert: bool) {
@@ -131,14 +126,14 @@ impl Actor {
     }
 
     fn report(&mut self) {
-        let failures = self.live.failures();
-        let alert = failures.iter().any(|f| !self.live.reported.contains(f));
-        self.live.reported = failures;
+        let failure = &self.live.failure;
+        let alert = failure.is_some() && *failure != self.live.reported;
+        self.live.reported.clone_from(failure);
         self.publish_live(alert);
     }
 
     fn live_reset(&mut self) {
-        for timer in [Timer::Caret, Timer::Halting, Timer::Retry, Timer::Issues] {
+        for timer in [Timer::Caret, Timer::Halting, Timer::Issues] {
             self.timers.remove(&timer);
         }
         let live = &mut self.live;
@@ -162,15 +157,9 @@ impl Actor {
         self.live.active() || self.timers.contains_key(&Timer::Restart)
     }
 
-    fn fail(&mut self, error: CoreError) {
-        self.live.failure = Some(error.message);
-        self.report();
-    }
-
     fn ended(&mut self) {
         self.live.phase = LivePhase::Stopped;
         self.live_reset();
-        self.live.rejected.clear();
         self.live.document_seen = false;
         self.publish_live(false);
         self.publish_pdf();
@@ -196,10 +185,9 @@ impl Actor {
 
     pub fn live_start(&mut self) {
         let live = &mut self.live;
+        live.stop();
         live.phase = LivePhase::Starting;
-        live.failure = None;
-        live.rejected.clear();
-        live.reported.clear();
+        (live.failure, live.reported) = (None, None);
         self.live_reset();
         self.publish_live(false);
         let (mut files, mut versions) = (Vec::new(), HashMap::new());
@@ -219,26 +207,19 @@ impl Actor {
             let _ = tx.send(Msg::Live(generation, event));
         });
         let path_env = self.service.tool_paths().1;
-        match (self.preview).start(self.id, &self.project, &files, &path_env, &pane, sink) {
-            Ok(status) => {
-                self.live.synced = versions.keys().cloned().collect();
-                self.live.sent = versions;
-                (self.live.sent_view, self.live.caret) = (self.live.view, caret);
-                if status.running {
-                    self.live.phase = LivePhase::Running;
-                } else if status.error.is_none() {
-                    self.live.failure = Some(messages::texpresso_didnt_start());
-                }
-                self.live.error = status.error;
-                self.report();
-                if status.running {
-                    self.flush_pending();
-                } else {
-                    self.ended();
-                }
+        match (self.preview).start(&self.project, &files, &path_env, &pane, sink) {
+            Ok(run) => {
+                let live = &mut self.live;
+                (live.run, live.phase) = (Some(run), LivePhase::Running);
+                live.synced = versions.keys().cloned().collect();
+                live.sent = versions;
+                (live.sent_view, live.caret) = (live.view, caret);
+                self.publish_live(false);
+                self.flush_pending();
             }
             Err(error) => {
-                self.fail(error);
+                self.live.failure = Some(error.message);
+                self.report();
                 self.ended();
             }
         }
@@ -251,21 +232,23 @@ impl Actor {
 
     pub fn live_stop(&mut self) {
         self.live_cancel_work();
-        if self.live.phase == LivePhase::Stopped {
-            self.preview.stop_request(self.id);
-            return;
+        self.live.stop();
+        if self.live.phase != LivePhase::Stopped {
+            self.ended();
         }
-        self.live.phase = LivePhase::Stopping;
-        self.live_reset();
-        self.publish_live(false);
-        self.live.error = self.preview.stop_request(self.id).error;
-        self.ended();
     }
 
     pub fn live_follow(&mut self) {
         if self.live.active() {
             self.after(Timer::Restart);
         }
+    }
+
+    pub fn live_restart(&mut self) {
+        if let Some(run) = &self.live.run {
+            run.stop();
+        }
+        self.live_follow();
     }
 
     pub fn live_edited(&mut self, path: &str, version: u64, edit: &TextEdit) {
@@ -279,12 +262,8 @@ impl Actor {
             return;
         }
         let (start, length) = (edit.start as usize, edit.length as usize);
-        if live.fits(path)
-            && self
-                .preview
-                .edit(self.id, path, start, length, &edit.text)
-                .is_ok()
-        {
+        let run = live.run.as_ref().filter(|_| live.fits(path));
+        if run.is_some_and(|run| run.edit(path, start, length, &edit.text)) {
             return self.mark_sent();
         }
         self.live.pending.insert(path.to_owned(), None);
@@ -299,10 +278,9 @@ impl Actor {
     }
 
     pub fn flush_pending(&mut self) {
-        if self.live.phase != LivePhase::Running {
+        let Some(run) = self.live.running() else {
             return;
-        }
-        self.timers.remove(&Timer::Retry);
+        };
         while let Some((path, text)) = self.live.pending.pop_first() {
             let (text, version) = match text {
                 Some(text) => (text, None),
@@ -314,47 +292,28 @@ impl Actor {
                     None => continue,
                 },
             };
-            match self.preview.update(self.id, &path, &text) {
-                Ok(()) => {
-                    self.live.rejected.remove(&path);
-                    if self.live.pending.is_empty() {
-                        self.live.failure = None;
-                    }
-                    if let Some(version) = version {
-                        self.live.sent.insert(path.clone(), version);
-                    }
-                    self.live.synced.insert(path);
-                    self.mark_sent();
-                    self.publish_live(false);
-                }
-                Err(error) if error.kind == crate::ErrorKind::Invalid => {
-                    self.live.rejected.insert(path, error.message);
-                    self.live.failure = None;
-                    self.report();
-                }
-                Err(error) => {
-                    self.fail(error);
-                    self.live.pending.entry(path).or_insert(Some(text));
-                    self.after(Timer::Retry);
-                    return;
-                }
+            run.update(&path, &text);
+            if let Some(version) = version {
+                self.live.sent.insert(path.clone(), version);
             }
+            self.live.synced.insert(path);
+            self.mark_sent();
         }
     }
 
     pub fn live_rescan(&mut self) {
-        if self.live.phase == LivePhase::Running
-            && let Err(error) = self.preview.rescan(self.id)
-        {
-            self.fail(error);
+        if let Some(run) = self.live.running() {
+            run.rescan();
         }
     }
 
     pub fn live_view(&mut self, first: u32, last: u32) {
         let pages = (first, last.max(first));
         self.live.view = Some(pages);
-        if self.live.phase == LivePhase::Running && self.live.sent_view != Some(pages) {
-            let _ = self.preview.view(self.id, pages.0, pages.1);
+        if let Some(run) = self.live.running()
+            && self.live.sent_view != Some(pages)
+        {
+            run.view(pages.0, pages.1);
             self.live.sent_view = Some(pages);
         }
     }
@@ -371,9 +330,12 @@ impl Actor {
         let Some((path, offset)) = live.wanted.clone() else {
             return;
         };
-        if live.fits(&path) && live.caret != live.wanted {
+        if live.fits(&path)
+            && live.caret != live.wanted
+            && let Some(run) = &live.run
+        {
             live.caret.clone_from(&live.wanted);
-            let _ = self.preview.caret(self.id, &path, offset);
+            run.caret(&path, offset);
         }
     }
 
@@ -481,7 +443,9 @@ impl Actor {
 impl Actor {
     fn mark_sent(&mut self) {
         self.live.mark_sent = self.edits;
-        let _ = self.preview.mark(self.id, self.edits);
+        if let Some(run) = &self.live.run {
+            run.mark(self.edits);
+        }
     }
 
     pub fn live_issues_settled(&mut self) {
@@ -489,7 +453,8 @@ impl Actor {
         if live.phase != LivePhase::Running || live.mark_read != live.mark_sent {
             return;
         }
-        let (Some(log), Some(main)) = (self.preview.tex_log(self.id), &self.tree.main) else {
+        let log = live.run.as_ref().and_then(|run| run.tex_log());
+        let (Some(log), Some(main)) = (log, &self.tree.main) else {
             return;
         };
         let files = self.tree.files.iter();

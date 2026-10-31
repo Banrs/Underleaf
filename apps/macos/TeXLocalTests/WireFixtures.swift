@@ -125,6 +125,7 @@ nonisolated enum FixtureUnion: Codable, Hashable, Sendable {
     case empty
     case plain(FixtureStruct)
     case many([FixtureUnit])
+    case note(String)
 
     enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
@@ -136,6 +137,7 @@ nonisolated extension FixtureUnion {
         case "empty": self = .empty
         case "plain": self = .plain(try wire.decode(FixtureStruct.self, forKey: .value))
         case "many": self = .many(try wire.decode([FixtureUnit].self, forKey: .value))
+        case "note": self = .note(try wire.decode(String.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
         }
     }
@@ -149,6 +151,9 @@ nonisolated extension FixtureUnion {
             try wire.encode(value, forKey: .value)
         case .many(let value):
             try wire.encode("many", forKey: .type)
+            try wire.encode(value, forKey: .value)
+        case .note(let value):
+            try wire.encode("note", forKey: .type)
             try wire.encode(value, forKey: .value)
         }
     }
@@ -170,6 +175,7 @@ nonisolated let wireSamples: [(any (Codable & Hashable & Sendable).Type, String)
     (FixtureOptional.self, #"{"note":"n","hint":2}"#),
     (FixtureUnit.self, #""light""#),
     (FixtureUnion.self, #"{"type":"empty"}"#),
+    (FixtureUnion.self, #"{"type":"note","value":"π"}"#),
     (FixtureUnion.self, #"{"type":"plain","value":{"name":"π","count":3,"total":18446744073709551615,"ratio":0.5,"on":true,"bytes":"aGk="}}"#),
     (FixtureList.self, #"{"items":[]}"#),
     (FixtureMap.self, #"{"scores":{"a":1}}"#),
@@ -184,4 +190,14 @@ nonisolated let wireRejects: [(any (Codable & Hashable & Sendable).Type, String)
     (FixtureUnion.self, #"{"type":"round"}"#),
     (FixtureUnion.self, #"{"type":"plain","value":{"name":"a","count":1,"total":1,"ratio":1.0,"on":false,"bytes":""},"more":1}"#),
     (FixtureMap.self, #"{"scores":{"a":"1"}}"#),
+]
+
+nonisolated let wireSaid = [
+    #"{"type":"reply","value":{"id":7,"answer":{"type":"ok","value":"main.tex"}}}"#,
+    #"{"type":"reply","value":{"id":8,"answer":{"type":"error","value":{"kind":"notFound","message":{"id":"no_such_session","args":{},"text":"No such session"}}}}}"#,
+    #"{"type":"event","value":{"session":1,"event":{"type":"liveAlert"}}}"#,
+    #"{"type":"event","value":{"session":1,"event":{"type":"section","value":{"type":"lifecycle","value":{"type":"stopped","value":{"unsaved":["main.tex"]}}}}}}"#,
+    #"{"type":"library","value":{"type":"projects","value":[]}}"#,
+    #"{"type":"library","value":{"type":"tex","value":{"available":true,"latexmkVersion":"4.86","texDir":null,"found":"/Library/TeX/texbin","texpresso":null,"texpressoDir":null}}}"#,
+    #"{"type":"log","value":{"level":"fault","text":"thread 'texlocal-session-1' panicked at src/session/build.rs:9:5:\nboom"}}"#,
 ]

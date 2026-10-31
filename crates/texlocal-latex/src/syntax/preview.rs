@@ -105,7 +105,7 @@ impl SourceDocument {
             if !seen.insert(name) {
                 continue;
             }
-            let command = self.symbols.commands.iter().find(|c| c.name == name);
+            let command = self.symbols.commands().find(|c| c.name == name);
             if let Some(definition) = command.and_then(|c| c.tex.as_deref()) {
                 wanted.extend(words(definition));
                 definitions.push_str(definition);

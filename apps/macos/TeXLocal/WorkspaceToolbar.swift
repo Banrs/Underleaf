@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 extension NSToolbarItem.Identifier {
-    static let back = Self("back")
     static let format = Self("format")
     static let math = Self("math")
     static let insert = Self("insert")
@@ -42,7 +41,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
+        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
          .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
     }
@@ -52,7 +51,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .back, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .toggleInspector]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
@@ -65,14 +64,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                  willBeInsertedIntoToolbar inserted: Bool) -> NSToolbarItem? {
         let item: NSToolbarItem
         switch id {
-        case .back:
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = "Back"
-            item.toolTip = "Return to Projects"
-            item.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: item.label)
-            item.target = self
-            item.action = #selector(back)
-            item.isNavigational = true
         case .format:
             item = NSToolbarItem(itemIdentifier: id)
             item.label = "Format"
@@ -118,7 +109,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         default: return nil
         }
         item.autovalidates = false
-        item.visibilityPriority = [.back, .compile, .layout].contains(id) ? .high : .low
+        item.visibilityPriority = [.compile, .layout].contains(id) ? .high : .low
         if inserted { configure(item, state) }
         return item
     }
@@ -233,7 +224,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func zoom(_ control: NSSegmentedControl) {
         if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }
     }
-    @objc private func back() { window.perform(.projectClose, on: project) }
     @objc private func compile() { window.perform(project.compiling ? .compileStop : .compileRun, on: project) }
 
     private func compileButton(_ state: State) -> CompileButton {

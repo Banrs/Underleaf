@@ -4,7 +4,7 @@ use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::Place;
+use texlocal_latex::facts::Place;
 use texlocal_latex::{FileKind, file_kind, utf16};
 
 use super::files::{Planned, inside, write_all};

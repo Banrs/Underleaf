@@ -22,7 +22,7 @@ struct PDFEmptyState: View {
             } actions: {
                 ProgressView()
             }
-        } else if app.tex?.available != true {
+        } else if app.tex?.available == false {
             ContentUnavailableView {
                 Label("TeX Isn’t Installed", systemImage: "richtext.page")
             } description: {

@@ -4,10 +4,18 @@ import Testing
 
 @Suite(.serialized)
 struct CoreTests {
-    @Test func theLibraryIsTheTestOne() throws {
+    @Test func theLibraryAndStateAreTheTestOnes() throws {
         let data = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let state = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_STATE"])
         #expect(Core.libraryFolder == URL(filePath: data, directoryHint: .isDirectory))
+        #expect(Core.stateFolder == URL(filePath: state, directoryHint: .isDirectory))
         #expect(Core.shared.isOpen)
+    }
+
+    @Test func aFailedOpenNamesTheFolderThatCantBeWritten() {
+        let missing = URL(filePath: "/nonexistent/state", directoryHint: .isDirectory)
+        #expect(Core.advice([Core.libraryFolder, missing]).contains("/nonexistent/state"))
+        #expect(Core.advice().contains(Core.libraryPath))
     }
 
     @Test func aCommandAnswersDecodedValuesAfterTheLibraryItChanged() async throws {
@@ -48,7 +56,7 @@ struct CoreTests {
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), editor = views.editor
-        await project.load()
+        try await project.load()
         #expect(project.openPath == "main.tex" && editor.path == "main.tex")
         try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
@@ -70,13 +78,35 @@ struct CoreTests {
         try await waitUntil { !views.editor.textView.isEditable }
     }
 
+    @Test func theEditorAppliesEditsOnlyToTheVersionOfTheFileItShows() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
+        let views = WorkspaceViews(project: project), text = views.editor.textView
+        try await project.load()
+        let stale = try #require(text.document.version)
+        text.insertText("% mine\n", replacementRange: NSRange(location: 0, length: 0))
+        let (shown, version) = (text.string, try #require(text.document.version))
+        let edits = { (path: String, version: UInt64) in
+            DocumentEdits(path: path, version: version, edits: [TextEdit(start: 0, length: 7, text: "% theirs\n")])
+        }
+        #expect(version != stale && !views.apply(edits("main.tex", stale), named: "Restore"))
+        #expect(!views.apply(edits("other.tex", version), named: "Restore"))
+        #expect(text.string == shown && text.document.version == version)
+        #expect(views.apply(edits("main.tex", version), named: "Restore"))
+        #expect(text.string.hasPrefix("% theirs\n"))
+        #expect(await project.close().value)
+    }
+
     @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
         let window = defaults.window()
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
-        await project.load()
+        try await project.load()
         project.engine = .xelatex
         try await waitUntil { project.engine == .xelatex }
         #expect(await project.close().value)
@@ -84,7 +114,7 @@ struct CoreTests {
         let settings = info.path + "/.texlocal.json"
         try "{ not json".write(toFile: settings, atomically: true, encoding: .utf8)
         let corrupt = ProjectModel(id: info.id, window: window)
-        await corrupt.load()
+        try await corrupt.load()
         #expect(window.alert?.title == "Couldn’t Read the Project’s Settings")
         #expect(corrupt.engine == .pdflatex)
         #expect(try String(contentsOfFile: settings, encoding: .utf8) == "{ not json")
@@ -123,6 +153,55 @@ struct CoreTests {
         #expect(try await session.close())
     }
 
+    @Test func aCallMadeWhileTheCloseWaitsOnABuildEndsQuietly() async throws {
+        let project = try await newProject(template: .blank)
+        let latexmk = "#!/bin/sh\n[ \"$1\" = -version ] || { : > started; exec sleep 30; }\n"
+        FileManager.default.createFile(atPath: project.path + "/latexmk", contents: Data(latexmk.utf8), attributes: [.posixPermissions: 0o755])
+        let session = SessionClient(core: .shared)
+        try await session.call(OpenProject(id: project.id, autoCompile: false))
+        try await Core.shared.call(SetTexDir(dir: project.path))
+        try await session.call(Compile(auto: false))
+        try await waitUntil { FileManager.default.fileExists(atPath: project.path + "/started") }
+        try await Core.shared.call(SetTexDir(dir: nil))
+        let closing = Task.immediate { try await session.close() }
+        await #expect(throws: CancellationError.self) { try await session.call(Save(reporting: true)) }
+        #expect(try await closing.value && session.closed)
+    }
+
+    @Test func theCoreLooksForTeXItselfAndAFolderChosenReachesTheLibraryBeforeItsReply() async throws {
+        try await waitUntil { Core.shared.library.tex != nil }
+        let project = try await newProject(template: .blank)
+        let latexmk = "#!/bin/sh\necho 'Latexmk, John Collins, 4 Jan 2026. Version 4.86'\n"
+        FileManager.default.createFile(atPath: project.path + "/latexmk", contents: Data(latexmk.utf8), attributes: [.posixPermissions: 0o755])
+        let defaults = TestDefaults()
+        let app = defaults.app()
+        try await app.setTeXFolder(project.path, texpresso: false)
+        #expect(app.tex?.available == true && app.tex?.latexmkVersion == "4.86" && app.tex?.texDir != nil)
+        try await app.setTeXFolder(nil, texpresso: false)
+        #expect(app.tex?.texDir == nil && !app.settingTeX)
+    }
+
+    @Test func anExportHoldsTheEditsTheCoreSavesAndIsRefusedWhenTheyCantBeSaved() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
+        try await project.load()
+        let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
+        let main = info.path + "/main.tex"
+        let mode = { (mode: Int) in try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: main) }
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
+        let zip = try await project.exportZip()
+        #expect(FileManager.default.fileExists(atPath: zip.path(percentEncoded: false)))
+        #expect(try String(contentsOfFile: main, encoding: .utf8).hasPrefix("% mine\n"))
+        try mode(0o444)
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% more\n", changing: nil, mirroring: false)
+        await #expect(throws: CoreError.self) { try await project.exportZip() }
+        try mode(0o644)
+        #expect(await project.close().value)
+    }
+
     @Test func aSessionTheCoreNeverOpenedClosesAtOnce() async throws {
         let session = SessionClient(core: .shared)
         #expect(try await session.close() && session.closed)
@@ -138,5 +217,20 @@ struct CoreTests {
             #expect(throws: DecodingError.self, "\(json)") { try JSONDecoder().decode(type, from: Data(json.utf8)) }
         }
         #expect(FixtureUnit.highContrast.title == "High Contrast")
+    }
+
+    @Test func theAppReadsEachKindOfThingTheCoreSays() throws {
+        let said = try wireSaid.map { try JSONDecoder().decode(Said<String>.self, from: Data($0.utf8)) }
+        guard case .reply(let ok) = said[0], case .reply(let refused) = said[1], case .event(let event) = said[2],
+              case .event(let stopped) = said[3], case .library = said[4], case .library(.tex(let tex)) = said[5],
+              case .log(let log) = said[6] else {
+            Issue.record("\(said)")
+            return
+        }
+        #expect(try ok.answer.get() == "main.tex")
+        #expect { try refused.answer.get() } throws: { ($0 as? CoreError)?.message.id == .noSuchSession }
+        #expect(event.event == .liveAlert && log.level == .fault)
+        #expect(stopped.event == .section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
+        #expect(tex.available && tex.latexmkVersion == "4.86" && tex.texDir == nil)
     }
 }

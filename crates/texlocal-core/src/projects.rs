@@ -17,15 +17,18 @@ use crate::paths::fold_case;
 pub(crate) const MAX_FILES: usize = 20_000;
 
 pub use files::{RenameResult, create_free, rename_entry};
-pub(crate) use files::{copy_paths, discard_replaced, write_creating};
-pub(crate) use history::{History, Snapshot, Taken, put_back};
-pub use library::{ProjectInfo, create_project, free_project_name, list_projects, rename_project};
+pub(crate) use files::{copy_paths, discard_replaced, untrash, write_creating};
+pub(crate) use history::{History, Job, Reason, Snapshot, Taken, put_back};
+pub use library::{
+    ProjectInfo, create_project, free_project_name, list_projects, put_back_project,
+    rename_project, trash_project,
+};
 pub(crate) use library::{guess_main_file, new_project};
 pub use opened::{Opening, forget_folder, open_path};
-pub(crate) use opened::{find as find_opened, is_opened};
+pub(crate) use opened::{STORE as OPENED_DIR, find as find_opened, is_opened};
 pub(crate) use search::replace_in_files;
 pub use search::{SearchGroup, Written, search_groups, search_project};
-pub use symbols::{Files, Symbols, scan_symbols};
+pub use symbols::{Files, scan_facts};
 pub use tree::{TreeNode, file_tree};
 pub(crate) use tree::{listed, walk};
 

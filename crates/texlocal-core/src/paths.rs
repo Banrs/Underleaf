@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -8,8 +8,10 @@ use texlocal_latex::message::Message;
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::projects::{self, is_opened};
-use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, sys};
+use crate::projects::{self, OPENED_DIR, is_opened};
+use crate::service::Service;
+use crate::settings::APP_SETTINGS_FILE;
+use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, atomic, sys};
 
 pub(crate) fn normalize_segments(
     rel: &str,
@@ -28,18 +30,17 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn find(data_dir: &Path, id: &str) -> Result<Self, CoreError> {
+    pub fn find(service: &Service, id: &str) -> Result<Self, CoreError> {
         let [name] = normalize_segments(id, messages::bad_project_id)?[..] else {
             return Err(CoreError::bad_request(messages::bad_project_id()));
         };
         if is_opened(name) {
-            return projects::find_opened(data_dir, name);
+            return projects::find_opened(&service.state_dir, name);
         }
-        let root = data_dir.join(name);
-        if !root.is_dir() {
+        if !service.data_dir.join(name).is_dir() {
             return Err(CoreError::not_found(messages::no_such_project(id)));
         }
-        Ok(Self::in_folder(&fs::canonicalize(root)?))
+        Ok(Self::in_library(service, name)?)
     }
 
     pub fn name(&self) -> String {
@@ -47,20 +48,62 @@ impl Project {
         name.to_string_lossy().into_owned()
     }
 
-    pub(crate) fn in_folder(root: &Path) -> Self {
-        let settings = root.join(SETTINGS_FILE);
-        Self {
-            ui: settings.clone(),
-            settings,
+    pub(crate) fn in_library(service: &Service, name: &str) -> io::Result<Self> {
+        let root = fs::canonicalize(service.data_dir.join(name))?;
+        Ok(Self {
+            settings: root.join(SETTINGS_FILE),
+            ui: ui_file(&service.state_dir, name),
             build: root.join(BUILD_DIR),
             history: root.join(HISTORY_DIR),
-            root: root.to_path_buf(),
+            root,
+        })
+    }
+}
+
+const UI_DIR: &str = ".ui";
+
+pub(crate) fn ui_file(state_dir: &Path, name: &str) -> PathBuf {
+    state_dir.join(UI_DIR).join(format!("{name}.json"))
+}
+
+pub(crate) fn move_device_state(data_dir: &Path, state_dir: &Path) {
+    for name in [OPENED_DIR, APP_SETTINGS_FILE] {
+        let (from, to) = (data_dir.join(name), state_dir.join(name));
+        if !to.exists()
+            && let Err(err) = atomic::rename_exclusive(&from, &to)
+            && err.kind() == io::ErrorKind::CrossesDevices
+        {
+            let _ = copy_over(&from, &to);
         }
     }
 }
 
+fn copy_over(from: &Path, to: &Path) -> io::Result<()> {
+    let temp = atomic::temp_builder().tempdir_in(to.parent().expect("in the state folder"))?;
+    let copy = temp.path().join("copy");
+    copy_all(from, &copy)?;
+    atomic::rename_exclusive(&copy, to)?;
+    if from.is_dir() {
+        fs::remove_dir_all(from)
+    } else {
+        fs::remove_file(from)
+    }
+}
+
+fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
+    if !fs::symlink_metadata(from)?.is_dir() {
+        return fs::copy(from, to).map(drop);
+    }
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        copy_all(&entry.path(), &to.join(entry.file_name()))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
-    fs::metadata(path).ok().map(|meta| sys::identity(&meta))
+    sys::identity(path, &fs::metadata(path).ok()?).ok()
 }
 
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
@@ -103,6 +146,18 @@ pub(crate) fn in_folder(dir: &str, name: &str) -> String {
     }
 }
 
+pub(crate) fn relative(root: &Path, path: &Path) -> Option<String> {
+    let rest = path.strip_prefix(root).ok()?;
+    let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
+    Some(parts?.join("/"))
+}
+
+pub(crate) fn utf8_name(path: &Path) -> Result<&str, CoreError> {
+    let name = path.file_name().unwrap_or_default();
+    name.to_str()
+        .ok_or_else(|| CoreError::bad_request(messages::not_utf8_name(path.display())))
+}
+
 pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
     let mut rest = path;
     for (i, name) in entry.split('/').enumerate() {
@@ -123,8 +178,8 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 }
 
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
-        (Ok(a), Ok(b)) if sys::identity(&a) == sys::identity(&b))
+    let entry = |path: &Path| sys::identity(path, &fs::symlink_metadata(path).ok()?).ok();
+    entry(a).is_some_and(|a| entry(b) == Some(a))
 }
 
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {
@@ -198,4 +253,55 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
         spelt.push(found);
     }
     path.is_file().then(|| spelt.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    #[test]
+    fn a_path_inside_the_root_is_joined_with_slashes_and_one_that_isnt_utf8_is_refused() {
+        let root = Path::new("/project");
+        let nested = root.join("a").join("b.tex");
+        assert_eq!(relative(root, &nested).as_deref(), Some("a/b.tex"));
+        assert_eq!(relative(root, root).as_deref(), Some(""));
+        assert_eq!(relative(root, Path::new("/elsewhere/b.tex")), None);
+        let latin1 = root.join(OsStr::from_bytes(b"caf\xe9")).join("b.tex");
+        assert_eq!(relative(root, &latin1), None);
+        let refused = utf8_name(latin1.parent().unwrap()).unwrap_err();
+        assert_eq!(refused.kind, crate::ErrorKind::Invalid);
+        assert_eq!(utf8_name(&nested).unwrap(), "b.tex");
+    }
+
+    #[test]
+    fn a_copy_lands_whole_or_not_at_all_and_its_source_goes_only_once_it_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let (data, state) = (dir.path().join("data"), dir.path().join("state"));
+        let (from, to) = (data.join(".opened"), state.join(".opened"));
+        let read = |path: &Path| fs::read_to_string(path).unwrap();
+        fs::create_dir_all(from.join("a/history")).unwrap();
+        fs::create_dir(&state).unwrap();
+        let unreadable = from.join("a/history/1.json");
+        fs::write(&unreadable, "[]").unwrap();
+        let mode = |mode| fs::set_permissions(&unreadable, fs::Permissions::from_mode(mode));
+        mode(0).unwrap();
+        assert!(copy_over(&from, &to).is_err());
+        assert!(fs::read_dir(&state).unwrap().next().is_none());
+        mode(0o644).unwrap();
+        copy_over(&from, &to).unwrap();
+        assert!(!from.exists());
+        assert_eq!(read(&to.join("a/history/1.json")), "[]");
+        let (settings, copied) = (data.join("app.json"), state.join("app.json"));
+        fs::write(&settings, "old").unwrap();
+        copy_over(&settings, &copied).unwrap();
+        fs::write(&settings, "new").unwrap();
+        let refused = copy_over(&settings, &copied).unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!([read(&settings), read(&copied)], ["new", "old"]);
+        assert_eq!(fs::read_dir(&state).unwrap().count(), 2);
+    }
 }

@@ -1,10 +1,12 @@
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use texlocal_latex::syntax::HighlightKind;
 
 use super::*;
 
@@ -19,24 +21,33 @@ struct Core {
     events: Receiver<Value>,
     asked: Cell<u64>,
     _dir: tempfile::TempDir,
-    _sender: Box<Sender<Value>>,
+    _state: tempfile::TempDir,
 }
 
 impl Core {
     fn open() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let (dir, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let (sender, events) = channel();
-        let sender = Box::new(sender);
-        let path = c(dir.path().to_str().unwrap());
+        let sender = Box::leak(Box::new(sender));
+        let path = |dir: &tempfile::TempDir| c(dir.path().to_str().unwrap());
+        let (data_dir, state_dir) = (path(&dir), path(&state));
         let ctx = (&raw const *sender).cast_mut().cast::<c_void>();
-        let handle = unsafe { tl_open(path.as_ptr(), Some(collect), ctx) };
+        let handle = unsafe {
+            tl_open(
+                data_dir.as_ptr(),
+                state_dir.as_ptr(),
+                ptr::null(),
+                Some(collect),
+                ctx,
+            )
+        };
         assert!(!handle.is_null());
         Self {
             handle,
             events,
             asked: Cell::default(),
             _dir: dir,
-            _sender: sender,
+            _state: state,
         }
     }
 
@@ -51,9 +62,9 @@ impl Core {
     fn call_raw(&self, session: Option<u64>, command: Option<&str>, args: Option<&str>) -> Value {
         let id = self.send(session, command, args);
         loop {
-            let said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
-            if said["reply"] == id {
-                return said;
+            let mut said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
+            if said["type"] == "reply" && said["value"]["id"] == id {
+                return said["value"]["answer"].take();
             }
         }
     }
@@ -96,16 +107,30 @@ fn take(text: *mut c_char) -> Value {
     value
 }
 
+fn answered(mut answer: Value) -> Value {
+    assert_eq!(answer["type"], "ok", "{answer}");
+    answer["value"].take()
+}
+
+fn refused(mut answer: Value) -> Value {
+    assert_eq!(answer["type"], "error", "{answer}");
+    answer["value"].take()
+}
+
 fn version(source: *mut TlSource) -> Option<u64> {
     let mut version = 0;
     unsafe { tl_source_version(source, &raw mut version) }.then_some(version)
 }
 
 #[test]
-fn opening_needs_a_folder_and_a_listener() {
+fn opening_needs_two_folders_and_a_listener() {
     let dir = c("/tmp");
-    assert!(unsafe { tl_open(ptr::null(), Some(collect), ptr::null_mut()) }.is_null());
-    assert!(unsafe { tl_open(dir.as_ptr(), None, ptr::null_mut()) }.is_null());
+    let open = |data, state, listener| unsafe {
+        tl_open(data, state, ptr::null(), listener, ptr::null_mut())
+    };
+    assert!(open(ptr::null(), dir.as_ptr(), Some(collect)).is_null());
+    assert!(open(dir.as_ptr(), ptr::null(), Some(collect)).is_null());
+    assert!(open(dir.as_ptr(), dir.as_ptr(), None).is_null());
 }
 
 #[test]
@@ -143,12 +168,17 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
     let mut replies = Vec::new();
     while replies.len() < expected.len() {
         let said = core.events.recv_timeout(Duration::from_secs(10)).unwrap();
-        if let Some(id) = said["reply"].as_u64() {
-            let kind = said["error"]["kind"].as_str().unwrap_or("ok").to_owned();
-            replies.push((id, kind));
+        if said["type"] == "reply" {
+            let answer = &said["value"]["answer"];
+            let kind = if answer["type"] == "ok" {
+                "ok"
+            } else {
+                answer["value"]["kind"].as_str().unwrap()
+            };
+            replies.push((said["value"]["id"].as_u64().unwrap(), kind.to_owned()));
         }
     }
-    assert!(core.events.try_iter().all(|said| said["reply"].is_null()));
+    assert!(core.events.try_iter().all(|said| said["type"] != "reply"));
     replies.sort_unstable();
     let ids: Vec<u64> = replies.iter().map(|(id, _)| *id).collect();
     assert_eq!(ids, expected.iter().map(|(id, _)| *id).collect::<Vec<_>>());
@@ -176,7 +206,7 @@ fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
         || unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
     assert_eq!(
         take(edit()),
-        json!({ "ok": [] }),
+        json!({ "type": "ok", "value": [] }),
         "an edit outside a snippet mirrors nothing"
     );
     let edited = format!("{note}{before}");
@@ -191,28 +221,13 @@ fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(version(source), Some(opened + 2));
     assert!(unsafe { tl_source_editable(source) });
-    assert_eq!(core.ask(7, "CloseProject", json!({}))["ok"], true);
+    assert_eq!(answered(core.ask(7, "CloseProject", json!({}))), true);
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
     assert_eq!(saved, text);
     assert!(!unsafe { tl_source_editable(source) });
-    assert_eq!(take(edit())["error"]["kind"], "conflict");
+    assert_eq!(refused(take(edit()))["kind"], "conflict");
     assert_eq!(source_text(source), text);
     unsafe { tl_source_free(source) };
-}
-
-#[test]
-fn session_events_reach_the_listener() {
-    let core = Core::open();
-    core.call(
-        "CreateProject",
-        json!({ "name": "P", "template": "article" }),
-    );
-    let open = r#"{"id":"P","autoCompile":false}"#;
-    core.send(Some(1), Some("OpenProject"), Some(open));
-    let found = (0..50)
-        .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
-        .find(|event| event["event"]["type"] == "section");
-    assert_eq!(found.unwrap()["session"], 1);
 }
 
 #[test]
@@ -229,12 +244,13 @@ fn a_source_of_the_hosts_own_highlights_and_answers_commands() {
     let command = c("ToggleComment");
     let args = c(r#"{"selections":[{"start":0,"length":0}]}"#);
     let answer = take(unsafe { tl_source_call(source, command.as_ptr(), args.as_ptr()) });
-    assert!(answer["ok"].is_array());
+    assert!(answered(answer).is_array());
     let unknown = c("nope");
-    let refused = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
-    assert_eq!(refused["error"]["kind"], "invalid");
+    let answer = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
+    let refused = refused(answer);
+    assert_eq!(refused["kind"], "invalid");
     let message = json!({ "id": "unknown_command", "args": {}, "text": "Unknown command" });
-    assert_eq!(refused["error"]["message"], message);
+    assert_eq!(refused["message"], message);
     unsafe { tl_source_free(source) };
 }
 
@@ -243,22 +259,18 @@ fn syntax_commands_need_no_source() {
     let menus = c("ListMenus");
     let empty = c("{}");
     let answer = take(unsafe { tl_syntax_call(menus.as_ptr(), empty.as_ptr()) });
-    assert!(answer["ok"]["templates"].is_object());
-    let refused = take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) });
-    assert_eq!(refused["error"]["kind"], "invalid");
+    assert!(answered(answer)["templates"].is_object());
+    let refused = refused(take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) }));
+    assert_eq!(refused["kind"], "invalid");
 }
 
 #[test]
-fn each_message_id_is_in_one_catalog() {
-    let catalogs = [
-        texlocal_latex::messages::CATALOG,
-        texlocal_core::messages::CATALOG,
-        messages::CATALOG,
-    ];
-    let mut ids: Vec<&str> = catalogs.concat().iter().map(|(id, _)| *id).collect();
-    ids.sort_unstable();
-    let twice: Vec<&[&str]> = ids.windows(2).filter(|pair| pair[0] == pair[1]).collect();
-    assert!(twice.is_empty(), "{twice:?}");
+fn a_highlight_kind_is_packed_as_its_place_in_the_protocol() {
+    let kinds = texlocal_core::protocol::protocol().outbound["HighlightKind"]["enum"].take();
+    for (place, kind) in kinds.as_array().unwrap().iter().enumerate() {
+        let kind: HighlightKind = serde_json::from_value(kind.clone()).unwrap();
+        assert_eq!(kind as usize, place);
+    }
 }
 
 #[test]
@@ -266,7 +278,7 @@ fn a_panic_answers_an_error_and_a_new_source_survives_one() {
     let source = own(|| panic!("a broken editor"));
     assert_eq!(source_text(source), "");
     let answer = take(unsafe { answer_on(source, |_| panic!("a broken edit")) });
-    assert_eq!(answer["error"]["kind"], "internal");
+    assert_eq!(refused(answer)["kind"], "internal");
     let text = "kept";
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(source_text(source), text);
@@ -280,4 +292,129 @@ fn the_app_has_the_crates_version_from_one_place() {
     assert!(config.lines().any(|line| line == version), "{config}");
     let project = include_str!("../../../apps/macos/TeXLocal.xcodeproj/project.pbxproj");
     assert!(!project.contains("MARKETING_VERSION"));
+}
+
+type Signature = (String, Vec<String>);
+
+fn words(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn enclosed(text: &str) -> (&str, &str) {
+    let mut depth = 0;
+    for (at, c) in text.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => return (&text[..at], &text[at + 1..]),
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    panic!("no ) closes {text}")
+}
+
+fn listed(params: &str) -> Vec<&str> {
+    let (mut list, mut depth, mut start) = (Vec::new(), 0, 0);
+    for (at, c) in params.char_indices().chain([(params.len(), ',')]) {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                list.push(params[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    list.retain(|param| !param.is_empty());
+    list
+}
+
+fn c_type(rust: &str) -> String {
+    if let Some(pointee) = rust.strip_prefix("*const ") {
+        return format!("const {} *", c_type(pointee));
+    }
+    if let Some(pointee) = rust.strip_prefix("*mut ") {
+        return format!("{} *", c_type(pointee));
+    }
+    let callback = rust.strip_prefix("Option<extern \"C\" fn(");
+    if let Some(params) = callback.and_then(|rest| rest.strip_suffix(")>")) {
+        let params: Vec<String> = listed(params).into_iter().map(c_type).collect();
+        return format!("void (*)({})", params.join(", "));
+    }
+    match rust {
+        "bool" | "TlHandle" | "TlSource" => rust,
+        "c_char" => "char",
+        "c_void" => "void",
+        "u8" => "uint8_t",
+        "u32" => "uint32_t",
+        "u64" => "uint64_t",
+        "usize" => "size_t",
+        "TextRange" => "TlRange",
+        _ => panic!("{rust} has no C type"),
+    }
+    .into()
+}
+
+fn rust_functions(lib: &str) -> BTreeMap<String, Signature> {
+    let lib = words(lib);
+    let items = lib.split("#[unsafe(no_mangle)] pub unsafe extern \"C\" fn ");
+    let function = |item: &str| {
+        let (name, rest) = item.split_once('(').unwrap();
+        let (params, rest) = enclosed(rest);
+        let typed = |param: &str| c_type(param.split_once(": ").unwrap().1);
+        let returns = rest.split_once('{').unwrap().0.trim().strip_prefix("-> ");
+        let returns = returns.map_or("void".into(), c_type);
+        (
+            name.to_owned(),
+            (returns, listed(params).into_iter().map(typed).collect()),
+        )
+    };
+    items.skip(1).map(function).collect()
+}
+
+fn c_functions(header: &str) -> BTreeMap<String, Signature> {
+    let code: Vec<&str> = header
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    let code = words(&code.join(" ").replace("_Nullable", "").replace('*', " * "));
+    let types = |params: &str| -> Vec<String> {
+        let unnamed = |param: &str| {
+            param
+                .rsplit_once(' ')
+                .map_or(param, |(ty, _)| ty)
+                .to_owned()
+        };
+        listed(params).into_iter().map(unnamed).collect()
+    };
+    let (mut functions, mut pointers) = (BTreeMap::new(), BTreeMap::new());
+    for declaration in code.split(';') {
+        let Some((head, rest)) = declaration.split_once('(') else {
+            continue;
+        };
+        let (inner, rest) = enclosed(rest);
+        if let Some(returns) = head.trim().strip_prefix("typedef ") {
+            let params = types(enclosed(rest.strip_prefix('(').unwrap()).0);
+            let name = inner.replace('*', "").trim().to_owned();
+            pointers.insert(name, format!("{returns} (*)({})", params.join(", ")));
+        } else {
+            let (returns, name) = head.trim().rsplit_once(' ').unwrap();
+            functions.insert(name.to_owned(), (returns.to_owned(), types(inner)));
+        }
+    }
+    for param in functions.values_mut().flat_map(|(_, params)| params) {
+        if let Some(pointer) = pointers.get(param) {
+            param.clone_from(pointer);
+        }
+    }
+    functions
+}
+
+#[test]
+fn the_header_declares_each_function_as_lib_rs_defines_it() {
+    let lib = include_str!("lib.rs");
+    let rust = rust_functions(lib);
+    assert_eq!(rust.len(), lib.matches("#[unsafe(no_mangle)]").count());
+    assert_eq!(c_functions(include_str!("../include/texlocal.h")), rust);
 }

@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use super::Msg;
 use crate::SETTINGS_FILE;
-use crate::paths::{disk_spelling, fold_case, within};
+use crate::paths::{disk_spelling, fold_case, relative, within};
 use crate::projects::{TreeNode, listed};
 
 pub(crate) struct Change {
@@ -87,12 +87,6 @@ pub(crate) struct Meaning {
     pub settings: bool,
     pub docs: BTreeSet<String>,
     pub listed: BTreeSet<String>,
-}
-
-fn relative(root: &Path, path: &Path) -> Option<String> {
-    let rest = path.strip_prefix(root).ok()?;
-    let parts: Option<Vec<&str>> = rest.components().map(|c| c.as_os_str().to_str()).collect();
-    Some(parts?.join("/"))
 }
 
 pub(crate) fn classify(

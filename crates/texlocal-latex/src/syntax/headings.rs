@@ -1,8 +1,11 @@
+use std::sync::LazyLock;
+
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::SourceDocument;
-use super::scan::{Scanner, Visit, braced};
+use super::scan::{self, Scanner, Visit, braced};
 use super::scans::SPACING;
 
 impl SourceDocument {
@@ -60,4 +63,34 @@ pub(crate) fn heading_styles(class: Option<&str>) -> Vec<HeadingStyle> {
     })
     .chain(levels)
     .collect()
+}
+
+static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:texorpdfstring|label|index|footnote|begin|end)\s*\{").unwrap()
+});
+static TITLE_STYLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:emph|text(?:bf|it|sl|sc|tt|sf|rm|up|md|normal)|underline|em|bf|it|sl|sc|tt|sf|rm|normalfont|(?:bf|md)series|(?:it|sl|sc|up)shape|(?:rm|sf|tt)family)(?-u:\b)\s*").unwrap()
+});
+static TITLE_BRACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([{}&%$#_])|[{}]").unwrap());
+pub(crate) static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+
+pub(crate) fn plain_title(title: &str) -> Option<String> {
+    let mut rest = title;
+    let mut title = String::new();
+    while let Some(m) = TITLE_DROP.find(rest) {
+        title.push_str(&rest[..m.start()]);
+        rest = &rest[m.end()..];
+        if let Some(close) = scan::closing_brace(rest) {
+            rest = &rest[close + 1..];
+        } else {
+            title.push_str(m.as_str());
+        }
+    }
+    title.push_str(rest);
+    let title = TITLE_STYLE.replace_all(&title, "");
+    let title = TITLE_BRACE.replace_all(&title, "$1");
+    match SPACES.replace_all(&title, " ").trim_matches(' ') {
+        "" => None,
+        title => Some(title.into()),
+    }
 }

@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::syntax::Installed;
 
-use crate::process::run;
+use crate::process::{Processes, run};
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
 use crate::sys;
@@ -33,7 +33,7 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
     years.into_iter().flat_map(children)
 }
 
-pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
+pub(crate) fn tool_paths(app: &AppSettings, helpers: Option<&PathBuf>) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
     let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
         .chain(absolute_dirs(&user))
@@ -41,7 +41,7 @@ pub(crate) fn tool_paths(app: &AppSettings) -> (String, String) {
         .chain(sys::tinytex_root().map(|root| sys::tinytex_bin(&root)))
         .chain(texlive_bins())
         .collect();
-    let texpresso = join_path(app.texpresso_dir.iter().chain(&tex).cloned());
+    let texpresso = join_path(app.texpresso_dir.iter().chain(helpers).chain(&tex).cloned());
     (join_path(tex), texpresso)
 }
 
@@ -59,17 +59,7 @@ fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
 }
 
 pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
-    absolute_dirs(OsStr::new(path_env))
-        .map(|dir| dir.join(program))
-        .find(|path| executable(path))
-}
-
-pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
-    (path.is_absolute() && executable(path)).then(|| path.to_path_buf())
-}
-
-fn executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|meta| sys::executable(&meta))
+    absolute_dirs(OsStr::new(path_env)).find_map(|dir| sys::program(&dir, program))
 }
 
 pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
@@ -77,13 +67,13 @@ pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
     [dir.to_path_buf(), bin.clone()]
         .into_iter()
         .chain(children(bin))
-        .find(|c| program_at(&c.join(program)).is_some())
+        .find(|c| c.is_absolute() && sys::program(c, program).is_some())
 }
 
 static LATEXMK_VERSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
 
-#[derive(Default, Serialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,
@@ -94,8 +84,8 @@ pub struct TexStatus {
     pub texpresso_dir: Option<String>,
 }
 
-pub async fn tex_available(path_env: &str) -> TexStatus {
-    let Ok((0, stdout)) = run("latexmk", &["-version"], path_env).await else {
+pub(crate) async fn tex_available(processes: &Processes, path_env: &str) -> TexStatus {
+    let Ok((0, stdout)) = run(processes, "latexmk", &["-version"], path_env).await else {
         return TexStatus::default();
     };
     TexStatus {

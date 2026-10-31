@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -18,8 +17,9 @@ use texlocal_latex::utf16::byte_offset;
 
 use crate::messages;
 use crate::paths::{self, Project};
-use crate::process::{self, Tree};
-use crate::tex::{find_tool, program_at};
+use crate::process::{self, Processes, Tree};
+use crate::stamp::Stamp;
+use crate::tex::find_tool;
 use crate::{CoreError, lock, settings, sys, tail};
 
 const MAX_OUTPUT: usize = 128 * 1024;
@@ -38,14 +38,6 @@ pub struct FileBuffer {
 pub struct Pane {
     pub view: Option<(u32, u32)>,
     pub caret: Option<(String, usize)>,
-}
-
-#[derive(Debug, Default)]
-pub struct Status {
-    pub running: bool,
-    pub log: String,
-    pub output: String,
-    pub error: Option<Message>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,32 +70,26 @@ pub trait Preview: Send + Sync {
     fn available(&self, path_env: &str) -> bool;
     fn start(
         &self,
-        owner: u64,
         project: &Project,
         files: &[FileBuffer],
         path_env: &str,
         pane: &Pane,
         sink: Sink,
-    ) -> Result<Status, CoreError>;
-    fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError>;
-    fn edit(
-        &self,
-        owner: u64,
-        rel: &str,
-        start: usize,
-        remove: usize,
-        text: &str,
-    ) -> Result<(), CoreError>;
-    fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError>;
-    fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError>;
-    fn rescan(&self, owner: u64) -> Result<(), CoreError>;
-    fn mark(&self, owner: u64, mark: u64) -> Result<(), CoreError>;
-    fn tex_log(&self, owner: u64) -> Option<String>;
-    fn status(&self, owner: u64) -> Result<Status, CoreError>;
-    fn stop_request(&self, owner: u64) -> Status;
-    fn live_text(&self, owner: u64, rel: &str) -> Option<String>;
-    fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError>;
-    fn stop(&self, root: &Path) -> Result<(), CoreError>;
+    ) -> Result<Arc<dyn LiveRun>, CoreError>;
+}
+
+pub trait LiveRun: Send + Sync {
+    fn update(&self, rel: &str, text: &str);
+    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool;
+    fn view(&self, first: u32, last: u32);
+    fn caret(&self, rel: &str, offset: usize);
+    fn rescan(&self);
+    fn mark(&self, mark: u64);
+    fn log(&self) -> String;
+    fn tex_log(&self) -> Option<String>;
+    fn text(&self, rel: &str) -> Option<String>;
+    fn pdf(&self) -> Result<PathBuf, CoreError>;
+    fn stop(&self);
 }
 
 struct Output {
@@ -188,10 +174,34 @@ struct Session {
 }
 
 impl Session {
+    fn new(
+        root: PathBuf,
+        pdf: PathBuf,
+        files: HashMap<String, String>,
+        sink: Sink,
+        tree: Tree,
+    ) -> (Arc<Self>, mpsc::UnboundedReceiver<Vec<u8>>) {
+        let (lines, queued) = mpsc::unbounded_channel();
+        let session = Arc::new(Self {
+            root,
+            pdf,
+            files: Mutex::new(files),
+            sink,
+            state: Mutex::new(State {
+                link: Some(Link { lines, tree }),
+                log: Output {
+                    max: MAX_LOG,
+                    ..Output::default()
+                },
+                ..State::default()
+            }),
+        });
+        (session, queued)
+    }
     fn running(&self) -> bool {
         lock(&self.state).link.is_some()
     }
-    fn stop(&self, error: Option<Message>) {
+    fn end(&self, error: Option<Message>) {
         let link = {
             let mut state = lock(&self.state);
             let link = state.link.take();
@@ -206,19 +216,6 @@ impl Session {
         lock(&self.files).clear();
         (self.sink)(LiveEvent::Ended(error));
     }
-    fn status(&self) -> Status {
-        let state = lock(&self.state);
-        let mut log = state.log.text();
-        if !state.protocol_seen || state.error.is_some() {
-            log.push_str(tail(&state.stderr.text(), 16 * 1024));
-        }
-        Status {
-            running: state.link.is_some(),
-            output: state.output.text(),
-            log: tail(&log, MAX_OUTPUT).to_owned(),
-            error: state.error.clone(),
-        }
-    }
     fn send(&self, messages: &[Value]) {
         let mut lines = Vec::new();
         for message in messages {
@@ -231,9 +228,82 @@ impl Session {
     }
 }
 
+impl LiveRun for Session {
+    fn update(&self, rel: &str, text: &str) {
+        let mut files = lock(&self.files);
+        if !self.running() {
+            return;
+        }
+        let path = self.root.join(rel);
+        let message = match files.get(rel).map(|old| delta(old, text)) {
+            Some((_, 0, "")) => return,
+            Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
+            None => json!(["open", path, text]),
+        };
+        self.send(&[message]);
+        files.insert(rel.to_owned(), text.to_owned());
+    }
+    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool {
+        let mut files = lock(&self.files);
+        if !self.running() {
+            return true;
+        }
+        let spliced = files
+            .get_mut(rel)
+            .and_then(|held| splice(held, start, remove, text));
+        let Some((offset, removed)) = spliced else {
+            return false;
+        };
+        let path = self.root.join(rel);
+        self.send(&[json!(["change", path, offset, removed, text])]);
+        true
+    }
+    fn view(&self, first: u32, last: u32) {
+        self.send(&[json!(["view", first, last.max(first)])]);
+    }
+    fn caret(&self, rel: &str, offset: usize) {
+        let offset = (lock(&self.files).get(rel)).and_then(|text| byte_offset(text, offset));
+        if let Some(offset) = offset {
+            self.send(&[json!(["caret", self.root.join(rel), offset])]);
+        }
+    }
+    fn rescan(&self) {
+        self.send(&[json!(["rescan"])]);
+    }
+    fn mark(&self, mark: u64) {
+        self.send(&[json!(["mark", mark])]);
+    }
+    fn log(&self) -> String {
+        let state = lock(&self.state);
+        let mut log = state.log.text();
+        if !state.protocol_seen || state.error.is_some() {
+            log.push_str(tail(&state.stderr.text(), 16 * 1024));
+        }
+        let texts = [tail(&log, MAX_OUTPUT), &state.output.text()];
+        let texts: Vec<&str> = texts.into_iter().filter(|text| !text.is_empty()).collect();
+        texts.join("\n\n")
+    }
+    fn tex_log(&self) -> Option<String> {
+        let log = &lock(&self.state).log;
+        (log.base == 0).then(|| String::from_utf8_lossy(&log.bytes).into_owned())
+    }
+    fn text(&self, rel: &str) -> Option<String> {
+        lock(&self.files).get(rel).cloned()
+    }
+    fn pdf(&self) -> Result<PathBuf, CoreError> {
+        if !self.pdf.with_extension("synctex").is_file() {
+            return Err(CoreError::not_found(messages::texpresso_unsynced()));
+        }
+        Ok(self.pdf.clone())
+    }
+    fn stop(&self) {
+        self.end(None);
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
-        self.stop(None);
+        self.end(None);
     }
 }
 
@@ -243,75 +313,31 @@ fn remove_pdf_folder(pdf: &Path) {
     }
 }
 
-#[derive(Default)]
 pub struct Manager {
-    sessions: Mutex<HashMap<u64, Arc<Session>>>,
-    shutdown: AtomicBool,
+    processes: Arc<Processes>,
+    cache: PathBuf,
+    sessions: Mutex<Vec<Weak<Session>>>,
 }
 
 impl Drop for Manager {
     fn drop(&mut self) {
-        self.kill_all();
+        self.stop_all();
     }
 }
 
 impl Manager {
-    pub fn kill_all(&self) {
-        self.shutdown.store(true, Ordering::Release);
-        for session in lock(&self.sessions).values() {
-            session.stop(None);
+    pub(crate) fn new(processes: Arc<Processes>, cache: PathBuf) -> Self {
+        Self {
+            processes,
+            cache,
+            sessions: Mutex::default(),
         }
-    }
-    fn owned(&self, owner: u64) -> Result<Arc<Session>, CoreError> {
-        lock(&self.sessions)
-            .get(&owner)
-            .cloned()
-            .ok_or_else(|| CoreError::not_found(messages::live_not_running()))
     }
 
-    fn prepare(&self, owner: u64, project: &Project) -> Result<(PathBuf, PathBuf), CoreError> {
-        fs::create_dir_all(&project.build)?;
-        let build = fs::canonicalize(&project.build)?;
-        if let Some(previous) = lock(&self.sessions).get(&owner) {
-            previous.stop(None);
+    pub fn stop_all(&self) {
+        for session in lock(&self.sessions).iter().filter_map(Weak::upgrade) {
+            session.end(None);
         }
-        let mut folder = tempfile::Builder::new();
-        folder.prefix("texlocal-texpresso-");
-        folder.permissions(sys::permissions(0o700));
-        let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
-        Ok((build, pdf))
-    }
-
-    fn open(
-        &self,
-        owner: u64,
-        root: PathBuf,
-        pdf: PathBuf,
-        buffers: HashMap<String, String>,
-        sink: Sink,
-        tree: Tree,
-    ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
-        let (lines, queued) = mpsc::unbounded_channel();
-        let session = Arc::new(Session {
-            root,
-            pdf,
-            files: Mutex::new(buffers),
-            sink,
-            state: Mutex::new(State {
-                link: Some(Link { lines, tree }),
-                log: Output {
-                    max: MAX_LOG,
-                    ..Output::default()
-                },
-                ..State::default()
-            }),
-        });
-        let mut sessions = lock(&self.sessions);
-        if self.shutdown.load(Ordering::Acquire) {
-            session.stop(None);
-        }
-        sessions.insert(owner, Arc::clone(&session));
-        (session, queued)
     }
 }
 
@@ -340,6 +366,7 @@ fn opening(
 fn command(
     executable: &Path,
     path_env: &str,
+    cache: &Path,
     build: &Path,
     main: &Path,
     root: &Path,
@@ -352,9 +379,22 @@ fn command(
         .arg(main)
         .current_dir(root)
         .stdin(Stdio::piped())
+        .env("XDG_CACHE_HOME", cache)
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    sys::default_signals(&mut command);
     command
+}
+
+fn engine_cache(root: &Path, executable: &Path) -> PathBuf {
+    let key = Stamp::at(&executable.with_file_name("texpresso-xetex")).map_or_else(
+        |_| "unknown".into(),
+        |s| format!("{}-{}", s.size, s.modified),
+    );
+    for old in fs::read_dir(root).into_iter().flatten().flatten() {
+        if old.file_name() != *key {
+            let _ = fs::remove_dir_all(old.path());
+        }
+    }
+    root.join(key)
 }
 
 impl Preview for Manager {
@@ -363,39 +403,37 @@ impl Preview for Manager {
     }
     fn start(
         &self,
-        owner: u64,
         project: &Project,
         files: &[FileBuffer],
         path_env: &str,
         pane: &Pane,
         sink: Sink,
-    ) -> Result<Status, CoreError> {
+    ) -> Result<Arc<dyn LiveRun>, CoreError> {
         let root = fs::canonicalize(&project.root)?;
         let main = settings::read_settings(&project.settings).main_file;
         let main = paths::safe_path(&root, &main)?;
         if !main.is_file() {
             return Err(CoreError::bad_request(messages::live_no_main()));
         }
+        let none = || CoreError::not_found(messages::no_texpresso());
+        let executable = discover(path_env).ok_or_else(none)?;
+        fs::create_dir_all(&project.build)?;
+        let build = fs::canonicalize(&project.build)?;
+        let mut folder = tempfile::Builder::new();
+        folder.prefix("texlocal-texpresso-");
+        sys::private(&mut folder);
+        let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
+        let cache = engine_cache(&self.cache, &executable);
+        let mut command = command(&executable, path_env, &cache, &build, &main, &root, &pdf);
+        let (mut child, tree) = self.processes.spawn(None, &mut command).map_err(|err| {
+            remove_pdf_folder(&pdf);
+            CoreError::internal(messages::texpresso_unstarted(err))
+        })?;
         let (buffers, opening) = opening(&root, files, pane);
-        let failed = |error: Message| {
-            Ok(Status {
-                error: Some(error),
-                ..Status::default()
-            })
-        };
-        let Some(executable) = discover(path_env) else {
-            return failed(messages::no_texpresso());
-        };
-        let (build, pdf) = self.prepare(owner, project)?;
-        let mut command = command(&executable, path_env, &build, &main, &root, &pdf);
-        let (mut child, tree) = match Tree::spawn(&mut command) {
-            Ok(spawned) => spawned,
-            Err(err) => {
-                remove_pdf_folder(&pdf);
-                return failed(messages::texpresso_unstarted(err));
-            }
-        };
-        let (session, queued) = self.open(owner, root, pdf, buffers, sink, tree.clone());
+        let (session, queued) = Session::new(root, pdf, buffers, sink, tree.clone());
+        let mut sessions = lock(&self.sessions);
+        sessions.retain(|session| session.strong_count() > 0);
+        sessions.push(Arc::downgrade(&session));
         let (stdin, stdout, stderr) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let weak = Arc::downgrade(&session);
@@ -410,112 +448,11 @@ impl Preview for Manager {
         };
         tokio::spawn(stop_on_exit(exit, weak));
         session.send(&opening);
-        Ok(session.status())
-    }
-    fn update(&self, owner: u64, rel: &str, text: &str) -> Result<(), CoreError> {
-        let session = self.owned(owner)?;
-        let mut files = lock(&session.files);
-        if !session.running() {
-            return Ok(());
-        }
-        let path = session.root.join(rel);
-        let message = match files.get(rel).map(|old| delta(old, text)) {
-            Some((_, 0, "")) => return Ok(()),
-            Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
-            None => json!(["open", path, text]),
-        };
-        session.send(&[message]);
-        files.insert(rel.to_owned(), text.to_owned());
-        Ok(())
-    }
-    fn edit(
-        &self,
-        owner: u64,
-        rel: &str,
-        start: usize,
-        remove: usize,
-        text: &str,
-    ) -> Result<(), CoreError> {
-        let session = self.owned(owner)?;
-        let mut files = lock(&session.files);
-        if !session.running() {
-            return Ok(());
-        }
-        let held = files.get_mut(rel);
-        let (offset, removed) = held
-            .and_then(|held| splice(held, start, remove, text))
-            .ok_or_else(|| CoreError::unfit(messages::live_unfit()))?;
-        session.send(&[json!([
-            "change",
-            session.root.join(rel),
-            offset,
-            removed,
-            text
-        ])]);
-        Ok(())
-    }
-    fn view(&self, owner: u64, first: u32, last: u32) -> Result<(), CoreError> {
-        let session = self.owned(owner)?;
-        session.send(&[json!(["view", first, last.max(first)])]);
-        Ok(())
-    }
-    fn caret(&self, owner: u64, rel: &str, offset: usize) -> Result<(), CoreError> {
-        let session = self.owned(owner)?;
-        let offset = (lock(&session.files).get(rel))
-            .and_then(|text| byte_offset(text, offset))
-            .ok_or_else(|| CoreError::unfit(messages::live_unfit()))?;
-        session.send(&[json!(["caret", session.root.join(rel), offset])]);
-        Ok(())
-    }
-    fn rescan(&self, owner: u64) -> Result<(), CoreError> {
-        let session = self.owned(owner)?;
-        if session.running() {
-            session.send(&[json!(["rescan"])]);
-        }
-        Ok(())
-    }
-    fn mark(&self, owner: u64, mark: u64) -> Result<(), CoreError> {
-        self.owned(owner)?.send(&[json!(["mark", mark])]);
-        Ok(())
-    }
-    fn tex_log(&self, owner: u64) -> Option<String> {
-        let session = self.owned(owner).ok()?;
-        let log = &lock(&session.state).log;
-        (log.base == 0).then(|| String::from_utf8_lossy(&log.bytes).into_owned())
-    }
-    fn status(&self, owner: u64) -> Result<Status, CoreError> {
-        Ok(self.owned(owner)?.status())
-    }
-    fn stop_request(&self, owner: u64) -> Status {
-        let session = lock(&self.sessions).remove(&owner);
-        session.map_or_else(Status::default, |session| {
-            session.stop(None);
-            session.status()
-        })
-    }
-    fn live_text(&self, owner: u64, rel: &str) -> Option<String> {
-        lock(&self.owned(owner).ok()?.files).get(rel).cloned()
-    }
-    fn live_pdf(&self, owner: u64) -> Result<PathBuf, CoreError> {
-        let pdf = self.owned(owner)?.pdf.clone();
-        if !pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(messages::texpresso_unsynced()));
-        }
-        Ok(pdf)
-    }
-    fn stop(&self, root: &Path) -> Result<(), CoreError> {
-        let root = fs::canonicalize(root)?;
-        for session in lock(&self.sessions).values().filter(|s| s.root == root) {
-            session.stop(None);
-        }
-        Ok(())
+        Ok(session)
     }
 }
 
 pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
-    if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
-        return program_at(Path::new(&override_path));
-    }
     find_tool("texpresso", path_env).and_then(|p| fs::canonicalize(p).ok())
 }
 
@@ -524,7 +461,7 @@ async fn stop_on_exit(exit: impl Future<Output = Option<String>>, session: Weak<
     impl Drop for Stop {
         fn drop(&mut self) {
             if let Some(session) = self.0.upgrade() {
-                session.stop(self.1.take());
+                session.end(self.1.take());
             }
         }
     }
@@ -548,7 +485,7 @@ async fn write_lines(
             Err(_) => messages::viewer_stopped(),
         };
         if let Some(session) = session.upgrade() {
-            session.stop(Some(messages::texpresso_unsent(error)));
+            session.end(Some(messages::texpresso_unsent(error)));
         }
         break;
     }
@@ -601,7 +538,7 @@ fn apply_message(session: &Session, mut message: Value) {
         state.live
     };
     if !live {
-        return session.stop(Some(messages::live_unpatched()));
+        return session.end(Some(messages::live_unpatched()));
     }
     let event = match verb {
         "page" => match (number(1), message[2].take()) {
@@ -658,6 +595,8 @@ fn apply_message(session: &Session, mut message: Value) {
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
+    use tokio::io::AsyncReadExt;
+
     use super::*;
     use crate::settings::AppSettings;
     use crate::tex::tool_paths;
@@ -673,13 +612,101 @@ mod tests {
             .count()
     }
 
-    async fn typed(manager: &Manager, at: usize, keys: &str) {
+    async fn typed(run: &dyn LiveRun, at: usize, keys: &str) {
         for (i, key) in keys.char_indices() {
-            manager
-                .edit(1, "main.tex", at + i, 0, &key.to_string())
-                .unwrap();
+            assert!(run.edit("main.tex", at + i, 0, &key.to_string()));
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
+    }
+
+    fn listening(dir: &Path) -> (Arc<Session>, Receiver<LiveEvent>) {
+        let (tx, events) = channel();
+        let sink: Sink = Box::new(move |event| drop(tx.send(event)));
+        let pdf = dir.join("live/live.pdf");
+        let (session, _) = Session::new(dir.into(), pdf, HashMap::new(), sink, Tree::default());
+        (session, events)
+    }
+
+    #[test]
+    fn the_output_follows_offsets_before_at_and_past_its_end_and_keeps_its_newest_bytes() {
+        let mut out = Output {
+            max: 8,
+            ..Output::default()
+        };
+        out.append(0, b"abcdef");
+        out.append(4, b"XYZ");
+        assert_eq!((out.base, out.text()), (0, "abcdXYZ".into()));
+        out.append(7, b"123");
+        assert_eq!((out.base, out.text()), (2, "cdXYZ123".into()));
+        out.append(20, b"far");
+        out.truncate(21);
+        assert_eq!((out.base, out.text()), (20, "f".into()));
+        out.append(1, b"near");
+        assert_eq!((out.base, out.text()), (1, "near".into()));
+        let mut log = Output {
+            max: MAX_LOG,
+            ..Output::default()
+        };
+        log.append(0, &vec![b'a'; MAX_OUTPUT + 1]);
+        assert_eq!((log.base, log.text().len()), (0, MAX_OUTPUT));
+    }
+
+    #[tokio::test]
+    async fn a_message_split_between_reads_is_applied_whole_after_the_handshake() {
+        let dir = tempfile::tempdir().unwrap();
+        let (session, events) = listening(dir.path());
+        let first: &[u8] = b"[\"live\",3]\n[\"append\",\"log\",0,\"This is \"]\n[\"page\",0,\"JV";
+        let second: &[u8] = b"BER\"]\nnot json\n[\"append\",\"log\",8,\"TeX\"]\n[\"append\",\"out\",0,\"o\"]\n[\"done\",\"complete\"]\n";
+        read_output(first.chain(second), Arc::clone(&session), true).await;
+        let page = LiveEvent::Page {
+            page: 0,
+            pdf: "JVBER".into(),
+        };
+        let done = LiveEvent::Done("complete".into());
+        let heard: Vec<_> = events.try_iter().collect();
+        use LiveEvent::Log;
+        assert_eq!(heard, [Log, page, Log, Log, done]);
+        assert_eq!(session.log(), "This is TeX\n\no");
+        assert_eq!(session.tex_log().as_deref(), Some("This is TeX"));
+    }
+
+    #[tokio::test]
+    async fn output_without_the_handshake_or_with_another_version_ends_the_preview_once() {
+        for output in [
+            &b"[\"page\",0,\"JV\"]\n"[..],
+            b"[\"live\",2]\n[\"done\",\"x\"]\n",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (session, events) = listening(dir.path());
+            read_output(output, Arc::clone(&session), true).await;
+            let heard: Vec<_> = events.try_iter().collect();
+            assert_eq!(heard, [LiveEvent::Ended(Some(messages::live_unpatched()))]);
+            assert!(!session.running());
+        }
+    }
+
+    #[test]
+    fn texpresso_is_looked_for_in_the_chosen_folder_then_the_apps_own_then_the_path() {
+        let [chosen, helpers] = ["/chosen", "/helpers"].map(PathBuf::from);
+        let mut app = AppSettings::default();
+        app.texpresso_dir = Some(chosen.clone());
+        let dirs = |path: String| std::env::split_paths(&path).collect::<Vec<_>>();
+        let path = dirs(tool_paths(&AppSettings::default(), None).1);
+        let found = dirs(tool_paths(&app, Some(&helpers)).1);
+        assert_eq!(found, [&[chosen, helpers][..], &path].concat());
+    }
+
+    #[test]
+    fn each_engine_keeps_its_own_cache_and_drops_the_last_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, texpresso) = (dir.path().join("cache"), dir.path().join("texpresso"));
+        fs::write(dir.path().join("texpresso-xetex"), "one").unwrap();
+        let first = engine_cache(&root, &texpresso);
+        fs::create_dir_all(&first).unwrap();
+        assert_eq!(engine_cache(&root, &texpresso), first);
+        fs::write(dir.path().join("texpresso-xetex"), "other").unwrap();
+        assert_ne!(engine_cache(&root, &texpresso), first);
+        assert!(!first.exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -709,7 +736,7 @@ mod tests {
         };
         let (tx, events) = channel();
         let sink: Sink = Box::new(move |event| drop(tx.send(event)));
-        let manager = Manager::default();
+        let manager = Manager::new(Arc::default(), dir.path().join("cache"));
         let files = [FileBuffer {
             path: "main.tex".into(),
             text: text.clone(),
@@ -718,40 +745,45 @@ mod tests {
             view: Some((0, 0)),
             caret: None,
         };
-        let path = tool_paths(&AppSettings::default()).1;
-        let status = manager.start(1, &project, &files, &path, &pane, sink);
-        assert!(status.unwrap().running);
-        assert!(typesets(&heard(&events, Duration::from_secs(5))) > 0);
+        let helpers = std::env::var_os("TEXLOCAL_TEXPRESSO")
+            .and_then(|program| Some(Path::new(&program).parent()?.to_path_buf()));
+        let path = tool_paths(&AppSettings::default(), helpers.as_ref()).1;
+        let run = manager.start(&project, &files, &path, &pane, sink).unwrap();
+        let mut started = std::iter::from_fn(|| events.recv_timeout(Duration::from_secs(120)).ok());
+        assert!(started.any(|event| matches!(event, LiveEvent::Done(_))));
+        heard(&events, Duration::from_secs(5));
 
-        typed(&manager, text.find("A sentence").unwrap(), "abcdefgh").await;
+        typed(&*run, text.find("A sentence").unwrap(), "abcdefgh").await;
         let typing: Vec<_> = events.try_iter().collect();
         assert_eq!(typesets(&typing), 0, "only the page in view while typing");
-        let pages = typing.iter().filter_map(|e| match e {
-            LiveEvent::Page { page, .. } => Some(*page),
-            _ => None,
-        });
+        let settling = heard(&events, Duration::from_secs(5));
+        let pages = (typing.iter().chain(&settling))
+            .take_while(|e| !matches!(e, LiveEvent::Done(_)))
+            .filter_map(|e| match e {
+                LiveEvent::Page { page, .. } => Some(*page),
+                _ => None,
+            });
         let pages: Vec<u32> = pages.collect();
         assert!(
             !pages.is_empty() && pages.iter().all(|&page| page == 0),
             "{pages:?}"
         );
-        let settled = typesets(&heard(&events, Duration::from_secs(5)));
         assert!(
-            (1..=3).contains(&settled),
+            (1..=3).contains(&typesets(&settling)),
             "the rest once, then at most two passes"
         );
 
         let last = text.rfind("A sentence").unwrap();
-        manager.caret(1, "main.tex", last).unwrap();
+        run.caret("main.tex", last);
         let moved = heard(&events, Duration::from_secs(3));
         assert_eq!(typesets(&moved), 0, "a caret move alone typesets nothing");
 
-        typed(&manager, text.find("{Part 1}").unwrap() + 5, "xy").await;
+        typed(&*run, text.find("{Part 1}").unwrap() + 5, "xy").await;
         let retitled = typesets(&heard(&events, Duration::from_secs(6)));
         assert!(
             (2..=3).contains(&retitled),
             "the run and at most two passes"
         );
-        manager.stop_request(1);
+        run.stop();
     }
 }

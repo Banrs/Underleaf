@@ -13,8 +13,8 @@ folder on your disk, compiled by the TeX installation on your Mac.
   elsewhere, so a git repository is left as it was.
 - See the source and the PDF side by side, or either one alone. A project opens again on the same
   file and line, at the same zoom.
-- Open several projects at once, each in its own window tab. A project opens in one window at a time,
-  and opening it again brings its window forward.
+- Open several projects at once, each in its own window, from the Projects window (Window ▸ Projects).
+  A project opens in one window at a time, and opening it again brings its window forward.
 - Completion for commands, environments, installed packages, `\cite` keys and `\ref` labels.
   Brackets, dollar signs and environments close as you type, and the maths under the cursor shows
   in a small preview.
@@ -59,27 +59,25 @@ needed), then run:
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 tools/texpresso/build.sh
-tools/texpresso/install.sh --link tools/texpresso/source/build
 zsh tools/install-mac.sh
 ```
 
-The first two build TeXpresso with Underleaf's patch, for Live Preview, and install it, linking
-`/opt/homebrew/bin/texpresso` to it. To keep a TeXpresso you have there, leave out `--link` and choose
-`~/Library/Application Support/TeXLocal/TeXpresso` in Settings › Live Preview. The last builds TeXLocal, copies
-it to `/Applications` and opens it. To update, pull and run all three again, since TeXLocal needs the TeXpresso
-from its own checkout. You can also open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
+The first builds TeXpresso with Underleaf's patch, for Live Preview. The second builds TeXLocal with that
+TeXpresso inside, copies it to `/Applications` and opens it. To update, pull and run both again. You can also
+open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
 
 ## Live Preview
 
-Live Preview, which is experimental, typesets as you type with the TeXpresso you installed above. Turn it on
-from the Compile menu or the project's inspector. If you keep TeXpresso somewhere else, choose its folder in
-Settings › Live Preview.
+Live Preview, which is experimental, typesets as you type with the TeXpresso inside TeXLocal. Turn it on from
+the Compile menu or the project's inspector. To use another TeXpresso, choose its folder in Settings › Live
+Preview.
 
 ## Projects and security
 
 New projects go in a `TeXLocal` folder in your home folder. A project's settings, such as its main
 file and engine, are kept in a `.texlocal.json` file beside its sources. A folder you open keeps its
-settings outside the folder, unless it already has a `.texlocal.json`.
+settings outside the folder, unless it already has a `.texlocal.json`. Where you were in a project
+is kept in `~/Library/Application Support`, so syncing the `TeXLocal` folder doesn't carry it.
 
 Shell escape lets a document run programs on your Mac, so it is off until you turn it on for a
 project. That choice is stored on your Mac, not in the project, so a project you download or clone
@@ -90,5 +88,10 @@ personal `~/.latexmkrc` is always read.
 
 MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under TeXpresso's own MIT
 licence, and the maths previews are drawn with [RaTeX](https://crates.io/crates/ratex-layout) and
-KaTeX's fonts, which are under the SIL Open Font License. Report bugs in
-[Issues](https://github.com/Banrs/Underleaf/issues).
+KaTeX's fonts, which are under the SIL Open Font License.
+
+The app also carries TeXpresso and the Homebrew libraries it links. MuPDF and jbig2dec are under the AGPL-3.0,
+so the TeXpresso inside the app is too; its source is TeXpresso's with the patch in `tools/texpresso`. GLib and
+libintl are under the LGPL-2.1, FreeType under its own licence, and the rest under permissive licences.
+
+Report bugs in [Issues](https://github.com/Banrs/Underleaf/issues).

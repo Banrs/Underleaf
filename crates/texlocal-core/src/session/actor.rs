@@ -1,13 +1,14 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use notify::RecommendedWatcher;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
+use texlocal_latex::project::Scan;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
@@ -20,14 +21,15 @@ use super::edits::{DocumentEdits, Fixed, ProjectEdits};
 use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
+use super::state::{Lifecycle, Stopped};
 use super::watch::{self, Change, TreeIndex};
-use super::{Compiler, Msg, Pending, Preview, Reply, SessionSection, Sessions};
+use super::{Compiler, Msg, OnActor, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
-use crate::events::{Event, Queued, Sent, SessionEvent};
+use crate::events::{Event, Said, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot, Symbols};
+use crate::projects::{self, Job, Reason, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
@@ -37,6 +39,7 @@ requests! {
     Session {
         OpenProject { id: String, auto_compile: bool } -> UiState,
         CloseProject {} -> bool,
+        Reattach {} -> (),
         SetOptions { auto_compile: bool } -> (),
         Open { path: RelPath } -> Option<String>,
         Composing { path: RelPath, composing: bool } -> (),
@@ -59,8 +62,8 @@ requests! {
         Rename { from: RelPath, to: String } -> Option<RenameResult>,
         CreateEntry { folder: String, name: String, dir: bool } -> String,
         SetSettings { patch: SettingsPatch } -> (),
-        PrepareDelete { path: RelPath } -> bool,
-        Deleted { path: RelPath, trashed: bool } -> (),
+        Trash { path: RelPath } -> Option<PathBuf>,
+        PutBack { path: RelPath, trashed: PathBuf } -> (),
         StartLive {} -> (),
         StopLive {} -> (),
         LiveView { first: u32, last: u32 } -> (),
@@ -90,7 +93,6 @@ pub(crate) enum Timer {
     Fs,
     Caret,
     Halting,
-    Retry,
     Restart,
     Disk,
     Log,
@@ -103,12 +105,17 @@ impl Timer {
             Self::Autosave => 700,
             Self::Symbols | Self::Caret => 150,
             Self::Fs => 250,
-            Self::Retry => 750,
             Self::Halting | Self::Issues => 1000,
             Self::Restart | Self::Disk => 180,
             Self::Log => 200,
         })
     }
+}
+
+enum Stage {
+    Open(InSession),
+    Closing(InSession, Vec<Pending<bool>>),
+    Closed,
 }
 
 enum Wake {
@@ -119,17 +126,18 @@ enum Wake {
 
 pub(crate) struct Actor {
     pub id: u64,
+    pub children: u64,
     pub project: Project,
     pub service: Arc<Service>,
     pub compiler: Arc<dyn Compiler>,
     pub preview: Arc<dyn Preview>,
-    events: std::sync::mpsc::Sender<Queued>,
+    events: std::sync::mpsc::Sender<Said>,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub docs: Docs,
     pub next_doc: u64,
     pub open: Option<String>,
     pub opens: Arc<AtomicU64>,
-    pub symbols: Arc<RwLock<Arc<Symbols>>>,
+    pub scan: Arc<RwLock<Arc<Scan>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
     pub edits: u64,
@@ -141,15 +149,14 @@ pub(crate) struct Actor {
     pub fs_pending: Vec<Change>,
     pub tree: TreeIndex,
     _watcher: Option<RecommendedWatcher>,
-    pub deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub history: Arc<Mutex<History>>,
+    pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
+    pub snapshots: usize,
+    pub queued: VecDeque<OnActor>,
     pub sent: Sent<SessionSection>,
-    in_session: Option<InSession>,
-    closing: Option<Pending<bool>>,
-    closed: bool,
+    stage: Stage,
 }
 
 impl Actor {
@@ -173,6 +180,7 @@ impl Actor {
             .flatten();
         let mut builds = Builds::default();
         builds.pdf = built_pdf(&project);
+        settings::migrate(&project);
         let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
         if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
@@ -184,6 +192,7 @@ impl Actor {
         let history = sessions.service.history(&project);
         let mut actor = Self {
             id,
+            children: sessions.service.processes.owner(),
             project,
             service: Arc::clone(&sessions.service),
             compiler: Arc::clone(&sessions.compiler),
@@ -194,7 +203,7 @@ impl Actor {
             next_doc: 1,
             open: None,
             opens,
-            symbols: Arc::default(),
+            scan: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
             edits: 0,
@@ -206,15 +215,14 @@ impl Actor {
             fs_pending: Vec::new(),
             tree: TreeIndex::of(&tree),
             _watcher: watcher,
-            deleting: BTreeSet::new(),
             live: Live::default(),
             later,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
+            snapshots: 0,
+            queued: VecDeque::new(),
             sent: Sent::default(),
-            in_session: Some(in_session),
-            closing: None,
-            closed: false,
+            stage: Stage::Open(in_session),
         };
         actor.reopen(ui.file.clone());
         actor.publish_all(tree);
@@ -241,7 +249,7 @@ impl Actor {
             if step.is_err() {
                 return self.stopped(&mut rx);
             }
-            if self.closed {
+            if matches!(self.stage, Stage::Closed) {
                 return;
             }
             let deadline = self.timers.values().min().copied();
@@ -270,13 +278,15 @@ impl Actor {
     }
 
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
-        self.closed = true;
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.flush_all(false);
             self.stop_compile();
             self.live_stop();
         }));
         self.stop_history();
+        let stopped = Stopped {
+            unsaved: self.dirty_paths(),
+        };
         for (_, doc) in self.docs.iter_mut() {
             doc.doc.close();
             doc.error = Some(if doc.dirty() {
@@ -286,12 +296,20 @@ impl Actor {
             });
         }
         self.publish_documents();
-        self.in_session = None;
+        self.publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
+        for close in self.end() {
+            close.send(Err(super::stopped()));
+        }
         rx.close();
         while let Ok(message) = rx.try_recv() {
-            if let Msg::Command(_, reply) = message {
-                reply.send(Err(super::stopped()));
+            match message {
+                Msg::Command(_, reply) => reply.send(Err(super::stopped())),
+                Msg::Snapshotted(finish) => finish(self),
+                _ => {}
             }
+        }
+        while let Some(queued) = self.queued.pop_front() {
+            queued(self);
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(Err(super::stopped()));
@@ -302,10 +320,25 @@ impl Actor {
         let session = self.id;
         let _ = self
             .events
-            .send(Queued::Event(SessionEvent { session, event }));
+            .send(Said::Event(SessionEvent { session, event }));
     }
 
     fn handle(&mut self, message: Msg) {
+        if let Stage::Closing(_, closes) = &mut self.stage {
+            return match message {
+                Msg::Command(Session::CloseProject(_, answer), reply) => {
+                    closes.push(Pending { reply, answer });
+                }
+                Msg::Command(_, reply) => reply.send(Err(super::gone())),
+                Msg::BuildDone(result) => self.build_done(result),
+                Msg::Cleaned(result) => self.cleaned(result),
+                Msg::Snapshotted(finish) => {
+                    finish(self);
+                    self.close_when_idle();
+                }
+                _ => {}
+            };
+        }
         match message {
             Msg::Changed { doc, version, edit } => self.changed(doc, version, &edit),
             Msg::Command(command, reply) => self.command(command, reply),
@@ -313,6 +346,7 @@ impl Actor {
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
             Msg::Live(generation, event) => self.live_event(generation, event),
+            Msg::Snapshotted(finish) => finish(self),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
                 self.soon(Timer::Fs);
@@ -330,7 +364,6 @@ impl Actor {
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.caret_settled(),
                 Timer::Halting => self.live_halted(true),
-                Timer::Retry => self.flush_pending(),
                 Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
                 Timer::Log => self.publish_live(false),
@@ -351,7 +384,7 @@ impl Actor {
 
     fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
-            if self.closed || self.closing.is_some() {
+            if !matches!(self.stage, Stage::Open(_)) {
                 self.later.clear();
                 return;
             }
@@ -375,6 +408,7 @@ impl Actor {
             Session::CloseProject(CloseProject {}, answer) => {
                 return self.close(Pending { reply, answer });
             }
+            Session::Reattach(Reattach {}, answer) => answer(Ok(self.resync())),
             Session::SetOptions(SetOptions { auto_compile }, answer) => {
                 answer(Ok(self.auto_compile = auto_compile))
             }
@@ -417,9 +451,13 @@ impl Actor {
                     whole_word,
                 },
                 answer,
-            ) => answer(self.replace(&Query::new(&query, match_case, whole_word), &replacement)),
+            ) => {
+                let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
+                return self.before(Reason::ReplaceAll, replace, Pending { reply, answer });
+            }
             Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
-                answer(self.rename_symbol(kind, &from, &to))
+                let rename = self.rename_symbol(kind, from, to);
+                return self.before(Reason::Rename, rename, Pending { reply, answer });
             }
             Session::ApplyFix(ApplyFix { id }, answer) => {
                 return self.fix(id, Pending { reply, answer });
@@ -434,7 +472,7 @@ impl Actor {
                 return self.history_compare(id, path.0, Pending { reply, answer });
             }
             Session::RestoreVersion(RestoreVersion { id, paths }, answer) => {
-                answer(self.history_restore(&id, paths))
+                return self.history_restore(id, paths, Pending { reply, answer });
             }
             Session::Rename(Rename { from, to }, answer) => answer(self.rename(&from.0, &to)),
             Session::CreateEntry(CreateEntry { folder, name, dir }, answer) => {
@@ -443,11 +481,9 @@ impl Actor {
             Session::SetSettings(SetSettings { patch }, answer) => {
                 answer(self.set_settings(&patch, true))
             }
-            Session::PrepareDelete(PrepareDelete { path }, answer) => {
-                answer(self.prepare_delete(&path.0))
-            }
-            Session::Deleted(Deleted { path, trashed }, answer) => {
-                answer(Ok(self.deleted(&path.0, trashed)))
+            Session::Trash(Trash { path }, answer) => answer(self.trash(&path.0)),
+            Session::PutBack(PutBack { path, trashed }, answer) => {
+                answer(self.put_back(&path.0, &trashed))
             }
             Session::StartLive(StartLive {}, answer) => answer(Ok(self.live_start_asked())),
             Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),
@@ -492,26 +528,42 @@ impl Actor {
 
     fn close(&mut self, reply: Pending<bool>) {
         match self.flush_all(true) {
-            Ok(true) => self.closing = Some(reply),
+            Ok(true) => {}
             flushed => return reply.send(flushed),
         }
+        let Stage::Open(held) = std::mem::replace(&mut self.stage, Stage::Closed) else {
+            unreachable!("a closing session queues its closes")
+        };
+        self.stage = Stage::Closing(held, vec![reply]);
+        self.publish(SessionSection::Lifecycle(Lifecycle::Closing));
         self.stop_compile();
         self.live_stop();
         self.docs.clear();
+        self.timers.clear();
         self.close_when_idle();
     }
 
     pub fn close_when_idle(&mut self) {
-        if self.builds.busy() {
+        if self.builds.busy() || self.snapshots > 0 || !matches!(self.stage, Stage::Closing(..)) {
             return;
         }
-        let Some(reply) = self.closing.take() else {
-            return;
-        };
         self.stop_history();
-        self.closed = true;
-        self.in_session = None;
-        let _ = self.service.publish_projects();
-        reply.send(Ok(true));
+        let closes = self.end();
+        self.publish(SessionSection::Lifecycle(Lifecycle::Closed));
+        self.service.relist();
+        for close in closes {
+            close.send(Ok(true));
+        }
+    }
+
+    fn end(&mut self) -> Vec<Pending<bool>> {
+        self.service.processes.end(self.children);
+        match std::mem::replace(&mut self.stage, Stage::Closed) {
+            Stage::Closing(held, closes) => {
+                drop(held);
+                closes
+            }
+            _ => Vec::new(),
+        }
     }
 }

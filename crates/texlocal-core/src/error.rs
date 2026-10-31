@@ -15,7 +15,6 @@ pub enum ErrorKind {
     Denied,
     NotFound,
     Conflict,
-    Unfit,
     Unavailable,
     Internal,
 }
@@ -38,9 +37,6 @@ impl CoreError {
     }
     pub fn conflict(message: Message) -> Self {
         Self::new(ErrorKind::Conflict, message)
-    }
-    pub fn unfit(message: Message) -> Self {
-        Self::new(ErrorKind::Unfit, message)
     }
     pub(crate) fn unavailable(message: Message) -> Self {
         Self::new(ErrorKind::Unavailable, message)

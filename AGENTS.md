@@ -3,15 +3,16 @@
 The Mac app TeXLocal: a Rust core in `crates/` and the SwiftUI and AppKit app in `apps/macos`.
 
 - `texlocal-latex`: the editor and LaTeX logic. No files, processes, threads or clock, so it builds for the web.
-- `texlocal-core`: projects, sessions, compiling and the live preview. Platform calls stay in `sys.rs`.
+- `texlocal-core`: projects, sessions, compiling and the live preview. Platform calls stay in `sys/`, by platform.
 - `texlocal-ffi`: the C ABI the app links.
+- `texlocal-wire`: writes the app's side of the protocol from the core's types.
 
 The app talks to the core two ways. The editor engine is synchronous and in process (`tl_source_*`). Everything
 else is one ordered stream: `tl_send` and `tl_session_send` carry the commands that `texlocal-core/src/protocol.rs`
 types, and one listener hears their replies after the events sent before them. A session's state arrives as
-sections, each sent again only when it changes. The Swift side of the protocol, `apps/macos/TeXLocal/Wire.swift`,
-and the test fixtures in `WireFixtures.swift` are generated: after changing a command, event or section type, run
-`BLESS=1 cargo test -p texlocal-core --test wire` and commit what it writes.
+sections, each sent again only when it changes or on `Reattach`. The Swift side of the protocol,
+`apps/macos/TeXLocal/Wire.swift`, and the test fixtures in `WireFixtures.swift` are generated: after changing a
+command, event or section type, run `cargo run -p texlocal-wire -- --write` and commit what it writes.
 
 ## Where code goes
 
@@ -33,6 +34,7 @@ Ask in order; the first yes decides.
 - `cargo test --workspace`
 - `cargo check -p texlocal-latex --target wasm32-unknown-unknown`
 - `cargo check -p texlocal-core --target aarch64-apple-ios`
+- `cargo check -p texlocal-core --target x86_64-unknown-linux-gnu`
 - `CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime cargo test -p texlocal-latex --target wasm32-wasip1`
 - `zsh tools/qa/typecheck.sh`
 - `tools/qa/xctest.sh . $QA_SCRATCH/dd-xctest`
@@ -41,19 +43,21 @@ Ask in order; the first yes decides.
 wasm test needs `brew install wasmtime` once. The QA scripts need `zsh tools/qa/setup.sh <scratch>` once, then
 `export QA_SCRATCH=<scratch>`.
 
+`typecheck.sh` also type-checks the model files in its `models` list for iOS, so AppKit stays in the view files: a
+model reaches the platform through `ProjectViews` or `AppWindow`, and a new model file joins the list.
+
 The real-TeX tests, `cargo test -p texlocal-core -- --ignored`, need TeX on the `PATH` and, for Live Preview, a
 TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly and
 on pull requests that touch TeX code.
 
-`zsh tools/qa/build.sh` builds the QA app, and `$QA_SCRATCH/qa/qa` drives it for checking by eye what no test can.
+`zsh tools/qa/build.sh` builds the QA app, bundling the TeXpresso build in `$TEXPRESSO_BUILD` (by default
+`tools/texpresso/source/build`), and `$QA_SCRATCH/qa/qa` drives it for checking by eye what no test can.
 
 ## Rules
 
 - Never run tests or UI checks against the installed app or `~/TeXLocal`. Use the QA app that
   `tools/qa` builds, with its own data.
-- Install only when asked: TeXpresso first (`tools/texpresso/build.sh`, then
-  `tools/texpresso/install.sh tools/texpresso/source/build`), since the app needs the TeXpresso of its own
-  checkout, then `zsh tools/install-mac.sh`. Pass `--link` to `install.sh` only when the user asks for
-  `/opt/homebrew/bin/texpresso` to link to it. `zsh tools/install-mac.sh --dev` instead builds a branch as
+- Install only when asked: `tools/texpresso/build.sh`, then `zsh tools/install-mac.sh`, which puts that
+  TeXpresso inside the app. `zsh tools/install-mac.sh --dev` instead builds a branch as
   `~/Applications/TeXLocal Dev.app`, with its own bundle identifier, preferences and projects folder,
   `~/TeXLocal Dev`, leaving the installed app as it is.

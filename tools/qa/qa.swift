@@ -439,11 +439,12 @@ func bestHit(_ text: String, roots: [AXUIElement], role: String?, index: Int?) -
 
 func launch() {
     let dataDir = takeOpt("--data") ?? "\(SCR)/qa-library"
+    let stateDir = (dataDir as NSString).standardizingPath + "-state"
     let dark = takeFlag("--dark"), light = takeFlag("--light")
     var extra: [String] = []
     if let i = args.firstIndex(of: "--") { extra = Array(args[(i + 1)...]) }
     if targetApp() == nil {
-        var envs = ["TEXLOCAL_DATA=\(dataDir)"]
+        var envs = ["TEXLOCAL_DATA=\(dataDir)", "TEXLOCAL_STATE=\(stateDir)"]
         let dylib = "\(SCR)/qa/appearance.dylib"
         if dark || light, FileManager.default.fileExists(atPath: dylib) {
             envs = ["QA_APPEARANCE=\(dark ? "dark" : "light")", "DYLD_INSERT_LIBRARIES=\(dylib)"] + envs

@@ -1,4 +1,62 @@
+import AppKit
 import SwiftUI
+
+final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, AppWindow {
+    private static var kept: [HomeWindowController] = []
+    let model: WindowModel
+
+    init(app: AppModel) {
+        model = WindowModel(app: app)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
+        window.isExcludedFromWindowsMenu = true
+        window.tabbingMode = .disallowed
+        window.toolbarStyle = .unified
+        super.init(window: window)
+        window.delegate = self
+        model.controller = self
+        Self.kept.append(self)
+        let home = NSHostingController(rootView: HomeView()
+            .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
+            .environment(app)
+            .environment(model))
+        home.sceneBridgingOptions = [.title, .toolbars]
+        home.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
+        let modals = NSHostingView(rootView: WindowModals(window: model, project: nil))
+        modals.sizingOptions = []
+        home.view.addSubview(modals)
+        window.contentViewController = home
+        window.center()
+        window.setFrameAutosaveName("Projects")
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var undoManager: UndoManager? { window?.undoManager }
+    func show() { showWindow(nil) }
+    func performPDF(_ action: PDFAction) {}
+    func revealSidebar() {}
+
+    func focusSearch() { window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first?.beginSearchInteraction() }
+
+    @objc func performFindPanelAction(_ sender: Any?) { focusSearch() }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item.action != #selector(performFindPanelAction(_:)) || NSTextFinder.Action(rawValue: item.tag) == .showFindInterface
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) { model.isKey = true }
+    func windowDidResignKey(_ notification: Notification) { model.isKey = false }
+
+    func windowWillClose(_ notification: Notification) {
+        model.isKey = false
+        model.windowClosed()
+        Self.kept.removeAll { $0 === self }
+    }
+}
 
 struct HomeView: View {
     @Environment(AppModel.self) private var app
@@ -7,7 +65,7 @@ struct HomeView: View {
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
     @State private var query = ""
-    @State private var slowOpening: String?
+    @State private var slowLoads: [String] = []
     @State private var slowImports: [URL] = []
 
     var body: some View {
@@ -25,9 +83,9 @@ struct HomeView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
-        .task(id: window.opening) {
+        .task(id: loading) {
             if !copied { do { try await Task.sleep(for: .milliseconds(300)) } catch { return } }
-            slowOpening = window.opening
+            slowLoads = loading
         }
         .task(id: window.importing) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
@@ -51,7 +109,7 @@ struct HomeView: View {
                     ProjectLabel(detail: Text("Opening…"), progress: "Opening") { Text(url.lastPathComponent).font(.headline) }
                 }
                 ForEach(shown) { project in
-                    ProjectRow(project: project, working: project.id == window.opening && (project.id == slowOpening || copied),
+                    ProjectRow(project: project, working: loading.contains(project.id) && (slowLoads.contains(project.id) || copied),
                                rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
                 if app.projectsLoaded, shown.isEmpty { noProjects.frame(maxWidth: .infinity).selectionDisabled() }
@@ -108,6 +166,10 @@ struct HomeView: View {
     private func commitRename(_ project: ProjectInfo) {
         guard let name = rename.end(project.id, from: project.name) else { return }
         Task { await window.rename(project, to: name) }
+    }
+
+    private var loading: [String] {
+        app.windows.compactMap(\.project).filter { !$0.initialLoadComplete && !$0.closed }.map(\.id)
     }
 
     private var copying: [URL] { query.isEmpty ? slowImports.filter(window.importing.contains) : [] }

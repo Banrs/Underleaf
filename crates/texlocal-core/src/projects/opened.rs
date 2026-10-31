@@ -8,14 +8,15 @@ use texlocal_latex::{FileKind, file_kind};
 use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
 use super::tree::visit_files;
+use crate::atomic::{self, Flush};
 use crate::error::{CoreError, ErrorKind};
 use crate::messages;
-use crate::paths::{Project, identity};
+use crate::paths::{Project, identity, utf8_name};
 use crate::service::Service;
-use crate::settings::write_settings;
-use crate::{BUILD_DIR, SETTINGS_FILE, atomic, import, lock};
+use crate::settings::new_settings;
+use crate::{BUILD_DIR, SETTINGS_FILE, import, lock};
 
-const STORE: &str = ".opened";
+pub(crate) const STORE: &str = ".opened";
 const FOLDER: &str = "folder.json";
 const SIDECAR: &str = "project.json";
 
@@ -35,16 +36,16 @@ pub(crate) fn is_opened(id: &str) -> bool {
     id.starts_with('.')
 }
 
-fn store(data_dir: &Path, id: &str) -> PathBuf {
-    data_dir.join(STORE).join(&id[1..])
+fn store(state_dir: &Path, id: &str) -> PathBuf {
+    state_dir.join(STORE).join(&id[1..])
 }
 
 fn read(store: &Path) -> Option<Folder> {
     serde_json::from_slice(&fs::read(store.join(FOLDER)).ok()?).ok()
 }
 
-pub(super) fn folders(data_dir: &Path) -> Vec<(String, Folder)> {
-    let Ok(stores) = fs::read_dir(data_dir.join(STORE)) else {
+pub(super) fn folders(state_dir: &Path) -> Vec<(String, Folder)> {
+    let Ok(stores) = fs::read_dir(state_dir.join(STORE)) else {
         return Vec::new();
     };
     let folder = |store: fs::DirEntry| {
@@ -73,16 +74,16 @@ fn project(root: &Path, store: &Path) -> Project {
     }
 }
 
-pub(super) fn list(data_dir: &Path) -> Vec<ProjectInfo> {
+pub(super) fn list(state_dir: &Path) -> Vec<ProjectInfo> {
     let info = |(id, folder): (String, Folder)| {
-        let project = project(&folder.path, &store(data_dir, &id));
+        let project = project(&folder.path, &store(state_dir, &id));
         ProjectInfo::of(id, &project)
     };
-    folders(data_dir).into_iter().map(info).collect()
+    folders(state_dir).into_iter().map(info).collect()
 }
 
-pub(crate) fn find(data_dir: &Path, id: &str) -> Result<Project, CoreError> {
-    let store = store(data_dir, id);
+pub(crate) fn find(state_dir: &Path, id: &str) -> Result<Project, CoreError> {
+    let store = store(state_dir, id);
     let Some(Folder { path, .. }) = read(&store) else {
         return Err(CoreError::not_found(messages::no_such_project(id)));
     };
@@ -96,31 +97,35 @@ pub(crate) fn find(data_dir: &Path, id: &str) -> Result<Project, CoreError> {
 
 pub fn open_path(service: &Service, path: &Path) -> Result<Opening, CoreError> {
     let meta = fs::metadata(path).map_err(CoreError::at(path))?;
-    let data_dir = &service.data_dir;
-    fs::create_dir_all(data_dir)?;
-    let found = locate(data_dir, path)?;
+    fs::create_dir_all(&service.data_dir)?;
+    let found = locate(service, path)?;
     if let Some(Located { id, path: inside }) =
         found.filter(|found| !meta.is_dir() || found.path.is_empty() || !is_opened(&found.id))
     {
-        let project = ProjectInfo::of(id.clone(), &Project::find(data_dir, &id)?);
+        let project = ProjectInfo::of(id.clone(), &service.project(&id)?);
         let file = meta.is_file().then_some(inside);
         return Ok(Opening { project, file });
     }
     let real = fs::canonicalize(path)?;
-    let name = real.file_name().unwrap_or_default().to_string_lossy();
-    let (project, file) = if meta.is_dir() {
-        (open_folder(service, &real, None)?, None)
-    } else if file_kind(&name) != FileKind::Tex {
+    if meta.is_dir() {
+        let project = open_folder(service, &real, None)?;
+        return Ok(Opening {
+            project,
+            file: None,
+        });
+    }
+    let name = utf8_name(&real)?;
+    let (project, file) = if file_kind(name) != FileKind::Tex {
         (import::import_project(service, path)?, None)
     } else {
         let folder = real.parent().expect("a file's folder");
-        let project = match open_folder(service, folder, Some(&name)) {
+        let project = match open_folder(service, folder, Some(name)) {
             Err(refused) if refused.kind == ErrorKind::Invalid => {
                 import::import_project(service, path)?
             }
             opened => opened?,
         };
-        (project, Some(name.into_owned()))
+        (project, Some(name.to_owned()))
     };
     Ok(Opening { project, file })
 }
@@ -130,9 +135,9 @@ fn open_folder(
     root: &Path,
     chosen: Option<&str>,
 ) -> Result<ProjectInfo, CoreError> {
-    let data_dir = &service.data_dir;
+    let state_dir = &service.state_dir;
     let name = root.file_name().unwrap_or(root.as_os_str()).display();
-    let library = fs::canonicalize(data_dir)?;
+    let library = fs::canonicalize(&service.data_dir)?;
     if library.starts_with(root) || root.starts_with(&library) {
         return Err(CoreError::bad_request(messages::holds_library(name)));
     }
@@ -150,14 +155,14 @@ fn open_folder(
         path: root.to_path_buf(),
         identity: identity(root),
     };
-    let same = folders(data_dir).into_iter().find(|(_, known)| {
+    let same = folders(state_dir).into_iter().find(|(_, known)| {
         known.path == folder.path || folder.identity.is_some() && known.identity == folder.identity
     });
     let (store, made) = match same {
-        Some((id, _)) => (store(data_dir, &id), None),
+        Some((id, _)) => (store(state_dir, &id), None),
         None if !tex => return Err(CoreError::bad_request(messages::no_tex(name))),
         None => {
-            let stores = data_dir.join(STORE);
+            let stores = state_dir.join(STORE);
             fs::create_dir_all(&stores)?;
             let made = tempfile::Builder::new()
                 .prefix("")
@@ -165,14 +170,14 @@ fn open_folder(
                 .tempdir_in(stores)?;
             if !own_settings(root) {
                 let settings = import::guessed_settings(root, chosen)?;
-                write_settings(&made.path().join(SIDECAR), &settings)?;
+                new_settings(&made.path().join(SIDECAR), &settings)?;
             }
             (made.path().to_path_buf(), Some(made))
         }
     };
     let record = serde_json::to_vec_pretty(&folder);
     let record = record.map_err(|err| CoreError::bad_request(messages::unexpected(err)))?;
-    atomic::write(&store.join(FOLDER), &record)?;
+    atomic::write(&store.join(FOLDER), &record, Flush::Full)?;
     made.map(tempfile::TempDir::keep);
     let id = format!(".{}", store.file_name().unwrap_or_default().display());
     Ok(ProjectInfo::of(id, &project(root, &store)))
@@ -182,9 +187,9 @@ pub fn forget_folder(service: &Service, id: &str) -> Result<(), CoreError> {
     if !is_opened(id) {
         return Err(CoreError::bad_request(messages::only_opened_forgotten()));
     }
-    let store = store(&service.data_dir, id);
+    let store = store(&service.state_dir, id);
     let library = service.unless_open(id, messages::close_before_forgetting)?;
-    let known = folders(&service.data_dir);
+    let known = folders(&service.state_dir);
     if !known.iter().any(|(known, _)| known == id) {
         return Err(CoreError::not_found(messages::no_such_project(id)));
     }

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
 use texlocal_core::session::{
-    FileBuffer, LiveEvent, Pane, Preview, Project, Sessions, Sink, Status,
+    FileBuffer, LiveEvent, LiveRun, Pane, Preview, Project, Sessions, Sink,
 };
 use texlocal_core::{CoreError, ErrorKind, messages};
 
@@ -30,8 +30,12 @@ pub struct Library {
 impl Library {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("data")).unwrap();
-        let service = Arc::new(Service::new(dir.path().join("data")));
+        let (data, state) = (dir.path().join("data"), dir.path().join("state"));
+        std::fs::create_dir(&data).unwrap();
+        std::fs::create_dir(&state).unwrap();
+        let helpers = std::env::var_os("TEXLOCAL_TEXPRESSO")
+            .and_then(|program| Some(Path::new(&program).parent()?.to_path_buf()));
+        let service = Arc::new(Service::new(data, state, helpers));
         Self { dir, service }
     }
 
@@ -90,6 +94,7 @@ pub struct Rig {
     pub library: Library,
     pub sessions: Arc<Sessions>,
     pub id: String,
+    pub tex: Value,
     events: Receiver<Value>,
     seen: Mutex<Vec<Value>>,
     asked: AtomicU64,
@@ -139,20 +144,25 @@ impl Rig {
         let sessions = Arc::new(match preview {
             Some(preview) => {
                 let compiler = Arc::new(Arc::clone(&service));
+                let preview = Arc::new(Previewing(preview));
                 Sessions::with_compiler(service, compiler, preview, true, listener)
             }
             None => Sessions::new(service, listener),
         });
-        let rig = Self {
+        let mut rig = Self {
             library,
             sessions,
             id,
+            tex: Value::Null,
             events,
             seen: Mutex::default(),
             asked: AtomicU64::default(),
             sent: Mutex::default(),
             open: Mutex::default(),
         };
+        let tex = |e: &Value| e["type"] == "library" && e["value"]["type"] == "tex";
+        rig.tex = rig.find(tex)["value"]["value"].take();
+        rig.forget();
         rig.call("OpenProject", json!({ "id": rig.id, "autoCompile": false }));
         rig
     }
@@ -176,15 +186,22 @@ impl Rig {
     }
 
     pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, Refused> {
+        self.reply(self.send_library(command, args))
+    }
+
+    pub fn send_library(&self, command: &str, args: Value) -> u64 {
         let id = self.asked.fetch_add(1, Ordering::Relaxed);
         self.sessions.send(id, command, args);
-        self.reply(id)
+        id
     }
 
     pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
-        let listed =
-            |e: &Value| e["library"]["type"] == "projects" && matching(&e["library"]["value"]);
-        self.find(listed)["library"]["value"].take()
+        let listed = |e: &Value| {
+            e["type"] == "library"
+                && e["value"]["type"] == "projects"
+                && matching(&e["value"]["value"])
+        };
+        self.find(listed)["value"]["value"].take()
     }
 
     pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
@@ -198,8 +215,9 @@ impl Rig {
     }
 
     pub fn reply(&self, id: u64) -> Result<Value, Refused> {
-        let mut reply = self.find(|e| e["reply"] == id);
-        let ok = reply.get_mut("ok").map(Value::take);
+        let mut reply = self.find(|e| e["type"] == "reply" && e["value"]["id"] == id);
+        let mut answer = reply["value"]["answer"].take();
+        let ok = (answer["type"] == "ok").then(|| answer["value"].take());
         if let (Some(ok), Some((session, command))) = (&ok, self.sent.lock().unwrap().remove(&id)) {
             let mut open = self.open.lock().unwrap();
             match command.as_str() {
@@ -208,7 +226,7 @@ impl Rig {
                 _ => false,
             };
         }
-        ok.ok_or_else(|| serde_json::from_value(reply["error"].take()).unwrap())
+        ok.ok_or_else(|| serde_json::from_value(answer["value"].take()).unwrap())
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
@@ -217,8 +235,11 @@ impl Rig {
     }
 
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        let event = |e: &Value| e["event"]["type"] == kind && matching(&e["event"]["value"]);
-        self.find(event)["event"]["value"].take()
+        let event = |e: &Value| {
+            let event = &e["value"]["event"];
+            e["type"] == "event" && event["type"] == kind && matching(&event["value"])
+        };
+        self.find(event)["value"]["event"]["value"].take()
     }
 
     pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
@@ -228,9 +249,13 @@ impl Rig {
 
     pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| {
-            e["session"] == session && e["event"]["type"] == kind && matching(&e["event"]["value"])
+            let event = &e["value"]["event"];
+            e["type"] == "event"
+                && e["value"]["session"] == session
+                && event["type"] == kind
+                && matching(&event["value"])
         };
-        self.find(event)["event"]["value"].take()
+        self.find(event)["value"]["event"]["value"].take()
     }
 
     pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
@@ -262,11 +287,16 @@ impl Rig {
 
     pub fn said(&self) -> Vec<String> {
         let seen = self.seen.lock().unwrap();
-        let kind = |e: &Value| match &e["event"] {
-            Value::Null if e["library"].is_object() => "library".to_owned(),
-            Value::Null => "reply".to_owned(),
-            event if event["type"] == "section" => event["value"]["type"].as_str().unwrap().into(),
-            event => event["type"].as_str().unwrap().into(),
+        let kind = |e: &Value| {
+            let event = &e["value"]["event"];
+            let kind = if e["type"] != "event" {
+                &e["type"]
+            } else if event["type"] == "section" {
+                &event["value"]["type"]
+            } else {
+                &event["type"]
+            };
+            kind.as_str().unwrap().to_owned()
         };
         seen.iter().map(kind).collect()
     }
@@ -312,6 +342,10 @@ pub struct FakePreview {
 }
 
 impl FakePreview {
+    pub fn running(&self) -> bool {
+        self.sink.lock().unwrap().is_some()
+    }
+
     pub fn send(&self, event: LiveEvent) {
         if let Some(sink) = &*self.sink.lock().unwrap() {
             sink(event);
@@ -319,74 +353,60 @@ impl FakePreview {
     }
 }
 
-impl Preview for FakePreview {
+struct Previewing(Arc<FakePreview>);
+
+impl Preview for Previewing {
     fn available(&self, _: &str) -> bool {
         true
     }
 
     fn start(
         &self,
-        _: u64,
         _: &Project,
         _: &[FileBuffer],
         _: &str,
         _: &Pane,
         sink: Sink,
-    ) -> Result<Status, CoreError> {
-        *self.sink.lock().unwrap() = Some(sink);
-        Ok(Status {
-            running: true,
-            ..Status::default()
-        })
+    ) -> Result<Arc<dyn LiveRun>, CoreError> {
+        *self.0.sink.lock().unwrap() = Some(sink);
+        Ok(self.0.clone())
+    }
+}
+
+impl LiveRun for FakePreview {
+    fn update(&self, _: &str, _: &str) {}
+
+    fn edit(&self, _: &str, _: usize, _: usize, _: &str) -> bool {
+        true
     }
 
-    fn update(&self, _: u64, _: &str, _: &str) -> Result<(), CoreError> {
-        Ok(())
-    }
+    fn view(&self, _: u32, _: u32) {}
 
-    fn edit(&self, _: u64, _: &str, _: usize, _: usize, _: &str) -> Result<(), CoreError> {
-        Ok(())
-    }
+    fn caret(&self, _: &str, _: usize) {}
 
-    fn view(&self, _: u64, _: u32, _: u32) -> Result<(), CoreError> {
-        Ok(())
-    }
+    fn rescan(&self) {}
 
-    fn caret(&self, _: u64, _: &str, _: usize) -> Result<(), CoreError> {
-        Ok(())
-    }
-
-    fn rescan(&self, _: u64) -> Result<(), CoreError> {
-        Ok(())
-    }
-
-    fn mark(&self, _: u64, mark: u64) -> Result<(), CoreError> {
+    fn mark(&self, mark: u64) {
         self.send(LiveEvent::Synced(mark));
-        Ok(())
     }
 
-    fn tex_log(&self, _: u64) -> Option<String> {
+    fn log(&self) -> String {
+        String::new()
+    }
+
+    fn tex_log(&self) -> Option<String> {
         Some(self.log.lock().unwrap().clone())
     }
 
-    fn status(&self, _: u64) -> Result<Status, CoreError> {
-        Ok(Status::default())
-    }
-
-    fn stop_request(&self, _: u64) -> Status {
-        self.sink.lock().unwrap().take();
-        Status::default()
-    }
-
-    fn live_text(&self, _: u64, _: &str) -> Option<String> {
+    fn text(&self, _: &str) -> Option<String> {
         None
     }
 
-    fn live_pdf(&self, _: u64) -> Result<PathBuf, CoreError> {
+    fn pdf(&self) -> Result<PathBuf, CoreError> {
         Err(CoreError::not_found(messages::texpresso_unsynced()))
     }
 
-    fn stop(&self, _: &Path) -> Result<(), CoreError> {
-        Ok(())
+    fn stop(&self) {
+        self.sink.lock().unwrap().take();
     }
 }

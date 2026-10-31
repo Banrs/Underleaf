@@ -15,7 +15,8 @@ typedef struct TlHandle TlHandle;
 
 typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
 
-TlHandle *_Nullable tl_open(const char *_Nullable data_dir, TlCallback _Nullable listener, void *_Nullable ctx);
+TlHandle *_Nullable tl_open(const char *_Nullable data_dir, const char *_Nullable state_dir,
+                            const char *_Nullable helpers_dir, TlCallback _Nullable listener, void *_Nullable ctx);
 
 void tl_free(char *_Nullable text);
 

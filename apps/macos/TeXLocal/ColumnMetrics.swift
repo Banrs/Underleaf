@@ -6,7 +6,7 @@ enum ColumnMetrics {
     static let panelMinimum: CGFloat = 140
     static let windowControls: CGFloat = 132
     static let toggles: CGFloat = 92
-    static let sourceTools: CGFloat = 338
+    static let sourceTools: CGFloat = 294
     static let editingTools: CGFloat = 120
     static let zoom: CGFloat = 156
     static let compile: CGFloat = 110

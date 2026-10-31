@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::Analysis;
 use texlocal_latex::message::Message;
+use texlocal_latex::project::Analysis;
 use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::actor::Actor;
@@ -16,14 +16,30 @@ use crate::settings::{self, ProjectSettings};
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum SessionSection {
+    Lifecycle(Lifecycle),
     Project(ProjectState),
     Tree(Vec<TreeNode>),
     Documents(Vec<DocumentState>),
     OpenFile(Option<OpenFile>),
     Outline(Option<Analysis>),
     Build(BuildState),
+    BuildLog(String),
     ShownPdf(ShownPdf),
     Live(LiveState),
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub(crate) enum Lifecycle {
+    Open,
+    Closing,
+    Closed,
+    Stopped(Stopped),
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct Stopped {
+    pub unsaved: Vec<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -49,18 +65,26 @@ pub(crate) struct OpenFile {
 
 impl Actor {
     pub fn publish(&mut self, section: SessionSection) -> bool {
-        let changed = self.sent.changed(&section);
-        if changed {
-            self.emit(Event::Section(section));
+        let Some(said) = self.sent.changed(&section) else {
+            return false;
+        };
+        self.emit(Event::Section(said));
+        true
+    }
+
+    pub fn resync(&self) {
+        for said in self.sent.each() {
+            self.emit(Event::Section(said));
         }
-        changed
     }
 
     pub fn publish_all(&mut self, tree: Vec<TreeNode>) {
+        self.publish(SessionSection::Lifecycle(Lifecycle::Open));
         self.show_tree(tree);
         self.publish_documents();
         self.publish(SessionSection::Outline(None));
         self.publish_build();
+        self.publish(SessionSection::BuildLog(String::new()));
         self.publish_pdf();
         self.publish_live(false);
     }

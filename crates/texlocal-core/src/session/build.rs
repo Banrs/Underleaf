@@ -193,6 +193,7 @@ impl Actor {
             .map_or(0, |result| result.errors.len());
         let auto = builds.auto;
         let announce = !result.stopped && (!auto || result.errors.len() != before);
+        let log = std::mem::take(&mut result.log);
         (builds.result, builds.result_edits) = (Some(result), builds.built);
         builds.compiling = false;
         if !builds.cleaners.is_empty() {
@@ -202,6 +203,7 @@ impl Actor {
             let _ = self.compile(auto);
         }
         self.publish_build();
+        self.publish(SessionSection::BuildLog(log));
         self.publish_pdf();
         self.emit(Event::BuildFinished(BuildFinished { auto, announce }));
         self.close_when_idle();
@@ -280,6 +282,7 @@ impl Actor {
             let builds = &mut self.builds;
             (builds.pdf, builds.outdated, builds.result) = (None, false, None);
             self.publish_build();
+            self.publish(SessionSection::BuildLog(String::new()));
             self.publish_pdf();
         }
         let queued = self.builds.queued.take();

@@ -10,10 +10,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            items(.projectNew, .fileNew, .fileNewFolder)
-            Button("New Tab") { app.openWindow(beside: app.main) }
-                .keyboardShortcut("t")
-            items(.projectOpen)
+            items(.projectNew, .fileNew, .fileNewFolder, .projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recents) { recent in
                     Button(recent.name, systemImage: "text.document") { Task { await app.front.open(recent.id) } }
@@ -97,6 +94,10 @@ struct AppCommands: Commands {
             Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
             BuildOptionItems(app: app)
             SetMainFileItem(app: app)
+        }
+        CommandGroup(replacing: .singleWindowList) {
+            Button("Projects") { app.showHome() }
+                .keyboardShortcut("1", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .help) {
             items(.quickHelp)

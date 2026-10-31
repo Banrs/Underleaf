@@ -1,13 +1,14 @@
 use std::ops::Range;
 
 use schemars::JsonSchema;
+use serde::Deserialize;
 
 use super::catalog::CATALOG;
 use super::scan::blank_line;
 use super::stack::Stack;
 use super::{NAME, Text, ascii, is, letter};
 
-#[derive(Clone, Copy, Debug, JsonSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum HighlightKind {
     Command,

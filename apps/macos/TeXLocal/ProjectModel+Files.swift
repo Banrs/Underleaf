@@ -34,29 +34,23 @@ extension ProjectModel {
     }
 
     func deleteEntry(_ path: String) async {
-        guard let original = url(path) else { return }
-        let item = UndoableTrash(
-            original: original, name: path.fileName, undoManager: window?.undoManager,
-            trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in _ = try? await self?.session.call(ReloadTree()) },
-            failed: { [weak self] title, error in self?.window?.report(title, error) })
+        let item = UndoableTrash(undoManager: window?.undoManager, trash: { [weak self] in
+            await self?.trashEntry(path)
+        }, putBack: { [weak self] trashed in
+            guard let self else { return false }
+            return await alerting("Couldn’t Put “\(path.fileName)” Back") {
+                try await session.call(PutBack(path: path, trashed: trashed))
+            } != nil
+        })
         trashed.append(item)
         await item.moveToTrash()
     }
 
-    private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
+    private func trashEntry(_ path: String) async -> String? {
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
-        guard await alerting(title, { try await session.call(PrepareDelete(path: path)) }) == true else { return false }
-        do {
-            try item.recycle()
-        } catch {
-            session.send(Deleted(path: path, trashed: false))
-            window?.report(title, error)
-            return false
-        }
-        session.send(Deleted(path: path, trashed: true))
+        guard let trashed = await alerting(title, { try await session.call(Trash(path: path)) }) ?? nil else { return nil }
         views?.trashed(path)
-        return true
+        return trashed
     }
 
     func dropFiles(_ urls: [URL], into dir: String) async {
@@ -69,6 +63,12 @@ extension ProjectModel {
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
 
+    func dropAction(for url: URL) -> DropAction? {
+        guard let path = projectPath(url) else { return includeGraphics(url.lastPathComponent) == nil ? nil : .copy }
+        guard tree.node(at: path) != nil else { return nil }
+        return includeGraphics(path).map(DropAction.insert) ?? .open(path)
+    }
+
     func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
         let request = ImportFiles(dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
         guard let clashes = await alerting("Couldn’t Add the Files", { try await session.call(request).existing.map(\.path) }) else { return }
@@ -76,10 +76,6 @@ extension ProjectModel {
     }
 
     func exportZip(forArxiv: Bool = false) async throws -> URL {
-        guard await save() else {
-            let name = openPath?.fileName ?? self.name
-            throw AppFailure(String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."))
-        }
         removeExport()
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -94,6 +90,8 @@ extension ProjectModel {
         exportFolder = nil
     }
 }
+
+enum DropAction: Equatable { case insert(String), copy, open(String) }
 
 struct ImportClash {
     let urls: [URL]

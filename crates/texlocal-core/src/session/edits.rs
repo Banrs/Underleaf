@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::analyze::{Facts, Place};
+use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::message::Message;
 use texlocal_latex::search::Query;
@@ -12,9 +12,10 @@ use texlocal_latex::{FileKind, file_kind};
 use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
+use super::history::Then;
 use super::scans::tex;
 use crate::messages;
-use crate::projects::{self, Written};
+use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
 use crate::{CoreError, packages};
 
@@ -40,24 +41,18 @@ pub(crate) struct Fixed {
 }
 
 impl Actor {
-    pub fn replace(&self, query: &Query, to: &str) -> Result<ProjectEdits, CoreError> {
+    pub fn replace(&mut self, query: Query, to: String) -> Result<Then<ProjectEdits>, CoreError> {
         let open = self.texts_to_edit()?;
-        let found = |_: &str, text: &str| query.places(text);
-        self.edit_project(
-            "Before Replace All",
-            &open,
-            &texlocal_latex::is_text,
-            &found,
-            to,
-        )
+        let found = move |_: &str, text: &str| query.places(text);
+        edit_project(&open, texlocal_latex::is_text, found, to)
     }
 
     pub fn rename_symbol(
-        &self,
+        &mut self,
         kind: SymbolKind,
-        from: &str,
-        to: &str,
-    ) -> Result<ProjectEdits, CoreError> {
+        from: String,
+        to: String,
+    ) -> Result<Then<ProjectEdits>, CoreError> {
         let (bad_name, undefined, exists): (fn() -> Message, Said, Said) = match kind {
             SymbolKind::Label => (
                 messages::bad_label_name,
@@ -78,30 +73,32 @@ impl Actor {
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
-        let symbols = projects::scan_symbols(&self.project.root, &self.facts, &texts.collect())?;
+        let read = projects::scan_facts(&self.project.root, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
-            let mut files = symbols.by_file.values();
-            files.any(|facts| !syntax::definitions(facts, kind, name).is_empty())
+            let mut files = read.values();
+            files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
         };
-        if !defines(from) {
-            return Err(CoreError::not_found(undefined(from)));
+        if !defines(&from) {
+            return Err(CoreError::not_found(undefined(&from)));
         }
-        if defines(to) {
-            return Err(CoreError::conflict(exists(to)));
+        if defines(&to) {
+            return Err(CoreError::conflict(exists(&to)));
         }
-        let found = |rel: &str, text: &str| {
+        let found = move |rel: &str, text: &str| {
             let facts = Facts::read(text, file_kind(rel));
-            syntax::usages(&facts, rel, kind, from, |_| None)
+            syntax::usages(&facts, rel, kind, &from, |_| None)
         };
-        self.edit_project("Before Rename", &open, &tex, &found, to)
+        edit_project(&open, tex, found, to)
     }
 
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
         let edits = match fix {
             Fix::Install(file) => {
-                let service = Arc::clone(&self.service);
+                let (service, children) = (Arc::clone(&self.service), self.children);
                 tokio::spawn(async move {
-                    let installed = packages::install_package(&file, &service.tool_paths().0).await;
+                    let path = service.tool_paths().0;
+                    let installed =
+                        packages::install_package(&service.processes, children, &file, &path).await;
                     reply.send(match installed {
                         Err(err) if err.kind == crate::ErrorKind::Denied => Ok(None),
                         installed => installed.map(|_| Some(Fixed { edits: None })),
@@ -109,7 +106,14 @@ impl Actor {
                 });
                 return;
             }
-            Fix::AddPackage(name) => self.add_package(&name).map(|added| added.edits),
+            Fix::AddPackage(name) => {
+                let added = self.add_package(name).map(|add| -> Then<Option<Fixed>> {
+                    Box::new(|actor, snapshot| {
+                        add(actor, snapshot).map(|added| Some(Fixed { edits: added.edits }))
+                    })
+                });
+                return self.before(Reason::AddPackage, added, reply);
+            }
             Fix::Xelatex => self.patch_settings(SettingsPatch {
                 engine: Some(Engine::Xelatex),
                 ..SettingsPatch::default()
@@ -126,67 +130,69 @@ impl Actor {
         self.set_settings(&patch, false).map(|()| None)
     }
 
-    fn add_package(&self, name: &str) -> Result<ProjectEdits, CoreError> {
-        let main = self.tree.main.as_deref();
+    fn add_package(&mut self, name: String) -> Result<Then<ProjectEdits>, CoreError> {
         let open = self.texts_to_edit()?;
-        let found = |_: &str, text: &str| {
+        let main = self.tree.main.clone();
+        let line = format!("\n\\usepackage{{{name}}}");
+        let found = move |_: &str, text: &str| {
             let facts = Facts::read(text, FileKind::Tex);
-            let loaded = facts.packages.iter().any(|package| package == name);
+            let loaded = facts.packages.contains(&name);
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
-        let line = format!("\n\\usepackage{{{name}}}");
-        let main = |rel: &str| Some(rel) == main;
-        self.edit_project("Before Adding a Package", &open, &main, &found, &line)
+        let main = move |rel: &str| Some(rel) == main.as_deref();
+        edit_project(&open, main, found, line)
     }
 
-    pub fn texts_to_edit(&self) -> Result<Vec<(String, String, u64)>, CoreError> {
-        let docs = self.docs.values();
+    pub fn texts_to_edit(&mut self) -> Result<Vec<(String, String, u64)>, CoreError> {
         let unsettled = |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some();
-        if let Some(doc) = docs.clone().find(unsettled) {
+        if let Some(doc) = self.docs.values().find(unsettled) {
             return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }
+        self.save_first()?;
         let text = |doc: &Doc| {
             let (text, version) = doc.doc.snapshot();
             (doc.path.clone(), text, version)
         };
-        Ok(docs.map(text).collect())
+        Ok(self.docs.values().map(text).collect())
     }
+}
 
-    fn edit_project(
-        &self,
-        reason: &'static str,
-        open: &[(String, String, u64)],
-        chosen: &dyn Fn(&str) -> bool,
-        found: &dyn Fn(&str, &str) -> Vec<Place>,
-        to: &str,
-    ) -> Result<ProjectEdits, CoreError> {
-        let open = open.iter().filter(|(path, ..)| chosen(path));
-        let mut edits: Vec<DocumentEdits> = open
-            .filter_map(|(path, text, version)| {
-                let lines = Text::new(text).lines;
-                let edit = |place: Place| TextEdit {
-                    start: lines[place.line as usize - 1] + place.column,
-                    length: place.length,
-                    text: to.to_owned(),
-                };
-                let edits: Vec<TextEdit> = found(path, text).into_iter().map(edit).collect();
-                (!edits.is_empty()).then(|| DocumentEdits {
-                    path: path.clone(),
-                    version: *version,
-                    edits,
-                })
+fn edit_project(
+    open: &[(String, String, u64)],
+    chosen: impl Fn(&str) -> bool + Send + 'static,
+    found: impl Fn(&str, &str) -> Vec<Place> + Send + 'static,
+    to: String,
+) -> Result<Then<ProjectEdits>, CoreError> {
+    let mut edits: Vec<DocumentEdits> = open
+        .iter()
+        .filter(|(path, ..)| chosen(path))
+        .filter_map(|(path, text, version)| {
+            let lines = Text::new(text).lines;
+            let edit = |place: Place| TextEdit {
+                start: lines[place.line as usize - 1] + place.column,
+                length: place.length,
+                text: to.clone(),
+            };
+            let edits: Vec<TextEdit> = found(path, text).into_iter().map(edit).collect();
+            (!edits.is_empty()).then(|| DocumentEdits {
+                path: path.clone(),
+                version: *version,
+                edits,
             })
-            .collect();
-        if edits.len() > 1 {
-            return Err(CoreError::conflict(messages::one_document()));
-        }
-        let snapshot = self.snapshot_before(reason)?;
-        let others = |rel: &str| chosen(rel) && !self.docs.contains_key(rel) && !self.deleting(rel);
-        let written = projects::replace_in_files(&self.project.root, &others, found, to)?;
+        })
+        .collect();
+    if edits.len() > 1 {
+        return Err(CoreError::conflict(messages::one_document()));
+    }
+    let edits = edits.pop();
+    let open: Vec<String> = open.iter().map(|(path, ..)| path.clone()).collect();
+    Ok(Box::new(move |actor, snapshot| {
+        let others = |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel);
+        let written = projects::replace_in_files(&actor.project.root, &others, &found, &to)?;
         Ok(ProjectEdits {
-            edits: edits.pop(),
+            edits,
             written,
             snapshot,
         })
-    }
+    }))
 }

@@ -9,6 +9,10 @@ use serde_json::json;
 const ARTICLE: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nA first paragraph of words.\n\nSee section~\\ref{sec:intro} and \\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
 const REFS: &str = "@book{knuth, author = {Donald Knuth}, title = {The TeXbook}, year = {1984}, publisher = {Addison-Wesley}}\n";
 
+fn log(rig: &Rig, session: u64) -> serde_json::Value {
+    rig.section_in(session, "buildLog", |log| log != "")
+}
+
 async fn built(files: &[(&str, &str)]) -> (Rig, serde_json::Value) {
     let rig = Rig::open(files).await;
     rig.call("Compile", json!({ "auto": false }));
@@ -22,7 +26,7 @@ async fn built(files: &[(&str, &str)]) -> (Rig, serde_json::Value) {
 async fn latexmk_builds_a_pdf_with_its_bibliography() {
     let (rig, build) = built(&[("main.tex", ARTICLE), ("refs.bib", REFS)]).await;
     let result = &build["result"];
-    assert_eq!(result["ok"], true, "{}", result["log"]);
+    assert_eq!(result["ok"], true, "{}", log(&rig, SESSION));
     assert_eq!(
         build["issues"],
         json!([]),
@@ -74,7 +78,7 @@ async fn a_glossary_is_built_with_makeglossaries() {
     let main = "\\documentclass{article}\n\\usepackage{glossaries}\n\\makeglossaries\n\\newglossaryentry{tex}{name={TeX},description={a typesetting system}}\n\\begin{document}\n\\gls{tex} is used here.\n\\printglossaries\n\\end{document}\n";
     let (rig, build) = built(&[("main.tex", main)]).await;
     let result = &build["result"];
-    assert_eq!(result["ok"], true, "{}", result["log"]);
+    assert_eq!(result["ok"], true, "{}", log(&rig, SESSION));
     assert!(rig.root().join("build/main.gls").is_file());
 }
 
@@ -132,7 +136,7 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     rig.call("Compile", json!({ "auto": false }));
     rig.event("buildFinished", |_| true);
     let build = rig.section("build", |b| !b["result"].is_null());
-    assert_eq!(build["result"]["ok"], true, "{}", build["result"]["log"]);
+    assert_eq!(build["result"]["ok"], true, "{}", log(&rig, SESSION));
     assert_eq!(build["issues"], json!([]));
     rig.open_document("part.tex");
     rig.call("StartLive", json!({}));
@@ -154,7 +158,7 @@ async fn a_live_edit_to_an_input_after_a_compile_typesets_and_places_its_error()
     let main = "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n";
     let part = "A part.\n";
     let (rig, build) = built(&[("main.tex", main), ("part.tex", part)]).await;
-    assert_eq!(build["result"]["ok"], true, "{}", build["result"]["log"]);
+    assert_eq!(build["result"]["ok"], true, "{}", log(&rig, SESSION));
     let doc = rig.open_document("part.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
@@ -215,7 +219,7 @@ async fn two_projects_compile_and_preview_at_once() {
     }
     for session in both {
         let build = rig.section_in(session, "build", |b| !b["result"].is_null());
-        assert_eq!(build["result"]["ok"], true, "{}", build["result"]["log"]);
+        assert_eq!(build["result"]["ok"], true, "{}", log(&rig, session));
     }
     let page = |session: u64, line: u32| {
         let at = json!({ "file": "main.tex", "line": line });
