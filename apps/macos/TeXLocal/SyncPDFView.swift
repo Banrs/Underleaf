@@ -15,7 +15,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     private func matchPaper() {
-        darkPaper = paper == .dark || paper == .auto && effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        darkPaper = paper.isDark(inDarkAppearance: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
 
     private(set) var darkPaper = false {
