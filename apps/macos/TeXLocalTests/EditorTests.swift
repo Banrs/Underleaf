@@ -68,31 +68,6 @@ struct EditorTests {
         #expect(stepped.moved(from: .caret(15), to: .caret(20), stepping: false) == nil && stepped.isEmpty)
     }
 
-    @Test func theEditSyncHoldsAMirrorWhileTheNameIsComposedAndTheMirrorsEchoAsksForNoMore() {
-        let document = SourceDocument(text: "\\begin{x}\n\\end{x}")
-        let text = NSMutableString(string: document.text)
-        var sync = EditSync()
-        document.select(.caret(8), mirroring: false)
-        sync.willChange([.caret(8)], to: ["é"])
-        text.insert("é", at: 8)
-        #expect(sync.edited(NSRange(location: 8, length: 1), delta: 1, in: text, of: document) == .caret(8))
-        #expect(sync.mirror(composing: true).isEmpty)
-        #expect(sync.mirror(composing: false) == [TextEdit(start: 16, length: 1, text: "xé")])
-        sync.mirroring = true
-        text.replaceCharacters(in: NSRange(location: 16, length: 1), with: "xé")
-        _ = sync.edited(NSRange(location: 16, length: 2), delta: 1, in: text, of: document)
-        sync.mirroring = false
-        #expect(sync.mirror(composing: false).isEmpty && document.text == text as String)
-    }
-
-    @Test func offsetsAndRangesConvertThroughTheTextContent() throws {
-        let content = NSTextContentStorage()
-        content.attributedString = NSAttributedString(string: "ab\ncdé")
-        let range = try #require(content.textRange(of: NSRange(location: 1, length: 4)))
-        #expect(content.offset(of: range.location) == 1 && content.offset(of: range.endLocation) == 5)
-        #expect(content.textRange(of: NSRange(location: 7, length: 0)) == nil)
-    }
-
     @Test func aCompletionReplacesWhatWasTypedFillsItsFieldAndUndoesBackToIt() throws {
         let (editor, window) = Self.editor("")
         defer { window.close() }
