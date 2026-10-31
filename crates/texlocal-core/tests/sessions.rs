@@ -1188,7 +1188,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     rig.call("StopLive", json!({}));
     assert!(!preview.running());
     let kinds = ["live", "shownPdf", "reply"];
-    assert_eq!(said_of(&rig, &kinds), ["live", "live", "shownPdf", "reply"]);
+    assert_eq!(said_of(&rig, &kinds), kinds);
     assert_eq!(rig.section("shownPdf", |_| true)["live"], false);
     let stopped = rig.section("live", |l| l["phase"] == "stopped");
     assert_eq!(stopped["lines"], json!({}));

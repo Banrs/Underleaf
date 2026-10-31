@@ -943,7 +943,7 @@ nonisolated extension LivePage {
 }
 
 nonisolated enum LivePhase: String, Decodable, CaseIterable, Hashable, Sendable {
-    case stopped, starting, running, stopping
+    case stopped, starting, running
 }
 
 nonisolated struct LiveState: Decodable, Hashable, Sendable {

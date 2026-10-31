@@ -529,7 +529,7 @@ struct ViewsTests {
         #expect(project.followsCaret && project.showsLive)
         project.liveDocumentShown()
         #expect(project.followTask != nil)
-        live(.stopping)
+        live(.stopped)
         #expect(!project.followsCaret && !project.showsLive)
         live(.running)
         #expect(await project.close().value && !project.showsLive)

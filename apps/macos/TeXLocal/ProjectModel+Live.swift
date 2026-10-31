@@ -6,7 +6,7 @@ extension ProjectModel {
         set { if newValue { startTeXpresso() } else { session.send(StopLive()) } }
     }
 
-    var canSwitchLivePreview: Bool { window?.app.canPreviewLive == true && initialLoadComplete && texpresso.phase != .stopping }
+    var canSwitchLivePreview: Bool { window?.app.canPreviewLive == true && initialLoadComplete }
 
     var showsLive: Bool { !closed && texpresso.active && livePDF }
 
