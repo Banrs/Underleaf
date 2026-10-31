@@ -154,6 +154,7 @@ pub(crate) struct Actor {
     pub later: VecDeque<Later>,
     pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
+    pub befores: usize,
     pub sent: Sent<SessionSection>,
     lifecycle: Lifecycle,
 }
@@ -218,6 +219,7 @@ impl Actor {
             later,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
+            befores: 0,
             sent: Sent::default(),
             lifecycle: Lifecycle::Open(in_session),
         };
@@ -295,8 +297,10 @@ impl Actor {
         }
         rx.close();
         while let Ok(message) = rx.try_recv() {
-            if let Msg::Command(_, reply) = message {
-                reply.send(Err(super::stopped()));
+            match message {
+                Msg::Command(_, reply) => reply.send(Err(super::stopped())),
+                Msg::Snapshotted(finish) => finish(self),
+                _ => {}
             }
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
@@ -320,6 +324,10 @@ impl Actor {
                 Msg::Command(_, reply) => reply.send(Err(super::gone())),
                 Msg::BuildDone(result) => self.build_done(result),
                 Msg::Cleaned(result) => self.cleaned(result),
+                Msg::Snapshotted(finish) => {
+                    finish(self);
+                    self.close_when_idle();
+                }
                 _ => {}
             };
         }
@@ -530,7 +538,10 @@ impl Actor {
     }
 
     pub fn close_when_idle(&mut self) {
-        if self.builds.busy() || !matches!(self.lifecycle, Lifecycle::Closing(..)) {
+        if self.builds.busy()
+            || self.befores > 0
+            || !matches!(self.lifecycle, Lifecycle::Closing(..))
+        {
             return;
         }
         self.stop_history();

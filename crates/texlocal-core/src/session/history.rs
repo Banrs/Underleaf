@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -99,22 +100,33 @@ impl Actor {
     }
 
     fn then_on_actor<U: Send + 'static, T: 'static>(
-        &self,
+        &mut self,
         job: impl FnOnce(&History) -> Result<U, CoreError> + Send + 'static,
         then: impl FnOnce(&mut Self, U) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
+        self.befores += 1;
         let tx = self.tx.clone();
+        let job = move |history: &History| {
+            catch_unwind(AssertUnwindSafe(|| job(history)))
+                .unwrap_or_else(|_| Err(super::stopped()))
+        };
         self.off_thread(job, move |done| {
-            let done = done.unwrap_or_else(|| Err(super::gone()));
-            let finish =
-                move |actor: &mut Self| reply.send(done.and_then(|done| then(actor, done)));
+            let finish = move |actor: &mut Self| {
+                actor.befores -= 1;
+                reply.send(match done {
+                    Some(done) if actor.writes_history.load(Ordering::Acquire) => {
+                        done.and_then(|done| then(actor, done))
+                    }
+                    _ => Err(super::stopped()),
+                });
+            };
             let _ = tx.send(Msg::Snapshotted(Box::new(finish)));
         });
     }
 
     pub fn before<T: 'static>(
-        &self,
+        &mut self,
         reason: &'static str,
         then: Result<Then<T>, CoreError>,
         reply: Pending<T>,

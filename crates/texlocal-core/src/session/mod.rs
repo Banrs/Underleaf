@@ -238,7 +238,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicUsize;
-    use std::sync::mpsc::channel;
+    use std::sync::mpsc::{Sender, channel};
     use std::time::Duration;
 
     use tokio::sync::Notify;
@@ -328,6 +328,35 @@ mod tests {
 
     fn replied(heard: &Heard, id: u64) -> Value {
         replied_within(heard, id, Duration::from_secs(10)).expect("a reply")
+    }
+
+    fn hold_history(sessions: &Sessions) -> Sender<()> {
+        let (release, held) = channel::<()>();
+        let project = sessions.service.project("P").unwrap();
+        let hold = Box::new(move |_: &History| {
+            let _ = held.recv();
+        });
+        sessions.service.history(&project).send(hold).unwrap();
+        release
+    }
+
+    type Held = (Arc<Sessions>, Heard, tempfile::TempDir, Sender<()>);
+
+    async fn replacing_while_the_history_is_held() -> Held {
+        let (sessions, heard, dir) = panicking().await;
+        fs::write(dir.path().join("P/ch.tex"), "cat\n").unwrap();
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0);
+        let release = hold_history(&sessions);
+        let replace =
+            json!({ "query": "cat", "replacement": "dog", "matchCase": false, "wholeWord": false });
+        sessions.send_to(1, 1, "Replace", replace);
+        (sessions, heard, dir, release)
+    }
+
+    fn chapter(dir: &tempfile::TempDir) -> String {
+        fs::read_to_string(dir.path().join("P/ch.tex")).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -424,12 +453,7 @@ mod tests {
         replied(&heard, 0);
         sessions.send_to(1, 1, "SaveVersion", json!({ "name": "Draft" }));
         let draft = replied(&heard, 1)["ok"]["id"].take();
-        let (release, held) = std::sync::mpsc::channel::<()>();
-        let project = sessions.service.project("P").unwrap();
-        let hold = Box::new(move |_: &History| {
-            let _ = held.recv();
-        });
-        sessions.service.history(&project).send(hold).unwrap();
+        let release = hold_history(&sessions);
         let replace =
             json!({ "query": "x", "replacement": "y", "matchCase": false, "wholeWord": false });
         sessions.send_to(2, 1, "Replace", replace);
@@ -448,6 +472,29 @@ mod tests {
         for id in [2, 3] {
             assert!(replied(&heard, id).get("ok").is_some());
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_close_applies_the_edits_sent_before_it_and_refuses_those_after() {
+        let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
+        sessions.send_to(2, 1, "CloseProject", json!({}));
+        sessions.send_to(3, 1, "Open", json!({ "path": "ch.tex" }));
+        assert_eq!(replied(&heard, 3)["error"]["kind"], "notFound");
+        drop(release);
+        assert!(replied(&heard, 1)["ok"]["snapshot"].is_string());
+        assert_eq!(replied(&heard, 2)["ok"], true);
+        assert_eq!(chapter(&dir), "dog\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_edit_waiting_on_the_history_when_its_session_stops_is_answered_as_stopped() {
+        let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
+        sessions.send_to(2, 1, "Compile", json!({ "auto": false }));
+        assert_eq!(replied(&heard, 2)["error"]["kind"], "internal");
+        drop(release);
+        let said = replied(&heard, 1);
+        assert_eq!(said["error"]["message"]["id"], "session_stopped", "{said}");
+        assert_eq!(chapter(&dir), "cat\n");
     }
 
     #[tokio::test(flavor = "multi_thread")]
