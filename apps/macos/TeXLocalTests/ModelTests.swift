@@ -132,6 +132,20 @@ struct SectionTests {
         #expect(project.saveFailure == "The disk is full.")
     }
 
+    @Test func theTrailGoesBackOnlyToFilesTheTreeStillHolds() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let file = { (path: String) in TreeNode(name: path.fileName, path: path, kind: .tex, children: nil, main: false) }
+        let tree = { (files: [TreeNode]) in
+            project.handle(.section(.tree([TreeNode(name: "ch", path: "ch", kind: nil, children: files, main: false), file("main.tex")])))
+        }
+        tree([file("ch/one.tex")])
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
+        #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
+        tree([])
+        #expect(!project.canRetrace(back: true))
+    }
+
     @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
         let window = defaults.window()
         window.layout = .source

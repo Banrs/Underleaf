@@ -355,7 +355,7 @@ final class ProjectModel {
 
     func canRetrace(back: Bool) -> Bool { openPath != nil && (back ? trail.back : trail.forward).contains(where: exists) }
 
-    private func exists(_ place: Place) -> Bool { root.map { FileManager.default.fileExists(atPath: $0.appending(path: place.path).path) } ?? false }
+    private func exists(_ place: Place) -> Bool { tree.node(at: place.path) != nil }
 
     func retrace(back: Bool) async {
         guard let at = caretPlace, let to = trail.step(back: back, from: at, exists: exists) else { return }
