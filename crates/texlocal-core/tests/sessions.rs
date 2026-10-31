@@ -1295,16 +1295,6 @@ async fn closing_a_project_ends_the_install_it_started() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn stop_compile_stops_the_sessions_build() {
-    let rig = compiling_slowly().await;
-    rig.call("StopCompile", json!({}));
-    rig.event("buildFinished", |_| true);
-    let build = rig.section("build", |b| !b["result"].is_null());
-    assert_eq!(build["result"]["stopped"], true);
-    assert!(!rig.root().join("build/main.fdb_latexmk").exists());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_building() {
     let main = "\\documentclass{article}\n% slowly over\n\\begin{document}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
@@ -1326,7 +1316,7 @@ async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_buildi
     rig.event_in(SESSION, "buildFinished", |_| true);
     let result = &rig.section_in(SESSION, "build", |b| !b["result"].is_null())["result"];
     assert_eq!(result["stopped"], true);
-    for partial in ["main.aux", "main.pdf"] {
+    for partial in ["main.aux", "main.pdf", "main.fdb_latexmk"] {
         assert!(!build.join(partial).exists(), "{partial} is discarded");
     }
     wait_until("the build's own processes end", || {
