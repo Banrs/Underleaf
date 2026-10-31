@@ -87,9 +87,7 @@ fn zip_names(path: &Path) -> Vec<String> {
     names
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() {
-    let rig = project().await;
+fn every_section_then_the_reply(rig: &Rig) {
     let protocol = texlocal_core::protocol::protocol();
     let every = protocol.outbound["SessionSection"]["oneOf"]
         .as_array()
@@ -103,6 +101,12 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
     said.sort_unstable();
     every.sort_unstable();
     assert_eq!(said, every);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() {
+    let rig = project().await;
+    every_section_then_the_reply(&rig);
     let project = rig.section("project", |_| true);
     assert_eq!(project["name"], "P");
     assert_eq!(project["settings"]["mainFile"], "main.tex");
@@ -113,6 +117,23 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
     assert_eq!(rig.section("outline", |_| true), Value::Null);
     let open = json!({ "id": rig.id, "autoCompile": false });
     assert_eq!(rig.refuse("OpenProject", open), ErrorKind::Conflict);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reattaching_sends_every_section_again_as_it_is_now_before_its_reply() {
+    let rig = project().await;
+    rig.open_document("ch.tex");
+    rig.forget();
+    rig.call("Reattach", json!({}));
+    every_section_then_the_reply(&rig);
+    assert_eq!(rig.section("openFile", |_| true)["path"], "ch.tex");
+    let documents = rig.section("documents", |_| true);
+    assert_eq!(names(&documents, "path"), ["ch.tex"]);
+    rig.forget();
+    assert!(rig.ask_library("Resync", json!({})).is_ok());
+    let tex = |e: &Value| e["type"] == "library" && e["value"]["type"] == "tex";
+    assert_eq!(rig.find(tex)["value"]["value"], rig.tex);
+    assert_eq!(rig.said().last().map(String::as_str), Some("reply"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

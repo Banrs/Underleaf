@@ -39,6 +39,7 @@ requests! {
     Session {
         OpenProject { id: String, auto_compile: bool } -> UiState,
         CloseProject {} -> bool,
+        Reattach {} -> (),
         SetOptions { auto_compile: bool } -> (),
         Open { path: RelPath } -> Option<String>,
         Composing { path: RelPath, composing: bool } -> (),
@@ -406,6 +407,7 @@ impl Actor {
             Session::CloseProject(CloseProject {}, answer) => {
                 return self.close(Pending { reply, answer });
             }
+            Session::Reattach(Reattach {}, answer) => answer(Ok(self.resync())),
             Session::SetOptions(SetOptions { auto_compile }, answer) => {
                 answer(Ok(self.auto_compile = auto_compile))
             }

@@ -62,6 +62,7 @@ requests! {
         SetTexDir { dir: Option<PathBuf> } -> TexStatus,
         InstallTex {} -> TexStatus,
         ReloadProjects {} -> (),
+        Resync {} -> (),
         CreateProject { name: String, template: ProjectTemplate, engine: Option<Engine> } -> ProjectInfo,
         DuplicateProject { id: String, name: String } -> ProjectInfo,
         FreeProjectName {} -> String,
@@ -104,9 +105,17 @@ impl Service {
 
     fn publish(&self, sent: &mut Sent<LibrarySection>, section: LibrarySection) {
         if let Some(hub) = self.hub.get()
-            && sent.changed(&section)
+            && let Some(said) = sent.changed(&section)
         {
-            let _ = hub.send(Said::Library(section));
+            let _ = hub.send(Said::Library(said));
+        }
+    }
+
+    fn resync(&self) {
+        if let Some(hub) = self.hub.get() {
+            for said in lock(&self.sent).each() {
+                let _ = hub.send(Said::Library(said));
+            }
         }
     }
 
@@ -251,6 +260,7 @@ impl Service {
                 answer(installed.map(|()| status))
             }
             Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),
+            Library::Resync(Resync {}, answer) => answer(Ok(self.resync())),
             Library::CreateProject(
                 CreateProject {
                     name,

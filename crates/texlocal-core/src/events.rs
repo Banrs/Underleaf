@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::mem::{Discriminant, discriminant};
 use std::panic::{AssertUnwindSafe, PanicHookInfo, catch_unwind};
 use std::sync::{Mutex, Once, mpsc};
@@ -7,6 +6,7 @@ use std::sync::{Mutex, Once, mpsc};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Serialize;
 use serde_json::Value;
+use serde_json::value::{RawValue, to_raw_value};
 
 use crate::service::LibrarySection;
 use crate::session::{DiskConflict, SessionSection};
@@ -20,7 +20,7 @@ pub type Listener = Box<dyn Fn(String) + Send>;
 pub(crate) enum Said {
     Reply(Replied),
     Event(SessionEvent),
-    Library(LibrarySection),
+    Library(#[schemars(with = "LibrarySection")] Box<RawValue>),
     Log(Log),
 }
 
@@ -82,20 +82,28 @@ impl Log {
     }
 }
 
-pub(crate) struct Sent<S>(HashMap<Discriminant<S>, String>);
+pub(crate) struct Sent<S>(Vec<(Discriminant<S>, Box<RawValue>)>);
 
 impl<S> Default for Sent<S> {
     fn default() -> Self {
-        Self(HashMap::new())
+        Self(Vec::new())
     }
 }
 
 impl<S: Serialize> Sent<S> {
-    pub fn changed(&mut self, section: &S) -> bool {
-        let said = serde_json::to_string(section).expect("a section serialises");
+    pub fn changed(&mut self, section: &S) -> Option<Box<RawValue>> {
+        let said = to_raw_value(section).expect("a section serialises");
         let kind = discriminant(section);
-        let before = self.0.insert(kind, said);
-        before.as_ref() != self.0.get(&kind)
+        match self.0.iter_mut().find(|(sent, _)| *sent == kind) {
+            Some((_, before)) if before.get() == said.get() => return None,
+            Some((_, before)) => *before = said.clone(),
+            None => self.0.push((kind, said.clone())),
+        }
+        Some(said)
+    }
+
+    pub fn each(&self) -> impl Iterator<Item = Box<RawValue>> {
+        self.0.iter().map(|(_, said)| said.clone())
     }
 }
 
@@ -108,7 +116,7 @@ pub(crate) struct SessionEvent {
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum Event {
-    Section(SessionSection),
+    Section(#[schemars(with = "SessionSection")] Box<RawValue>),
     DocumentReload(String),
     Renamed(Renamed),
     Conflict(Conflict),
@@ -197,6 +205,10 @@ mod tests {
     use crate::session::{Lifecycle, Stopped};
     use crate::tex::TexStatus;
 
+    fn raw(section: impl Serialize) -> Box<RawValue> {
+        to_raw_value(&section).unwrap()
+    }
+
     #[test]
     fn the_core_says_each_kind_of_thing_as_the_fixtures_show() {
         let fixtures = include_str!("../../texlocal-wire/fixtures/wire.json");
@@ -218,17 +230,19 @@ mod tests {
             }),
             Said::Event(SessionEvent {
                 session: 1,
-                event: Event::Section(SessionSection::Lifecycle(Lifecycle::Stopped(Stopped {
-                    unsaved: vec!["main.tex".into()],
-                }))),
+                event: Event::Section(raw(SessionSection::Lifecycle(Lifecycle::Stopped(
+                    Stopped {
+                        unsaved: vec!["main.tex".into()],
+                    },
+                )))),
             }),
-            Said::Library(LibrarySection::Projects(Vec::new())),
-            Said::Library(LibrarySection::Tex(TexStatus {
+            Said::Library(raw(LibrarySection::Projects(Vec::new()))),
+            Said::Library(raw(LibrarySection::Tex(TexStatus {
                 available: true,
                 latexmk_version: Some("4.86".into()),
                 found: Some("/Library/TeX/texbin".into()),
                 ..TexStatus::default()
-            })),
+            }))),
             Said::Log(Log {
                 level: LogLevel::Fault,
                 text: text.into(),

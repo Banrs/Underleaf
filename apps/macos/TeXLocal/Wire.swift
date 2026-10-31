@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "73ce427fbec313cfb555a64afaab056bc0d257f2cac209f0b60be022726e664c"
+nonisolated let protocolDigest = "6dfca741bf1bae5dc985d5f774cba6d25e1a49a61073ebc7cdb1ed67f9d7c5a5"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -1565,6 +1565,11 @@ nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Senda
     case file, heading, label
 }
 
+nonisolated struct Reattach: SessionRequest {
+    typealias Reply = Done
+    static let command = "Reattach"
+}
+
 nonisolated struct ReloadProjects: LibraryRequest {
     typealias Reply = Done
     static let command = "ReloadProjects"
@@ -1682,6 +1687,11 @@ nonisolated struct RestoreVersion: SessionRequest {
 
     var id: String
     var paths: [String]?
+}
+
+nonisolated struct Resync: LibraryRequest {
+    typealias Reply = Done
+    static let command = "Resync"
 }
 
 nonisolated enum Said<Payload: Decodable & Sendable>: Decodable, Sendable {

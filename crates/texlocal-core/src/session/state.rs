@@ -65,11 +65,17 @@ pub(crate) struct OpenFile {
 
 impl Actor {
     pub fn publish(&mut self, section: SessionSection) -> bool {
-        let changed = self.sent.changed(&section);
-        if changed {
-            self.emit(Event::Section(section));
+        let Some(said) = self.sent.changed(&section) else {
+            return false;
+        };
+        self.emit(Event::Section(said));
+        true
+    }
+
+    pub fn resync(&self) {
+        for said in self.sent.each() {
+            self.emit(Event::Section(said));
         }
-        changed
     }
 
     pub fn publish_all(&mut self, tree: Vec<TreeNode>) {
