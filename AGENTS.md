@@ -3,7 +3,7 @@
 The Mac app TeXLocal: a Rust core in `crates/` and the SwiftUI and AppKit app in `apps/macos`.
 
 - `texlocal-latex`: the editor and LaTeX logic. No files, processes, threads or clock, so it builds for the web.
-- `texlocal-core`: projects, sessions, compiling and the live preview. Platform calls stay in `sys.rs`.
+- `texlocal-core`: projects, sessions, compiling and the live preview. Platform calls stay in `sys/`, by platform.
 - `texlocal-ffi`: the C ABI the app links.
 - `texlocal-wire`: writes the app's side of the protocol from the core's types.
 
@@ -34,6 +34,7 @@ Ask in order; the first yes decides.
 - `cargo test --workspace`
 - `cargo check -p texlocal-latex --target wasm32-unknown-unknown`
 - `cargo check -p texlocal-core --target aarch64-apple-ios`
+- `cargo check -p texlocal-core --target x86_64-unknown-linux-gnu`
 - `CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime cargo test -p texlocal-latex --target wasm32-wasip1`
 - `zsh tools/qa/typecheck.sh`
 - `tools/qa/xctest.sh . $QA_SCRATCH/dd-xctest`

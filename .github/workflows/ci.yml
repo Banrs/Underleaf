@@ -59,11 +59,26 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
       - run: cargo run --locked -p texlocal-wire -- --check
       - run: cargo check --locked -p texlocal-core --target aarch64-apple-ios
+
+  linux:
+    name: Rust on Linux
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
 
   wasm:
     name: LaTeX on wasm
@@ -169,7 +184,7 @@ jobs:
           [ -z "$missing" ] || { echo "::error::target/release/libtexlocal_ffi.a lacks $(echo $missing)"; exit 1; }
 
   ci-ok:
-    needs: [changes, rust, wasm, deps, mac, release]
+    needs: [changes, rust, linux, wasm, deps, mac, release]
     if: always()
     runs-on: ubuntu-latest
     steps:
