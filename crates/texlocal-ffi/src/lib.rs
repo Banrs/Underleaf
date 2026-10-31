@@ -145,8 +145,8 @@ unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut Tl
 }
 
 fn answered(body: impl FnOnce() -> Result<Value, CoreError>) -> *mut c_char {
-    let answer =
-        caught(body).unwrap_or_else(|| Err(CoreError::internal(messages::editor_panicked())));
+    let answer = caught(body)
+        .unwrap_or_else(|| Err(CoreError::internal(texlocal_core::messages::went_wrong())));
     c_json(json!(Answered::from(answer)).to_string()).into_raw()
 }
 

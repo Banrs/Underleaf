@@ -7,6 +7,7 @@ texlocal_latex::messages! {
     project_open = "That project is open already.";
     shares_folder(name) = "This folder holds or is inside “{name}”, which is open. Close “{name}” first.";
     session_stopped = "The project stopped after an internal error. Close it and open it again.";
+    went_wrong = "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.";
     stopped_saved = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
     stopped_unsaved = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
 

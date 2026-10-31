@@ -11,6 +11,7 @@ mod scans;
 mod state;
 mod watch;
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::{Entry, VacantEntry};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -80,12 +81,16 @@ impl Reply {
 
 impl Drop for Reply {
     fn drop(&mut self) {
-        self.answer(Err(if std::thread::panicking() {
-            stopped()
-        } else {
-            gone()
+        self.answer(Err(match std::thread::panicking() {
+            true if ACTOR.get() => stopped(),
+            true => failed(),
+            false => gone(),
         }));
     }
+}
+
+thread_local! {
+    static ACTOR: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) struct Pending<T> {
@@ -101,6 +106,10 @@ impl<T> Pending<T> {
 
 pub(crate) fn stopped() -> CoreError {
     CoreError::internal(messages::session_stopped())
+}
+
+fn failed() -> CoreError {
+    CoreError::internal(messages::went_wrong())
 }
 
 fn gone() -> CoreError {
@@ -218,6 +227,7 @@ impl Sessions {
         std::thread::Builder::new()
             .name(format!("texlocal-session-{session}"))
             .spawn(move || {
+                ACTOR.set(true);
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
                     match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
@@ -393,8 +403,27 @@ mod tests {
         }
         assert!(replied(&heard, 0).unwrap().is_object());
         for id in 1..=4 {
-            assert_eq!(replied(&heard, id).unwrap_err()["kind"], "internal");
+            let refused = replied(&heard, id).unwrap_err();
+            assert_eq!(refused["message"]["id"], "session_stopped", "{refused}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panic_beside_a_session_fails_only_what_it_was_doing() {
+        let (sessions, heard, _dir) = panicking().await;
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0).unwrap();
+        let (project, reply) = (sessions.service.project("P").unwrap(), sessions.reply(1));
+        let job = Box::new(move |_: &History| {
+            let _reply = reply;
+            panic!("a history job panics");
+        });
+        sessions.service.history(&project).send(job).unwrap();
+        let refused = replied(&heard, 1).unwrap_err();
+        assert_eq!(refused["message"]["id"], "went_wrong", "{refused}");
+        sessions.send_to(2, 1, "ListVersions", json!({}));
+        assert!(replied(&heard, 2).is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread")]

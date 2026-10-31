@@ -108,8 +108,7 @@ impl Actor {
         self.snapshots += 1;
         let tx = self.tx.clone();
         let job = move |history: &History| {
-            catch_unwind(AssertUnwindSafe(|| job(history)))
-                .unwrap_or_else(|_| Err(super::stopped()))
+            catch_unwind(AssertUnwindSafe(|| job(history))).unwrap_or_else(|_| Err(super::failed()))
         };
         self.off_thread(job, move |done| {
             let finish = move |actor: &mut Self| {
