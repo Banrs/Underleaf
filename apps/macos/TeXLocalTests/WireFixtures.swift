@@ -185,3 +185,10 @@ nonisolated let wireRejects: [(any (Codable & Hashable & Sendable).Type, String)
     (FixtureUnion.self, #"{"type":"plain","value":{"name":"a","count":1,"total":1,"ratio":1.0,"on":false,"bytes":""},"more":1}"#),
     (FixtureMap.self, #"{"scores":{"a":"1"}}"#),
 ]
+
+nonisolated let wireSaid = [
+    #"{"type":"reply","value":{"id":7,"answer":{"type":"ok","value":"main.tex"}}}"#,
+    #"{"type":"reply","value":{"id":8,"answer":{"type":"error","value":{"kind":"notFound","message":{"id":"no_such_session","args":{},"text":"No such session"}}}}}"#,
+    #"{"type":"event","value":{"session":1,"event":{"type":"liveAlert"}}}"#,
+    #"{"type":"library","value":{"type":"projects","value":[]}}"#,
+]

@@ -10,7 +10,7 @@ use texlocal_latex::templates::ProjectTemplate;
 use tokio::sync::oneshot;
 
 use crate::compile::CompileManager;
-use crate::events::{Queued, Sent};
+use crate::events::{Said, Sent};
 use crate::messages;
 use crate::paths::Project;
 use crate::process::Processes;
@@ -30,7 +30,7 @@ pub struct Service {
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     tex_queue: Mutex<Option<oneshot::Receiver<()>>>,
     histories: Mutex<HashMap<PathBuf, mpsc::Sender<Job>>>,
-    pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
+    pub(crate) hub: OnceLock<mpsc::Sender<Said>>,
     sent: Mutex<Sent<LibrarySection>>,
 }
 
@@ -99,7 +99,7 @@ impl Service {
         let mut sent = lock(&self.sent);
         let section = LibrarySection::Projects(self.projects()?);
         if sent.changed(&section) {
-            let _ = hub.send(Queued::Library(section));
+            let _ = hub.send(Said::Library(section));
         }
         Ok(())
     }

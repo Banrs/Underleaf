@@ -81,6 +81,7 @@ pub struct Fixture {
 pub struct Fixtures {
     pub samples: Vec<Fixture>,
     pub rejects: Vec<Fixture>,
+    pub said: Vec<Value>,
 }
 
 pub fn fixtures() -> Fixtures {

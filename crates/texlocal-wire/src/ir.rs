@@ -1,6 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
+
+pub const PAYLOAD: &str = "Payload";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ty {
@@ -125,6 +127,10 @@ impl Ir {
     pub fn add(&mut self, defs: &Map<String, Value>, way: Way) {
         for (name, schema) in defs {
             type_name(name, defs);
+            if name == PAYLOAD {
+                assert!(*schema == Value::Bool(true), "{PAYLOAD} is a type's name");
+                continue;
+            }
             let shape = shape(name, schema, way);
             let def = self.defs.entry(name.clone()).or_insert(Def {
                 shape: shape.clone(),
@@ -194,19 +200,35 @@ impl Ir {
                 "{store} has a case without a value"
             );
         }
-        let mut named = Vec::new();
-        for def in self.defs.values() {
-            match &def.shape {
-                Shape::Struct(fields) => named.extend(fields.iter().map(|f| &f.ty)),
-                Shape::Units(_) => {}
-                Shape::Union(cases) => named.extend(cases.iter().filter_map(|(_, ty)| ty.as_ref())),
-            }
-        }
+        let mut named: Vec<&Ty> = self.defs.values().flat_map(Def::holds).collect();
         named.extend(self.requests.iter().map(|r| &r.reply));
         for ty in named {
             if let Some(name) = ty.named() {
-                assert!(self.defs.contains_key(name), "{name} has no definition");
+                let defined = name == PAYLOAD || self.defs.contains_key(name);
+                assert!(defined, "{name} has no definition");
             }
+        }
+    }
+
+    pub fn holding_payload(&self) -> BTreeSet<&str> {
+        let mut holding = BTreeSet::from([PAYLOAD]);
+        while let Some(name) = self.defs.keys().find(|name| {
+            let held = |ty: &&Ty| ty.named().is_some_and(|n| holding.contains(n));
+            !holding.contains(name.as_str()) && self.defs[*name].holds().iter().any(held)
+        }) {
+            holding.insert(name);
+        }
+        holding.remove(PAYLOAD);
+        holding
+    }
+}
+
+impl Def {
+    fn holds(&self) -> Vec<&Ty> {
+        match &self.shape {
+            Shape::Struct(fields) => fields.iter().map(|f| &f.ty).collect(),
+            Shape::Union(cases) => cases.iter().filter_map(|(_, ty)| ty.as_ref()).collect(),
+            Shape::Units(_) => Vec::new(),
         }
     }
 }

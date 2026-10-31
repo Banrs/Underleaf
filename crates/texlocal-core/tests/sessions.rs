@@ -1234,8 +1234,9 @@ async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found
     .await;
     let checked = rig.send_library("CheckTex", json!({}));
     let set = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("tex/bin") }));
-    let first = rig.find(|e| e["reply"] == checked || e["reply"] == set);
-    assert_eq!(first["reply"], checked);
+    let id = |e: &Value| e["value"]["id"].clone();
+    let first = rig.find(|e| e["type"] == "reply" && (id(e) == checked || id(e) == set));
+    assert_eq!(id(&first), checked);
     assert_eq!(rig.reply(set).unwrap()["available"], true);
     rig.call("SetOptions", json!({ "autoCompile": true }));
     rig.call("SetSettings", json!({ "patch": {} }));

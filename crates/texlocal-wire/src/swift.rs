@@ -1,7 +1,8 @@
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use crate::fixtures::{Fixture, Fixtures};
-use crate::ir::{Def, Field, Ir, Request, Shape, Ty};
+use crate::ir::{Def, Field, Ir, PAYLOAD, Request, Shape, Ty};
 
 const PREAMBLE: &str = r#"import Foundation
 import Observation
@@ -51,9 +52,10 @@ pub fn file(ir: &Ir) -> String {
         )
         .unwrap();
     }
-    out += &types(ir);
+    let generic = ir.holding_payload();
+    out += &types(ir, &generic);
     for sections in &ir.stores {
-        store(&mut out, sections, ir);
+        store(&mut out, sections, ir, &generic);
     }
     out
 }
@@ -69,29 +71,33 @@ pub fn fixtures(ir: &Ir, fixtures: &Fixtures) -> String {
             rows.concat()
         )
     };
+    let said: String = (fixtures.said.iter())
+        .map(|said| format!("    #\"{said}\"#,\n"))
+        .collect();
     format!(
-        "import Foundation\n@testable import TeXLocal\n{}{}{}",
-        types(ir),
+        "import Foundation\n@testable import TeXLocal\n{}{}{}\nnonisolated let wireSaid = [\n{}]\n",
+        types(ir, &ir.holding_payload()),
         listed("wireSamples", &fixtures.samples),
         listed("wireRejects", &fixtures.rejects),
+        said,
     )
 }
 
-fn types(ir: &Ir) -> String {
+fn types(ir: &Ir, generic: &BTreeSet<&str>) -> String {
     let mut out = String::new();
     for (name, def) in &ir.defs {
         let request = ir.requests.iter().find(|r| r.name == *name);
         out.push('\n');
         match &def.shape {
-            Shape::Struct(fields) => structure(&mut out, name, def, fields, request),
+            Shape::Struct(fields) => structure(&mut out, name, def, fields, request, generic),
             Shape::Units(units) => enumeration(&mut out, name, def, units),
-            Shape::Union(cases) => union(&mut out, name, def, cases),
+            Shape::Union(cases) => union(&mut out, name, def, cases, generic),
         }
     }
     out
 }
 
-fn swift(ty: &Ty) -> String {
+fn swift(ty: &Ty, generic: &BTreeSet<&str>) -> String {
     match ty {
         Ty::Bool => "Bool".into(),
         Ty::Int => "Int".into(),
@@ -100,9 +106,10 @@ fn swift(ty: &Ty) -> String {
         Ty::String => "String".into(),
         Ty::Data => "Data".into(),
         Ty::Done => "Done".into(),
-        Ty::List(ty) => format!("[{}]", swift(ty)),
-        Ty::Map(ty) => format!("[String: {}]", swift(ty)),
-        Ty::Optional(ty) => format!("{}?", swift(ty)),
+        Ty::List(ty) => format!("[{}]", swift(ty, generic)),
+        Ty::Map(ty) => format!("[String: {}]", swift(ty, generic)),
+        Ty::Optional(ty) => format!("{}?", swift(ty, generic)),
+        Ty::Named(name) if generic.contains(name.as_str()) => format!("{name}<{PAYLOAD}>"),
         Ty::Named(name) => name.clone(),
     }
 }
@@ -175,6 +182,14 @@ fn conformances(def: &Def) -> &'static str {
     }
 }
 
+fn declared(name: &str, def: &Def, generic: &BTreeSet<&str>) -> String {
+    if generic.contains(name) {
+        format!("{name}<{PAYLOAD}: Decodable & Sendable>: Decodable, Sendable")
+    } else {
+        format!("{name}: {}", conformances(def))
+    }
+}
+
 fn keys<'a>(out: &mut String, names: impl IntoIterator<Item = &'a str>) {
     let names: Vec<String> = names.into_iter().map(ident).collect();
     let names = names.join(", ");
@@ -185,7 +200,14 @@ fn keys<'a>(out: &mut String, names: impl IntoIterator<Item = &'a str>) {
     .unwrap();
 }
 
-fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request: Option<&Request>) {
+fn structure(
+    out: &mut String,
+    name: &str,
+    def: &Def,
+    fields: &[Field],
+    request: Option<&Request>,
+    generic: &BTreeSet<&str>,
+) {
     match request {
         Some(request) => {
             writeln!(
@@ -194,16 +216,21 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
                 request.group
             )
             .unwrap();
-            writeln!(out, "    typealias Reply = {}", swift(&request.reply)).unwrap();
+            let reply = swift(&request.reply, generic);
+            writeln!(out, "    typealias Reply = {reply}").unwrap();
             writeln!(out, "    static let command = \"{name}\"").unwrap();
             if !fields.is_empty() {
                 out.push('\n');
             }
         }
-        None => writeln!(out, "nonisolated struct {name}: {} {{", conformances(def)).unwrap(),
+        None => {
+            let declared = declared(name, def, generic);
+            writeln!(out, "nonisolated struct {declared} {{").unwrap();
+        }
     }
     for field in fields {
-        writeln!(out, "    var {}: {}", ident(&field.name), swift(&field.ty)).unwrap();
+        let ty = swift(&field.ty, generic);
+        writeln!(out, "    var {}: {ty}", ident(&field.name)).unwrap();
     }
     if !def.decoded {
         out.push_str("}\n");
@@ -217,8 +244,8 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
     out.push_str("        let wire = try decoder.strict(CodingKeys.self)\n");
     for field in fields {
         let (decode, ty) = match &field.ty {
-            Ty::Optional(ty) if !field.required => ("decodeIfPresent", swift(ty)),
-            ty => ("decode", swift(ty)),
+            Ty::Optional(ty) if !field.required => ("decodeIfPresent", swift(ty, generic)),
+            ty => ("decode", swift(ty, generic)),
         };
         let field = &field.name;
         writeln!(
@@ -251,7 +278,7 @@ fn structure(out: &mut String, name: &str, def: &Def, fields: &[Field], request:
     out.push_str("}\n");
 }
 
-fn store(out: &mut String, sections: &str, ir: &Ir) {
+fn store(out: &mut String, sections: &str, ir: &Ir, generic: &BTreeSet<&str>) {
     let Shape::Union(cases) = &ir.defs[sections].shape else {
         unreachable!("a store's sections are checked")
     };
@@ -260,10 +287,10 @@ fn store(out: &mut String, sections: &str, ir: &Ir) {
     for (case, ty) in cases {
         let ty = ty.as_ref().expect("a store's sections are checked");
         let (ty, initial) = match ty {
-            Ty::List(_) => (swift(ty), " = []"),
-            Ty::Map(_) => (swift(ty), " = [:]"),
-            Ty::Optional(_) => (swift(ty), ""),
-            _ => (format!("{}?", swift(ty)), ""),
+            Ty::List(_) => (swift(ty, generic), " = []"),
+            Ty::Map(_) => (swift(ty, generic), " = [:]"),
+            Ty::Optional(_) => (swift(ty, generic), ""),
+            _ => (format!("{}?", swift(ty, generic)), ""),
         };
         writeln!(out, "    private(set) var {}: {ty}{initial}", ident(case)).unwrap();
     }
@@ -291,12 +318,19 @@ fn enumeration(out: &mut String, name: &str, def: &Def, units: &[(String, Option
     out.push_str("}\n");
 }
 
-fn union(out: &mut String, name: &str, def: &Def, cases: &[(String, Option<Ty>)]) {
-    writeln!(out, "nonisolated enum {name}: {} {{", conformances(def)).unwrap();
+fn union(
+    out: &mut String,
+    name: &str,
+    def: &Def,
+    cases: &[(String, Option<Ty>)],
+    generic: &BTreeSet<&str>,
+) {
+    let declared = declared(name, def, generic);
+    writeln!(out, "nonisolated enum {declared} {{").unwrap();
     for (case, value) in cases {
         let value = value
             .as_ref()
-            .map(|ty| format!("({})", swift(ty)))
+            .map(|ty| format!("({})", swift(ty, generic)))
             .unwrap_or_default();
         writeln!(out, "    case {}{value}", ident(case)).unwrap();
     }
@@ -312,7 +346,7 @@ fn union(out: &mut String, name: &str, def: &Def, cases: &[(String, Option<Ty>)]
                 Some(ty) => writeln!(
                     out,
                     "        case \"{case}\": self = .{case}(try wire.decode({}.self, forKey: .value))",
-                    swift(ty)
+                    swift(ty, generic)
                 ),
                 None => writeln!(out, "        case \"{case}\": self = .{case}"),
             }

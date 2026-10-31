@@ -67,6 +67,24 @@ nonisolated extension Analysis {
     }
 }
 
+nonisolated enum Answered<Payload: Decodable & Sendable>: Decodable, Sendable {
+    case ok(Payload)
+    case error(CoreError)
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+}
+
+nonisolated extension Answered {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        switch try wire.decode(String.self, forKey: .type) {
+        case "ok": self = .ok(try wire.decode(Payload.self, forKey: .value))
+        case "error": self = .error(try wire.decode(CoreError.self, forKey: .value))
+        case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
+        }
+    }
+}
+
 nonisolated struct ApplyFix: SessionRequest {
     typealias Reply = Fixed?
     static let command = "ApplyFix"
@@ -1417,6 +1435,21 @@ nonisolated struct Replace: SessionRequest {
     var wholeWord: Bool
 }
 
+nonisolated struct Replied<Payload: Decodable & Sendable>: Decodable, Sendable {
+    var id: UInt64
+    var answer: Answered<Payload>
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case id, answer }
+}
+
+nonisolated extension Replied {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        id = try wire.decode(UInt64.self, forKey: .id)
+        answer = try wire.decode(Answered<Payload>.self, forKey: .answer)
+    }
+}
+
 nonisolated enum Resolution: String, Encodable, CaseIterable, Hashable, Sendable {
     case save, revert, cancel, close
 }
@@ -1435,6 +1468,26 @@ nonisolated struct RestoreVersion: SessionRequest {
 
     var id: String
     var paths: [String]?
+}
+
+nonisolated enum Said<Payload: Decodable & Sendable>: Decodable, Sendable {
+    case reply(Replied<Payload>)
+    case event(SessionEvent)
+    case library(LibrarySection)
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+}
+
+nonisolated extension Said {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        switch try wire.decode(String.self, forKey: .type) {
+        case "reply": self = .reply(try wire.decode(Replied<Payload>.self, forKey: .value))
+        case "event": self = .event(try wire.decode(SessionEvent.self, forKey: .value))
+        case "library": self = .library(try wire.decode(LibrarySection.self, forKey: .value))
+        case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
+        }
+    }
 }
 
 nonisolated struct Save: SessionRequest {

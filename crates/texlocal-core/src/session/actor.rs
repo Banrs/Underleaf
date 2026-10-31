@@ -24,7 +24,7 @@ use super::scans::Usages;
 use super::watch::{self, Change, TreeIndex};
 use super::{Compiler, Msg, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
-use crate::events::{Event, Queued, Sent, SessionEvent};
+use crate::events::{Event, Said, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
@@ -131,7 +131,7 @@ pub(crate) struct Actor {
     pub service: Arc<Service>,
     pub compiler: Arc<dyn Compiler>,
     pub preview: Arc<dyn Preview>,
-    events: std::sync::mpsc::Sender<Queued>,
+    events: std::sync::mpsc::Sender<Said>,
     pub tx: mpsc::UnboundedSender<Msg>,
     pub docs: Docs,
     pub next_doc: u64,
@@ -312,7 +312,7 @@ impl Actor {
         let session = self.id;
         let _ = self
             .events
-            .send(Queued::Event(SessionEvent { session, event }));
+            .send(Said::Event(SessionEvent { session, event }));
     }
 
     fn handle(&mut self, message: Msg) {

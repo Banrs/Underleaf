@@ -107,6 +107,10 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         #[serde(skip_serializing_if = "Vec::is_empty")]
         items: Vec<u32>,
     }
+    #[derive(JsonSchema)]
+    struct Payload {
+        payload: u32,
+    }
     let cases = [
         (refused::<Loose>(), "untyped"),
         (refused::<Pair>(), "isn't written for"),
@@ -120,6 +124,7 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         (refused::<Defaulted>(), "left out"),
         (refused::<Skipped>(), "left out"),
         (refused::<Hex>(), "encoded as \"base16\""),
+        (refused::<Payload>(), "Payload is a type's name"),
     ];
     for (panic, expected) in cases {
         assert!(

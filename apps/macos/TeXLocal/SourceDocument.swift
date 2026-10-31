@@ -135,7 +135,7 @@ final class SourceDocument {
         Syntax.json(request).flatMap { answered(R.command, tl_source_call(raw, R.command, $0)) }
     }
 
-    private func answered<T: Decodable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
+    private func answered<T: Decodable & Sendable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
         let answer: T? = Syntax.answer(command, out)
         if answer == nil { restore() }
         return answer
@@ -156,10 +156,10 @@ nonisolated enum Syntax {
         }
     }
 
-    static func answer<T: Decodable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
+    static func answer<T: Decodable & Sendable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
         defer { tl_free(out) }
         do {
-            return try Core.decoded(command, Data(bytes: out, count: strlen(out))) as T
+            return try Core.decoded(command) { try JSONDecoder().decode(Answered<T>.self, from: Data(bytes: out, count: strlen(out))) }
         } catch {
             log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil

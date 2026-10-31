@@ -50,9 +50,9 @@ impl Core {
     fn call_raw(&self, session: Option<u64>, command: Option<&str>, args: Option<&str>) -> Value {
         let id = self.send(session, command, args);
         loop {
-            let said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
-            if said["reply"] == id {
-                return said;
+            let mut said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
+            if said["type"] == "reply" && said["value"]["id"] == id {
+                return said["value"]["answer"].take();
             }
         }
     }
@@ -93,6 +93,16 @@ fn take(text: *mut c_char) -> Value {
     let value = serde_json::from_str(unsafe { CStr::from_ptr(text) }.to_str().unwrap()).unwrap();
     unsafe { tl_free(text) };
     value
+}
+
+fn answered(mut answer: Value) -> Value {
+    assert_eq!(answer["type"], "ok", "{answer}");
+    answer["value"].take()
+}
+
+fn refused(mut answer: Value) -> Value {
+    assert_eq!(answer["type"], "error", "{answer}");
+    answer["value"].take()
 }
 
 fn version(source: *mut TlSource) -> Option<u64> {
@@ -142,12 +152,17 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
     let mut replies = Vec::new();
     while replies.len() < expected.len() {
         let said = core.events.recv_timeout(Duration::from_secs(10)).unwrap();
-        if let Some(id) = said["reply"].as_u64() {
-            let kind = said["error"]["kind"].as_str().unwrap_or("ok").to_owned();
-            replies.push((id, kind));
+        if said["type"] == "reply" {
+            let answer = &said["value"]["answer"];
+            let kind = if answer["type"] == "ok" {
+                "ok"
+            } else {
+                answer["value"]["kind"].as_str().unwrap()
+            };
+            replies.push((said["value"]["id"].as_u64().unwrap(), kind.to_owned()));
         }
     }
-    assert!(core.events.try_iter().all(|said| said["reply"].is_null()));
+    assert!(core.events.try_iter().all(|said| said["type"] != "reply"));
     replies.sort_unstable();
     let ids: Vec<u64> = replies.iter().map(|(id, _)| *id).collect();
     assert_eq!(ids, expected.iter().map(|(id, _)| *id).collect::<Vec<_>>());
@@ -175,7 +190,7 @@ fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
         || unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
     assert_eq!(
         take(edit()),
-        json!({ "ok": [] }),
+        json!({ "type": "ok", "value": [] }),
         "an edit outside a snippet mirrors nothing"
     );
     let edited = format!("{note}{before}");
@@ -190,11 +205,11 @@ fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(version(source), Some(opened + 2));
     assert!(unsafe { tl_source_editable(source) });
-    assert_eq!(core.ask(7, "CloseProject", json!({}))["ok"], true);
+    assert_eq!(answered(core.ask(7, "CloseProject", json!({}))), true);
     let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
     assert_eq!(saved, text);
     assert!(!unsafe { tl_source_editable(source) });
-    assert_eq!(take(edit())["error"]["kind"], "conflict");
+    assert_eq!(refused(take(edit()))["kind"], "conflict");
     assert_eq!(source_text(source), text);
     unsafe { tl_source_free(source) };
 }
@@ -210,8 +225,8 @@ fn session_events_reach_the_listener() {
     core.send(Some(1), Some("OpenProject"), Some(open));
     let found = (0..50)
         .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
-        .find(|event| event["event"]["type"] == "section");
-    assert_eq!(found.unwrap()["session"], 1);
+        .find(|said| said["type"] == "event" && said["value"]["event"]["type"] == "section");
+    assert_eq!(found.unwrap()["value"]["session"], 1);
 }
 
 #[test]
@@ -228,12 +243,13 @@ fn a_source_of_the_hosts_own_highlights_and_answers_commands() {
     let command = c("ToggleComment");
     let args = c(r#"{"selections":[{"start":0,"length":0}]}"#);
     let answer = take(unsafe { tl_source_call(source, command.as_ptr(), args.as_ptr()) });
-    assert!(answer["ok"].is_array());
+    assert!(answered(answer).is_array());
     let unknown = c("nope");
-    let refused = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
-    assert_eq!(refused["error"]["kind"], "invalid");
+    let answer = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
+    let refused = refused(answer);
+    assert_eq!(refused["kind"], "invalid");
     let message = json!({ "id": "unknown_command", "args": {}, "text": "Unknown command" });
-    assert_eq!(refused["error"]["message"], message);
+    assert_eq!(refused["message"], message);
     unsafe { tl_source_free(source) };
 }
 
@@ -242,9 +258,9 @@ fn syntax_commands_need_no_source() {
     let menus = c("ListMenus");
     let empty = c("{}");
     let answer = take(unsafe { tl_syntax_call(menus.as_ptr(), empty.as_ptr()) });
-    assert!(answer["ok"]["templates"].is_object());
-    let refused = take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) });
-    assert_eq!(refused["error"]["kind"], "invalid");
+    assert!(answered(answer)["templates"].is_object());
+    let refused = refused(take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) }));
+    assert_eq!(refused["kind"], "invalid");
 }
 
 #[test]
@@ -265,7 +281,7 @@ fn a_panic_answers_an_error_and_a_new_source_survives_one() {
     let source = own(|| panic!("a broken editor"));
     assert_eq!(source_text(source), "");
     let answer = take(unsafe { answer_on(source, |_| panic!("a broken edit")) });
-    assert_eq!(answer["error"]["kind"], "internal");
+    assert_eq!(refused(answer)["kind"], "internal");
     let text = "kept";
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(source_text(source), text);

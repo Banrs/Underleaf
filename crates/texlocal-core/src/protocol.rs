@@ -8,7 +8,7 @@ use texlocal_latex::protocol::Described;
 use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 
 use crate::CoreError;
-use crate::events::SessionEvent;
+use crate::events::Said;
 use crate::service::{Library, LibrarySection};
 use crate::session::{Session, SessionSection};
 
@@ -45,9 +45,8 @@ pub fn protocol() -> Protocol {
     requests.extend(Session::describe(&mut inbound, &mut outbound));
     requests.extend(Source::describe(&mut inbound, &mut outbound));
     requests.extend(Syntax::describe(&mut inbound, &mut outbound));
-    outbound.subschema_for::<CoreError>();
     outbound.subschema_for::<HighlightKind>();
-    outbound.subschema_for::<SessionEvent>();
+    outbound.subschema_for::<Said>();
     let stores = vec![
         outbound.subschema_for::<SessionSection>(),
         outbound.subschema_for::<LibrarySection>(),
