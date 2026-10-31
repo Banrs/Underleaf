@@ -73,7 +73,7 @@ impl Actor {
             history.take(&root, now(), Taken::Named(name))?;
             Ok(history.list()?.into_iter().next())
         };
-        self.beside(save, reply);
+        self.then_on_actor(save, |_, saved| Ok(saved), reply);
     }
 
     pub fn history_compare(&self, id: String, path: String, reply: Pending<Vec<DiffLine>>) {
@@ -105,7 +105,7 @@ impl Actor {
         then: impl FnOnce(&mut Self, U) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
-        self.befores += 1;
+        self.snapshots += 1;
         let tx = self.tx.clone();
         let job = move |history: &History| {
             catch_unwind(AssertUnwindSafe(|| job(history)))
@@ -113,7 +113,7 @@ impl Actor {
         };
         self.off_thread(job, move |done| {
             let finish = move |actor: &mut Self| {
-                actor.befores -= 1;
+                actor.snapshots -= 1;
                 reply.send(match done {
                     Some(done) if actor.writes_history.load(Ordering::Acquire) => {
                         done.and_then(|done| then(actor, done))

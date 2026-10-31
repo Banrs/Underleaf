@@ -155,7 +155,7 @@ pub(crate) struct Actor {
     pub later: VecDeque<Later>,
     pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
-    pub befores: usize,
+    pub snapshots: usize,
     pub sent: Sent<SessionSection>,
     stage: Stage,
 }
@@ -220,7 +220,7 @@ impl Actor {
             later,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
-            befores: 0,
+            snapshots: 0,
             sent: Sent::default(),
             stage: Stage::Open(in_session),
         };
@@ -543,7 +543,7 @@ impl Actor {
     }
 
     pub fn close_when_idle(&mut self) {
-        if self.builds.busy() || self.befores > 0 || !matches!(self.stage, Stage::Closing(..)) {
+        if self.builds.busy() || self.snapshots > 0 || !matches!(self.stage, Stage::Closing(..)) {
             return;
         }
         self.stop_history();

@@ -531,13 +531,32 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn an_edit_waiting_on_the_history_when_its_session_stops_is_answered_as_stopped() {
-        let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
-        sessions.send_to(2, 1, "Compile", json!({ "auto": false }));
-        assert_eq!(replied(&heard, 2).unwrap_err()["kind"], "internal");
+    async fn a_version_asked_before_a_close_is_saved_before_the_close_answers() {
+        let (sessions, heard, _dir) = panicking().await;
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0).unwrap();
+        let release = hold_history(&sessions);
+        sessions.send_to(1, 1, "SaveVersion", json!({ "name": "Draft" }));
+        sessions.send_to(2, 1, "CloseProject", json!({}));
+        sessions.send_to(3, 1, "ListVersions", json!({}));
+        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "notFound");
         drop(release);
-        let refused = replied(&heard, 1).unwrap_err();
-        assert_eq!(refused["message"]["id"], "session_stopped", "{refused}");
+        assert_eq!(replied(&heard, 1).unwrap()["name"], "Draft");
+        assert_eq!(replied(&heard, 2), Ok(json!(true)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn what_waits_on_the_history_when_its_session_stops_is_answered_as_stopped() {
+        let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
+        sessions.send_to(2, 1, "SaveVersion", json!({ "name": "Draft" }));
+        sessions.send_to(3, 1, "Compile", json!({ "auto": false }));
+        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "internal");
+        drop(release);
+        for id in [1, 2] {
+            let refused = replied(&heard, id).unwrap_err();
+            assert_eq!(refused["message"]["id"], "session_stopped", "{refused}");
+        }
         assert_eq!(chapter(&dir), "cat\n");
     }
 
