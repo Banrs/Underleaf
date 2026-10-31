@@ -146,13 +146,13 @@ struct SectionTests {
         #expect(!project.canRetrace(back: true))
     }
 
-    @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
+    @Test func theBuildSectionFeedsTheListAndItsCountsItsLogSectionTheLogAndThePDFSectionTheShownPDF() {
         let window = defaults.window()
         window.layout = .source
         let project = ProjectModel(id: "P", window: window)
         let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: "tex", args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
         let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
-        let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box], log: "")
+        let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box])
         let build = { (issues: [LogItem]) in
             project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: true, result: result,
                                                       issues: issues, lines: [:]))))
@@ -164,7 +164,9 @@ struct SectionTests {
         build([error, warning])
         #expect(project.chosenIssue == 1)
         build([warning])
-        #expect(project.chosenIssue == nil)
+        #expect(project.chosenIssue == nil && project.buildLog.isEmpty)
+        project.handle(.section(.buildLog("Output written on main.pdf")))
+        #expect(project.buildLog == "Output written on main.pdf" && project.result == result)
         let pdf = { (live: Bool) in project.handle(.section(.shownPdf(ShownPdf(path: "/tmp/P/main.pdf", version: 1, live: live)))) }
         pdf(false)
         #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !window.showPDF)
@@ -465,7 +467,7 @@ struct ViewsTests {
         let project = ProjectModel(id: "P", window: window)
         let views = Views(project)
         let build = { (ok: Bool, outdated: Bool) in
-            let result = CompileResult(ok: ok, stopped: false, durationMs: 0, pdf: nil, badBoxes: [], log: "")
+            let result = CompileResult(ok: ok, stopped: false, durationMs: 0, pdf: nil, badBoxes: [])
             project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: outdated, result: result, issues: [], lines: [:]))))
         }
         build(true, false)

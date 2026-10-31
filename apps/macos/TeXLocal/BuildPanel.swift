@@ -40,7 +40,7 @@ struct BuildPanelBar: View {
                 .disabled(project.warningCount == 0 && project.result?.badBoxes.isEmpty != false)
                 filter($panel.issueFilter)
             } else {
-                let text = panel.tab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
+                let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
                 Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)

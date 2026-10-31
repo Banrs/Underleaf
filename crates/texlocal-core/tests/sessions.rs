@@ -951,17 +951,27 @@ fn said_of(rig: &Rig, kinds: &[&str]) -> Vec<String> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_build_sends_its_sections_before_it_finishes_and_its_pdf_follows_the_main_file() {
+async fn a_build_sends_its_sections_and_its_log_before_it_finishes_and_its_pdf_follows_main() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
     rig.section("outline", |o| !o.is_null());
     rig.forget();
     rig.call("Compile", json!({ "auto": false }));
     rig.event("buildFinished", |_| true);
-    let said = ["build", "reply", "build", "shownPdf", "buildFinished"];
+    let said = [
+        "build",
+        "reply",
+        "build",
+        "buildLog",
+        "shownPdf",
+        "buildFinished",
+    ];
     assert_eq!(rig.said(), said);
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["ok"], true);
+    assert_eq!(build["result"].get("log"), None);
     assert_eq!(build["issues"], json!([]));
+    let log = rig.section("buildLog", |_| true);
+    assert!(log.as_str().unwrap().contains("Output written on main.pdf"));
     let pdf = rig.section("shownPdf", |_| true);
     assert_eq!((&pdf["version"], &pdf["live"]), (&json!(1), &json!(false)));
     let path = pdf["path"].clone();
@@ -977,8 +987,9 @@ async fn a_build_sends_its_sections_before_it_finishes_and_its_pdf_follows_the_m
     assert!(rig.root().join("build/main.fdb_latexmk").exists());
     rig.forget();
     rig.call("Clean", json!({}));
-    assert_eq!(rig.said(), ["build", "shownPdf", "reply"]);
+    assert_eq!(rig.said(), ["build", "buildLog", "shownPdf", "reply"]);
     assert_eq!(rig.section("build", |_| true)["result"], Value::Null);
+    assert_eq!(rig.section("buildLog", |_| true), "");
     assert!(!rig.root().join("build").exists());
 }
 

@@ -125,6 +125,7 @@ nonisolated enum FixtureUnion: Codable, Hashable, Sendable {
     case empty
     case plain(FixtureStruct)
     case many([FixtureUnit])
+    case note(String)
 
     enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
@@ -136,6 +137,7 @@ nonisolated extension FixtureUnion {
         case "empty": self = .empty
         case "plain": self = .plain(try wire.decode(FixtureStruct.self, forKey: .value))
         case "many": self = .many(try wire.decode([FixtureUnit].self, forKey: .value))
+        case "note": self = .note(try wire.decode(String.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
         }
     }
@@ -149,6 +151,9 @@ nonisolated extension FixtureUnion {
             try wire.encode(value, forKey: .value)
         case .many(let value):
             try wire.encode("many", forKey: .type)
+            try wire.encode(value, forKey: .value)
+        case .note(let value):
+            try wire.encode("note", forKey: .type)
             try wire.encode(value, forKey: .value)
         }
     }
@@ -170,6 +175,7 @@ nonisolated let wireSamples: [(any (Codable & Hashable & Sendable).Type, String)
     (FixtureOptional.self, #"{"note":"n","hint":2}"#),
     (FixtureUnit.self, #""light""#),
     (FixtureUnion.self, #"{"type":"empty"}"#),
+    (FixtureUnion.self, #"{"type":"note","value":"π"}"#),
     (FixtureUnion.self, #"{"type":"plain","value":{"name":"π","count":3,"total":18446744073709551615,"ratio":0.5,"on":true,"bytes":"aGk="}}"#),
     (FixtureList.self, #"{"items":[]}"#),
     (FixtureMap.self, #"{"scores":{"a":1}}"#),

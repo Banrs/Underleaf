@@ -44,6 +44,7 @@ enum FixtureUnion {
     Empty,
     Plain(FixtureStruct),
     Many(Vec<FixtureUnit>),
+    Note(String),
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]

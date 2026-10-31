@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "1aa9dd9eb988c5f6dfd70913f056350866bb52d291b3f04ea5857dca823b01ca"
+nonisolated let protocolDigest = "8a53b583b29707516c489090f0b5d38a9468cbb949296729ef861262ec941951"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -229,9 +229,8 @@ nonisolated struct CompileResult: Decodable, Hashable, Sendable {
     var durationMs: UInt64
     var pdf: String?
     var badBoxes: [LogItem]
-    var log: String
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case ok, stopped, durationMs, pdf, badBoxes, log }
+    enum CodingKeys: String, CodingKey, CaseIterable { case ok, stopped, durationMs, pdf, badBoxes }
 }
 
 nonisolated extension CompileResult {
@@ -242,7 +241,6 @@ nonisolated extension CompileResult {
         durationMs = try wire.decode(UInt64.self, forKey: .durationMs)
         pdf = try wire.decode(String?.self, forKey: .pdf)
         badBoxes = try wire.decode([LogItem].self, forKey: .badBoxes)
-        log = try wire.decode(String.self, forKey: .log)
     }
 }
 
@@ -1628,6 +1626,7 @@ nonisolated enum SessionSection: Decodable, Hashable, Sendable {
     case openFile(OpenFile?)
     case outline(Analysis?)
     case build(BuildState)
+    case buildLog(String)
     case shownPdf(ShownPdf)
     case live(LiveState)
 
@@ -1645,6 +1644,7 @@ nonisolated extension SessionSection {
         case "openFile": self = .openFile(try wire.decode(OpenFile?.self, forKey: .value))
         case "outline": self = .outline(try wire.decode(Analysis?.self, forKey: .value))
         case "build": self = .build(try wire.decode(BuildState.self, forKey: .value))
+        case "buildLog": self = .buildLog(try wire.decode(String.self, forKey: .value))
         case "shownPdf": self = .shownPdf(try wire.decode(ShownPdf.self, forKey: .value))
         case "live": self = .live(try wire.decode(LiveState.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
@@ -2211,6 +2211,7 @@ final class SessionStore {
     private(set) var openFile: OpenFile?
     private(set) var outline: Analysis?
     private(set) var build: BuildState?
+    private(set) var buildLog: String?
     private(set) var shownPdf: ShownPdf?
     private(set) var live: LiveState?
 
@@ -2223,6 +2224,7 @@ final class SessionStore {
         case .openFile(let value): self.openFile = value
         case .outline(let value): self.outline = value
         case .build(let value): self.build = value
+        case .buildLog(let value): self.buildLog = value
         case .shownPdf(let value): self.shownPdf = value
         case .live(let value): self.live = value
         }

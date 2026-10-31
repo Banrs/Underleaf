@@ -23,6 +23,7 @@ pub(crate) enum SessionSection {
     OpenFile(Option<OpenFile>),
     Outline(Option<Analysis>),
     Build(BuildState),
+    BuildLog(String),
     ShownPdf(ShownPdf),
     Live(LiveState),
 }
@@ -77,6 +78,7 @@ impl Actor {
         self.publish_documents();
         self.publish(SessionSection::Outline(None));
         self.publish_build();
+        self.publish(SessionSection::BuildLog(String::new()));
         self.publish_pdf();
         self.publish_live(false);
     }

@@ -4,6 +4,7 @@
     { "type": "FixtureOptional", "value": { "note": "n", "hint": 2 } },
     { "type": "FixtureUnit", "value": "light" },
     { "type": "FixtureUnion", "value": { "type": "empty" } },
+    { "type": "FixtureUnion", "value": { "type": "note", "value": "π" } },
     { "type": "FixtureUnion", "value": { "type": "plain", "value": { "name": "π", "count": 3, "total": 18446744073709551615, "ratio": 0.5, "on": true, "bytes": "aGk=" } } },
     { "type": "FixtureList", "value": { "items": [] } },
     { "type": "FixtureMap", "value": { "scores": { "a": 1 } } },
