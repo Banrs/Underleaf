@@ -10,7 +10,7 @@ use texlocal_latex::templates::ProjectTemplate;
 use tokio::sync::oneshot;
 
 use crate::compile::CompileManager;
-use crate::events::{Said, Sent};
+use crate::events::{Log, LogLevel, Said, Sent};
 use crate::messages;
 use crate::paths::Project;
 use crate::process::Processes;
@@ -104,8 +104,18 @@ impl Service {
         Ok(())
     }
 
-    fn relist<T>(&self, done: Result<T, CoreError>) -> Result<T, CoreError> {
-        let _ = self.publish_projects();
+    pub(crate) fn relist(&self) {
+        if let (Err(err), Some(hub)) = (self.publish_projects(), self.hub.get()) {
+            let text = format!("The projects couldn’t be listed: {err}");
+            let _ = hub.send(Said::Log(Log {
+                level: LogLevel::Error,
+                text,
+            }));
+        }
+    }
+
+    fn relisted<T>(&self, done: Result<T, CoreError>) -> Result<T, CoreError> {
+        self.relist();
         done
     }
 
@@ -240,14 +250,14 @@ impl Service {
                     engine,
                 },
                 answer,
-            ) => answer(self.relist(projects::create_project(
+            ) => answer(self.relisted(projects::create_project(
                 &self.data_dir,
                 &name,
                 template,
                 engine,
             ))),
             Library::DuplicateProject(DuplicateProject { id, name }, answer) => {
-                answer(self.relist(import::duplicate_project(self, &id, &name)))
+                answer(self.relisted(import::duplicate_project(self, &id, &name)))
             }
             Library::FreeProjectName(FreeProjectName {}, answer) => {
                 answer(projects::free_project_name(&self.data_dir))
@@ -256,14 +266,14 @@ impl Service {
                 let renamed = self
                     .unless_open(&id, messages::close_before_renaming)
                     .and_then(|_library| projects::rename_project(&self.data_dir, &id, &name));
-                answer(self.relist(renamed))
+                answer(self.relisted(renamed))
             }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
             Library::OpenPath(OpenPath { path }, answer) => {
-                answer(self.relist(projects::open_path(self, &path)))
+                answer(self.relisted(projects::open_path(self, &path)))
             }
             Library::ForgetFolder(ForgetFolder { id }, answer) => {
-                answer(self.relist(projects::forget_folder(self, &id)))
+                answer(self.relisted(projects::forget_folder(self, &id)))
             }
         }
     }

@@ -546,7 +546,7 @@ impl Actor {
         }
         self.stop_history();
         let closes = self.end();
-        let _ = self.service.publish_projects();
+        self.service.relist();
         for close in closes {
             close.send(Ok(true));
         }

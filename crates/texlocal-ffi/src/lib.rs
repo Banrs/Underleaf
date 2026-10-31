@@ -62,6 +62,7 @@ pub unsafe extern "C" fn tl_open(
             let _entered = runtime.enter();
             Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen))
         };
+        sessions.log_panics();
         Some(Box::new(TlHandle { runtime, sessions }))
     })
     .flatten()

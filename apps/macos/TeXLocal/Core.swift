@@ -16,6 +16,15 @@ nonisolated extension Answered {
     }
 }
 
+nonisolated extension LogLevel {
+    var type: OSLogType {
+        switch self {
+        case .error: .error
+        case .fault: .fault
+        }
+    }
+}
+
 nonisolated struct AppFailure: LocalizedError {
     let errorDescription: String?
 
@@ -51,6 +60,7 @@ final class Core {
                 case .reply(let reply): pending.removeValue(forKey: reply.id)?(json)
                 case .event(let event): observers[event.session]?(event.event)
                 case .library(let section): library.apply(section)
+                case .log(let log): Self.log.log(level: log.level.type, "\(log.text, privacy: .public)")
                 }
             }
         }

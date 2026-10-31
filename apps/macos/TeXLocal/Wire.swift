@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "8f4b5d8e38cdc9709ebeb0094b905097dc413cf53c45176af22efe3adf102301"
+nonisolated let protocolDigest = "7cbc58b0ae88125333092837768e347dcc20ed428a77411daaa3888379d5c96f"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -961,6 +961,21 @@ nonisolated struct LiveView: SessionRequest {
     var last: Int
 }
 
+nonisolated struct Log: Decodable, Hashable, Sendable {
+    var level: LogLevel
+    var text: String
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case level, text }
+}
+
+nonisolated extension Log {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        level = try wire.decode(LogLevel.self, forKey: .level)
+        text = try wire.decode(String.self, forKey: .text)
+    }
+}
+
 nonisolated struct LogItem: Decodable, Hashable, Sendable {
     var kind: Severity
     var file: String?
@@ -982,6 +997,10 @@ nonisolated extension LogItem {
         explain = try wire.decodeIfPresent(Message.self, forKey: .explain)
         fix = try wire.decodeIfPresent(Fix.self, forKey: .fix)
     }
+}
+
+nonisolated enum LogLevel: String, Decodable, CaseIterable, Hashable, Sendable {
+    case error, fault
 }
 
 nonisolated struct LookUp: SessionRequest {
@@ -1476,6 +1495,7 @@ nonisolated enum Said<Payload: Decodable & Sendable>: Decodable, Sendable {
     case reply(Replied<Payload>)
     case event(SessionEvent)
     case library(LibrarySection)
+    case log(Log)
 
     enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
@@ -1487,6 +1507,7 @@ nonisolated extension Said {
         case "reply": self = .reply(try wire.decode(Replied<Payload>.self, forKey: .value))
         case "event": self = .event(try wire.decode(SessionEvent.self, forKey: .value))
         case "library": self = .library(try wire.decode(LibrarySection.self, forKey: .value))
+        case "log": self = .log(try wire.decode(Log.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
         }
     }

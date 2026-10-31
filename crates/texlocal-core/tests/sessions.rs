@@ -271,6 +271,27 @@ async fn the_library_is_pushed_before_the_reply_that_changed_it_and_an_open_proj
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_library_that_cant_be_listed_after_a_change_is_logged_before_the_reply() {
+    let rig = project().await;
+    let data = rig.library.path("data");
+    let mode = |mode| fs::set_permissions(&data, fs::Permissions::from_mode(mode)).unwrap();
+    rig.section("outline", |o| !o.is_null());
+    rig.forget();
+    mode(0o300);
+    let made = rig.ask_library("CreateProject", json!({ "name": "Q", "template": "blank" }));
+    mode(0o755);
+    assert_eq!(made.unwrap()["id"], "Q");
+    assert_eq!(rig.said(), ["log", "reply"]);
+    let log = rig.find(|e| e["type"] == "log")["value"].take();
+    assert_eq!(log["level"], "error");
+    let text = log["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("The projects couldn’t be listed: "),
+        "{text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn checks_find_undefined_labels_and_unclosed_environments() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\ref{nowhere}\n\\begin{itemize}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;

@@ -11,12 +11,13 @@ The Mac app TeXLocal: a Rust core in `crates/` and the SwiftUI and AppKit app in
 The app talks to the core two ways. The editor engine is synchronous and in process (`tl_source_*`), and answers
 each call with an `Answered`. Everything else is one ordered stream: `tl_send` and `tl_session_send` carry the
 commands that `texlocal-core/src/protocol.rs` types, and one listener hears everything the core says as a `Said`
-(`events.rs`): replies after the events sent before them, and library sections. A session's state arrives as
-sections, each sent again only when it changes. The Swift side of the protocol, `apps/macos/TeXLocal/Wire.swift`,
-the test fixtures in `WireFixtures.swift` and the schema digest in `texlocal-core/src/protocol/digest.rs` are
-generated: after changing a command, event or section type, run `cargo run -p texlocal-wire -- --write` and commit
-what it writes. `cargo test` fails while any of them is stale. The samples, rejects and stream messages that every
-client's wire tests check are in `crates/texlocal-wire/fixtures/wire.json`.
+(`events.rs`): replies after the events sent before them, library sections, and `Log`s of panics and dropped errors,
+which the app writes to the unified log in the `core` category. A session's state arrives as sections, each sent
+again only when it changes. The Swift side of the protocol, `apps/macos/TeXLocal/Wire.swift`, the test fixtures in
+`WireFixtures.swift` and the schema digest in `texlocal-core/src/protocol/digest.rs` are generated: after changing a
+command, event or section type, run `cargo run -p texlocal-wire -- --write` and commit what it writes. `cargo test`
+fails while any of them is stale. The samples, rejects and stream messages that every client's wire tests check are
+in `crates/texlocal-wire/fixtures/wire.json`.
 
 ## Where code goes
 

@@ -180,12 +180,12 @@ struct CoreTests {
     @Test func theAppReadsEachKindOfThingTheCoreSays() throws {
         let said = try wireSaid.map { try JSONDecoder().decode(Said<String>.self, from: Data($0.utf8)) }
         guard case .reply(let ok) = said[0], case .reply(let refused) = said[1], case .event(let event) = said[2],
-              case .library = said[3] else {
+              case .library = said[3], case .log(let log) = said[4] else {
             Issue.record("\(said)")
             return
         }
         #expect(try ok.answer.get() == "main.tex")
         #expect(throws: CoreError.self) { try refused.answer.get() }
-        #expect(event.event == .liveAlert)
+        #expect(event.event == .liveAlert && log.level == .fault)
     }
 }

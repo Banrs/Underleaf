@@ -147,6 +147,10 @@ impl Sessions {
         }
     }
 
+    pub fn log_panics(&self) {
+        self.hub.log_panics();
+    }
+
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
         let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
@@ -388,6 +392,30 @@ mod tests {
         for id in 1..=4 {
             assert_eq!(replied(&heard, id).unwrap_err()["kind"], "internal");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panic_in_a_session_reaches_the_stream_as_a_log_before_the_replies_it_fails() {
+        let (sessions, heard, _dir) = panicking().await;
+        sessions.log_panics();
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 9, "OpenProject", open);
+        replied(&heard, 0).unwrap();
+        sessions.send_to(1, 9, "Compile", json!({ "auto": false }));
+        let at = format!("thread 'texlocal-session-9' panicked at {}:", file!());
+        let ours = |said: &Value| {
+            said["value"]["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with(&at))
+        };
+        let wait = Duration::from_secs(10);
+        let first = heard_within(&heard, wait, |said| ours(said) || said["type"] == "reply");
+        let log = first.expect("the session panics");
+        assert!(ours(&log), "a reply came before the log: {log}");
+        assert_eq!(log["value"]["level"], "fault");
+        let text = log["value"]["text"].as_str().unwrap();
+        assert!(text.ends_with(":\nthe test compiler panics"), "{text}");
+        assert_eq!(replied(&heard, 1).unwrap_err()["kind"], "internal");
     }
 
     #[tokio::test(flavor = "multi_thread")]
