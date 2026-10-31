@@ -16,7 +16,6 @@ struct StatusBar: View {
             content(.short).labelStyle(.iconOnly)
         }
         .barRow(leading: 14, trailing: 16.5)
-        .background(.textSurface)
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
