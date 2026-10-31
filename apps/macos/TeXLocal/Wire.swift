@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "c341e0c5cf0fd5cff3534871355a73ed331b8576ca19ba5e6b1e19ffc4a99398"
+nonisolated let protocolDigest = "1aa9dd9eb988c5f6dfd70913f056350866bb52d291b3f04ea5857dca823b01ca"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -490,7 +490,7 @@ nonisolated enum Engine: String, Codable, CaseIterable, Hashable, Sendable {
 }
 
 nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable {
-    case invalid, denied, notFound, conflict, unfit, unavailable, `internal`
+    case invalid, denied, notFound, conflict, unavailable, `internal`
 }
 
 nonisolated enum Event: Decodable, Hashable, Sendable {
