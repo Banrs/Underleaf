@@ -1026,6 +1026,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "texlocal-wire"
+version = "0.2.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "texlocal-core",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

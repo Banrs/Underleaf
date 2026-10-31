@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
-use super::ir::{Def, Field, Ir, Request, Shape, Ty};
+use crate::fixtures::{Fixture, Fixtures};
+use crate::ir::{Def, Field, Ir, Request, Shape, Ty};
 
 const PREAMBLE: &str = r#"import Foundation
 import Observation
@@ -57,7 +58,26 @@ pub fn file(ir: &Ir) -> String {
     out
 }
 
-pub fn types(ir: &Ir) -> String {
+pub fn fixtures(ir: &Ir, fixtures: &Fixtures) -> String {
+    let listed = |name: &str, list: &[Fixture]| {
+        let rows: Vec<String> = list
+            .iter()
+            .map(|fixture| format!("    ({}.self, #\"{}\"#),\n", fixture.ty, fixture.value))
+            .collect();
+        format!(
+            "\nnonisolated let {name}: [(any (Codable & Hashable & Sendable).Type, String)] = [\n{}]\n",
+            rows.concat()
+        )
+    };
+    format!(
+        "import Foundation\n@testable import TeXLocal\n{}{}{}",
+        types(ir),
+        listed("wireSamples", &fixtures.samples),
+        listed("wireRejects", &fixtures.rejects),
+    )
+}
+
+fn types(ir: &Ir) -> String {
     let mut out = String::new();
     for (name, def) in &ir.defs {
         let request = ir.requests.iter().find(|r| r.name == *name);
