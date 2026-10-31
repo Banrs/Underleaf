@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -278,4 +279,129 @@ fn the_app_has_the_crates_version_from_one_place() {
     assert!(config.lines().any(|line| line == version), "{config}");
     let project = include_str!("../../../apps/macos/TeXLocal.xcodeproj/project.pbxproj");
     assert!(!project.contains("MARKETING_VERSION"));
+}
+
+type Signature = (String, Vec<String>);
+
+fn words(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn enclosed(text: &str) -> (&str, &str) {
+    let mut depth = 0;
+    for (at, c) in text.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => return (&text[..at], &text[at + 1..]),
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    panic!("no ) closes {text}")
+}
+
+fn listed(params: &str) -> Vec<&str> {
+    let (mut list, mut depth, mut start) = (Vec::new(), 0, 0);
+    for (at, c) in params.char_indices().chain([(params.len(), ',')]) {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                list.push(params[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    list.retain(|param| !param.is_empty());
+    list
+}
+
+fn c_type(rust: &str) -> String {
+    if let Some(pointee) = rust.strip_prefix("*const ") {
+        return format!("const {} *", c_type(pointee));
+    }
+    if let Some(pointee) = rust.strip_prefix("*mut ") {
+        return format!("{} *", c_type(pointee));
+    }
+    let callback = rust.strip_prefix("Option<extern \"C\" fn(");
+    if let Some(params) = callback.and_then(|rest| rest.strip_suffix(")>")) {
+        let params: Vec<String> = listed(params).into_iter().map(c_type).collect();
+        return format!("void (*)({})", params.join(", "));
+    }
+    match rust {
+        "bool" | "TlHandle" | "TlSource" => rust,
+        "c_char" => "char",
+        "c_void" => "void",
+        "u8" => "uint8_t",
+        "u32" => "uint32_t",
+        "u64" => "uint64_t",
+        "usize" => "size_t",
+        "TextRange" => "TlRange",
+        _ => panic!("{rust} has no C type"),
+    }
+    .into()
+}
+
+fn rust_functions(lib: &str) -> BTreeMap<String, Signature> {
+    let lib = words(lib);
+    let items = lib.split("#[unsafe(no_mangle)] pub unsafe extern \"C\" fn ");
+    let function = |item: &str| {
+        let (name, rest) = item.split_once('(').unwrap();
+        let (params, rest) = enclosed(rest);
+        let typed = |param: &str| c_type(param.split_once(": ").unwrap().1);
+        let returns = rest.split_once('{').unwrap().0.trim().strip_prefix("-> ");
+        let returns = returns.map_or("void".into(), c_type);
+        (
+            name.to_owned(),
+            (returns, listed(params).into_iter().map(typed).collect()),
+        )
+    };
+    items.skip(1).map(function).collect()
+}
+
+fn c_functions(header: &str) -> BTreeMap<String, Signature> {
+    let code: Vec<&str> = header
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    let code = words(&code.join(" ").replace("_Nullable", "").replace('*', " * "));
+    let types = |params: &str| -> Vec<String> {
+        let unnamed = |param: &str| {
+            param
+                .rsplit_once(' ')
+                .map_or(param, |(ty, _)| ty)
+                .to_owned()
+        };
+        listed(params).into_iter().map(unnamed).collect()
+    };
+    let (mut functions, mut pointers) = (BTreeMap::new(), BTreeMap::new());
+    for declaration in code.split(';') {
+        let Some((head, rest)) = declaration.split_once('(') else {
+            continue;
+        };
+        let (inner, rest) = enclosed(rest);
+        if let Some(returns) = head.trim().strip_prefix("typedef ") {
+            let params = types(enclosed(rest.strip_prefix('(').unwrap()).0);
+            let name = inner.replace('*', "").trim().to_owned();
+            pointers.insert(name, format!("{returns} (*)({})", params.join(", ")));
+        } else {
+            let (returns, name) = head.trim().rsplit_once(' ').unwrap();
+            functions.insert(name.to_owned(), (returns.to_owned(), types(inner)));
+        }
+    }
+    for param in functions.values_mut().flat_map(|(_, params)| params) {
+        if let Some(pointer) = pointers.get(param) {
+            param.clone_from(pointer);
+        }
+    }
+    functions
+}
+
+#[test]
+fn the_header_declares_each_function_as_lib_rs_defines_it() {
+    let lib = include_str!("lib.rs");
+    let rust = rust_functions(lib);
+    assert_eq!(rust.len(), lib.matches("#[unsafe(no_mangle)]").count());
+    assert_eq!(c_functions(include_str!("../include/texlocal.h")), rust);
 }
