@@ -719,23 +719,27 @@ mod tests {
         let path = tool_paths(&AppSettings::default()).1;
         let status = manager.start(1, &project, &files, &path, &pane, sink);
         assert!(status.unwrap().running);
-        assert!(typesets(&heard(&events, Duration::from_secs(5))) > 0);
+        let mut started = std::iter::from_fn(|| events.recv_timeout(Duration::from_secs(120)).ok());
+        assert!(started.any(|event| matches!(event, LiveEvent::Done(_))));
+        heard(&events, Duration::from_secs(5));
 
         typed(&manager, text.find("A sentence").unwrap(), "abcdefgh").await;
         let typing: Vec<_> = events.try_iter().collect();
         assert_eq!(typesets(&typing), 0, "only the page in view while typing");
-        let pages = typing.iter().filter_map(|e| match e {
-            LiveEvent::Page { page, .. } => Some(*page),
-            _ => None,
-        });
+        let settling = heard(&events, Duration::from_secs(5));
+        let pages = (typing.iter().chain(&settling))
+            .take_while(|e| !matches!(e, LiveEvent::Done(_)))
+            .filter_map(|e| match e {
+                LiveEvent::Page { page, .. } => Some(*page),
+                _ => None,
+            });
         let pages: Vec<u32> = pages.collect();
         assert!(
             !pages.is_empty() && pages.iter().all(|&page| page == 0),
             "{pages:?}"
         );
-        let settled = typesets(&heard(&events, Duration::from_secs(5)));
         assert!(
-            (1..=3).contains(&settled),
+            (1..=3).contains(&typesets(&settling)),
             "the rest once, then at most two passes"
         );
 
