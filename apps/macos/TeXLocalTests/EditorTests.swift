@@ -203,6 +203,15 @@ struct EditorTests {
         #expect(text.string == "a b a b" && text.document.text == text.string)
     }
 
+    @Test func aWrappedLineContinuesUnderItsIndentation() throws {
+        let (editor, window) = Self.editor("    " + Array(repeating: "word", count: 80).joined(separator: " "))
+        defer { window.close() }
+        window.displayIfNeeded()
+        let lines = try #require(editor.textView.fragments.first?.fragment.textLineFragments)
+        try #require(lines.count > 1)
+        #expect(abs(lines[1].typographicBounds.minX - lines[0].locationForCharacter(at: 4).x) < 0.5)
+    }
+
     @Test func scrollingReportsTheTopLine() throws {
         let (editor, window) = Self.editor((1...200).map { "line \($0)" }.joined(separator: "\n"))
         defer { window.close() }
