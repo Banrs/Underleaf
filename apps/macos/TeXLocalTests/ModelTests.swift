@@ -132,6 +132,20 @@ struct SectionTests {
         #expect(project.saveFailure == "The disk is full.")
     }
 
+    @Test func theTrailGoesBackOnlyToFilesTheTreeStillHolds() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let file = { (path: String) in TreeNode(name: path.fileName, path: path, kind: .tex, children: nil, main: false) }
+        let tree = { (files: [TreeNode]) in
+            project.handle(.section(.tree([TreeNode(name: "ch", path: "ch", kind: nil, children: files, main: false), file("main.tex")])))
+        }
+        tree([file("ch/one.tex")])
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
+        #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
+        tree([])
+        #expect(!project.canRetrace(back: true))
+    }
+
     @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
         let window = defaults.window()
         window.layout = .source
@@ -294,40 +308,45 @@ private struct Renaming: View {
 struct SwitchTests {
     private let defaults = TestDefaults()
 
-    @Test func anOpenFromHomeSupersedesOneNotYetUnderWay() async throws {
-        let (first, second) = (try await newProject(), try await newProject())
-        let window = defaults.window()
-        window.app.autoCompile = false
-        let superseded = Task { await window.open(first.id) }
-        let latest = Task { await window.open(second.id) }
-        _ = (await superseded.value, await latest.value)
-        #expect(window.project?.id == second.id && window.project?.initialLoadComplete == true)
-        #expect(window.app.recentProjects == [second.id] && window.app.windows.count == 1)
-        #expect(await window.close())
-        #expect(window.project == nil)
-    }
-
-    @Test func aProjectOpensInOneWindowAndAnotherInAWindowOfItsOwn() async throws {
+    @Test func eachProjectOpensInAWindowOfItsOwnOnceEvenWhenOpenedTwiceAtOnceAndHomeNeverHoldsOne() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
         app.autoCompile = false
-        let window = WindowModel(app: app)
-        await window.open(first.id)
+        let home = app.showHome()
+        async let opened: Void = home.open(first.id)
+        async let again: Void = home.open(first.id)
+        _ = await (opened, again)
+        let window = try #require(app.window(showing: first.id))
+        #expect(app.windows.count == 2 && window.project?.initialLoadComplete == true && home.project == nil)
         await window.open(second.id)
         let other = try #require(app.window(showing: second.id))
-        #expect(other !== window && window.project?.id == first.id && app.windows.count == 2)
+        #expect(other !== window && window.project?.id == first.id && app.windows.count == 3 && app.recentProjects == [second.id, first.id])
         await other.open(first.id)
-        #expect(app.windows.count == 2 && other.project?.id == second.id)
+        #expect(app.windows.count == 3 && other.project?.id == second.id)
         #expect(!app.canChange(first) && !app.canChange(second))
         #expect(await window.close() && other.project?.isOpen == true)
         #expect(app.canChange(first) && !app.canChange(second))
         #expect(await other.close())
     }
 
-    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsed() {
+    @Test func aProjectStillOpensWhenTheWindowThatAskedHasClosedMeanwhile() async throws {
+        let info = try await newProject()
         let app = defaults.app()
-        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
-        #expect(app.main == nil && app.front === window)
+        app.autoCompile = false
+        let home = app.showHome()
+        home.windowClosed()
+        await home.open(info.id)
+        let window = try #require(app.window(showing: info.id))
+        #expect(window.project?.isOpen == true && app.windows.count == 1)
+        #expect(await window.close())
+    }
+
+    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
+        let app = defaults.app()
+        let home = app.front
+        #expect(app.main == nil && app.home === home && app.windows.count == 1)
+        let (window, other) = (app.openWindow("A"), app.openWindow("B"))
+        #expect(app.front === home)
         other.isKey = true
         #expect(app.main === other && app.front === other)
         (other.isKey, window.isKey) = (false, true)
@@ -362,21 +381,21 @@ struct SwitchTests {
         let info = try await newProject()
         let app = defaults.app()
         app.autoCompile = false
-        let (home, other) = (WindowModel(app: app), WindowModel(app: app))
-        await other.open(info.id)
+        let home = app.showHome()
+        await home.open(info.id)
         await home.delete(info)
         #expect(FileManager.default.fileExists(atPath: info.path) && home.alert != nil)
-        #expect(await other.close())
+        #expect(await app.window(showing: info.id)?.close() == true)
     }
 
     @Test func quitLeavesEveryProjectOpenWhileOneHasADocumentItCantSave() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
         app.autoCompile = false
-        let (window, other) = (WindowModel(app: app), WindowModel(app: app))
-        await window.open(first.id)
-        await other.open(second.id)
-        let held = try #require(other.project)
+        let home = app.showHome()
+        await home.open(first.id)
+        await home.open(second.id)
+        let (window, held) = (try #require(app.window(showing: first.id)), try #require(app.window(showing: second.id)?.project))
         let document = try #require(SourceDocument(session: held.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
         try await Task.sleep(for: .milliseconds(300))
@@ -400,7 +419,7 @@ struct ViewsTests {
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try #"{ "ui": { "file": "main.tex", "line": 3 } }"#.write(toFile: info.path + "/.texlocal.json", atomically: true, encoding: .utf8)
-        await project.load()
+        try await project.load()
         #expect(views.ui != nil && project.initialLoadComplete)
         #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
         #expect(await project.createEntry(in: "", directory: true) == "untitled-folder")
@@ -416,34 +435,159 @@ struct ViewsTests {
         #expect(window.alert == nil && views.shown.count == 3)
     }
 
+    @Test func aRestoreOrAFixTheEditorRefusesSaysSoAndTheFixDoesntCompile() async throws {
+        let info = try await newProject()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        window.app.tex = TexStatus(available: true, latexmkVersion: nil, texDir: nil, found: nil, texpresso: nil, texpressoDir: nil)
+        let project = ProjectModel(id: info.id, window: window)
+        let views = Views(project)
+        try await project.load()
+        let snapshot = try #require(try await project.session.call(SaveVersion(name: "First")))
+        let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
+        await #expect {
+            try await project.restoreVersion(snapshot, paths: nil)
+        } throws: {
+            $0.localizedDescription == "The file shown changed meanwhile, so it wasn’t restored. Try again."
+        }
+        let text = Message(id: "fix", args: [:], text: "Add the Package")
+        await project.run(Fix(id: "package:texlocal", title: text, help: text, confirm: nil))
+        #expect(window.alert?.message == "The file shown changed meanwhile, so nothing was changed. Try again.")
+        #expect(views.refused == ["main.tex", "main.tex"])
+        #expect(!project.compiling && project.result == nil)
+        #expect(await project.close().value)
+    }
+
+    @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() {
+        let window = defaults.window()
+        window.app.syncAfterCompile = true
+        let project = ProjectModel(id: "P", window: window)
+        let views = Views(project)
+        let build = { (ok: Bool, outdated: Bool) in
+            let result = CompileResult(ok: ok, stopped: false, durationMs: 0, pdf: nil, badBoxes: [], log: "")
+            project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: outdated, result: result, issues: [], lines: [:]))))
+        }
+        build(true, false)
+        #expect(!project.syncsAfterBuild)
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        #expect(project.syncsAfterBuild)
+        build(true, true)
+        #expect(!project.syncsAfterBuild)
+        build(true, false)
+        window.layout = .source
+        #expect(!project.syncsAfterBuild)
+        window.layout = .split
+        window.app.syncAfterCompile = false
+        #expect(!project.syncsAfterBuild)
+        build(false, false)
+        project.handle(.buildFinished(BuildFinished(auto: true, announce: true)))
+        #expect(views.attention == 0)
+        project.handle(.buildFinished(BuildFinished(auto: false, announce: false)))
+        #expect(views.attention == 1 && project.panel.shown)
+    }
+
+    @Test func aDoubleClickSyncsOnlyToAPaneThatShows() async {
+        let window = defaults.window()
+        let project = ProjectModel(id: "P", window: window)
+        let views = Views(project)
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        #expect(!project.canSyncForward())
+        views.hasPDF = true
+        window.layout = .source
+        #expect(project.canSyncForward() && !project.canSyncForward(quietly: true))
+        window.layout = .split
+        #expect(project.canSyncForward(quietly: true))
+        window.layout = .pdf
+        await project.inverseSync(page: 0, x: 0, y: 0, quietly: true)
+        #expect(project.syncTask == nil)
+        await project.inverseSync(page: 0, x: 0, y: 0)
+        #expect(project.syncTask != nil)
+    }
+
+    @Test func editsWhileTheLivePDFShowsFollowTheCaretUntilLivePreviewStops() async {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let live = { (phase: LivePhase) in
+            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, log: nil, failures: [], lines: [:]))))
+        }
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        live(.running)
+        project.edited()
+        project.liveDocumentShown()
+        #expect(!project.followsCaret && !project.showsLive && project.followTask == nil)
+        project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 1, live: true))))
+        project.edited()
+        #expect(project.followsCaret && project.showsLive)
+        project.liveDocumentShown()
+        #expect(project.followTask != nil)
+        live(.stopping)
+        #expect(!project.followsCaret && !project.showsLive)
+        live(.running)
+        #expect(await project.close().value && !project.showsLive)
+    }
+
+    @Test func clickingAnIssueInTheTextChoosesItOrShowsTheLivePreviewLog() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let message = Message(id: "tex", args: [:], text: "Undefined control sequence.")
+        let lines = { (line: Int, index: Int?) in
+            ["main.tex": [IssueLine(line: line, error: true, message: message, short: message, compact: nil, tokens: [], others: [], index: index)]]
+        }
+        project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: false, result: nil, issues: [], lines: lines(3, 1)))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, log: nil, failures: [], lines: lines(5, nil)))))
+        project.issueClicked(atLine: 5, in: "main.tex")
+        #expect(project.panel.showsLiveLog && project.chosenIssue == nil)
+        project.issueClicked(atLine: 3, in: "main.tex")
+        #expect(project.panel.tab == .issues && project.chosenIssue == 1)
+        project.panel.shown = false
+        project.issueClicked(atLine: 3, in: "other.tex")
+        #expect(!project.panel.shown)
+    }
+
+    @Test func aDroppedFigureIsIncludedOrCopiedInAndAProjectFileOpens() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
+        let file = { (name: String, kind: FileKind) in TreeNode(name: name, path: name, kind: kind, children: nil, main: false) }
+        project.handle(.section(.project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil))))
+        project.handle(.section(.tree([file("main.tex", .tex), file("plot.png", .image), file("refs.bib", .bib)])))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        let drop = { (path: String) in project.dropAction(for: URL(filePath: path)) }
+        #expect(drop("/tmp/Paper/plot.png") == .insert("\\includegraphics{plot.png}") && drop("/tmp/Paper/refs.bib") == .open("refs.bib"))
+        #expect(drop("/tmp/Paper/gone.png") == nil && drop("/Users/me/shot.png") == .copy && drop("/Users/me/notes.txt") == nil)
+        project.handle(.section(.openFile(OpenFile(path: "refs.bib", kind: .bib))))
+        #expect(drop("/tmp/Paper/plot.png") == .open("plot.png") && drop("/Users/me/shot.png") == nil)
+    }
+
     private final class Views: ProjectViews {
         private let project: ProjectModel
         var ui: UiState?
-        var shown: [String] = [], revealed: [String] = [], moved: [String] = []
+        var shown: [String] = [], revealed: [String] = [], moved: [String] = [], refused: [String] = []
+        var hasPDF = false, attention = 0
 
         init(_ project: ProjectModel) {
             self.project = project
             project.views = self
         }
 
-        let hasPDF = false, zoom = Zoom.fitWidth, shownVersion = 0, inspectorShown = false
+        let zoom = Zoom.fitWidth, shownVersion = 0, inspectorShown = false, pdfLoading: Task<Void, Never>? = nil
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }
             if case .renamed(let renamed) = event { moved += [renamed.from, renamed.to] }
         }
 
-        func opened(_ ui: UiState) -> Task<Void, Never>? {
-            self.ui = ui
-            return nil
-        }
+        func opened(_ ui: UiState) { self.ui = ui }
 
         func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
-        func apply(_ edits: DocumentEdits, named name: String) -> Bool { false }
+        func apply(_ edits: DocumentEdits, named name: String) -> Bool {
+            refused.append(edits.path)
+            return false
+        }
+        func follow(_ loc: ForwardLoc) {}
         func trashed(_ path: String) {}
         func beep() {}
+        func requestAttention() { attention += 1 }
         func perform(_ command: EditorCommand) {}
         func perform(_ command: MenuCommand) {}
         func validates(_ command: MenuCommand) -> Bool { false }

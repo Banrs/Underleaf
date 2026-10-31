@@ -163,7 +163,7 @@ extension AppModel {
         case .pdfSave, .pdfOpen, .filePrint: project?.buildPDF != nil
         case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
-        case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
+        case .syncForward: project?.canSyncForward() == true
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
         default: project != nil
         }
@@ -185,11 +185,8 @@ extension AppModel {
 }
 
 extension WindowModel {
-    private static let pdfApp = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
-        .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
-
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
-        if command == .pdfOpen, let app = Self.pdfApp { return "Open PDF in \(app)" }
+        if command == .pdfOpen, let name = app.pdfAppName { return "Open PDF in \(name)" }
         let shown: Bool? = switch command {
         case .viewToggleSource: showSource
         case .viewTogglePDF: showPDF
@@ -211,7 +208,7 @@ extension WindowModel {
         switch command {
         case .projectNew: newProject()
         case .projectOpen: openingProject = true
-        case .projectClose: Task { await close() }
+        case .projectClose: Task { if await close() { app.showHome() } }
         case .projectExport, .projectExportArxiv:
             let arxiv = command == .projectExportArxiv
             if let project {
@@ -227,17 +224,15 @@ extension WindowModel {
         case .fileSave: Task { await project?.save() }
         case .fileSaveVersion: prompt = .saveVersion
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
-        case .openQuickly: if let project { OpenQuickly.show(for: project) }
         case .fileBrowseVersions: prompt = .versionHistory
-        case .pdfOpen: if let url = project?.buildPDF { NSWorkspace.shared.open(url) }
-        case .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition, .findUsages, .editRename:
+        case .openQuickly, .pdfOpen, .viewToggleInspector, .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition,
+             .findUsages, .editRename:
             project?.views?.perform(command)
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .pdfGotoPage: prompt = .gotoPage
         case .viewToggleSource: toggleSource()
         case .viewTogglePDF: togglePDF()
-        case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         case .viewToggleLogs: project?.panel.shown.toggle()
         case .viewToggleWordCount: app.showWordCount.toggle()
         case .compileRun: Task { await project?.compile() }

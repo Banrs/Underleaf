@@ -48,7 +48,7 @@ struct CoreTests {
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), editor = views.editor
-        await project.load()
+        try await project.load()
         #expect(project.openPath == "main.tex" && editor.path == "main.tex")
         try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
@@ -70,13 +70,35 @@ struct CoreTests {
         try await waitUntil { !views.editor.textView.isEditable }
     }
 
+    @Test func theEditorAppliesEditsOnlyToTheVersionOfTheFileItShows() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
+        let views = WorkspaceViews(project: project), text = views.editor.textView
+        try await project.load()
+        let stale = try #require(text.document.version)
+        text.insertText("% mine\n", replacementRange: NSRange(location: 0, length: 0))
+        let (shown, version) = (text.string, try #require(text.document.version))
+        let edits = { (path: String, version: UInt64) in
+            DocumentEdits(path: path, version: version, edits: [TextEdit(start: 0, length: 7, text: "% theirs\n")])
+        }
+        #expect(version != stale && !views.apply(edits("main.tex", stale), named: "Restore"))
+        #expect(!views.apply(edits("other.tex", version), named: "Restore"))
+        #expect(text.string == shown && text.document.version == version)
+        #expect(views.apply(edits("main.tex", version), named: "Restore"))
+        #expect(text.string.hasPrefix("% theirs\n"))
+        #expect(await project.close().value)
+    }
+
     @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
         let window = defaults.window()
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
-        await project.load()
+        try await project.load()
         project.engine = .xelatex
         try await waitUntil { project.engine == .xelatex }
         #expect(await project.close().value)
@@ -84,7 +106,7 @@ struct CoreTests {
         let settings = info.path + "/.texlocal.json"
         try "{ not json".write(toFile: settings, atomically: true, encoding: .utf8)
         let corrupt = ProjectModel(id: info.id, window: window)
-        await corrupt.load()
+        try await corrupt.load()
         #expect(window.alert?.title == "Couldn’t Read the Project’s Settings")
         #expect(corrupt.engine == .pdflatex)
         #expect(try String(contentsOfFile: settings, encoding: .utf8) == "{ not json")

@@ -41,6 +41,9 @@ Ask in order; the first yes decides.
 wasm test needs `brew install wasmtime` once. The QA scripts need `zsh tools/qa/setup.sh <scratch>` once, then
 `export QA_SCRATCH=<scratch>`.
 
+`typecheck.sh` also type-checks the model files in its `models` list for iOS, so AppKit stays in the view files: a
+model reaches the platform through `ProjectViews` or `AppWindow`, and a new model file joins the list.
+
 The real-TeX tests, `cargo test -p texlocal-core -- --ignored`, need TeX on the `PATH` and, for Live Preview, a
 TeXpresso built by `tools/texpresso/build.sh` (`TEXLOCAL_TEXPRESSO=<build>/texpresso`). CI runs them nightly and
 on pull requests that touch TeX code.

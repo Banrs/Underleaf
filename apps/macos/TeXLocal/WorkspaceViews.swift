@@ -8,8 +8,6 @@ final class WorkspaceViews: ProjectViews {
     let pdf = PDFController()
     var inspectorShown = false
     @ObservationIgnored private(set) var liveReads: Task<Void, Never>?
-    @ObservationIgnored private var followTask: Task<Void, Never>?
-    @ObservationIgnored private var followsCaret = false
     @ObservationIgnored private var watches: [Task<Void, Never>] = []
 
     init(project: ProjectModel) {
@@ -22,7 +20,6 @@ final class WorkspaceViews: ProjectViews {
             },
             track({ [weak project] in project?.closed ?? true }, initial: false) { [weak self] _ in
                 self?.liveReads?.cancel()
-                self?.followTask?.cancel()
                 self?.pdf.loading?.cancel()
             },
             track({ [weak project] in project?.window?.app.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
@@ -35,7 +32,7 @@ final class WorkspaceViews: ProjectViews {
         editor.onCursor = { [weak self] line, column in
             if let self { project.cursorMoved(to: line, column: column, caret: editor.caret, in: editor.path) }
         }
-        editor.onEdit = { [weak self] in if let self, project.livePDF { followsCaret = true } }
+        editor.onEdit = { [weak self] in self?.project.edited() }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
         editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }
         let text = editor.textView
@@ -43,14 +40,24 @@ final class WorkspaceViews: ProjectViews {
         text.spellCheckToggled = { [weak self] in self?.project.window?.app.spellCheck = $0 }
         text.composing = { [weak self] in if let self { project.composing($0, in: editor.path) } }
         text.keyboardChanged = { [weak self] in self?.project.sourceHasKeyboard = $0 }
-        text.fileDrop = { [weak self] in self?.dropped($0) }
-        text.issues.clicked = { [weak self] in self?.issueClicked(at: $0) }
+        text.fileDrop = { [weak self] url in
+            guard let project = self?.project else { return nil }
+            return switch project.dropAction(for: url) {
+            case .insert(let text)?: .insert(text)
+            case .copy?: .copy { await project.copyFigure(url) }
+            case .open(let path)?: .open { project.session.task { await project.open(path) } }
+            case nil: nil
+            }
+        }
+        text.issues.clicked = { [weak self] line in
+            if let self, let path = editor.path { project.issueClicked(atLine: line, in: path) }
+        }
         text.headings = { [weak self] in
             guard let project = self?.project else { return [] }
             return project.outline.filter { $0.file == project.openPath }.map { ($0.line, $0.title) }
         }
         text.forwardSync = { [weak self] quietly in
-            guard let project = self?.project, project.hasPDF, project.isLaTeX, !quietly || project.window?.showPDF == true else { return nil }
+            guard let project = self?.project, project.canSyncForward(quietly: quietly) else { return nil }
             return { project.session.task { await project.forwardSync(quietly: quietly, wordOnly: quietly) } }
         }
         text.openDefinition = { [weak self] place in
@@ -60,7 +67,7 @@ final class WorkspaceViews: ProjectViews {
         text.quickHelp = { [weak self] in self?.quickHelp(at: $0) }
         pdf.onVisiblePages = { [weak self] in self?.project.liveView($0) }
         pdf.view.onInverse = { [weak self] page, point, click, quietly in
-            guard let project = self?.project, !quietly || project.window?.showSource == true else { return }
+            guard let project = self?.project else { return }
             project.session.task { await project.inverseSync(page: page, x: point.x, y: point.y, click: click, quietly: quietly) }
         }
     }
@@ -68,28 +75,22 @@ final class WorkspaceViews: ProjectViews {
     var hasPDF: Bool { pdf.pageCount > 0 }
     var zoom: Zoom { pdf.keptZoom }
     var shownVersion: Int { pdf.shownVersion }
+    var pdfLoading: Task<Void, Never>? { pdf.loading }
 
     func heard(_ event: Event) {
         switch event {
         case .section(.openFile): showOpenFile()
-        case .section(.build): showIssues()
-        case .section(.live(let state)):
-            if state.phase != .running { followsCaret = false }
-            showIssues()
+        case .section(.build), .section(.live): showIssues()
         case .section(.shownPdf): showPDF()
         case .documentReload(let path): reload(path)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
-        case .buildFinished(let finished): built(finished)
         case .liveDocument(let document): showLive(document)
         case .livePage(let page): showLive(page)
         default: break
         }
     }
 
-    func opened(_ ui: UiState) -> Task<Void, Never>? {
-        pdf.restoreZoom = ui.zoom
-        return pdf.loading
-    }
+    func opened(_ ui: UiState) { pdf.restoreZoom = ui.zoom }
 
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
         guard editor.path == path else { return }
@@ -103,8 +104,10 @@ final class WorkspaceViews: ProjectViews {
         return true
     }
 
+    func follow(_ loc: ForwardLoc) { pdf.follow(loc) }
     func trashed(_ path: String) { editor.forget(path: path) }
     func beep() { NSSound.beep() }
+    func requestAttention() { if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) } }
     func perform(_ command: EditorCommand) { editor.perform(command) }
 
     func perform(_ command: MenuCommand) {
@@ -117,6 +120,9 @@ final class WorkspaceViews: ProjectViews {
         case .findUsages:
             if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
         case .editRename: project.window?.prompt = editor.renamable.map(Prompt.rename)
+        case .openQuickly: OpenQuickly.show(for: project)
+        case .pdfOpen: if let url = project.buildPDF { NSWorkspace.shared.open(url) }
+        case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         default: break
         }
     }
@@ -177,42 +183,18 @@ final class WorkspaceViews: ProjectViews {
         editor.reload(source)
     }
 
-    private func built(_ finished: BuildFinished) {
-        guard let result = project.result else { return }
-        if result.ok, !project.outdated, project.isLaTeX, let window = project.window, window.showPDF, window.app.syncAfterCompile {
-            project.session.task { [loading = pdf.loading, project] in
-                await loading?.value
-                await project.forwardSync(quietly: true)
-            }
-        }
-        if !finished.auto, result.failed, !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
-    }
-
-    private var showsLive: Bool { !project.closed && project.texpresso.active && project.livePDF }
-
     private func showLive(_ live: LiveDocument) {
         _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let document = await PDFController.loadDocument(URL(filePath: live.path)), showsLive else { return }
+            guard !Task.isCancelled, let document = await PDFController.loadDocument(URL(filePath: live.path)), project.showsLive else { return }
             pdf.show(document)
-            if followsCaret { followCaret() }
+            project.liveDocumentShown()
         }
     }
 
     private func showLive(_ live: LivePage) {
         _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let page = await PDFController.loadPage(live.pdf), showsLive else { return }
+            guard !Task.isCancelled, let page = await PDFController.loadPage(live.pdf), project.showsLive else { return }
             pdf.show(page, at: live.page)
-        }
-    }
-
-    private func followCaret() {
-        guard let path = project.openPath, project.isLaTeX else { return }
-        let line = editor.currentLine
-        _ = restart(&followTask) { [self] in
-            guard let loc = try? await project.session.call(SynctexForward(file: path, line: line)), !Task.isCancelled,
-                  project.livePDF, project.openPath == path else { return }
-            followsCaret = false
-            pdf.follow(loc)
         }
     }
 
@@ -222,23 +204,5 @@ final class WorkspaceViews: ProjectViews {
             guard let help = await project.quickHelp(in: path, at: offset), editor.path == path else { return }
             editor.textView.showQuickHelp(help, at: offset)
         }
-    }
-
-    private func issueClicked(at line: Int) {
-        if let index = editor.textView.issues.lines[line]?.index {
-            project.panel.show(.issues)
-            project.chooseIssue(index, focus: false, open: false)
-        } else if editor.textView.issues.live[line] != nil {
-            project.panel.show(.texpresso)
-        }
-    }
-
-    private func dropped(_ url: URL) -> SourceTextView.FileDrop? {
-        guard let path = project.projectPath(url) else {
-            return project.includeGraphics(url.lastPathComponent) == nil ? nil : .copy { [project] in await project.copyFigure(url) }
-        }
-        guard project.tree.node(at: path) != nil else { return nil }
-        if let insert = project.includeGraphics(path) { return .insert(insert) }
-        return .open { [project] in project.session.task { await project.open(path) } }
     }
 }

@@ -69,6 +69,12 @@ extension ProjectModel {
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
 
+    func dropAction(for url: URL) -> DropAction? {
+        guard let path = projectPath(url) else { return includeGraphics(url.lastPathComponent) == nil ? nil : .copy }
+        guard tree.node(at: path) != nil else { return nil }
+        return includeGraphics(path).map(DropAction.insert) ?? .open(path)
+    }
+
     func importFiles(_ urls: [URL], into dir: String = "", conflict: ImportConflict? = nil) async {
         let request = ImportFiles(dir: dir, paths: urls.map { $0.path(percentEncoded: false) }, conflict: conflict)
         guard let clashes = await alerting("Couldn’t Add the Files", { try await session.call(request).existing.map(\.path) }) else { return }
@@ -94,6 +100,8 @@ extension ProjectModel {
         exportFolder = nil
     }
 }
+
+enum DropAction: Equatable { case insert(String), copy, open(String) }
 
 struct ImportClash {
     let urls: [URL]

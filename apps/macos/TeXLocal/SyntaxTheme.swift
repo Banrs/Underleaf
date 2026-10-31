@@ -1,20 +1,6 @@
 import AppKit
 
-enum SyntaxTheme: String, CaseIterable, Identifiable {
-    case overleaf
-    case texstudio
-    case system
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .overleaf: "Overleaf"
-        case .texstudio: "TeXstudio"
-        case .system: "System"
-        }
-    }
-
+extension SyntaxTheme {
     func color(_ kind: HighlightKind) -> NSColor {
         let shown = Self.made[self] ?? Dictionary(uniqueKeysWithValues: zip(HighlightKind.allCases, palette.map { color in
             NSColor.adapting(Dictionary(uniqueKeysWithValues: NSColor.textAppearances.map { ($0, color.legibleAsText(in: $0)) }),
