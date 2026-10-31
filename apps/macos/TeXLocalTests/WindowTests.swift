@@ -94,7 +94,7 @@ struct WindowTests {
         #expect(!homeWindow.isVisible && app.home == nil)
         let one = try #require(app.window(showing: first.id))
         let screen = try #require(window(of: one)?.screen?.visibleFrame)
-        window(of: one)?.setFrameTopLeftPoint(NSPoint(x: screen.minX, y: screen.maxY))
+        window(of: one)?.setFrame(NSRect(x: screen.minX, y: screen.maxY - 600, width: 800, height: 600), display: false)
         await one.open(second.id)
         let two = try #require(app.window(showing: second.id))
         let windows = try [one, two].map { try #require(window(of: $0)) }
