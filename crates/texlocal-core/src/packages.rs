@@ -40,10 +40,13 @@ pub(crate) async fn install_package(
     let package = holder(&found, &pattern)
         .ok_or_else(|| CoreError::not_found(messages::no_package_has(file)))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
-    if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
-        let as_administrator = sys::install_as_administrator(&tlmgr, &package, path_env);
+    if installed.0 != 0
+        && installed.1.contains(NOT_WRITABLE)
+        && let Some((as_administrator, cancelled)) =
+            sys::install_as_administrator(&tlmgr, &package, path_env)
+    {
         installed = run(processes, Some(owner), as_administrator).await?;
-        if installed.1.contains(sys::ADMIN_CANCELLED) {
+        if installed.1.contains(cancelled) {
             let message = messages::install_cancelled(&package);
             return Err(CoreError::new(crate::ErrorKind::Denied, message));
         }

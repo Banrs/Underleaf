@@ -505,7 +505,7 @@ impl Actor {
 }
 
 fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
-    let now = fs::metadata(abs).ok().map(|meta| Stamp::of(&meta));
+    let now = Stamp::at(abs).ok();
     match (stamp, now) {
         (Some(stamp), Some(now)) if stamp == now => {
             stamp.modified % 1_000_000_000 != 0
@@ -517,7 +517,7 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
 }
 
 fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError> {
-    let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
+    let stamp = Stamp::at(path).ok();
     let disk = String::from_utf8(fs::read(path)?).ok().map(|text| {
         let newline = newline(&text);
         (lf(text), newline)

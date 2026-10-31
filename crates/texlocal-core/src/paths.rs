@@ -60,7 +60,7 @@ impl Project {
 }
 
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
-    fs::metadata(path).ok().map(|meta| sys::identity(&meta))
+    sys::identity(path, &fs::metadata(path).ok()?).ok()
 }
 
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
@@ -123,8 +123,8 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 }
 
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)),
-        (Ok(a), Ok(b)) if sys::identity(&a) == sys::identity(&b))
+    let entry = |path: &Path| sys::identity(path, &fs::symlink_metadata(path).ok()?).ok();
+    entry(a).is_some_and(|a| entry(b) == Some(a))
 }
 
 pub fn rel_key(rel: &str) -> Result<String, CoreError> {

@@ -35,6 +35,7 @@ texlocal_latex::messages! {
     disk_full(file) = "The file “{file}” couldn’t be saved because there isn’t enough space.";
     not_saved(file, error) = "The file “{file}” couldn’t be saved ({error}).";
     trash_failed(error) = "Could not move the item to Trash: {error}";
+    no_trash = "There's no Trash on this computer to move it to.";
 
     unreadable(name, error) = "“{name}” can't be read ({error}), so it was left as it is. Correct it, or delete it to start again.";
     over_one_mb = "it's over 1 MB";

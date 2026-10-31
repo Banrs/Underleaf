@@ -117,9 +117,9 @@ pub(crate) fn new_project(
 ) -> Result<ProjectInfo, CoreError> {
     let name = sanitize_name(name)?;
     fs::create_dir_all(data_dir)?;
-    let temp = atomic::temp_builder(0o777).tempdir_in(data_dir)?;
+    let temp = atomic::temp_builder().tempdir_in(data_dir)?;
     fill(temp.path())?;
-    let id = project_names(&name)
+    let id: String = project_names(&name)
         .find_map(
             |id| match atomic::rename_exclusive(temp.path(), &data_dir.join(&id)) {
                 Err(err) if err.kind() == ErrorKind::AlreadyExists => None,

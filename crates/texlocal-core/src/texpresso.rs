@@ -282,7 +282,7 @@ impl Manager {
         }
         let mut folder = tempfile::Builder::new();
         folder.prefix("texlocal-texpresso-");
-        folder.permissions(sys::permissions(0o700));
+        sys::private(&mut folder);
         let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         Ok((build, pdf))
     }

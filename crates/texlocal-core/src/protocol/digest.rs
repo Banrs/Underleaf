@@ -1,1 +1,1 @@
-pub const DIGEST: &str = "6dfca741bf1bae5dc985d5f774cba6d25e1a49a61073ebc7cdb1ed67f9d7c5a5";
+pub const DIGEST: &str = "a39d5b12783d86dd81dba01266a4e9f7872f0952ed5b305dd2e0df4f1dcfe020";

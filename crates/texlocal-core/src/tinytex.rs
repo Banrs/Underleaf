@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -33,7 +33,9 @@ async fn install_into(processes: &Processes, root: &Path, path_env: &str) -> Res
     let temp = tempfile::Builder::new()
         .prefix(UNFINISHED)
         .tempdir_in(parent)?;
-    let unpacked = unpack(processes, temp.path(), path_env).await?;
+    unpack(processes, temp.path(), path_env).await?;
+    let name = root.file_name().expect("TinyTeX's folder has a name");
+    let unpacked = temp.path().join(name);
     tlmgr(processes, &unpacked, path_env, &["update", "--self"]).await?;
     let packages = ["install", "beamer", "makeindex"];
     tlmgr(processes, &unpacked, path_env, &packages).await?;
@@ -42,7 +44,7 @@ async fn install_into(processes: &Processes, root: &Path, path_env: &str) -> Res
     tlmgr(processes, root, path_env, &postaction).await
 }
 
-async fn unpack(processes: &Processes, temp: &Path, path_env: &str) -> Result<PathBuf, CoreError> {
+async fn unpack(processes: &Processes, temp: &Path, path_env: &str) -> Result<(), CoreError> {
     let release = temp.join("release.json");
     fetch(processes, RELEASE, &release, path_env).await?;
     let release = serde_json::from_slice(&std::fs::read(&release)?)
@@ -55,7 +57,7 @@ async fn unpack(processes: &Processes, temp: &Path, path_env: &str) -> Result<Pa
         return Err(CoreError::internal(messages::tinytex_mismatch()));
     }
     match run(processes, None, sys::unpack(&archive, temp, path_env)).await? {
-        (0, _) => Ok(temp.join("TinyTeX")),
+        (0, _) => Ok(()),
         (_, out) => Err(CoreError::internal(messages::tinytex_unpack_failed(
             crate::tail(out.trim(), 2000),
         ))),
