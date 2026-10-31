@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -14,11 +15,75 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: u64 = 1_000_000;
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
+type Group = Mutex<Option<u32>>;
+
 #[derive(Clone)]
-pub(crate) struct Tree(Arc<Mutex<Option<u32>>>);
+pub(crate) struct Tree(Arc<Group>);
+
+#[derive(Default)]
+pub(crate) struct Processes(Mutex<Registry>);
+
+#[derive(Default)]
+struct Registry {
+    quit: bool,
+    last: u64,
+    owners: HashSet<u64>,
+    trees: Vec<(Option<u64>, Weak<Group>)>,
+}
+
+impl Processes {
+    pub(crate) fn owner(&self) -> u64 {
+        let mut registry = lock(&self.0);
+        registry.last += 1;
+        let owner = registry.last;
+        registry.owners.insert(owner);
+        owner
+    }
+
+    pub(crate) fn spawn(
+        &self,
+        owner: Option<u64>,
+        command: &mut Command,
+    ) -> io::Result<(Child, Tree)> {
+        let mut registry = lock(&self.0);
+        if registry.quit || owner.is_some_and(|owner| !registry.owners.contains(&owner)) {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        let (child, tree) = Tree::spawn(command)?;
+        registry.trees.retain(|(_, tree)| tree.strong_count() > 0);
+        registry.trees.push((owner, Arc::downgrade(&tree.0)));
+        Ok((child, tree))
+    }
+
+    pub(crate) fn kill_all(&self) {
+        let mut registry = lock(&self.0);
+        registry.quit = true;
+        registry.kill(|_| true);
+    }
+
+    pub(crate) fn end(&self, owner: u64) {
+        let mut registry = lock(&self.0);
+        registry.owners.remove(&owner);
+        registry.kill(|of| of == Some(owner));
+    }
+
+    pub(crate) fn quit(&self) -> bool {
+        lock(&self.0).quit
+    }
+}
+
+impl Registry {
+    fn kill(&self, chosen: impl Fn(Option<u64>) -> bool) {
+        for (owner, tree) in &self.trees {
+            if let Some(tree) = tree.upgrade().filter(|_| chosen(*owner)) {
+                Tree(tree).kill();
+            }
+        }
+    }
+}
 
 impl Tree {
-    pub(crate) fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
+    fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
         let (child, group) = sys::spawn_group(command)?;
         Ok((child, Self(Arc::new(Mutex::new(Some(group))))))
     }
@@ -61,6 +126,7 @@ pub(crate) fn tool(program: &Path, path_env: &str) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    sys::default_signals(&mut cmd);
     cmd
 }
 
@@ -75,9 +141,14 @@ async fn read_capped(mut reader: impl AsyncRead + Unpin, kept: &mut Vec<u8>) {
     }
 }
 
-pub(crate) async fn run(program: &str, args: &[&str], path_env: &str) -> io::Result<(i32, String)> {
+pub(crate) async fn run(
+    processes: &Processes,
+    program: &str,
+    args: &[&str],
+    path_env: &str,
+) -> io::Result<(i32, String)> {
     let mut cmd = command(program, None, path_env)?;
-    let (mut child, tree) = Tree::spawn(cmd.args(args))?;
+    let (mut child, tree) = processes.spawn(None, cmd.args(args))?;
     let (code, output, _) = drive(&mut child, &tree, Some(PROBE_TIMEOUT)).await;
     Ok((code, output))
 }
@@ -120,6 +191,8 @@ pub(crate) async fn drive(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
+
     use super::*;
 
     async fn sh(script: &str, timeout: Option<Duration>) -> (i32, String, bool) {
@@ -135,5 +208,29 @@ mod tests {
         let script = "echo out; echo err >&2; sleep 30";
         let timeout = Some(Duration::from_secs(1));
         assert_eq!(sh(script, timeout).await, (-1, "out\nerr\n".into(), true));
+    }
+
+    #[tokio::test]
+    async fn a_sessions_children_end_with_it_and_every_child_at_quit() {
+        let processes = Processes::default();
+        let sleep = || {
+            let mut command = command("sleep", None, "/bin").unwrap();
+            command.arg("30");
+            command
+        };
+        let (session, other) = (processes.owner(), processes.owner());
+        let (mut ended, _ended) = processes.spawn(Some(session), &mut sleep()).unwrap();
+        let (mut other, _other) = processes.spawn(Some(other), &mut sleep()).unwrap();
+        let (mut probe, _probe) = processes.spawn(None, &mut sleep()).unwrap();
+        processes.end(session);
+        assert_eq!(ended.wait().await.unwrap().signal(), Some(9));
+        assert!(processes.spawn(Some(session), &mut sleep()).is_err());
+        let still = tokio::time::timeout(Duration::from_millis(200), other.wait()).await;
+        assert!(still.is_err(), "another session's child ended too");
+        processes.kill_all();
+        for child in [&mut other, &mut probe] {
+            assert_eq!(child.wait().await.unwrap().signal(), Some(9));
+        }
+        assert!(processes.spawn(None, &mut sleep()).is_err());
     }
 }

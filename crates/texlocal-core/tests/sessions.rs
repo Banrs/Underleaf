@@ -1073,13 +1073,56 @@ async fn compiling_slowly() -> Rig {
     rig
 }
 
+const SLEEPS: &str = "#!/bin/sh\necho $$ > \"$0.pid\"\nexec sleep 30\n";
+
+fn alive(pid: &Path) -> bool {
+    let pid = fs::read_to_string(pid).unwrap();
+    let alive = std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(std::process::Stdio::null())
+        .status();
+    alive.unwrap().success()
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn kill_all_stops_the_builds_under_way() {
+async fn kill_all_ends_every_child_and_starts_none_after() {
     let rig = compiling_slowly().await;
+    program(&rig.library.path("tex/bin/tlmgr"), SLEEPS);
+    program(&rig.library.path("slow/latexmk"), SLEEPS);
+    let (build, tlmgr, probe) = (
+        rig.root().join("build/child"),
+        rig.library.path("tex/bin/tlmgr.pid"),
+        rig.library.path("slow/latexmk.pid"),
+    );
+    let install = rig.send(SESSION, "ApplyFix", json!({ "id": "install:x.sty" }));
+    wait_until("the install starts", || tlmgr.exists());
+    let checked = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("slow") }));
+    wait_until("the probe starts", || build.exists() && probe.exists());
     rig.library.call("KillAll", json!({})).await;
-    rig.event("buildFinished", |_| true);
-    let build = rig.section("build", |b| !b["result"].is_null());
-    assert_eq!(build["result"]["stopped"], true);
+    wait_until("every child ends", || {
+        ![&build, &tlmgr, &probe]
+            .map(|pid| alive(pid))
+            .contains(&true)
+    });
+    let built = rig.section("build", |b| !b["result"].is_null());
+    assert_eq!(built["result"]["stopped"], true);
+    assert!(rig.reply(install).is_err());
+    assert_eq!(rig.reply(checked).unwrap()["available"], false);
+    fs::remove_file(&probe).unwrap();
+    rig.ask_library("CheckTex", json!({})).unwrap();
+    assert!(!probe.exists(), "a probe started after KillAll");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_a_project_ends_the_install_it_started() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    program(&rig.library.path("tex/bin/tlmgr"), SLEEPS);
+    let tlmgr = rig.library.path("tex/bin/tlmgr.pid");
+    let install = rig.send(SESSION, "ApplyFix", json!({ "id": "install:x.sty" }));
+    wait_until("the install starts", || tlmgr.exists());
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    wait_until("the install ends", || !alive(&tlmgr));
+    assert!(rig.reply(install).is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1090,15 +1133,6 @@ async fn stop_compile_stops_the_sessions_build() {
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["stopped"], true);
     assert!(!rig.root().join("build/main.fdb_latexmk").exists());
-}
-
-fn running(build: &Path) -> bool {
-    let child = fs::read_to_string(build.join("child")).unwrap();
-    let alive = std::process::Command::new("kill")
-        .args(["-0", child.trim()])
-        .stderr(std::process::Stdio::null())
-        .status();
-    alive.unwrap().success()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1126,8 +1160,13 @@ async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_buildi
     for partial in ["main.aux", "main.pdf"] {
         assert!(!build.join(partial).exists(), "{partial} is discarded");
     }
-    wait_until("the build's own processes end", || !running(&build));
-    assert!(running(&other_build), "the other project still builds");
+    wait_until("the build's own processes end", || {
+        !alive(&build.join("child"))
+    });
+    assert!(
+        alive(&other_build.join("child")),
+        "the other project still builds"
+    );
     assert!(other_build.join("main.aux").exists());
 }
 

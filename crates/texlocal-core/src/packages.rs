@@ -6,7 +6,7 @@ use tokio::process::Command;
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::process::{self, Tree, drive};
+use crate::process::{self, Processes, drive};
 use crate::sys;
 use crate::tex::find_tool;
 
@@ -20,7 +20,12 @@ static UNREACHABLE: LazyLock<Regex> = LazyLock::new(|| {
 const OLDER: &str = "is older than remote repository";
 const NOT_WRITABLE: &str = "don't have permission to change the installation";
 
-pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String, CoreError> {
+pub(crate) async fn install_package(
+    processes: &Processes,
+    owner: u64,
+    file: &str,
+    path_env: &str,
+) -> Result<String, CoreError> {
     if !NAME.is_match(file) {
         return Err(CoreError::bad_request(messages::not_a_file_name(file)));
     }
@@ -28,7 +33,7 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
     let run_tlmgr = |args: &[&str]| {
         let mut command = process::tool(&tlmgr, path_env);
         command.args(args);
-        run(command)
+        run(processes, Some(owner), command)
     };
     let pattern = format!("/{file}");
     let found = checked(run_tlmgr(&["search", "--global", "--file", &pattern]).await?)?;
@@ -36,7 +41,8 @@ pub(crate) async fn install_package(file: &str, path_env: &str) -> Result<String
         .ok_or_else(|| CoreError::not_found(messages::no_package_has(file)))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
-        installed = run(sys::install_as_administrator(&tlmgr, &package, path_env)).await?;
+        let as_administrator = sys::install_as_administrator(&tlmgr, &package, path_env);
+        installed = run(processes, Some(owner), as_administrator).await?;
         if installed.1.contains(sys::ADMIN_CANCELLED) {
             let message = messages::install_cancelled(&package);
             return Err(CoreError::new(crate::ErrorKind::Denied, message));
@@ -62,8 +68,12 @@ fn holder(found: &str, slashed: &str) -> Option<String> {
         .map(|(_, package)| package.to_owned())
 }
 
-pub(crate) async fn run(mut command: Command) -> Result<(i32, String), CoreError> {
-    let (mut child, tree) = Tree::spawn(&mut command)?;
+pub(crate) async fn run(
+    processes: &Processes,
+    owner: Option<u64>,
+    mut command: Command,
+) -> Result<(i32, String), CoreError> {
+    let (mut child, tree) = processes.spawn(owner, &mut command)?;
     match drive(&mut child, &tree, Some(TIMEOUT)).await {
         (.., true) => Err(CoreError::unavailable(messages::install_timed_out())),
         (code, out, false) => Ok((code, out)),

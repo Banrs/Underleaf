@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -18,7 +17,7 @@ use texlocal_latex::utf16::byte_offset;
 
 use crate::messages;
 use crate::paths::{self, Project};
-use crate::process::{self, Tree};
+use crate::process::{self, Processes, Tree};
 use crate::tex::{find_tool, program_at};
 use crate::{CoreError, lock, settings, sys, tail};
 
@@ -245,19 +244,25 @@ fn remove_pdf_folder(pdf: &Path) {
 
 #[derive(Default)]
 pub struct Manager {
+    processes: Arc<Processes>,
     sessions: Mutex<HashMap<u64, Arc<Session>>>,
-    shutdown: AtomicBool,
 }
 
 impl Drop for Manager {
     fn drop(&mut self) {
-        self.kill_all();
+        self.stop_all();
     }
 }
 
 impl Manager {
-    pub fn kill_all(&self) {
-        self.shutdown.store(true, Ordering::Release);
+    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+        Self {
+            processes,
+            sessions: Mutex::default(),
+        }
+    }
+
+    pub fn stop_all(&self) {
         for session in lock(&self.sessions).values() {
             session.stop(None);
         }
@@ -306,11 +311,7 @@ impl Manager {
                 ..State::default()
             }),
         });
-        let mut sessions = lock(&self.sessions);
-        if self.shutdown.load(Ordering::Acquire) {
-            session.stop(None);
-        }
-        sessions.insert(owner, Arc::clone(&session));
+        lock(&self.sessions).insert(owner, Arc::clone(&session));
         (session, queued)
     }
 }
@@ -353,7 +354,6 @@ fn command(
         .current_dir(root)
         .stdin(Stdio::piped())
         .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    sys::default_signals(&mut command);
     command
 }
 
@@ -388,7 +388,7 @@ impl Preview for Manager {
         };
         let (build, pdf) = self.prepare(owner, project)?;
         let mut command = command(&executable, path_env, &build, &main, &root, &pdf);
-        let (mut child, tree) = match Tree::spawn(&mut command) {
+        let (mut child, tree) = match self.processes.spawn(None, &mut command) {
             Ok(spawned) => spawned,
             Err(err) => {
                 remove_pdf_folder(&pdf);

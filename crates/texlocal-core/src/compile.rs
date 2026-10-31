@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use schemars::JsonSchema;
@@ -16,7 +15,7 @@ use crate::error::CoreError;
 use crate::lock;
 use crate::messages;
 use crate::paths::{Project, safe_rel_file};
-use crate::process::{self, Tree, drive};
+use crate::process::{self, Processes, Tree, drive};
 use crate::settings::{granted, read_settings};
 use crate::stamp::Stamp;
 use crate::sys;
@@ -63,10 +62,9 @@ struct Running {
     tree: Option<Tree>,
 }
 
-#[derive(Default)]
 pub struct CompileManager {
+    processes: Arc<Processes>,
     running: Mutex<HashMap<PathBuf, Running>>,
-    shutdown: AtomicBool,
 }
 
 #[derive(PartialEq)]
@@ -87,7 +85,7 @@ struct CompileRun {
 
 pub struct Started {
     run: CompileRun,
-    spawned: Option<std::io::Result<(Child, Tree)>>,
+    spawned: std::io::Result<(Child, Tree)>,
 }
 
 impl CompileRun {
@@ -117,11 +115,10 @@ impl CompileRun {
 }
 
 impl CompileManager {
-    pub fn kill_all(&self) {
-        let running = lock(&self.running);
-        self.shutdown.store(true, Ordering::Release);
-        for entry in running.values() {
-            entry.halt();
+    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+        Self {
+            processes,
+            running: Mutex::default(),
         }
     }
 
@@ -191,19 +188,14 @@ impl CompileManager {
             command
         });
         let mut running = lock(&self.running);
-        let spawned = (!self.shutdown.load(Ordering::Acquire)).then(|| {
-            let entry = running.entry(root.clone()).or_default();
-            let spawned = command.and_then(|mut command| Tree::spawn(&mut command));
-            spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()))
-        });
+        let entry = running.entry(root.clone()).or_default();
+        let spawned = command.and_then(|mut command| self.processes.spawn(None, &mut command));
+        let spawned = spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()));
         Ok(Started { run, spawned })
     }
 
     pub async fn wait(&self, started: Started, auto: bool) -> Result<CompileResult, CoreError> {
         let Started { run, spawned } = started;
-        let Some(spawned) = spawned else {
-            return Ok(stopped_before_start(&run));
-        };
         let (end, output) = match spawned {
             Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
             Ok((mut child, tree)) => {
@@ -218,7 +210,7 @@ impl CompileManager {
             }
         };
         let entry = lock(&self.running).remove(&run.root).unwrap_or_default();
-        let end = if entry.stopped || self.shutdown.load(Ordering::Acquire) {
+        let end = if entry.stopped || self.processes.quit() {
             End::Stopped
         } else {
             end
@@ -237,15 +229,6 @@ impl Running {
         if let Some(tree) = &self.tree {
             tree.kill();
         }
-    }
-}
-
-fn stopped_before_start(run: &CompileRun) -> CompileResult {
-    CompileResult {
-        stopped: true,
-        duration_ms: run.request_started.elapsed().as_millis() as u64,
-        log: "The build was stopped before it started.".to_string(),
-        ..CompileResult::default()
     }
 }
 

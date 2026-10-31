@@ -94,9 +94,11 @@ impl Actor {
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
         let edits = match fix {
             Fix::Install(file) => {
-                let service = Arc::clone(&self.service);
+                let (service, owner) = (Arc::clone(&self.service), self.owner);
                 tokio::spawn(async move {
-                    let installed = packages::install_package(&file, &service.tool_paths().0).await;
+                    let path = service.tool_paths().0;
+                    let installed =
+                        packages::install_package(&service.processes, owner, &file, &path).await;
                     reply.send(match installed {
                         Err(err) if err.kind == crate::ErrorKind::Denied => Ok(None),
                         installed => installed.map(|_| Some(Fixed { edits: None })),

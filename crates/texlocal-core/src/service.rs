@@ -13,6 +13,7 @@ use crate::compile::CompileManager;
 use crate::events::{Queued, Sent};
 use crate::messages;
 use crate::paths::Project;
+use crate::process::Processes;
 use crate::projects::{self, History, Job, Opening, ProjectInfo};
 use crate::protocol::requests;
 use crate::settings::{AppSettings, Engine};
@@ -22,6 +23,7 @@ use crate::{CoreError, import, lock, tinytex};
 
 pub struct Service {
     pub(crate) data_dir: PathBuf,
+    pub(crate) processes: Arc<Processes>,
     pub(crate) compile: CompileManager,
     pub(crate) texpresso: Arc<texpresso::Manager>,
     pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
@@ -71,10 +73,12 @@ requests! {
 
 impl Service {
     pub fn new(data_dir: PathBuf) -> Self {
+        let processes = Arc::new(Processes::default());
         Self {
             data_dir,
-            compile: CompileManager::default(),
-            texpresso: Arc::default(),
+            compile: CompileManager::new(Arc::clone(&processes)),
+            texpresso: Arc::new(texpresso::Manager::new(Arc::clone(&processes))),
+            processes,
             library: Mutex::default(),
             tex_found: tokio::sync::watch::Sender::new(false),
             tex_queue: Mutex::default(),
@@ -149,8 +153,8 @@ impl Service {
     }
 
     fn kill_all(&self) {
-        self.compile.kill_all();
-        self.texpresso.kill_all();
+        self.processes.kill_all();
+        self.texpresso.stop_all();
     }
 
     pub fn project(&self, id: &str) -> Result<Project, CoreError> {
@@ -172,7 +176,7 @@ impl Service {
         let app = AppSettings::read(&self.data_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
-        let mut found = tex::tex_available(&tex_path).await;
+        let mut found = tex::tex_available(&self.processes, &tex_path).await;
         found.texpresso = shown(texpresso::discover(&texpresso_path));
         found.tex_dir = shown(app.tex_dir);
         found.texpresso_dir = shown(app.texpresso_dir);
@@ -224,7 +228,7 @@ impl Service {
                 answer(Ok(self.status().await))
             }
             Library::InstallTex(InstallTex {}, answer) => {
-                tinytex::install(&self.tool_paths().0).await?;
+                tinytex::install(&self.processes, &self.tool_paths().0).await?;
                 let _turn = self.tex_turn().await;
                 answer(Ok(self.status().await))
             }

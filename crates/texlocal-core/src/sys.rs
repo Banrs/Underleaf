@@ -182,7 +182,18 @@ pub(crate) fn local_time(time: SystemTime) -> Option<(u16, u8, u8, u8, u8, u8)> 
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
+
     use super::*;
+
+    #[tokio::test]
+    async fn a_child_starts_with_the_signals_the_app_ignores_back_at_their_defaults() {
+        let ignored = unsafe { libc::signal(libc::SIGUSR1, libc::SIG_IGN) };
+        let mut command = process::command("sh", None, "/bin").unwrap();
+        let ran = command.args(["-c", "kill -USR1 $$"]).status().await;
+        unsafe { libc::signal(libc::SIGUSR1, ignored) };
+        assert_eq!(ran.unwrap().signal(), Some(libc::SIGUSR1));
+    }
 
     #[test]
     fn latexmkrc_is_found_in_the_config_folder_then_home() {
