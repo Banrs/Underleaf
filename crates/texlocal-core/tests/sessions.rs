@@ -50,8 +50,12 @@ printf 'Output written on %s.pdf (1 page).\n' "$stem" > "$out/$stem.log"
 
 fn program(path: &Path, script: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, script).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    let written = std::process::Command::new("sh")
+        .args(["-c", r#"printf %s "$1" > "$0" && chmod 755 "$0""#])
+        .arg(path)
+        .arg(script)
+        .status();
+    assert!(written.unwrap().success());
 }
 
 fn app_settings(library: &Library, settings: Value) {
