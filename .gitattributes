@@ -1,1 +1,4 @@
 tools/qa/library-seed/** linguist-vendored
+apps/macos/TeXLocal/Wire.swift linguist-generated
+apps/macos/TeXLocalTests/WireFixtures.swift linguist-generated
+crates/texlocal-core/src/protocol/digest.rs linguist-generated

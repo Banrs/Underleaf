@@ -444,7 +444,7 @@ impl Preview for Manager {
         let held = files.get_mut(rel);
         let (offset, removed) = held
             .and_then(|held| splice(held, start, remove, text))
-            .ok_or_else(|| CoreError::unfit(messages::live_unfit()))?;
+            .ok_or_else(|| CoreError::conflict(messages::live_unfit()))?;
         session.send(&[json!([
             "change",
             session.root.join(rel),
@@ -463,7 +463,7 @@ impl Preview for Manager {
         let session = self.owned(owner)?;
         let offset = (lock(&session.files).get(rel))
             .and_then(|text| byte_offset(text, offset))
-            .ok_or_else(|| CoreError::unfit(messages::live_unfit()))?;
+            .ok_or_else(|| CoreError::conflict(messages::live_unfit()))?;
         session.send(&[json!(["caret", session.root.join(rel), offset])]);
         Ok(())
     }

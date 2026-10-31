@@ -21,6 +21,7 @@ mod tinytex;
 mod zipexport;
 
 pub use error::{CoreError, ErrorKind};
+pub use events::Answered;
 
 pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";

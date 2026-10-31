@@ -1,5 +1,3 @@
-mod messages;
-
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -7,9 +5,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use texlocal_core::CoreError;
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
+use texlocal_core::{Answered, CoreError, messages};
 use texlocal_latex::syntax::{Source, SourceDocument, Syntax, TextRange};
 
 pub struct TlHandle {
@@ -62,6 +60,7 @@ pub unsafe extern "C" fn tl_open(
             let _entered = runtime.enter();
             Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen))
         };
+        sessions.log_panics();
         Some(Box::new(TlHandle { runtime, sessions }))
     })
     .flatten()
@@ -144,13 +143,8 @@ unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut Tl
 }
 
 fn answered(body: impl FnOnce() -> Result<Value, CoreError>) -> *mut c_char {
-    let answer =
-        caught(body).unwrap_or_else(|| Err(CoreError::internal(messages::editor_panicked())));
-    let said = match answer {
-        Ok(ok) => json!({ "ok": ok }),
-        Err(error) => json!({ "error": error }),
-    };
-    c_json(said.to_string()).into_raw()
+    let answer = caught(body).unwrap_or_else(|| Err(CoreError::internal(messages::went_wrong())));
+    c_json(json!(Answered::from(answer)).to_string()).into_raw()
 }
 
 unsafe fn answer_on(

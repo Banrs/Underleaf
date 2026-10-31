@@ -11,6 +11,7 @@ mod scans;
 mod state;
 mod watch;
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::{Entry, VacantEntry};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -24,7 +25,7 @@ use texlocal_latex::syntax::TextEdit;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
-use crate::events::{Hub, Listener, Queued};
+use crate::events::{Hub, Listener, Replied, Said};
 use crate::protocol::Answer;
 use crate::service::Service;
 use crate::settings::UiState;
@@ -37,6 +38,8 @@ pub use document::Document;
 pub(crate) use documents::DiskConflict;
 use documents::{Docs, Shared};
 pub(crate) use state::SessionSection;
+#[cfg(test)]
+pub(crate) use state::{Lifecycle, Stopped};
 use watch::Change;
 
 pub use crate::paths::Project;
@@ -61,7 +64,7 @@ pub(crate) enum Msg {
     Snapshotted(Box<dyn FnOnce(&mut actor::Actor) + Send>),
 }
 
-pub(crate) struct Reply(Option<(u64, std::sync::mpsc::Sender<Queued>)>);
+pub(crate) struct Reply(Option<(u64, std::sync::mpsc::Sender<Said>)>);
 
 impl Reply {
     pub fn send(mut self, answer: Result<Value, CoreError>) {
@@ -70,19 +73,24 @@ impl Reply {
 
     fn answer(&mut self, answer: Result<Value, CoreError>) {
         if let Some((id, queue)) = self.0.take() {
-            let _ = queue.send(Queued::Reply { id, answer });
+            let answer = answer.into();
+            let _ = queue.send(Said::Reply(Replied { id, answer }));
         }
     }
 }
 
 impl Drop for Reply {
     fn drop(&mut self) {
-        self.answer(Err(if std::thread::panicking() {
-            stopped()
-        } else {
-            gone()
+        self.answer(Err(match std::thread::panicking() {
+            true if ACTOR.get() => stopped(),
+            true => failed(),
+            false => gone(),
         }));
     }
+}
+
+thread_local! {
+    static ACTOR: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) struct Pending<T> {
@@ -98,6 +106,10 @@ impl<T> Pending<T> {
 
 pub(crate) fn stopped() -> CoreError {
     CoreError::internal(messages::session_stopped())
+}
+
+fn failed() -> CoreError {
+    CoreError::internal(messages::went_wrong())
 }
 
 fn gone() -> CoreError {
@@ -146,6 +158,10 @@ impl Sessions {
         }
     }
 
+    pub fn log_panics(&self) {
+        self.hub.log_panics();
+    }
+
     pub fn document(&self, session: u64, path: &str) -> Option<Document> {
         let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
@@ -177,6 +193,7 @@ impl Sessions {
                 Session::OpenProject(opening, answer) => {
                     self.open(entry, opening, Pending { reply, answer });
                 }
+                Session::CloseProject(_, answer) => reply.send(answer(Ok(true))),
                 _ => reply.send(Err(gone())),
             },
         }
@@ -210,6 +227,7 @@ impl Sessions {
         std::thread::Builder::new()
             .name(format!("texlocal-session-{session}"))
             .spawn(move || {
+                ACTOR.set(true);
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
                     match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
@@ -322,11 +340,18 @@ mod tests {
         }
     }
 
-    fn replied_within(heard: &Heard, id: u64, wait: Duration) -> Option<Value> {
-        heard_within(heard, wait, |said| said["reply"] == id)
+    fn replied_within(heard: &Heard, id: u64, wait: Duration) -> Option<Result<Value, Value>> {
+        let replied = |said: &Value| said["type"] == "reply" && said["value"]["id"] == id;
+        let mut answer = heard_within(heard, wait, replied)?["value"]["answer"].take();
+        let value = answer["value"].take();
+        Some(if answer["type"] == "ok" {
+            Ok(value)
+        } else {
+            Err(value)
+        })
     }
 
-    fn replied(heard: &Heard, id: u64) -> Value {
+    fn replied(heard: &Heard, id: u64) -> Result<Value, Value> {
         replied_within(heard, id, Duration::from_secs(10)).expect("a reply")
     }
 
@@ -347,7 +372,7 @@ mod tests {
         fs::write(dir.path().join("P/ch.tex"), "cat\n").unwrap();
         let open = json!({ "id": "P", "autoCompile": false });
         sessions.send_to(0, 1, "OpenProject", open);
-        replied(&heard, 0);
+        replied(&heard, 0).unwrap();
         let release = hold_history(&sessions);
         let replace =
             json!({ "query": "cat", "replacement": "dog", "matchCase": false, "wholeWord": false });
@@ -376,11 +401,53 @@ mod tests {
         for (id, (command, args)) in (1..).zip(pending) {
             sessions.send_to(id, 1, command, args);
         }
-        assert!(replied(&heard, 0)["ok"].is_object());
+        assert!(replied(&heard, 0).unwrap().is_object());
         for id in 1..=4 {
-            let said = replied(&heard, id);
-            assert_eq!(said["error"]["kind"], "internal", "{said}");
+            let refused = replied(&heard, id).unwrap_err();
+            assert_eq!(refused["message"]["id"], "session_stopped", "{refused}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panic_beside_a_session_fails_only_what_it_was_doing() {
+        let (sessions, heard, _dir) = panicking().await;
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0).unwrap();
+        let (project, reply) = (sessions.service.project("P").unwrap(), sessions.reply(1));
+        let job = Box::new(move |_: &History| {
+            let _reply = reply;
+            panic!("a history job panics");
+        });
+        sessions.service.history(&project).send(job).unwrap();
+        let refused = replied(&heard, 1).unwrap_err();
+        assert_eq!(refused["message"]["id"], "went_wrong", "{refused}");
+        sessions.send_to(2, 1, "ListVersions", json!({}));
+        assert!(replied(&heard, 2).is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panic_in_a_session_reaches_the_stream_as_a_log_before_the_replies_it_fails() {
+        let (sessions, heard, _dir) = panicking().await;
+        sessions.log_panics();
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 9, "OpenProject", open);
+        replied(&heard, 0).unwrap();
+        sessions.send_to(1, 9, "Compile", json!({ "auto": false }));
+        let at = format!("thread 'texlocal-session-9' panicked at {}:", file!());
+        let ours = |said: &Value| {
+            said["value"]["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with(&at))
+        };
+        let wait = Duration::from_secs(10);
+        let first = heard_within(&heard, wait, |said| ours(said) || said["type"] == "reply");
+        let log = first.expect("the session panics");
+        assert!(ours(&log), "a reply came before the log: {log}");
+        assert_eq!(log["value"]["level"], "fault");
+        let text = log["value"]["text"].as_str().unwrap();
+        assert!(text.ends_with(":\nthe test compiler panics"), "{text}");
+        assert_eq!(replied(&heard, 1).unwrap_err()["kind"], "internal");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -390,7 +457,7 @@ mod tests {
         fs::write(root.join("ch.tex"), "chapter\n").unwrap();
         let open = json!({ "id": "P", "autoCompile": false });
         sessions.send_to(0, 1, "OpenProject", open);
-        replied(&heard, 0);
+        replied(&heard, 0).unwrap();
         let typed = |path| {
             sessions
                 .document(1, path)
@@ -400,23 +467,28 @@ mod tests {
         typed("main.tex");
         fs::set_permissions(root.join("main.tex"), fs::Permissions::from_mode(0o444)).unwrap();
         sessions.send_to(1, 1, "Open", json!({ "path": "ch.tex" }));
-        assert_eq!(replied(&heard, 1)["ok"], "ch.tex");
+        assert_eq!(replied(&heard, 1).unwrap(), "ch.tex");
         typed("ch.tex");
         sessions.send_to(2, 1, "Clean", json!({}));
         let marked = |said: &Value| {
-            let section = &said["event"]["value"];
+            let section = &said["value"]["event"]["value"];
             let ids = section["value"].as_array().into_iter().flatten();
             let ids: Vec<_> = ids.map(|doc| &doc["error"]["id"]).collect();
             section["type"] == "documents" && ids == ["stopped_saved", "stopped_unsaved"]
         };
-        heard_within(&heard, Duration::from_secs(10), marked).expect("each document marked");
+        let wait = Duration::from_secs(10);
+        heard_within(&heard, wait, marked).expect("each document marked");
+        let lifecycle = |said: &Value| said["value"]["event"]["value"]["type"] == "lifecycle";
+        let stopped = heard_within(&heard, wait, lifecycle).expect("the session stops");
+        let unsaved = json!({ "type": "stopped", "value": { "unsaved": ["main.tex"] } });
+        assert_eq!(stopped["value"]["event"]["value"]["value"], unsaved);
         let disk = |path| fs::read_to_string(root.join(path)).unwrap();
         assert_eq!(disk("ch.tex"), "% typed\nchapter\n");
         assert!(!disk("main.tex").starts_with("% typed"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn commands_after_a_close_are_refused_and_every_close_waits_for_the_build() {
+    async fn commands_after_a_close_are_refused_every_close_waits_and_closing_none_is_done() {
         let holds = Arc::new(Holds::default());
         let (sessions, heard, _dir) = compiling_with(Arc::clone(&holds) as _).await;
         let asked = [
@@ -431,18 +503,19 @@ mod tests {
             sessions.send_to(id, 1, command, args);
         }
         for id in [0, 1] {
-            assert!(replied(&heard, id).get("ok").is_some());
+            assert!(replied(&heard, id).is_ok());
         }
         for id in [3, 4] {
-            let said = replied(&heard, id);
-            assert_eq!(said["error"]["kind"], "notFound", "{said}");
+            assert_eq!(replied(&heard, id).unwrap_err()["kind"], "notFound");
         }
         assert!(sessions.document(1, "main.tex").is_none());
         holds.done.notify_one();
         for id in [2, 5] {
-            assert_eq!(replied(&heard, id)["ok"], true);
+            assert_eq!(replied(&heard, id), Ok(json!(true)));
         }
         assert_eq!(holds.builds.load(Ordering::Relaxed), 1);
+        sessions.send_to(6, 2, "CloseProject", json!({}));
+        assert_eq!(replied(&heard, 6), Ok(json!(true)));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -450,9 +523,9 @@ mod tests {
         let (sessions, heard, _dir) = panicking().await;
         let open = json!({ "id": "P", "autoCompile": false });
         sessions.send_to(0, 1, "OpenProject", open);
-        replied(&heard, 0);
+        replied(&heard, 0).unwrap();
         sessions.send_to(1, 1, "SaveVersion", json!({ "name": "Draft" }));
-        let draft = replied(&heard, 1)["ok"]["id"].take();
+        let draft = replied(&heard, 1).unwrap()["id"].take();
         let release = hold_history(&sessions);
         let replace =
             json!({ "query": "x", "replacement": "y", "matchCase": false, "wholeWord": false });
@@ -460,9 +533,9 @@ mod tests {
         let restore = json!({ "id": draft, "paths": ["main.tex"] });
         sessions.send_to(3, 1, "RestoreVersion", restore);
         sessions.send_to(4, 1, "Save", json!({ "reporting": true }));
-        assert_eq!(replied(&heard, 4)["ok"], true);
+        assert_eq!(replied(&heard, 4), Ok(json!(true)));
         let early = heard_within(&heard, Duration::from_millis(300), |said| {
-            said["reply"] == 2 || said["reply"] == 3
+            said["type"] == "reply" && (said["value"]["id"] == 2 || said["value"]["id"] == 3)
         });
         assert_eq!(
             early, None,
@@ -470,7 +543,7 @@ mod tests {
         );
         drop(release);
         for id in [2, 3] {
-            assert!(replied(&heard, id).get("ok").is_some());
+            assert!(replied(&heard, id).is_ok());
         }
     }
 
@@ -479,21 +552,40 @@ mod tests {
         let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
         sessions.send_to(2, 1, "CloseProject", json!({}));
         sessions.send_to(3, 1, "Open", json!({ "path": "ch.tex" }));
-        assert_eq!(replied(&heard, 3)["error"]["kind"], "notFound");
+        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "notFound");
         drop(release);
-        assert!(replied(&heard, 1)["ok"]["snapshot"].is_string());
-        assert_eq!(replied(&heard, 2)["ok"], true);
+        assert!(replied(&heard, 1).unwrap()["snapshot"].is_string());
+        assert_eq!(replied(&heard, 2), Ok(json!(true)));
         assert_eq!(chapter(&dir), "dog\n");
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn an_edit_waiting_on_the_history_when_its_session_stops_is_answered_as_stopped() {
-        let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
-        sessions.send_to(2, 1, "Compile", json!({ "auto": false }));
-        assert_eq!(replied(&heard, 2)["error"]["kind"], "internal");
+    async fn a_version_asked_before_a_close_is_saved_before_the_close_answers() {
+        let (sessions, heard, _dir) = panicking().await;
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0).unwrap();
+        let release = hold_history(&sessions);
+        sessions.send_to(1, 1, "SaveVersion", json!({ "name": "Draft" }));
+        sessions.send_to(2, 1, "CloseProject", json!({}));
+        sessions.send_to(3, 1, "ListVersions", json!({}));
+        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "notFound");
         drop(release);
-        let said = replied(&heard, 1);
-        assert_eq!(said["error"]["message"]["id"], "session_stopped", "{said}");
+        assert_eq!(replied(&heard, 1).unwrap()["name"], "Draft");
+        assert_eq!(replied(&heard, 2), Ok(json!(true)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn what_waits_on_the_history_when_its_session_stops_is_answered_as_stopped() {
+        let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
+        sessions.send_to(2, 1, "SaveVersion", json!({ "name": "Draft" }));
+        sessions.send_to(3, 1, "Compile", json!({ "auto": false }));
+        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "internal");
+        drop(release);
+        for id in [1, 2] {
+            let refused = replied(&heard, id).unwrap_err();
+            assert_eq!(refused["message"]["id"], "session_stopped", "{refused}");
+        }
         assert_eq!(chapter(&dir), "cat\n");
     }
 
@@ -504,7 +596,7 @@ mod tests {
         for (session, stops) in [(1, false), (2, true)] {
             let asked = session * 10;
             sessions.send_to(asked, session, "OpenProject", open("P"));
-            assert!(replied(&heard, asked)["ok"].is_object());
+            assert!(replied(&heard, asked).unwrap().is_object());
             let registry = lock(&sessions.service.library);
             if stops {
                 sessions.send_to(asked + 1, session, "Compile", json!({ "auto": false }));
@@ -516,7 +608,7 @@ mod tests {
                 "the close was answered before the project was free"
             );
             drop(registry);
-            replied(&heard, asked + 2);
+            assert_eq!(replied(&heard, asked + 2).is_ok(), !stops);
         }
         let root = dir.path().join("P");
         let mode = |mode| fs::set_permissions(&root, fs::Permissions::from_mode(mode)).unwrap();
@@ -527,10 +619,10 @@ mod tests {
         sessions.send_to(40, 4, "OpenProject", open("Q"));
         let unknown = replied(&heard, 40);
         for refused in [unreadable, unknown] {
-            assert!(refused["error"].is_object(), "{refused}");
+            assert!(refused.is_err(), "{refused:?}");
         }
         assert!(lock(&sessions.service.library).is_empty());
         sessions.send_to(50, 5, "OpenProject", open("P"));
-        assert!(replied(&heard, 50)["ok"].is_object());
+        assert!(replied(&heard, 50).unwrap().is_object());
     }
 }

@@ -127,7 +127,7 @@ struct SectionTests {
         project.handle(.section(.tree([file("main.tex"), file("a.tex")])))
         #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
-        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: "disk_full", args: [:], text: "The disk is full."), held: nil)])))
+        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."), held: nil)])))
         #expect(window.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
@@ -146,13 +146,13 @@ struct SectionTests {
         #expect(!project.canRetrace(back: true))
     }
 
-    @Test func theBuildSectionFeedsTheListAndItsCountsAndThePDFSectionTheShownPDF() {
+    @Test func theBuildSectionFeedsTheListAndItsCountsItsLogSectionTheLogAndThePDFSectionTheShownPDF() {
         let window = defaults.window()
         window.layout = .source
         let project = ProjectModel(id: "P", window: window)
-        let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: "tex", args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
+        let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: .tex, args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
         let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
-        let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box], log: "")
+        let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box])
         let build = { (issues: [LogItem]) in
             project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: true, result: result,
                                                       issues: issues, lines: [:]))))
@@ -164,7 +164,9 @@ struct SectionTests {
         build([error, warning])
         #expect(project.chosenIssue == 1)
         build([warning])
-        #expect(project.chosenIssue == nil)
+        #expect(project.chosenIssue == nil && project.buildLog.isEmpty)
+        project.handle(.section(.buildLog("Output written on main.pdf")))
+        #expect(project.buildLog == "Output written on main.pdf" && project.result == result)
         let pdf = { (live: Bool) in project.handle(.section(.shownPdf(ShownPdf(path: "/tmp/P/main.pdf", version: 1, live: live)))) }
         pdf(false)
         #expect(project.buildPDF?.path(percentEncoded: false) == "/tmp/P/main.pdf" && !project.livePDF && !window.showPDF)
@@ -182,7 +184,7 @@ struct SectionTests {
         #expect(live.phase == .stopped && !live.used && live.log.isEmpty && !live.needsAttention)
         state(.running, [], "Output written.")
         #expect(live.active && live.used && live.log == "Output written." && String(localized: live.title) == "Live Preview On")
-        let failed = Message(id: "texpresso_failed", args: [:], text: "TeXpresso stopped.")
+        let failed = Message(id: .texpressoExited, args: [:], text: "TeXpresso stopped.")
         state(.stopped, [failed], nil)
         project.handle(.liveAlert)
         #expect(live.needsAttention && live.log == "TeXpresso stopped." && project.panel.showsLiveLog)
@@ -361,12 +363,12 @@ struct SwitchTests {
         let window = defaults.window()
         let saved = ProjectModel(id: "P", window: window)
         window.project = saved
+        saved.handle(.section(.lifecycle(.stopped(Stopped(unsaved: [])))))
         #expect(await window.end() && saved.closed && window.alert == nil)
 
         let lost = ProjectModel(id: "Q", window: window)
         window.project = lost
-        let stopped = Message(id: "stopped_unsaved", args: [:], text: "Copy them out.")
-        lost.handle(.section(.documents([DocumentState(path: "main.tex", error: stopped, held: nil)])))
+        lost.handle(.section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
         let kept = Task { await window.end() }
         try await waitUntil { lost.askingToDiscard == ["main.tex"] }
         lost.answerDiscard(false)
@@ -439,7 +441,6 @@ struct ViewsTests {
         let info = try await newProject()
         let window = defaults.window()
         window.app.autoCompile = false
-        window.app.tex = TexStatus(available: true, latexmkVersion: nil, texDir: nil, found: nil, texpresso: nil, texpressoDir: nil)
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try await project.load()
@@ -451,8 +452,15 @@ struct ViewsTests {
         } throws: {
             $0.localizedDescription == "The file shown changed meanwhile, so it wasn’t restored. Try again."
         }
-        let text = Message(id: "fix", args: [:], text: "Add the Package")
+        let text = Message(id: .addPackageTitle, args: [:], text: "Add the Package")
+        let library = window.app.core.library
+        try await waitUntil { library.tex != nil }
+        let found = try #require(library.tex)
+        var available = found
+        available.available = true
+        library.apply(.tex(available))
         await project.run(Fix(id: "package:texlocal", title: text, help: text, confirm: nil))
+        library.apply(.tex(found))
         #expect(window.alert?.message == "The file shown changed meanwhile, so nothing was changed. Try again.")
         #expect(views.refused == ["main.tex", "main.tex"])
         #expect(!project.compiling && project.result == nil)
@@ -465,7 +473,7 @@ struct ViewsTests {
         let project = ProjectModel(id: "P", window: window)
         let views = Views(project)
         let build = { (ok: Bool, outdated: Bool) in
-            let result = CompileResult(ok: ok, stopped: false, durationMs: 0, pdf: nil, badBoxes: [], log: "")
+            let result = CompileResult(ok: ok, stopped: false, durationMs: 0, pdf: nil, badBoxes: [])
             project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: outdated, result: result, issues: [], lines: [:]))))
         }
         build(true, false)
@@ -528,7 +536,7 @@ struct ViewsTests {
 
     @Test func clickingAnIssueInTheTextChoosesItOrShowsTheLivePreviewLog() {
         let project = ProjectModel(id: "P", window: defaults.window())
-        let message = Message(id: "tex", args: [:], text: "Undefined control sequence.")
+        let message = Message(id: .tex, args: [:], text: "Undefined control sequence.")
         let lines = { (line: Int, index: Int?) in
             ["main.tex": [IssueLine(line: line, error: true, message: message, short: message, compact: nil, tokens: [], others: [], index: index)]]
         }

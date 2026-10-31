@@ -7,6 +7,28 @@ nonisolated extension CoreError: LocalizedError {
     var errorDescription: String? { message.text }
 }
 
+nonisolated extension Answered {
+    func get() throws -> Payload {
+        switch self {
+        case .ok(let value): value
+        case .error(let error): throw error
+        }
+    }
+}
+
+nonisolated extension Lifecycle {
+    var stopped: Stopped? { if case .stopped(let stopped) = self { stopped } else { nil } }
+}
+
+nonisolated extension LogLevel {
+    var type: OSLogType {
+        switch self {
+        case .error: .error
+        case .fault: .fault
+        }
+    }
+}
+
 nonisolated struct AppFailure: LocalizedError {
     let errorDescription: String?
 
@@ -39,9 +61,10 @@ final class Core {
         Task {
             for await (said, json) in Self.heard.stream {
                 switch said {
-                case .reply(let id): pending.removeValue(forKey: id)?(json)
-                case .event(let session, let event): observers[session]?(event)
+                case .reply(let reply): pending.removeValue(forKey: reply.id)?(json)
+                case .event(let event): observers[event.session]?(event.event)
                 case .library(let section): library.apply(section)
+                case .log(let log): Self.log.log(level: log.level.type, "\(log.text, privacy: .public)")
                 }
             }
         }
@@ -67,29 +90,23 @@ final class Core {
         sent(asked)
     }
 
-    private nonisolated struct Envelope<T: Decodable>: Decodable {
-        let answer: Result<T, CoreError>
-
-        private enum Keys: CodingKey { case ok, error }
-
-        init(from decoder: any Decoder) throws {
-            let envelope = try decoder.container(keyedBy: Keys.self)
-            if let error = try envelope.decodeIfPresent(CoreError.self, forKey: .error) {
-                answer = .failure(error)
-            } else {
-                answer = .success(try envelope.decode(T.self, forKey: .ok))
-            }
-        }
-    }
-
-    nonisolated static func decoded<T: Decodable>(_ command: String, _ envelope: Data) throws -> T {
-        let answer: Result<T, CoreError>
+    nonisolated static func decoded<T: Decodable & Sendable>(_ command: String, _ read: () throws -> Answered<T>) throws -> T {
+        let answer: Answered<T>
         do {
-            answer = try JSONDecoder().decode(Envelope<T>.self, from: envelope).answer
+            answer = try read()
         } catch {
             throw fault(command, String(describing: error))
         }
         return try answer.get()
+    }
+
+    private nonisolated static func replied<T: Decodable & Sendable>(_ command: String, _ said: Data) throws -> T {
+        try decoded(command) {
+            guard case .reply(let reply) = try JSONDecoder().decode(Said<T>.self, from: said) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Not a reply"))
+            }
+            return reply.answer
+        }
     }
 
     private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
@@ -113,8 +130,8 @@ final class Core {
 
     private func answer<R: WireRequest>(_: R.Type, _ sent: (UInt64) -> Void) async throws -> R.Reply {
         try await withCheckedThrowingContinuation { done in
-            ask(sent) { envelope in
-                done.resume(with: Result { try Self.decoded(R.command, envelope) })
+            ask(sent) { said in
+                done.resume(with: Result { try Self.replied(R.command, said) })
             }
         }
     }
@@ -126,8 +143,8 @@ final class Core {
         }
         do {
             let (handle, json) = try prepared(request)
-            ask({ tl_session_send(handle, $0, session, R.command, json) }) { envelope in
-                do { let _: R.Reply = try Self.decoded(R.command, envelope) } catch { failed(error) }
+            ask({ tl_session_send(handle, $0, session, R.command, json) }) { said in
+                do { let _: R.Reply = try Self.replied(R.command, said) } catch { failed(error) }
             }
         } catch {
             failed(error)
@@ -136,32 +153,16 @@ final class Core {
 
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
-    private nonisolated enum Said: Decodable {
-        case reply(UInt64)
-        case event(UInt64, Event)
-        case library(LibrarySection)
-
-        private enum Keys: CodingKey { case reply, library }
-
-        init(from decoder: any Decoder) throws {
-            let said = try decoder.container(keyedBy: Keys.self)
-            if let id = try said.decodeIfPresent(UInt64.self, forKey: .reply) {
-                self = .reply(id)
-            } else if let section = try said.decodeIfPresent(LibrarySection.self, forKey: .library) {
-                self = .library(section)
-            } else {
-                let said = try SessionEvent(from: decoder)
-                self = .event(said.session, said.event)
-            }
-        }
+    private nonisolated struct Unread: Decodable, Sendable {
+        init(from decoder: any Decoder) {}
     }
 
-    private nonisolated static let heard = AsyncStream.makeStream(of: (Said, Data).self)
+    private nonisolated static let heard = AsyncStream.makeStream(of: (Said<Unread>, Data).self)
 
     private nonisolated static let listener: TlCallback = { _, json in
         let said = Data(bytes: json, count: strlen(json))
         do {
-            Core.heard.continuation.yield((try JSONDecoder().decode(Said.self, from: said), said))
+            Core.heard.continuation.yield((try JSONDecoder().decode(Said<Unread>.self, from: said), said))
         } catch {
             Core.log.error("Something from the core the app can't read: \(String(describing: error), privacy: .public)")
         }
@@ -184,15 +185,20 @@ final class Core {
 final class SessionClient {
     let id: UInt64
     private(set) var closed = false
+    @ObservationIgnored private var lifecycle: Lifecycle?
     @ObservationIgnored var heard: (Event) -> Void
     @ObservationIgnored private let core: Core
-    @ObservationIgnored private var closing = false
     @ObservationIgnored private var tasks: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored private var started = 0
 
     init(core: Core, _ heard: @escaping (Event) -> Void = { _ in }) {
         (self.core, self.heard, id) = (core, heard, core.session())
-        core.observe(id) { [weak self] in self?.heard($0) }
+        core.observe(id) { [weak self] in self?.hear($0) }
+    }
+
+    private func hear(_ event: Event) {
+        if case .section(.lifecycle(let now)) = event { lifecycle = now }
+        heard(event)
     }
 
     @discardableResult
@@ -203,18 +209,16 @@ final class SessionClient {
             guard !closed else { throw CancellationError() }
             return reply
         } catch {
-            throw ended(error) ? CancellationError() : error
+            throw ending ? CancellationError() : error
         }
     }
 
     func send<R: SessionRequest>(_ request: R, else failed: @escaping (any Error) -> Void = { _ in }) {
         guard !closed else { return }
-        core.send(request, in: id) { [weak self] in if self?.ended($0) == false { failed($0) } }
+        core.send(request, in: id) { [weak self] in if self?.ending == false { failed($0) } }
     }
 
-    private func ended(_ error: any Error) -> Bool {
-        closed || closing && (error as? CoreError)?.message.id == "no_such_session"
-    }
+    private var ending: Bool { closed || lifecycle == .closing || lifecycle == .closed }
 
     func source(_ path: String) -> OpaquePointer? { closed ? nil : core.source(session: id, path: path) }
 
@@ -229,11 +233,9 @@ final class SessionClient {
     }
 
     func close() async throws -> Bool {
-        closing = true
-        defer { closing = false }
         do {
             guard try await call(CloseProject()) else { return false }
-        } catch is CancellationError {}
+        } catch let error where error is CancellationError || lifecycle?.stopped != nil {}
         end()
         return true
     }

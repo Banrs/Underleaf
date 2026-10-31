@@ -14,6 +14,7 @@ struct ColorTests {
                 for kind in HighlightKind.allCases {
                     let shown = ratio(theme.color(kind), in: name)
                     #expect(shown >= 4.45, "\(theme) \(kind) in \(name.rawValue): \(shown)")
+                    #expect(theme.color(kind) != .textColor, "\(theme) \(kind)")
                 }
             }
         }

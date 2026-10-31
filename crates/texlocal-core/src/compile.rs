@@ -53,6 +53,7 @@ pub struct CompileResult {
     #[serde(skip)]
     pub warnings: Vec<LogItem>,
     pub bad_boxes: Vec<LogItem>,
+    #[serde(skip)]
     pub log: String,
 }
 

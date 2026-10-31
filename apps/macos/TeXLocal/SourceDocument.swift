@@ -54,10 +54,8 @@ final class SourceDocument {
         var count = 0
         guard let runs = tl_source_highlights(raw, UInt32(range.location), UInt32(range.length), &count) else { return [] }
         defer { tl_source_free_runs(runs, count) }
-        let kinds = HighlightKind.allCases
         return stride(from: 0, to: count, by: 3).compactMap { i in
-            let kind = Int(runs[i + 2])
-            return kinds.indices.contains(kind) ? (NSRange(location: Int(runs[i]), length: Int(runs[i + 1])), kinds[kind]) : nil
+            HighlightKind(rawValue: runs[i + 2]).map { (NSRange(location: Int(runs[i]), length: Int(runs[i + 1])), $0) }
         }
     }
 
@@ -135,7 +133,7 @@ final class SourceDocument {
         Syntax.json(request).flatMap { answered(R.command, tl_source_call(raw, R.command, $0)) }
     }
 
-    private func answered<T: Decodable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
+    private func answered<T: Decodable & Sendable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
         let answer: T? = Syntax.answer(command, out)
         if answer == nil { restore() }
         return answer
@@ -156,10 +154,10 @@ nonisolated enum Syntax {
         }
     }
 
-    static func answer<T: Decodable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
+    static func answer<T: Decodable & Sendable>(_ command: String, _ out: UnsafeMutablePointer<CChar>) -> T? {
         defer { tl_free(out) }
         do {
-            return try Core.decoded(command, Data(bytes: out, count: strlen(out))) as T
+            return try Core.decoded(command) { try JSONDecoder().decode(Answered<T>.self, from: Data(bytes: out, count: strlen(out))) }
         } catch {
             log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil

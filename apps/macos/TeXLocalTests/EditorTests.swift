@@ -4,9 +4,10 @@ import Testing
 
 struct EditorTests {
     @Test func highlightsMapToTheAppsKinds() {
-        let document = SourceDocument(text: "\\emph{a} $x$ % note")
-        let kinds = Set(document.highlights(in: NSRange(location: 0, length: 19)).map(\.kind))
-        #expect(kinds == [.command, .maths, .comment])
+        let document = SourceDocument(text: "}1 \\x $y$ % z")
+        let runs = document.highlights(in: NSRange(location: 0, length: 14))
+        let kinds = Dictionary(uniqueKeysWithValues: runs.map { ($0.range.location, $0.kind) })
+        #expect([0, 1, 3, 7, 10].map { kinds[$0] } == [.invalid, .argument, .command, .maths, .comment])
     }
 
     @Test func theCoresAnswersDecode() throws {

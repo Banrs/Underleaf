@@ -10,7 +10,7 @@ use texlocal_latex::templates::ProjectTemplate;
 use tokio::sync::oneshot;
 
 use crate::compile::CompileManager;
-use crate::events::{Queued, Sent};
+use crate::events::{Log, LogLevel, Said, Sent};
 use crate::messages;
 use crate::paths::Project;
 use crate::process::Processes;
@@ -30,7 +30,7 @@ pub struct Service {
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     tex_queue: Mutex<Option<oneshot::Receiver<()>>>,
     histories: Mutex<HashMap<PathBuf, mpsc::Sender<Job>>>,
-    pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
+    pub(crate) hub: OnceLock<mpsc::Sender<Said>>,
     sent: Mutex<Sent<LibrarySection>>,
 }
 
@@ -38,6 +38,7 @@ pub struct Service {
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum LibrarySection {
     Projects(Vec<ProjectInfo>),
+    Tex(TexStatus),
 }
 
 pub(crate) struct InSession {
@@ -61,6 +62,7 @@ requests! {
         SetTexDir { dir: Option<PathBuf> } -> TexStatus,
         InstallTex {} -> TexStatus,
         ReloadProjects {} -> (),
+        Resync {} -> (),
         CreateProject { name: String, template: ProjectTemplate, engine: Option<Engine> } -> ProjectInfo,
         DuplicateProject { id: String, name: String } -> ProjectInfo,
         FreeProjectName {} -> String,
@@ -93,19 +95,41 @@ impl Service {
     }
 
     pub(crate) fn publish_projects(&self) -> Result<(), CoreError> {
-        let Some(hub) = self.hub.get() else {
-            return Ok(());
-        };
-        let mut sent = lock(&self.sent);
-        let section = LibrarySection::Projects(self.projects()?);
-        if sent.changed(&section) {
-            let _ = hub.send(Queued::Library(section));
+        if self.hub.get().is_some() {
+            let mut sent = lock(&self.sent);
+            self.publish(&mut sent, LibrarySection::Projects(self.projects()?));
         }
         Ok(())
     }
 
-    fn relist<T>(&self, done: Result<T, CoreError>) -> Result<T, CoreError> {
-        let _ = self.publish_projects();
+    fn publish(&self, sent: &mut Sent<LibrarySection>, section: LibrarySection) {
+        if let Some(hub) = self.hub.get()
+            && let Some(said) = sent.changed(&section)
+        {
+            let _ = hub.send(Said::Library(said));
+        }
+    }
+
+    fn resync(&self) {
+        if let Some(hub) = self.hub.get() {
+            for said in lock(&self.sent).each() {
+                let _ = hub.send(Said::Library(said));
+            }
+        }
+    }
+
+    pub(crate) fn relist(&self) {
+        if let (Err(err), Some(hub)) = (self.publish_projects(), self.hub.get()) {
+            let text = format!("The projects couldn’t be listed: {err}");
+            let _ = hub.send(Said::Log(Log {
+                level: LogLevel::Error,
+                text,
+            }));
+        }
+    }
+
+    fn relisted<T>(&self, done: Result<T, CoreError>) -> Result<T, CoreError> {
+        self.relist();
         done
     }
 
@@ -181,6 +205,7 @@ impl Service {
         found.tex_dir = shown(app.tex_dir);
         found.texpresso_dir = shown(app.texpresso_dir);
         self.tex_found.send_replace(found.available);
+        self.publish(&mut lock(&self.sent), LibrarySection::Tex(found.clone()));
         found
     }
 
@@ -228,11 +253,13 @@ impl Service {
                 answer(Ok(self.status().await))
             }
             Library::InstallTex(InstallTex {}, answer) => {
-                tinytex::install(&self.processes, &self.tool_paths().0).await?;
+                let installed = tinytex::install(&self.processes, &self.tool_paths().0).await;
                 let _turn = self.tex_turn().await;
-                answer(Ok(self.status().await))
+                let status = self.status().await;
+                answer(installed.map(|()| status))
             }
             Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),
+            Library::Resync(Resync {}, answer) => answer(Ok(self.resync())),
             Library::CreateProject(
                 CreateProject {
                     name,
@@ -240,14 +267,14 @@ impl Service {
                     engine,
                 },
                 answer,
-            ) => answer(self.relist(projects::create_project(
+            ) => answer(self.relisted(projects::create_project(
                 &self.data_dir,
                 &name,
                 template,
                 engine,
             ))),
             Library::DuplicateProject(DuplicateProject { id, name }, answer) => {
-                answer(self.relist(import::duplicate_project(self, &id, &name)))
+                answer(self.relisted(import::duplicate_project(self, &id, &name)))
             }
             Library::FreeProjectName(FreeProjectName {}, answer) => {
                 answer(projects::free_project_name(&self.data_dir))
@@ -256,14 +283,14 @@ impl Service {
                 let renamed = self
                     .unless_open(&id, messages::close_before_renaming)
                     .and_then(|_library| projects::rename_project(&self.data_dir, &id, &name));
-                answer(self.relist(renamed))
+                answer(self.relisted(renamed))
             }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
             Library::OpenPath(OpenPath { path }, answer) => {
-                answer(self.relist(projects::open_path(self, &path)))
+                answer(self.relisted(projects::open_path(self, &path)))
             }
             Library::ForgetFolder(ForgetFolder { id }, answer) => {
-                answer(self.relist(projects::forget_folder(self, &id)))
+                answer(self.relisted(projects::forget_folder(self, &id)))
             }
         }
     }

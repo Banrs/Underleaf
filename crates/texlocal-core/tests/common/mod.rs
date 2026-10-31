@@ -90,6 +90,7 @@ pub struct Rig {
     pub library: Library,
     pub sessions: Arc<Sessions>,
     pub id: String,
+    pub tex: Value,
     events: Receiver<Value>,
     seen: Mutex<Vec<Value>>,
     asked: AtomicU64,
@@ -143,16 +144,20 @@ impl Rig {
             }
             None => Sessions::new(service, listener),
         });
-        let rig = Self {
+        let mut rig = Self {
             library,
             sessions,
             id,
+            tex: Value::Null,
             events,
             seen: Mutex::default(),
             asked: AtomicU64::default(),
             sent: Mutex::default(),
             open: Mutex::default(),
         };
+        let tex = |e: &Value| e["type"] == "library" && e["value"]["type"] == "tex";
+        rig.tex = rig.find(tex)["value"]["value"].take();
+        rig.forget();
         rig.call("OpenProject", json!({ "id": rig.id, "autoCompile": false }));
         rig
     }
@@ -186,9 +191,12 @@ impl Rig {
     }
 
     pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
-        let listed =
-            |e: &Value| e["library"]["type"] == "projects" && matching(&e["library"]["value"]);
-        self.find(listed)["library"]["value"].take()
+        let listed = |e: &Value| {
+            e["type"] == "library"
+                && e["value"]["type"] == "projects"
+                && matching(&e["value"]["value"])
+        };
+        self.find(listed)["value"]["value"].take()
     }
 
     pub fn send(&self, session: u64, command: &str, args: Value) -> u64 {
@@ -202,8 +210,9 @@ impl Rig {
     }
 
     pub fn reply(&self, id: u64) -> Result<Value, Refused> {
-        let mut reply = self.find(|e| e["reply"] == id);
-        let ok = reply.get_mut("ok").map(Value::take);
+        let mut reply = self.find(|e| e["type"] == "reply" && e["value"]["id"] == id);
+        let mut answer = reply["value"]["answer"].take();
+        let ok = (answer["type"] == "ok").then(|| answer["value"].take());
         if let (Some(ok), Some((session, command))) = (&ok, self.sent.lock().unwrap().remove(&id)) {
             let mut open = self.open.lock().unwrap();
             match command.as_str() {
@@ -212,7 +221,7 @@ impl Rig {
                 _ => false,
             };
         }
-        ok.ok_or_else(|| serde_json::from_value(reply["error"].take()).unwrap())
+        ok.ok_or_else(|| serde_json::from_value(answer["value"].take()).unwrap())
     }
 
     pub fn open_document(&self, path: &str) -> texlocal_core::session::Document {
@@ -221,8 +230,11 @@ impl Rig {
     }
 
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        let event = |e: &Value| e["event"]["type"] == kind && matching(&e["event"]["value"]);
-        self.find(event)["event"]["value"].take()
+        let event = |e: &Value| {
+            let event = &e["value"]["event"];
+            e["type"] == "event" && event["type"] == kind && matching(&event["value"])
+        };
+        self.find(event)["value"]["event"]["value"].take()
     }
 
     pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
@@ -232,9 +244,13 @@ impl Rig {
 
     pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| {
-            e["session"] == session && e["event"]["type"] == kind && matching(&e["event"]["value"])
+            let event = &e["value"]["event"];
+            e["type"] == "event"
+                && e["value"]["session"] == session
+                && event["type"] == kind
+                && matching(&event["value"])
         };
-        self.find(event)["event"]["value"].take()
+        self.find(event)["value"]["event"]["value"].take()
     }
 
     pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
@@ -266,11 +282,16 @@ impl Rig {
 
     pub fn said(&self) -> Vec<String> {
         let seen = self.seen.lock().unwrap();
-        let kind = |e: &Value| match &e["event"] {
-            Value::Null if e["library"].is_object() => "library".to_owned(),
-            Value::Null => "reply".to_owned(),
-            event if event["type"] == "section" => event["value"]["type"].as_str().unwrap().into(),
-            event => event["type"].as_str().unwrap().into(),
+        let kind = |e: &Value| {
+            let event = &e["value"]["event"];
+            let kind = if e["type"] != "event" {
+                &e["type"]
+            } else if event["type"] == "section" {
+                &event["value"]["type"]
+            } else {
+                &event["type"]
+            };
+            kind.as_str().unwrap().to_owned()
         };
         seen.iter().map(kind).collect()
     }

@@ -1,8 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use serde::Serialize;
 use serde_json::{Map, Value};
 
-#[derive(Clone, Debug, PartialEq)]
+pub const PAYLOAD: &str = "Payload";
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum Ty {
     Bool,
     Int,
@@ -17,26 +20,28 @@ pub enum Ty {
     Named(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Field {
     pub name: String,
     pub ty: Ty,
     pub required: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum Shape {
     Struct(Vec<Field>),
     Units(Vec<(String, Option<String>)>),
     Union(Vec<(String, Option<Ty>)>),
 }
 
+#[derive(Serialize)]
 pub struct Def {
     pub shape: Shape,
     pub decoded: bool,
     pub encoded: bool,
 }
 
+#[derive(Serialize)]
 pub struct Request {
     pub name: String,
     pub group: String,
@@ -49,11 +54,12 @@ pub enum Way {
     Out,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct Ir {
     pub defs: BTreeMap<String, Def>,
     pub requests: Vec<Request>,
     pub stores: Vec<String>,
+    pub packed: Vec<String>,
 }
 
 const TAKEN: &[&str] = &[
@@ -125,6 +131,10 @@ impl Ir {
     pub fn add(&mut self, defs: &Map<String, Value>, way: Way) {
         for (name, schema) in defs {
             type_name(name, defs);
+            if name == PAYLOAD {
+                assert!(*schema == Value::Bool(true), "{PAYLOAD} is a type's name");
+                continue;
+            }
             let shape = shape(name, schema, way);
             let def = self.defs.entry(name.clone()).or_insert(Def {
                 shape: shape.clone(),
@@ -184,6 +194,15 @@ impl Ir {
         self.stores.push(name);
     }
 
+    pub fn pack(&mut self, kinds: &Value) {
+        let Ty::Named(name) = ty(kinds) else {
+            panic!("a packed kind isn't a named enum")
+        };
+        let units = matches!(self.defs[&name].shape, Shape::Units(_));
+        assert!(units, "{name} isn't an enum of names");
+        self.packed.push(name);
+    }
+
     pub fn check(&self) {
         for store in &self.stores {
             let Shape::Union(cases) = &self.defs[store].shape else {
@@ -194,19 +213,35 @@ impl Ir {
                 "{store} has a case without a value"
             );
         }
-        let mut named = Vec::new();
-        for def in self.defs.values() {
-            match &def.shape {
-                Shape::Struct(fields) => named.extend(fields.iter().map(|f| &f.ty)),
-                Shape::Units(_) => {}
-                Shape::Union(cases) => named.extend(cases.iter().filter_map(|(_, ty)| ty.as_ref())),
-            }
-        }
+        let mut named: Vec<&Ty> = self.defs.values().flat_map(Def::holds).collect();
         named.extend(self.requests.iter().map(|r| &r.reply));
         for ty in named {
             if let Some(name) = ty.named() {
-                assert!(self.defs.contains_key(name), "{name} has no definition");
+                let defined = name == PAYLOAD || self.defs.contains_key(name);
+                assert!(defined, "{name} has no definition");
             }
+        }
+    }
+
+    pub fn holding_payload(&self) -> BTreeSet<&str> {
+        let mut holding = BTreeSet::from([PAYLOAD]);
+        while let Some(name) = self.defs.keys().find(|name| {
+            let held = |ty: &&Ty| ty.named().is_some_and(|n| holding.contains(n));
+            !holding.contains(name.as_str()) && self.defs[*name].holds().iter().any(held)
+        }) {
+            holding.insert(name);
+        }
+        holding.remove(PAYLOAD);
+        holding
+    }
+}
+
+impl Def {
+    fn holds(&self) -> Vec<&Ty> {
+        match &self.shape {
+            Shape::Struct(fields) => fields.iter().map(|f| &f.ty).collect(),
+            Shape::Union(cases) => cases.iter().filter_map(|(_, ty)| ty.as_ref()).collect(),
+            Shape::Units(_) => Vec::new(),
         }
     }
 }
@@ -247,6 +282,13 @@ fn member_name(name: &str, of: &str) -> String {
         "{of}.{name} isn't camelCase"
     );
     name.into()
+}
+
+pub fn case(unit: &str, of: &str) -> String {
+    let mut words = unit.split('_');
+    let first = words.next().unwrap_or_default().to_owned();
+    let rest = words.map(|word| word[..1].to_uppercase() + &word[1..]);
+    member_name(&(first + &rest.collect::<String>()), of)
 }
 
 fn object(schema: &Value) -> &Map<String, Value> {
@@ -361,10 +403,10 @@ fn shape(name: &str, schema: &Value, way: Way) -> Shape {
             let Some(Value::Array(units)) = schema.get("enum") else {
                 panic!("{name} is a string, not a struct or an enum")
             };
-            let units = units
-                .iter()
-                .map(|unit| (member_name(unit.as_str().unwrap(), name), None));
-            Shape::Units(units.collect())
+            let units: Vec<_> = units.iter().map(|unit| unit.as_str().unwrap()).collect();
+            let cases: BTreeSet<_> = units.iter().map(|unit| case(unit, name)).collect();
+            assert!(cases.len() == units.len(), "{name} has a case twice");
+            Shape::Units(units.into_iter().map(|unit| (unit.into(), None)).collect())
         }
         Some(kind) if kind == "object" => fields(name, schema, way),
         _ => panic!("{name} is neither a struct nor an enum"),

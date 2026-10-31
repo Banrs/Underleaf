@@ -2,26 +2,27 @@ import AppKit
 
 extension SyntaxTheme {
     func color(_ kind: HighlightKind) -> NSColor {
-        let shown = Self.made[self] ?? Dictionary(uniqueKeysWithValues: zip(HighlightKind.allCases, palette.map { color in
+        let shown = Self.made[self] ?? palette.mapValues { color in
             NSColor.adapting(Dictionary(uniqueKeysWithValues: NSColor.textAppearances.map { ($0, color.legibleAsText(in: $0)) }),
                              fallback: .textColor)
-        }))
+        }
         Self.made[self] = shown
         return shown[kind] ?? .textColor
     }
 
     private static var made: [SyntaxTheme: [HighlightKind: NSColor]] = [:]
 
-    private var palette: [NSColor] {
+    private var palette: [HighlightKind: NSColor] {
         func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {
             NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .hex(dark) : .hex(light) }
         }
         return switch self {
-        case .overleaf: [rgb(0x0000FF, 0x8BE9FD), rgb(0x318495, 0xFFB86C), rgb(0x036A07, 0xF1FA8C), rgb(0x4C886B, 0x6272A4),
-                         rgb(0xFF0000, 0xFF79C6)]
-        case .texstudio: [rgb(0x800000, 0x60CDF2), rgb(0x008000, 0x60F260), rgb(0x509600, 0x85F218), rgb(0x808080, 0x667299),
-                          rgb(0xC00000, 0xF2F218)]
-        case .system: [.systemPink, .systemTeal, .systemPurple, .secondaryLabelColor, .systemRed]
+        case .overleaf: [.command: rgb(0x0000FF, 0x8BE9FD), .argument: rgb(0x318495, 0xFFB86C), .maths: rgb(0x036A07, 0xF1FA8C),
+                         .comment: rgb(0x4C886B, 0x6272A4), .invalid: rgb(0xFF0000, 0xFF79C6)]
+        case .texstudio: [.command: rgb(0x800000, 0x60CDF2), .argument: rgb(0x008000, 0x60F260), .maths: rgb(0x509600, 0x85F218),
+                          .comment: rgb(0x808080, 0x667299), .invalid: rgb(0xC00000, 0xF2F218)]
+        case .system: [.command: .systemPink, .argument: .systemTeal, .maths: .systemPurple, .comment: .secondaryLabelColor,
+                       .invalid: .systemRed]
         }
     }
 }

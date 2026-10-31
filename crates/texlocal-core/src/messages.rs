@@ -2,11 +2,17 @@ texlocal_latex::messages! {
     io_error(error) = "{error}";
     unexpected(error) = "{error}";
     at_path(path, error) = "“{path}”: {error}";
+    invalid_command = "Invalid command";
+    unreadable_arguments = "Invalid arguments";
+    invalid_json(error) = "Invalid JSON: {error}";
+    no_source = "No source";
+    not_editable = "The document isn’t open for editing";
     no_such_session = "No such session";
     session_open = "That session is open already";
     project_open = "That project is open already.";
     shares_folder(name) = "This folder holds or is inside “{name}”, which is open. Close “{name}” first.";
     session_stopped = "The project stopped after an internal error. Close it and open it again.";
+    went_wrong = "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.";
     stopped_saved = "Saving stopped after an internal error. What was typed so far is saved: close the project and open it again to go on.";
     stopped_unsaved = "Saving stopped after an internal error, and this file’s edits couldn’t be saved. Copy them out, then close the project and open it again.";
 

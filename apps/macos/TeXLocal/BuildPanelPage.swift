@@ -8,8 +8,8 @@ struct BuildPanelPage: View {
             switch project.panel.tab {
             case .issues: issues
             case .log:
-                if let text = project.result?.log, !text.isEmpty {
-                    LogPane(text: text, filter: project.panel.logFilter)
+                if !project.buildLog.isEmpty {
+                    LogPane(text: project.buildLog, filter: project.panel.logFilter)
                 } else {
                     ContentUnavailableView("No Log", systemImage: "text.page", description: Text("Compile to see the log here."))
                 }

@@ -8,9 +8,13 @@ use texlocal_latex::protocol::Described;
 use texlocal_latex::syntax::{HighlightKind, Source, Syntax};
 
 use crate::CoreError;
-use crate::events::SessionEvent;
+use crate::events::Said;
 use crate::service::{Library, LibrarySection};
 use crate::session::{Session, SessionSection};
+
+mod digest;
+
+pub use digest::DIGEST;
 
 pub(crate) type Answer<T> = fn(Result<T, CoreError>) -> Result<Value, CoreError>;
 
@@ -30,6 +34,7 @@ pub(crate) fn unknown() -> CoreError {
 pub struct Protocol {
     pub requests: Vec<Described>,
     pub stores: Vec<Schema>,
+    pub packed: Vec<Schema>,
     pub inbound: Map<String, Value>,
     pub outbound: Map<String, Value>,
 }
@@ -45,18 +50,22 @@ pub fn protocol() -> Protocol {
     requests.extend(Session::describe(&mut inbound, &mut outbound));
     requests.extend(Source::describe(&mut inbound, &mut outbound));
     requests.extend(Syntax::describe(&mut inbound, &mut outbound));
-    outbound.subschema_for::<CoreError>();
-    outbound.subschema_for::<HighlightKind>();
-    outbound.subschema_for::<SessionEvent>();
+    outbound.subschema_for::<Said>();
     let stores = vec![
         outbound.subschema_for::<SessionSection>(),
         outbound.subschema_for::<LibrarySection>(),
     ];
+    let packed = vec![outbound.subschema_for::<HighlightKind>()];
+    let ids = [messages::CATALOG, crate::messages::CATALOG].concat();
+    let ids: Vec<&str> = ids.into_iter().map(|(id, _)| id).collect();
+    let mut outbound = outbound.take_definitions(true);
+    outbound.insert("MessageID".into(), json!({ "type": "string", "enum": ids }));
     Protocol {
         requests,
         stores,
+        packed,
         inbound: inbound.take_definitions(true),
-        outbound: outbound.take_definitions(true),
+        outbound,
     }
 }
 
