@@ -117,30 +117,22 @@ async fn device_state_left_in_the_library_moves_to_the_state_folder_once() {
     let old = Arc::new(Service::new(data.clone(), data.clone()));
     let folder = library.path("Thesis");
     write(&folder, &[("main.tex", "x")]);
-    let opened = old
-        .call("OpenPath", json!({ "path": folder }))
-        .await
-        .unwrap();
+    let path = json!({ "path": folder });
+    let opened = old.call("OpenPath", path).await.unwrap();
     let (place, tex) = (r#"{"ui":{"file":"ch.tex"}}"#, r#"{"texDir":"/tex"}"#);
     write(&data, &[(".ui/P.json", place), (".texlocal-app.json", tex)]);
     let moved = Service::new(data.clone(), state.clone());
     for name in [".ui", ".opened", ".texlocal-app.json"] {
-        assert!(
-            !data.join(name).exists() && state.join(name).exists(),
-            "{name}"
-        );
+        let (left, landed) = (data.join(name).exists(), state.join(name).exists());
+        assert!(!left && landed, "{name}");
     }
-    assert_eq!(
-        json!(moved.projects().unwrap())[0]["id"],
-        opened["project"]["id"]
-    );
-    assert_eq!(fs::read_to_string(state.join(".ui/P.json")).unwrap(), place);
+    let listed = json!(moved.projects().unwrap());
+    assert_eq!(listed[0]["id"], opened["project"]["id"]);
+    let read = |name| fs::read_to_string(state.join(name)).unwrap();
+    assert_eq!(read(".ui/P.json"), place);
     write(&data, &[(".texlocal-app.json", "{}")]);
     Service::new(data.clone(), state.clone());
-    assert_eq!(
-        fs::read_to_string(state.join(".texlocal-app.json")).unwrap(),
-        tex
-    );
+    assert_eq!(read(".texlocal-app.json"), tex);
     assert!(data.join(".texlocal-app.json").exists());
 }
 
