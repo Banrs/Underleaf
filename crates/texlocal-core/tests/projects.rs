@@ -66,12 +66,13 @@ async fn a_project_is_renamed_unless_the_name_is_taken() {
         .refuse("RenameProject", json!({ "id": "B", "name": "A" }))
         .await;
     assert_eq!(taken, ErrorKind::Conflict);
+    write(&library.path("state"), &[(".ui/C.json", "{}")]);
     let renamed = library
         .call("RenameProject", json!({ "id": "B", "name": "C" }))
         .await;
     assert_eq!(renamed["id"], "C");
     assert!(library.path("data/C/main.tex").is_file());
-    assert!(!library.path("data/B").exists());
+    assert!(!library.path("data/B").exists() && !library.path("state/.ui/C.json").exists());
 }
 
 #[tokio::test]
