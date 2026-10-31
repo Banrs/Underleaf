@@ -441,7 +441,6 @@ struct ViewsTests {
         let info = try await newProject()
         let window = defaults.window()
         window.app.autoCompile = false
-        window.app.tex = TexStatus(available: true, latexmkVersion: nil, texDir: nil, found: nil, texpresso: nil, texpressoDir: nil)
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try await project.load()
@@ -454,7 +453,14 @@ struct ViewsTests {
             $0.localizedDescription == "The file shown changed meanwhile, so it wasn’t restored. Try again."
         }
         let text = Message(id: "fix", args: [:], text: "Add the Package")
+        let library = window.app.core.library
+        try await waitUntil { library.tex != nil }
+        let found = try #require(library.tex)
+        var available = found
+        available.available = true
+        library.apply(.tex(available))
         await project.run(Fix(id: "package:texlocal", title: text, help: text, confirm: nil))
+        library.apply(.tex(found))
         #expect(window.alert?.message == "The file shown changed meanwhile, so nothing was changed. Try again.")
         #expect(views.refused == ["main.tex", "main.tex"])
         #expect(!project.compiling && project.result == nil)

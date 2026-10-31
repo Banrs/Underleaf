@@ -160,6 +160,40 @@ struct CoreTests {
         #expect(try await closing.value && session.closed)
     }
 
+    @Test func theCoreLooksForTeXItselfAndAFolderChosenReachesTheLibraryBeforeItsReply() async throws {
+        try await waitUntil { Core.shared.library.tex != nil }
+        let project = try await newProject(template: .blank)
+        let latexmk = "#!/bin/sh\necho 'Latexmk, John Collins, 4 Jan 2026. Version 4.86'\n"
+        FileManager.default.createFile(atPath: project.path + "/latexmk", contents: Data(latexmk.utf8), attributes: [.posixPermissions: 0o755])
+        let defaults = TestDefaults()
+        let app = defaults.app()
+        try await app.setTeXFolder(project.path, texpresso: false)
+        #expect(app.tex?.available == true && app.tex?.latexmkVersion == "4.86" && app.tex?.texDir != nil)
+        try await app.setTeXFolder(nil, texpresso: false)
+        #expect(app.tex?.texDir == nil && !app.settingTeX)
+    }
+
+    @Test func anExportHoldsTheEditsTheCoreSavesAndIsRefusedWhenTheyCantBeSaved() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
+        try await project.load()
+        let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
+        let main = info.path + "/main.tex"
+        let mode = { (mode: Int) in try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: main) }
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
+        let zip = try await project.exportZip()
+        #expect(FileManager.default.fileExists(atPath: zip.path(percentEncoded: false)))
+        #expect(try String(contentsOfFile: main, encoding: .utf8).hasPrefix("% mine\n"))
+        try mode(0o444)
+        _ = document.edit(NSRange(location: 0, length: 0), with: "% more\n", changing: nil, mirroring: false)
+        await #expect(throws: CoreError.self) { try await project.exportZip() }
+        try mode(0o644)
+        #expect(await project.close().value)
+    }
+
     @Test func aSessionTheCoreNeverOpenedClosesAtOnce() async throws {
         let session = SessionClient(core: .shared)
         #expect(try await session.close() && session.closed)
@@ -180,7 +214,8 @@ struct CoreTests {
     @Test func theAppReadsEachKindOfThingTheCoreSays() throws {
         let said = try wireSaid.map { try JSONDecoder().decode(Said<String>.self, from: Data($0.utf8)) }
         guard case .reply(let ok) = said[0], case .reply(let refused) = said[1], case .event(let event) = said[2],
-              case .event(let stopped) = said[3], case .library = said[4], case .log(let log) = said[5] else {
+              case .event(let stopped) = said[3], case .library = said[4], case .library(.tex(let tex)) = said[5],
+              case .log(let log) = said[6] else {
             Issue.record("\(said)")
             return
         }
@@ -188,5 +223,6 @@ struct CoreTests {
         #expect(throws: CoreError.self) { try refused.answer.get() }
         #expect(event.event == .liveAlert && log.level == .fault)
         #expect(stopped.event == .section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
+        #expect(tex.available && tex.latexmkVersion == "4.86" && tex.texDir == nil)
     }
 }

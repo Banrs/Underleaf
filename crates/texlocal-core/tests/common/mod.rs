@@ -90,6 +90,7 @@ pub struct Rig {
     pub library: Library,
     pub sessions: Arc<Sessions>,
     pub id: String,
+    pub tex: Value,
     events: Receiver<Value>,
     seen: Mutex<Vec<Value>>,
     asked: AtomicU64,
@@ -143,16 +144,20 @@ impl Rig {
             }
             None => Sessions::new(service, listener),
         });
-        let rig = Self {
+        let mut rig = Self {
             library,
             sessions,
             id,
+            tex: Value::Null,
             events,
             seen: Mutex::default(),
             asked: AtomicU64::default(),
             sent: Mutex::default(),
             open: Mutex::default(),
         };
+        let tex = |e: &Value| e["type"] == "library" && e["value"]["type"] == "tex";
+        rig.tex = rig.find(tex)["value"]["value"].take();
+        rig.forget();
         rig.call("OpenProject", json!({ "id": rig.id, "autoCompile": false }));
         rig
     }

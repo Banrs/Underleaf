@@ -38,6 +38,7 @@ pub struct Service {
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum LibrarySection {
     Projects(Vec<ProjectInfo>),
+    Tex(TexStatus),
 }
 
 pub(crate) struct InSession {
@@ -93,15 +94,20 @@ impl Service {
     }
 
     pub(crate) fn publish_projects(&self) -> Result<(), CoreError> {
-        let Some(hub) = self.hub.get() else {
-            return Ok(());
-        };
-        let mut sent = lock(&self.sent);
-        let section = LibrarySection::Projects(self.projects()?);
-        if sent.changed(&section) {
-            let _ = hub.send(Said::Library(section));
+        if self.hub.get().is_some() {
+            let mut sent = lock(&self.sent);
+            let projects = LibrarySection::Projects(self.projects()?);
+            self.publish(&mut sent, projects);
         }
         Ok(())
+    }
+
+    fn publish(&self, sent: &mut Sent<LibrarySection>, section: LibrarySection) {
+        if let Some(hub) = self.hub.get()
+            && sent.changed(&section)
+        {
+            let _ = hub.send(Said::Library(section));
+        }
     }
 
     pub(crate) fn relist(&self) {
@@ -191,6 +197,7 @@ impl Service {
         found.tex_dir = shown(app.tex_dir);
         found.texpresso_dir = shown(app.texpresso_dir);
         self.tex_found.send_replace(found.available);
+        self.publish(&mut lock(&self.sent), LibrarySection::Tex(found.clone()));
         found
     }
 
@@ -238,9 +245,10 @@ impl Service {
                 answer(Ok(self.status().await))
             }
             Library::InstallTex(InstallTex {}, answer) => {
-                tinytex::install(&self.processes, &self.tool_paths().0).await?;
+                let installed = tinytex::install(&self.processes, &self.tool_paths().0).await;
                 let _turn = self.tex_turn().await;
-                answer(Ok(self.status().await))
+                let status = self.status().await;
+                answer(installed.map(|()| status))
             }
             Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),
             Library::CreateProject(

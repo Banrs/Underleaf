@@ -1248,6 +1248,7 @@ async fn turning_auto_compile_on_builds_after_a_save() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tex_is_looked_for_at_start_so_an_auto_build_waits_on_no_client() {
     let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    assert_eq!(rig.tex["available"], true);
     rig.call("CloseProject", json!({}));
     let auto = json!({ "id": rig.id, "autoCompile": true });
     rig.call_to(2, "OpenProject", auto);
@@ -1273,6 +1274,24 @@ async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found
     rig.call("SetOptions", json!({ "autoCompile": true }));
     rig.call("SetSettings", json!({ "patch": {} }));
     rig.section("build", |b| b["compiling"] == true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tex_status_is_sent_again_only_when_it_changes_and_before_the_reply_that_changed_it() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    let failing = rig.library.path("failing");
+    program(&failing.join("latexmk"), "#!/bin/sh\nexit 1\n");
+    rig.forget();
+    rig.ask_library("SetTexDir", json!({ "dir": failing }))
+        .unwrap();
+    let library = ["library", "reply"];
+    assert_eq!(said_of(&rig, &library), library);
+    let tex = rig.find(|e| e["type"] == "library")["value"]["value"].take();
+    assert_eq!(tex["available"], false);
+    assert_eq!(tex["texDir"], json!(failing));
+    rig.forget();
+    rig.ask_library("CheckTex", json!({})).unwrap();
+    assert_eq!(said_of(&rig, &library), ["reply"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

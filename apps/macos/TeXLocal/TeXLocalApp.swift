@@ -37,9 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if app.windows.isEmpty { app.showHome() }
         Task { [app] in
-            async let tex: Void = app.refreshTeXStatus()
             await app.reloadProjects()
-            await tex
             for window in app.windows { await window.reopen() }
             if let id = app.launchProject.take() { await app.front.open(id) }
         }

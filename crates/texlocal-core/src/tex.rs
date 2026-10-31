@@ -83,7 +83,7 @@ pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
 static LATEXMK_VERSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Version (\d[\w.]*)").unwrap());
 
-#[derive(Default, Serialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TexStatus {
     pub available: bool,

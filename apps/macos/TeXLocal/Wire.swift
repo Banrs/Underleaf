@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "8a53b583b29707516c489090f0b5d38a9468cbb949296729ef861262ec941951"
+nonisolated let protocolDigest = "48471f49eb469d34289ac93e53c1e9b0bb4626ae0ee4e703457f1ea58ee1ced7"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -853,6 +853,7 @@ nonisolated struct KillAll: LibraryRequest {
 
 nonisolated enum LibrarySection: Decodable, Hashable, Sendable {
     case projects([ProjectInfo])
+    case tex(TexStatus)
 
     enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
@@ -862,6 +863,7 @@ nonisolated extension LibrarySection {
         let wire = try decoder.strict(CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "projects": self = .projects(try wire.decode([ProjectInfo].self, forKey: .value))
+        case "tex": self = .tex(try wire.decode(TexStatus.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
         }
     }
@@ -2234,10 +2236,12 @@ final class SessionStore {
 @Observable
 final class LibraryStore {
     private(set) var projects: [ProjectInfo] = []
+    private(set) var tex: TexStatus?
 
     func apply(_ section: LibrarySection) {
         switch section {
         case .projects(let value): self.projects = value
+        case .tex(let value): self.tex = value
         }
     }
 }

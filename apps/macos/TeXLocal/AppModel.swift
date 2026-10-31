@@ -80,7 +80,7 @@ final class AppModel {
     let core: Core
     var projects: [ProjectInfo] { core.library.projects }
     private(set) var projectsLoaded = false
-    var tex: TexStatus?
+    var tex: TexStatus? { core.library.tex }
     private(set) var settingTeX = false
     private(set) var installingTeX = false
     private(set) var libraryProblem: AppAlert?
@@ -183,12 +183,9 @@ final class AppModel {
         recentProjects = Array(([id] + recentProjects.filter { $0 != id }).prefix(recentLimit()))
     }
 
-    @ObservationIgnored private var texCheck: Task<Void, Never>?
-
     func retryLibrary() async {
         core.reopen()
         await reloadProjects()
-        await refreshTeXStatus()
     }
 
     func reloadProjects() async {
@@ -203,13 +200,7 @@ final class AppModel {
         projectsLoaded = true
     }
 
-    func refreshTeXStatus() async {
-        guard !settingTeX else { return }
-        await restart(&texCheck) { [self] in
-            let status = try? await core.call(CheckTex())
-            if !Task.isCancelled, let status { tex = status }
-        }.value
-    }
+    func refreshTeXStatus() async { _ = try? await core.call(CheckTex()) }
 
     func setTeXFolder(_ path: String?, texpresso: Bool) async throws {
         if texpresso { try await setTeX(SetTexpressoDir(dir: path)) } else { try await setTeX(SetTexDir(dir: path)) }
@@ -221,16 +212,10 @@ final class AppModel {
         try await setTeX(InstallTex())
     }
 
-    private func setTeX<R: LibraryRequest>(_ request: R) async throws where R.Reply == TexStatus {
+    private func setTeX<R: LibraryRequest>(_ request: R) async throws {
         settingTeX = true
-        texCheck?.cancel()
         defer { settingTeX = false }
-        do {
-            tex = try await core.call(request)
-        } catch {
-            Task { await refreshTeXStatus() }
-            throw error
-        }
+        try await core.call(request)
     }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)

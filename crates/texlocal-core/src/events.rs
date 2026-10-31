@@ -195,6 +195,7 @@ mod tests {
     use super::*;
     use crate::messages;
     use crate::session::{Lifecycle, Stopped};
+    use crate::tex::TexStatus;
 
     #[test]
     fn the_core_says_each_kind_of_thing_as_the_fixtures_show() {
@@ -222,6 +223,12 @@ mod tests {
                 }))),
             }),
             Said::Library(LibrarySection::Projects(Vec::new())),
+            Said::Library(LibrarySection::Tex(TexStatus {
+                available: true,
+                latexmk_version: Some("4.86".into()),
+                found: Some("/Library/TeX/texbin".into()),
+                ..TexStatus::default()
+            })),
             Said::Log(Log {
                 level: LogLevel::Fault,
                 text: text.into(),
