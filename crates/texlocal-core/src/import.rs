@@ -327,7 +327,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         return Err(CoreError::bad_request(messages::no_tex(file_name(src))));
     }
 
-    projects::new_project(&service.data_dir, &base, |root| {
+    projects::new_project(service, &base, |root| {
         write_files(root, &files, zip.as_mut())?;
         let mut settings = guessed_settings(root, main.as_deref())?;
         if settings.main_file.is_none() {
@@ -395,13 +395,13 @@ pub(crate) fn duplicate_project(
         }
         Ok(true)
     })?;
-    let copy = projects::new_project(&service.data_dir, name, |copy| {
+    let copy = projects::new_project(service, name, |copy| {
         write_files(copy, &files, None)?;
         match fs::copy(root.join(SETTINGS_FILE), copy.join(SETTINGS_FILE)) {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
             copied => Ok(copied.map(drop)?),
         }
     })?;
-    copy_ui(&source, &ui_file(&service.data_dir, &copy.id));
+    copy_ui(&source, &ui_file(&service.state_dir, &copy.id));
     Ok(copy)
 }

@@ -1,10 +1,12 @@
 mod common;
 
 use std::fs;
+use std::sync::Arc;
 
 use common::{Library, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
+use texlocal_core::service::Service;
 
 #[tokio::test]
 async fn a_new_project_is_listed_with_its_template() {
@@ -105,6 +107,41 @@ async fn a_folder_opens_where_it_is() {
         fs::canonicalize(&folder).unwrap()
     );
     assert!(!folder.join(".texlocal.json").exists());
+    assert!(fs::read_dir(library.path("data")).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn device_state_left_in_the_library_moves_to_the_state_folder_once() {
+    let library = Library::new();
+    let (data, state) = (library.path("data"), library.path("state"));
+    let old = Arc::new(Service::new(data.clone(), data.clone()));
+    let folder = library.path("Thesis");
+    write(&folder, &[("main.tex", "x")]);
+    let opened = old
+        .call("OpenPath", json!({ "path": folder }))
+        .await
+        .unwrap();
+    let (place, tex) = (r#"{"ui":{"file":"ch.tex"}}"#, r#"{"texDir":"/tex"}"#);
+    write(&data, &[(".ui/P.json", place), (".texlocal-app.json", tex)]);
+    let moved = Service::new(data.clone(), state.clone());
+    for name in [".ui", ".opened", ".texlocal-app.json"] {
+        assert!(
+            !data.join(name).exists() && state.join(name).exists(),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        json!(moved.projects().unwrap())[0]["id"],
+        opened["project"]["id"]
+    );
+    assert_eq!(fs::read_to_string(state.join(".ui/P.json")).unwrap(), place);
+    write(&data, &[(".texlocal-app.json", "{}")]);
+    Service::new(data.clone(), state.clone());
+    assert_eq!(
+        fs::read_to_string(state.join(".texlocal-app.json")).unwrap(),
+        tex
+    );
+    assert!(data.join(".texlocal-app.json").exists());
 }
 
 #[tokio::test]

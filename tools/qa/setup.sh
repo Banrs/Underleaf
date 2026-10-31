@@ -7,4 +7,5 @@ clang -dynamiclib -framework Cocoa -o $S/qa/appearance.dylib $T/appearance.m
 rsync -a --delete --exclude='*.gz' $T/library-seed/ $S/qa-library-seed/
 L="Test Long (400 pages)/main.tex"; gunzip -c "$T/library-seed/$L.gz" > "$S/qa-library-seed/$L"
 rsync -a --delete $S/qa-library-seed/ $S/qa-library/
+rm -rf $S/qa-library-state
 echo "ready: export QA_SCRATCH=$S"

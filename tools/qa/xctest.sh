@@ -5,7 +5,7 @@ mkdir -p $S/locks $S/logs
 : >> $S/locks/xctest.lock
 zsystem flock $S/locks/xctest.lock
 L=$S/logs/xctest-${D:t}.log
-rm -rf $D/Build/Intermediates.noindex/xctest-data
+rm -rf $D/Build/Intermediates.noindex/xctest-{data,state}
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug -destination 'platform=macOS' \
   -derivedDataPath $D -parallel-testing-enabled NO TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev CODE_SIGNING_ALLOWED=NO test "$@" > $L 2>&1
 r=$?

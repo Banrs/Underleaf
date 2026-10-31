@@ -30,8 +30,10 @@ pub struct Library {
 impl Library {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("data")).unwrap();
-        let service = Arc::new(Service::new(dir.path().join("data")));
+        let (data, state) = (dir.path().join("data"), dir.path().join("state"));
+        std::fs::create_dir(&data).unwrap();
+        std::fs::create_dir(&state).unwrap();
+        let service = Arc::new(Service::new(data, state));
         Self { dir, service }
     }
 

@@ -4,9 +4,11 @@ import Testing
 
 @Suite(.serialized)
 struct CoreTests {
-    @Test func theLibraryIsTheTestOne() throws {
+    @Test func theLibraryAndStateAreTheTestOnes() throws {
         let data = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let state = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_STATE"])
         #expect(Core.libraryFolder == URL(filePath: data, directoryHint: .isDirectory))
+        #expect(Core.stateFolder == URL(filePath: state, directoryHint: .isDirectory))
         #expect(Core.shared.isOpen)
     }
 

@@ -44,21 +44,23 @@ unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_open(
     data_dir: *const c_char,
+    state_dir: *const c_char,
     listener: Option<extern "C" fn(*mut c_void, *const c_char)>,
     ctx: *mut c_void,
 ) -> *mut TlHandle {
-    let (Some(dir), Some(call)) = (unsafe { str_arg(data_dir) }.map(PathBuf::from), listener)
-    else {
+    let path = |ptr| unsafe { str_arg(ptr) }.map(PathBuf::from);
+    let (Some(dir), Some(state), Some(call)) = (path(data_dir), path(state_dir), listener) else {
         return std::ptr::null_mut();
     };
     let callback = Callback { call, ctx };
     caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
+        std::fs::create_dir_all(&state).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
         let listen = Box::new(move |said: String| callback.send(said));
         let sessions = {
             let _entered = runtime.enter();
-            Arc::new(Sessions::new(Arc::new(Service::new(dir)), listen))
+            Arc::new(Sessions::new(Arc::new(Service::new(dir, state)), listen))
         };
         sessions.log_panics();
         Some(Box::new(TlHandle { runtime, sessions }))

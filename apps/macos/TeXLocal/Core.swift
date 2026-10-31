@@ -49,6 +49,12 @@ final class Core {
             .appending(path: "TeXLocal", directoryHint: .isDirectory)
     }
 
+    static let stateFolder = if let dir = ProcessInfo.processInfo.environment["TEXLOCAL_STATE"], !dir.isEmpty {
+        URL(filePath: dir, directoryHint: .isDirectory)
+    } else {
+        URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "TeXLocal", directoryHint: .isDirectory)
+    }
+
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
     let library = LibraryStore()
@@ -71,7 +77,9 @@ final class Core {
     }
 
     private static func open() -> OpaquePointer? {
-        libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0, listener, nil) }
+        libraryFolder.withUnsafeFileSystemRepresentation { data in
+            stateFolder.withUnsafeFileSystemRepresentation { tl_open(data, $0, listener, nil) }
+        }
     }
 
     func reopen() { if handle == nil { handle = Self.open() } }

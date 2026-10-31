@@ -55,7 +55,7 @@ fn program(path: &Path, script: &str) {
 }
 
 fn app_settings(library: &Library, settings: Value) {
-    let file = library.path("data/.texlocal-app.json");
+    let file = library.path("state/.texlocal-app.json");
     fs::write(file, settings.to_string()).unwrap();
 }
 
@@ -929,7 +929,7 @@ async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ui_state_is_written_beside_the_library_before_the_close_and_never_to_the_project() {
+async fn ui_state_is_written_to_the_state_folder_before_the_close_and_never_to_the_library() {
     let rig = project().await;
     let settings = rig.root().join(".texlocal.json");
     let modified = || fs::metadata(&settings).unwrap().modified().unwrap();
@@ -944,7 +944,8 @@ async fn ui_state_is_written_beside_the_library_before_the_close_and_never_to_th
     rig.send(SESSION, "SetUiState", patch(folds));
     assert_eq!(rig.call("CloseProject", json!({})), true);
     assert!((fs::read(&settings).unwrap(), modified()) == before);
-    let ui = &read_json(&rig.library.path("data/.ui/P.json"))["ui"];
+    assert!(!rig.library.path("data/.ui").exists());
+    let ui = &read_json(&rig.library.path("state/.ui/P.json"))["ui"];
     assert_eq!(
         (&ui["file"], &ui["line"], &ui["zoom"]),
         (&json!("ch.tex"), &json!(12), &json!(1.5))
@@ -972,7 +973,7 @@ async fn an_old_files_place_and_grant_move_out_at_open_and_leave_it_at_a_setting
     assert_eq!(rig.section("openFile", |_| true)["path"], "ch.tex");
     let project = rig.section("project", |_| true);
     assert_eq!(project["settings"]["shellEscape"], true);
-    let moved = read_json(&rig.library.path("data/.ui/P.json"));
+    let moved = read_json(&rig.library.path("state/.ui/P.json"));
     assert_eq!(moved["ui"]["line"], 3);
     assert_eq!(moved["ui"]["openFile"], "ch.tex");
     assert!(moved["shellEscapeFor"].is_array());
@@ -1001,7 +1002,7 @@ async fn a_renamed_project_keeps_its_place_and_grant() {
     rig.call("CloseProject", json!({}));
     let renamed = rig.ask_library("RenameProject", json!({ "id": "P", "name": "Q" }));
     assert_eq!(renamed.unwrap()["id"], "Q");
-    assert!(!rig.library.path("data/.ui/P.json").exists());
+    assert!(!rig.library.path("state/.ui/P.json").exists());
     rig.call_to(2, "OpenProject", json!({ "id": "Q", "autoCompile": false }));
     assert_eq!(rig.section_in(2, "openFile", |_| true)["path"], "ch.tex");
     let project = rig.section_in(2, "project", |_| true);
@@ -1020,12 +1021,12 @@ async fn a_copy_keeps_the_place_but_not_the_grant_and_a_gone_projects_are_swept_
     assert_eq!(rig.section_in(2, "openFile", |_| true)["path"], "ch.tex");
     let project = rig.section_in(2, "project", |_| true);
     assert_eq!(project["settings"]["shellEscape"], false);
-    let copied = rig.library.path("data/.ui/P copy.json");
+    let copied = rig.library.path("state/.ui/P copy.json");
     assert!(read_json(&copied)["shellEscapeFor"].is_null());
     rig.call_to(2, "CloseProject", json!({}));
     fs::remove_dir_all(rig.library.path("data/P copy")).unwrap();
     rig.ask_library("ReloadProjects", json!({})).unwrap();
-    assert!(!copied.exists() && rig.library.path("data/.ui/P.json").exists());
+    assert!(!copied.exists() && rig.library.path("state/.ui/P.json").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1408,7 +1409,7 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
     for id in sent {
         rig.reply(id).unwrap();
     }
-    let file = fs::read(rig.library.path("data/.texlocal-app.json")).unwrap();
+    let file = fs::read(rig.library.path("state/.texlocal-app.json")).unwrap();
     let stored: Value = serde_json::from_slice(&file).unwrap();
     let expected = json!({ "later": true, "texDir": tex, "texpressoDir": texpresso });
     assert_eq!(stored, expected);

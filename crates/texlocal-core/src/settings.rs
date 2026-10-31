@@ -257,15 +257,15 @@ pub(crate) struct AppSettings {
     rest: Map<String, Value>,
 }
 
-const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
+pub(crate) const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 
 impl AppSettings {
-    pub(crate) fn read(data_dir: &Path) -> Self {
-        load(&data_dir.join(APP_SETTINGS_FILE)).unwrap_or_default()
+    pub(crate) fn read(dir: &Path) -> Self {
+        load(&dir.join(APP_SETTINGS_FILE)).unwrap_or_default()
     }
 
-    pub(crate) fn update(data_dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), CoreError> {
-        update(&data_dir.join(APP_SETTINGS_FILE), |app| {
+    pub(crate) fn update(dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), CoreError> {
+        update(&dir.join(APP_SETTINGS_FILE), |app| {
             change(app);
             Ok(())
         })

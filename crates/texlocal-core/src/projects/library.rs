@@ -36,8 +36,8 @@ pub struct ProjectInfo {
 }
 
 impl ProjectInfo {
-    fn read(data_dir: &Path, id: &str) -> io::Result<Self> {
-        Ok(Self::of(id.to_owned(), &Project::in_library(data_dir, id)?))
+    fn read(service: &Service, id: &str) -> io::Result<Self> {
+        Ok(Self::of(id.to_owned(), &Project::in_library(service, id)?))
     }
 
     pub(super) fn of(id: String, project: &Project) -> Self {
@@ -78,29 +78,29 @@ fn newest(root: &Path) -> u64 {
     newest
 }
 
-pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
+pub fn list_projects(service: &Service) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
-    for entry in fs::read_dir(data_dir)? {
+    for entry in fs::read_dir(&service.data_dir)? {
         let entry = entry?;
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
         if !name.starts_with('.') && entry.file_type()?.is_dir() {
-            projects.extend(skip_unreadable(ProjectInfo::read(data_dir, &name))?);
+            projects.extend(skip_unreadable(ProjectInfo::read(service, &name))?);
         }
     }
-    projects.extend(opened::list(data_dir));
+    projects.extend(opened::list(&service.state_dir));
     projects.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.id.cmp(&b.id)));
     Ok(projects)
 }
 
 pub fn create_project(
-    data_dir: &Path,
+    service: &Service,
     name: &str,
     template: ProjectTemplate,
     engine: Option<Engine>,
 ) -> Result<ProjectInfo, CoreError> {
-    new_project(data_dir, name, |root| {
+    new_project(service, name, |root| {
         for (file, content) in template.files() {
             fs::write(root.join(file), content)?;
         }
@@ -113,11 +113,12 @@ pub fn create_project(
 }
 
 pub(crate) fn new_project(
-    data_dir: &Path,
+    service: &Service,
     name: &str,
     fill: impl FnOnce(&Path) -> Result<(), CoreError>,
 ) -> Result<ProjectInfo, CoreError> {
     let name = sanitize_name(name)?;
+    let data_dir = &service.data_dir;
     fs::create_dir_all(data_dir)?;
     let temp = atomic::temp_builder().tempdir_in(data_dir)?;
     fill(temp.path())?;
@@ -129,7 +130,7 @@ pub(crate) fn new_project(
             },
         )
         .expect("a free name")?;
-    Ok(ProjectInfo::read(data_dir, &id)?)
+    Ok(ProjectInfo::read(service, &id)?)
 }
 
 pub fn free_project_name(data_dir: &Path) -> Result<String, CoreError> {
@@ -179,24 +180,24 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         .cloned())
 }
 
-pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
+pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
     if is_opened(id) {
         return Err(CoreError::bad_request(messages::opened_elsewhere()));
     }
-    let project = Project::find(data_dir, id)?;
-    let clean = sanitize_name(new_name)?;
-    let dest = data_dir.join(&clean);
+    let project = service.project(id)?;
+    let clean = sanitize_name(name)?;
+    let dest = service.data_dir.join(&clean);
     if occupied(&project.root, &dest) {
         return Err(CoreError::conflict(messages::project_exists()));
     }
     atomic::rename_exclusive(&project.root, &dest)?;
-    let _ = fs::rename(&project.ui, ui_file(data_dir, &clean));
-    Ok(ProjectInfo::read(data_dir, &clean)?)
+    let _ = fs::rename(&project.ui, ui_file(&service.state_dir, &clean));
+    Ok(ProjectInfo::read(service, &clean)?)
 }
 
 pub(crate) fn sweep_ui(service: &Service) {
     let _library = lock(&service.library);
-    let Ok(files) = fs::read_dir(service.data_dir.join(UI_DIR)) else {
+    let Ok(files) = fs::read_dir(service.state_dir.join(UI_DIR)) else {
         return;
     };
     let gone = |name: &OsStr| !service.data_dir.join(name).is_dir();
@@ -222,7 +223,7 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
-pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
+pub fn locate(service: &Service, path: &Path) -> Result<Option<Located>, CoreError> {
     if !path.is_absolute() {
         return Ok(None);
     }
@@ -235,6 +236,7 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
             })
             .collect()
     };
+    let data_dir = &service.data_dir;
     if let Ok(rest) = real.strip_prefix(std::fs::canonicalize(data_dir)?) {
         let segments = segments(rest);
         let Some([id, inside @ ..]) = segments.as_deref() else {
@@ -246,7 +248,7 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
         let (id, path) = (id.clone(), inside.join("/"));
         return Ok(Some(Located { id, path }));
     }
-    let mut folders = opened::folders(data_dir);
+    let mut folders = opened::folders(&service.state_dir);
     folders.sort_by_key(|(_, folder)| Reverse(folder.path.as_os_str().len()));
     Ok(folders.into_iter().find_map(|(id, folder)| {
         let path = segments(real.strip_prefix(&folder.path).ok()?)?.join("/");
