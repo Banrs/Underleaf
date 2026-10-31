@@ -79,6 +79,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+        env:
+          TMPDIR: ${{ runner.temp }}
 
   wasm:
     name: LaTeX on wasm
