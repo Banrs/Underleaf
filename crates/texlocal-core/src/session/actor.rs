@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use notify::RecommendedWatcher;
@@ -28,7 +28,7 @@ use crate::events::{Event, Queued, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, History, RenameResult, SearchGroup, Snapshot};
+use crate::projects::{self, Job, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
@@ -151,7 +151,7 @@ pub(crate) struct Actor {
     pub deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub history: Arc<Mutex<History>>,
+    pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
     pub sent: Sent<SessionSection>,
     lifecycle: Lifecycle,
@@ -328,6 +328,7 @@ impl Actor {
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
             Msg::Live(generation, event) => self.live_event(generation, event),
+            Msg::Snapshotted(finish) => finish(self),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
                 self.soon(Timer::Fs);
@@ -432,9 +433,13 @@ impl Actor {
                     whole_word,
                 },
                 answer,
-            ) => answer(self.replace(&Query::new(&query, match_case, whole_word), &replacement)),
+            ) => {
+                let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
+                return self.before("Before Replace All", replace, Pending { reply, answer });
+            }
             Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
-                answer(self.rename_symbol(kind, &from, &to))
+                let rename = self.rename_symbol(kind, from, to);
+                return self.before("Before Rename", rename, Pending { reply, answer });
             }
             Session::ApplyFix(ApplyFix { id }, answer) => {
                 return self.fix(id, Pending { reply, answer });
@@ -449,7 +454,7 @@ impl Actor {
                 return self.history_compare(id, path.0, Pending { reply, answer });
             }
             Session::RestoreVersion(RestoreVersion { id, paths }, answer) => {
-                answer(self.history_restore(&id, paths))
+                return self.history_restore(id, paths, Pending { reply, answer });
             }
             Session::Rename(Rename { from, to }, answer) => answer(self.rename(&from.0, &to)),
             Session::CreateEntry(CreateEntry { folder, name, dir }, answer) => {

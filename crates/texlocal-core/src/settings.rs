@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use texlocal_latex::message::Message;
 
-use crate::atomic;
+use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, identity, safe_rel_file};
@@ -101,7 +101,7 @@ fn update<T: DeserializeOwned + Default + Serialize>(
     change(&mut value)?;
     let bytes = serde_json::to_vec_pretty(&value)
         .map_err(|e| CoreError::internal(messages::unexpected(e)))?;
-    atomic::write(path, &bytes)?;
+    atomic::write(path, &bytes, Flush::Full)?;
     Ok(value)
 }
 

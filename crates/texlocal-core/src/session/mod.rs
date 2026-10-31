@@ -58,6 +58,7 @@ pub(crate) enum Msg {
     },
     Live(u64, LiveEvent),
     Fs(Vec<Change>),
+    Snapshotted(Box<dyn FnOnce(&mut actor::Actor) + Send>),
 }
 
 pub(crate) struct Reply(Option<(u64, std::sync::mpsc::Sender<Queued>)>);
@@ -244,6 +245,7 @@ mod tests {
 
     use super::build::Fut;
     use super::*;
+    use crate::projects::History;
 
     struct Panics;
 
@@ -412,6 +414,40 @@ mod tests {
             assert_eq!(replied(&heard, id)["ok"], true);
         }
         assert_eq!(holds.builds.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_snapshot_before_an_edit_waits_on_the_history_and_not_the_session() {
+        let (sessions, heard, _dir) = panicking().await;
+        let open = json!({ "id": "P", "autoCompile": false });
+        sessions.send_to(0, 1, "OpenProject", open);
+        replied(&heard, 0);
+        sessions.send_to(1, 1, "SaveVersion", json!({ "name": "Draft" }));
+        let draft = replied(&heard, 1)["ok"]["id"].take();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let project = sessions.service.project("P").unwrap();
+        let hold = Box::new(move |_: &History| {
+            let _ = held.recv();
+        });
+        sessions.service.history(&project).send(hold).unwrap();
+        let replace =
+            json!({ "query": "x", "replacement": "y", "matchCase": false, "wholeWord": false });
+        sessions.send_to(2, 1, "Replace", replace);
+        let restore = json!({ "id": draft, "paths": ["main.tex"] });
+        sessions.send_to(3, 1, "RestoreVersion", restore);
+        sessions.send_to(4, 1, "Save", json!({ "reporting": true }));
+        assert_eq!(replied(&heard, 4)["ok"], true);
+        let early = heard_within(&heard, Duration::from_millis(300), |said| {
+            said["reply"] == 2 || said["reply"] == 3
+        });
+        assert_eq!(
+            early, None,
+            "a snapshot was taken while the history was held"
+        );
+        drop(release);
+        for id in [2, 3] {
+            assert!(replied(&heard, id).get("ok").is_some());
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

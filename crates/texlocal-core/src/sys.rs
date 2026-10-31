@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::process::{Child, Command};
 
+use crate::atomic::Flush;
 use crate::error::CoreError;
 use crate::messages;
 use crate::process;
@@ -94,6 +95,16 @@ pub(crate) fn identity(meta: &Metadata) -> (u64, u64) {
 
 pub(crate) fn executable(meta: &Metadata) -> bool {
     meta.is_file() && meta.mode() & 0o111 != 0
+}
+
+pub(crate) fn flush(file: &File, flush: Flush) -> io::Result<()> {
+    match flush {
+        Flush::Full => file.sync_all(),
+        Flush::Ordered => match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } {
+            -1 => Err(io::Error::last_os_error()),
+            _ => Ok(()),
+        },
+    }
 }
 
 pub(crate) fn copy_xattrs(from: &Path, to: &File) {

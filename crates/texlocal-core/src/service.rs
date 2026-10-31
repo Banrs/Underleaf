@@ -13,7 +13,7 @@ use crate::compile::CompileManager;
 use crate::events::{Queued, Sent};
 use crate::messages;
 use crate::paths::Project;
-use crate::projects::{self, History, Opening, ProjectInfo};
+use crate::projects::{self, History, Job, Opening, ProjectInfo};
 use crate::protocol::requests;
 use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
@@ -27,7 +27,7 @@ pub struct Service {
     pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     tex_queue: Mutex<Option<oneshot::Receiver<()>>>,
-    histories: Mutex<HashMap<PathBuf, Arc<Mutex<History>>>>,
+    histories: Mutex<HashMap<PathBuf, mpsc::Sender<Job>>>,
     pub(crate) hub: OnceLock<mpsc::Sender<Queued>>,
     sent: Mutex<Sent<LibrarySection>>,
 }
@@ -142,10 +142,10 @@ impl Service {
         Ok(library)
     }
 
-    pub(crate) fn history(&self, project: &Project) -> Arc<Mutex<History>> {
+    pub(crate) fn history(&self, project: &Project) -> mpsc::Sender<Job> {
         let mut histories = lock(&self.histories);
         let history = histories.entry(project.history.clone());
-        Arc::clone(history.or_insert_with(|| Arc::new(Mutex::new(History::of(project)))))
+        history.or_insert_with(|| History::queue(project)).clone()
     }
 
     fn kill_all(&self) {

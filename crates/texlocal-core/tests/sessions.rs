@@ -490,7 +490,13 @@ async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
         fs::read_to_string(rig.root().join("main.tex")).unwrap(),
         "cat\n"
     );
-    assert!(replaced["snapshot"].is_string());
+    let before = json!({ "id": replaced["snapshot"], "path": "ch.tex" });
+    let rows = rig.call("CompareVersion", before);
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .contains(&json!({ "type": "removed", "value": "cat cat" }))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
