@@ -32,6 +32,7 @@ pub struct ProjectInfo {
     pub path: String,
     pub opened: bool,
     pub missing: bool,
+    pub pdf: Option<String>,
 }
 
 impl ProjectInfo {
@@ -40,14 +41,25 @@ impl ProjectInfo {
     }
 
     pub(super) fn of(id: String, project: &Project) -> Self {
+        let settings = read_settings(&project.settings);
+        let missing = !project.root.is_dir();
+        let pdf = settings
+            .output(&project.build, "pdf")
+            .ok()
+            .filter(|pdf| !missing && pdf.is_file());
+        let built = pdf
+            .as_ref()
+            .and_then(|pdf| fs::metadata(pdf).ok())
+            .map_or(0, |meta| mtime_ms(&meta));
         Self {
             opened: is_opened(&id),
             id,
             name: project.name(),
-            mtime: newest(&project.root),
-            main_file: read_settings(&project.settings).main_file,
+            mtime: newest(&project.root).max(built),
+            main_file: settings.main_file,
             path: project.root.to_string_lossy().into_owned(),
-            missing: !project.root.is_dir(),
+            missing,
+            pdf: pdf.map(|pdf| pdf.to_string_lossy().into_owned()),
         }
     }
 }

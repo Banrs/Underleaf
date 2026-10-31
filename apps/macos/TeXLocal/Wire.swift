@@ -1430,8 +1430,9 @@ nonisolated struct ProjectInfo: Decodable, Hashable, Sendable {
     var path: String
     var opened: Bool
     var missing: Bool
+    var pdf: String?
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case id, name, mtime, mainFile, path, opened, missing }
+    enum CodingKeys: String, CodingKey, CaseIterable { case id, name, mtime, mainFile, path, opened, missing, pdf }
 }
 
 nonisolated extension ProjectInfo {
@@ -1444,6 +1445,7 @@ nonisolated extension ProjectInfo {
         path = try wire.decode(String.self, forKey: .path)
         opened = try wire.decode(Bool.self, forKey: .opened)
         missing = try wire.decode(Bool.self, forKey: .missing)
+        pdf = try wire.decode(String?.self, forKey: .pdf)
     }
 }
 

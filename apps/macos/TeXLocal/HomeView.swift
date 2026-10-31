@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 import SwiftUI
 
 final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, AppWindow {
@@ -212,8 +213,8 @@ private struct ProjectRow: View {
     let ended, commit: () -> Void
 
     var body: some View {
-        ProjectLabel(detail: detail, symbol: project.opened ? "folder" : "text.document", dimmed: project.missing,
-                     progress: working ? "Opening" : nil) {
+        ProjectLabel(detail: detail, symbol: project.opened ? "folder" : "text.document", pdf: project.pdf.map { ($0, project.mtime) },
+                     dimmed: project.missing, progress: working ? "Opening" : nil) {
             if rename.id == project.id {
                 RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
             } else {
@@ -234,22 +235,39 @@ private struct ProjectRow: View {
 private struct ProjectLabel<Name: View>: View {
     let detail: Text
     var symbol = "text.document"
+    var pdf: (path: String, built: UInt64)?
     var dimmed = false
     let progress: String?
     @ViewBuilder let name: Name
+    @Environment(\.displayScale) private var scale
+    @State private var page: NSImage?
 
     var body: some View {
-        HStack {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    name.foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .primary)
-                    detail.font(.subheadline).foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .secondary)
-                        .lineLimit(1).truncationMode(.middle)
+        HStack(spacing: 10) {
+            Group {
+                if let page {
+                    let paper = RoundedRectangle(cornerRadius: 2)
+                    Image(nsImage: page).resizable().aspectRatio(contentMode: .fit)
+                        .clipShape(paper)
+                        .overlay { paper.strokeBorder(.separator) }
+                } else {
+                    Image(systemName: symbol)
+                        .font(.title2)
+                        .foregroundStyle(dimmed ? Color(nsColor: .tertiaryLabelColor) : .secondary)
                 }
-            } icon: {
-                Image(systemName: symbol)
-                    .font(.title2)
-                    .foregroundStyle(dimmed ? Color(nsColor: .tertiaryLabelColor) : .secondary)
+            }
+            .frame(width: thumbnail.width, height: thumbnail.height)
+            .accessibilityHidden(true)
+            .task(id: pdf.map { "\($0.built) \($0.path)" }) {
+                guard let pdf else { return page = nil }
+                let request = QLThumbnailGenerator.Request(fileAt: URL(filePath: pdf.path), size: thumbnail, scale: scale,
+                                                           representationTypes: .thumbnail)
+                page = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                name.foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .primary)
+                detail.font(.subheadline).foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .secondary)
+                    .lineLimit(1).truncationMode(.middle)
             }
             if let progress {
                 Spacer()
@@ -260,6 +278,8 @@ private struct ProjectLabel<Name: View>: View {
         }
     }
 }
+
+private let thumbnail = CGSize(width: 32, height: 40)
 
 private struct TemplateCard: View {
     let template: ProjectTemplate

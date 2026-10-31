@@ -26,6 +26,19 @@ async fn a_new_project_is_listed_with_its_template() {
 }
 
 #[tokio::test]
+async fn a_built_project_lists_its_pdf() {
+    let library = Library::new();
+    library.create("Paper", "blank").await;
+    assert_eq!(library.projects()[0]["pdf"], Value::Null);
+    let root = library.project_root("Paper");
+    write(&root, &[("build/main.pdf", "%PDF")]);
+    assert_eq!(
+        library.projects()[0]["pdf"],
+        json!(root.join("build/main.pdf"))
+    );
+}
+
+#[tokio::test]
 async fn a_taken_name_is_numbered() {
     let library = Library::new();
     library.create("Paper", "blank").await;
