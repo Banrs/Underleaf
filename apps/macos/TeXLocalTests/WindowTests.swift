@@ -166,6 +166,13 @@ struct WindowTests {
         #expect(again.model.project?.id == info.id && again.model.project?.isOpen == true)
         try await waitUntil { again.workspace != nil }
         #expect(await again.model.close())
+
+        let missing = NSKeyedArchiver(requiringSecureCoding: true)
+        missing.encode("No Such Project" as NSString, forKey: "project")
+        let gone = try #require(try restore(missing.encodedData)).model
+        #expect(await gone.project?.saveBeforeLeaving() == true)
+        await gone.reopen()
+        #expect(gone.project?.closed == true && !gone.app.windows.contains { $0 === gone } && gone.alert == nil)
     }
 
     @Test func theToolbarFollowsTheLayoutAndTheColumnsWidthsAtOnceWhileADividerIsDragged() async throws {

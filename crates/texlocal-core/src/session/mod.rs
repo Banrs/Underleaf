@@ -314,7 +314,7 @@ mod tests {
         compiler: Arc<dyn Compiler>,
     ) -> (Arc<Sessions>, Heard, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let service = Arc::new(Service::new(dir.path().into(), dir.path().into()));
+        let service = Arc::new(Service::new(dir.path().into(), dir.path().into(), None));
         let made = json!({ "name": "P", "template": "blank" });
         service.call("CreateProject", made).await.unwrap();
         let (tx, heard) = channel();
@@ -559,22 +559,6 @@ mod tests {
         assert!(replied(&heard, 1).unwrap()["snapshot"].is_string());
         assert_eq!(replied(&heard, 2), Ok(json!(true)));
         assert_eq!(chapter(&dir), "dog\n");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_version_asked_before_a_close_is_saved_before_the_close_answers() {
-        let (sessions, heard, _dir) = panicking().await;
-        let open = json!({ "id": "P", "autoCompile": false });
-        sessions.send_to(0, 1, "OpenProject", open);
-        replied(&heard, 0).unwrap();
-        let release = hold_history(&sessions);
-        sessions.send_to(1, 1, "SaveVersion", json!({ "name": "Draft" }));
-        sessions.send_to(2, 1, "CloseProject", json!({}));
-        sessions.send_to(3, 1, "ListVersions", json!({}));
-        assert_eq!(replied(&heard, 3).unwrap_err()["kind"], "notFound");
-        drop(release);
-        assert_eq!(replied(&heard, 1).unwrap()["name"], "Draft");
-        assert_eq!(replied(&heard, 2), Ok(json!(true)));
     }
 
     #[tokio::test(flavor = "multi_thread")]

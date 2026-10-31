@@ -8,7 +8,6 @@ use std::path::Path;
 use ir::{Ir, Way};
 use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
-use sha2::Digest;
 
 pub const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
@@ -45,23 +44,12 @@ fn read<T: JsonSchema>() -> Ir {
     ir
 }
 
-fn digest(ir: &Ir) -> String {
-    let ir = serde_json::to_vec(ir).expect("the IR serialises");
-    let digest = sha2::Sha256::digest(ir);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 pub fn stale() -> Vec<(&'static str, String)> {
     let ir = protocol();
-    let digest = digest(&ir);
     let fixtures = swift::fixtures(&read::<fixtures::FixtureNested>(), &fixtures::fixtures());
     let files = [
-        ("apps/macos/TeXLocal/Wire.swift", swift::file(&ir, &digest)),
+        ("apps/macos/TeXLocal/Wire.swift", swift::file(&ir)),
         ("apps/macos/TeXLocalTests/WireFixtures.swift", fixtures),
-        (
-            "crates/texlocal-core/src/protocol/digest.rs",
-            format!("pub const DIGEST: &str = \"{digest}\";\n"),
-        ),
     ];
     let current = |path: &str, text: &str| {
         fs::read_to_string(Path::new(ROOT).join(path)).is_ok_and(|written| written == text)

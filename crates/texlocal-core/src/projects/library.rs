@@ -191,7 +191,12 @@ pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<Project
         return Err(CoreError::conflict(messages::project_exists()));
     }
     atomic::rename_exclusive(&project.root, &dest)?;
-    let _ = fs::rename(&project.ui, ui_file(&service.state_dir, &clean));
+    let ui = ui_file(&service.state_dir, &clean);
+    if let Err(err) = fs::rename(&project.ui, &ui)
+        && err.kind() == ErrorKind::NotFound
+    {
+        let _ = fs::remove_file(&ui);
+    }
     Ok(ProjectInfo::read(service, &clean)?)
 }
 

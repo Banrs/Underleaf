@@ -66,12 +66,13 @@ async fn a_project_is_renamed_unless_the_name_is_taken() {
         .refuse("RenameProject", json!({ "id": "B", "name": "A" }))
         .await;
     assert_eq!(taken, ErrorKind::Conflict);
+    write(&library.path("state"), &[(".ui/C.json", "{}")]);
     let renamed = library
         .call("RenameProject", json!({ "id": "B", "name": "C" }))
         .await;
     assert_eq!(renamed["id"], "C");
     assert!(library.path("data/C/main.tex").is_file());
-    assert!(!library.path("data/B").exists());
+    assert!(!library.path("data/B").exists() && !library.path("state/.ui/C.json").exists());
 }
 
 #[tokio::test]
@@ -114,24 +115,23 @@ async fn a_folder_opens_where_it_is() {
 async fn device_state_left_in_the_library_moves_to_the_state_folder_once() {
     let library = Library::new();
     let (data, state) = (library.path("data"), library.path("state"));
-    let old = Arc::new(Service::new(data.clone(), data.clone()));
+    let old = Arc::new(Service::new(data.clone(), data.clone(), None));
     let folder = library.path("Thesis");
     write(&folder, &[("main.tex", "x")]);
     let path = json!({ "path": folder });
     let opened = old.call("OpenPath", path).await.unwrap();
-    let (place, tex) = (r#"{"ui":{"file":"ch.tex"}}"#, r#"{"texDir":"/tex"}"#);
-    write(&data, &[(".ui/P.json", place), (".texlocal-app.json", tex)]);
-    let moved = Service::new(data.clone(), state.clone());
-    for name in [".ui", ".opened", ".texlocal-app.json"] {
+    let tex = r#"{"texDir":"/tex"}"#;
+    write(&data, &[(".texlocal-app.json", tex)]);
+    let moved = Service::new(data.clone(), state.clone(), None);
+    for name in [".opened", ".texlocal-app.json"] {
         let (left, landed) = (data.join(name).exists(), state.join(name).exists());
         assert!(!left && landed, "{name}");
     }
     let listed = json!(moved.projects().unwrap());
     assert_eq!(listed[0]["id"], opened["project"]["id"]);
     let read = |name| fs::read_to_string(state.join(name)).unwrap();
-    assert_eq!(read(".ui/P.json"), place);
     write(&data, &[(".texlocal-app.json", "{}")]);
-    Service::new(data.clone(), state.clone());
+    Service::new(data.clone(), state.clone(), None);
     assert_eq!(read(".texlocal-app.json"), tex);
     assert!(data.join(".texlocal-app.json").exists());
 }

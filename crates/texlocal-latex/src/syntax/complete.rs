@@ -291,7 +291,7 @@ impl SourceDocument {
         (!places.is_empty()).then_some(Definition { kind, name, places })
     }
 
-    pub(crate) fn symbol(&self, at: u32) -> Option<SymbolName> {
+    pub(crate) fn symbol(&mut self, at: u32) -> Option<SymbolName> {
         let text = &self.text;
         let line = text.line_index(at.min(text.len()));
         let blank = |&index: &usize| scan::blank_line(text.line(index));
@@ -300,6 +300,17 @@ impl SourceDocument {
             .rev()
             .find(blank)
             .map_or(first, |blank| blank + 1);
+        let start = text.lines[first] as usize;
+        let mut scanner = self.scans.resume(text, start, start).scanner;
+        scanner.run(&text.units, start, &[], &mut ());
+        let first = if scanner.i > start {
+            text.line_index(scanner.i as u32) + 1
+        } else {
+            first
+        };
+        if first > line {
+            return None;
+        }
         let last = (line + 1..text.lines.len()).take(PARAGRAPH).find(blank);
         let window = (line + PARAGRAPH).min(text.lines.len() - 1);
         let end = last.map_or_else(|| text.bounds(window).end, |last| text.lines[last] as usize);

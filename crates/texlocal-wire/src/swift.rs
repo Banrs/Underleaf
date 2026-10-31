@@ -41,9 +41,8 @@ nonisolated extension Decoder {
 }
 "#;
 
-pub fn file(ir: &Ir, digest: &str) -> String {
+pub fn file(ir: &Ir) -> String {
     let mut out = PREAMBLE.to_owned();
-    writeln!(out, "\nnonisolated let protocolDigest = \"{digest}\"").unwrap();
     let mut groups: Vec<&str> = ir.requests.iter().map(|r| r.group.as_str()).collect();
     groups.dedup();
     for group in groups {

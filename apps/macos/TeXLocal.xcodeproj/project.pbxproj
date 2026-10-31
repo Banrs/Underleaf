@@ -99,6 +99,7 @@
 				D0BFDCD8EC49557EEE2F31DA /* Build Rust core */,
 				4DB01B4638613538B369BFF0 /* Sources */,
 				A1C0FFEE0A55E7500000B003 /* Resources */,
+				B0D1E5C0FFEE7E7000000001 /* Bundle TeXpresso */,
 			);
 			buildRules = (
 			);
@@ -177,6 +178,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/../../tools/build-core.sh\"\n";
+		};
+		B0D1E5C0FFEE7E7000000001 /* Bundle TeXpresso */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle TeXpresso";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "B=${TEXPRESSO_BUILD:-$SRCROOT/../../tools/texpresso/source/build}\nif [ -x \"$B/texpresso\" ]; then exec zsh \"$SRCROOT/../../tools/texpresso/bundle.sh\" \"$B\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH\"; fi\necho \"warning: no TeXpresso in $B for Live Preview; build it with tools/texpresso/build.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

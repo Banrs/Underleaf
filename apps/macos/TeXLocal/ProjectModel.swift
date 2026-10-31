@@ -279,7 +279,7 @@ final class ProjectModel {
     func save(reporting: Bool = true) async -> Bool {
         do {
             return try await session.call(Save(reporting: reporting))
-        } catch _ where store.lifecycle?.stopped != nil {
+        } catch _ where store.lifecycle?.stopped != nil || !initialLoadComplete {
             return discarded || lostEdits.isEmpty
         } catch {
             if reporting { window?.report(notSavedTitle(), error) }

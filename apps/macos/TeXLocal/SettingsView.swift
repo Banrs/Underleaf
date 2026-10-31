@@ -151,6 +151,7 @@ private struct ProgramFolder: View {
 
         func detail(in tex: TexStatus) -> String {
             guard let path = folder(in: tex) else { return "Not Found" }
+            if self == .texpresso, path == Core.helpersFolder.path { return "Built In" }
             guard self == .tex, let number = tex.latexmkVersion else { return path }
             return "latexmk \(number) in \(path)"
         }

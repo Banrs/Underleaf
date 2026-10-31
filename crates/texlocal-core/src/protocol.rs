@@ -12,10 +12,6 @@ use crate::events::Said;
 use crate::service::{Library, LibrarySection};
 use crate::session::{Session, SessionSection};
 
-mod digest;
-
-pub use digest::DIGEST;
-
 pub(crate) type Answer<T> = fn(Result<T, CoreError>) -> Result<Value, CoreError>;
 
 pub(crate) fn answer<T: Serialize>(result: Result<T, CoreError>) -> Result<Value, CoreError> {

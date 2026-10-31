@@ -25,7 +25,6 @@ final class TeXpressoSession {
         case .stopped: needsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
         case .starting: "Starting Live Preview…"
         case .running: halted ? "Live Preview Paused at an Error" : needsAttention ? "Live Preview Needs Attention" : "Live Preview On"
-        case .stopping: "Stopping Live Preview…"
         }
     }
 
