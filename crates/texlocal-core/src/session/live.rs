@@ -27,7 +27,6 @@ pub(crate) enum LivePhase {
     Stopped,
     Starting,
     Running,
-    Stopping,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -234,13 +233,9 @@ impl Actor {
     pub fn live_stop(&mut self) {
         self.live_cancel_work();
         self.live.stop();
-        if self.live.phase == LivePhase::Stopped {
-            return;
+        if self.live.phase != LivePhase::Stopped {
+            self.ended();
         }
-        self.live.phase = LivePhase::Stopping;
-        self.live_reset();
-        self.publish_live(false);
-        self.ended();
     }
 
     pub fn live_follow(&mut self) {

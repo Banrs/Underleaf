@@ -15,7 +15,11 @@ on:
       - 'crates/texlocal-core/src/tinytex.rs'
       - 'crates/texlocal-core/src/session/build.rs'
       - 'crates/texlocal-core/src/session/live.rs'
+      - 'crates/texlocal-core/src/session/navigate.rs'
+      - 'crates/texlocal-core/tests/common/**'
       - 'crates/texlocal-core/tests/tex.rs'
+      - 'crates/texlocal-latex/src/logparse.rs'
+      - 'crates/texlocal-latex/src/synctex.rs'
       - 'tools/texpresso/**'
       - '.github/workflows/tex-check.yml'
 

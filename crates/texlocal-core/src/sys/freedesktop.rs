@@ -36,6 +36,9 @@ pub(crate) fn trash_in(trash: &Path, path: &Path) -> Result<PathBuf, CoreError> 
             .and_then(|()| sys::rename_exclusive(path, &trashed));
         if let Err(err) = moved {
             let _ = fs::remove_file(info);
+            if err.kind() == ErrorKind::AlreadyExists {
+                continue;
+            }
             return Err(err.into());
         }
         return Ok(trashed);
@@ -84,5 +87,13 @@ mod tests {
         untrash(&second, &two).unwrap();
         assert_eq!(fs::read_to_string(&two).unwrap(), "2");
         assert!(!record.exists() && trash.join("info/my notes.trashinfo").exists());
+        fs::write(trash.join("files/notes"), "left").unwrap();
+        let notes = dir.path().join("notes");
+        fs::write(&notes, "3").unwrap();
+        assert_eq!(
+            trash_in(&trash, &notes).unwrap(),
+            trash.join("files/notes.2")
+        );
+        assert!(!trash.join("info/notes.trashinfo").exists());
     }
 }

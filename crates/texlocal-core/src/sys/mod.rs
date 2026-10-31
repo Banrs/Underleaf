@@ -6,16 +6,11 @@ mod freedesktop;
 mod linux;
 #[cfg(unix)]
 mod unix;
-#[cfg(windows)]
-#[rustfmt::skip]
-mod windows;
 
 #[cfg(target_vendor = "apple")]
 use apple as os;
 #[cfg(target_os = "linux")]
 use linux as os;
-#[cfg(windows)]
-use windows as os;
 
 pub(crate) use os::{
     Group, TEX_DIRS, TEXLIVE, TINYTEX_BUNDLE, copy_xattrs, default_permissions, default_signals,

@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
 use serde_json::{Map, Value};
 
 pub const PAYLOAD: &str = "Payload";
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Ty {
     Bool,
     Int,
@@ -20,28 +19,26 @@ pub enum Ty {
     Named(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Field {
     pub name: String,
     pub ty: Ty,
     pub required: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
     Struct(Vec<Field>),
     Units(Vec<(String, Option<String>)>),
     Union(Vec<(String, Option<Ty>)>),
 }
 
-#[derive(Serialize)]
 pub struct Def {
     pub shape: Shape,
     pub decoded: bool,
     pub encoded: bool,
 }
 
-#[derive(Serialize)]
 pub struct Request {
     pub name: String,
     pub group: String,
@@ -54,7 +51,7 @@ pub enum Way {
     Out,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default)]
 pub struct Ir {
     pub defs: BTreeMap<String, Def>,
     pub requests: Vec<Request>,

@@ -208,15 +208,23 @@ fn a_reference_leads_to_its_label() {
 #[test]
 fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
     let text = "Intro \\ref{one}.\n\n\\label{fig:a} see \\cite{knuth,\n  lamport} é\n\nPlain \\input{ch} text.";
-    let mut doc = SourceDocument::named(text, "main.tex");
-    let whole = Facts::read(text, file_kind("main.tex"));
-    for at in 0..=text.encode_utf16().count() as u32 {
-        let read = doc
-            .symbol_at(&whole, at)
-            .map(|(kind, name, _)| json!({ "kind": kind, "name": name }));
-        let answer = run(&mut doc, "SymbolAt", json!({ "at": at }));
-        assert_eq!(answer, read.unwrap_or_default(), "at {at}");
+    for text in [
+        text,
+        "\\begin{verbatim}\nx\n\n\\ref{y}\n\\end{verbatim}\n",
+        "\\begin{comment}\nx\n\n\\ref{y}\n\\end{comment}\n",
+        "\\begin{verbatim}\n\n\\ref{y}\n\\end{verbatim}\n\\ref{z}",
+    ] {
+        let mut doc = SourceDocument::named(text, "main.tex");
+        let whole = Facts::read(text, file_kind("main.tex"));
+        for at in 0..=text.encode_utf16().count() as u32 {
+            let read = doc
+                .symbol_at(&whole, at)
+                .map(|(kind, name, _)| json!({ "kind": kind, "name": name }));
+            let answer = run(&mut doc, "SymbolAt", json!({ "at": at }));
+            assert_eq!(answer, read.unwrap_or_default(), "{text:?} at {at}");
+        }
     }
+    let mut doc = SourceDocument::named(text, "main.tex");
     let at = |find: &str| json!({ "at": text.find(find).unwrap() + 1 });
     let label = json!({ "kind": "label", "name": "fig:a" });
     assert_eq!(run(&mut doc, "SymbolAt", at("fig:a")), label);
