@@ -118,9 +118,7 @@ texlocal_latex::messages! {
     tinytex_download_failed(output) = "TinyTeX couldn't be downloaded:\n{output}";
     no_tinytex_tlmgr = "TinyTeX's package manager, tlmgr, wasn't found.";
 
-    live_not_running = "Live Preview isn't running.";
     live_unpatched = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build and install it with tools/texpresso/build.sh and install.sh.";
-    live_unfit = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
     live_no_main = "The main file does not exist.";
     no_texpresso = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
     texpresso_unstarted(error) = "Couldn't start TeXpresso: {error}. Check its folder in Settings › Live Preview.";
@@ -128,6 +126,4 @@ texlocal_latex::messages! {
     texpresso_exited(status) = "TeXpresso exited ({status}). Check its log and start TeXpresso again.";
     texpresso_unsent(error) = "Couldn't send changes to TeXpresso: {error}. Start TeXpresso again.";
     viewer_stopped = "viewer stopped reading commands";
-    texpresso_didnt_start = "TeXpresso didn’t start. Check its location in Settings and the log below.";
-    live_rejected(path, error) = "{path}: {error}";
 }

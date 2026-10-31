@@ -182,7 +182,8 @@ impl Actor {
 impl Actor {
     fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
         let shown = self.live.active() && self.live.document_seen;
-        shown.then(|| self.preview.live_pdf(self.id)).transpose()
+        let run = self.live.run.as_ref().filter(|_| shown);
+        run.map(|run| run.pdf()).transpose()
     }
 
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
@@ -203,10 +204,10 @@ impl Actor {
         reply: Pending<InverseLoc>,
     ) {
         let (live, project) = (self.live_pdf(), self.project.clone());
-        let (preview, id) = (Arc::clone(&self.preview), self.id);
+        let run = self.live.run.clone();
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
-                let typeset = |rel: &str| live.as_ref().and_then(|_| preview.live_text(id, rel));
+                let typeset = |rel: &str| live.as_ref().and(run.as_ref())?.text(rel);
                 synctex::inverse(&project, page, x, y, click, live.as_deref(), &typeset)
             }));
         });

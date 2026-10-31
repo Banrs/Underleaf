@@ -141,10 +141,9 @@ impl Actor {
             return Ok(None);
         }
         let renamed = projects::rename_entry(&self.project, from, to)?;
-        self.preview.restart(self.id);
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
         self.emit(Event::Renamed(Renamed { from, to }));
-        self.live_follow();
+        self.live_restart();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
             if !within(&path, from) {
@@ -190,7 +189,7 @@ impl Actor {
         let updated = settings::write_settings(project, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if updated.main_file != main {
-            self.preview.restart(self.id);
+            self.live_restart();
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));

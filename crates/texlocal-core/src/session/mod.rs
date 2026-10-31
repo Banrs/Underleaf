@@ -43,7 +43,7 @@ pub(crate) use state::{Lifecycle, Stopped};
 use watch::Change;
 
 pub use crate::paths::Project;
-pub use crate::texpresso::{FileBuffer, LiveEvent, Pane, Preview, Sink, Status};
+pub use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane, Preview, Sink};
 
 pub(crate) enum Msg {
     Changed {

@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "5dce258fbae11b807b1bd46c8cc2893c8fbf7ef63cbeac31db4fbc42fa0c5096"
+nonisolated let protocolDigest = "562fa4d90543914a3e07ca36ed555ebf7bcc2e80615226f18e331b7d5b882395"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -1266,9 +1266,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case tinytexStalled = "tinytex_stalled"
     case tinytexDownloadFailed = "tinytex_download_failed"
     case noTinytexTlmgr = "no_tinytex_tlmgr"
-    case liveNotRunning = "live_not_running"
     case liveUnpatched = "live_unpatched"
-    case liveUnfit = "live_unfit"
     case liveNoMain = "live_no_main"
     case noTexpresso = "no_texpresso"
     case texpressoUnstarted = "texpresso_unstarted"
@@ -1276,8 +1274,6 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case texpressoExited = "texpresso_exited"
     case texpressoUnsent = "texpresso_unsent"
     case viewerStopped = "viewer_stopped"
-    case texpressoDidntStart = "texpresso_didnt_start"
-    case liveRejected = "live_rejected"
 }
 
 nonisolated struct MoveLines: SourceRequest {

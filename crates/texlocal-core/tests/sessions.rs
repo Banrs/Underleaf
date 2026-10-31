@@ -1186,6 +1186,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     rig.section("live", |l| l["lines"]["main.tex"][0]["line"] == 4);
     rig.forget();
     rig.call("StopLive", json!({}));
+    assert!(!preview.running());
     let kinds = ["live", "shownPdf", "reply"];
     assert_eq!(said_of(&rig, &kinds), ["live", "live", "shownPdf", "reply"]);
     assert_eq!(rig.section("shownPdf", |_| true)["live"], false);
@@ -1213,9 +1214,10 @@ async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_
 async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside_it() {
     let main = "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n";
     let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", main)], stub_tex, preview).await;
+    let rig = Rig::previewing(&[("main.tex", main)], stub_tex, Arc::clone(&preview)).await;
     rig.call("StartLive", json!({}));
     rig.call("CloseProject", json!({}));
+    assert!(!preview.running());
     rig.forget();
     let again = 2;
     rig.call_to(
