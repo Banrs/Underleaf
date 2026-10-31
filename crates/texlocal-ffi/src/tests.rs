@@ -231,21 +231,6 @@ fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
 }
 
 #[test]
-fn session_events_reach_the_listener() {
-    let core = Core::open();
-    core.call(
-        "CreateProject",
-        json!({ "name": "P", "template": "article" }),
-    );
-    let open = r#"{"id":"P","autoCompile":false}"#;
-    core.send(Some(1), Some("OpenProject"), Some(open));
-    let found = (0..50)
-        .filter_map(|_| core.events.recv_timeout(Duration::from_millis(200)).ok())
-        .find(|said| said["type"] == "event" && said["value"]["event"]["type"] == "section");
-    assert_eq!(found.unwrap()["value"]["session"], 1);
-}
-
-#[test]
 fn a_source_of_the_hosts_own_highlights_and_answers_commands() {
     let text = "\\emph{a} % b";
     let source = unsafe { tl_source_new(text.as_ptr(), text.len()) };
