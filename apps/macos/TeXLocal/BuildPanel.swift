@@ -108,6 +108,7 @@ struct LogTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
+        view.textContainerInset = NSSize(width: 10, height: 8)
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,

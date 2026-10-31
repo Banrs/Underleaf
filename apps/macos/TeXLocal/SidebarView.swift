@@ -270,7 +270,7 @@ struct OutlineHeader: View {
                     .accessibilityHidden(true)
             }
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.tertiary)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { line = $0 }
             .padding(.leading, 14)
             .padding(.trailing, 18)
