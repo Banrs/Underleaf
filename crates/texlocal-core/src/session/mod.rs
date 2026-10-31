@@ -37,6 +37,8 @@ pub use document::Document;
 pub(crate) use documents::DiskConflict;
 use documents::{Docs, Shared};
 pub(crate) use state::SessionSection;
+#[cfg(test)]
+pub(crate) use state::{Lifecycle, Stopped};
 use watch::Change;
 
 pub use crate::paths::Project;
@@ -182,6 +184,7 @@ impl Sessions {
                 Session::OpenProject(opening, answer) => {
                     self.open(entry, opening, Pending { reply, answer });
                 }
+                Session::CloseProject(_, answer) => reply.send(answer(Ok(true))),
                 _ => reply.send(Err(gone())),
             },
         }
@@ -444,14 +447,19 @@ mod tests {
             let ids: Vec<_> = ids.map(|doc| &doc["error"]["id"]).collect();
             section["type"] == "documents" && ids == ["stopped_saved", "stopped_unsaved"]
         };
-        heard_within(&heard, Duration::from_secs(10), marked).expect("each document marked");
+        let wait = Duration::from_secs(10);
+        heard_within(&heard, wait, marked).expect("each document marked");
+        let lifecycle = |said: &Value| said["value"]["event"]["value"]["type"] == "lifecycle";
+        let stopped = heard_within(&heard, wait, lifecycle).expect("the session stops");
+        let unsaved = json!({ "type": "stopped", "value": { "unsaved": ["main.tex"] } });
+        assert_eq!(stopped["value"]["event"]["value"]["value"], unsaved);
         let disk = |path| fs::read_to_string(root.join(path)).unwrap();
         assert_eq!(disk("ch.tex"), "% typed\nchapter\n");
         assert!(!disk("main.tex").starts_with("% typed"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn commands_after_a_close_are_refused_and_every_close_waits_for_the_build() {
+    async fn commands_after_a_close_are_refused_every_close_waits_and_closing_none_is_done() {
         let holds = Arc::new(Holds::default());
         let (sessions, heard, _dir) = compiling_with(Arc::clone(&holds) as _).await;
         let asked = [
@@ -477,6 +485,8 @@ mod tests {
             assert_eq!(replied(&heard, id), Ok(json!(true)));
         }
         assert_eq!(holds.builds.load(Ordering::Relaxed), 1);
+        sessions.send_to(6, 2, "CloseProject", json!({}));
+        assert_eq!(replied(&heard, 6), Ok(json!(true)));
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -194,6 +194,7 @@ mod tests {
 
     use super::*;
     use crate::messages;
+    use crate::session::{Lifecycle, Stopped};
 
     #[test]
     fn the_core_says_each_kind_of_thing_as_the_fixtures_show() {
@@ -213,6 +214,12 @@ mod tests {
             Said::Event(SessionEvent {
                 session: 1,
                 event: Event::LiveAlert,
+            }),
+            Said::Event(SessionEvent {
+                session: 1,
+                event: Event::Section(SessionSection::Lifecycle(Lifecycle::Stopped(Stopped {
+                    unsaved: vec!["main.tex".into()],
+                }))),
             }),
             Said::Library(LibrarySection::Projects(Vec::new())),
             Said::Log(Log {

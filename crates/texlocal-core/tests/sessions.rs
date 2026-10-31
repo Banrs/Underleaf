@@ -1216,11 +1216,11 @@ async fn closing_answers_once_the_build_it_stopped_has_ended() {
     let rig = compiling_slowly().await;
     rig.forget();
     assert_eq!(rig.call("CloseProject", json!({})), true);
-    let said = rig.said();
-    assert!(
-        said.ends_with(&["buildFinished", "library", "reply"].map(String::from)),
-        "{said:?}"
-    );
+    let said = said_of(&rig, &["lifecycle", "buildFinished", "library", "reply"]);
+    assert_eq!(said[..2], ["lifecycle", "buildFinished"]);
+    assert_eq!(said[2..], ["lifecycle", "library", "reply"]);
+    rig.section("lifecycle", |l| l["type"] == "closing");
+    rig.section("lifecycle", |l| l["type"] == "closed");
 }
 
 #[tokio::test(flavor = "multi_thread")]

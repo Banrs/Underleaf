@@ -361,12 +361,12 @@ struct SwitchTests {
         let window = defaults.window()
         let saved = ProjectModel(id: "P", window: window)
         window.project = saved
+        saved.handle(.section(.lifecycle(.stopped(Stopped(unsaved: [])))))
         #expect(await window.end() && saved.closed && window.alert == nil)
 
         let lost = ProjectModel(id: "Q", window: window)
         window.project = lost
-        let stopped = Message(id: "stopped_unsaved", args: [:], text: "Copy them out.")
-        lost.handle(.section(.documents([DocumentState(path: "main.tex", error: stopped, held: nil)])))
+        lost.handle(.section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
         let kept = Task { await window.end() }
         try await waitUntil { lost.askingToDiscard == ["main.tex"] }
         lost.answerDiscard(false)

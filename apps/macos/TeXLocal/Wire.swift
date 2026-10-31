@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "7cbc58b0ae88125333092837768e347dcc20ed428a77411daaa3888379d5c96f"
+nonisolated let protocolDigest = "c341e0c5cf0fd5cff3534871355a73ed331b8576ca19ba5e6b1e19ffc4a99398"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -869,6 +869,28 @@ nonisolated extension LibrarySection {
     }
 }
 
+nonisolated enum Lifecycle: Decodable, Hashable, Sendable {
+    case `open`
+    case closing
+    case closed
+    case stopped(Stopped)
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+}
+
+nonisolated extension Lifecycle {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        switch try wire.decode(String.self, forKey: .type) {
+        case "open": self = .open
+        case "closing": self = .closing
+        case "closed": self = .closed
+        case "stopped": self = .stopped(try wire.decode(Stopped.self, forKey: .value))
+        case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
+        }
+    }
+}
+
 nonisolated struct ListMenus: SyntaxRequest {
     typealias Reply = Menus
     static let command = "ListMenus"
@@ -1599,6 +1621,7 @@ nonisolated extension SessionEvent {
 }
 
 nonisolated enum SessionSection: Decodable, Hashable, Sendable {
+    case lifecycle(Lifecycle)
     case project(ProjectState)
     case tree([TreeNode])
     case documents([DocumentState])
@@ -1615,6 +1638,7 @@ nonisolated extension SessionSection {
     init(from decoder: any Decoder) throws {
         let wire = try decoder.strict(CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
+        case "lifecycle": self = .lifecycle(try wire.decode(Lifecycle.self, forKey: .value))
         case "project": self = .project(try wire.decode(ProjectState.self, forKey: .value))
         case "tree": self = .tree(try wire.decode([TreeNode].self, forKey: .value))
         case "documents": self = .documents(try wire.decode([DocumentState].self, forKey: .value))
@@ -1765,6 +1789,19 @@ nonisolated struct StopCompile: SessionRequest {
 nonisolated struct StopLive: SessionRequest {
     typealias Reply = Done
     static let command = "StopLive"
+}
+
+nonisolated struct Stopped: Decodable, Hashable, Sendable {
+    var unsaved: [String]
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case unsaved }
+}
+
+nonisolated extension Stopped {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        unsaved = try wire.decode([String].self, forKey: .unsaved)
+    }
 }
 
 nonisolated struct StylesAt: SourceRequest {
@@ -2167,6 +2204,7 @@ nonisolated extension Zoom {
 
 @Observable
 final class SessionStore {
+    private(set) var lifecycle: Lifecycle?
     private(set) var project: ProjectState?
     private(set) var tree: [TreeNode] = []
     private(set) var documents: [DocumentState] = []
@@ -2178,6 +2216,7 @@ final class SessionStore {
 
     func apply(_ section: SessionSection) {
         switch section {
+        case .lifecycle(let value): self.lifecycle = value
         case .project(let value): self.project = value
         case .tree(let value): self.tree = value
         case .documents(let value): self.documents = value

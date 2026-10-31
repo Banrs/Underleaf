@@ -21,6 +21,7 @@ use super::edits::{DocumentEdits, Fixed, ProjectEdits};
 use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
+use super::state::{Lifecycle, Stopped};
 use super::watch::{self, Change, TreeIndex};
 use super::{Compiler, Msg, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
@@ -112,7 +113,7 @@ impl Timer {
     }
 }
 
-enum Lifecycle {
+enum Stage {
     Open(InSession),
     Closing(InSession, Vec<Pending<bool>>),
     Closed,
@@ -156,7 +157,7 @@ pub(crate) struct Actor {
     pub writes_history: Arc<AtomicBool>,
     pub befores: usize,
     pub sent: Sent<SessionSection>,
-    lifecycle: Lifecycle,
+    stage: Stage,
 }
 
 impl Actor {
@@ -221,7 +222,7 @@ impl Actor {
             writes_history: Arc::new(AtomicBool::new(true)),
             befores: 0,
             sent: Sent::default(),
-            lifecycle: Lifecycle::Open(in_session),
+            stage: Stage::Open(in_session),
         };
         actor.reopen(ui.file.clone());
         actor.publish_all(tree);
@@ -248,7 +249,7 @@ impl Actor {
             if step.is_err() {
                 return self.stopped(&mut rx);
             }
-            if matches!(self.lifecycle, Lifecycle::Closed) {
+            if matches!(self.stage, Stage::Closed) {
                 return;
             }
             let deadline = self.timers.values().min().copied();
@@ -283,6 +284,9 @@ impl Actor {
             self.live_stop();
         }));
         self.stop_history();
+        let stopped = Stopped {
+            unsaved: self.dirty_paths(),
+        };
         for (_, doc) in self.docs.iter_mut() {
             doc.doc.close();
             doc.error = Some(if doc.dirty() {
@@ -292,6 +296,7 @@ impl Actor {
             });
         }
         self.publish_documents();
+        self.publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
         for close in self.end() {
             close.send(Err(super::stopped()));
         }
@@ -316,7 +321,7 @@ impl Actor {
     }
 
     fn handle(&mut self, message: Msg) {
-        if let Lifecycle::Closing(_, closes) = &mut self.lifecycle {
+        if let Stage::Closing(_, closes) = &mut self.stage {
             return match message {
                 Msg::Command(Session::CloseProject(_, answer), reply) => {
                     closes.push(Pending { reply, answer });
@@ -377,7 +382,7 @@ impl Actor {
 
     fn run_later(&mut self) {
         while let Some(next) = self.later.pop_front() {
-            if !matches!(self.lifecycle, Lifecycle::Open(_)) {
+            if !matches!(self.stage, Stage::Open(_)) {
                 self.later.clear();
                 return;
             }
@@ -525,11 +530,11 @@ impl Actor {
             Ok(true) => {}
             flushed => return reply.send(flushed),
         }
-        let Lifecycle::Open(held) = std::mem::replace(&mut self.lifecycle, Lifecycle::Closed)
-        else {
+        let Stage::Open(held) = std::mem::replace(&mut self.stage, Stage::Closed) else {
             unreachable!("a closing session queues its closes")
         };
-        self.lifecycle = Lifecycle::Closing(held, vec![reply]);
+        self.stage = Stage::Closing(held, vec![reply]);
+        self.publish(SessionSection::Lifecycle(Lifecycle::Closing));
         self.stop_compile();
         self.live_stop();
         self.docs.clear();
@@ -538,14 +543,12 @@ impl Actor {
     }
 
     pub fn close_when_idle(&mut self) {
-        if self.builds.busy()
-            || self.befores > 0
-            || !matches!(self.lifecycle, Lifecycle::Closing(..))
-        {
+        if self.builds.busy() || self.befores > 0 || !matches!(self.stage, Stage::Closing(..)) {
             return;
         }
         self.stop_history();
         let closes = self.end();
+        self.publish(SessionSection::Lifecycle(Lifecycle::Closed));
         self.service.relist();
         for close in closes {
             close.send(Ok(true));
@@ -554,8 +557,8 @@ impl Actor {
 
     fn end(&mut self) -> Vec<Pending<bool>> {
         self.service.processes.end(self.children);
-        match std::mem::replace(&mut self.lifecycle, Lifecycle::Closed) {
-            Lifecycle::Closing(held, closes) => {
+        match std::mem::replace(&mut self.stage, Stage::Closed) {
+            Stage::Closing(held, closes) => {
                 drop(held);
                 closes
             }

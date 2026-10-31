@@ -222,7 +222,7 @@ final class ProjectModel {
         switch section {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
-        case .tree: break
+        case .lifecycle, .tree: break
         case .openFile, .outline: findHeadings()
         case .documents(let documents):
             for document in documents {
@@ -278,7 +278,7 @@ final class ProjectModel {
     func save(reporting: Bool = true) async -> Bool {
         do {
             return try await session.call(Save(reporting: reporting))
-        } catch let error as CoreError where error.message.id == "no_such_session" {
+        } catch _ where store.lifecycle?.stopped != nil {
             return discarded || lostEdits.isEmpty
         } catch {
             if reporting { window?.report(notSavedTitle(), error) }
@@ -286,7 +286,7 @@ final class ProjectModel {
         }
     }
 
-    private var lostEdits: [String] { store.documents.filter { $0.error?.id == "stopped_unsaved" }.map(\.path) }
+    private var lostEdits: [String] { store.lifecycle?.stopped?.unsaved ?? [] }
 
     func saveBeforeLeaving() async -> Bool {
         if await save() { return true }

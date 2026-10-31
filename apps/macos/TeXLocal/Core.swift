@@ -16,6 +16,10 @@ nonisolated extension Answered {
     }
 }
 
+nonisolated extension Lifecycle {
+    var stopped: Stopped? { if case .stopped(let stopped) = self { stopped } else { nil } }
+}
+
 nonisolated extension LogLevel {
     var type: OSLogType {
         switch self {
@@ -181,15 +185,20 @@ final class Core {
 final class SessionClient {
     let id: UInt64
     private(set) var closed = false
+    @ObservationIgnored private(set) var lifecycle: Lifecycle?
     @ObservationIgnored var heard: (Event) -> Void
     @ObservationIgnored private let core: Core
-    @ObservationIgnored private var closing = false
     @ObservationIgnored private var tasks: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored private var started = 0
 
     init(core: Core, _ heard: @escaping (Event) -> Void = { _ in }) {
         (self.core, self.heard, id) = (core, heard, core.session())
-        core.observe(id) { [weak self] in self?.heard($0) }
+        core.observe(id) { [weak self] in self?.hear($0) }
+    }
+
+    private func hear(_ event: Event) {
+        if case .section(.lifecycle(let now)) = event { lifecycle = now }
+        heard(event)
     }
 
     @discardableResult
@@ -200,18 +209,16 @@ final class SessionClient {
             guard !closed else { throw CancellationError() }
             return reply
         } catch {
-            throw ended(error) ? CancellationError() : error
+            throw ending ? CancellationError() : error
         }
     }
 
     func send<R: SessionRequest>(_ request: R, else failed: @escaping (any Error) -> Void = { _ in }) {
         guard !closed else { return }
-        core.send(request, in: id) { [weak self] in if self?.ended($0) == false { failed($0) } }
+        core.send(request, in: id) { [weak self] in if self?.ending == false { failed($0) } }
     }
 
-    private func ended(_ error: any Error) -> Bool {
-        closed || closing && (error as? CoreError)?.message.id == "no_such_session"
-    }
+    private var ending: Bool { closed || lifecycle == .closing || lifecycle == .closed }
 
     func source(_ path: String) -> OpaquePointer? { closed ? nil : core.source(session: id, path: path) }
 
@@ -226,11 +233,9 @@ final class SessionClient {
     }
 
     func close() async throws -> Bool {
-        closing = true
-        defer { closing = false }
         do {
             guard try await call(CloseProject()) else { return false }
-        } catch is CancellationError {}
+        } catch let error where error is CancellationError || lifecycle?.stopped != nil {}
         end()
         return true
     }
