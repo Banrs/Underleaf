@@ -179,7 +179,7 @@ impl Actor {
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
         let project = &self.project;
         let main = settings::read_settings(&project.settings).main_file;
-        let updated = settings::write_settings(&project.settings, patch)?;
+        let updated = settings::write_settings(project, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if updated.main_file != main {
             self.preview.restart(self.id);

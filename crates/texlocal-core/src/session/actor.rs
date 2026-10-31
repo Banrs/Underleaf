@@ -182,6 +182,7 @@ impl Actor {
             .flatten();
         let mut builds = Builds::default();
         builds.pdf = built_pdf(&project);
+        settings::migrate(&project);
         let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
         if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {

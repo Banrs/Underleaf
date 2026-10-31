@@ -13,7 +13,7 @@ use crate::error::{CoreError, ErrorKind};
 use crate::messages;
 use crate::paths::{Project, identity, utf8_name};
 use crate::service::Service;
-use crate::settings::write_settings;
+use crate::settings::new_settings;
 use crate::{BUILD_DIR, SETTINGS_FILE, import, lock};
 
 const STORE: &str = ".opened";
@@ -171,7 +171,7 @@ fn open_folder(
                 .tempdir_in(stores)?;
             if !own_settings(root) {
                 let settings = import::guessed_settings(root, chosen)?;
-                write_settings(&made.path().join(SIDECAR), &settings)?;
+                new_settings(&made.path().join(SIDECAR), &settings)?;
             }
             (made.path().to_path_buf(), Some(made))
         }

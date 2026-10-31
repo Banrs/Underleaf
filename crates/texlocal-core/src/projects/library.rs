@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
@@ -17,9 +18,10 @@ use super::skip_unreadable;
 use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, sanitize_name};
-use crate::settings::{Engine, SettingsPatch, read_settings, write_settings};
-use crate::{SETTINGS_FILE, atomic};
+use crate::paths::{Project, UI_DIR, fold_case, sanitize_name, ui_file};
+use crate::service::Service;
+use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
+use crate::{SETTINGS_FILE, atomic, lock};
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -35,8 +37,7 @@ pub struct ProjectInfo {
 
 impl ProjectInfo {
     fn read(data_dir: &Path, id: &str) -> io::Result<Self> {
-        let root = std::fs::canonicalize(data_dir.join(id))?;
-        Ok(Self::of(id.to_owned(), &Project::in_folder(&root)))
+        Ok(Self::of(id.to_owned(), &Project::in_library(data_dir, id)?))
     }
 
     pub(super) fn of(id: String, project: &Project) -> Self {
@@ -107,8 +108,7 @@ pub fn create_project(
             engine,
             ..SettingsPatch::default()
         };
-        write_settings(&root.join(SETTINGS_FILE), &settings)?;
-        Ok(())
+        new_settings(&root.join(SETTINGS_FILE), &settings)
     })
 }
 
@@ -183,14 +183,29 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     if is_opened(id) {
         return Err(CoreError::bad_request(messages::opened_elsewhere()));
     }
-    let root = Project::find(data_dir, id)?.root;
+    let project = Project::find(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
-    if occupied(&root, &dest) {
+    if occupied(&project.root, &dest) {
         return Err(CoreError::conflict(messages::project_exists()));
     }
-    atomic::rename_exclusive(&root, &dest)?;
+    atomic::rename_exclusive(&project.root, &dest)?;
+    let _ = fs::rename(&project.ui, ui_file(data_dir, &clean));
     Ok(ProjectInfo::read(data_dir, &clean)?)
+}
+
+pub(crate) fn sweep_ui(service: &Service) {
+    let _library = lock(&service.library);
+    let Ok(files) = fs::read_dir(service.data_dir.join(UI_DIR)) else {
+        return;
+    };
+    let gone = |name: &OsStr| !service.data_dir.join(name).is_dir();
+    for file in files.flatten() {
+        let path = file.path();
+        if path.extension().is_some_and(|ext| ext == "json") && path.file_stem().is_some_and(gone) {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 fn real_path(path: &Path) -> PathBuf {

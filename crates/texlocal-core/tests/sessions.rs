@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -74,6 +74,10 @@ fn wait_until(why: &str, done: impl Fn() -> bool) {
         assert!(Instant::now() < deadline, "{why}");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn read_json(path: &Path) -> Value {
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
 fn zip_names(path: &Path) -> Vec<String> {
@@ -925,30 +929,103 @@ async fn an_arxiv_export_adds_its_readme_and_refuses_lualatex() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ui_state_is_written_before_the_close_and_keeps_what_it_is_not_given() {
-    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
-        let file = library.project_root("P").join(".texlocal.json");
-        fs::write(
-            file,
-            r#"{"mainFile": "main.tex", "ui": {"openFile": "main.tex"}}"#,
-        )
-        .unwrap();
-    })
-    .await;
+async fn ui_state_is_written_beside_the_library_before_the_close_and_never_to_the_project() {
+    let rig = project().await;
+    let settings = rig.root().join(".texlocal.json");
+    let modified = || fs::metadata(&settings).unwrap().modified().unwrap();
+    let before = (fs::read(&settings).unwrap(), modified());
     let zoom = json!({ "type": "scale", "value": 1.5 });
-    let place = json!({ "file": "main.tex", "line": 12, "zoom": zoom });
+    let place = json!({ "file": "ch.tex", "line": 12, "zoom": zoom });
     let patch = |patch| json!({ "patch": patch });
     rig.send(SESSION, "SetUiState", patch(json!({ "place": place })));
     let folders = json!({ "expandedFolders": ["figs"] });
     rig.send(SESSION, "SetUiState", patch(folders));
+    let folds = json!({ "foldedHeadings": ["main.tex\tIntro"] });
+    rig.send(SESSION, "SetUiState", patch(folds));
     assert_eq!(rig.call("CloseProject", json!({})), true);
-    let file = fs::read(rig.root().join(".texlocal.json")).unwrap();
-    let ui = &serde_json::from_slice::<Value>(&file).unwrap()["ui"];
+    assert!((fs::read(&settings).unwrap(), modified()) == before);
+    let ui = &read_json(&rig.library.path("data/.ui/P.json"))["ui"];
     assert_eq!(
-        (&ui["openFile"], &ui["line"], &ui["zoom"]),
-        (&json!("main.tex"), &json!(12), &json!(1.5))
+        (&ui["file"], &ui["line"], &ui["zoom"]),
+        (&json!("ch.tex"), &json!(12), &json!(1.5))
     );
     assert_eq!(ui["expandedFolders"], json!(["figs"]));
+    assert_eq!(ui["foldedHeadings"], json!(["main.tex\tIntro"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_old_files_place_and_grant_move_out_at_open_and_leave_it_at_a_settings_write() {
+    let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], |library| {
+        let root = library.project_root("P");
+        let folder = fs::metadata(&root).unwrap();
+        let old = json!({
+            "mainFile": "main.tex",
+            "theirs": 1,
+            "shellEscapeFor": [folder.dev(), folder.ino()],
+            "ui": { "file": "ch.tex", "line": 3, "openFile": "ch.tex" },
+        });
+        fs::write(root.join(".texlocal.json"), old.to_string()).unwrap();
+    })
+    .await;
+    let settings = rig.root().join(".texlocal.json");
+    let old = fs::read(&settings).unwrap();
+    assert_eq!(rig.section("openFile", |_| true)["path"], "ch.tex");
+    let project = rig.section("project", |_| true);
+    assert_eq!(project["settings"]["shellEscape"], true);
+    let moved = read_json(&rig.library.path("data/.ui/P.json"));
+    assert_eq!(moved["ui"]["line"], 3);
+    assert_eq!(moved["ui"]["openFile"], "ch.tex");
+    assert!(moved["shellEscapeFor"].is_array());
+    assert_eq!(moved["theirs"], Value::Null);
+    let folders = json!({ "patch": { "expandedFolders": ["figs"] } });
+    rig.call("SetUiState", folders);
+    assert_eq!(fs::read(&settings).unwrap(), old);
+    rig.call("SetSettings", json!({ "patch": { "engine": "xelatex" } }));
+    let facts = json!({
+        "mainFile": "main.tex",
+        "engine": "xelatex",
+        "stopOnFirstError": false,
+        "theirs": 1,
+    });
+    assert_eq!(read_json(&settings), facts);
+    let project = rig.section("project", |p| p["settings"]["engine"] == "xelatex");
+    assert_eq!(project["settings"]["shellEscape"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_renamed_project_keeps_its_place_and_grant() {
+    let rig = project().await;
+    let place = json!({ "patch": { "place": { "file": "ch.tex" } } });
+    rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
+    rig.call("SetUiState", place);
+    rig.call("CloseProject", json!({}));
+    let renamed = rig.ask_library("RenameProject", json!({ "id": "P", "name": "Q" }));
+    assert_eq!(renamed.unwrap()["id"], "Q");
+    assert!(!rig.library.path("data/.ui/P.json").exists());
+    rig.call_to(2, "OpenProject", json!({ "id": "Q", "autoCompile": false }));
+    assert_eq!(rig.section_in(2, "openFile", |_| true)["path"], "ch.tex");
+    let project = rig.section_in(2, "project", |_| true);
+    assert_eq!(project["settings"]["shellEscape"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_keeps_the_place_but_not_the_grant_and_a_gone_projects_are_swept_at_a_reload() {
+    let rig = project().await;
+    let place = json!({ "patch": { "place": { "file": "ch.tex" } } });
+    rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
+    rig.call("SetUiState", place);
+    let copy = rig.ask_library("DuplicateProject", json!({ "id": "P", "name": "P copy" }));
+    let id = copy.unwrap()["id"].clone();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    assert_eq!(rig.section_in(2, "openFile", |_| true)["path"], "ch.tex");
+    let project = rig.section_in(2, "project", |_| true);
+    assert_eq!(project["settings"]["shellEscape"], false);
+    let copied = rig.library.path("data/.ui/P copy.json");
+    assert!(read_json(&copied)["shellEscapeFor"].is_null());
+    rig.call_to(2, "CloseProject", json!({}));
+    fs::remove_dir_all(rig.library.path("data/P copy")).unwrap();
+    rig.ask_library("ReloadProjects", json!({})).unwrap();
+    assert!(!copied.exists() && rig.library.path("data/.ui/P.json").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]

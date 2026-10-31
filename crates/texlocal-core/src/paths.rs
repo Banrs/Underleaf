@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -35,11 +35,10 @@ impl Project {
         if is_opened(name) {
             return projects::find_opened(data_dir, name);
         }
-        let root = data_dir.join(name);
-        if !root.is_dir() {
+        if !data_dir.join(name).is_dir() {
             return Err(CoreError::not_found(messages::no_such_project(id)));
         }
-        Ok(Self::in_folder(&fs::canonicalize(root)?))
+        Ok(Self::in_library(data_dir, name)?)
     }
 
     pub fn name(&self) -> String {
@@ -47,16 +46,22 @@ impl Project {
         name.to_string_lossy().into_owned()
     }
 
-    pub(crate) fn in_folder(root: &Path) -> Self {
-        let settings = root.join(SETTINGS_FILE);
-        Self {
-            ui: settings.clone(),
-            settings,
+    pub(crate) fn in_library(data_dir: &Path, name: &str) -> io::Result<Self> {
+        let root = fs::canonicalize(data_dir.join(name))?;
+        Ok(Self {
+            settings: root.join(SETTINGS_FILE),
+            ui: ui_file(data_dir, name),
             build: root.join(BUILD_DIR),
             history: root.join(HISTORY_DIR),
-            root: root.to_path_buf(),
-        }
+            root,
+        })
     }
+}
+
+pub(crate) const UI_DIR: &str = ".ui";
+
+pub(crate) fn ui_file(data_dir: &Path, name: &str) -> PathBuf {
+    data_dir.join(UI_DIR).join(format!("{name}.json"))
 }
 
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {

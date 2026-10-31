@@ -12,10 +12,12 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::messages;
-use crate::paths::{self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key};
+use crate::paths::{
+    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file,
+};
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
-use crate::settings::{Engine, SettingsPatch, write_settings};
+use crate::settings::{Engine, SettingsPatch, copy_ui, new_settings};
 use crate::zipexport::left_out;
 use crate::{CoreError, SETTINGS_FILE, atomic};
 
@@ -333,8 +335,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
             fs::write(root.join(file), content)?;
             settings.main_file = Some(file.into());
         }
-        write_settings(&root.join(SETTINGS_FILE), &settings)?;
-        Ok(())
+        new_settings(&root.join(SETTINGS_FILE), &settings)
     })
 }
 
@@ -385,19 +386,22 @@ pub(crate) fn duplicate_project(
     if projects::is_opened(id) {
         return Err(CoreError::conflict(messages::opened_not_duplicated()));
     }
-    let root = service.project(id)?.root;
+    let source = service.project(id)?;
+    let root = &source.root;
     let mut files = Vec::new();
-    walk(&root, &|rel| !left_out(rel), true, &mut |entry| {
+    walk(root, &|rel| !left_out(rel), true, &mut |entry| {
         if !entry.dir {
             files.push((entry.rel.clone(), Source::File(entry.path.clone())));
         }
         Ok(true)
     })?;
-    projects::new_project(&service.data_dir, name, |copy| {
+    let copy = projects::new_project(&service.data_dir, name, |copy| {
         write_files(copy, &files, None)?;
         match fs::copy(root.join(SETTINGS_FILE), copy.join(SETTINGS_FILE)) {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
             copied => Ok(copied.map(drop)?),
         }
-    })
+    })?;
+    copy_ui(&source, &ui_file(&service.data_dir, &copy.id));
+    Ok(copy)
 }

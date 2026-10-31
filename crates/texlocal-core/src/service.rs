@@ -258,7 +258,10 @@ impl Service {
                 let status = self.status().await;
                 answer(installed.map(|()| status))
             }
-            Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),
+            Library::ReloadProjects(ReloadProjects {}, answer) => {
+                projects::sweep_ui(self);
+                answer(self.publish_projects())
+            }
             Library::Resync(Resync {}, answer) => answer(Ok(self.resync())),
             Library::CreateProject(
                 CreateProject {
