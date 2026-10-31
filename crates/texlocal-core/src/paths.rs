@@ -67,7 +67,7 @@ pub(crate) fn ui_file(state_dir: &Path, name: &str) -> PathBuf {
 }
 
 pub(crate) fn move_device_state(data_dir: &Path, state_dir: &Path) {
-    for name in [UI_DIR, OPENED_DIR, APP_SETTINGS_FILE] {
+    for name in [OPENED_DIR, APP_SETTINGS_FILE] {
         let (from, to) = (data_dir.join(name), state_dir.join(name));
         if !to.exists()
             && let Err(err) = atomic::rename_exclusive(&from, &to)
