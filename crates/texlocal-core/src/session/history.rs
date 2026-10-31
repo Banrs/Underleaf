@@ -12,7 +12,7 @@ use super::edits::DocumentEdits;
 use super::{Msg, Pending};
 use crate::messages;
 use crate::paths::RelPath;
-use crate::projects::{self, History, Snapshot, Taken};
+use crate::projects::{self, History, Reason, Snapshot, Taken};
 use crate::{CoreError, lf, lossy_string};
 
 pub(super) type Then<T> =
@@ -126,7 +126,7 @@ impl Actor {
 
     pub fn before<T: 'static>(
         &mut self,
-        reason: &'static str,
+        reason: Reason,
         then: Result<Then<T>, CoreError>,
         reply: Pending<T>,
     ) {
@@ -178,7 +178,7 @@ impl Actor {
             if edits.len() > 1 {
                 return Err(CoreError::conflict(messages::one_document()));
             }
-            history.take(&root, now(), Taken::Before("Before Restore"))?;
+            history.take(&root, now(), Taken::Before(Reason::Restore))?;
             Ok((edits.pop(), others))
         };
         let put_back = |actor: &mut Self, (edits, others): (_, Vec<(String, _)>)| {

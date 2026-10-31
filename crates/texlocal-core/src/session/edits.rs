@@ -15,7 +15,7 @@ use super::documents::Doc;
 use super::history::Then;
 use super::scans::tex;
 use crate::messages;
-use crate::projects::{self, Written};
+use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
 use crate::{CoreError, packages};
 
@@ -112,7 +112,7 @@ impl Actor {
                         add(actor, snapshot).map(|added| Some(Fixed { edits: added.edits }))
                     })
                 });
-                return self.before("Before Adding a Package", added, reply);
+                return self.before(Reason::AddPackage, added, reply);
             }
             Fix::Xelatex => self.patch_settings(SettingsPatch {
                 engine: Some(Engine::Xelatex),

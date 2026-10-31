@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "6716ff164f222e4ad48d88927f051d99f7e50c00477a52749f93af06bf88d43d"
+nonisolated let protocolDigest = "7d8c3b747b4893ad657cacfea142f16f0ca5943513862f199cc1f9ecd703c051"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -1567,6 +1567,19 @@ nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Senda
     case file, heading, label
 }
 
+nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
+    case replaceAll, rename, addPackage, restore
+
+    var title: String {
+        switch self {
+        case .replaceAll: "Before Replace All"
+        case .rename: "Before Rename"
+        case .addPackage: "Before Adding a Package"
+        case .restore: "Before Restore"
+        }
+    }
+}
+
 nonisolated struct Reattach: SessionRequest {
     typealias Reply = Done
     static let command = "Reattach"
@@ -1912,7 +1925,7 @@ nonisolated struct Snapshot: Decodable, Hashable, Sendable {
     var id: String
     var time: Int
     var name: String?
-    var reason: String?
+    var reason: Reason?
     var changed: [ChangedFile]
 
     enum CodingKeys: String, CodingKey, CaseIterable { case id, time, name, reason, changed }
@@ -1924,7 +1937,7 @@ nonisolated extension Snapshot {
         id = try wire.decode(String.self, forKey: .id)
         time = try wire.decode(Int.self, forKey: .time)
         name = try wire.decode(String?.self, forKey: .name)
-        reason = try wire.decode(String?.self, forKey: .reason)
+        reason = try wire.decode(Reason?.self, forKey: .reason)
         changed = try wire.decode([ChangedFile].self, forKey: .changed)
     }
 }

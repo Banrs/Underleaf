@@ -29,7 +29,7 @@ use crate::events::{Event, Said, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, Job, RenameResult, SearchGroup, Snapshot};
+use crate::projects::{self, Job, Reason, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
@@ -453,11 +453,11 @@ impl Actor {
                 answer,
             ) => {
                 let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
-                return self.before("Before Replace All", replace, Pending { reply, answer });
+                return self.before(Reason::ReplaceAll, replace, Pending { reply, answer });
             }
             Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
                 let rename = self.rename_symbol(kind, from, to);
-                return self.before("Before Rename", rename, Pending { reply, answer });
+                return self.before(Reason::Rename, rename, Pending { reply, answer });
             }
             Session::ApplyFix(ApplyFix { id }, answer) => {
                 return self.fix(id, Pending { reply, answer });

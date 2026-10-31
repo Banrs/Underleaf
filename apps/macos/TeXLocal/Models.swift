@@ -115,7 +115,7 @@ nonisolated struct SyncSource: Sendable {
 
 nonisolated extension Snapshot: Identifiable {
     var date: Date { Date(timeIntervalSince1970: Double(time) / 1000) }
-    var title: String { name ?? reason ?? String(localized: "Automatic") }
+    var title: String { name ?? reason?.title ?? String(localized: "Automatic") }
 }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
