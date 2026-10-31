@@ -12,6 +12,12 @@ struct CoreTests {
         #expect(Core.shared.isOpen)
     }
 
+    @Test func aFailedOpenNamesTheFolderThatCantBeWritten() {
+        let missing = URL(filePath: "/nonexistent/state", directoryHint: .isDirectory)
+        #expect(Core.advice([Core.libraryFolder, missing]).contains("/nonexistent/state"))
+        #expect(Core.advice().contains(Core.libraryPath))
+    }
+
     @Test func aCommandAnswersDecodedValuesAfterTheLibraryItChanged() async throws {
         let project = try await newProject()
         #expect(project.mainFile == "main.tex")

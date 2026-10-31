@@ -59,9 +59,17 @@ final class Core {
     var isOpen: Bool { handle != nil }
     let library = LibraryStore()
 
-    static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-    static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
-    private static let unavailable = AppFailure("TeXLocal can’t open its projects folder. \(libraryAdvice)")
+    static let libraryPath = shown(libraryFolder)
+    private static var unavailable: AppFailure { AppFailure("TeXLocal can’t open its folders. \(advice())") }
+
+    static func advice(_ folders: [URL] = [Core.libraryFolder, Core.stateFolder]) -> String {
+        let unwritable = folders.first { !FileManager.default.isWritableFile(atPath: $0.path(percentEncoded: false)) }
+        return "Make sure you can create and write to \(shown(unwritable ?? folders[0])), then try again."
+    }
+
+    private static func shown(_ folder: URL) -> String {
+        (folder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+    }
 
     private init() {
         Task {

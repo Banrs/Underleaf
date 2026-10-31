@@ -121,7 +121,7 @@ final class AppModel {
     init(core: Core, defaults: UserDefaults = .standard) {
         self.core = core
         self.defaults = defaults
-        if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open the Projects Folder", Core.libraryAdvice) }
+        if !core.isOpen { libraryProblem = AppAlert("Couldn’t Open TeXLocal’s Folders", Core.advice()) }
         defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true, DefaultsKey.showSource: true,
                                      DefaultsKey.showPDF: true, DefaultsKey.editorFontSize: 13, DefaultsKey.editorLineNumbers: true,
                                      DefaultsKey.editorAutoPair: true, DefaultsKey.editorAutoComplete: true,
