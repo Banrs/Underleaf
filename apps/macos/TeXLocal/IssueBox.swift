@@ -14,6 +14,8 @@ struct IssueBox: View, Equatable {
         }
     }
 
+    static let tint: CGFloat = 0.14
+
     let isError: Bool
     let issues: Int
     let text: String?
@@ -25,6 +27,7 @@ struct IssueBox: View, Equatable {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 4)
         let separator = Color(nsColor: .separatorColor)
+        let severity: Color = isError ? .red : .yellow
         HStack(spacing: 0) {
             if issues > 1 {
                 onBaseline(Text(verbatim: "\(issues)"))
@@ -34,7 +37,7 @@ struct IssueBox: View, Equatable {
             Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
                 .font(.system(size: Metrics.small(font.pointSize)))
                 .imageScale(.small)
-                .foregroundStyle(isError ? .red : .yellow)
+                .foregroundStyle(severity)
                 .frame(width: Metrics.segment(font, issues: 1))
             if let text {
                 separator.frame(width: Metrics.divider)
@@ -45,8 +48,9 @@ struct IssueBox: View, Equatable {
         }
         .font(Font(font as CTFont))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(severity.opacity(Self.tint), in: shape)
         .background(fill, in: shape)
-        .overlay(shape.strokeBorder(separator, lineWidth: 1))
+        .overlay(shape.strokeBorder(severity.opacity(3 * Self.tint), lineWidth: 1))
         .accessibilityHidden(true)
     }
 
