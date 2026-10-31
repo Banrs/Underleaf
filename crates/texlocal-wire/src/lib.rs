@@ -24,6 +24,9 @@ fn protocol() -> Ir {
     for store in &protocol.stores {
         ir.store(store.as_value());
     }
+    for kinds in &protocol.packed {
+        ir.pack(kinds.as_value());
+    }
     ir.check();
     ir
 }

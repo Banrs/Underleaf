@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "0dc93703db1067269311e65073deee6b3006810834b2387caa6c637726d6197e"
+nonisolated let protocolDigest = "73ce427fbec313cfb555a64afaab056bc0d257f2cac209f0b60be022726e664c"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -692,8 +692,12 @@ nonisolated struct HeadingStyles: SyntaxRequest {
     static let command = "HeadingStyles"
 }
 
-nonisolated enum HighlightKind: String, Decodable, CaseIterable, Hashable, Sendable {
-    case command, argument, maths, comment, invalid
+nonisolated enum HighlightKind: UInt32, CaseIterable, Hashable, Sendable {
+    case command = 0
+    case argument = 1
+    case maths = 2
+    case comment = 3
+    case invalid = 4
 }
 
 nonisolated enum ImportConflict: String, Encodable, CaseIterable, Hashable, Sendable {

@@ -34,6 +34,7 @@ pub(crate) fn unknown() -> CoreError {
 pub struct Protocol {
     pub requests: Vec<Described>,
     pub stores: Vec<Schema>,
+    pub packed: Vec<Schema>,
     pub inbound: Map<String, Value>,
     pub outbound: Map<String, Value>,
 }
@@ -49,12 +50,12 @@ pub fn protocol() -> Protocol {
     requests.extend(Session::describe(&mut inbound, &mut outbound));
     requests.extend(Source::describe(&mut inbound, &mut outbound));
     requests.extend(Syntax::describe(&mut inbound, &mut outbound));
-    outbound.subschema_for::<HighlightKind>();
     outbound.subschema_for::<Said>();
     let stores = vec![
         outbound.subschema_for::<SessionSection>(),
         outbound.subschema_for::<LibrarySection>(),
     ];
+    let packed = vec![outbound.subschema_for::<HighlightKind>()];
     let ids = [messages::CATALOG, crate::messages::CATALOG].concat();
     let ids: Vec<&str> = ids.into_iter().map(|(id, _)| id).collect();
     let mut outbound = outbound.take_definitions(true);
@@ -62,6 +63,7 @@ pub fn protocol() -> Protocol {
     Protocol {
         requests,
         stores,
+        packed,
         inbound: inbound.take_definitions(true),
         outbound,
     }

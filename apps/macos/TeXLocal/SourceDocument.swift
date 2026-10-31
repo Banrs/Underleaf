@@ -54,10 +54,8 @@ final class SourceDocument {
         var count = 0
         guard let runs = tl_source_highlights(raw, UInt32(range.location), UInt32(range.length), &count) else { return [] }
         defer { tl_source_free_runs(runs, count) }
-        let kinds = HighlightKind.allCases
         return stride(from: 0, to: count, by: 3).compactMap { i in
-            let kind = Int(runs[i + 2])
-            return kinds.indices.contains(kind) ? (NSRange(location: Int(runs[i]), length: Int(runs[i + 1])), kinds[kind]) : nil
+            HighlightKind(rawValue: runs[i + 2]).map { (NSRange(location: Int(runs[i]), length: Int(runs[i + 1])), $0) }
         }
     }
 

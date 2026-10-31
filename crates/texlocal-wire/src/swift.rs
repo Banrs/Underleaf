@@ -91,7 +91,10 @@ fn types(ir: &Ir, generic: &BTreeSet<&str>) -> String {
         out.push('\n');
         match &def.shape {
             Shape::Struct(fields) => structure(&mut out, name, def, fields, request, generic),
-            Shape::Units(units) => enumeration(&mut out, name, def, units),
+            Shape::Units(units) => {
+                let packed = ir.packed.contains(name);
+                enumeration(&mut out, name, def, units, packed);
+            }
             Shape::Union(cases) => union(&mut out, name, def, cases, generic),
         }
     }
@@ -303,11 +306,23 @@ fn store(out: &mut String, sections: &str, ir: &Ir, generic: &BTreeSet<&str>) {
     out.push_str("        }\n    }\n}\n");
 }
 
-fn enumeration(out: &mut String, name: &str, def: &Def, units: &[(String, Option<String>)]) {
-    let codable = conformances(def).replace(", Hashable", ", CaseIterable, Hashable");
-    writeln!(out, "nonisolated enum {name}: String, {codable} {{").unwrap();
-    let cases: Vec<String> = (units.iter())
-        .map(|(unit, _)| match case(unit, name) {
+fn enumeration(
+    out: &mut String,
+    name: &str,
+    def: &Def,
+    units: &[(String, Option<String>)],
+    packed: bool,
+) {
+    let declared = if packed {
+        "UInt32, CaseIterable, Hashable, Sendable".to_owned()
+    } else {
+        let codable = conformances(def).replace(", Hashable", ", CaseIterable, Hashable");
+        format!("String, {codable}")
+    };
+    writeln!(out, "nonisolated enum {name}: {declared} {{").unwrap();
+    let cases: Vec<String> = (units.iter().enumerate())
+        .map(|(place, (unit, _))| match case(unit, name) {
+            case if packed => format!("{} = {place}", ident(&case)),
             case if case != *unit => format!("{} = \"{unit}\"", ident(&case)),
             case => ident(&case),
         })

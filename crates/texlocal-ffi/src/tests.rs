@@ -6,6 +6,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use texlocal_latex::syntax::HighlightKind;
 
 use super::*;
 
@@ -261,6 +262,15 @@ fn syntax_commands_need_no_source() {
     assert!(answered(answer)["templates"].is_object());
     let refused = refused(take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) }));
     assert_eq!(refused["kind"], "invalid");
+}
+
+#[test]
+fn a_highlight_kind_is_packed_as_its_place_in_the_protocol() {
+    let kinds = texlocal_core::protocol::protocol().outbound["HighlightKind"]["enum"].take();
+    for (place, kind) in kinds.as_array().unwrap().iter().enumerate() {
+        let kind: HighlightKind = serde_json::from_value(kind.clone()).unwrap();
+        assert_eq!(kind as usize, place);
+    }
 }
 
 #[test]

@@ -59,6 +59,7 @@ pub struct Ir {
     pub defs: BTreeMap<String, Def>,
     pub requests: Vec<Request>,
     pub stores: Vec<String>,
+    pub packed: Vec<String>,
 }
 
 const TAKEN: &[&str] = &[
@@ -191,6 +192,15 @@ impl Ir {
         };
         assert!(name.ends_with("Section"), "{name} doesn't end in Section");
         self.stores.push(name);
+    }
+
+    pub fn pack(&mut self, kinds: &Value) {
+        let Ty::Named(name) = ty(kinds) else {
+            panic!("a packed kind isn't a named enum")
+        };
+        let units = matches!(self.defs[&name].shape, Shape::Units(_));
+        assert!(units, "{name} isn't an enum of names");
+        self.packed.push(name);
     }
 
     pub fn check(&self) {
