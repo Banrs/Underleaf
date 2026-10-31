@@ -219,30 +219,6 @@ struct LaneTests {
         let cancelled = (await first.value, await second.value)
         #expect(cancelled == (true, true))
     }
-
-    @Test func movingToTheTrashUndoesAndRedoes() async throws {
-        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let file = folder.appending(path: "a.tex")
-        try Data("a".utf8).write(to: file)
-        let exists = { FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) }
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        var changes = 0
-        let item = UndoableTrash(original: file, name: "a.tex", undoManager: undo, trash: { (try? $0.recycle()) != nil },
-                                 changed: { changes += 1 }, failed: { _, _ in })
-        undo.beginUndoGrouping()
-        await item.moveToTrash()
-        undo.endUndoGrouping()
-        #expect(!exists() && undo.undoActionName == "Move to Trash")
-        undo.undo()
-        try await waitUntil { exists() && changes == 1 }
-        undo.redo()
-        try await waitUntil { !exists() && changes == 2 }
-        undo.undo()
-        try await waitUntil { exists() && changes == 3 }
-    }
 }
 
 struct FieldTests {
@@ -435,6 +411,31 @@ struct ViewsTests {
         project.engine = .xelatex
         await project.compile()
         #expect(window.alert == nil && views.shown.count == 3)
+    }
+
+    @Test func movingToTheTrashUndoesAndRedoesThroughTheCore() async throws {
+        let info = try await newProject()
+        let window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window)
+        try await project.load()
+        let path = try #require(await project.createEntry(in: "", directory: false))
+        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let item = UndoableTrash(undoManager: undo, trash: { (try? await project.session.call(Trash(path: path))) ?? nil },
+                                 putBack: { (try? await project.session.call(PutBack(path: path, trashed: $0))) != nil })
+        undo.beginUndoGrouping()
+        await item.moveToTrash()
+        undo.endUndoGrouping()
+        #expect(!shown() && undo.undoActionName == "Move to Trash")
+        undo.undo()
+        try await waitUntil { shown() }
+        undo.redo()
+        try await waitUntil { !shown() }
+        undo.undo()
+        try await waitUntil { shown() }
+        #expect(await project.close().value)
     }
 
     @Test func aRestoreOrAFixTheEditorRefusesSaysSoAndTheFixDoesntCompile() async throws {

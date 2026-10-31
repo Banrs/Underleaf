@@ -11,15 +11,16 @@ use texlocal_latex::syntax::SourceDocument;
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
 
-use super::files::occupied;
+use super::files::{occupied, untrash};
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
 use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, sanitize_name};
-use crate::settings::{Engine, SettingsPatch, read_settings, write_settings};
-use crate::{SETTINGS_FILE, atomic};
+use crate::paths::{Project, fold_case, sanitize_name, ui_file};
+use crate::service::Service;
+use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
+use crate::{SETTINGS_FILE, atomic, sys};
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -34,9 +35,8 @@ pub struct ProjectInfo {
 }
 
 impl ProjectInfo {
-    fn read(data_dir: &Path, id: &str) -> io::Result<Self> {
-        let root = std::fs::canonicalize(data_dir.join(id))?;
-        Ok(Self::of(id.to_owned(), &Project::in_folder(&root)))
+    fn read(service: &Service, id: &str) -> io::Result<Self> {
+        Ok(Self::of(id.to_owned(), &Project::in_library(service, id)?))
     }
 
     pub(super) fn of(id: String, project: &Project) -> Self {
@@ -77,27 +77,29 @@ fn newest(root: &Path) -> u64 {
     newest
 }
 
-pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
+pub fn list_projects(service: &Service) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
-    for entry in fs::read_dir(data_dir)? {
+    for entry in fs::read_dir(&service.data_dir)? {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
         if !name.starts_with('.') && entry.file_type()?.is_dir() {
-            projects.extend(skip_unreadable(ProjectInfo::read(data_dir, &name))?);
+            projects.extend(skip_unreadable(ProjectInfo::read(service, &name))?);
         }
     }
-    projects.extend(opened::list(data_dir));
+    projects.extend(opened::list(&service.state_dir));
     projects.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.id.cmp(&b.id)));
     Ok(projects)
 }
 
 pub fn create_project(
-    data_dir: &Path,
+    service: &Service,
     name: &str,
     template: ProjectTemplate,
     engine: Option<Engine>,
 ) -> Result<ProjectInfo, CoreError> {
-    new_project(data_dir, name, |root| {
+    new_project(service, name, |root| {
         for (file, content) in template.files() {
             fs::write(root.join(file), content)?;
         }
@@ -105,21 +107,21 @@ pub fn create_project(
             engine,
             ..SettingsPatch::default()
         };
-        write_settings(&root.join(SETTINGS_FILE), &settings)?;
-        Ok(())
+        new_settings(&root.join(SETTINGS_FILE), &settings)
     })
 }
 
 pub(crate) fn new_project(
-    data_dir: &Path,
+    service: &Service,
     name: &str,
     fill: impl FnOnce(&Path) -> Result<(), CoreError>,
 ) -> Result<ProjectInfo, CoreError> {
     let name = sanitize_name(name)?;
+    let data_dir = &service.data_dir;
     fs::create_dir_all(data_dir)?;
-    let temp = atomic::temp_builder(0o777).tempdir_in(data_dir)?;
+    let temp = atomic::temp_builder().tempdir_in(data_dir)?;
     fill(temp.path())?;
-    let id = project_names(&name)
+    let id: String = project_names(&name)
         .find_map(
             |id| match atomic::rename_exclusive(temp.path(), &data_dir.join(&id)) {
                 Err(err) if err.kind() == ErrorKind::AlreadyExists => None,
@@ -127,7 +129,8 @@ pub(crate) fn new_project(
             },
         )
         .expect("a free name")?;
-    Ok(ProjectInfo::read(data_dir, &id)?)
+    let _ = fs::remove_file(ui_file(&service.state_dir, &id));
+    Ok(ProjectInfo::read(service, &id)?)
 }
 
 pub fn free_project_name(data_dir: &Path) -> Result<String, CoreError> {
@@ -151,7 +154,9 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     let mut tex = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
         if entry.file_type()?.is_file()
             && file_kind(&name) == FileKind::Tex
             && !name.starts_with('-')
@@ -175,18 +180,30 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         .cloned())
 }
 
-pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
+pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
     if is_opened(id) {
         return Err(CoreError::bad_request(messages::opened_elsewhere()));
     }
-    let root = Project::find(data_dir, id)?.root;
-    let clean = sanitize_name(new_name)?;
-    let dest = data_dir.join(&clean);
-    if occupied(&root, &dest) {
+    let project = service.project(id)?;
+    let clean = sanitize_name(name)?;
+    let dest = service.data_dir.join(&clean);
+    if occupied(&project.root, &dest) {
         return Err(CoreError::conflict(messages::project_exists()));
     }
-    atomic::rename_exclusive(&root, &dest)?;
-    Ok(ProjectInfo::read(data_dir, &clean)?)
+    atomic::rename_exclusive(&project.root, &dest)?;
+    let _ = fs::rename(&project.ui, ui_file(&service.state_dir, &clean));
+    Ok(ProjectInfo::read(service, &clean)?)
+}
+
+pub fn trash_project(service: &Service, id: &str) -> Result<PathBuf, CoreError> {
+    if is_opened(id) {
+        return Err(CoreError::bad_request(messages::opened_elsewhere()));
+    }
+    sys::trash(&service.project(id)?.root)
+}
+
+pub fn put_back_project(service: &Service, id: &str, trashed: &Path) -> Result<(), CoreError> {
+    untrash(trashed, &service.data_dir.join(sanitize_name(id)?))
 }
 
 fn real_path(path: &Path) -> PathBuf {
@@ -203,7 +220,7 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
-pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError> {
+pub fn locate(service: &Service, path: &Path) -> Result<Option<Located>, CoreError> {
     if !path.is_absolute() {
         return Ok(None);
     }
@@ -211,11 +228,12 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
     let segments = |rest: &Path| -> Option<Vec<String>> {
         (rest.components())
             .map(|part| match part {
-                Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                Component::Normal(name) => name.to_str().map(str::to_owned),
                 _ => None,
             })
             .collect()
     };
+    let data_dir = &service.data_dir;
     if let Ok(rest) = real.strip_prefix(std::fs::canonicalize(data_dir)?) {
         let segments = segments(rest);
         let Some([id, inside @ ..]) = segments.as_deref() else {
@@ -227,7 +245,7 @@ pub fn locate(data_dir: &Path, path: &Path) -> Result<Option<Located>, CoreError
         let (id, path) = (id.clone(), inside.join("/"));
         return Ok(Some(Located { id, path }));
     }
-    let mut folders = opened::folders(data_dir);
+    let mut folders = opened::folders(&service.state_dir);
     folders.sort_by_key(|(_, folder)| Reverse(folder.path.as_os_str().len()));
     Ok(folders.into_iter().find_map(|(id, folder)| {
         let path = segments(real.strip_prefix(&folder.path).ok()?)?.join("/");

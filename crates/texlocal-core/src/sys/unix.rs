@@ -1,35 +1,17 @@
-use std::ffi::{CString, OsString};
-use std::fs::{File, Metadata, Permissions};
+use std::ffi::OsString;
+use std::fs::{self, Metadata, Permissions};
 use std::io;
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::process::{Child, Command};
 
-use crate::atomic::Flush;
-use crate::error::CoreError;
-use crate::messages;
 use crate::process;
 
 pub(crate) const TEXLIVE: &str = "/usr/local/texlive";
-pub(crate) const TEX_DIRS: [&str; 3] =
-    ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"];
-pub(crate) const TINYTEX_BUNDLE: (&str, &str) = ("TinyTeX-1-darwin-", ".tar.xz");
-pub(crate) const ADMIN_CANCELLED: &str = "(-128)";
 
-const AS_ADMINISTRATOR: &str = r#"on run {tlmgr, package}
-do shell script quoted form of tlmgr & " install " & quoted form of package with prompt "TeXLocal wants to install the TeX package “" & package & "”." with administrator privileges
-end run"#;
-
-pub(crate) fn tinytex_root() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/TinyTeX"))
-}
-
-pub(crate) fn tinytex_bin(root: &Path) -> PathBuf {
-    root.join("bin/universal-darwin")
-}
+pub(crate) struct Group(u32);
 
 pub(crate) fn latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
@@ -38,27 +20,6 @@ pub(crate) fn latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBu
     [config.join("latexmk/latexmkrc"), home.join(".latexmkrc")]
         .into_iter()
         .find(|rc| rc.is_file())
-}
-
-pub(crate) fn trash(path: &Path) -> Result<(), CoreError> {
-    let trashed = std::process::Command::new("/usr/bin/trash")
-        .arg("-s")
-        .arg(path)
-        .output()?;
-    if trashed.status.success() {
-        return Ok(());
-    }
-    let said = String::from_utf8_lossy(&trashed.stderr);
-    Err(CoreError::internal(messages::trash_failed(said.trim())))
-}
-
-pub(crate) fn install_as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Command {
-    let mut command = process::tool(Path::new("/usr/bin/osascript"), path_env);
-    command
-        .args(["-e", AS_ADMINISTRATOR])
-        .arg(tlmgr)
-        .arg(package);
-    command
 }
 
 pub(crate) fn download(url: &str, to: &Path, path_env: &str) -> Command {
@@ -85,60 +46,35 @@ pub(crate) fn unpack(archive: &Path, into: &Path, path_env: &str) -> Command {
     command
 }
 
-pub(crate) fn permissions(mode: u32) -> Permissions {
-    Permissions::from_mode(mode)
+pub(crate) fn default_permissions(builder: &mut tempfile::Builder) {
+    builder.permissions(Permissions::from_mode(0o666));
 }
 
-pub(crate) fn identity(meta: &Metadata) -> (u64, u64) {
-    (meta.dev(), meta.ino())
+pub(crate) fn private(builder: &mut tempfile::Builder) {
+    builder.permissions(Permissions::from_mode(0o700));
 }
 
-pub(crate) fn executable(meta: &Metadata) -> bool {
-    meta.is_file() && meta.mode() & 0o111 != 0
+pub(crate) fn identity(_: &Path, meta: &Metadata) -> io::Result<(u64, u64)> {
+    Ok((meta.dev(), meta.ino()))
 }
 
-pub(crate) fn flush(file: &File, flush: Flush) -> io::Result<()> {
-    match flush {
-        Flush::Full => file.sync_all(),
-        Flush::Ordered => match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } {
-            -1 => Err(io::Error::last_os_error()),
-            _ => Ok(()),
-        },
-    }
+pub(crate) fn executable(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
 }
 
-pub(crate) fn copy_xattrs(from: &Path, to: &File) {
-    if let Ok(from) = File::open(from) {
-        unsafe {
-            libc::fcopyfile(
-                from.as_raw_fd(),
-                to.as_raw_fd(),
-                std::ptr::null_mut(),
-                libc::COPYFILE_XATTR,
-            );
-        }
-    }
+pub(crate) fn program(dir: &Path, name: &str) -> Option<PathBuf> {
+    Some(dir.join(name)).filter(|path| executable(path))
 }
 
-pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
-    let from = CString::new(from.as_os_str().as_encoded_bytes())?;
-    let to = CString::new(to.as_os_str().as_encoded_bytes())?;
-    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-pub(crate) fn spawn_group(command: &mut Command) -> io::Result<(Child, u32)> {
+pub(crate) fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
     let child = command.process_group(0).spawn()?;
-    let group = child.id().expect("a child just spawned has its pid");
-    Ok((child, group))
+    let leader = child.id().expect("a child just spawned has its pid");
+    Ok((child, Group(leader)))
 }
 
-pub(crate) fn kill_group(group: u32) {
+pub(crate) fn kill_group(group: &Group) {
     unsafe {
-        libc::killpg(group as i32, libc::SIGKILL);
+        libc::killpg(group.0 as i32, libc::SIGKILL);
     }
 }
 

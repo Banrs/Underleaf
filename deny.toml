@@ -1,11 +1,11 @@
 [graph]
-targets = ["aarch64-apple-darwin", "aarch64-apple-ios", "wasm32-unknown-unknown", "wasm32-wasip1"]
+targets = ["aarch64-apple-darwin", "aarch64-apple-ios", "wasm32-unknown-unknown", "wasm32-wasip1", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 ignore = [{ id = "RUSTSEC-2026-0192", reason = "ratex reads its fonts with ttf-parser, and no ratex release drops it yet" }]
 
 [licenses]
-allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "CC0-1.0", "MIT", "Unicode-3.0", "Unlicense", "Zlib"]
+allow = ["Apache-2.0", "Apache-2.0 WITH LLVM-exception", "CC0-1.0", "ISC", "MIT", "Unicode-3.0", "Unlicense", "Zlib"]
 
 [bans]
 multiple-versions = "warn"

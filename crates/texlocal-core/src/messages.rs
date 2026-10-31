@@ -35,13 +35,15 @@ texlocal_latex::messages! {
     disk_full(file) = "The file “{file}” couldn’t be saved because there isn’t enough space.";
     not_saved(file, error) = "The file “{file}” couldn’t be saved ({error}).";
     trash_failed(error) = "Could not move the item to Trash: {error}";
+    no_trash = "There's no Trash on this computer to move it to.";
 
     unreadable(name, error) = "“{name}” can't be read ({error}), so it was left as it is. Correct it, or delete it to start again.";
     over_one_mb = "it's over 1 MB";
 
-    opened_elsewhere = "A folder opened where it is can't be renamed here.";
+    opened_elsewhere = "A folder opened where it is can't be renamed or moved to the Trash here.";
     project_exists = "A project with that name already exists";
     close_before_renaming = "Close the project before renaming it.";
+    close_before_trashing = "Close the project before moving it to the Trash.";
     close_before_forgetting = "Close the project before removing it from the list.";
     only_opened_forgotten = "Only a folder opened where it is can be removed from the list.";
     folder_moved(name, path) = "“{name}” isn’t at {path} any more. Open it where it is now, or remove it from the list.";
@@ -66,6 +68,7 @@ texlocal_latex::messages! {
     changed_on_disk(path) = "“{path}” changed on disk, so nothing was changed. Keep your edits or the disk’s first, then try again.";
     edits_unsaved = "Some edits aren’t saved, so they’d be left out. Save them, then try again.";
     one_document = "Only one open document can be edited at once: close the others first.";
+    not_utf8_name(path) = "The name of “{path}” isn't UTF-8, so it can't be copied as it is. Rename it, then try again.";
     not_utf8_file(path) = "“{path}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it.";
     too_large_to_keep(path) = "“{path}” is too large for the version history to keep, so nothing was changed, as it couldn’t be put back.";
     renamed_symbol_unfit = "Only a label or a citation is renamed";
@@ -115,9 +118,7 @@ texlocal_latex::messages! {
     tinytex_download_failed(output) = "TinyTeX couldn't be downloaded:\n{output}";
     no_tinytex_tlmgr = "TinyTeX's package manager, tlmgr, wasn't found.";
 
-    live_not_running = "Live Preview isn't running.";
     live_unpatched = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Build and install it with tools/texpresso/build.sh and install.sh.";
-    live_unfit = "The edit doesn't fit the text TeXpresso has. Send the whole text.";
     live_no_main = "The main file does not exist.";
     no_texpresso = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
     texpresso_unstarted(error) = "Couldn't start TeXpresso: {error}. Check its folder in Settings › Live Preview.";
@@ -125,6 +126,4 @@ texlocal_latex::messages! {
     texpresso_exited(status) = "TeXpresso exited ({status}). Check its log and start TeXpresso again.";
     texpresso_unsent(error) = "Couldn't send changes to TeXpresso: {error}. Start TeXpresso again.";
     viewer_stopped = "viewer stopped reading commands";
-    texpresso_didnt_start = "TeXpresso didn’t start. Check its location in Settings and the log below.";
-    live_rejected(path, error) = "{path}: {error}";
 }

@@ -95,8 +95,7 @@ impl CompileRun {
     }
 
     fn wrote(&self, ext: &str) -> bool {
-        std::fs::metadata(self.output(ext))
-            .is_ok_and(|meta| self.before.get(ext) != Some(&Stamp::of(&meta)))
+        Stamp::at(&self.output(ext)).is_ok_and(|now| self.before.get(ext) != Some(&now))
     }
 
     fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
@@ -150,10 +149,9 @@ impl CompileManager {
             )));
         }
         let pdf = settings.output(&project.build, "pdf")?;
-        let before = STAMPED.into_iter().filter_map(|ext| {
-            let meta = std::fs::metadata(pdf.with_extension(ext)).ok()?;
-            Some((ext, Stamp::of(&meta)))
-        });
+        let before = STAMPED
+            .into_iter()
+            .filter_map(|ext| Some((ext, Stamp::at(&pdf.with_extension(ext)).ok()?)));
         let run = CompileRun {
             root: root.clone(),
             before: before.collect(),

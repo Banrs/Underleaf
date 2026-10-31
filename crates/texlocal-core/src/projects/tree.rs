@@ -9,7 +9,8 @@ use texlocal_latex::{FileKind, file_kind};
 use super::skip_unreadable;
 use crate::BUILD_DIR;
 use crate::error::CoreError;
-use crate::paths::{Project, fold_case};
+use crate::messages;
+use crate::paths::{Project, fold_case, relative};
 use crate::settings::read_settings;
 
 #[derive(Serialize, JsonSchema)]
@@ -55,17 +56,20 @@ fn entries(
             continue;
         };
         let path = entry.path();
-        let rel = path
-            .strip_prefix(root)
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
+        let Some(rel) = relative(root, &path) else {
+            if whole {
+                return Err(CoreError::bad_request(messages::not_utf8_name(
+                    path.display(),
+                )));
+            }
+            continue;
+        };
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };
         let link = kind.is_symlink();
         if keep(&rel) && (kind.is_dir() || kind.is_file() || link && path.is_file()) {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
             let dir = kind.is_dir();
             out.push(Entry {
                 path,
@@ -136,4 +140,42 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     }
     let main = read_settings(&project.settings).main_file;
     nodes(&project.root, &project.root, &fold_case(&main))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rels(root: &Path, whole: bool) -> Result<Vec<String>, CoreError> {
+        let mut rels = Vec::new();
+        walk(root, &listed, whole, &mut |entry| {
+            rels.push(entry.rel.clone());
+            Ok(true)
+        })?;
+        Ok(rels)
+    }
+
+    #[test]
+    fn a_nested_files_rel_is_joined_with_slashes_and_a_hidden_folder_is_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in ["a/b.tex", "a/.git/c.tex", "d.tex"] {
+            let path = dir.path().join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "").unwrap();
+        }
+        assert_eq!(rels(dir.path(), false).unwrap(), ["a", "a/b.tex", "d.tex"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_name_that_isnt_utf8_is_left_out_of_a_listing_and_refuses_a_whole_copy() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.tex"), "").unwrap();
+        let latin1 = std::ffi::OsStr::from_bytes(b"caf\xe9.tex");
+        fs::write(dir.path().join(latin1), "").unwrap();
+        assert_eq!(rels(dir.path(), false).unwrap(), ["a.tex"]);
+        let refused = rels(dir.path(), true).unwrap_err();
+        assert_eq!(refused.kind, crate::ErrorKind::Invalid);
+    }
 }

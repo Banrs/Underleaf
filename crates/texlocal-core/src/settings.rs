@@ -67,6 +67,13 @@ impl Engine {
 struct ProjectFile {
     #[serde(flatten)]
     settings: StoredSettings,
+    #[serde(flatten)]
+    rest: Map<String, Value>,
+}
+
+#[derive(Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct DeviceFile {
     #[serde(skip_serializing_if = "StoredUi::is_default")]
     ui: StoredUi,
     #[serde(rename = "shellEscapeFor", skip_serializing_if = "Option::is_none")]
@@ -105,15 +112,73 @@ fn update<T: DeserializeOwned + Default + Serialize>(
     Ok(value)
 }
 
-fn read_project(file: &Path) -> ProjectFile {
+fn read_device(file: &Path) -> DeviceFile {
     load(file).unwrap_or_default()
 }
 
-pub fn read_settings(file: &Path) -> StoredSettings {
-    read_project(file).settings
+fn update_device(
+    file: &Path,
+    change: impl FnOnce(&mut DeviceFile) -> Result<(), CoreError>,
+) -> Result<(), CoreError> {
+    match fs::create_dir(file.parent().expect("a file is in a folder")) {
+        Err(err) if err.kind() != ErrorKind::AlreadyExists => Err(err.into()),
+        _ => update(file, change).map(drop),
+    }
 }
 
-pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettings, CoreError> {
+pub(crate) fn migrate(project: &Project) {
+    if project.ui == project.settings || project.ui.exists() {
+        return;
+    }
+    let Ok(old) = load::<DeviceFile>(&project.settings) else {
+        return;
+    };
+    let moved = DeviceFile {
+        rest: Map::new(),
+        ..old
+    };
+    if moved != DeviceFile::default() {
+        let _ = update_device(&project.ui, |device| {
+            *device = moved;
+            Ok(())
+        });
+    }
+}
+
+pub(crate) fn copy_ui(from: &Project, to: &Path) {
+    migrate(from);
+    if let Ok(device) = load::<DeviceFile>(&from.ui) {
+        let _ = update_device(to, |copy| {
+            *copy = DeviceFile {
+                shell_escape_for: None,
+                ..device
+            };
+            Ok(())
+        });
+    }
+}
+
+pub fn read_settings(file: &Path) -> StoredSettings {
+    load::<ProjectFile>(file).unwrap_or_default().settings
+}
+
+pub fn write_settings(
+    project: &Project,
+    patch: &SettingsPatch,
+) -> Result<StoredSettings, CoreError> {
+    let moved = project.ui != project.settings && project.ui.exists();
+    store_settings(&project.settings, patch, moved)
+}
+
+pub(crate) fn new_settings(file: &Path, patch: &SettingsPatch) -> Result<(), CoreError> {
+    store_settings(file, patch, false).map(drop)
+}
+
+fn store_settings(
+    file: &Path,
+    patch: &SettingsPatch,
+    moved: bool,
+) -> Result<StoredSettings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
         let settings = &mut file.settings;
         if let Some(main_file) = &patch.main_file {
@@ -124,28 +189,31 @@ pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettin
             .stop_on_first_error
             .unwrap_or(settings.stop_on_first_error);
         file.rest.remove("shellEscape");
+        if moved {
+            file.rest.remove("ui");
+            file.rest.remove("shellEscapeFor");
+        }
         Ok(())
     })?;
     Ok(file.settings)
 }
 
 pub fn problem(project: &Project) -> Option<Message> {
-    let unreadable = |file: &Path| load::<ProjectFile>(file).err();
-    let problem = unreadable(&project.settings).or_else(|| unreadable(&project.ui));
+    let problem = load::<ProjectFile>(&project.settings).err();
+    let problem = problem.or_else(|| load::<DeviceFile>(&project.ui).err());
     problem.map(|err| err.message)
 }
 
 pub fn granted(project: &Project) -> bool {
-    let granted = read_project(&project.ui).shell_escape_for;
+    let granted = read_device(&project.ui).shell_escape_for;
     granted.is_some_and(|folder| identity(&project.root) == Some(folder))
 }
 
 pub fn grant(project: &Project, on: bool) -> Result<(), CoreError> {
-    update(&project.ui, |file: &mut ProjectFile| {
-        file.shell_escape_for = on.then(|| identity(&project.root)).flatten();
+    update_device(&project.ui, |device| {
+        device.shell_escape_for = on.then(|| identity(&project.root)).flatten();
         Ok(())
     })
-    .map(drop)
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -189,15 +257,15 @@ pub(crate) struct AppSettings {
     rest: Map<String, Value>,
 }
 
-const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
+pub(crate) const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 
 impl AppSettings {
-    pub(crate) fn read(data_dir: &Path) -> Self {
-        load(&data_dir.join(APP_SETTINGS_FILE)).unwrap_or_default()
+    pub(crate) fn read(dir: &Path) -> Self {
+        load(&dir.join(APP_SETTINGS_FILE)).unwrap_or_default()
     }
 
-    pub(crate) fn update(data_dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), CoreError> {
-        update(&data_dir.join(APP_SETTINGS_FILE), |app| {
+    pub(crate) fn update(dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), CoreError> {
+        update(&dir.join(APP_SETTINGS_FILE), |app| {
             change(app);
             Ok(())
         })
@@ -237,7 +305,7 @@ pub struct UiState {
 }
 
 pub fn read_ui(file: &Path) -> UiState {
-    let ui = read_project(file).ui;
+    let ui = read_device(file).ui;
     UiState {
         zoom: ui.zoom.as_ref().and_then(Zoom::read),
         expanded_folders: ui.expanded_folders,
@@ -251,16 +319,16 @@ pub fn read_ui(file: &Path) -> UiState {
 pub(crate) fn store_ui(
     file: &Path,
     change: impl FnOnce(&mut StoredUi) -> Result<(), CoreError>,
-) -> Result<StoredUi, CoreError> {
-    let file = update(file, |file: &mut ProjectFile| {
-        change(&mut file.ui)?;
-        for list in [&mut file.ui.expanded_folders, &mut file.ui.folded_headings] {
+) -> Result<(), CoreError> {
+    update_device(file, |device| {
+        let ui = &mut device.ui;
+        change(ui)?;
+        for list in [&mut ui.expanded_folders, &mut ui.folded_headings] {
             list.sort();
             list.dedup();
         }
         Ok(())
-    })?;
-    Ok(file.ui)
+    })
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -324,11 +392,10 @@ pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
         }
         Ok(())
     })
-    .map(drop)
 }
 
 pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
-    let before = read_project(file).ui;
+    let before = read_device(file).ui;
     let mut state = before.clone();
     for folder in &mut state.expanded_folders {
         if let Some(new) = moved(folder) {

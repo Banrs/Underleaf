@@ -15,10 +15,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: u64 = 1_000_000;
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-type Group = Mutex<Option<u32>>;
+type Held = Mutex<Option<sys::Group>>;
 
-#[derive(Clone)]
-pub(crate) struct Tree(Arc<Group>);
+#[derive(Clone, Default)]
+pub(crate) struct Tree(Arc<Held>);
 
 #[derive(Default)]
 pub(crate) struct Processes(Mutex<Registry>);
@@ -28,7 +28,7 @@ struct Registry {
     quit: bool,
     last: u64,
     owners: HashSet<u64>,
-    trees: Vec<(Option<u64>, Weak<Group>)>,
+    trees: Vec<(Option<u64>, Weak<Held>)>,
 }
 
 impl Processes {
@@ -91,7 +91,7 @@ impl Tree {
     }
 
     pub(crate) fn kill(&self) {
-        if let Some(group) = *lock(&self.0) {
+        if let Some(group) = &*lock(&self.0) {
             sys::kill_group(group);
         }
     }
@@ -100,7 +100,7 @@ impl Tree {
         let pid = child.id().expect("not reaped yet");
         let _ = tokio::task::spawn_blocking(move || sys::wait_exited(pid)).await;
         if let Some(group) = lock(&self.0).take() {
-            sys::kill_group(group);
+            sys::kill_group(&group);
         }
         child.wait().await
     }

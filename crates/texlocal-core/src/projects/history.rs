@@ -23,14 +23,31 @@ pub(super) const MAX_KEPT: u64 = 20 << 20;
 
 pub(crate) enum Taken {
     Auto,
-    Before(&'static str),
+    Before(Reason),
     Named(String),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Reason {
+    #[serde(alias = "Before Replace All")]
+    #[schemars(title = "Before Replace All")]
+    ReplaceAll,
+    #[serde(alias = "Before Rename")]
+    #[schemars(title = "Before Rename")]
+    Rename,
+    #[serde(alias = "Before Adding a Package")]
+    #[schemars(title = "Before Adding a Package")]
+    AddPackage,
+    #[serde(alias = "Before Restore")]
+    #[schemars(title = "Before Restore")]
+    Restore,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Version {
     name: Option<String>,
-    reason: Option<String>,
+    reason: Option<Reason>,
     files: BTreeMap<String, String>,
 }
 
@@ -39,7 +56,7 @@ pub struct Snapshot {
     id: String,
     time: i64,
     name: Option<String>,
-    reason: Option<String>,
+    reason: Option<Reason>,
     changed: Vec<ChangedFile>,
 }
 
@@ -158,7 +175,7 @@ impl History {
             (taken, _) => {
                 let (name, reason) = match taken {
                     Taken::Auto => (None, None),
-                    Taken::Before(reason) => (None, Some(reason.to_owned())),
+                    Taken::Before(reason) => (None, Some(reason)),
                     Taken::Named(name) => (Some(name), None),
                 };
                 let snapshot = Version {
@@ -323,5 +340,18 @@ mod tests {
         let mut objects: Vec<_> = objects.map(|entry| entry.unwrap().file_name()).collect();
         objects.sort_unstable();
         assert_eq!(objects, ["day", "hour", "named", "recent"]);
+    }
+
+    #[test]
+    fn an_old_records_reason_reads_as_its_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = History {
+            dir: dir.path().into(),
+        };
+        let old = r#"{"name":null,"reason":"Before Restore","files":{}}"#;
+        fs::create_dir_all(history.dir.join("snapshots")).unwrap();
+        fs::write(history.record(1), old).unwrap();
+        let listed = serde_json::to_value(history.list().unwrap()).unwrap();
+        assert_eq!(listed[0]["reason"], "restore");
     }
 }

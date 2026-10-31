@@ -14,15 +14,16 @@ pub(crate) enum Flush {
     Ordered,
 }
 
-pub(crate) fn temp_builder(mode: u32) -> tempfile::Builder<'static, 'static> {
+pub(crate) fn temp_builder() -> tempfile::Builder<'static, 'static> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
-    builder.permissions(sys::permissions(mode));
     builder
 }
 
 pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
-    Ok(temp_builder(0o666).tempfile_in(dir)?.into_parts())
+    let mut builder = temp_builder();
+    sys::default_permissions(&mut builder);
+    Ok(builder.tempfile_in(dir)?.into_parts())
 }
 
 pub(crate) fn write(path: &Path, bytes: &[u8], flush: Flush) -> io::Result<Stamp> {
@@ -41,7 +42,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8], flush: Flush) -> io::Result<Stamp
     }
     file.write_all(bytes)?;
     sys::flush(&file, flush)?;
-    let stamp = Stamp::of(&file.metadata()?);
+    let stamp = Stamp::at(&temp)?;
     temp.persist(&target)?;
     Ok(stamp)
 }
@@ -64,7 +65,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "new");
         let meta = fs::metadata(&file).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o640);
-        assert!(stamp == Stamp::of(&meta));
+        assert!(stamp == Stamp::at(&file).unwrap());
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
         fs::set_permissions(&file, fs::Permissions::from_mode(0o440)).unwrap();
         let refused = write(&file, b"newer", Flush::Full)

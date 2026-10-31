@@ -12,7 +12,7 @@ use super::edits::DocumentEdits;
 use super::{Msg, Pending};
 use crate::messages;
 use crate::paths::RelPath;
-use crate::projects::{self, History, Snapshot, Taken};
+use crate::projects::{self, History, Reason, Snapshot, Taken};
 use crate::{CoreError, lf, lossy_string};
 
 pub(super) type Then<T> =
@@ -105,6 +105,13 @@ impl Actor {
         then: impl FnOnce(&mut Self, U) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
+        if self.snapshots > 0 {
+            let queued = move |actor: &mut Self| actor.then_on_actor(job, then, reply);
+            return self.queued.push_back(Box::new(queued));
+        }
+        if !self.writes_history.load(Ordering::Acquire) {
+            return reply.send(Err(super::stopped()));
+        }
         self.snapshots += 1;
         let tx = self.tx.clone();
         let job = move |history: &History| {
@@ -119,6 +126,9 @@ impl Actor {
                     }
                     _ => Err(super::stopped()),
                 });
+                if let Some(next) = actor.queued.pop_front() {
+                    next(actor);
+                }
             };
             let _ = tx.send(Msg::Snapshotted(Box::new(finish)));
         });
@@ -126,7 +136,7 @@ impl Actor {
 
     pub fn before<T: 'static>(
         &mut self,
-        reason: &'static str,
+        reason: Reason,
         then: Result<Then<T>, CoreError>,
         reply: Pending<T>,
     ) {
@@ -178,12 +188,11 @@ impl Actor {
             if edits.len() > 1 {
                 return Err(CoreError::conflict(messages::one_document()));
             }
-            history.take(&root, now(), Taken::Before("Before Restore"))?;
+            history.take(&root, now(), Taken::Before(Reason::Restore))?;
             Ok((edits.pop(), others))
         };
-        let put_back = |actor: &mut Self, (edits, others): (_, Vec<(String, _)>)| {
-            let others = others.into_iter().filter(|(path, _)| !actor.deleting(path));
-            if !projects::put_back(&actor.project.root, others.collect())?.is_empty() {
+        let put_back = |actor: &mut Self, (edits, others)| {
+            if !projects::put_back(&actor.project.root, others)?.is_empty() {
                 actor.reload_tree();
             }
             Ok(edits)

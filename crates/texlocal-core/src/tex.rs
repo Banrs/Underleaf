@@ -59,17 +59,11 @@ fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
 }
 
 pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
-    absolute_dirs(OsStr::new(path_env))
-        .map(|dir| dir.join(program))
-        .find(|path| executable(path))
+    absolute_dirs(OsStr::new(path_env)).find_map(|dir| sys::program(&dir, program))
 }
 
 pub(crate) fn program_at(path: &Path) -> Option<PathBuf> {
-    (path.is_absolute() && executable(path)).then(|| path.to_path_buf())
-}
-
-fn executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|meta| sys::executable(&meta))
+    (path.is_absolute() && sys::executable(path)).then(|| path.to_path_buf())
 }
 
 pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
@@ -77,7 +71,7 @@ pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
     [dir.to_path_buf(), bin.clone()]
         .into_iter()
         .chain(children(bin))
-        .find(|c| program_at(&c.join(program)).is_some())
+        .find(|c| c.is_absolute() && sys::program(c, program).is_some())
 }
 
 static LATEXMK_VERSION: LazyLock<Regex> =

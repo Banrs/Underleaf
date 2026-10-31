@@ -1,4 +1,5 @@
-use std::fs::{self, Metadata};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
@@ -13,17 +14,18 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    pub fn of(meta: &Metadata) -> Self {
+    pub fn at(path: &Path) -> io::Result<Self> {
+        let meta = fs::metadata(path)?;
         let modified = match meta.modified().map(|time| time.duration_since(UNIX_EPOCH)) {
             Ok(Ok(after)) => after.as_nanos() as i128,
             Ok(Err(before)) => -(before.duration().as_nanos() as i128),
             Err(_) => 0,
         };
-        Self {
-            identity: sys::identity(meta),
+        Ok(Self {
+            identity: sys::identity(path, &meta)?,
             size: meta.len(),
             modified,
-        }
+        })
     }
 }
 
@@ -43,7 +45,7 @@ impl<T> Kept<T> {
         path: &Path,
         read: impl FnOnce(&Path) -> Result<T, E>,
     ) -> Result<Arc<T>, E> {
-        let stamp = fs::metadata(path).ok().map(|meta| Stamp::of(&meta));
+        let stamp = Stamp::at(path).ok();
         let read_as = (path.to_owned(), stamp);
         let mut kept = lock(&self.0);
         if let Some(at) = kept.iter().position(|(was, _)| *was == read_as) {

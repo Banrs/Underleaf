@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "6dfca741bf1bae5dc985d5f774cba6d25e1a49a61073ebc7cdb1ed67f9d7c5a5"
+nonisolated let protocolDigest = "562fa4d90543914a3e07ca36ed555ebf7bcc2e80615226f18e331b7d5b882395"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -385,14 +385,6 @@ nonisolated struct DeleteLines: SourceRequest {
     static let command = "DeleteLines"
 
     var selections: [TextRange]
-}
-
-nonisolated struct Deleted: SessionRequest {
-    typealias Reply = Done
-    static let command = "Deleted"
-
-    var path: String
-    var trashed: Bool
 }
 
 nonisolated enum DiffLine: Decodable, Hashable, Sendable {
@@ -1198,11 +1190,13 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case diskFull = "disk_full"
     case notSaved = "not_saved"
     case trashFailed = "trash_failed"
+    case noTrash = "no_trash"
     case unreadable
     case overOneMb = "over_one_mb"
     case openedElsewhere = "opened_elsewhere"
     case projectExists = "project_exists"
     case closeBeforeRenaming = "close_before_renaming"
+    case closeBeforeTrashing = "close_before_trashing"
     case closeBeforeForgetting = "close_before_forgetting"
     case onlyOpenedForgotten = "only_opened_forgotten"
     case folderMoved = "folder_moved"
@@ -1226,6 +1220,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case changedOnDisk = "changed_on_disk"
     case editsUnsaved = "edits_unsaved"
     case oneDocument = "one_document"
+    case notUtf8Name = "not_utf8_name"
     case notUtf8File = "not_utf8_file"
     case tooLargeToKeep = "too_large_to_keep"
     case renamedSymbolUnfit = "renamed_symbol_unfit"
@@ -1271,9 +1266,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case tinytexStalled = "tinytex_stalled"
     case tinytexDownloadFailed = "tinytex_download_failed"
     case noTinytexTlmgr = "no_tinytex_tlmgr"
-    case liveNotRunning = "live_not_running"
     case liveUnpatched = "live_unpatched"
-    case liveUnfit = "live_unfit"
     case liveNoMain = "live_no_main"
     case noTexpresso = "no_texpresso"
     case texpressoUnstarted = "texpresso_unstarted"
@@ -1281,8 +1274,6 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case texpressoExited = "texpresso_exited"
     case texpressoUnsent = "texpresso_unsent"
     case viewerStopped = "viewer_stopped"
-    case texpressoDidntStart = "texpresso_didnt_start"
-    case liveRejected = "live_rejected"
 }
 
 nonisolated struct MoveLines: SourceRequest {
@@ -1416,13 +1407,6 @@ nonisolated struct PdfPage: Encodable, Hashable, Sendable {
     var near: [TextRange]
 }
 
-nonisolated struct PrepareDelete: SessionRequest {
-    typealias Reply = Bool
-    static let command = "PrepareDelete"
-
-    var path: String
-}
-
 nonisolated struct ProjectEdits: Decodable, Hashable, Sendable {
     var edits: DocumentEdits?
     var written: [Written]
@@ -1516,6 +1500,22 @@ nonisolated enum ProjectTemplate: String, Encodable, CaseIterable, Hashable, Sen
     }
 }
 
+nonisolated struct PutBack: SessionRequest {
+    typealias Reply = Done
+    static let command = "PutBack"
+
+    var path: String
+    var trashed: String
+}
+
+nonisolated struct PutBackProject: LibraryRequest {
+    typealias Reply = Done
+    static let command = "PutBackProject"
+
+    var id: String
+    var trashed: String
+}
+
 nonisolated struct QuickHelp: Decodable, Hashable, Sendable {
     var title: String
     var detail: String
@@ -1563,6 +1563,19 @@ nonisolated extension QuickOpenItem {
 
 nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Sendable {
     case file, heading, label
+}
+
+nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
+    case replaceAll, rename, addPackage, restore
+
+    var title: String {
+        switch self {
+        case .replaceAll: "Before Replace All"
+        case .rename: "Before Rename"
+        case .addPackage: "Before Adding a Package"
+        case .restore: "Before Restore"
+        }
+    }
 }
 
 nonisolated struct Reattach: SessionRequest {
@@ -1910,7 +1923,7 @@ nonisolated struct Snapshot: Decodable, Hashable, Sendable {
     var id: String
     var time: Int
     var name: String?
-    var reason: String?
+    var reason: Reason?
     var changed: [ChangedFile]
 
     enum CodingKeys: String, CodingKey, CaseIterable { case id, time, name, reason, changed }
@@ -1922,7 +1935,7 @@ nonisolated extension Snapshot {
         id = try wire.decode(String.self, forKey: .id)
         time = try wire.decode(Int.self, forKey: .time)
         name = try wire.decode(String?.self, forKey: .name)
-        reason = try wire.decode(String?.self, forKey: .reason)
+        reason = try wire.decode(Reason?.self, forKey: .reason)
         changed = try wire.decode([ChangedFile].self, forKey: .changed)
     }
 }
@@ -2244,6 +2257,20 @@ nonisolated struct ToggleStyle: SourceRequest {
 
     var selections: [TextRange]
     var style: TextStyle
+}
+
+nonisolated struct Trash: SessionRequest {
+    typealias Reply = String?
+    static let command = "Trash"
+
+    var path: String
+}
+
+nonisolated struct TrashProject: LibraryRequest {
+    typealias Reply = String
+    static let command = "TrashProject"
+
+    var id: String
 }
 
 nonisolated struct TreeNode: Decodable, Hashable, Sendable {

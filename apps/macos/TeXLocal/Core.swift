@@ -49,13 +49,27 @@ final class Core {
             .appending(path: "TeXLocal", directoryHint: .isDirectory)
     }
 
+    static let stateFolder = if let dir = ProcessInfo.processInfo.environment["TEXLOCAL_STATE"], !dir.isEmpty {
+        URL(filePath: dir, directoryHint: .isDirectory)
+    } else {
+        URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "TeXLocal", directoryHint: .isDirectory)
+    }
+
     private var handle: OpaquePointer? = Core.open()
     var isOpen: Bool { handle != nil }
     let library = LibraryStore()
 
-    static let libraryPath = (libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-    static let libraryAdvice = "Make sure you can create and write to \(libraryPath), then try again."
-    private static let unavailable = AppFailure("TeXLocal can’t open its projects folder. \(libraryAdvice)")
+    static let libraryPath = shown(libraryFolder)
+    private static var unavailable: AppFailure { AppFailure("TeXLocal can’t open its folders. \(advice())") }
+
+    static func advice(_ folders: [URL] = [Core.libraryFolder, Core.stateFolder]) -> String {
+        let unwritable = folders.first { !FileManager.default.isWritableFile(atPath: $0.path(percentEncoded: false)) }
+        return "Make sure you can create and write to \(shown(unwritable ?? folders[0])), then try again."
+    }
+
+    private static func shown(_ folder: URL) -> String {
+        (folder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+    }
 
     private init() {
         Task {
@@ -71,7 +85,9 @@ final class Core {
     }
 
     private static func open() -> OpaquePointer? {
-        libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0, listener, nil) }
+        libraryFolder.withUnsafeFileSystemRepresentation { data in
+            stateFolder.withUnsafeFileSystemRepresentation { tl_open(data, $0, listener, nil) }
+        }
     }
 
     func reopen() { if handle == nil { handle = Self.open() } }

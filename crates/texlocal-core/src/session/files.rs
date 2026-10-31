@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use texlocal_latex::{FileKind, file_kind, is_text};
 
@@ -12,22 +12,34 @@ use crate::messages;
 use crate::paths::{self, within};
 use crate::projects::{self, RenameResult};
 use crate::settings::{self, SettingsPatch, UiPatch};
-use crate::{CoreError, zipexport};
+use crate::{CoreError, sys, zipexport};
 
 impl Actor {
-    pub fn deleted(&mut self, path: &str, trashed: bool) {
-        self.deleting.remove(path);
-        if trashed {
-            if self.open.as_ref().is_some_and(|open| within(open, path))
-                && let Some(main) = self.tree.main.clone()
-            {
-                let _ = self.open_file(&main);
-            }
-            for doc in self.docs_within(path) {
-                self.close_doc(&doc);
-            }
-            self.reload_tree();
+    pub fn trash(&mut self, path: &str) -> Result<Option<PathBuf>, CoreError> {
+        if !self.flush_all(true)? {
+            return Ok(None);
         }
+        let main = settings::read_settings(&self.project.settings).main_file;
+        if within(&main, path) {
+            return Err(CoreError::conflict(messages::main_file_trash()));
+        }
+        let trashed = sys::trash(&paths::safe_path(&self.project.root, path)?)?;
+        if self.open.as_ref().is_some_and(|open| within(open, path))
+            && let Some(main) = self.tree.main.clone()
+        {
+            let _ = self.open_file(&main);
+        }
+        for doc in self.docs_within(path) {
+            self.close_doc(&doc);
+        }
+        self.reload_tree();
+        Ok(Some(trashed))
+    }
+
+    pub fn put_back(&mut self, path: &str, trashed: &Path) -> Result<(), CoreError> {
+        projects::untrash(trashed, &paths::safe_write_path(&self.project.root, path)?)?;
+        self.reload_tree();
+        Ok(())
     }
 
     pub fn create_entry(
@@ -40,10 +52,6 @@ impl Actor {
         let made = projects::create_free(&self.project.root, &path, dir)?;
         self.reload_tree();
         Ok(made)
-    }
-
-    pub fn deleting(&self, path: &str) -> bool {
-        self.deleting.iter().any(|entry| within(path, entry))
     }
 
     pub fn files_changed_on_disk(&mut self) {
@@ -133,10 +141,9 @@ impl Actor {
             return Ok(None);
         }
         let renamed = projects::rename_entry(&self.project, from, to)?;
-        self.preview.restart(self.id);
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
         self.emit(Event::Renamed(Renamed { from, to }));
-        self.live_follow();
+        self.live_restart();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
             if !within(&path, from) {
@@ -179,10 +186,10 @@ impl Actor {
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
         let project = &self.project;
         let main = settings::read_settings(&project.settings).main_file;
-        let updated = settings::write_settings(&project.settings, patch)?;
+        let updated = settings::write_settings(project, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if updated.main_file != main {
-            self.preview.restart(self.id);
+            self.live_restart();
             self.main_file_changed();
         } else if build && self.auto_compile {
             self.later.push_back(Later::Compile(true));
@@ -201,17 +208,5 @@ impl Actor {
         if self.auto_compile || building {
             self.later.push_back(Later::Compile(self.auto_compile));
         }
-    }
-
-    pub fn prepare_delete(&mut self, path: &str) -> Result<bool, CoreError> {
-        if !self.flush_all(true)? {
-            return Ok(false);
-        }
-        let main = settings::read_settings(&self.project.settings).main_file;
-        if within(&main, path) {
-            return Err(CoreError::conflict(messages::main_file_trash()));
-        }
-        self.deleting.insert(path.to_owned());
-        Ok(true)
     }
 }

@@ -15,7 +15,7 @@ use super::documents::Doc;
 use super::history::Then;
 use super::scans::tex;
 use crate::messages;
-use crate::projects::{self, Written};
+use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
 use crate::{CoreError, packages};
 
@@ -112,7 +112,7 @@ impl Actor {
                         add(actor, snapshot).map(|added| Some(Fixed { edits: added.edits }))
                     })
                 });
-                return self.before("Before Adding a Package", added, reply);
+                return self.before(Reason::AddPackage, added, reply);
             }
             Fix::Xelatex => self.patch_settings(SettingsPatch {
                 engine: Some(Engine::Xelatex),
@@ -187,8 +187,7 @@ fn edit_project(
     let edits = edits.pop();
     let open: Vec<String> = open.iter().map(|(path, ..)| path.clone()).collect();
     Ok(Box::new(move |actor, snapshot| {
-        let others =
-            |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel) && !actor.deleting(rel);
+        let others = |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel);
         let written = projects::replace_in_files(&actor.project.root, &others, &found, &to)?;
         Ok(ProjectEdits {
             edits,

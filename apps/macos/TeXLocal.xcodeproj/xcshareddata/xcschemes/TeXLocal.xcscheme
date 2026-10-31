@@ -73,6 +73,11 @@
             value = "$(OBJROOT)/xctest-data"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TEXLOCAL_STATE"
+            value = "$(OBJROOT)/xctest-state"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </TestAction>
    <LaunchAction

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -23,13 +23,13 @@ use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::{Lifecycle, Stopped};
 use super::watch::{self, Change, TreeIndex};
-use super::{Compiler, Msg, Pending, Preview, Reply, SessionSection, Sessions};
+use super::{Compiler, Msg, OnActor, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
 use crate::events::{Event, Said, Sent, SessionEvent};
 use crate::import::{ImportConflict, Imported};
 use crate::messages;
 use crate::paths::{Project, RelPath};
-use crate::projects::{self, Job, RenameResult, SearchGroup, Snapshot};
+use crate::projects::{self, Job, Reason, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
@@ -62,8 +62,8 @@ requests! {
         Rename { from: RelPath, to: String } -> Option<RenameResult>,
         CreateEntry { folder: String, name: String, dir: bool } -> String,
         SetSettings { patch: SettingsPatch } -> (),
-        PrepareDelete { path: RelPath } -> bool,
-        Deleted { path: RelPath, trashed: bool } -> (),
+        Trash { path: RelPath } -> Option<PathBuf>,
+        PutBack { path: RelPath, trashed: PathBuf } -> (),
         StartLive {} -> (),
         StopLive {} -> (),
         LiveView { first: u32, last: u32 } -> (),
@@ -93,7 +93,6 @@ pub(crate) enum Timer {
     Fs,
     Caret,
     Halting,
-    Retry,
     Restart,
     Disk,
     Log,
@@ -106,7 +105,6 @@ impl Timer {
             Self::Autosave => 700,
             Self::Symbols | Self::Caret => 150,
             Self::Fs => 250,
-            Self::Retry => 750,
             Self::Halting | Self::Issues => 1000,
             Self::Restart | Self::Disk => 180,
             Self::Log => 200,
@@ -151,12 +149,12 @@ pub(crate) struct Actor {
     pub fs_pending: Vec<Change>,
     pub tree: TreeIndex,
     _watcher: Option<RecommendedWatcher>,
-    pub deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: std::sync::mpsc::Sender<Job>,
     pub writes_history: Arc<AtomicBool>,
     pub snapshots: usize,
+    pub queued: VecDeque<OnActor>,
     pub sent: Sent<SessionSection>,
     stage: Stage,
 }
@@ -182,6 +180,7 @@ impl Actor {
             .flatten();
         let mut builds = Builds::default();
         builds.pdf = built_pdf(&project);
+        settings::migrate(&project);
         let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
         if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
@@ -216,12 +215,12 @@ impl Actor {
             fs_pending: Vec::new(),
             tree: TreeIndex::of(&tree),
             _watcher: watcher,
-            deleting: BTreeSet::new(),
             live: Live::default(),
             later,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
             snapshots: 0,
+            queued: VecDeque::new(),
             sent: Sent::default(),
             stage: Stage::Open(in_session),
         };
@@ -309,6 +308,9 @@ impl Actor {
                 _ => {}
             }
         }
+        while let Some(queued) = self.queued.pop_front() {
+            queued(self);
+        }
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(Err(super::stopped()));
         }
@@ -362,7 +364,6 @@ impl Actor {
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.caret_settled(),
                 Timer::Halting => self.live_halted(true),
-                Timer::Retry => self.flush_pending(),
                 Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
                 Timer::Log => self.publish_live(false),
@@ -452,11 +453,11 @@ impl Actor {
                 answer,
             ) => {
                 let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
-                return self.before("Before Replace All", replace, Pending { reply, answer });
+                return self.before(Reason::ReplaceAll, replace, Pending { reply, answer });
             }
             Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
                 let rename = self.rename_symbol(kind, from, to);
-                return self.before("Before Rename", rename, Pending { reply, answer });
+                return self.before(Reason::Rename, rename, Pending { reply, answer });
             }
             Session::ApplyFix(ApplyFix { id }, answer) => {
                 return self.fix(id, Pending { reply, answer });
@@ -480,11 +481,9 @@ impl Actor {
             Session::SetSettings(SetSettings { patch }, answer) => {
                 answer(self.set_settings(&patch, true))
             }
-            Session::PrepareDelete(PrepareDelete { path }, answer) => {
-                answer(self.prepare_delete(&path.0))
-            }
-            Session::Deleted(Deleted { path, trashed }, answer) => {
-                answer(Ok(self.deleted(&path.0, trashed)))
+            Session::Trash(Trash { path }, answer) => answer(self.trash(&path.0)),
+            Session::PutBack(PutBack { path, trashed }, answer) => {
+                answer(self.put_back(&path.0, &trashed))
             }
             Session::StartLive(StartLive {}, answer) => answer(Ok(self.live_start_asked())),
             Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),

@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use crate::compile::CompileManager;
 use crate::events::{Log, LogLevel, Said, Sent};
 use crate::messages;
-use crate::paths::Project;
+use crate::paths::{self, Project};
 use crate::process::Processes;
 use crate::projects::{self, History, Job, Opening, ProjectInfo};
 use crate::protocol::requests;
@@ -23,6 +23,7 @@ use crate::{CoreError, import, lock, tinytex};
 
 pub struct Service {
     pub(crate) data_dir: PathBuf,
+    pub(crate) state_dir: PathBuf,
     pub(crate) processes: Arc<Processes>,
     pub(crate) compile: CompileManager,
     pub(crate) texpresso: Arc<texpresso::Manager>,
@@ -67,6 +68,8 @@ requests! {
         DuplicateProject { id: String, name: String } -> ProjectInfo,
         FreeProjectName {} -> String,
         RenameProject { id: String, name: String } -> ProjectInfo,
+        TrashProject { id: String } -> PathBuf,
+        PutBackProject { id: String, trashed: PathBuf } -> (),
         KillAll {} -> (),
         OpenPath { path: PathBuf } -> Opening,
         ForgetFolder { id: String } -> (),
@@ -74,10 +77,12 @@ requests! {
 }
 
 impl Service {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, state_dir: PathBuf) -> Self {
+        paths::move_device_state(&data_dir, &state_dir);
         let processes = Arc::new(Processes::default());
         Self {
             data_dir,
+            state_dir,
             compile: CompileManager::new(Arc::clone(&processes)),
             texpresso: Arc::new(texpresso::Manager::new(Arc::clone(&processes))),
             processes,
@@ -91,7 +96,7 @@ impl Service {
     }
 
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, CoreError> {
-        projects::list_projects(&self.data_dir)
+        projects::list_projects(self)
     }
 
     pub(crate) fn publish_projects(&self) -> Result<(), CoreError> {
@@ -182,7 +187,7 @@ impl Service {
     }
 
     pub fn project(&self, id: &str) -> Result<Project, CoreError> {
-        Project::find(&self.data_dir, id)
+        Project::find(self, id)
     }
 
     fn tex_turn(&self) -> impl Future<Output = oneshot::Sender<()>> + use<> {
@@ -197,7 +202,7 @@ impl Service {
     }
 
     async fn status(&self) -> TexStatus {
-        let app = AppSettings::read(&self.data_dir);
+        let app = AppSettings::read(&self.state_dir);
         let (tex_path, texpresso_path) = tex::tool_paths(&app);
         let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
         let mut found = tex::tex_available(&self.processes, &tex_path).await;
@@ -210,7 +215,7 @@ impl Service {
     }
 
     pub(crate) fn tool_paths(&self) -> (String, String) {
-        tex::tool_paths(&AppSettings::read(&self.data_dir))
+        tex::tool_paths(&AppSettings::read(&self.state_dir))
     }
 
     pub fn call(
@@ -242,14 +247,14 @@ impl Service {
                 let none_there = || CoreError::bad_request(messages::no_texpresso_there());
                 let bin = dir.map(|dir| tex::bin_dir(&dir, "texpresso").ok_or_else(none_there));
                 let bin = bin.transpose()?;
-                AppSettings::update(&self.data_dir, |app| app.texpresso_dir = bin)?;
+                AppSettings::update(&self.state_dir, |app| app.texpresso_dir = bin)?;
                 answer(Ok(self.status().await))
             }
             Library::SetTexDir(SetTexDir { dir }, answer) => {
                 let no_latexmk = || CoreError::bad_request(messages::no_latexmk());
                 let bin = dir.map(|dir| tex::bin_dir(&dir, "latexmk").ok_or_else(no_latexmk));
                 let bin = bin.transpose()?;
-                AppSettings::update(&self.data_dir, |app| app.tex_dir = bin)?;
+                AppSettings::update(&self.state_dir, |app| app.tex_dir = bin)?;
                 answer(Ok(self.status().await))
             }
             Library::InstallTex(InstallTex {}, answer) => {
@@ -267,12 +272,7 @@ impl Service {
                     engine,
                 },
                 answer,
-            ) => answer(self.relisted(projects::create_project(
-                &self.data_dir,
-                &name,
-                template,
-                engine,
-            ))),
+            ) => answer(self.relisted(projects::create_project(self, &name, template, engine))),
             Library::DuplicateProject(DuplicateProject { id, name }, answer) => {
                 answer(self.relisted(import::duplicate_project(self, &id, &name)))
             }
@@ -282,8 +282,17 @@ impl Service {
             Library::RenameProject(RenameProject { id, name }, answer) => {
                 let renamed = self
                     .unless_open(&id, messages::close_before_renaming)
-                    .and_then(|_library| projects::rename_project(&self.data_dir, &id, &name));
+                    .and_then(|_library| projects::rename_project(self, &id, &name));
                 answer(self.relisted(renamed))
+            }
+            Library::TrashProject(TrashProject { id }, answer) => {
+                let trashed = self
+                    .unless_open(&id, messages::close_before_trashing)
+                    .and_then(|_library| projects::trash_project(self, &id));
+                answer(self.relisted(trashed))
+            }
+            Library::PutBackProject(PutBackProject { id, trashed }, answer) => {
+                answer(self.relisted(projects::put_back_project(self, &id, &trashed)))
             }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
             Library::OpenPath(OpenPath { path }, answer) => {

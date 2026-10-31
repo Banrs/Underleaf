@@ -39,7 +39,7 @@ pub struct Files(Mutex<HashMap<String, (Stamp, Arc<Facts>)>>);
 
 impl Files {
     pub fn facts(&self, abs: &Path, rel: &str) -> io::Result<Arc<Facts>> {
-        let stamp = Stamp::of(&fs::metadata(abs)?);
+        let stamp = Stamp::at(abs)?;
         let key = fold_case(rel);
         if let Some((read, facts)) = lock(&self.0).get(&key)
             && *read == stamp

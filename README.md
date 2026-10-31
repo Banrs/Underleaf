@@ -79,7 +79,8 @@ Settings › Live Preview.
 
 New projects go in a `TeXLocal` folder in your home folder. A project's settings, such as its main
 file and engine, are kept in a `.texlocal.json` file beside its sources. A folder you open keeps its
-settings outside the folder, unless it already has a `.texlocal.json`.
+settings outside the folder, unless it already has a `.texlocal.json`. Where you were in a project
+is kept in `~/Library/Application Support`, so syncing the `TeXLocal` folder doesn't carry it.
 
 Shell escape lets a document run programs on your Mac, so it is off until you turn it on for a
 project. That choice is stored on your Mac, not in the project, so a project you download or clone
