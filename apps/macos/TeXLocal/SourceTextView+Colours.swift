@@ -25,6 +25,11 @@ extension SourceTextView {
         let line = document.lineStart(document.line(at: start))
         let stale = textRange(.caret(line)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
         manager.invalidateRenderingAttributes(for: stale ?? manager.documentRange)
+        let shown = Set(fragments.map { ObjectIdentifier($0.fragment) })
+        for case let fragment as NSTextLayoutFragment in fragmentColours.keyEnumerator().allObjects
+        where !shown.contains(ObjectIdentifier(fragment)) {
+            fragmentColours.removeObject(forKey: fragment)
+        }
         let first = fragments.lastIndex { $0.offset <= line } ?? 0
         var changed: [CGRect] = []
         for (index, (_, fragment)) in fragments.enumerated().dropFirst(first) {

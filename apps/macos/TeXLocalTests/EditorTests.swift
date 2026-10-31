@@ -216,6 +216,26 @@ struct EditorTests {
         #expect(tops == [4])
     }
 
+    @Test func textLaidOutBeforeAnEditIsColouredWhenScrolledIntoView() throws {
+        let (editor, window) = Self.editor((1...400).map { "\\section{\($0)}" }.joined(separator: "\n"))
+        defer { window.close() }
+        let text = editor.textView
+        let manager = try #require(text.textLayoutManager)
+        window.displayIfNeeded()
+        manager.ensureLayout(for: manager.documentRange)
+        Self.type("x", in: text)
+        window.displayIfNeeded()
+        text.scrollRangeToVisible(NSRange(location: text.length, length: 0))
+        window.displayIfNeeded()
+        let last = try #require(text.textRange(.caret(text.document.lineStart(400))))
+        var colour: NSColor?
+        manager.enumerateRenderingAttributes(from: last.location, reverse: false) { _, attributes, _ in
+            colour = attributes[.foregroundColor] as? NSColor
+            return false
+        }
+        #expect(colour === text.syntaxTheme.color(.command))
+    }
+
     private static let typed = NSRange(location: NSNotFound, length: 0)
 
     private static func event(_ text: SourceTextView, _ body: () -> Void) {
