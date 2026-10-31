@@ -266,14 +266,13 @@ impl Actor {
 
     fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
         for _ in 0..2 {
-            let deleting = self.deleting(path);
             let Some(doc) = self.docs.get_mut(path) else {
                 return Ok(true);
             };
             if !doc.dirty() {
                 return Ok(true);
             }
-            if deleting || doc.asking.is_some() || autosave && doc.composing {
+            if doc.asking.is_some() || autosave && doc.composing {
                 return Ok(false);
             }
             if let Some(kind) = doc.conflict {

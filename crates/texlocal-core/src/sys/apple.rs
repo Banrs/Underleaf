@@ -4,6 +4,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
+use objc2_foundation::{NSFileManager, NSURL};
 use tokio::process::Command;
 
 pub(crate) use super::unix::*;
@@ -28,16 +29,21 @@ pub(crate) fn tinytex_bin(root: &Path) -> PathBuf {
     root.join("bin/universal-darwin")
 }
 
-pub(crate) fn trash(path: &Path) -> Result<(), CoreError> {
-    let trashed = std::process::Command::new("/usr/bin/trash")
-        .arg("-s")
-        .arg(path)
-        .output()?;
-    if trashed.status.success() {
-        return Ok(());
-    }
-    let said = String::from_utf8_lossy(&trashed.stderr);
-    Err(CoreError::internal(messages::trash_failed(said.trim())))
+pub(crate) fn trash(path: &Path) -> Result<PathBuf, CoreError> {
+    let failed = |said: String| CoreError::internal(messages::trash_failed(said));
+    let unnamed = || failed(path.display().to_string());
+    let url = NSURL::from_file_path(path).ok_or_else(unnamed)?;
+    let mut trashed = None;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
+        .map_err(|err| failed(err.localizedDescription().to_string()))?;
+    trashed
+        .and_then(|url| url.to_file_path())
+        .ok_or_else(unnamed)
+}
+
+pub(crate) fn untrash(trashed: &Path, to: &Path) -> io::Result<()> {
+    rename_exclusive(trashed, to)
 }
 
 pub(crate) fn install_as_administrator(

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -62,8 +62,8 @@ requests! {
         Rename { from: RelPath, to: String } -> Option<RenameResult>,
         CreateEntry { folder: String, name: String, dir: bool } -> String,
         SetSettings { patch: SettingsPatch } -> (),
-        PrepareDelete { path: RelPath } -> bool,
-        Deleted { path: RelPath, trashed: bool } -> (),
+        Trash { path: RelPath } -> Option<PathBuf>,
+        PutBack { path: RelPath, trashed: PathBuf } -> (),
         StartLive {} -> (),
         StopLive {} -> (),
         LiveView { first: u32, last: u32 } -> (),
@@ -151,7 +151,6 @@ pub(crate) struct Actor {
     pub fs_pending: Vec<Change>,
     pub tree: TreeIndex,
     _watcher: Option<RecommendedWatcher>,
-    pub deleting: BTreeSet<String>,
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: std::sync::mpsc::Sender<Job>,
@@ -218,7 +217,6 @@ impl Actor {
             fs_pending: Vec::new(),
             tree: TreeIndex::of(&tree),
             _watcher: watcher,
-            deleting: BTreeSet::new(),
             live: Live::default(),
             later,
             history,
@@ -486,11 +484,9 @@ impl Actor {
             Session::SetSettings(SetSettings { patch }, answer) => {
                 answer(self.set_settings(&patch, true))
             }
-            Session::PrepareDelete(PrepareDelete { path }, answer) => {
-                answer(self.prepare_delete(&path.0))
-            }
-            Session::Deleted(Deleted { path, trashed }, answer) => {
-                answer(Ok(self.deleted(&path.0, trashed)))
+            Session::Trash(Trash { path }, answer) => answer(self.trash(&path.0)),
+            Session::PutBack(PutBack { path, trashed }, answer) => {
+                answer(self.put_back(&path.0, &trashed))
             }
             Session::StartLive(StartLive {}, answer) => answer(Ok(self.live_start_asked())),
             Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),

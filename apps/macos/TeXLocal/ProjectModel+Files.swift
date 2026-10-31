@@ -34,29 +34,23 @@ extension ProjectModel {
     }
 
     func deleteEntry(_ path: String) async {
-        guard let original = url(path) else { return }
-        let item = UndoableTrash(
-            original: original, name: path.fileName, undoManager: window?.undoManager,
-            trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in _ = try? await self?.session.call(ReloadTree()) },
-            failed: { [weak self] title, error in self?.window?.report(title, error) })
+        let item = UndoableTrash(undoManager: window?.undoManager, trash: { [weak self] in
+            await self?.trashEntry(path)
+        }, putBack: { [weak self] trashed in
+            guard let self else { return false }
+            return await alerting("Couldn’t Put “\(path.fileName)” Back") {
+                try await session.call(PutBack(path: path, trashed: trashed))
+            } != nil
+        })
         trashed.append(item)
         await item.moveToTrash()
     }
 
-    private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
+    private func trashEntry(_ path: String) async -> String? {
         let title = "Couldn’t Move “\(path.fileName)” to the Trash"
-        guard await alerting(title, { try await session.call(PrepareDelete(path: path)) }) == true else { return false }
-        do {
-            try item.recycle()
-        } catch {
-            session.send(Deleted(path: path, trashed: false))
-            window?.report(title, error)
-            return false
-        }
-        session.send(Deleted(path: path, trashed: true))
+        guard let trashed = await alerting(title, { try await session.call(Trash(path: path)) }) ?? nil else { return nil }
         views?.trashed(path)
-        return true
+        return trashed
     }
 
     func dropFiles(_ urls: [URL], into dir: String) async {

@@ -114,24 +114,19 @@ final class WindowModel {
     }
 
     func delete(_ project: ProjectInfo) async {
-        let failure = "Couldn’t Move “\(project.name)” to the Trash"
-        guard app.canChange(project) else { return report(failure, "Close the project before moving it to the Trash.") }
-        let item = UndoableTrash(
-            original: project.folder, name: project.name, undoManager: undoManager,
-            trash: { [weak self] item in
-                do {
-                    try item.recycle()
-                    self?.app.recentProjects.removeAll { $0 == project.id }
-                    return true
-                } catch {
-                    self?.report(failure, error)
-                    return false
-                }
-            },
-            changed: { [weak self] in await self?.app.reloadProjects() },
-            failed: { [weak self] title, error in self?.report(title, error) })
+        let item = UndoableTrash(undoManager: undoManager, trash: { [weak self] in
+            guard let self, let trashed = await alerting("Couldn’t Move “\(project.name)” to the Trash", {
+                try await app.core.call(TrashProject(id: project.id))
+            }) else { return nil }
+            app.recentProjects.removeAll { $0 == project.id }
+            return trashed
+        }, putBack: { [weak self] trashed in
+            guard let self else { return false }
+            return await alerting("Couldn’t Put “\(project.name)” Back") {
+                try await app.core.call(PutBackProject(id: project.id, trashed: trashed))
+            } != nil
+        })
         await item.moveToTrash()
-        await app.reloadProjects()
     }
 
     @discardableResult

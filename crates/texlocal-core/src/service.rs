@@ -68,6 +68,8 @@ requests! {
         DuplicateProject { id: String, name: String } -> ProjectInfo,
         FreeProjectName {} -> String,
         RenameProject { id: String, name: String } -> ProjectInfo,
+        TrashProject { id: String } -> PathBuf,
+        PutBackProject { id: String, trashed: PathBuf } -> (),
         KillAll {} -> (),
         OpenPath { path: PathBuf } -> Opening,
         ForgetFolder { id: String } -> (),
@@ -282,6 +284,15 @@ impl Service {
                     .unless_open(&id, messages::close_before_renaming)
                     .and_then(|_library| projects::rename_project(self, &id, &name));
                 answer(self.relisted(renamed))
+            }
+            Library::TrashProject(TrashProject { id }, answer) => {
+                let trashed = self
+                    .unless_open(&id, messages::close_before_trashing)
+                    .and_then(|_library| projects::trash_project(self, &id));
+                answer(self.relisted(trashed))
+            }
+            Library::PutBackProject(PutBackProject { id, trashed }, answer) => {
+                answer(self.relisted(projects::put_back_project(self, &id, &trashed)))
             }
             Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
             Library::OpenPath(OpenPath { path }, answer) => {

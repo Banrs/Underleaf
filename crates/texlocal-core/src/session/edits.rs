@@ -187,8 +187,7 @@ fn edit_project(
     let edits = edits.pop();
     let open: Vec<String> = open.iter().map(|(path, ..)| path.clone()).collect();
     Ok(Box::new(move |actor, snapshot| {
-        let others =
-            |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel) && !actor.deleting(rel);
+        let others = |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel);
         let written = projects::replace_in_files(&actor.project.root, &others, &found, &to)?;
         Ok(ProjectEdits {
             edits,

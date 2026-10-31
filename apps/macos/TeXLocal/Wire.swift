@@ -34,7 +34,7 @@ nonisolated extension Decoder {
     }
 }
 
-nonisolated let protocolDigest = "7d8c3b747b4893ad657cacfea142f16f0ca5943513862f199cc1f9ecd703c051"
+nonisolated let protocolDigest = "5dce258fbae11b807b1bd46c8cc2893c8fbf7ef63cbeac31db4fbc42fa0c5096"
 
 nonisolated protocol LibraryRequest: WireRequest {}
 
@@ -385,14 +385,6 @@ nonisolated struct DeleteLines: SourceRequest {
     static let command = "DeleteLines"
 
     var selections: [TextRange]
-}
-
-nonisolated struct Deleted: SessionRequest {
-    typealias Reply = Done
-    static let command = "Deleted"
-
-    var path: String
-    var trashed: Bool
 }
 
 nonisolated enum DiffLine: Decodable, Hashable, Sendable {
@@ -1204,6 +1196,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case openedElsewhere = "opened_elsewhere"
     case projectExists = "project_exists"
     case closeBeforeRenaming = "close_before_renaming"
+    case closeBeforeTrashing = "close_before_trashing"
     case closeBeforeForgetting = "close_before_forgetting"
     case onlyOpenedForgotten = "only_opened_forgotten"
     case folderMoved = "folder_moved"
@@ -1418,13 +1411,6 @@ nonisolated struct PdfPage: Encodable, Hashable, Sendable {
     var near: [TextRange]
 }
 
-nonisolated struct PrepareDelete: SessionRequest {
-    typealias Reply = Bool
-    static let command = "PrepareDelete"
-
-    var path: String
-}
-
 nonisolated struct ProjectEdits: Decodable, Hashable, Sendable {
     var edits: DocumentEdits?
     var written: [Written]
@@ -1516,6 +1502,22 @@ nonisolated enum ProjectTemplate: String, Encodable, CaseIterable, Hashable, Sen
         case .beamer: "Presentation"
         }
     }
+}
+
+nonisolated struct PutBack: SessionRequest {
+    typealias Reply = Done
+    static let command = "PutBack"
+
+    var path: String
+    var trashed: String
+}
+
+nonisolated struct PutBackProject: LibraryRequest {
+    typealias Reply = Done
+    static let command = "PutBackProject"
+
+    var id: String
+    var trashed: String
 }
 
 nonisolated struct QuickHelp: Decodable, Hashable, Sendable {
@@ -2259,6 +2261,20 @@ nonisolated struct ToggleStyle: SourceRequest {
 
     var selections: [TextRange]
     var style: TextStyle
+}
+
+nonisolated struct Trash: SessionRequest {
+    typealias Reply = String?
+    static let command = "Trash"
+
+    var path: String
+}
+
+nonisolated struct TrashProject: LibraryRequest {
+    typealias Reply = String
+    static let command = "TrashProject"
+
+    var id: String
 }
 
 nonisolated struct TreeNode: Decodable, Hashable, Sendable {

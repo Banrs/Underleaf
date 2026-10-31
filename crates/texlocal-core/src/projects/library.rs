@@ -11,7 +11,7 @@ use texlocal_latex::syntax::SourceDocument;
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
 
-use super::files::occupied;
+use super::files::{occupied, untrash};
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
 use super::tree::{listed, walk};
@@ -20,7 +20,7 @@ use crate::messages;
 use crate::paths::{Project, fold_case, sanitize_name, ui_file};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
-use crate::{SETTINGS_FILE, atomic};
+use crate::{SETTINGS_FILE, atomic, sys};
 
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -193,6 +193,17 @@ pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<Project
     atomic::rename_exclusive(&project.root, &dest)?;
     let _ = fs::rename(&project.ui, ui_file(&service.state_dir, &clean));
     Ok(ProjectInfo::read(service, &clean)?)
+}
+
+pub fn trash_project(service: &Service, id: &str) -> Result<PathBuf, CoreError> {
+    if is_opened(id) {
+        return Err(CoreError::bad_request(messages::opened_elsewhere()));
+    }
+    sys::trash(&service.project(id)?.root)
+}
+
+pub fn put_back_project(service: &Service, id: &str, trashed: &Path) -> Result<(), CoreError> {
+    untrash(trashed, &service.data_dir.join(sanitize_name(id)?))
 }
 
 fn real_path(path: &Path) -> PathBuf {

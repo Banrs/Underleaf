@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
+use super::freedesktop::trash_in;
+pub(crate) use super::freedesktop::untrash;
 pub(crate) use super::unix::*;
 use crate::atomic::Flush;
 use crate::error::CoreError;
@@ -25,8 +27,13 @@ pub(crate) fn tinytex_bin(root: &Path) -> PathBuf {
     root.join(format!("bin/{}-linux", std::env::consts::ARCH))
 }
 
-pub(crate) fn trash(_: &Path) -> Result<(), CoreError> {
-    Err(CoreError::unavailable(messages::no_trash()))
+pub(crate) fn trash(path: &Path) -> Result<PathBuf, CoreError> {
+    let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from);
+    let home = std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"));
+    let Some(data) = data.filter(|data| data.is_absolute()).or(home) else {
+        return Err(CoreError::unavailable(messages::no_trash()));
+    };
+    trash_in(&data.join("Trash"), path)
 }
 
 pub(crate) fn install_as_administrator(

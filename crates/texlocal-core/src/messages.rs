@@ -40,9 +40,10 @@ texlocal_latex::messages! {
     unreadable(name, error) = "“{name}” can't be read ({error}), so it was left as it is. Correct it, or delete it to start again.";
     over_one_mb = "it's over 1 MB";
 
-    opened_elsewhere = "A folder opened where it is can't be renamed here.";
+    opened_elsewhere = "A folder opened where it is can't be renamed or moved to the Trash here.";
     project_exists = "A project with that name already exists";
     close_before_renaming = "Close the project before renaming it.";
+    close_before_trashing = "Close the project before moving it to the Trash.";
     close_before_forgetting = "Close the project before removing it from the list.";
     only_opened_forgotten = "Only a folder opened where it is can be removed from the list.";
     folder_moved(name, path) = "“{name}” isn’t at {path} any more. Open it where it is now, or remove it from the list.";

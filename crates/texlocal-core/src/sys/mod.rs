@@ -1,5 +1,7 @@
 #[cfg(target_vendor = "apple")]
 mod apple;
+#[cfg(any(target_os = "linux", test))]
+mod freedesktop;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(unix)]
@@ -19,5 +21,5 @@ pub(crate) use os::{
     Group, TEX_DIRS, TEXLIVE, TINYTEX_BUNDLE, copy_xattrs, default_permissions, default_signals,
     download, executable, flush, identity, install_as_administrator, kill_group, latexmkrc,
     local_time, private, program, rename_exclusive, spawn_group, tinytex_bin, tinytex_root, trash,
-    unpack, wait_exited,
+    unpack, untrash, wait_exited,
 };

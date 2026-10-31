@@ -191,9 +191,8 @@ impl Actor {
             history.take(&root, now(), Taken::Before(Reason::Restore))?;
             Ok((edits.pop(), others))
         };
-        let put_back = |actor: &mut Self, (edits, others): (_, Vec<(String, _)>)| {
-            let others = others.into_iter().filter(|(path, _)| !actor.deleting(path));
-            if !projects::put_back(&actor.project.root, others.collect())?.is_empty() {
+        let put_back = |actor: &mut Self, (edits, others)| {
+            if !projects::put_back(&actor.project.root, others)?.is_empty() {
                 actor.reload_tree();
             }
             Ok(edits)

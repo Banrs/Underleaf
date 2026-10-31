@@ -168,7 +168,18 @@ pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreE
     if is_under(&read_settings(&project.settings).main_file, rel) {
         return Err(CoreError::conflict(messages::main_file_inside()));
     }
-    sys::trash(&safe_path(&project.root, rel)?)
+    sys::trash(&safe_path(&project.root, rel)?).map(drop)
+}
+
+pub(crate) fn untrash(trashed: &Path, to: &Path) -> Result<(), CoreError> {
+    fs::create_dir_all(to.parent().unwrap_or(to))?;
+    sys::untrash(trashed, to).map_err(|err| match err.kind() {
+        ErrorKind::AlreadyExists => {
+            let name = to.file_name().unwrap_or_default().to_string_lossy();
+            CoreError::conflict(messages::exists_already(name))
+        }
+        _ => err.into(),
+    })
 }
 
 pub(crate) fn copy_paths(rel: &str) -> impl Iterator<Item = String> {

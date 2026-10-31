@@ -683,16 +683,23 @@ async fn renaming_the_open_file_to_another_kind_closes_or_opens_its_document() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_main_file_is_never_prepared_for_deletion_and_opens_when_the_open_file_goes() {
+async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     let rig = project().await;
-    rig.open_document("ch.tex");
-    let refused = rig.refuse("PrepareDelete", json!({ "path": "main.tex" }));
+    rig.open_document("ch.tex")
+        .edit(0, 0, "% mine\n", None, false);
+    let refused = rig.refuse("Trash", json!({ "path": "main.tex" }));
     assert_eq!(refused, ErrorKind::Conflict);
-    assert_eq!(rig.call("PrepareDelete", json!({ "path": "ch.tex" })), true);
-    fs::remove_file(rig.root().join("ch.tex")).unwrap();
-    rig.call("Deleted", json!({ "path": "ch.tex", "trashed": true }));
+    let trashed = rig.call("Trash", json!({ "path": "ch.tex" }));
+    assert!(!rig.root().join("ch.tex").exists());
     rig.section("openFile", |f| f["path"] == "main.tex");
     rig.section("documents", |d| names(d, "path") == ["main.tex"]);
+    rig.section("tree", |t| !t.to_string().contains("ch.tex"));
+    let back = json!({ "path": "ch.tex", "trashed": trashed });
+    rig.call("PutBack", back.clone());
+    rig.section("tree", |t| t.to_string().contains("ch.tex"));
+    let text = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    assert_eq!(text, format!("% mine\n{CHAPTER}"));
+    assert_eq!(rig.refuse("PutBack", back), ErrorKind::NotFound);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1008,6 +1015,29 @@ async fn a_renamed_project_keeps_its_place_and_grant() {
     assert_eq!(renamed.unwrap()["id"], "Q");
     assert!(!rig.library.path("state/.ui/P.json").exists());
     rig.call_to(2, "OpenProject", json!({ "id": "Q", "autoCompile": false }));
+    assert_eq!(rig.section_in(2, "openFile", |_| true)["path"], "ch.tex");
+    let project = rig.section_in(2, "project", |_| true);
+    assert_eq!(project["settings"]["shellEscape"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_open() {
+    let rig = project().await;
+    let place = json!({ "patch": { "place": { "file": "ch.tex" } } });
+    rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
+    rig.call("SetUiState", place);
+    let refused = rig.ask_library("TrashProject", json!({ "id": "P" }));
+    assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
+    rig.call("CloseProject", json!({}));
+    let trashed = rig
+        .ask_library("TrashProject", json!({ "id": "P" }))
+        .unwrap();
+    rig.listed(|projects| projects.as_array().unwrap().is_empty());
+    rig.ask_library("ReloadProjects", json!({})).unwrap();
+    let back = json!({ "id": "P", "trashed": trashed });
+    rig.ask_library("PutBackProject", back).unwrap();
+    rig.listed(|projects| names(projects, "id") == ["P"]);
+    rig.call_to(2, "OpenProject", json!({ "id": "P", "autoCompile": false }));
     assert_eq!(rig.section_in(2, "openFile", |_| true)["path"], "ch.tex");
     let project = rig.section_in(2, "project", |_| true);
     assert_eq!(project["settings"]["shellEscape"], true);
