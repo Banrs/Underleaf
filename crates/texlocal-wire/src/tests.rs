@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde_json::Value;
 
 use crate::fixtures::{fixtures, round_trip};
-use crate::{read, stale};
+use crate::{digest, read, stale};
 
 #[test]
 fn the_generated_files_are_current() {
@@ -26,6 +26,36 @@ fn the_fixtures_round_trip_and_their_rejects_are_refused() {
         let read = round_trip(&reject.ty, &reject.value);
         assert!(read.is_err(), "{} {}", reject.ty, reject.value);
     }
+}
+
+#[test]
+#[expect(dead_code)]
+fn the_digest_changes_when_a_type_does() {
+    mod before {
+        #[derive(schemars::JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        pub struct Same {
+            pub count: u32,
+        }
+    }
+    mod retyped {
+        #[derive(schemars::JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        pub struct Same {
+            pub count: u64,
+        }
+    }
+    mod renamed {
+        #[derive(schemars::JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        pub struct Same {
+            pub total: u32,
+        }
+    }
+    let before = digest(&read::<before::Same>());
+    assert_eq!(digest(&read::<before::Same>()), before);
+    assert_ne!(digest(&read::<retyped::Same>()), before);
+    assert_ne!(digest(&read::<renamed::Same>()), before);
 }
 
 fn refused<T: JsonSchema>() -> String {

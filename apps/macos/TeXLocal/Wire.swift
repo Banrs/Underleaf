@@ -34,6 +34,8 @@ nonisolated extension Decoder {
     }
 }
 
+nonisolated let protocolDigest = "8f4b5d8e38cdc9709ebeb0094b905097dc413cf53c45176af22efe3adf102301"
+
 nonisolated protocol LibraryRequest: WireRequest {}
 
 nonisolated protocol SessionRequest: WireRequest {}
