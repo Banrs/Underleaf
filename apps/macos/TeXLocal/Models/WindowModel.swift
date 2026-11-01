@@ -81,20 +81,18 @@ final class WindowModel {
     }
 
     func rename(_ project: ProjectInfo, to name: String) async {
-        if let renamed = await renameProject(project.id, shown: project.name, to: name) {
-            registerRenameUndo(current: (renamed.id, renamed.name), previous: (project.id, project.name))
-        }
+        if let renamed = await renameProject(project, to: name) { registerRenameUndo(current: renamed, previous: project) }
     }
 
-    private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
-        await alerting("Couldn’t Rename “\(shown)”") { try await app.rename(id, to: name) }
+    private func renameProject(_ project: ProjectInfo, to name: String) async -> ProjectInfo? {
+        await alerting("Couldn’t Rename “\(project.name)”") { try await app.rename(project.id, to: name) }
     }
 
-    private func registerRenameUndo(current: (id: String, name: String), previous: (id: String, name: String)) {
+    private func registerRenameUndo(current: ProjectInfo, previous: ProjectInfo) {
         undoManager?.registerAsyncUndo(withTarget: self, actionName: String(localized: "Rename"), reversal: {
             self.registerRenameUndo(current: previous, previous: current)
         }, work: {
-            await self.renameProject(current.id, shown: current.name, to: previous.name) != nil
+            await self.renameProject(current, to: previous.name) != nil
         })
     }
 
