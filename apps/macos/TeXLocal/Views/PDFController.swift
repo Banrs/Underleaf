@@ -93,7 +93,7 @@ final class PDFController: NSObject {
     }
 
     func setScale(_ scale: CGFloat) {
-        zoom = .scale(Double(self.scale))
+        zoom = .scale(Double(scale))
         view.autoScales = false
         view.scaleFactor = scale
     }

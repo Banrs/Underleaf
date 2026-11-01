@@ -50,6 +50,12 @@ struct PDFTests {
         #expect(try shown(view).page == 1)
     }
 
+    @Test func aZoomChosenWhileThePaneIsHiddenIsTheOneKept() {
+        let controller = PDFController()
+        controller.setScale(2)
+        #expect(controller.zoom == .scale(2) && controller.keptZoom == .scale(2))
+    }
+
     @Test func thePaperIsDarkWhenChosenOrMatchingADarkAppearance() {
         let view = SyncPDFView()
         for (paper, appearance, dark) in [(PDFPaper.white, NSAppearance.Name.darkAqua, false), (.dark, .aqua, true), (.auto, .aqua, false), (.auto, .darkAqua, true)] {
