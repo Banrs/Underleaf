@@ -142,6 +142,7 @@ struct SectionTests {
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
         project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
         #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
+        project.trail.jumped(from: Place(path: "main.tex", line: 1))
         tree([])
         #expect(!project.canRetrace(back: true))
     }
@@ -445,14 +446,18 @@ struct ViewsTests {
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try await project.load()
+        let chapter = info.path + "/ch.tex"
+        try "first\n".write(toFile: chapter, atomically: true, encoding: .utf8)
         let snapshot = try #require(try await project.session.call(SaveVersion(name: "First")))
+        try "second\n".write(toFile: chapter, atomically: true, encoding: .utf8)
         let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
         await #expect {
             try await project.restoreVersion(snapshot, paths: nil)
         } throws: {
-            $0.localizedDescription == "The file shown changed meanwhile, so it wasn’t restored. Try again."
+            $0.localizedDescription == "The file shown changed meanwhile, so nothing was changed. Try again."
         }
+        #expect(try String(contentsOfFile: chapter, encoding: .utf8) == "second\n")
         let text = Message(id: .addPackageTitle, args: [:], text: "Add the Package")
         let library = window.app.core.library
         try await waitUntil { library.tex != nil }

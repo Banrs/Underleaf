@@ -1,15 +1,14 @@
 import Foundation
+import Observation
 
+@Observable
 final class FileTree {
-    private let store: SessionStore
-    private var sorted: (of: [TreeNode], nodes: [TreeNode]) = ([], [])
+    @ObservationIgnored private let store: SessionStore
+    private(set) var nodes: [TreeNode] = []
 
     init(store: SessionStore) { self.store = store }
 
-    var nodes: [TreeNode] {
-        if sorted.of != store.tree { sorted = (store.tree, Self.ordered(store.tree)) }
-        return sorted.nodes
-    }
+    func arrived() { nodes = Self.ordered(store.tree) }
 
     func node(at path: String) -> TreeNode? {
         var level = store.tree

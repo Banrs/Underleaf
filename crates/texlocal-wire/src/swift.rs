@@ -43,9 +43,9 @@ nonisolated extension Decoder {
 
 pub fn file(ir: &Ir) -> String {
     let mut out = PREAMBLE.to_owned();
-    let mut groups: Vec<&str> = ir.requests.iter().map(|r| r.group.as_str()).collect();
-    groups.dedup();
-    for group in groups {
+    let mut seen = BTreeSet::new();
+    let groups = ir.requests.iter().map(|r| r.group.as_str());
+    for group in groups.filter(|group| seen.insert(*group)) {
         writeln!(
             out,
             "\nnonisolated protocol {group}Request: WireRequest {{}}"

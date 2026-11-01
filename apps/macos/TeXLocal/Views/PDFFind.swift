@@ -90,6 +90,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     private func found(_ query: String, _ all: [PDFSelection], keepingPlace: Bool) {
+        let was = matches
         self.query = query
         matches = Array(all.prefix(Self.maxMatches))
         limited = all.count > matches.count
@@ -98,7 +99,8 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         if let start, !matches.isEmpty { matchIndex = index(from: start.anchor, step: start.step) }
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
-        if matches.isEmpty { view.clearSelection() }
+        if matches.isEmpty, let shown = view.currentSelection.flatMap(position),
+           was.contains(where: { position($0).map { $0 == shown } ?? false }) { view.clearSelection() }
         if !keepingPlace || view.currentSelection == nil { select(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
     }
 

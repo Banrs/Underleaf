@@ -8,11 +8,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use texlocal_latex::diff::{DiffLine, compare, edit_to};
 
 use super::actor::Actor;
-use super::edits::DocumentEdits;
+use super::edits::{DocumentEdits, ProjectEdits};
 use super::{Msg, Pending};
 use crate::messages;
 use crate::paths::RelPath;
-use crate::projects::{self, History, Reason, Snapshot, Taken};
+use crate::projects::{self, History, Reason, Snapshot, Taken, Written};
 use crate::{CoreError, lf, lossy_string};
 
 pub(super) type Then<T> =
@@ -156,7 +156,7 @@ impl Actor {
         &mut self,
         id: String,
         paths: Option<Vec<RelPath>>,
-        reply: Pending<Option<DocumentEdits>>,
+        reply: Pending<ProjectEdits>,
     ) {
         let open = match self.texts_to_edit() {
             Ok(open) => open,
@@ -188,14 +188,20 @@ impl Actor {
             if edits.len() > 1 {
                 return Err(CoreError::conflict(messages::one_document()));
             }
-            history.take(&root, now(), Taken::Before(Reason::Restore))?;
-            Ok((edits.pop(), others))
+            let snapshot = history.take(&root, now(), Taken::Before(Reason::Restore))?;
+            Ok((edits.pop(), others, snapshot.map(|id| id.to_string())))
         };
-        let put_back = |actor: &mut Self, (edits, others)| {
-            if !projects::put_back(&actor.project.root, others)?.is_empty() {
+        let put_back = |actor: &mut Self, (edits, others, snapshot)| {
+            let written = projects::put_back(&actor.project.root, others)?;
+            if !written.is_empty() {
                 actor.reload_tree();
             }
-            Ok(edits)
+            let written = written.into_iter().map(|file| Written { file, count: 0 });
+            Ok(ProjectEdits {
+                edits,
+                written: written.collect(),
+                snapshot,
+            })
         };
         self.then_on_actor(restore, put_back, reply);
     }

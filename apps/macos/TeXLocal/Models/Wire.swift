@@ -1695,7 +1695,7 @@ nonisolated struct Resolve: SessionRequest {
 }
 
 nonisolated struct RestoreVersion: SessionRequest {
-    typealias Reply = DocumentEdits?
+    typealias Reply = ProjectEdits
     static let command = "RestoreVersion"
 
     var id: String

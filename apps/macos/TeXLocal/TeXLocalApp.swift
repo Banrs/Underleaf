@@ -24,8 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.shared = self
         NSWindow.allowsAutomaticWindowTabbing = false
         app.recentLimit = { NSDocumentController.shared.maximumRecentDocumentCount }
-        app.pdfAppName = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
-            .flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
         app.newWindow = { [app] id in id.map { MainWindowController(app: app, project: $0).model } ?? HomeWindowController(app: app).model }
     }
 
@@ -46,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        let pdfApp = NSWorkspace.shared.urlForApplication(toOpen: .pdf)
+        let name = pdfApp.flatMap { try? $0.resourceValues(forKeys: [.localizedNameKey]).localizedName }
+        if name != app.pdfAppName { app.pdfAppName = name }
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 

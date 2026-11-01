@@ -119,7 +119,7 @@ struct FilesList: View {
     }
 
     private func actions(_ node: TreeNode) -> ItemActions {
-        ItemActions(rename: { rename.begin(node.path, name: node.name) },
+        ItemActions(rename: { created = nil; rename.begin(node.path, name: node.name) },
                     showInFinder: { project.url(node.path).map { NSWorkspace.shared.activateFileViewerSelecting([$0]) } },
                     moveToTrash: { Task { await project.deleteEntry(node.path) } })
     }
