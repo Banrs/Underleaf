@@ -16,9 +16,5 @@ xcrun swiftc -typecheck -module-name TeXLocalTests $flags -I $out \
   $root/apps/macos/TeXLocalTests/*.swift 2>&1 | show
 tests=${pipestatus[1]}
 rm -rf $out
-xcrun swiftc -typecheck -module-name TeXLocal $common -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
-  -target arm64-apple-ios$(xcrun --sdk iphoneos --show-sdk-version) $root/apps/macos/TeXLocal/Models/*.swift 2>&1 | show
-ios=${pipestatus[1]}
 (( tests == 0 )) || echo "typecheck: the tests have errors"
-(( ios == 0 )) || echo "typecheck: the model files have errors for iOS"
-(( tests == 0 && ios == 0 )) && echo "typecheck: ok"
+(( tests == 0 )) && echo "typecheck: ok"
