@@ -17,7 +17,7 @@ final class OpenQuickly: FloatingPanel {
         panel.search("")
     }
 
-    static let width: CGFloat = 600, fieldHeight: CGFloat = 48, rowHeight: CGFloat = 38, shownRows = 10
+    static let width: CGFloat = 600, fieldHeight: CGFloat = 48, rowHeight: CGFloat = 38, shownRows = 10, corner: CGFloat = 16
 
     private let project: ProjectModel
     private let rows = ChoiceRows<QuickOpenItem> { [$0.title, $0.detail] }
@@ -89,10 +89,10 @@ private struct QuickOpenView: View {
             .frame(height: OpenQuickly.fieldHeight)
             if !rows.items.isEmpty {
                 Divider()
-                ChoiceList(rows: rows, height: OpenQuickly.rowHeight, truncation: .middle, chosen: open, row: row)
+                ChoiceList(rows: rows, height: OpenQuickly.rowHeight, corner: OpenQuickly.corner, truncation: .middle, chosen: open, row: row)
             }
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .glassEffect(.regular, in: .rect(cornerRadius: OpenQuickly.corner))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Open Quickly")
     }

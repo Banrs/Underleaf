@@ -157,9 +157,11 @@ class FloatingPanel: NSPanel {
     }
 }
 
+/// Rows inside a glass shape of radius `corner`, a margin in, the chosen one filled in a shape concentric with it.
 struct ChoiceList<Item, Row: View>: View {
     let rows: ChoiceRows<Item>
     let height: CGFloat
+    let corner: CGFloat
     let truncation: Text.TruncationMode
     let chosen: (Int) -> Void
     @ViewBuilder let row: (Item) -> Row
@@ -181,7 +183,7 @@ struct ChoiceList<Item, Row: View>: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, CompletionRowsView.textInset)
                             .frame(height: height)
-                            .background(selected ? Self.accent : .clear, in: .rect(cornerRadius: CompletionRowsView.rowCorner))
+                            .background(selected ? Self.accent : .clear, in: .rect(cornerRadius: corner - CompletionRowsView.margin))
                             .padding(.horizontal, CompletionRowsView.margin)
                             .contentShape(.rect)
                             .onTapGesture { chosen(index) }
@@ -237,10 +239,10 @@ struct CompletionRowsView: View {
     let look: CompletionLook
     let clicked: (Int) -> Void
 
-    static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20, corner: CGFloat = 13, rowCorner: CGFloat = 8
+    static let margin: CGFloat = 5, textInset: CGFloat = 10, detailSpacing: CGFloat = 20, corner: CGFloat = 13
 
     var body: some View {
-        ChoiceList(rows: rows, height: look.height, truncation: .tail, chosen: clicked) { item in
+        ChoiceList(rows: rows, height: look.height, corner: Self.corner, truncation: .tail, chosen: clicked) { item in
             HStack(spacing: Self.detailSpacing) {
                 Text(label(item)).layoutPriority(1)
                 if let detail = item.detail {
