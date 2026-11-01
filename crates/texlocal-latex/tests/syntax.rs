@@ -151,6 +151,7 @@ fn the_scanner_knows_where_maths_is() {
         ("\\begin{align} x", true),
         ("\\url{a%b} $", true),
         ("$a\n\n", false),
+        ("$a\\\n\nb ", false),
         ("% $", false),
         ("\\verb|$| ", false),
         ("\\begin{verbatim}$\\end{verbatim} ", false),
