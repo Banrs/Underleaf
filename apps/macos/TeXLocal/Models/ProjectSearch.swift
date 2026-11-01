@@ -13,6 +13,8 @@ final class ProjectSearch {
         set { asked.query = newValue }
     }
     var replacement = ""
+    /// Whether Find shows its replacement field, as Xcode's Find navigator does in its Replace mode.
+    var replacing = false
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
     private(set) var groups: [SearchGroup]?
     private(set) var searched = Asked()

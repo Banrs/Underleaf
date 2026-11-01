@@ -85,7 +85,7 @@ extension Navigator {
 /// around a large search field 28 pt tall and 8 pt from the bar's edges, and in Files around a 28 pt add menu 7 pt in, 8 pt
 /// before the field; in Issues a toggle inside the field's trailing end shows only errors.
 final class NavigatorFilterBar: NSView {
-    private let field = FilterField()
+    private let field = NavigatorField()
     private let fieldGlass = NSGlassEffectView()
     private let addGlass = NSGlassEffectView()
     private let onlyErrors = NSButton()
@@ -149,7 +149,7 @@ final class NavigatorFilterBar: NSView {
         addGlass.isHidden = shown.navigator != .files
         onlyErrors.isHidden = shown.navigator != .issues
         onlyErrors.state = shown.onlyErrors ? .on : .off
-        (field.cell as? FilterField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggleRoom
+        (field.cell as? NavigatorField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggleRoom
         needsLayout = true
     }
 
@@ -188,9 +188,10 @@ final class NavigatorFilterBar: NSView {
     private static let toggleRoom: CGFloat = 7 + 17
 }
 
-/// Xcode's navigator filter field, a large DVTSearchField, laid out as it lays out: its symbol 15 pt square 6 pt in, its text
-/// from 22 pt, its clear button 17 pt square 6 pt from the end, before any room kept for toggles over its end.
-private final class FilterField: NSSearchField {
+/// Xcode's large navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 15 pt
+/// square 6 pt in, the text from 22 pt, with or without the symbol, and the clear button 17 pt square 6 pt from the end, before
+/// any room kept for toggles over the end.
+final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         var room: CGFloat = 0
 
@@ -204,6 +205,13 @@ private final class FilterField: NSSearchField {
 
         override func searchTextRect(forBounds rect: NSRect) -> NSRect {
             NSRect(x: rect.minX + 22, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - rect.minX - 22, height: 20)
+        }
+
+        // A cell without its symbol still lists the symbol's button to accessibility, as an element with no role or name.
+        override func accessibilityChildren() -> [Any]? {
+            let children = super.accessibilityChildren()
+            guard searchButtonCell == nil else { return children }
+            return children?.filter { NSStringFromClass(Swift.type(of: $0 as AnyObject)) != "NSSearchButtonCellProxy" }
         }
     }
 
@@ -251,7 +259,10 @@ struct NavigatorPane: View {
         .searching(project)
         .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .safeAreaBar(edge: .top, spacing: 0) { Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, 8) }
+        .safeAreaBar(edge: .top, spacing: 0) {
+            // Xcode's lists start 8 pt below the chooser, and its Find navigator's mode row 2 pt below.
+            Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
+        }
     }
 }
 

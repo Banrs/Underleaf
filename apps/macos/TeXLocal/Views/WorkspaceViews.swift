@@ -105,6 +105,13 @@ final class WorkspaceViews: ProjectViews {
         return true
     }
 
+    func replace(_ hit: SearchHit, with text: String) -> Bool {
+        guard hit.file == editor.path else { return false }
+        let found = editor.revealed(line: hit.line, column: hit.column, length: hit.length).found
+        guard found.length == hit.length, (editor.textView.string as NSString).substring(with: found) == hit.match else { return false }
+        return editor.textView.apply([TextEdit(start: found.location, length: found.length, text: text)], named: String(localized: "Replace"))
+    }
+
     func trashed(_ path: String) { editor.forget(path: path) }
     func beep() { NSSound.beep() }
     func requestAttention() { if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) } }

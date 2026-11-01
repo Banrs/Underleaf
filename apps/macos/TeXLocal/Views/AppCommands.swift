@@ -44,7 +44,7 @@ struct AppCommands: Commands {
         }
         CommandGroup(replacing: .printItem) { items(.filePrint) }
         TextEditingCommands()
-        CommandGroup(before: .textEditing) { items(.projectSearch, .findUsages, .pdfFind) }
+        CommandGroup(before: .textEditing) { items(.projectSearch, .projectReplace, .findUsages, .pdfFind) }
         CommandGroup(after: .pasteboard) {
             Divider()
             items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine)
