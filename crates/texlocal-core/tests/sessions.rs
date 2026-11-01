@@ -1271,7 +1271,7 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
     );
     let at = json!({ "page": 1, "x": h.unwrap() + 1.0, "y": v.unwrap() - height.unwrap() / 2.0 });
     let back = rig.call("SynctexInverse", at);
-    assert_eq!((&back["line"], &back["column"]), (&json!(6), &Value::Null));
+    assert_eq!((&back["line"], &back["column"]), (&json!(6), &json!(0)));
     doc.edit(start(4) as u32, 0, "A new line.\n", None, false);
     let moved = json!({ "file": "main.tex", "line": 11 });
     assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);

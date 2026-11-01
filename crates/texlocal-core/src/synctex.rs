@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
 use texlocal_latex::syntax::{SyncLines, sync_lines};
+use texlocal_latex::utf16;
 use texlocal_latex::wordmatch::find_in_source;
 use tokio::task::JoinHandle;
 
@@ -132,11 +133,19 @@ pub(crate) fn inverse(
         source_file(root, name).ok_or_else(|| CoreError::not_found(messages::no_source_file()))?;
     let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
     let source = typeset(&rel).or_else(disk);
-    if let Some(SyncLines::Whole(picture)) = source.as_deref().map(|text| sync_lines(text, line)) {
+    if let Some(text) = source.as_deref()
+        && let SyncLines::Whole(picture) = sync_lines(text, line)
+    {
+        // The caret goes to the picture's \begin, a spot found like a clicked word, so a double-click follows it.
+        let line = *picture.start();
+        let begin = text.lines().nth(line as usize - 1).unwrap_or_default();
+        let column = begin
+            .find("\\begin")
+            .map(|byte| utf16::len(&begin[..byte]) as u32);
         return Ok(InverseLoc {
             file: rel,
-            line: *picture.start(),
-            column: None,
+            line,
+            column,
         });
     }
     let found = click
