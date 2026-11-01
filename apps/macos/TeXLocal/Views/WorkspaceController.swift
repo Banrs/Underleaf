@@ -106,6 +106,7 @@ final class WorkspaceController: ThinSplitViewController {
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.paneMinimum
+        sourceItem.addTopAlignedAccessoryViewController(accessory(hostingView(EditorJumpBar(project: project)), edge: .soft))
         let pdfPane = NSViewController()
         pdfPane.view = NSView(frame: NSRect(x: 0, y: 0, width: pdfWidth, height: 0))
         let empty = NSHostingView(rootView: Pane(project: project, content: PDFEmptyState(project: project)).environment(app).environment(window))
@@ -118,6 +119,7 @@ final class WorkspaceController: ThinSplitViewController {
         }
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
+        pdfItem.addTopAlignedAccessoryViewController(accessory(hostingView(PDFJumpBar(project: project, pdf: pdf)), edge: .soft))
         pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find)))
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
