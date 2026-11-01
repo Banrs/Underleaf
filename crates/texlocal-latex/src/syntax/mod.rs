@@ -13,6 +13,7 @@ mod scans;
 mod snippet;
 mod stack;
 mod style;
+mod sync;
 mod typing;
 
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub use complete::{Installed, SymbolKind, Symbols};
 pub use complete::{definitions, usages};
 use highlight::Highlight;
 pub use highlight::HighlightKind;
+pub use sync::{SyncLines, sync_lines};
 
 use crate::utf16;
 
