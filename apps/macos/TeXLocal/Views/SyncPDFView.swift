@@ -158,10 +158,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize != frame.size else { return }
-        let widthChanged = newSize.width != frame.width, atStart = hasShownArea && atDocumentStart
+        let place = hasShownArea ? shownPlace : nil
         super.setFrameSize(newSize)
         onResize()
-        if atStart, widthChanged || !atDocumentStart { goToStart() }
+        if let place { go(to: place) }
     }
 
     func goToStart() {
@@ -169,10 +169,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
     }
 
-    private var atDocumentStart: Bool {
-        guard let page = document?.page(at: 0) else { return false }
-        let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
-        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor + 1 / (window?.backingScaleFactor ?? 1)
+    /// Puts the place's point at the top left of the shown area, on its page or the last one.
+    func go(to place: (index: Int, point: CGPoint)) {
+        guard let document, let page = document.page(ifAt: min(max(place.index, 0), document.pageCount - 1)) else { return }
+        go(to: PDFDestination(page: page, at: place.point))
     }
 
     var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }

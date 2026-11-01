@@ -192,9 +192,7 @@ final class PDFController: NSObject {
             view.minScaleFactor = Self.minScale
             view.maxScaleFactor = Self.maxScale
             view.autoScales = autoScales
-            if let place, let page = document.page(ifAt: min(place.index, document.pageCount - 1)) {
-                view.go(to: PDFDestination(page: page, at: place.point))
-            }
+            if let place { view.go(to: place) }
             signposts.withIntervalSignpost("layout") { view.layoutDocumentView() }
         }
         watchScrollView()

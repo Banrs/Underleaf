@@ -27,7 +27,7 @@ struct PDFTests {
     }
 
     @Test(arguments: [Zoom.fitWidth, .scale(1.5), .fitPage])
-    func aRebuildKeepsThePlaceAndCoversItsPagesUntilPDFKitDrawsThem(_ zoom: Zoom) async throws {
+    func aRebuildOrResizeKeepsThePlaceAndARebuildCoversItsPagesUntilPDFKitDrawsThem(_ zoom: Zoom) async throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)
         defer { window.close() }
@@ -42,6 +42,10 @@ struct PDFTests {
         #expect(try shown(view) == place)
         #expect(overlays(in: view).contains { $0.covered })
         try await waitUntil(timeout: .seconds(2)) { !overlays(in: view).contains { $0.covered } }
+        for width in [420, 700] as [CGFloat] {
+            window.setContentSize(NSSize(width: width, height: 600))
+            #expect(try shown(view) == place)
+        }
         controller.show(try textPDF(count: 2))
         #expect(try shown(view).page == 1)
     }
