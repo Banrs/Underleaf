@@ -151,7 +151,7 @@ pub(crate) struct Actor {
     _watcher: Option<RecommendedWatcher>,
     pub live: Live,
     pub later: VecDeque<Later>,
-    pub history: std::sync::mpsc::Sender<Job>,
+    pub history: Arc<std::sync::mpsc::Sender<Job>>,
     pub writes_history: Arc<AtomicBool>,
     pub snapshots: usize,
     pub queued: VecDeque<OnActor>,
