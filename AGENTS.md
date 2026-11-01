@@ -13,13 +13,16 @@ sessions, builds and Live Preview, `texlocal-ffi` is the C ABI, and `texlocal-wi
 
 ## Writing code
 
-- Before writing a helper, search for one that does the same job; reuse beats a second copy.
+- Before writing a helper, search for one by name and by what it would call; reuse beats a second copy.
 - Keep a commit either structure or behaviour, never both. Report the net lines a change adds or removes.
 - Validate at boundaries (the FFI, files, the wire), not again inside.
 - Prefer flat call paths: no layer that only forwards, no protocol or parameter nothing needs yet.
+- Before adding a branch to a long function, extract the part it touches; agent code piles complexity into one place.
 - Comments say why: a workaround, a measured number and its source. Never restate the code.
-- Shorter by deleting, not by packing. End each feature with a pass that consolidates what it added.
-- After two failed fixes for the same problem, revert and rethink.
+- Shorter by deleting, not by packing. End each feature with a consolidation pass, measured by the checks, not by eye.
+- Passing tests isn't done: read the diff for edits outside the task and for the repo's conventions.
+- After two failed fixes for the same problem, revert and start again from the problem, not the failed attempts.
+- The evidence for these rules, and the checks that go with them: `docs/agents/README.md`.
 
 ## Choosing frameworks and designs
 
