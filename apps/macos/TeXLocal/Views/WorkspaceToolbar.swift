@@ -9,11 +9,12 @@ extension NSToolbarItem.Identifier {
     static let zoom = Self("zoom")
     static let compile = Self("compile")
     static let layout = Self("layout")
+    static let inspector = Self("inspector")
     static let share = Self("share")
 }
 
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate, NSMenuItemValidation {
-    let toolbar = NSToolbar(identifier: "Workspace 6")
+    let toolbar = NSToolbar(identifier: "Workspace 7")
     private(set) var compactCompile = false
     weak var workspace: WorkspaceController?
     private let window: WindowModel
@@ -49,7 +50,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
+         .inspectorTrackingSeparator, .flexibleSpace, .layout, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -57,12 +58,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .inspector]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
-              [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
+              item.itemIdentifier == .toggleSidebar else { return }
         item.visibilityPriority = .high
     }
 
@@ -106,6 +107,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .layout:
             item = menuItem(id, "Editor Layout", window.layout.symbol, WorkspaceLayoutPicker(window: window))
             item.toolTip = "Choose Source Only, Source & PDF, or PDF Only"
+        case .inspector:
+            // AppKit's own .toggleInspector item always sits on a glass of its own (read from its toolbar platter); this one shares
+            // the Layout menu's, as items beside each other do.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = MenuCommand.viewToggleInspector.title
+            item.toolTip = "Show or hide the inspector"
+            item.image = NSImage(systemSymbolName: "sidebar.trailing", accessibilityDescription: item.label)
+            item.action = #selector(NSSplitViewController.toggleInspector(_:))
         case .share:
             let share = ShareItem(itemIdentifier: id)
             share.delegate = self
@@ -114,7 +123,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         default: return nil
         }
         item.autovalidates = false
-        item.visibilityPriority = id == .compile ? compilePriority : id == .layout ? .high : .low
+        item.visibilityPriority = id == .compile ? compilePriority : [.layout, .inspector].contains(id) ? .high : .low
         if inserted { configure(item, state) }
         return item
     }
@@ -276,9 +285,9 @@ extension WorkspaceLayout {
 
     var symbol: String {
         switch self {
-        case .source: "rectangle.lefthalf.inset.filled"
+        case .source: "rectangle.leadinghalf.inset.filled"
         case .split: "rectangle.split.2x1"
-        case .pdf: "rectangle.righthalf.inset.filled"
+        case .pdf: "rectangle.trailinghalf.inset.filled"
         }
     }
 }
