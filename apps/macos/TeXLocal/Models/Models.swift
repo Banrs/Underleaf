@@ -66,7 +66,7 @@ extension [IssueLine] {
 }
 
 nonisolated extension SearchHit: Identifiable {
-    var id: String { "\(file):\(line):\(before.count)" }
+    var id: String { "\(file):\(line):\(column)" }
 }
 
 nonisolated extension SearchGroup: Identifiable {
