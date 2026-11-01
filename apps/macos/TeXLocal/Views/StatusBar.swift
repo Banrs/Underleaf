@@ -49,6 +49,7 @@ struct StatusBar: View {
 }
 
 private struct BuildStatus: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let project: ProjectModel
     let detail: StatusBar.Detail
 
@@ -59,40 +60,50 @@ private struct BuildStatus: View {
         .help("Show issues")
     }
 
+    /// The build's state, its symbol replacing the last one as it changes, and pulsing while it compiles.
+    private var state: (title: LocalizedStringKey, symbol: String?, color: Color?)? {
+        if project.compiling { return ("Compiling…", "progress.indicator", .secondary) }
+        guard let result = project.result else { return project.hasPDF ? nil : ("No Build Yet", nil, nil) }
+        if result.stopped { return ("Build Stopped", nil, nil) }
+        if result.ok { return ("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green) }
+        return (project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
+                "xmark.octagon.fill", nil)
+    }
+
     private var label: some View {
         HStack {
-            if project.compiling {
-                Text("Compiling…")
-            } else if let result = project.result {
-                if result.stopped {
-                    Text("Build Stopped")
-                } else if result.ok {
-                    badge("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green)
+            if let state {
+                if let symbol = state.symbol {
+                    badge(state.title, symbol, state.color)
+                        .symbolEffect(.variableColor.iterative, options: .repeating, isActive: project.compiling && !reduceMotion)
                 } else {
-                    badge(project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
-                          "xmark.octagon.fill")
+                    Text(state.title)
                 }
-            } else if !project.hasPDF {
-                Text("No Build Yet")
             }
             if project.errorCount > 0, project.result?.failed != true {
-                badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)")
+                badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)",
+                      count: project.errorCount)
             }
             if project.warningCount > 0 {
-                badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
+                badge("\(project.warningCount)", "exclamationmark.triangle.fill",
+                      spoken: "^[\(project.warningCount) warning](inflect: true)", count: project.warningCount)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: project.compiling)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: project.compiling)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: [project.errorCount, project.warningCount])
     }
 
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
-                       spoken: LocalizedStringKey? = nil) -> some View {
+                       spoken: LocalizedStringKey? = nil, count: Int? = nil) -> some View {
         Label {
-            if let spoken { Text(title).accessibilityLabel(Text(spoken)) } else { Text(title) }
+            Text(title)
+                .contentTransition(count.map { .numericText(value: Double($0)) } ?? .opacity)
+                .accessibilityLabel(Text(spoken ?? title))
         } icon: {
             Image(systemName: systemImage)
                 .symbolRenderingMode(color == nil ? .multicolor : nil)
                 .foregroundStyle(color ?? .primary)
+                .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)
         }
         .labelStyle(.titleAndIcon)
