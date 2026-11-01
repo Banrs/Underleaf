@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use common::{FakePreview, Library, Rig, SESSION, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
-use texlocal_core::session::LiveEvent;
+use texlocal_core::session::{LiveEvent, RunEnd};
 use texlocal_latex::syntax::Source;
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
@@ -951,7 +951,8 @@ async fn ui_state_is_written_to_the_state_folder_before_the_close_and_never_to_t
     let modified = || fs::metadata(&settings).unwrap().modified().unwrap();
     let before = (fs::read(&settings).unwrap(), modified());
     let zoom = json!({ "type": "scale", "value": 1.5 });
-    let place = json!({ "file": "ch.tex", "line": 12, "zoom": zoom });
+    let shown = json!({ "page": 3, "x": 0.0, "y": 612.5 });
+    let place = json!({ "file": "ch.tex", "line": 12, "zoom": zoom, "pdfPlace": shown });
     let patch = |patch| json!({ "patch": patch });
     rig.send(SESSION, "SetUiState", patch(json!({ "place": place })));
     let folders = json!({ "expandedFolders": ["figs"] });
@@ -968,6 +969,8 @@ async fn ui_state_is_written_to_the_state_folder_before_the_close_and_never_to_t
     );
     assert_eq!(ui["expandedFolders"], json!(["figs"]));
     assert_eq!(ui["foldedHeadings"], json!(["main.tex\tIntro"]));
+    let opened = json!({ "id": rig.id, "autoCompile": false });
+    assert_eq!(rig.call_to(2, "OpenProject", opened)["pdfPlace"], shown);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1175,7 +1178,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     preview.send(LiveEvent::Document {
         path: "live.pdf".into(),
         pages: 1,
-        run: "done".into(),
+        run: RunEnd::Complete,
         changed: Vec::new(),
     });
     preview.send(LiveEvent::Page {
@@ -1199,6 +1202,81 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     assert_eq!(stopped["lines"], json!({}));
 }
 
+const PICTURED: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\nFirst paragraph.\n% a comment\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\nLast paragraph.\n\\end{document}\n";
+
+const PICTURED_SYNCTEX: &str = "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{1\n[1,4:4736286,46220574:26673152,41484288,0\n(1,4:8799518,8865054:22609920,455111,0\ng1,4:11475574,8865054\n)\n(1,7:8799518,20000000:5000000,4000000,0\ng1,7:9000000,20000000\n)\n]\n}1\n{2\n[1,10:4736286,46220574:26673152,41484288,0\n(1,10:8799518,8865054:22609920,455111,0\ng1,10:11475574,8865054\n)\n]\n}2\nPostamble:\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typeset_nothing() {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    fs::create_dir(rig.library.path("live")).unwrap();
+    fs::write(rig.library.path("live/live.synctex"), PICTURED_SYNCTEX).unwrap();
+    *preview.pdf.lock().unwrap() = Some(rig.library.path("live/live.pdf"));
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.send(LiveEvent::Document {
+        path: "live.pdf".into(),
+        pages: 2,
+        run: RunEnd::Complete,
+        changed: Vec::new(),
+    });
+    rig.event("liveDocument", |_| true);
+    let start = |line: usize| {
+        PICTURED
+            .split_inclusive('\n')
+            .take(line - 1)
+            .map(str::len)
+            .sum::<usize>()
+    };
+    let caret = |line| {
+        rig.call(
+            "LiveCaret",
+            json!({ "path": "main.tex", "offset": start(line) }),
+        )
+    };
+    let followed = |moved: &dyn Fn()| {
+        rig.forget();
+        let asked = Instant::now();
+        moved();
+        let page = rig.event("liveFollow", |_| true)["page"].as_f64();
+        assert!(
+            asked.elapsed() < Duration::from_millis(200),
+            "{:?}",
+            asked.elapsed()
+        );
+        page
+    };
+    assert_eq!(followed(&|| drop(caret(10))), Some(2.0));
+    let typed = || drop(doc.edit(start(10) as u32, 0, "More ", None, false));
+    assert_eq!(followed(&typed), Some(2.0));
+    assert_eq!(followed(&|| drop(caret(4))), Some(1.0));
+    rig.forget();
+    for line in [2, 3, 5, 7] {
+        caret(line);
+        rig.listen(Duration::from_millis(400));
+        assert!(!rig.heard("liveFollow"), "line {line}");
+    }
+    let refused = rig.reply(rig.send(
+        SESSION,
+        "SynctexForward",
+        json!({ "file": "main.tex", "line": 5 }),
+    ));
+    assert_eq!(refused.unwrap_err().message["id"], "no_output_here");
+    let picture = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 7 }));
+    let (h, v, height) = (
+        picture["h"].as_f64(),
+        picture["v"].as_f64(),
+        picture["height"].as_f64(),
+    );
+    let at = json!({ "page": 1, "x": h.unwrap() + 1.0, "y": v.unwrap() - height.unwrap() / 2.0 });
+    let back = rig.call("SynctexInverse", at);
+    assert_eq!((&back["line"], &back["column"]), (&json!(6), &json!(0)));
+    doc.edit(start(4) as u32, 0, "A new line.\n", None, false);
+    let moved = json!({ "file": "main.tex", "line": 11 });
+    assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
     let preview = Arc::new(FakePreview::default());
@@ -1210,7 +1288,7 @@ async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_
     rig.call("StartLive", json!({}));
     *preview.log.lock().unwrap() =
         "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
-    preview.send(LiveEvent::Done("complete".into()));
+    preview.send(LiveEvent::Done(RunEnd::Complete));
     let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
     assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);
 }

@@ -192,7 +192,8 @@ struct SectionTests {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = project.texpresso
         let state = { (phase: LivePhase, failures: [Message], log: String?) in
-            project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, log: log, failures: failures, lines: [:]))))
+            project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, failures: failures, lines: [:]))))
+            project.handle(.section(.liveLog(log ?? "")))
         }
         state(.stopped, [], nil)
         #expect(live.phase == .stopped && !live.used && live.log.isEmpty && !live.needsAttention)
@@ -532,23 +533,17 @@ struct ViewsTests {
         #expect(project.syncTask != nil)
     }
 
-    @Test func editsWhileTheLivePDFShowsFollowTheCaretUntilLivePreviewStops() async {
+    @Test func theLivePDFShowsWhileLivePreviewRunsUntilTheProjectCloses() async {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = { (phase: LivePhase) in
-            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, log: nil, failures: [], lines: [:]))))
+            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, failures: [], lines: [:]))))
         }
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
         live(.running)
-        project.edited()
-        project.liveDocumentShown()
-        #expect(!project.followsCaret && !project.showsLive && project.followTask == nil)
+        #expect(!project.showsLive)
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 1, live: true))))
-        project.edited()
-        #expect(project.followsCaret && project.showsLive)
-        project.liveDocumentShown()
-        #expect(project.followTask != nil)
+        #expect(project.showsLive)
         live(.stopped)
-        #expect(!project.followsCaret && !project.showsLive)
+        #expect(!project.showsLive)
         live(.running)
         #expect(await project.close().value && !project.showsLive)
     }
@@ -560,7 +555,7 @@ struct ViewsTests {
             ["main.tex": [IssueLine(line: line, error: true, message: message, short: message, compact: nil, tokens: [], others: [], index: index)]]
         }
         project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: false, result: nil, issues: [], lines: lines(3, 1)))))
-        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, log: nil, failures: [], lines: lines(5, nil)))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, failures: [], lines: lines(5, nil)))))
         project.issueClicked(atLine: 5, in: "main.tex")
         #expect(project.panel.showsLiveLog && project.chosenIssue == nil)
         project.issueClicked(atLine: 3, in: "main.tex")
@@ -596,7 +591,7 @@ struct ViewsTests {
             project.views = self
         }
 
-        let zoom = Zoom.fitWidth, shownVersion = 0, inspectorShown = false, pdfLoading: Task<Void, Never>? = nil
+        let zoom = Zoom.fitWidth, pdfPlace: PdfPlace? = nil, shownVersion = 0, inspectorShown = false, pdfLoading: Task<Void, Never>? = nil
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }
@@ -612,7 +607,6 @@ struct ViewsTests {
             refused.append(edits.path)
             return false
         }
-        func follow(_ loc: ForwardLoc) {}
         func trashed(_ path: String) {}
         func beep() {}
         func requestAttention() { attention += 1 }

@@ -18,7 +18,7 @@ use crate::events::{BuildFinished, Event};
 use crate::messages;
 use crate::paths::{Project, disk_spelling};
 use crate::service::Service;
-use crate::settings;
+use crate::{settings, synctex};
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -185,6 +185,9 @@ impl Actor {
         }
         let builds = &mut self.builds;
         if let Some(pdf) = &result.pdf {
+            if result.pdf_changed {
+                synctex::warm(pdf.into());
+            }
             builds.pdf = Some(pdf.clone());
             builds.version += u64::from(result.pdf_changed);
             builds.outdated = self.edits != builds.built;

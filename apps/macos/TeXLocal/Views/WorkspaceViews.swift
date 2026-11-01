@@ -7,7 +7,6 @@ final class WorkspaceViews: ProjectViews {
     let editor = SourceEditor()
     let pdf = PDFController()
     var inspectorShown = false
-    @ObservationIgnored private(set) var liveReads: Task<Void, Never>?
     @ObservationIgnored private var watches: [Task<Void, Never>] = []
 
     init(project: ProjectModel) {
@@ -19,7 +18,7 @@ final class WorkspaceViews: ProjectViews {
                 self?.editor.textView.isEditable = !closing
             },
             track({ [weak project] in project?.closed ?? true }, initial: false) { [weak self] _ in
-                self?.liveReads?.cancel()
+                self?.pdf.stopLive()
                 self?.pdf.loading?.cancel()
             },
             track({ [weak project] in project?.window?.app.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
@@ -32,7 +31,6 @@ final class WorkspaceViews: ProjectViews {
         editor.onCursor = { [weak self] line, column, shown in
             if let self { project.cursorMoved(to: line, column: column, shownColumn: shown, caret: editor.caret, in: editor.path) }
         }
-        editor.onEdit = { [weak self] in self?.project.edited() }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
         editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }
         let text = editor.textView
@@ -74,6 +72,7 @@ final class WorkspaceViews: ProjectViews {
 
     var hasPDF: Bool { pdf.pageCount > 0 }
     var zoom: Zoom { pdf.keptZoom }
+    var pdfPlace: PdfPlace? { pdf.keptPlace }
     var shownVersion: Int { pdf.shownVersion }
     var pdfLoading: Task<Void, Never>? { pdf.loading }
 
@@ -84,13 +83,14 @@ final class WorkspaceViews: ProjectViews {
         case .section(.shownPdf): showPDF()
         case .documentReload(let path): reload(path)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
-        case .liveDocument(let document): showLive(document)
-        case .livePage(let page): showLive(page)
+        case .liveDocument(let document): if project.showsLive { pdf.showLive(document) }
+        case .livePage(let page): if project.showsLive { pdf.showLive(page) }
+        case .liveFollow(let loc): if project.showsLive { pdf.follow(loc) }
         default: break
         }
     }
 
-    func opened(_ ui: UiState) { pdf.restoreZoom = ui.zoom }
+    func opened(_ ui: UiState) { pdf.restore = ui.zoom.map { ($0, ui.pdfPlace) } }
 
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
         guard editor.path == path else { return }
@@ -104,7 +104,6 @@ final class WorkspaceViews: ProjectViews {
         return true
     }
 
-    func follow(_ loc: ForwardLoc) { pdf.follow(loc) }
     func trashed(_ path: String) { editor.forget(path: path) }
     func beep() { NSSound.beep() }
     func requestAttention() { if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) } }
@@ -181,21 +180,6 @@ final class WorkspaceViews: ProjectViews {
     private func reload(_ path: String) {
         guard editor.path == path, let source = SourceDocument(session: project.session, path: path) else { return }
         editor.reload(source)
-    }
-
-    private func showLive(_ live: LiveDocument) {
-        _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let document = await PDFController.loadDocument(URL(filePath: live.path)), project.showsLive else { return }
-            pdf.show(document)
-            project.liveDocumentShown()
-        }
-    }
-
-    private func showLive(_ live: LivePage) {
-        _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let page = await PDFController.loadPage(live.pdf), project.showsLive else { return }
-            pdf.show(page, at: live.page)
-        }
     }
 
     private func quickHelp(at offset: Int) {

@@ -1,16 +1,17 @@
 import Foundation
 import Observation
+import os
 
 protocol ProjectViews: AnyObject {
     var hasPDF: Bool { get }
     var zoom: Zoom { get }
+    var pdfPlace: PdfPlace? { get }
     var shownVersion: Int { get }
     var pdfLoading: Task<Void, Never>? { get }
     func heard(_ event: Event)
     func opened(_ ui: UiState)
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool)
     func apply(_ edits: DocumentEdits, named name: String) -> Bool
-    func follow(_ loc: ForwardLoc)
     func trashed(_ path: String)
     func beep()
     func requestAttention()
@@ -104,8 +105,6 @@ final class ProjectModel {
     @ObservationIgnored weak var window: WindowModel?
     @ObservationIgnored weak var views: (any ProjectViews)?
     @ObservationIgnored var syncTask: Task<Void, Never>?
-    @ObservationIgnored var followTask: Task<Void, Never>?
-    @ObservationIgnored var followsCaret = false
     private var closing: Task<Bool, Never>?
     var isOpen: Bool { !closed && closing == nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -171,9 +170,11 @@ final class ProjectModel {
 
     let notices = ProjectNotices()
 
-    func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom))) }
+    func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom, pdfPlace: views?.pdfPlace))) }
 
     func load() async throws {
+        let interval = signposts.beginInterval("project.open")
+        defer { signposts.endInterval("project.open", interval) }
         let ui: UiState
         do {
             ui = try await session.call(OpenProject(id: id, autoCompile: window?.app.autoCompile ?? false))
@@ -184,7 +185,6 @@ final class ProjectModel {
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         views?.opened(ui)
         if let openPath { views?.reveal(openPath, line: openPath == ui.file ? ui.line : nil, column: nil, length: nil, atTop: false, focus: true) }
-        await views?.pdfLoading?.value
         initialLoadComplete = true
     }
 
@@ -215,7 +215,7 @@ final class ProjectModel {
     func handle(_ event: Event) {
         switch event {
         case .section(let section): apply(section)
-        case .documentReload, .renamed, .livePage, .liveDocument: break
+        case .documentReload, .renamed, .livePage, .liveDocument, .liveFollow: break
         case .conflict(let asked):
             conflicts.removeAll { $0.path == asked.path }
             conflicts.append(asked)
@@ -235,7 +235,7 @@ final class ProjectModel {
         switch section {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
-        case .lifecycle, .buildLog: break
+        case .lifecycle, .buildLog, .liveLog: break
         case .tree: tree.arrived()
         case .openFile, .outline:
             let now = analysis?.outline ?? []
@@ -251,7 +251,6 @@ final class ProjectModel {
             if shown.live, !live, window?.showPDF == false { window?.showPDF = true }
         case .live(let state):
             texpresso.heard(state)
-            if state.phase != .running { followsCaret = false }
         }
     }
 

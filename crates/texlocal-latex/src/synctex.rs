@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 
+use crate::syntax::SyncLines;
+
 const FAR: i64 = i32::MAX as i64;
 const LISTS: usize = 1024;
 
@@ -77,7 +79,6 @@ struct Sheet {
 struct Input {
     tag: i32,
     name: String,
-    last_line: i32,
 }
 
 pub struct SyncTex {
@@ -200,7 +201,6 @@ struct Reader {
     pending: Vec<Vec<u32>>,
     last_kern: Option<u32>,
     last_glue: Option<u32>,
-    form_depth: i32,
     ignored_forms: i32,
 }
 
@@ -250,7 +250,6 @@ impl SyncTex {
             pending: vec![Vec::new()],
             last_kern: None,
             last_glue: None,
-            form_depth: 0,
             ignored_forms: 0,
         };
         for line in lines {
@@ -260,6 +259,7 @@ impl SyncTex {
         }
         let mut s = reader.s;
         s.unlink_refs();
+        s.nodes.shrink_to_fit();
         Some(s)
     }
 
@@ -291,7 +291,6 @@ impl Input {
         Some(Self {
             tag,
             name: name.trim_end_matches(['\r', ' ']).to_owned(),
-            last_line: 0,
         })
     }
 }
@@ -349,7 +348,7 @@ impl Reader {
                 self.form = None;
                 return true;
             }
-            b'>' if self.form.is_some() && self.parent == self.form && self.form_depth > 0 => {
+            b'>' if self.form.is_some() && self.parent == self.form => {
                 self.end_form();
                 return true;
             }
@@ -445,14 +444,6 @@ impl Reader {
         })
     }
 
-    fn register_line(&mut self, id: u32) {
-        let node = self.s.node(id);
-        let (tag, line) = (node.tag, node.line);
-        if let Some(input) = self.s.inputs.get_mut(&tag) {
-            input.last_line = input.last_line.max(line);
-        }
-    }
-
     fn make_friend(&mut self, id: u32) {
         let node = self.s.node(id);
         if let Some(list) = friends_of(node.tag, node.line) {
@@ -486,7 +477,6 @@ impl Reader {
                 self.make_friend(start);
             }
         }
-        self.register_line(id);
         self.reset_kern();
         true
     }
@@ -625,7 +615,6 @@ impl Reader {
             Kind::Glue | Kind::Math | Kind::Boundary => self.contain(Bounds::point(at.h, at.v)),
             _ => {}
         }
-        self.register_line(id);
         match kind {
             Kind::Kern => (self.last_kern, self.last_glue) = (Some(id), None),
             Kind::Glue if self.last_kern.is_some() => self.last_glue = Some(id),
@@ -664,7 +653,6 @@ impl Reader {
         let Some((tag, _)) = number(&line[1..], 0) else {
             return;
         };
-        self.form_depth += 1;
         if self
             .form
             .is_some_and(|form| self.s.node(form).parent.is_some())
@@ -680,7 +668,6 @@ impl Reader {
 
     fn end_form(&mut self) {
         let form = self.form.expect("a form is open");
-        self.form_depth -= 1;
         if let Some(outer) = self.s.node(form).parent {
             self.s.nodes[form as usize].parent = None;
             (self.child, self.form, self.parent) = (Some(form), Some(outer), Some(outer));
@@ -832,41 +819,33 @@ fn outside(at: i64, min: i64, max: i64) -> i64 {
     }
 }
 
-fn next_step(step: i32) -> i32 {
-    if step < 0 { -(step - 1) } else { -(step + 1) }
-}
-
 impl SyncTex {
-    pub fn forward(&self, tag: i32, line: i32) -> Vec<Shown> {
-        let Some(last) = self.inputs.get(&tag).map(|input| input.last_line) else {
-            return Vec::new();
-        };
-        let (mut line, mut step) = (line.min(last), 1);
-        for _ in 0..100 {
-            if line > last {
-                break;
+    pub fn forward(&self, tag: i32, lines: &SyncLines) -> Vec<Shown> {
+        let shown = |ids: Vec<u32>| ids.into_iter().map(|id| self.shown(id));
+        match lines {
+            SyncLines::Nowhere => Vec::new(),
+            SyncLines::Within { line, range } => {
+                let mut tried = (*line..=*range.end()).chain((*range.start()..*line).rev());
+                let found = tried.find_map(|line| self.hits(tag, line));
+                found.map(|ids| shown(ids).collect()).unwrap_or_default()
             }
-            let list = friends_of(tag, line)
-                .map(|i| &self.friends[i])
-                .filter(|list| !list.is_empty());
-            if let Some(groups) = list.and_then(|list| {
-                self.on_line(list, tag, line, true)
-                    .or_else(|| self.on_line(list, tag, line, false))
-            }) {
-                return self
-                    .ordered(groups)
-                    .into_iter()
-                    .map(|id| self.shown(id))
-                    .collect();
-            }
-            line = line.saturating_add(step);
-            step = next_step(step);
-            if line <= 0 {
-                line = line.saturating_add(step);
-                step = next_step(step);
+            SyncLines::Whole(range) => {
+                let found = range.clone().filter_map(|line| self.hits(tag, line));
+                let area = |at: &Shown| at.width.abs() * at.height.abs();
+                let first = found
+                    .flat_map(shown)
+                    .min_by(|a, b| (a.page.cmp(&b.page)).then_with(|| area(b).total_cmp(&area(a))));
+                first.into_iter().collect()
             }
         }
-        Vec::new()
+    }
+
+    fn hits(&self, tag: i32, line: u32) -> Option<Vec<u32>> {
+        let line = i32::try_from(line).ok()?;
+        let list = friends_of(tag, line).map(|i| &self.friends[i])?;
+        let groups = self.on_line(list, tag, line, true);
+        let groups = groups.or_else(|| self.on_line(list, tag, line, false))?;
+        Some(self.ordered(groups))
     }
 
     fn on_line(&self, list: &[u32], tag: i32, line: i32, no_boxes: bool) -> Option<Vec<Vec<u32>>> {
@@ -1002,7 +981,7 @@ impl SyncTex {
                     for other in hboxes.filter(|&other| self.contains(hit, other)) {
                         node = self.smallest(other, node);
                     }
-                    let node = self.deepest(hit, node)?;
+                    let node = self.deepest(hit, node, false).node?;
                     (self.closest_children(hit, node), node)
                 }
                 None => {
@@ -1148,51 +1127,21 @@ impl SyncTex {
         }
     }
 
-    fn deepest(&self, hit: Point, id: u32) -> Option<u32> {
-        self.node(id).child?;
-        for child in self.children(id) {
-            if let Some(deep) = self
-                .contains(hit, child)
-                .then(|| self.deepest(hit, child))
-                .flatten()
-            {
-                return Some(deep);
-            }
-        }
-        if self.node(id).kind == Kind::VBox {
-            let mut best = NOWHERE;
-            for child in self.children(id).filter(|&c| self.node(c).child.is_some()) {
-                let distance = self.distance(hit, child);
-                if distance <= best.distance {
-                    best = Near {
-                        node: Some(child),
-                        distance,
-                    };
-                }
-            }
-            if best.node.is_some() {
-                return best.node;
-            }
-        }
-        self.contains(hit, id).then_some(id)
-    }
-
-    fn deepest_anywhere(&self, hit: Point, id: u32) -> Near {
+    fn deepest(&self, hit: Point, id: u32, anywhere: bool) -> Near {
         if self.node(id).child.is_none() {
             return NOWHERE;
         }
-        if let Some(deep) = self
-            .children(id)
-            .map(|child| self.deepest_anywhere(hit, child))
-            .find(|deep| deep.node.is_some())
-        {
+        let near = self.children(id);
+        let near = near.filter(|&child| anywhere || self.contains(hit, child));
+        let mut deep = near.map(|child| self.deepest(hit, child, anywhere));
+        if let Some(deep) = deep.find(|deep| deep.node.is_some()) {
             return deep;
         }
         if self.node(id).kind == Kind::VBox {
             let mut best = NOWHERE;
             for child in self.children(id).filter(|&c| self.node(c).child.is_some()) {
                 let distance = self.distance(hit, child);
-                if distance < best.distance {
+                if distance < best.distance || (!anywhere && distance == best.distance) {
                     best = Near {
                         node: Some(child),
                         distance,
@@ -1266,7 +1215,7 @@ impl SyncTex {
         }
         for side in [&mut left, &mut right] {
             if let Some(node) = side.node {
-                let deep = self.deepest_anywhere(hit, node);
+                let deep = self.deepest(hit, node, true);
                 if deep.node.is_some() {
                     *side = deep;
                 }

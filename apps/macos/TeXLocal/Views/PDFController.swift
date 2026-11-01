@@ -1,4 +1,5 @@
 import PDFKit
+import os
 import SwiftUI
 
 @Observable
@@ -11,6 +12,8 @@ final class PDFController: NSObject {
     let find: PDFFind
     var page = 0
     var pageCount = 0
+    /// A PDF is being read: the pane's empty state stays hidden meanwhile, as the window no longer waits for it.
+    private(set) var isLoading = false
     private(set) var scale: CGFloat = 1
     var zoom = Zoom.fitWidth
     var zoomLabel: String { Self.label(scale) }
@@ -18,7 +21,8 @@ final class PDFController: NSObject {
     var canZoomIn: Bool { scale < Self.maxScale }
     var canZoomOut: Bool { scale > Self.minScale }
 
-    @ObservationIgnored var restoreZoom: Zoom?
+    /// The zoom and place a project was left at, taken once the PDF shows with some area.
+    @ObservationIgnored var restore: (zoom: Zoom, place: PdfPlace?)?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
@@ -28,6 +32,7 @@ final class PDFController: NSObject {
 
     @ObservationIgnored var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
     @ObservationIgnored var revealing: Task<Void, Never>?
+    @ObservationIgnored var feed = LiveFeed()
 
     override init() {
         find = PDFFind(view: view)
@@ -46,7 +51,7 @@ final class PDFController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
     }
 
-    @objc private func pageChanged() {
+    @objc func pageChanged() {
         guard let document = view.document else { return }
         pageCount = document.pageCount
         if let page = view.currentPage, let number = document.number(of: page) { self.page = number }
@@ -92,7 +97,7 @@ final class PDFController: NSObject {
     }
 
     func setScale(_ scale: CGFloat) {
-        zoom = .scale(Double(self.scale))
+        zoom = .scale(Double(scale))
         view.autoScales = false
         view.scaleFactor = scale
     }
@@ -128,38 +133,43 @@ final class PDFController: NSObject {
     }
 
     private func restoreIfReady() {
-        guard view.document != nil, view.hasShownArea, let zoom = restoreZoom.take() else { return }
-        apply(zoom)
-        view.goToStart()
+        guard view.document != nil, view.hasShownArea, let restore = restore.take() else { return }
+        apply(restore.zoom)
+        if let place = restore.place { view.go(to: (place.page, CGPoint(x: place.x, y: place.y))) } else { view.goToStart() }
     }
 
-    var keptZoom: Zoom { restoreZoom ?? zoom }
+    var keptZoom: Zoom { restore?.zoom ?? zoom }
+
+    var keptPlace: PdfPlace? {
+        if let restore { return restore.place }
+        guard let place = view.hasShownArea ? view.shownPlace : view.lastPlace, view.document != nil else { return nil }
+        return PdfPlace(page: place.index, x: place.point.x, y: place.point.y)
+    }
 
     func load(_ url: URL?) -> Task<Void, Never> {
-        restart(&loading) { [self] in
-            let document: PDFDocument? = if let url { await Self.loadDocument(url) } else { nil }
+        let wanted = view.coverPages
+        stopLive()
+        isLoading = true
+        return restart(&loading) { [self] in
+            let loaded: LoadedPDF? = if let url { await Self.loadDocument(url, covering: wanted) } else { nil }
             guard !Task.isCancelled else { return }
-            if let document { show(document) } else { clear() }
+            if let loaded { show(loaded.document, covers: loaded.covers) } else { clear() }
         }
     }
 
-    @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
-        for index in 0..<document.pageCount {
-            for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
-                let border = PDFBorder()
-                border.lineWidth = 0
-                link.border = border
-            }
+    /// Parses the PDF and touches every page, which creates it here rather than on the main thread when the view lays
+    /// the document out (measured on 392 pages: a swap takes 23–28 ms on the main thread without this, 7–8 ms with it).
+    @concurrent static func loadDocument(_ url: URL, covering wanted: CoverPages = CoverPages()) async -> sending LoadedPDF? {
+        signposts.withIntervalSignpost("pdf.load") {
+            guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
+            for index in 0..<document.pageCount { document.page(at: index)?.hideLinkBorders() }
+            return LoadedPDF(document: document, covers: SyncPDFView.covers(wanted, of: document))
         }
-        return document
     }
-
-    @concurrent static func loadPage(_ pdf: Data) async -> sending PDFPage? { PDFDocument(data: pdf)?.page(at: 0) }
 
     func print(title: String, file: URL?) {
         Task {
-            let document = if let file { await Self.loadDocument(file) } else { view.document }
+            let document = if let file { await Self.loadDocument(file)?.document } else { view.document }
             guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true),
                   let window = view.window ?? NSApp.mainWindow else { return NSSound.beep() }
             operation.jobTitle = title
@@ -167,45 +177,34 @@ final class PDFController: NSObject {
         }
     }
 
-    func show(_ document: PDFDocument) {
+    func show(_ document: PDFDocument, covers: [Int: CGImage] = [:]) {
+        let interval = signposts.beginInterval("pdf.show")
+        defer { signposts.endInterval("pdf.show", interval) }
         shownVersion += 1
+        isLoading = false
         loading?.cancel()
         revealing?.cancel()
         view.removeMark()
         view.clearSelection()
         let place = view.document == nil ? nil : view.shownPlace
         let autoScales = view.autoScales
-        view.covering {
-            view.document = document
+        view.covering(covers) {
+            signposts.withIntervalSignpost("setDocument") { view.document = document }
             view.minScaleFactor = Self.minScale
             view.maxScaleFactor = Self.maxScale
             view.autoScales = autoScales
-            if let place, let page = document.page(ifAt: min(place.index, document.pageCount - 1)) {
-                view.go(to: PDFDestination(page: page, at: place.point))
-            }
-            view.layoutDocumentView()
+            if let place { view.go(to: place) }
+            signposts.withIntervalSignpost("layout") { view.layoutDocumentView() }
         }
         watchScrollView()
         restoreIfReady()
         pageChanged()
-        find.rerun()
-    }
-
-    func show(_ page: PDFPage, at index: Int) {
-        guard let document = view.document, let old = document.page(ifAt: index) else { return }
-        find.cancel()
-        view.removeMark()
-        view.covering {
-            document.insert(page, at: index)
-            document.removePage(at: index + 1)
-        }
-        if view.currentSelection?.pages.contains(old) == true { view.clearSelection() }
-        pageChanged()
-        find.rerun()
+        signposts.withIntervalSignpost("find") { find.rerun() }
     }
 
     private func clear() {
         shownVersion += 1
+        isLoading = false
         pendingReveal = nil
         revealing?.cancel()
         view.removeMark()
@@ -215,11 +214,27 @@ final class PDFController: NSObject {
     }
 }
 
-extension PDFDocument {
+nonisolated struct LoadedPDF {
+    let document: PDFDocument
+    let covers: [Int: CGImage]
+}
+
+nonisolated extension PDFDocument {
     func page(ifAt index: Int) -> PDFPage? { (0..<pageCount).contains(index) ? page(at: index) : nil }
 
     func number(of page: PDFPage) -> Int? {
         let index = index(for: page)
         return index == NSNotFound ? nil : index + 1
+    }
+}
+
+nonisolated extension PDFPage {
+    /// hyperref boxes links by default; the boxes are for print, so the view shows none.
+    func hideLinkBorders() {
+        for link in annotations where link.type == "Link" {
+            let border = PDFBorder()
+            border.lineWidth = 0
+            link.border = border
+        }
     }
 }

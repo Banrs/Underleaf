@@ -49,13 +49,30 @@ pub enum LiveEvent {
     Document {
         path: String,
         pages: u32,
-        run: String,
+        run: RunEnd,
         changed: Vec<PageRange>,
     },
-    Done(String),
+    Done(RunEnd),
     Synced(u64),
     Log,
     Ended(Option<Message>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunEnd {
+    Complete,
+    Partial,
+    Stopped,
+}
+
+impl RunEnd {
+    fn named(name: &str) -> Self {
+        match name {
+            "partial" => Self::Partial,
+            "stopped" => Self::Stopped,
+            _ => Self::Complete,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -389,12 +406,16 @@ fn engine_cache(root: &Path, executable: &Path) -> PathBuf {
         |_| "unknown".into(),
         |s| format!("{}-{}", s.size, s.modified),
     );
+    root.join(key)
+}
+
+fn remove_other_caches(kept: &Path) {
+    let Some(root) = kept.parent() else { return };
     for old in fs::read_dir(root).into_iter().flatten().flatten() {
-        if old.file_name() != *key {
+        if old.path() != kept {
             let _ = fs::remove_dir_all(old.path());
         }
     }
-    root.join(key)
 }
 
 impl Preview for Manager {
@@ -424,6 +445,8 @@ impl Preview for Manager {
         sys::private(&mut folder);
         let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         let cache = engine_cache(&self.cache, &executable);
+        let kept = cache.clone();
+        tokio::task::spawn_blocking(move || remove_other_caches(&kept));
         let mut command = command(&executable, path_env, &cache, &build, &main, &root, &pdf);
         let (mut child, tree) = self.processes.spawn(None, &mut command).map_err(|err| {
             remove_pdf_folder(&pdf);
@@ -553,7 +576,7 @@ fn apply_message(session: &Session, mut message: Value) {
             LiveEvent::Document {
                 path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
-                run: run.to_owned(),
+                run: RunEnd::named(run),
                 changed: ranges
                     .iter()
                     .map(|r| PageRange {
@@ -564,7 +587,7 @@ fn apply_message(session: &Session, mut message: Value) {
             }
         }
         "done" => match message[1].as_str() {
-            Some(run) => LiveEvent::Done(run.to_owned()),
+            Some(run) => LiveEvent::Done(RunEnd::named(run)),
             None => return,
         },
         "synced" => match message[1].as_u64() {
@@ -662,7 +685,7 @@ mod tests {
             page: 0,
             pdf: "JVBER".into(),
         };
-        let done = LiveEvent::Done("complete".into());
+        let done = LiveEvent::Done(RunEnd::Complete);
         let heard: Vec<_> = events.try_iter().collect();
         use LiveEvent::Log;
         assert_eq!(heard, [Log, page, Log, Log, done]);
@@ -704,8 +727,12 @@ mod tests {
         let first = engine_cache(&root, &texpresso);
         fs::create_dir_all(&first).unwrap();
         assert_eq!(engine_cache(&root, &texpresso), first);
+        remove_other_caches(&first);
+        assert!(first.exists());
         fs::write(dir.path().join("texpresso-xetex"), "other").unwrap();
-        assert_ne!(engine_cache(&root, &texpresso), first);
+        let second = engine_cache(&root, &texpresso);
+        assert_ne!(second, first);
+        remove_other_caches(&second);
         assert!(!first.exists());
     }
 

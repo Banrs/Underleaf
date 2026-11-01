@@ -2,9 +2,17 @@ use std::io::Write;
 
 use serde_json::{Value, json};
 use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::syntax::{SyncLines, sync_lines};
 use texlocal_latex::wordmatch::{PdfPage, find_in_pdf, find_in_source};
 
 const TWO_PAGES: &[u8] = include_bytes!("fixtures/two-pages.synctex");
+
+fn at(line: u32) -> SyncLines {
+    SyncLines::Within {
+        line,
+        range: line..=line,
+    }
+}
 
 fn pages(pages: Value) -> Vec<PdfPage> {
     serde_json::from_value(pages).unwrap()
@@ -23,15 +31,15 @@ fn synctex_goes_from_a_line_to_its_page_and_back() {
         let inputs: Vec<(i32, &str)> = synctex.inputs().collect();
         assert!(inputs.contains(&(1, "/p/./main.tex")), "{inputs:?}");
         for (line, page) in [(4, 1), (7, 2)] {
-            let shown = synctex.forward(1, line);
+            let shown = synctex.forward(1, &at(line));
             let at = shown.first().unwrap();
             assert_eq!(at.page, page);
             for h in [at.h + 5.0, 1.0] {
                 let back = synctex.inverse(page, h, at.v - at.height / 2.0);
-                assert_eq!(back, Some(("/p/./main.tex", line)));
+                assert_eq!(back, Some(("/p/./main.tex", line as i32)));
             }
         }
-        assert!(synctex.forward(9, 1).is_empty());
+        assert!(synctex.forward(9, &at(1)).is_empty());
     }
     assert!(SyncTex::read(b"not SyncTeX".to_vec()).is_none());
 }
@@ -45,7 +53,94 @@ fn a_live_synctex_keeps_the_inputs_read_after_one_has_ended() {
         inputs,
         [(3, "part.tex"), (2, "article.cls"), (1, "sub/main.tex")]
     );
-    assert_eq!(synctex.forward(3, 1).first().map(|at| at.page), Some(1));
+    assert_eq!(
+        synctex.forward(3, &at(1)).first().map(|at| at.page),
+        Some(1)
+    );
+}
+
+const PICTURED: &str = "\\documentclass{article}
+\\usepackage{tikz}
+\\begin{document}
+% a note
+Some text here.
+\\label{intro}
+
+\\begin{figure}
+  \\centering
+  \\begin{tikzpicture}
+    \\node {
+      \\begin{tikzpicture}
+        \\draw (0,0) -- (1,1);
+      \\end{tikzpicture}
+    };
+  \\end{tikzpicture}
+  \\caption{A}
+\\end{figure}
+
+Last words.
+\\end{document}
+After.
+";
+
+#[test]
+fn the_preamble_the_document_lines_comments_and_blank_lines_sync_nowhere() {
+    for line in [0, 1, 2, 3, 4, 7, 19, 21, 22, 23, 24] {
+        assert_eq!(
+            sync_lines(PICTURED, line),
+            SyncLines::Nowhere,
+            "line {line}"
+        );
+    }
+}
+
+#[test]
+fn a_line_in_a_picture_syncs_the_outermost_picture_whose_begin_is_its_first_line() {
+    for line in [10, 13, 16] {
+        assert_eq!(
+            sync_lines(PICTURED, line),
+            SyncLines::Whole(10..=16),
+            "line {line}"
+        );
+    }
+}
+
+#[test]
+fn other_lines_sync_within_their_environment_or_else_their_paragraph() {
+    let within = |line, range| SyncLines::Within { line, range };
+    assert_eq!(sync_lines(PICTURED, 9), within(9, 8..=18));
+    assert_eq!(sync_lines(PICTURED, 17), within(17, 8..=18));
+    assert_eq!(sync_lines(PICTURED, 6), within(6, 4..=6));
+    assert_eq!(sync_lines(PICTURED, 20), within(20, 20..=20));
+    let chapter = "\\section{One}\n\\label{one}\n\nWords.\n";
+    assert_eq!(sync_lines(chapter, 2), within(2, 1..=2));
+}
+
+#[test]
+fn a_forward_search_tries_its_line_then_after_then_before_and_never_leaves_its_range() {
+    let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
+    let page = |line, range| {
+        let found = synctex.forward(1, &SyncLines::Within { line, range });
+        found.first().map(|at| at.page)
+    };
+    assert_eq!(page(2, 1..=3), None);
+    assert_eq!(page(3, 1..=4), Some(1));
+    assert_eq!(page(9, 4..=9), Some(2));
+    assert_eq!(page(1, 1..=9), Some(1));
+    assert!(synctex.forward(1, &SyncLines::Nowhere).is_empty());
+}
+
+#[test]
+fn a_whole_picture_is_its_largest_box_on_its_first_page() {
+    let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
+    let all = (4..=8).flat_map(|line| synctex.forward(1, &at(line)));
+    let first = all.filter(|at| at.page == 1);
+    let largest = first.map(|at| at.width * at.height).fold(0.0, f32::max);
+    let whole = synctex.forward(1, &SyncLines::Whole(4..=8));
+    let [whole] = &whole[..] else {
+        panic!("one box")
+    };
+    assert_eq!((whole.page, whole.width * whole.height), (1, largest));
 }
 
 #[test]

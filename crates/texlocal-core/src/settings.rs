@@ -273,7 +273,7 @@ impl AppSettings {
     }
 }
 
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StoredUi {
     pub expanded_folders: Vec<String>,
@@ -281,6 +281,7 @@ pub struct StoredUi {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub zoom: Option<Value>,
+    pub pdf_place: Option<PdfPlace>,
     pub live_preview: bool,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
@@ -300,8 +301,18 @@ pub struct UiState {
     pub(crate) file: Option<String>,
     line: Option<u32>,
     zoom: Option<Zoom>,
+    pdf_place: Option<PdfPlace>,
     #[serde(skip)]
     pub(crate) live_preview: bool,
+}
+
+// The page is a 0-based index, and x and y are the top-left of the shown area in its PDF space.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PdfPlace {
+    page: u32,
+    x: f64,
+    y: f64,
 }
 
 pub fn read_ui(file: &Path) -> UiState {
@@ -312,6 +323,7 @@ pub fn read_ui(file: &Path) -> UiState {
         folded_headings: ui.folded_headings,
         file: ui.file,
         line: ui.line,
+        pdf_place: ui.pdf_place,
         live_preview: ui.live_preview,
     }
 }
@@ -345,6 +357,7 @@ pub struct UiPlace {
     file: Option<String>,
     line: Option<u32>,
     zoom: Option<Zoom>,
+    pdf_place: Option<PdfPlace>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -387,8 +400,15 @@ pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
         if let Some(headings) = folded_headings {
             state.folded_headings = headings;
         }
-        if let Some(UiPlace { file, line, zoom }) = place {
-            (state.file, state.line, state.zoom) = (file, line, zoom.map(Zoom::stored));
+        if let Some(UiPlace {
+            file,
+            line,
+            zoom,
+            pdf_place,
+        }) = place
+        {
+            (state.file, state.line) = (file, line);
+            (state.zoom, state.pdf_place) = (zoom.map(Zoom::stored), pdf_place);
         }
         Ok(())
     })

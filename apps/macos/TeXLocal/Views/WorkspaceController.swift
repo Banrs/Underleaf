@@ -192,7 +192,7 @@ final class WorkspaceController: ThinSplitViewController {
             track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
-            track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
+            track({ project.hasPDF || pdf.isLoading }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
         ]
     }

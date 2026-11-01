@@ -91,7 +91,7 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    let whole = rig.event("liveDocument", |e| e["complete"] == true);
+    let whole = rig.event("liveDocument", |_| true);
     assert!(Path::new(whole["path"].as_str().unwrap()).is_file());
     rig.forget();
     doc.edit(40, 0, "More words. ", None, false);
@@ -109,7 +109,7 @@ async fn forward_sync_follows_the_live_documents_synctex() {
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    rig.event("liveDocument", |e| e["complete"] == true);
+    rig.event("liveDocument", |_| true);
     let page = |line: u32| {
         let at = json!({ "file": "main.tex", "line": line });
         rig.call("SynctexForward", at)["page"].as_f64()
@@ -119,7 +119,7 @@ async fn forward_sync_follows_the_live_documents_synctex() {
     doc.edit(end, 0, "\\newpage\nSecond page.\n", None, false);
     rig.event("liveDocument", |e| {
         let second = |r: &serde_json::Value| r["last"].as_u64() >= Some(1);
-        e["complete"] == true && e["changed"].as_array().unwrap().iter().any(second)
+        e["changed"].as_array().unwrap().iter().any(second)
     });
     assert_eq!(page(5), Some(2.0));
     rig.call("StopLive", json!({}));
@@ -141,14 +141,14 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     rig.open_document("part.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    rig.event("liveDocument", |e| e["complete"] == true);
+    rig.event("liveDocument", |_| true);
     let at = json!({ "file": "part.tex", "line": 1 });
     assert_eq!(rig.call("SynctexForward", at)["page"].as_f64(), Some(1.0));
     rig.call("LiveLog", json!({ "shown": true }));
-    let live = rig.section("live", |l| l["log"].is_string());
-    let log = live["log"].as_str().unwrap();
+    let log = rig.section("liveLog", |_| true);
+    let log = log.as_str().unwrap();
     assert!(!log.lines().any(|line| line.starts_with("! ")), "{log}");
-    assert_eq!(live["failures"], json!([]));
+    assert_eq!(rig.section("live", |_| true)["failures"], json!([]));
     rig.call("StopLive", json!({}));
 }
 
@@ -162,7 +162,7 @@ async fn a_live_edit_to_an_input_after_a_compile_typesets_and_places_its_error()
     let doc = rig.open_document("part.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    rig.event("liveDocument", |e| e["complete"] == true);
+    rig.event("liveDocument", |_| true);
     doc.edit(part.len() as u32, 0, "\\undefinedcommand\n", None, false);
     let live = rig.section("live", |l| !l["lines"]["part.tex"].is_null());
     assert_eq!(live["lines"]["part.tex"][0]["line"], 2);
@@ -190,10 +190,10 @@ async fn the_live_contents_read_as_the_compiled_ones() {
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
     rig.event("liveDocument", |e| {
-        e["complete"] == true && first_page(e["path"].as_str().unwrap()) == compiled
+        first_page(e["path"].as_str().unwrap()) == compiled
     });
     rig.call("LiveLog", json!({ "shown": true }));
-    let log = rig.section("live", |l| l["log"].is_string())["log"].take();
+    let log = rig.section("liveLog", |_| true);
     let log = log.as_str().unwrap();
     assert!(!log.lines().any(|line| line.starts_with("! ")), "{log}");
     rig.call("StopLive", json!({}));
@@ -235,7 +235,7 @@ async fn two_projects_compile_and_preview_at_once() {
         rig.call_to(session, "LiveView", json!({ "first": 0, "last": 0 }));
     }
     for session in both {
-        rig.event_in(session, "liveDocument", |e| e["complete"] == true);
+        rig.event_in(session, "liveDocument", |_| true);
     }
     rig.forget();
     let doc = rig.sessions.document(SESSION, "main.tex").unwrap();

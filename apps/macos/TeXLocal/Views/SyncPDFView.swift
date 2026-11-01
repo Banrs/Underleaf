@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
 import PDFKit
+import os
 
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?, _ quietly: Bool) -> Void = { _, _, _, _ in }
@@ -34,24 +35,66 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func matchScroller() { pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark }
 
-    override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
+    /// The box pages show, fixed, as drawing off the main thread can't read `displayBox`.
+    nonisolated static let box = PDFDisplayBox.cropBox
+
+    override nonisolated func draw(_ page: PDFPage, to context: CGContext) { Self.paint(page, to: context) }
+
+    private nonisolated static func paint(_ page: PDFPage, to context: CGContext) {
         context.saveGState()
         context.setFillColor(.white)
-        context.fill(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)))
+        context.fill(page.bounds(for: box).applying(page.transform(for: box)))
         context.restoreGState()
-        page.draw(with: .cropBox, to: context)
+        page.draw(with: box, to: context)
     }
 
-    private var drawsCovers = false
+    /// The pages in view, by index, and the pixels per point they show at: what covers are drawn for.
+    var coverPages: CoverPages {
+        guard let document, hasShownArea, !UserDefaults.standard.bool(forKey: "PDFCoversOff") else { return CoverPages() }
+        let shown = shownRect
+        var indices: [Int] = []
+        for y in [shown.maxY - 1, shown.midY, shown.minY + 1] {
+            if let page = page(for: CGPoint(x: shown.midX, y: y), nearest: true), !indices.contains(document.index(for: page)) {
+                indices.append(document.index(for: page))
+            }
+        }
+        return CoverPages(indices: indices, scale: scaleFactor * (window?.backingScaleFactor ?? 2))
+    }
+
+    /// Whole pages drawn off the main thread, on a document no other thread touches, to stand in for its pages while
+    /// PDFKit draws their tiles after a swap. Whole pages, rather than the parts in view, still fit if the view scrolls
+    /// before the swap and need no rotation maths; together they're capped at 24 megapixels.
+    nonisolated static func covers(_ wanted: CoverPages, of document: PDFDocument) -> [Int: CGImage] {
+        signposts.withIntervalSignpost("covers") {
+            let pages = wanted.indices.compactMap { index in document.page(ifAt: index).map { (index, $0) } }
+            var covers: [Int: CGImage] = [:]
+            for (index, page) in pages {
+                let box = page.bounds(for: box).applying(page.transform(for: box))
+                let scale = min(wanted.scale, (24e6 / Double(pages.count) / (box.width * box.height)).squareRoot())
+                guard let context = CGContext(data: nil, width: Int((box.width * scale).rounded(.up)), height: Int((box.height * scale).rounded(.up)),
+                                              bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                              bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+                else { continue }
+                context.scaleBy(x: scale, y: scale)
+                context.translateBy(x: -box.minX, y: -box.minY)
+                paint(page, to: context)
+                covers[index] = context.makeImage()
+            }
+            return covers
+        }
+    }
+
+    private nonisolated static let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    private var covers: [Int: CGImage] = [:]
     private var uncovering: Task<Void, Never>?
 
-    func covering(_ change: () -> Void) {
-        drawsCovers = true
+    func covering(_ covers: [Int: CGImage], _ change: () -> Void) {
+        self.covers = covers
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         change()
         CATransaction.commit()
-        drawsCovers = false
+        self.covers = [:]
         restart(&uncovering, after: .milliseconds(400)) { [weak self] in
             for case let overlay as PageOverlay in self?.overlays.objectEnumerator()?.allObjects ?? [] { overlay.uncover() }
         }
@@ -62,6 +105,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        displayBox = Self.box
         pageOverlayViewProvider = self
         matchPaper()
     }
@@ -97,9 +141,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
-        if drawsCovers, let overlay = overlay as? PageOverlay {
-            overlay.cover(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))) { draw(page, to: $0) }
-        }
+        if let cover = document.flatMap({ covers[$0.index(for: page)] }) { (overlay as? PageOverlay)?.cover(cover) }
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
     }
 
@@ -116,21 +158,27 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize != frame.size else { return }
-        let widthChanged = newSize.width != frame.width, atStart = hasShownArea && atDocumentStart
+        let place = hasShownArea ? shownPlace : nil
         super.setFrameSize(newSize)
         onResize()
-        if atStart, widthChanged || !atDocumentStart { goToStart() }
+        if let place {
+            go(to: place)
+            lastPlace = place
+        }
     }
+
+    /// The place shown before the last resize, which is the one to keep while the pane is collapsed.
+    private(set) var lastPlace: (index: Int, point: CGPoint)?
 
     func goToStart() {
         guard let page = document?.page(at: 0) else { return }
         go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
     }
 
-    private var atDocumentStart: Bool {
-        guard let page = document?.page(at: 0) else { return false }
-        let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
-        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor + 1 / (window?.backingScaleFactor ?? 1)
+    /// Puts the place's point at the top left of the shown area, on its page or the last one.
+    func go(to place: (index: Int, point: CGPoint)) {
+        guard let document, let page = document.page(ifAt: min(max(place.index, 0), document.pageCount - 1)) else { return }
+        go(to: PDFDestination(page: page, at: place.point))
     }
 
     var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
@@ -178,8 +226,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 }
 
+nonisolated struct CoverPages: Sendable {
+    var indices: [Int] = []
+    var scale: CGFloat = 0
+}
+
 final class PageOverlay: NSView {
-    private static let space = CGColorSpace(name: CGColorSpace.sRGB)!
     private let drawing = CALayer()
 
     var dark = false {
@@ -206,20 +258,9 @@ final class PageOverlay: NSView {
         super.setFrameSize(newSize)
     }
 
-    func cover(_ box: CGRect, with draw: (CGContext) -> Void) {
-        let part = visibleRect, pixel = window?.backingScaleFactor ?? 1
-        guard !part.isEmpty, !box.isEmpty,
-              let context = CGContext(data: nil, width: Int((part.width * pixel).rounded(.up)), height: Int((part.height * pixel).rounded(.up)),
-                                      bitsPerComponent: 8, bytesPerRow: 0, space: Self.space,
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return }
-        context.scaleBy(x: pixel, y: pixel)
-        context.translateBy(x: -part.minX, y: -part.minY)
-        context.scaleBy(x: bounds.width / box.width, y: bounds.height / box.height)
-        context.translateBy(x: -box.minX, y: -box.minY)
-        draw(context)
-        drawing.contents = context.makeImage()
-        drawing.frame = part
+    func cover(_ image: CGImage) {
+        drawing.contents = image
+        drawing.frame = bounds
     }
 
     func uncover() { drawing.contents = nil }
