@@ -42,8 +42,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         Self.kept.append(self)
         findEditor.isFieldEditor = true
         let project = views.project
+        showWorkspace(in: window)
         watches = [
-            track({ project.initialLoadComplete }) { [weak self] _ in self?.showWorkspace() },
             track({ project.store.project?.name ?? "" }) { [weak self] in self?.window?.title = $0 },
             track({ project.openPath?.fileName ?? "" }) { [weak self] in self?.window?.subtitle = $0 },
             track({ project.url("") }) { [weak self] in self?.window?.representedURL = $0 },
@@ -60,7 +60,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             window.setFrame(NSRect(origin: window.frame.origin, size: front.frame.size), display: false)
             window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
-        showWorkspace()
         showWindow(nil)
     }
 
@@ -74,8 +73,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         return window?.contentViewController as? WorkspaceController
     }
 
-    private func showWorkspace() {
-        guard workspace == nil, project.initialLoadComplete, let window else { return }
+    private func showWorkspace(in window: NSWindow) {
         let workspace = WorkspaceController(window: model, views: views, size: window.contentLayoutRect.size)
         workspace.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         let modals = NSHostingView(rootView: WindowModals(window: model, project: project).environment(views))

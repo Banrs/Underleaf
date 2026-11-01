@@ -8,6 +8,7 @@ struct PDFEmptyState: View {
 
     var body: some View {
         content
+            .buttonStyle(.bordered)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.textSurface)
     }
@@ -33,7 +34,6 @@ struct PDFEmptyState: View {
                         do { try await app.installTeX() } catch { window.report("Couldn’t Install TinyTeX", error) }
                     }
                 }
-                .buttonStyle(.borderedProminent)
                 Link("Get MacTeX", destination: Links.mactex)
             }
         } else if project.compiling {
@@ -46,12 +46,9 @@ struct PDFEmptyState: View {
             ContentUnavailableView {
                 Label("Build Failed", systemImage: "xmark.octagon")
             } description: {
-                Text("The build made no PDF. The build panel shows what went wrong.")
+                Text("The build made no PDF. The Issues navigator shows what went wrong.")
             } actions: {
-                if !project.panel.shown {
-                    Button("Show Build Panel") { project.panel.show(.issues) }
-                        .buttonStyle(.borderedProminent)
-                }
+                Button("Show Issues") { project.showNavigator(.issues) }
             }
         } else {
             ContentUnavailableView {
@@ -60,7 +57,6 @@ struct PDFEmptyState: View {
                 Text("Compile to preview your document.")
             } actions: {
                 Button("Compile") { window.perform(.compileRun, on: project) }
-                    .buttonStyle(.borderedProminent)
                     .disabled(!app.isEnabled(.compileRun, on: project))
             }
         }
@@ -72,30 +68,27 @@ struct PDFFindBar: View {
 
     var body: some View {
         let label = PDFFind.count(find.matchIndex + 1, of: find.matches.count, limited: find.limited, for: find.query)
-        HStack {
-            SearchField(text: $find.text, prompt: "Find in PDF", handle: find.field,
-                        step: find.next, close: find.close)
-                .frame(minWidth: 100, maxWidth: 240)
+        // NSTextFinder's bar, read from an NSTextView's own: small controls 8 pt in and apart, 6 pt from its top and foot; the
+        // match count inside the field; chevrons drawn 7 pt square in 16 pt segments; Done an accessory bar button.
+        HStack(spacing: 8) {
+            SearchField(text: $find.text, prompt: "Find", handle: find.field, step: find.next, close: find.close,
+                        status: find.query.isEmpty ? "" : find.matches.count.formatted() + (find.limited ? "+" : ""),
+                        spokenStatus: label.isEmpty ? nil : label)
             ControlGroup {
-                Button("Previous Match", systemImage: "chevron.backward") { find.next(-1) }
+                Button { find.next(-1) } label: { Label { Text("Previous Match") } icon: { Self.back } }
                     .help("Go to the previous match")
-                Button("Next Match", systemImage: "chevron.forward") { find.next(1) }
+                Button { find.next(1) } label: { Label { Text("Next Match") } icon: { Self.forward } }
                     .help("Go to the next match")
             }
+            .frame(width: 32)
             .disabled(find.matches.isEmpty)
-            .fixedSize()
-            ViewThatFits(in: .horizontal) {
-                Text(label)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                Color.clear.frame(width: 0)
-            }
-            .layoutPriority(-1)
-            Spacer(minLength: 0)
-                .layoutPriority(-2)
             Button("Done") { find.close() }
+                .buttonStyle(.accessoryBarAction)
         }
-        .lineLimit(1)
+        .labelStyle(.iconOnly)
+        .controlSize(.small)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .task(id: label) {
             guard !label.isEmpty, (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
             var spoken = AttributedString(label)
@@ -106,6 +99,14 @@ struct PDFFindBar: View {
             try? await Task.sleep(for: PDFFind.debounce)
             if !Task.isCancelled { find.typed() }
         }
+    }
+
+    private static let back = chevron("chevron.backward"), forward = chevron("chevron.forward")
+
+    private static func chevron(_ name: String) -> Image {
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.copy() as? NSImage ?? NSImage()
+        image.size = NSSize(width: 7, height: 7)
+        return Image(nsImage: image)
     }
 }
 

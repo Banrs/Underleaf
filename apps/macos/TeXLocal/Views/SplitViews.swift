@@ -93,42 +93,7 @@ class ThinSplitViewController: NSSplitViewController {
     }
 }
 
-final class SidebarSplitViewController: ThinSplitViewController {
-    weak var header: NSSplitViewItemAccessoryViewController?
-
-    private final class SplitView: DraggedSplitView { override func drawDivider(in rect: NSRect) {} }
-
-    init() { super.init(splitView: SplitView(), isVertical: false) }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
-                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
-        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return .zero }
-        return rect.offsetBy(dx: 0, dy: header.view.convert(header.view.bounds, to: splitView).minY - drawnRect.minY)
-    }
-}
-
 final class ColumnsSplitView: DraggedSplitView {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        NotificationCenter.default.addObserver(self, selector: #selector(fitToolbar), name: NSSplitView.didResizeSubviewsNotification, object: self)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        fitToolbar()
-    }
-
-    @objc private func fitToolbar() { (window?.contentViewController as? WorkspaceController)?.fitToolbar() }
-
-    override func drawDivider(in rect: NSRect) {
-        super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
-    }
-
     var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 

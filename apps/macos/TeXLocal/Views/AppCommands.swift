@@ -57,12 +57,13 @@ struct AppCommands: Commands {
             Menu("Section Level") { SectionLevelItems(project: project) }
         }
         CommandGroup(replacing: .sidebar) {
-            Button(app.main?.outlineOpen(of: project) == true ? "Hide File Outline" : "Show File Outline") {
-                guard let window = app.main else { return }
-                window.outlineCollapsed.toggle()
-                if !window.outlineCollapsed { window.controller?.revealSidebar() }
+            Menu("Navigators") {
+                ForEach(Navigator.allCases, id: \.self) { navigator in
+                    Button(navigator.title) { project?.showNavigator(navigator) }
+                        .keyboardShortcut(navigator.shortcut)
+                }
             }
-            .disabled(project?.isLaTeX != true || project?.search.isSearching == true)
+            .disabled(project == nil)
             Menu("Editor Layout") { if let window = app.main { WorkspaceLayoutPicker(window: window) } }.disabled(project == nil)
             items(.viewToggleSource, .viewTogglePDF, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount)
             Divider()
@@ -82,6 +83,10 @@ struct AppCommands: Commands {
         CommandMenu("Insert") {
             MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut,
                           inlineMathEnabled: app.isEnabledInMenuBar(.editMath, on: project)) { app.main?.perform(.editMath, on: project) }
+            Section("Symbols") {
+                SymbolItems(project: project)
+                items(.symbolLibrary)
+            }
             Divider()
             InsertMenuItems(project: project)
         }

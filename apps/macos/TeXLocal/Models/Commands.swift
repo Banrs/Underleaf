@@ -6,7 +6,7 @@ enum MenuCommand: CaseIterable {
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
-    case editFold, editUnfold, editFoldAll, editUnfoldAll
+    case editFold, editUnfold, editFoldAll, editUnfoldAll, symbolLibrary
     case pdfFind, pdfGotoPage
     case viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
@@ -55,12 +55,13 @@ enum MenuCommand: CaseIterable {
         case .findUsages: ("Find Usages", KeyboardShortcut("f", modifiers: [.command, .control, .shift]))
         case .quickHelp: ("Quick Help for Selected Item", KeyboardShortcut("?", modifiers: [.command, .control]))
         case .editRename: ("Rename…", nil)
+        case .symbolLibrary: ("Symbol Library…", KeyboardShortcut("l", modifiers: [.command, .shift]))
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSource: ("Source", KeyboardShortcut("s", modifiers: [.command, .option]))
         case .viewTogglePDF: ("PDF", KeyboardShortcut("p", modifiers: [.command, .option]))
         case .viewToggleInspector: ("Inspector", KeyboardShortcut("i", modifiers: [.command, .option]))
-        case .viewToggleLogs: ("Build Panel", KeyboardShortcut("y", modifiers: [.command, .shift]))
+        case .viewToggleLogs: ("Logs", KeyboardShortcut("y", modifiers: [.command, .shift]))
         case .viewToggleWordCount: ("Word Count", nil)
         case .viewZoomIn: ("Zoom In", KeyboardShortcut("="))
         case .viewZoomOut: ("Zoom Out", KeyboardShortcut("-"))
@@ -165,6 +166,7 @@ extension AppModel {
             project?.hasPDF == true
         case .syncForward: project?.canSyncForward() == true
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
+        case .symbolLibrary: true
         default: project != nil
         }
     }
@@ -218,7 +220,7 @@ extension WindowModel {
             }
         case .projectSearch: controller?.focusSearch()
         case .fileNew, .fileNewFolder:
-            controller?.revealSidebar()
+            project?.showNavigator(.files)
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
@@ -241,6 +243,7 @@ extension WindowModel {
         case .syncForward: Task { await project?.forwardSync() }
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
+        case .symbolLibrary: SymbolLibrary.toggle(app: app)
         default: break
         }
     }

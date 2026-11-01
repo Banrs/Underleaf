@@ -1,28 +1,54 @@
 import SwiftUI
 
+/// Find's header: the query field, whose own menu holds Match Case, Whole Words and Replace, the last adding the replacement
+/// and Replace All under it.
+struct SearchBar: View {
+    let project: ProjectModel
+    let field: FieldHandle
+    @State private var replacing = false
+
+    var body: some View {
+        let search = Bindable(project.search)
+        if let usages = project.search.usages {
+            Text(String(localized: "Usages of \(usages.name)"))
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+        }
+        SearchField(text: search.query, prompt: "Search Project", handle: field,
+                    step: { [project] in
+                        if !project.search.step($0, in: project.navigator.filtered(project.search.groups ?? [])) { NSSound.beep() }
+                    },
+                    options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords),
+                              (String(localized: "Replace"), $replacing)])
+        if replacing, project.search.usages == nil {
+            SearchField(text: search.replacement, prompt: "With", symbol: "arrow.2.squarepath")
+            HStack {
+                Spacer()
+                // Replace All changes every match in the project, so it waits until the filter no longer hides any.
+                Button("Replace All") { Task { await project.replaceAll() } }
+                    .disabled(project.search.hitCount == 0 || !project.navigator.searchFilter.isEmpty)
+                    .help(project.navigator.searchFilter.isEmpty ? "" : "Clear the filter to replace every match")
+            }
+        }
+    }
+}
+
 struct SearchResults: View {
     let project: ProjectModel
-    private static let inset: (side: CGFloat, below: CGFloat) = (10, 9)
+    let field: FieldHandle
 
     var body: some View {
         list
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
             .safeAreaBar(edge: .top, spacing: 0) {
-                Group {
-                    if let usages = project.search.usages {
-                        Text(String(localized: "Usages of \(usages.name)"))
-                            .font(.headline)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityAddTraits(.isHeader)
-                    } else {
-                        replaceBar
-                    }
-                }
-                .padding(.horizontal, Self.inset.side)
-                .padding(.bottom, Self.inset.below)
+                VStack(alignment: .leading, spacing: 3) { SearchBar(project: project, field: field) }
+                    .padding(.horizontal, 6)
+                    .padding(.top, 2)
+                    .padding(.bottom, 6)
             }
             .overlay {
                 if let failure = project.search.failure {
@@ -40,46 +66,24 @@ struct SearchResults: View {
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
     }
 
-    private var replaceBar: some View {
-        HStack {
-            SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
-            replaceAll
-        }
-    }
-
-    private var replaceAll: some View {
-        Button("Replace All") { Task { await project.replaceAll() } }
-            .disabled(project.search.hitCount == 0)
-    }
-
     private func sections<Row: View>(@ViewBuilder _ hit: @escaping (SearchHit) -> Row) -> some View {
-        ForEach(project.search.groups ?? []) { group in
+        ForEach(project.navigator.filtered(project.search.groups ?? [])) { group in
             Section {
                 ForEach(group.hits) { hit($0) }
             } header: {
-                HStack {
-                    Text(group.file).truncationMode(.middle)
-                    Spacer()
-                    Text(group.hits.count, format: .number).monospacedDigit()
-                }
-                .accessibilityElement(children: .ignore)
+                Text("\(Text(group.file.fileName).foregroundStyle(.primary)) \(group.file.parentFolder)")
+                    .truncationMode(.middle)
+                    .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(group.file), \(Self.matches(group.hits.count))")
             }
         }
     }
 
     private func row(_ hit: SearchHit) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
-                .lineLimit(2)
-            Spacer(minLength: 4)
-            Text(verbatim: String(hit.line))
-                .font(.subheadline)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Line \(hit.line)")
-        }
-        .accessibilityElement(children: .combine)
+        Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
+            .lineLimit(2)
+            .navigatorRow()
+            .accessibilityValue("Line \(hit.line)")
     }
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {

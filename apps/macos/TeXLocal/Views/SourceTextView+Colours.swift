@@ -11,7 +11,7 @@ extension SourceTextView {
             for run in document.highlights(in: NSRange(location: start, length: end - start)) {
                 let clipped = NSIntersectionRange(run.range, NSRange(location: start, length: end - start))
                 if clipped.length > 0, let range = textRange(clipped) {
-                    manager.setRenderingAttributes([.foregroundColor: syntaxTheme.color(run.kind)], for: range)
+                    manager.setRenderingAttributes([.foregroundColor: run.kind.color], for: range)
                     runs += [clipped.location - start, clipped.length, run.kind.rawValue]
                 }
             }

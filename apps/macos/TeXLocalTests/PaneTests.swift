@@ -55,7 +55,7 @@ struct PaneTests {
     }
 
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {
-        let names = ["Workspace 2", "Sidebar", "Columns", "Area"]
+        let names = ["Workspace 2", "Columns", "Area"]
         let keys = names.map { "NSSplitView Subview Frames \($0)" } + [DefaultsKey.buildPanelHeight]
         let kept = keys.map { UserDefaults.standard.object(forKey: $0) }
         defer { for (key, value) in zip(keys, kept) { UserDefaults.standard.set(value, forKey: key) } }
@@ -69,7 +69,7 @@ struct PaneTests {
         (sidebar.isCollapsed, inspector.isCollapsed) = (true, false)
         workspace.project.panel.shown = true
         func saved(_ key: String, _ index: Int) -> String? { UserDefaults.standard.stringArray(forKey: key)?.dropFirst(index).first }
-        try await waitUntil { saved(keys[0], 0)?.contains(", YES,") == true && saved(keys[3], 1)?.contains(", NO,") == true }
+        try await waitUntil { saved(keys[0], 0)?.contains(", YES,") == true && saved(keys[2], 1)?.contains(", NO,") == true }
         workspace.close()
         window.close()
 
@@ -80,14 +80,12 @@ struct PaneTests {
         #expect(restored.project.panel.shown)
     }
 
-    @Test func theWindowControllerPassesTheInspectorToggleToTheWorkspaceItShows() throws {
+    @Test func theWindowShowsItsWorkspaceAtOnceAndItsControllerPassesTheInspectorToggleToIt() throws {
         let defaults = TestDefaults()
         let controller = MainWindowController(app: defaults.app(), project: "P")
-        #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) == nil)
-        let (window, workspace) = open(controller.model)
-        defer { workspace.close(); window.close() }
-        controller.window = window
-        window.contentViewController = workspace
+        let (window, workspace) = (try #require(controller.window), try #require(controller.workspace))
+        defer { window.close() }
+        #expect(window.contentViewController === workspace && window.toolbar === workspace.toolbar.toolbar)
         #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) as? WorkspaceController === workspace)
         #expect(controller.supplementalTarget(forAction: Self.toggleSidebar, sender: nil) == nil)
         #expect(controller.undoManager != nil && controller.undoManager === window.undoManager)

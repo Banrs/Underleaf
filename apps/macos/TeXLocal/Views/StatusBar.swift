@@ -1,8 +1,12 @@
 import SwiftUI
 
+/// Xcode's debug bar and its console's bar, read from their accessibility frames: 36 pt tall, their first and last
+/// controls 8 pt from their ends, and a symbol button 30 pt wide with its symbol centred.
 enum BarMetrics {
     static let height: CGFloat = 36
     static let target: CGFloat = 20
+    static let inset: CGFloat = 8
+    static let symbolWidth: CGFloat = 30
 }
 
 struct StatusBar: View {
@@ -15,8 +19,9 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .barRow(leading: 14, trailing: 16.5)
+        .barRow()
         .contentShape(.rect)
+        .barEdge()
         .monospacedDigit()
         .buttonStyle(.borderless)
         .contextMenu { Button(window.title(.viewToggleWordCount, on: project)) { window.perform(.viewToggleWordCount, on: project) } }
@@ -44,51 +49,61 @@ struct StatusBar: View {
 }
 
 private struct BuildStatus: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let project: ProjectModel
     let detail: StatusBar.Detail
 
     var body: some View {
-        let showingIssues = project.panel.shown && project.panel.tab == .issues
-        Button {
-            if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
-        } label: { label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
-        .help(showingIssues ? "Hide issues" : "Show issues")
+        Button { project.showNavigator(.issues) } label: {
+            label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
+        }
+        .help("Show issues")
+    }
+
+    /// The build's state, its symbol replacing the last one as it changes, and pulsing while it compiles.
+    private var state: (title: LocalizedStringKey, symbol: String?, color: Color?)? {
+        if project.compiling { return ("Compiling…", "progress.indicator", .secondary) }
+        guard let result = project.result else { return project.hasPDF ? nil : ("No Build Yet", nil, nil) }
+        if result.stopped { return ("Build Stopped", nil, nil) }
+        if result.ok { return ("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green) }
+        return (project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
+                "xmark.octagon.fill", nil)
     }
 
     private var label: some View {
         HStack {
-            if project.compiling {
-                Text("Compiling…")
-            } else if let result = project.result {
-                if result.stopped {
-                    Text("Build Stopped")
-                } else if result.ok {
-                    badge("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green)
+            if let state {
+                if let symbol = state.symbol {
+                    badge(state.title, symbol, state.color)
+                        .symbolEffect(.variableColor.iterative, options: .repeating, isActive: project.compiling && !reduceMotion)
                 } else {
-                    badge(project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
-                          "xmark.octagon.fill")
+                    Text(state.title)
                 }
-            } else if !project.hasPDF {
-                Text("No Build Yet")
             }
             if project.errorCount > 0, project.result?.failed != true {
-                badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)")
+                badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)",
+                      count: project.errorCount)
             }
             if project.warningCount > 0 {
-                badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
+                badge("\(project.warningCount)", "exclamationmark.triangle.fill",
+                      spoken: "^[\(project.warningCount) warning](inflect: true)", count: project.warningCount)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: project.compiling)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: project.compiling)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: [project.errorCount, project.warningCount])
     }
 
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
-                       spoken: LocalizedStringKey? = nil) -> some View {
+                       spoken: LocalizedStringKey? = nil, count: Int? = nil) -> some View {
         Label {
-            if let spoken { Text(title).accessibilityLabel(Text(spoken)) } else { Text(title) }
+            Text(title)
+                .contentTransition(count.map { .numericText(value: Double($0)) } ?? .opacity)
+                .accessibilityLabel(Text(spoken ?? title))
         } icon: {
             Image(systemName: systemImage)
                 .symbolRenderingMode(color == nil ? .multicolor : nil)
                 .foregroundStyle(color ?? .primary)
+                .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)
         }
         .labelStyle(.titleAndIcon)
@@ -200,7 +215,7 @@ private struct PagePlace: View {
 
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
-            Button { project.panel.show(.issues) } label: {
+            Button { project.showNavigator(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
@@ -221,10 +236,10 @@ private struct PanelToggle: View {
 
     var body: some View {
         Toggle(isOn: Bindable(project.panel).shown) {
-            Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
+            Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
-                .frame(minHeight: BarMetrics.target)
+                .hitTarget()
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
@@ -239,10 +254,20 @@ private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short
 }
 
 extension View {
-    func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
+    func barRow() -> some View {
         font(.subheadline).controlSize(.small).lineLimit(1)
-            .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
+            .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
     }
 
-    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect) }
+    /// A bar's top edge: a hairline, as above Xcode's debug bar, there whether or not text runs beneath, which the
+    /// scroll edge's own line is not.
+    func barEdge() -> some View { overlay(alignment: .top) { BarEdge() } }
+
+    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }
+}
+
+private struct BarEdge: View {
+    @Environment(\.pixelLength) private var pixelLength
+
+    var body: some View { Rectangle().fill(.separator).frame(height: pixelLength) }
 }

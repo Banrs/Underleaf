@@ -42,8 +42,9 @@ final class ProjectSearch {
         (groups, failure, searched, usages, chosen) = (found, why, asked, nil, nil)
     }
 
-    func step(_ step: Int) -> Bool {
-        let hits = groups?.flatMap(\.hits).map(\.id) ?? []
+    /// Chooses the next or previous of the hits shown, `shown` being the results as the navigator's filter leaves them.
+    func step(_ step: Int, in shown: [SearchGroup]) -> Bool {
+        let hits = shown.flatMap(\.hits).map(\.id)
         guard !hits.isEmpty else { return false }
         let at = chosen.flatMap(hits.firstIndex) ?? (step > 0 ? -1 : 0)
         chosen = hits[(at + step + hits.count) % hits.count]

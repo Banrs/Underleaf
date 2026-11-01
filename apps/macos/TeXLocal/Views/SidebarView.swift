@@ -4,34 +4,25 @@ struct FilesList: View {
     @Environment(WindowModel.self) private var window
     @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
-    @State private var selection: String?
     @State private var rename = InPlaceRename<String>()
     @State private var created: String?
     @FocusState private var listFocused: Bool
 
-    var body: some View {
-        GeometryReader { geometry in
-            Group { if project.search.isSearching { SearchResults(project: project) } else { files } }
-                .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
-        }
-        .searching(project)
-        .onChange(of: window.newEntry, initial: true) { _, entry in
-            guard let entry, !project.closed else { return }
-            window.newEntry = nil
-            create(entry)
-        }
+    private var selection: String? {
+        get { project.navigator.fileSelection }
+        nonmutating set { project.navigator.fileSelection = newValue }
     }
 
-    private var files: some View {
+    var body: some View {
+        let filter = project.navigator.fileFilter
+        let nodes = filtered(project.tree.nodes, \.children, by: filter) { $0.name }
         ScrollViewReader { proxy in
-            List(selection: $selection) {
-                Section("Files") {
-                    TreeRows(nodes: project.tree.nodes, children: \.children, isExpanded: { node in
-                        disclosure(\.expandedFolders, of: project, key: node.path,
-                                   subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? [])
-                    }, insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
-                        row(node).tag(node.path)
-                    }
+            List(selection: Bindable(project.navigator).fileSelection) {
+                TreeRows(nodes: nodes, children: \.children, isExpanded: { node in
+                    filter.isEmpty ? disclosure(\.expandedFolders, of: project, key: node.path,
+                                                subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? []) : .constant(true)
+                }, insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
+                    row(node).tag(node.path)
                 }
             }
             .listStyle(.sidebar)
@@ -40,7 +31,9 @@ struct FilesList: View {
                 Task { await project.dropFiles(urls, into: "") }
             }
             .overlay {
-                if project.initialLoadComplete, project.tree.nodes.isEmpty {
+                if !filter.isEmpty, nodes.isEmpty {
+                    ContentUnavailableView.search(text: filter)
+                } else if project.initialLoadComplete, project.tree.nodes.isEmpty {
                     ContentUnavailableView {
                         Label("No Files", systemImage: "text.document")
                     } description: {
@@ -82,8 +75,8 @@ struct FilesList: View {
                     }
                 }
             }
-            .onChange(of: project.openPath, initial: true) { _, path in
-                selection = path
+            .onChange(of: project.openPath, initial: true) { old, path in
+                if old != path || selection == nil { selection = path }
                 if let path { showRow(path) }
             }
             .onKeyPress(.return) {
@@ -94,6 +87,11 @@ struct FilesList: View {
             .focused($listFocused)
             .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.tree.node(at: path).map(actions) }
             .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
+            .onChange(of: window.newEntry, initial: true) { _, entry in
+                guard let entry, !project.closed else { return }
+                window.newEntry = nil
+                create(entry)
+            }
         }
     }
 
@@ -108,7 +106,7 @@ struct FilesList: View {
 
     private func create(_ entry: NewEntry) {
         let folder = entry.folder ?? chosenFolder
-        if project.search.isSearching { project.search.query = "" }
+        project.navigator.fileFilter = ""
         Task {
             guard let path = await project.createEntry(in: folder, directory: entry.directory) else { return }
             showRow(path)
@@ -138,16 +136,21 @@ struct FilesList: View {
                 } else {
                     Text(node.name).truncationMode(.middle)
                 }
-                if isMain {
-                    Spacer()
-                    Image(systemName: "star.fill")
-                        .foregroundStyle(.yellow)
-                        .imageScale(.small)
-                        .help("Main File")
-                        .accessibilityHidden(true)
-                }
             }
-        } icon: { Image(systemName: node.symbol) }
+        } icon: {
+            Image(systemName: node.symbol)
+                .overlay(alignment: .bottomLeading) {
+                    if isMain {
+                        Image(systemName: "star.circle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .foregroundStyle(.yellow)
+                            .imageScale(.small)
+                            .offset(x: -3, y: 3)
+                            .help("Main File")
+                    }
+                }
+        }
+        .navigatorRow()
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
@@ -206,12 +209,13 @@ extension View {
 struct OutlineList: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    @Environment(\.sidebarRowSize) private var rowSize
     @State private var chosen: Int?
 
     var body: some View {
         let outline = project.outline
         let current = project.currentHeading
+        let filter = project.navigator.outlineFilter
+        let nodes = filtered(project.outlineTree, \.children, by: filter) { $0.heading.title }
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
             guard let id, id != current, outline.indices.contains(id) else { return }
             chosen = id
@@ -219,8 +223,9 @@ struct OutlineList: View {
         })
         ScrollViewReader { proxy in
             List(selection: selection) {
-                TreeRows(nodes: project.outlineTree, children: \.children, isExpanded: { node in
-                    disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true, subtree: node.descendants.map(\.foldKey))
+                TreeRows(nodes: nodes, children: \.children, isExpanded: { node in
+                    filter.isEmpty ? disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true,
+                                                subtree: node.descendants.map(\.foldKey)) : .constant(true)
                 }) { node in
                     HeadingRow(node: node, words: app.showWordCount ? node.words : nil).tag(node.id)
                         .simultaneousGesture(TapGesture().onEnded {
@@ -231,12 +236,14 @@ struct OutlineList: View {
                 }
             }
             .listStyle(.sidebar)
-            .accessibilityLabel("File Outline")
-            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
-            .padding(.top, -sidebarListRoom)
-            .clipped()
-            .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
-            .overlay { if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") } }
+            .accessibilityLabel("Outline")
+            .overlay {
+                if !filter.isEmpty, nodes.isEmpty {
+                    ContentUnavailableView.search(text: filter)
+                } else if outline.isEmpty {
+                    ContentUnavailableView("No Sections", systemImage: "list.bullet.indent")
+                }
+            }
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let id = ids.first, outline.indices.contains(id) else { return }
                 let heading = outline[id]
@@ -251,78 +258,27 @@ struct OutlineList: View {
     }
 }
 
-struct OutlineHeader: View {
-    @Environment(WindowModel.self) private var window
-    let project: ProjectModel
-    @State private var hovering = false
-    @State private var line: CGFloat = 0
-
-    var body: some View {
-        let open = window.outlineOpen(of: project)
-        Button { window.outlineCollapsed = open } label: {
-            HStack {
-                Text("File Outline")
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .animation(.default, value: open)
-                    .opacity(hovering ? 1 : 0)
-                    .accessibilityHidden(true)
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.tertiary)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { line = $0 }
-            .padding(.leading, 14)
-            .padding(.trailing, 18)
-            .frame(height: BarMetrics.height)
-            .frame(height: open ? ((BarMetrics.height + line) / 2).rounded() : BarMetrics.height, alignment: .top)
-            .animation(.default, value: open)
-            .frame(maxHeight: .infinity, alignment: .bottom)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .disabled(!project.isLaTeX)
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityValue(open ? "Expanded" : "Collapsed")
-    }
-}
-
-private let sidebarListRoom: CGFloat = 10
-
 private struct HeadingRow: View {
     let node: OutlineNode
     let words: Int?
 
     var body: some View {
         let heading = node.heading
-        HStack {
+        HStack(spacing: 4) {
             Text(heading.title)
                 .help(heading.title)
                 .foregroundStyle(heading.untitled ? .secondary : .primary)
             if let words {
-                Spacer(minLength: 4)
                 Text(words, format: .number)
-                    .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .layoutPriority(1)
                     .accessibilityLabel("^[\(words) word](inflect: true)")
             }
         }
         .lineLimit(1)
+        .navigatorRow()
         .accessibilityElement(children: .combine)
         .accessibilityValue(heading.level)
         .id(node.id)
-    }
-}
-
-struct HeaderEdge: ViewModifier {
-    let height: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
-            .scrollEdgeEffectStyle(.hard, for: .bottom)
-            .scrollEdgeEffectHidden(height == 0, for: .bottom)
-            .ignoresSafeArea(.container, edges: .bottom)
     }
 }

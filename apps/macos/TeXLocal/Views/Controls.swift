@@ -11,3 +11,10 @@ extension Picker where Label == TupleView<(Text, Text)> {
         self.init(selection: selection, content: content) { Text(title); Text(detail) }
     }
 }
+
+extension NSPasteboard {
+    func replaceContents(with string: String) {
+        clearContents()
+        setString(string, forType: .string)
+    }
+}

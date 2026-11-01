@@ -25,9 +25,13 @@ struct SearchField: NSViewRepresentable {
     var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
     var options: [(title: String, isOn: Binding<Bool>)] = []
+    var status: String?
+    /// The status as VoiceOver reads it, since the drawn one isn't in the accessibility tree.
+    var spokenStatus: String?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
+        lazy var symbol = field.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
 
         init(_ field: SearchField) { self.field = field }
 
@@ -56,17 +60,20 @@ struct SearchField: NSViewRepresentable {
         }
     }
 
+    static let filterSymbol = "line.3.horizontal.decrease.circle"
+
+    static func filter(_ text: Binding<String>) -> SearchField {
+        SearchField(text: text, prompt: String(localized: "Filter"), symbol: filterSymbol)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {
-        let view = NSSearchField()
+        let view = status == nil ? NSSearchField() : StatusSearchField()
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))
-        if let symbol, let cell = view.cell as? NSSearchFieldCell {
-            cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        }
         if large, let cell = view.cell as? NSSearchFieldCell {
             view.font = .systemFont(ofSize: 20)
             (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
@@ -82,8 +89,19 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
+        // The cell puts its magnifier back whenever its control size changes, as SwiftUI's environment does after makeNSView.
+        if let symbol = context.coordinator.symbol, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell, button.image !== symbol {
+            button.image = symbol
+        }
+        if !large, view.font?.pointSize != NSFont.systemFontSize(for: view.controlSize) {
+            view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
+        }
+        if let cell = view.cell as? StatusSearchField.Cell, cell.status != status ?? "" {
+            cell.status = status ?? ""
+            (view.needsLayout, view.needsDisplay) = (true, true)
+        }
         view.placeholderString = prompt
-        view.setAccessibilityLabel(prompt)
+        view.setAccessibilityLabel(spokenStatus.map { "\(prompt), \($0)" } ?? prompt)
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
         }
@@ -95,6 +113,42 @@ struct SearchField: NSViewRepresentable {
             }
             cell.searchMenuTemplate = menu
         }
+    }
+}
+
+/// A search field showing a status, a match count, as NSTextFinder's bar field shows it, read from that field's cell: its
+/// right edge 1.5 pt into the clear button's rect, in the field's font with monospaced digits, the text stopping 11.5 pt
+/// before it. Laying the field out again moves the field editor to follow it.
+private final class StatusSearchField: NSSearchField {
+    final class Cell: NSSearchFieldCell {
+        var status = ""
+
+        private var attributes: [NSAttributedString.Key: Any] {
+            [.font: NSFont.monospacedDigitSystemFont(ofSize: font?.pointSize ?? NSFont.smallSystemFontSize, weight: .regular),
+             .foregroundColor: NSColor.secondaryLabelColor]
+        }
+
+        private func statusRect(forBounds rect: NSRect) -> NSRect {
+            let width = status.isEmpty ? 0 : (status as NSString).size(withAttributes: attributes).width.rounded(.up)
+            let text = super.searchTextRect(forBounds: rect)
+            return NSRect(x: cancelButtonRect(forBounds: rect).minX + 1.5 - width, y: text.minY, width: width, height: text.height)
+        }
+
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+            var text = super.searchTextRect(forBounds: rect)
+            if !status.isEmpty { text.size.width = max(0, statusRect(forBounds: rect).minX - 11.5 - text.minX) }
+            return text
+        }
+
+        override func drawInterior(withFrame frame: NSRect, in view: NSView) {
+            super.drawInterior(withFrame: frame, in: view)
+            (status as NSString).draw(in: statusRect(forBounds: frame), withAttributes: attributes)
+        }
+    }
+
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
     }
 }
 

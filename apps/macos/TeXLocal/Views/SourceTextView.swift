@@ -149,9 +149,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var laidOut: () -> Void = {}
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
     private(set) lazy var issues = IssueOverlay(in: self)
-    var syntaxTheme = SyntaxTheme.system {
-        didSet { if syntaxTheme != oldValue { fragmentColours.removeAllObjects(); colour(from: 0) } }
-    }
     var staleColours: Int?
     let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
     var partnerMark: NSRange?
@@ -417,7 +414,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func setsCursor(with event: NSEvent) -> Bool {
         gutterHover(inGutter(event))
         if updateDividerCursor(with: event) { return true }
-        guard inGutter(event) || issue(at: event) != nil || completions.contains(event.locationInWindow) else { return false }
+        guard inGutter(event) || issue(at: event) != nil else { return false }
         NSCursor.arrow.set()
         return true
     }

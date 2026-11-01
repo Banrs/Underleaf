@@ -19,14 +19,12 @@ final class WindowModel {
 
     var showSource: Bool { didSet { app.defaults.set(showSource, forKey: DefaultsKey.showSource) } }
     var showPDF: Bool { didSet { app.defaults.set(showPDF, forKey: DefaultsKey.showPDF) } }
-    var outlineCollapsed: Bool { didSet { app.defaults.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) } }
 
     init(app: AppModel) {
         self.app = app
         let defaults = app.defaults
         showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
         showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
-        outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         app.opened(self)
     }
 
@@ -43,12 +41,6 @@ final class WindowModel {
     func create(name: String, template: ProjectTemplate) async throws {
         let info = try await app.core.call(CreateProject(name: name, template: template, engine: app.newProjectEngine))
         Task { await open(info.id) }
-    }
-
-    func outlineOpen(of project: ProjectModel?) -> Bool { project?.isLaTeX == true && !outlineCollapsed }
-
-    func outlineState(of project: ProjectModel) -> OutlineState {
-        project.search.isSearching ? .hidden : outlineOpen(of: project) ? .open : .folded
     }
 
     var layout: WorkspaceLayout {

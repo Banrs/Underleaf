@@ -9,12 +9,13 @@ extension NSToolbarItem.Identifier {
     static let zoom = Self("zoom")
     static let compile = Self("compile")
     static let layout = Self("layout")
+    static let inspector = Self("inspector")
     static let share = Self("share")
 }
 
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate, NSMenuItemValidation {
-    let toolbar = NSToolbar(identifier: "Workspace 6")
-    var compactCompile = false { didSet { if compactCompile != oldValue { apply(state) } } }
+    let toolbar = NSToolbar(identifier: "Workspace 7")
+    private(set) var compactCompile = false
     weak var workspace: WorkspaceController?
     private let window: WindowModel
     private let views: WorkspaceViews
@@ -22,6 +23,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var pdf: PDFController { views.pdf }
     private var watch: Task<Void, Never>?
     private lazy var format = FormatPopover(window: window, views: views)
+    private lazy var compileButton = CompileButton(target: self, action: #selector(compile))
+    private var compileItem: NSToolbarItem?
+    private var overflow: NSKeyValueObservation?
+    private var wideRoom: CGFloat = 0
+    private var applied: State?
 
     init(window: WindowModel, views: WorkspaceViews) {
         self.window = window
@@ -37,13 +43,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func close() {
         watch?.cancel()
+        overflow?.invalidate()
         format.popover.close()
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
+         .inspectorTrackingSeparator, .flexibleSpace, .layout, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -51,12 +58,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .inspector]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
-              [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
+              item.itemIdentifier == .toggleSidebar else { return }
         item.visibilityPriority = .high
     }
 
@@ -80,8 +87,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 SectionLevelItems(project: project)
             })
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [window, project] in
-                window.perform(.editMath, on: project)
+            item = menuItem(id, "Math", "radicand.squareroot", Group { [window, project] in
+                MathMenuItems(project: project) { window.perform(.editMath, on: project) }
+                Divider()
+                Button(MenuCommand.symbolLibrary.title) { window.perform(.symbolLibrary, on: project) }
             })
         case .insert:
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))
@@ -93,14 +102,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .compile:
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
-            if inserted { item.view = NSHostingView(rootView: compileButton(state)) } else { item.title = item.label }
-            item.style = .prominent
+            if inserted { watchOverflow(of: item) } else { item.title = item.label }
             let form = NSMenuItem(title: item.label, action: #selector(compile), keyEquivalent: "")
             form.target = self
             item.menuFormRepresentation = form
         case .layout:
             item = menuItem(id, "Editor Layout", window.layout.symbol, WorkspaceLayoutPicker(window: window))
             item.toolTip = "Choose Source Only, Source & PDF, or PDF Only"
+        case .inspector:
+            // AppKit's own .toggleInspector item always sits on a glass of its own (read from its toolbar platter); this one shares
+            // the Layout menu's, as items beside each other do.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = MenuCommand.viewToggleInspector.title
+            item.toolTip = "Show or hide the inspector"
+            item.image = NSImage(systemSymbolName: "sidebar.trailing", accessibilityDescription: item.label)
+            item.action = #selector(NSSplitViewController.toggleInspector(_:))
         case .share:
             let share = ShareItem(itemIdentifier: id)
             share.delegate = self
@@ -109,7 +125,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         default: return nil
         }
         item.autovalidates = false
-        item.visibilityPriority = [.compile, .layout].contains(id) ? .high : .low
+        item.visibilityPriority = id == .compile ? compilePriority : [.layout, .inspector].contains(id) ? .high : .low
         if inserted { configure(item, state) }
         return item
     }
@@ -173,7 +189,44 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func apply(_ state: State) {
+        if compactCompile, let applied, applied.layout != state.layout { compactCompile = false }
+        applied = state
         for item in toolbar.items { configure(item, state) }
+    }
+
+    /// Below every other item's, so Compile turns compact before AppKit sends anything to the overflow menu, and above them once compact.
+    private var compilePriority: NSToolbarItem.VisibilityPriority {
+        compactCompile ? .high : NSToolbarItem.VisibilityPriority(rawValue: NSToolbarItem.VisibilityPriority.low.rawValue - 1)
+    }
+
+    /// Compile turns compact when AppKit finds no room for it in the toolbar, read from the item leaving for the overflow menu,
+    /// rather than from column widths worked out by hand.
+    private func watchOverflow(of item: NSToolbarItem) {
+        item.view = compileButton
+        compileItem = item
+        overflow = item.observe(\.isVisible, options: .initial) { [weak self] item, _ in MainActor.assumeIsolated { self?.overflowed(item) } }
+    }
+
+    /// AppKit can move the item to the overflow menu for a moment while a resize settles, so it's read again once layout is done.
+    private func overflowed(_ item: NSToolbarItem) {
+        guard !item.isVisible, !compactCompile else { return }
+        Task { [weak self] in
+            guard let self, !item.isVisible, !compactCompile, toolbar.isVisible, let room = workspace?.toolbarRoom else { return }
+            wideRoom = room + compileButton.intrinsicContentSize.width
+            setCompact(true)
+        }
+    }
+
+    /// Called as the columns change size: Compile reads as a word again once the room has grown, since the word last didn't fit,
+    /// by the word's width over the symbol's, so it can't flip back and forth at one width.
+    @objc func fit() {
+        guard compactCompile, let room = workspace?.toolbarRoom, room + compileButton.intrinsicContentSize.width >= wideRoom else { return }
+        setCompact(false)
+    }
+
+    private func setCompact(_ compact: Bool) {
+        compactCompile = compact
+        if let compileItem { configure(compileItem, state) }
     }
 
     private func configure(_ item: NSToolbarItem, _ state: State) {
@@ -202,13 +255,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             let title = (state.compiling ? MenuCommand.compileStop : .compileRun).title
             update(item, \.label, title)
             update(item.menuFormRepresentation, \.title, title)
-            update(item, \.backgroundTintColor, state.compiling ? .clear : nil)
+            update(item, \.style, state.compiling ? .plain : .prominent)
             update(item, \.isEnabled, state.open && state.canCompile)
-            update(item, \.toolTip, compactCompile ? state.compiling ? "Stop the build" : "Compile the project" : nil)
-            if let host = item.view as? NSHostingView<CompileButton>,
-               (host.rootView.compiling, host.rootView.compact, host.rootView.enabled) != (state.compiling, compactCompile, state.open && state.canCompile) {
-                host.rootView = compileButton(state)
-            }
+            update(item, \.visibilityPriority, compilePriority)
+            guard item.view === compileButton else { return }
+            update(compileButton, \.isEnabled, state.open && state.canCompile)
+            update(compileButton, \.toolTip, compactCompile ? state.compiling ? "Stop the build" : "Compile the project" : nil)
+            compileButton.show(compiling: state.compiling, compact: compactCompile)
         case .layout:
             update(item, \.isEnabled, state.open)
             if item.image?.accessibilityDescription != state.layout.title {
@@ -225,10 +278,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }
     }
     @objc private func compile() { window.perform(project.compiling ? .compileStop : .compileRun, on: project) }
-
-    private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, compact: compactCompile, enabled: state.open && state.canCompile) { [weak self] in self?.compile() }
-    }
 }
 
 extension WorkspaceLayout {
@@ -242,9 +291,9 @@ extension WorkspaceLayout {
 
     var symbol: String {
         switch self {
-        case .source: "rectangle.lefthalf.inset.filled"
+        case .source: "rectangle.leadinghalf.inset.filled"
         case .split: "rectangle.split.2x1"
-        case .pdf: "rectangle.righthalf.inset.filled"
+        case .pdf: "rectangle.trailinghalf.inset.filled"
         }
     }
 }
@@ -274,6 +323,9 @@ private final class ZoomControl: NSSegmentedControl {
 
     override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
+    /// Fixes the zoom segment at the width it takes around the widest label, so the control keeps its size as the zoom changes.
+    /// A fixed segment width leaves out the padding AppKit adds around a label, so the padding and the other segments (`rest`)
+    /// are read as the control's width with the segment fixed at some width, less that width.
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
@@ -281,57 +333,64 @@ private final class ZoomControl: NSSegmentedControl {
         let label = label(forSegment: 1) ?? ""
         setLabel(widestLabel, forSegment: 1)
         setWidth(0, forSegment: 1)
-        let widest = intrinsicContentSize.width
-        setWidth(widest, forSegment: 1)
-        setWidth(2 * widest - intrinsicContentSize.width, forSegment: 1)
+        let fitted = intrinsicContentSize.width
+        setWidth(fitted, forSegment: 1)
+        let rest = intrinsicContentSize.width - fitted
+        setWidth(fitted - rest, forSegment: 1)
         setLabel(label, forSegment: 1)
     }
 }
 
-private struct CompileButton: View {
-    let compiling, compact, enabled: Bool
-    let action: () -> Void
-    @Environment(\.appearsActive) private var appearsActive
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// Compile, or Stop while building, drawn as AppKit draws a titled toolbar item: the NSToolbarButton AppKit makes for one is an
+/// NSButton with the toolbar bezel (read from an instance: 13 pt title, 74 × 36 pt for Compile), so this one keeps AppKit's padding
+/// while holding the build's spinner in its image well, or around a stop symbol when compact.
+private final class CompileButton: NSButton {
+    private let spinner = NSProgressIndicator()
+    private var widest: CGFloat = 0
+    private var shown: (compiling: Bool, compact: Bool)?
 
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                idle.opacity(compiling ? 0 : 1)
-                busy.opacity(compiling ? 1 : 0).accessibilityHidden(true)
-            }
-            .foregroundStyle(appearsActive ? .primary : .tertiary)
-            .animation(reduceMotion ? nil : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2), value: compact)
-            .padding(.horizontal, compact ? 0 : 12)
-            .frame(minWidth: 36, minHeight: 36)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
+    init(target: AnyObject, action: Selector) {
+        super.init(frame: .zero)
+        (self.target, self.action) = (target, action)
+        bezelStyle = .toolbar
+        imagePosition = .imageLeading
+        spinner.style = .spinning
+        spinner.isDisplayedWhenStopped = false
+        spinner.setAccessibilityElement(false)
+        addSubview(spinner)
     }
 
-    @ViewBuilder private var idle: some View {
-        if compact {
-            Image(systemName: "play.fill").font(.system(size: 17))
-        } else {
-            Text(MenuCommand.compileRun.title).transition(.identity)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(compiling: Bool, compact: Bool) {
+        guard shown.map({ $0 != (compiling, compact) }) ?? true else { return }
+        shown = (compiling, compact)
+        let command = compiling ? MenuCommand.compileStop : .compileRun
+        title = compact ? "" : command.title
+        spinner.controlSize = compact ? .regular : .small
+        image = switch (compact, compiling) {
+        case (true, _): NSImage(systemSymbolName: compiling ? "stop.fill" : "play.fill", accessibilityDescription: command.title)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(scale: compiling ? .small : .medium))
+        case (false, true): NSImage(size: spinner.intrinsicContentSize)
+        case (false, false): nil
         }
+        if compiling { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        needsLayout = true
     }
 
-    @ViewBuilder private var busy: some View {
-        if compact {
-            ZStack {
-                ProgressView().controlSize(.regular).scaleEffect(0.8)
-                Image(systemName: "stop.fill").font(.system(size: 7))
-            }
-        } else {
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.small)
-                Text(MenuCommand.compileStop.title)
-            }
-            .transition(.identity)
-        }
+    /// As wide as the widest of Compile and Stop it has shown, so the items beside it stay put as a build starts and ends.
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        guard !title.isEmpty else { return size }
+        widest = max(widest, size.width)
+        size.width = widest
+        return size
+    }
+
+    override func layout() {
+        super.layout()
+        let well = title.isEmpty ? bounds : cell?.imageRect(forBounds: bounds) ?? bounds, size = spinner.intrinsicContentSize
+        spinner.frame = NSRect(x: (well.midX - size.width / 2).rounded(), y: (well.midY - size.height / 2).rounded(), width: size.width, height: size.height)
     }
 }
 

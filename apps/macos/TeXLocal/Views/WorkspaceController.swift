@@ -11,9 +11,8 @@ final class WorkspaceController: ThinSplitViewController {
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = AreaSplitViewController(isVertical: false)
-    private let sidebar = SidebarSplitViewController()
-    private var sidebarItem, outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
-    private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
+    private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
+    private var pdfFind: NSSplitViewItemAccessoryViewController!
     private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
     private let inspectorMount = Mount()
@@ -30,20 +29,22 @@ final class WorkspaceController: ThinSplitViewController {
         super.init()
         toolbar.workspace = self
         if app.savesLayout {
-            for (split, name) in zip(splitViews, ["Workspace 2", "Sidebar", "Columns", "Area"]) {
+            for (split, name) in zip(splitViews, ["Workspace 2", "Columns", "Area"]) {
                 split.autosaveName = name
             }
         }
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mount: inspectorMount))
         inspectorItem.isCollapsed = true
         inspectorItem.canCollapseFromWindowResize = true
-        buildSidebar(height: size.height)
+        inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+        buildSidebar()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
-        for item in [sidebarItem, outlineItem, sourceItem, pdfItem, panelItem, inspectorItem] {
+        for item in [sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem] {
             item!.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
         watch()
+        NotificationCenter.default.addObserver(toolbar, selector: #selector(WorkspaceToolbar.fit), name: NSView.frameDidChangeNotification, object: area.view)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -63,12 +64,6 @@ final class WorkspaceController: ThinSplitViewController {
         fitColumns()
     }
 
-    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect, forDrawnRect drawnRect: NSRect,
-                            ofDividerAt dividerIndex: Int) -> NSRect {
-        splitViewItems.firstIndex(of: inspectorItem) == dividerIndex + 1 ? .zero
-            : super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
-    }
-
     private func fitColumns() {
         let both = window.showSource && window.showPDF
         let area = both ? 2 * ColumnMetrics.paneMinimum + columns.splitView.dividerThickness : ColumnMetrics.paneMinimum
@@ -80,46 +75,20 @@ final class WorkspaceController: ThinSplitViewController {
         if views.inspectorShown == inspectorItem.isCollapsed { views.inspectorShown.toggle() }
     }
 
-    func fitToolbar() {
-        func edges(_ item: NSSplitViewItem) -> NSRect { item.viewController.view.convert(item.viewController.view.bounds, to: splitView) }
-        let source = edges(sourceItem), area = edges(areaItem)
-        let leading = max(source.minX, ColumnMetrics.windowControls)
-        let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
-        let tools = trailing - leading - ColumnMetrics.sourceTools + (window.showSource ? 0 : ColumnMetrics.editingTools)
-        let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
-            : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
-        let compact = room < ColumnMetrics.compile
-        let dragged = splitViews.contains { ($0 as? DraggedSplitView)?.dragging == true }
-        if compact || quieting == (dragged ? 1 : 0) { toolbar.compactCompile = compact }
-    }
+    /// The width of the toolbar's middle section: the columns between the sidebar and the inspector.
+    var toolbarRoom: CGFloat { areaItem.viewController.view.frame.width }
 
-    private func buildSidebar(height: CGFloat) {
-        let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
-        filesItem.minimumThickness = 100
-        outlineBar = accessory(hostingView(OutlineHeader(project: project)), edge: .soft)
-        filesItem.addBottomAlignedAccessoryViewController(outlineBar)
-        outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
-        outlineItem.minimumThickness = 80
-        outlineItem.holdingPriority = .defaultLow + 1
-        sidebar.addSplitViewItem(filesItem)
-        sidebar.addSplitViewItem(outlineItem)
-        sidebar.view.frame.size.width = inspectorItem.minimumThickness
-        if window.outlineState(of: project) != .open { outlineItem.isCollapsed = true }
-        sidebar.header = outlineBar
-
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+    private func buildSidebar() {
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: NavigatorArea(host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth)))
         sidebarItem.minimumThickness = 222
-        let search = Bindable(project.search)
-        sidebarSearch = accessory(hostingView(SearchField(
-            text: search.query, prompt: "Search Project", handle: searchField,
-            step: { [search = project.search] in if !search.step($0) { NSSound.beep() } },
-            options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords)])))
-        sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
+        sidebarItem.addBottomAlignedAccessoryViewController(accessory(NavigatorFilterBar(project: project, window: window), edge: .soft))
         addSplitViewItem(sidebarItem)
     }
 
+    private static let sidebarWidth: CGFloat = 270
+
     private func buildArea(size: CGSize) {
-        let panes = max(size.width - sidebar.view.frame.width, 2 * ColumnMetrics.paneMinimum)
+        let panes = max(size.width - Self.sidebarWidth, 2 * ColumnMetrics.paneMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.paneMinimum)
         if app.buildPanelHeight < ColumnMetrics.panelMinimum {
             app.buildPanelHeight = max(ColumnMetrics.panelMinimum, (size.height * 0.25).rounded())
@@ -140,25 +109,11 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
         pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find)))
+        pdfFind.preferredScrollEdgeEffectStyle = .hard // as NSTextFinder's bar, a banner on a hard pocket
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-
-        for item in [sourceItem!, pdfItem!] {
-            let space = NSView()
-            space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
-            item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
-        }
-        let bar = hostingView(StatusBar(project: project))
-        bar.sizingOptions = []
-        bar.safeAreaRegions = []
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(bar)
-        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-                                     bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-                                     bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height)])
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: app.buildPanelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -167,6 +122,7 @@ final class WorkspaceController: ThinSplitViewController {
         panelItem.isCollapsed = true
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
+        columnsItem.addBottomAlignedAccessoryViewController(accessory(hostingView(StatusBar(project: project)), edge: .hard))
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
@@ -185,8 +141,10 @@ final class WorkspaceController: ThinSplitViewController {
     func revealSidebar() { setCollapsed(sidebarItem, false) }
 
     func focusSearch() {
+        project.navigator.shown = .search
         revealSidebar()
-        focus(searchField, in: sidebarSearch)
+        sidebarItem.viewController.view.layoutSubtreeIfNeeded()
+        searchField.focus()
     }
 
     func dragged(_ split: NSSplitView) {
@@ -224,11 +182,6 @@ final class WorkspaceController: ThinSplitViewController {
         watches = [
             track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
-            track({ window.outlineState(of: project) }) { [weak self] state in
-                guard let self else { return }
-                setHidden(outlineBar, state == .hidden)
-                setCollapsed(outlineItem, state != .open)
-            },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
             track({ project.hasPDF || pdf.isLoading }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
@@ -274,17 +227,14 @@ final class WorkspaceController: ThinSplitViewController {
         }
     }
 
-    private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
+    private var splitViews: [NSSplitView] { [splitView, columns.splitView, area.splitView] }
 
     func quiet(_ resizing: Bool) {
         quieting += resizing ? 1 : -1
         guard quieting == (resizing ? 1 : 0) else { return }
         if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
         for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
-        if !resizing {
-            quietScrollViews = []
-            fitToolbar()
-        }
+        if !resizing { quietScrollViews = [] }
     }
 
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
@@ -347,13 +297,6 @@ final class WorkspaceController: ThinSplitViewController {
     }
 }
 
-private final class AreaSplitViewController: ThinSplitViewController {
-    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
-        let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
-        return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
-    }
-}
-
 @Observable private final class Mount {
     var shown = false
 }
@@ -364,4 +307,13 @@ private struct Pane<Content: View>: View {
     let content: Content
 
     var body: some View { if mount?.shown ?? true { content.disabled(!project.isOpen) } }
+}
+
+/// The status bar's top edge drags the Logs panel's divider beneath it, opening the panel when it's collapsed, as dragging
+/// Xcode's debug bar does; only the edge, since a divider's rect takes clicks from the bar's buttons.
+private final class AreaSplitViewController: ThinSplitViewController {
+    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
+        let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
+        return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
+    }
 }
