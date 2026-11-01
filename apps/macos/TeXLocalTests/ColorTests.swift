@@ -10,12 +10,10 @@ struct ColorTests {
 
     @Test func syntaxColoursAreLegible() {
         for name in [NSAppearance.Name.aqua, .darkAqua] {
-            for theme in SyntaxTheme.allCases {
-                for kind in HighlightKind.allCases {
-                    let shown = ratio(theme.color(kind), in: name)
-                    #expect(shown >= 4.45, "\(theme) \(kind) in \(name.rawValue): \(shown)")
-                    #expect(theme.color(kind) != .textColor, "\(theme) \(kind)")
-                }
+            for kind in HighlightKind.allCases {
+                let shown = ratio(kind.color, in: name)
+                #expect(shown >= 4.45, "\(kind) in \(name.rawValue): \(shown)")
+                #expect(kind.color != .textColor, "\(kind)")
             }
         }
     }

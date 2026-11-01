@@ -73,7 +73,6 @@ struct MathMenuItems: View {
             }
         }
         .disabled(off)
-        Section("Symbols") { SymbolItems(project: project) }
     }
 }
 

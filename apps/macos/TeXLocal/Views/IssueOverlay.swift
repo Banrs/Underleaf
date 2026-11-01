@@ -5,6 +5,7 @@ final class IssueOverlay {
     struct Row {
         let line: Int
         let error: Bool
+        let live: Bool
         let band: CGRect
         var message: (view: IssueMessageView, rect: CGRect, cut: Bool)?
         var tip: String?
@@ -48,9 +49,9 @@ final class IssueOverlay {
         rows.forEach { view.setNeedsDisplay($0.band) }
         rows.removeAll()
         func place(_ number: Int, on fragment: NSTextLayoutFragment, extra: Bool = false) {
-            guard let reported = issue(on: number)?.issue else { return }
+            guard let (reported, live) = issue(on: number) else { return }
             let former = views.removeValue(forKey: number)
-            let placed = row(number, reported, on: fragment.lines(extra: extra), of: fragment, in: former)
+            let placed = row(number, reported, live: live, on: fragment.lines(extra: extra), of: fragment, in: former)
             if placed?.message?.view !== former { former?.removeFromSuperview() }
             guard let placed else { return }
             view.setNeedsDisplay(placed.band)
@@ -65,11 +66,11 @@ final class IssueOverlay {
         updateTips()
     }
 
-    private func row(_ number: Int, _ reported: IssueLine, on lines: ArraySlice<NSTextLineFragment>,
+    private func row(_ number: Int, _ reported: IssueLine, live: Bool, on lines: ArraySlice<NSTextLineFragment>,
                      of fragment: NSTextLayoutFragment, in former: IssueMessageView?) -> Row? {
         guard let first = lines.first else { return nil }
         let band = view.band(lines, of: fragment)
-        var issue = Row(line: number, error: reported.error, band: band)
+        var issue = Row(line: number, error: reported.error, live: live, band: band)
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = ([reported.message] + reported.others).map(\.text)
@@ -79,15 +80,14 @@ final class IssueOverlay {
         let end = band.maxX
         let room = end - (left + first.typographicBounds.maxX) - gap
         let issues = said.count
-        let fitted = label.text(in: room - Metrics.width(ofText: 0, font: font, issues: issues))
+        let fitted = label.text(in: (room - Metrics.width(ofText: 0, font: font, issues: issues)).rounded(.down))
         let width = fitted?.cut == true ? room.rounded(.down) : Metrics.width(ofText: fitted?.width, font: font, issues: issues)
         if width <= room {
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
             let rect = CGRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
-            let fill = Color(nsColor: view.backgroundColor)
-            let box = IssueBox(isError: reported.error, issues: issues, text: fitted?.text,
-                               cutAtTail: fitted != nil && fitted?.width == nil, font: font, fill: fill,
-                               baseline: top + first.typographicBounds.minY + first.glyphOrigin.y - rect.minY)
+            let box = IssueBox(isError: reported.error, isLive: live, issues: issues, text: fitted?.text,
+                               cutAtTail: fitted != nil && fitted?.width == nil, font: font,
+                               background: Color(nsColor: view.backgroundColor), height: rect.height)
             let message = former ?? IssueMessageView(box)
             if message.rootView != box { message.rootView = box }
             if message.frame != rect { message.frame = rect }
@@ -128,11 +128,12 @@ final class IssueOverlay {
 
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
+            let palette = IssueBox.Palette.of(error: issue.error, live: issue.live)
             if issue.line != currentLine {
-                IssueBox.tint(error: issue.error).setFill()
+                palette.line.setFill()
                 NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
             }
-            NSColor.systemRed.setFill()
+            palette.range.setFill()
             issue.tokens.forEach { $0.fill() }
         }
     }

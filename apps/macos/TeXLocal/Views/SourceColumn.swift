@@ -33,7 +33,6 @@ private struct EditorView: NSViewRepresentable {
         if editor.textView.fontSize != CGFloat(app.fontSize) { editor.textView.fontSize = CGFloat(app.fontSize) }
         editor.textView.fontName = app.fontName
         editor.textView.showsLineNumbers = app.lineNumbers
-        editor.textView.syntaxTheme = app.syntaxTheme
         editor.textView.autoPair = app.autoPair
         editor.textView.autoComplete = app.autoComplete
         if editor.shown != shown { editor.shown = shown }

@@ -17,13 +17,13 @@ nonisolated enum DefaultsKey {
     static let settingsPane = "settingsPane"
     static let editorFontName = "editorFontName"
     static let editorFontSize = "editorFontSize"
-    static let editorSyntaxTheme = "editorSyntaxTheme"
     static let editorLineNumbers = "editorLineNumbers"
     static let editorAutoPair = "editorAutoPair"
     static let editorAutoComplete = "editorAutoComplete"
     static let editorSpellCheck = "editorSpellCheck"
     static let pdfPaper = "pdfPaper"
     static let buildPanelHeight = "buildPanelHeight"
+    static let recentSymbols = "recentSymbols"
 }
 
 enum Links {
@@ -99,11 +99,11 @@ final class AppModel {
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
+    var recentSymbols: [String] { didSet { defaults.set(recentSymbols, forKey: DefaultsKey.recentSymbols) } }
 
     static let fontSizes = 10...28
     var fontName: String { didSet { defaults.set(fontName, forKey: DefaultsKey.editorFontName) } }
     var fontSize: Int { didSet { defaults.set(fontSize, forKey: DefaultsKey.editorFontSize) } }
-    var syntaxTheme: SyntaxTheme { didSet { defaults.set(syntaxTheme.rawValue, forKey: DefaultsKey.editorSyntaxTheme) } }
     var lineNumbers: Bool { didSet { defaults.set(lineNumbers, forKey: DefaultsKey.editorLineNumbers) } }
     var autoPair: Bool { didSet { defaults.set(autoPair, forKey: DefaultsKey.editorAutoPair) } }
     var autoComplete: Bool { didSet { defaults.set(autoComplete, forKey: DefaultsKey.editorAutoComplete) } }
@@ -122,15 +122,16 @@ final class AppModel {
                                      DefaultsKey.showPDF: true, DefaultsKey.editorFontSize: 13, DefaultsKey.editorLineNumbers: true,
                                      DefaultsKey.editorAutoPair: true, DefaultsKey.editorAutoComplete: true,
                                      DefaultsKey.editorSpellCheck: true])
+        defaults.removeObject(forKey: "editorSyntaxTheme") // the Overleaf, TeXstudio or System choice, now always System
         func choice<T: RawRepresentable<String>>(_ key: String, _ fallback: T) -> T {
             defaults.string(forKey: key).flatMap { T(rawValue: $0) } ?? fallback
         }
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
+        recentSymbols = defaults.stringArray(forKey: DefaultsKey.recentSymbols) ?? []
         fontName = defaults.string(forKey: DefaultsKey.editorFontName) ?? ""
         fontSize = defaults.integer(forKey: DefaultsKey.editorFontSize)
-        syntaxTheme = choice(DefaultsKey.editorSyntaxTheme, .system)
         lineNumbers = defaults.bool(forKey: DefaultsKey.editorLineNumbers)
         autoPair = defaults.bool(forKey: DefaultsKey.editorAutoPair)
         autoComplete = defaults.bool(forKey: DefaultsKey.editorAutoComplete)

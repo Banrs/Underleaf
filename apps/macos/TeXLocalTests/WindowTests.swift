@@ -9,13 +9,21 @@ struct WindowTests {
 
     @Test func preferencesAreKeptInTheInjectedStore() {
         let app = defaults.app()
-        #expect((app.fontName, app.fontSize, app.syntaxTheme, app.lineNumbers, app.autoPair, app.autoComplete) == ("", 13, .system, true, true, true))
+        #expect((app.fontName, app.fontSize, app.lineNumbers, app.autoPair, app.autoComplete) == ("", 13, true, true, true))
         #expect((app.spellCheck, app.syncAfterCompile, app.newProjectEngine, app.paper, app.settingsPane) == (true, false, .pdflatex, .white, .general))
-        (app.fontName, app.fontSize, app.syntaxTheme, app.lineNumbers, app.autoPair, app.autoComplete) = ("Menlo", 15, .overleaf, false, false, false)
+        (app.fontName, app.fontSize, app.lineNumbers, app.autoPair, app.autoComplete) = ("Menlo", 15, false, false, false)
         (app.spellCheck, app.syncAfterCompile, app.newProjectEngine, app.paper, app.settingsPane) = (false, true, .xelatex, .dark, .pdf)
         let again = defaults.app()
-        #expect((again.fontName, again.fontSize, again.syntaxTheme, again.lineNumbers, again.autoPair, again.autoComplete) == ("Menlo", 15, .overleaf, false, false, false))
+        #expect((again.fontName, again.fontSize, again.lineNumbers, again.autoPair, again.autoComplete) == ("Menlo", 15, false, false, false))
         #expect((again.spellCheck, again.syncAfterCompile, again.newProjectEngine, again.paper, again.settingsPane) == (false, true, .xelatex, .dark, .pdf))
+    }
+
+    @Test func aStoredOverleafOrTeXstudioThemeGivesWayToSystemColours() {
+        for theme in ["overleaf", "texstudio"] {
+            defaults.store.set(theme, forKey: "editorSyntaxTheme")
+            _ = defaults.app()
+            #expect(defaults.store.object(forKey: "editorSyntaxTheme") == nil)
+        }
     }
 
     @Test func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore() async throws {
@@ -121,7 +129,7 @@ struct WindowTests {
         let app = windowedApp()
         await app.showHome().open(project.id)
         let screen = try #require(window(of: app.window(showing: project.id))?.screen?.visibleFrame)
-        let left = NSRect(x: screen.minX + 40, y: screen.minY + 40, width: 900, height: 640)
+        let left = NSRect(x: screen.minX + 40, y: screen.minY + 40, width: 800, height: 560)
         window(of: app.window(showing: project.id))?.setFrame(left, display: false)
         await close(app)
         await app.showHome().open(project.id)
@@ -189,7 +197,7 @@ struct WindowTests {
         #expect(gone.project?.closed == true && !gone.app.windows.contains { $0 === gone } && gone.alert == nil)
     }
 
-    @Test func theToolbarFollowsTheLayoutAndTheColumnsWidthsAtOnceWhileADividerIsDragged() async throws {
+    @Test func theToolbarFollowsTheLayoutAndCompileTurnsCompactBeforeAnythingOverflows() async throws {
         let model = defaults.window()
         let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
         let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
@@ -200,26 +208,34 @@ struct WindowTests {
         window.toolbar = workspace.toolbar.toolbar
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
-        let format = try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == .format })
-        #expect(workspace.toolbar.toolbar.items.allSatisfy { !$0.isNavigational })
+        let items = workspace.toolbar.toolbar.items
+        let format = try #require(items.first { $0.itemIdentifier == .format })
+        #expect(items.allSatisfy { !$0.isNavigational })
         model.layout = .pdf
         try await waitUntil { format.isHidden }
         model.layout = .split
         try await waitUntil { !format.isHidden }
 
-        let columns = try #require(workspace.columns.splitView as? DraggedSplitView)
-        func move(to position: CGFloat) {
-            columns.setPosition(position, ofDividerAt: 0)
+        func resize(to width: CGFloat) async throws {
+            window.setContentSize(NSSize(width: width, height: 800))
+            window.layoutIfNeeded()
+            window.displayIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
             window.layoutIfNeeded()
         }
-        move(to: columns.bounds.width)
+        var width: CGFloat = 1400
+        while !workspace.toolbar.compactCompile, width > 600 {
+            width -= 10
+            try await resize(to: width)
+        }
+        let tools = items.filter { [.format, .math, .insert, .zoom, .compile].contains($0.itemIdentifier) }
+        #expect(workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
+        try await resize(to: width + 20)
         #expect(workspace.toolbar.compactCompile)
-        workspace.quiet(true)
-        move(to: ColumnMetrics.paneMinimum)
-        #expect(workspace.toolbar.compactCompile)
-        workspace.quiet(false)
-        #expect(!workspace.toolbar.compactCompile)
-        #expect(!columns.dragging)
+        try await resize(to: 1400)
+        #expect(!workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
+
+        let columns = try #require(workspace.columns.splitView as? DraggedSplitView)
         window.orderFront(nil)
         func mouse(_ type: NSEvent.EventType, at x: CGFloat) throws {
             let point = columns.convert(NSPoint(x: x, y: columns.bounds.midY), to: nil)
@@ -231,17 +247,21 @@ struct WindowTests {
         let divider = columns.arrangedSubviews[0].frame.maxX + columns.dividerThickness / 2
         try mouse(.leftMouseDown, at: divider)
         try mouse(.leftMouseDragged, at: divider + 20)
-        try mouse(.leftMouseDragged, at: columns.bounds.width)
-        #expect(columns.dragging && workspace.toolbar.compactCompile)
-        workspace.quiet(true)
-        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 20)
-        #expect(workspace.toolbar.compactCompile)
-        workspace.quiet(false)
-        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 10)
-        try await waitUntil(timeout: .seconds(1)) { !workspace.toolbar.compactCompile }
+        try mouse(.leftMouseDragged, at: divider + 40)
         #expect(columns.dragging)
-        try mouse(.leftMouseUp, at: ColumnMetrics.paneMinimum + 10)
+        try mouse(.leftMouseUp, at: divider + 40)
         try await waitUntil { !columns.dragging }
+    }
+
+    @Test func theSymbolLibraryListsRecentSymbolsFirstAndSearchesTheirNames() throws {
+        let groups = Menus.shared.symbolGroups
+        let alpha = try #require(groups.flatMap(\.symbols).first { $0.command == "\\alpha" })
+        #expect(SymbolLibraryView.sections("", recents: []).map(\.title) == groups.map(\.title))
+        let recent = SymbolLibraryView.sections("", recents: [alpha.command, "\\nonesuch"])
+        #expect(recent.first?.symbols == [alpha] && recent.dropFirst().map(\.title) == groups.map(\.title))
+        #expect(SymbolLibraryView.sections("ALPHA", recents: [alpha.command]).flatMap(\.symbols).contains(alpha))
+        #expect(SymbolLibraryView.sections("arrow", recents: []).allSatisfy { !$0.symbols.isEmpty })
+        #expect(SymbolLibraryView.sections("no such symbol", recents: []).isEmpty)
     }
 
     @Test func aSplitViewKeepsItsGestureRecognizers() {

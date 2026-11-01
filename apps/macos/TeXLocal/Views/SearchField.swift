@@ -25,6 +25,7 @@ struct SearchField: NSViewRepresentable {
     var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
     var options: [(title: String, isOn: Binding<Bool>)] = []
+    var status: String?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
@@ -66,7 +67,7 @@ struct SearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {
-        let view = NSSearchField()
+        let view = status == nil ? NSSearchField() : StatusSearchField()
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -90,6 +91,13 @@ struct SearchField: NSViewRepresentable {
         if let symbol = context.coordinator.symbol, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell, button.image !== symbol {
             button.image = symbol
         }
+        if !large, view.font?.pointSize != NSFont.systemFontSize(for: view.controlSize) {
+            view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
+        }
+        if let cell = view.cell as? StatusSearchField.Cell, cell.status != status ?? "" {
+            cell.status = status ?? ""
+            (view.needsLayout, view.needsDisplay) = (true, true)
+        }
         view.placeholderString = prompt
         view.setAccessibilityLabel(prompt)
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
@@ -103,6 +111,42 @@ struct SearchField: NSViewRepresentable {
             }
             cell.searchMenuTemplate = menu
         }
+    }
+}
+
+/// A search field showing a status, a match count, as NSTextFinder's bar field shows it, read from that field's cell: its
+/// right edge 1.5 pt into the clear button's rect, in the field's font with monospaced digits, the text stopping 11.5 pt
+/// before it. Laying the field out again moves the field editor to follow it.
+private final class StatusSearchField: NSSearchField {
+    final class Cell: NSSearchFieldCell {
+        var status = ""
+
+        private var attributes: [NSAttributedString.Key: Any] {
+            [.font: NSFont.monospacedDigitSystemFont(ofSize: font?.pointSize ?? NSFont.smallSystemFontSize, weight: .regular),
+             .foregroundColor: NSColor.secondaryLabelColor]
+        }
+
+        private func statusRect(forBounds rect: NSRect) -> NSRect {
+            let width = status.isEmpty ? 0 : (status as NSString).size(withAttributes: attributes).width.rounded(.up)
+            let text = super.searchTextRect(forBounds: rect)
+            return NSRect(x: cancelButtonRect(forBounds: rect).minX + 1.5 - width, y: text.minY, width: width, height: text.height)
+        }
+
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+            var text = super.searchTextRect(forBounds: rect)
+            if !status.isEmpty { text.size.width = max(0, statusRect(forBounds: rect).minX - 11.5 - text.minX) }
+            return text
+        }
+
+        override func drawInterior(withFrame frame: NSRect, in view: NSView) {
+            super.drawInterior(withFrame: frame, in: view)
+            (status as NSString).draw(in: statusRect(forBounds: frame), withAttributes: attributes)
+        }
+    }
+
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
     }
 }
 
