@@ -38,6 +38,7 @@ final class PDFController: NSObject {
         find = PDFFind(view: view)
         super.init()
         view.backgroundColor = .untintedTextBackground
+        // As Preview's: pages keep PDFKit's side margins, and the first meets the toolbar's edge.
         view.pageBreakMargins.top = 0
         view.autoScales = true
         view.onResize = { [weak self] in
@@ -74,6 +75,7 @@ final class PDFController: NSObject {
         watched = scrollView
         scrollView.setAccessibilityLabel("PDF")
         view.matchScroller()
+        // PDFViewScaleChanged comes only as a pinch ends; the scroll view's magnification follows each step.
         magnification = scrollView.observe(\.magnification, options: .initial) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.scaleChanged() }
         }
@@ -82,6 +84,7 @@ final class PDFController: NSObject {
     @objc private func scaleChanged() {
         guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
+        // A pinch keeps autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
         if view.autoScales, abs(scale - view.scaleFactorForSizeToFit) < 0.001 {
             zoom = .fitWidth
         } else if zoom != .fitPage || abs(scale - pageScale) > 0.001 {

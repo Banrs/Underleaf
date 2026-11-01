@@ -101,6 +101,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         Self.kept.removeAll { $0 === self }
     }
 
+    /// The PDF find field's editor passes Find on up the responder chain to here, where a plain field editor would take it.
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, field === views.pdf.find.field.field else { return nil }
         return findEditor

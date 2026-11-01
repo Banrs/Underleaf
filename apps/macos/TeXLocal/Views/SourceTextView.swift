@@ -475,6 +475,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let first = line(at: event)
         let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
         window?.makeFirstResponder(self)
+        // Periodic events keep it scrolling while the pointer holds still past an edge, as a drag in the text does.
         NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
         defer { NSEvent.stopPeriodicEvents() }
         var current = event
