@@ -417,7 +417,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private func setsCursor(with event: NSEvent) -> Bool {
         gutterHover(inGutter(event))
         if updateDividerCursor(with: event) { return true }
-        guard inGutter(event) || issue(at: event) != nil || completions.contains(event.locationInWindow) else { return false }
+        guard inGutter(event) || issue(at: event) != nil else { return false }
         NSCursor.arrow.set()
         return true
     }

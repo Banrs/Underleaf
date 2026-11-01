@@ -7,17 +7,13 @@ final class CompletionList {
 
     private let look = CompletionLook()
     private let rows: ChoiceRows<Completion>
-    private lazy var surface: Surface = {
+    private lazy var panel: FloatingPanel = {
         let surface = Surface(rootView: CompletionRowsView(rows: rows, look: look) { [unowned self] in accept($0) })
         surface.sizingOptions = []
         surface.safeAreaRegions = []
-        surface.wantsLayer = true
-        let shadow = NSShadow()
-        shadow.shadowOffset = NSSize(width: 0, height: -4)
-        shadow.shadowBlurRadius = 22
-        shadow.shadowColor = .shadowColor.withAlphaComponent(0.22)
-        surface.shadow = shadow
-        return surface
+        let panel = FloatingPanel(takesKeys: false)
+        panel.contentView = surface
+        return panel
     }()
 
     private final class Surface: NSHostingView<CompletionRowsView> { override var acceptsFirstResponder: Bool { false } }
@@ -40,7 +36,7 @@ final class CompletionList {
     func close() {
         guard offered != nil else { return }
         offered = nil
-        surface.removeFromSuperview()
+        panel.dismiss()
         rows.items = []
     }
 
@@ -55,11 +51,10 @@ final class CompletionList {
     }
 
     private func show(reload: Bool) {
-        guard let offered, let window = editor.window, let host = editor.enclosingScrollView else { return }
-        let start = host.convert(window.convertFromScreen(editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)), from: nil)
-        let shown = host.convert(editor.shownRect, from: editor)
-        guard shown.contains(CGPoint(x: start.minX, y: start.midY)) else { return close() }
-        guard reload else { return place(under: start, in: shown) }
+        guard let offered, let window = editor.window, let screen = window.screen else { return }
+        let start = editor.firstRect(forCharacterRange: .caret(offered.start), actualRange: nil)
+        guard window.convertToScreen(editor.convert(editor.shownRect, to: nil)).contains(CGPoint(x: start.minX, y: start.midY)) else { return close() }
+        guard reload else { return place(under: start, on: screen.visibleFrame, over: window, animated: false) }
         let count = rows.items.count
         let font = editor.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         (rows.items, look.kind, look.font) = (offered.items, offered.kind, font)
@@ -67,10 +62,9 @@ final class CompletionList {
         look.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         look.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
         rows.reveal()
-        let opening = surface.superview == nil
+        let opening = !panel.isVisible
         fit()
-        if surface.superview !== host { host.addSubview(surface) }
-        place(under: start, in: shown)
+        place(under: start, on: screen.visibleFrame, over: window, animated: true)
         if opening || rows.items.count != count { rows.announce(interrupting: opening) }
         editor.previewMath()
     }
@@ -98,12 +92,13 @@ final class CompletionList {
 
     private(set) var isAbove = false
 
-    private func place(under start: CGRect, in editor: CGRect) {
-        guard let host = surface.superview else { return }
+    /// Places the list under the caret's line, or over it when the screen has more room there, in a panel of its own so
+    /// that it may run past the editor's column as Xcode's does; `start` and `screen` are in screen coordinates.
+    private func place(under start: CGRect, on screen: CGRect, over window: NSWindow, animated: Bool) {
         var frame = CGRect(origin: CGPoint(x: start.minX - Self.textStart, y: 0), size: size)
-        frame.size.width = min(size.width, editor.width, max(160, editor.maxX - frame.minX))
-        frame.origin.x = max(editor.minX, min(frame.minX, editor.maxX - frame.width))
-        let under = editor.maxY - start.maxY, over = start.minY - editor.minY
+        frame.size.width = min(size.width, screen.width)
+        frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - frame.width))
+        let under = start.minY - screen.minY, over = screen.maxY - start.maxY
         isAbove = under < frame.height && over > under
         let room = isAbove ? over : under
         let margins = 2 * CompletionRowsView.margin
@@ -111,17 +106,55 @@ final class CompletionList {
             let shown = max(1, ((room - margins) / look.height).rounded(.down))
             frame.size.height = shown * look.height + margins
         }
-        frame.origin.y = isAbove ? start.minY - frame.height : start.maxY
-        frame = host.backingAlignedRect(frame, options: .alignAllEdgesNearest)
-        guard frame != surface.frame else { return }
-        let shorter = frame.height != surface.frame.height
-        surface.frame = frame
+        frame.origin.y = isAbove ? start.maxY : start.minY - frame.height
+        frame = window.backingAlignedRect(frame, options: .alignAllEdgesNearest)
+        let shorter = frame.height != panel.frame.height
+        panel.show(frame, over: window, animated: animated)
         if shorter { rows.reveal() }
     }
 
-    func contains(_ point: NSPoint) -> Bool { surface.superview != nil && surface.bounds.contains(surface.convert(point, from: nil)) }
-
     func move(_ step: Int) { rows.move(step) }
+}
+
+/// A borderless panel floating over its window as a child window, its shadow the system's, drawn from its glass's shape:
+/// it fades in as it appears, and resizes at the system's pace unless Reduce Motion is on.
+class FloatingPanel: NSPanel {
+    private let takesKeys: Bool
+
+    init(takesKeys: Bool) {
+        self.takesKeys = takesKeys
+        super.init(contentRect: .zero, styleMask: takesKeys ? [.borderless] : [.borderless, .nonactivatingPanel], backing: .buffered,
+                   defer: true)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        isReleasedWhenClosed = false
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var canBecomeKey: Bool { takesKeys }
+
+    func show(_ frame: NSRect, over window: NSWindow, animated: Bool) {
+        if parent == nil {
+            setFrame(frame, display: false)
+            alphaValue = 0
+            window.addChildWindow(self, ordered: .above)
+            NSAnimationContext.runAnimationGroup { _ in animator().alphaValue = 1 }
+        } else if frame != self.frame {
+            let animates = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            // A zero-length group also stops a resize still running, which a plain setFrame would leave to finish.
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = animates ? animationResizeTime(frame) : 0
+                animator().setFrame(frame, display: true)
+            }
+        }
+    }
+
+    func dismiss() {
+        parent?.removeChildWindow(self)
+        orderOut(nil)
+    }
 }
 
 struct ChoiceList<Item, Row: View>: View {
