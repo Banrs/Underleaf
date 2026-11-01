@@ -48,7 +48,7 @@ pub fn stale() -> Vec<(&'static str, String)> {
     let ir = protocol();
     let fixtures = swift::fixtures(&read::<fixtures::FixtureNested>(), &fixtures::fixtures());
     let files = [
-        ("apps/macos/TeXLocal/Wire.swift", swift::file(&ir)),
+        ("apps/macos/TeXLocal/Models/Wire.swift", swift::file(&ir)),
         ("apps/macos/TeXLocalTests/WireFixtures.swift", fixtures),
     ];
     let current = |path: &str, text: &str| {
