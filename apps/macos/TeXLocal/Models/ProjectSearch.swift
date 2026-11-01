@@ -37,7 +37,7 @@ final class ProjectSearch {
             } catch {
                 (found, why) = ([], error.localizedDescription)
             }
-            guard !Task.isCancelled else { return }
+            guard self.asked == asked else { return }
         }
         (groups, failure, searched, usages, chosen) = (found, why, asked, nil, nil)
     }

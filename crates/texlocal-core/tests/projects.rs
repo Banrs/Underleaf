@@ -122,6 +122,15 @@ async fn a_folder_opens_where_it_is() {
     );
     assert!(!folder.join(".texlocal.json").exists());
     assert!(fs::read_dir(library.path("data")).unwrap().next().is_none());
+    let nested = library.path("Nested");
+    let thesis = [
+        ("figures/plots/plot.tex", "\\documentclass{standalone}"),
+        ("src/a.tex", "x"),
+        ("src/thesis.tex", "\\documentclass{book}"),
+    ];
+    write(&nested, &thesis);
+    let opened = library.call("OpenPath", json!({ "path": nested })).await;
+    assert_eq!(opened["project"]["mainFile"], "src/thesis.tex");
 }
 
 #[tokio::test]

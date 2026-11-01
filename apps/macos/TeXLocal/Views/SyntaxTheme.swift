@@ -2,7 +2,8 @@ import AppKit
 
 extension SyntaxTheme {
     func color(_ kind: HighlightKind) -> NSColor {
-        let shown = Self.made[self] ?? palette.mapValues { color in
+        if let shown = Self.made[self] { return shown[kind] ?? .textColor }
+        let shown = palette.mapValues { color in
             NSColor.adapting(Dictionary(uniqueKeysWithValues: NSColor.textAppearances.map { ($0, color.legibleAsText(in: $0)) }),
                              fallback: .textColor)
         }

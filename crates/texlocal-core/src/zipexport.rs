@@ -9,26 +9,28 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, in_build_dir, safe_rel_file};
+use crate::paths::{Project, fold_case, in_build_dir, relative, safe_rel_file};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
-use crate::{SETTINGS_FILE, sys};
+use crate::{SETTINGS_FILE, atomic, sys};
 
 pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Result<(), CoreError> {
     let added = match for_arxiv {
         true => arxiv_files(project)?,
         false => Vec::new(),
     };
-    let file = File::create(dest).map_err(CoreError::at(dest))?;
+    let folder = dest.parent().unwrap_or(Path::new("."));
+    let (file, temp) = atomic::create_temp(folder).map_err(CoreError::at(dest))?;
     let replaced = |rel: &str| {
         added
             .iter()
             .any(|(path, _)| fold_case(path) == fold_case(rel))
     };
+    let own = relative(&project.root, dest);
     let mut writer = ZipWriter::new(file);
     walk(
         &project.root,
-        &|rel| !left_out(rel) && !replaced(rel),
+        &|rel| !left_out(rel) && !replaced(rel) && own.as_deref() != Some(rel),
         true,
         &mut |entry| {
             if entry.dir {
@@ -48,6 +50,8 @@ pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Res
         writer.write_all(bytes)?;
     }
     writer.finish()?;
+    temp.persist(dest)
+        .map_err(|err| CoreError::at(dest)(err.error))?;
     Ok(())
 }
 

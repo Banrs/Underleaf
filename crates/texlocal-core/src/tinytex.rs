@@ -41,7 +41,11 @@ async fn install_into(processes: &Processes, root: &Path, path_env: &str) -> Res
     tlmgr(processes, &unpacked, path_env, &packages).await?;
     std::fs::rename(&unpacked, root)?;
     let postaction = ["postaction", "install", "script", "xetex"];
-    tlmgr(processes, root, path_env, &postaction).await
+    let done = tlmgr(processes, root, path_env, &postaction).await;
+    if done.is_err() {
+        let _ = std::fs::rename(root, &unpacked);
+    }
+    done
 }
 
 async fn unpack(processes: &Processes, temp: &Path, path_env: &str) -> Result<(), CoreError> {

@@ -76,6 +76,17 @@ fn a_named_argument_is_marked_after_options_and_the_options_are_not() {
 }
 
 #[test]
+fn a_percent_in_an_address_is_not_a_comment() {
+    let mut doc = SourceDocument::new("\\url{a%20b} \\href{c%d}{e} % note");
+    let found = [
+        ("\\url", "Command"),
+        ("\\href", "Command"),
+        ("% note", "Comment"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn control_symbols_are_commands_in_text_and_maths() {
     let mut doc = SourceDocument::new("caf\\'e $a \\\\ b \\: c$");
     let found = [
@@ -109,12 +120,38 @@ fn highlighting_carries_maths_and_verbatim_across_lines_and_follows_edits() {
 }
 
 #[test]
+fn a_maths_environment_is_maths_until_its_own_end() {
+    let text =
+        "\\begin{align*}\nx^2 \\end{aligned}\n\n\\end{align*} y \\begin{equation}a\\end{equation}";
+    let mut doc = SourceDocument::new(text);
+    let found = [
+        ("\\begin", "Command"),
+        ("align*", "Argument"),
+        ("x", "Maths"),
+        ("^", "Command"),
+        ("2", "Maths"),
+        ("\\end", "Command"),
+        ("aligned", "Maths"),
+        ("\\end", "Command"),
+        ("align", "Argument"),
+        ("*", "Argument"),
+        ("\\begin", "Command"),
+        ("equation", "Argument"),
+        ("a", "Maths"),
+        ("\\end", "Command"),
+        ("equation", "Argument"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn the_scanner_knows_where_maths_is() {
     let cases = [
         ("$a$ \\(", true),
         ("\\begin{align} x", true),
         ("\\url{a%b} $", true),
         ("$a\n\n", false),
+        ("$a\\\n\nb ", false),
         ("% $", false),
         ("\\verb|$| ", false),
         ("\\begin{verbatim}$\\end{verbatim} ", false),

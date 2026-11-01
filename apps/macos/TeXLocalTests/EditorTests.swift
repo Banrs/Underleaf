@@ -131,6 +131,9 @@ struct EditorTests {
         #expect(text.undo === undo && text.folds.ranges == folded && text.selection == selection)
         editor.open(path: "other.tex", source: SourceDocument(text: "changed"))
         #expect(text.undo !== other && text.selection == .caret(0))
+        editor.open(path: "glyphs.tex", source: SourceDocument(text: "a\n\t😀😀x"))
+        text.selection = .caret(8)
+        #expect(editor.currentLine == 2 && editor.currentColumn == 6 && editor.shownColumn == 5)
     }
 
     @Test func foldingHidesALinesBodyTheCaretStepsOverItAndAnEditInsideOpensIt() async throws {

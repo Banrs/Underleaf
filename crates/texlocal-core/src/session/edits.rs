@@ -23,9 +23,9 @@ type Said = fn(&str) -> Message;
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct ProjectEdits {
-    edits: Option<DocumentEdits>,
-    written: Vec<Written>,
-    snapshot: Option<String>,
+    pub edits: Option<DocumentEdits>,
+    pub written: Vec<Written>,
+    pub snapshot: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]

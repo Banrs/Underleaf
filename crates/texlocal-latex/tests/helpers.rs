@@ -37,6 +37,9 @@ fn a_diff_shows_three_lines_around_each_change() {
         ]
     );
     assert_eq!(diff::compare(old, old), []);
+    let ended = [Same("a".into()), Added("".into())];
+    assert_eq!(diff::compare("a", "a\n"), ended);
+    assert_eq!(diff::compare("", "a\n"), [Added("a".into())]);
 }
 
 #[test]

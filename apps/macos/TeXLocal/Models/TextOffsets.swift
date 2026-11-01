@@ -1,8 +1,4 @@
-#if os(macOS)
 import AppKit
-#else
-import UIKit
-#endif
 
 extension NSTextContentManager {
     func offset(of location: any NSTextLocation) -> Int { offset(from: documentRange.location, to: location) }

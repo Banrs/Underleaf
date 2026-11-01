@@ -343,7 +343,7 @@ fn continuation<'a>(
     let tagged = tag.and_then(|tag| next.strip_prefix('(')?.strip_prefix(tag)?.strip_prefix(')'));
     if let Some(rest) = tagged {
         Some((rest.trim(), " "))
-    } else if prev.chars().count() == 79 && !next.starts_with('(') {
+    } else if (prev.len() == 79 || prev.chars().count() == 79) && !next.starts_with('(') {
         Some((next, ""))
     } else {
         next.starts_with([' ', '\t']).then(|| (next.trim(), " "))
@@ -621,6 +621,17 @@ mod tests {
             (Some("main.tex"), Some(7))
         );
         assert_eq!(found[1].line, Some(9));
+    }
+
+    #[test]
+    fn a_line_pdftex_wrapped_at_79_bytes_is_joined_again() {
+        let warning = "LaTeX Warning: Reference `fig:résumé-and-a-long-long-label' on page 1 undefined on input line 7.";
+        let (head, tail) = warning.split_at(79);
+        let found = found(
+            &format!("(./main.tex\n{head}\n{tail}\n)"),
+            Severity::Warning,
+        );
+        assert_eq!(found[0].line, Some(7));
     }
 
     #[test]

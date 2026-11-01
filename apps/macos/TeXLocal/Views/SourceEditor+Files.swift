@@ -46,7 +46,8 @@ extension SourceEditor {
     var caret: Int { textView.caret }
     var currentLine: Int { textView.document.line(at: caret) }
     var currentColumn: Int { caret - textView.document.lineStart(currentLine) }
+    var shownColumn: Int { textView.source.substring(with: NSRange(location: caret - currentColumn, length: currentColumn)).count + 1 }
 
     func reportTop() { if let line = textView.topLine { onScroll(line) } }
-    func reportCursor() { onCursor(currentLine, currentColumn) }
+    func reportCursor() { onCursor(currentLine, currentColumn, shownColumn) }
 }

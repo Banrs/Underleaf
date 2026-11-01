@@ -106,11 +106,13 @@ impl Builds {
         result.flat_map(|result| result.errors.iter().chain(&result.warnings))
     }
 
+    fn covered(&self, check: &LogItem) -> bool {
+        let same = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
+        self.built().any(same)
+    }
+
     fn checks(&self) -> impl Iterator<Item = &LogItem> {
-        self.checks.iter().filter(|check| {
-            let same = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
-            !self.built().any(same)
-        })
+        self.checks.iter().filter(|check| !self.covered(check))
     }
 
     fn listed(&self) -> impl Iterator<Item = &LogItem> {
@@ -186,6 +188,8 @@ impl Actor {
             builds.pdf = Some(pdf.clone());
             builds.version += u64::from(result.pdf_changed);
             builds.outdated = self.edits != builds.built;
+        } else {
+            builds.pdf = built_pdf(&self.project);
         }
         let before = builds
             .result
@@ -213,8 +217,12 @@ impl Actor {
         let builds = &self.builds;
         let lines = self.docs.iter().filter_map(|(path, doc)| {
             let edits = self.last_edits.get(path).copied().unwrap_or(0);
-            let built = builds.built().filter(|_| edits <= builds.result_edits);
-            let checks = builds.checks.iter().filter(|_| edits <= builds.checked);
+            let shown = edits <= builds.result_edits;
+            let built = builds.built().filter(|_| shown);
+            let checks = builds
+                .checks
+                .iter()
+                .filter(|check| edits <= builds.checked && !(shown && builds.covered(check)));
             let index = |line| {
                 let on =
                     |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
