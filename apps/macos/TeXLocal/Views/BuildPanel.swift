@@ -11,7 +11,7 @@ struct BuildPanel: View {
             } else if project.panel.tab == .texpresso {
                 LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: PanelTab.texpresso.title)
             } else if project.buildLog.isEmpty {
-                ContentUnavailableView("No Log", systemImage: "text.page", description: Text("Compile to see the log here."))
+                ContentUnavailableView("No Build Log", systemImage: "text.page", description: Text("Compile to see the log here."))
             } else {
                 LogPane(text: project.buildLog, filter: project.panel.logFilter, title: PanelTab.log.title)
             }

@@ -8,6 +8,7 @@ struct PDFEmptyState: View {
 
     var body: some View {
         content
+            .buttonStyle(.bordered)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.textSurface)
     }
@@ -33,7 +34,6 @@ struct PDFEmptyState: View {
                         do { try await app.installTeX() } catch { window.report("Couldn’t Install TinyTeX", error) }
                     }
                 }
-                .buttonStyle(.borderedProminent)
                 Link("Get MacTeX", destination: Links.mactex)
             }
         } else if project.compiling {
@@ -49,7 +49,6 @@ struct PDFEmptyState: View {
                 Text("The build made no PDF. The Issues navigator shows what went wrong.")
             } actions: {
                 Button("Show Issues") { project.showNavigator(.issues) }
-                    .buttonStyle(.borderedProminent)
             }
         } else {
             ContentUnavailableView {
@@ -58,7 +57,6 @@ struct PDFEmptyState: View {
                 Text("Compile to preview your document.")
             } actions: {
                 Button("Compile") { window.perform(.compileRun, on: project) }
-                    .buttonStyle(.borderedProminent)
                     .disabled(!app.isEnabled(.compileRun, on: project))
             }
         }
