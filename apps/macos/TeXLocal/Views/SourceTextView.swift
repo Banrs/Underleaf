@@ -565,7 +565,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         case .insert(let text): text
         case .copy(let copy): await copy()
         }
-        guard let text, document === shown, isEditable else { return }
+        guard let text else { return }
+        guard document === shown, isEditable else { return NSSound.beep() }
         let target = document.version == version ? at : .caret(caret)
         apply([TextEdit(target, text)], named: String(localized: "Insert Figure"),
               selecting: [NSRange(location: target.location, length: (text as NSString).length)])
