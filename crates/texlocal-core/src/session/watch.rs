@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use notify::event::ModifyKind;
@@ -6,9 +7,9 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
-use crate::SETTINGS_FILE;
-use crate::paths::{disk_spelling, fold_case, relative, within};
+use crate::paths::{disk_spelling, fold_case, in_build_dir, relative, within};
 use crate::projects::{TreeNode, listed};
+use crate::{HISTORY_DIR, SETTINGS_FILE};
 
 pub(crate) struct Change {
     pub path: PathBuf,
@@ -19,7 +20,7 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
     let base = root.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let changes = match event {
-            Ok(event) if !event.need_rescan() => changes(event),
+            Ok(event) if !event.need_rescan() => changes(event, &base),
             _ => vec![Change {
                 path: base.clone(),
                 structural: true,
@@ -34,7 +35,7 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
     Some(watcher)
 }
 
-fn changes(event: notify::Event) -> Vec<Change> {
+fn changes(event: notify::Event, root: &Path) -> Vec<Change> {
     let structural = match event.kind {
         EventKind::Access(_) => return Vec::new(),
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) => {
@@ -42,7 +43,15 @@ fn changes(event: notify::Event) -> Vec<Change> {
         }
         _ => false,
     };
-    let paths = event.paths.into_iter();
+    let ours = |path: &PathBuf| {
+        let top = path
+            .strip_prefix(root)
+            .ok()
+            .and_then(|rest| rest.iter().next());
+        top.and_then(OsStr::to_str)
+            .is_some_and(|top| in_build_dir(top) || top == HISTORY_DIR)
+    };
+    let paths = event.paths.into_iter().filter(|path| !ours(path));
     paths.map(|path| Change { path, structural }).collect()
 }
 
