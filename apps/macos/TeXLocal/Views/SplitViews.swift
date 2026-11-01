@@ -103,6 +103,7 @@ extension NSScrollView {
         for key in [\NSScrollView.verticalScroller, \NSScrollView.horizontalScroller] {
             guard let scroller = self[keyPath: key] else { continue }
             if !hidden {
+                // Given back anew, the scroller returns at rest, as a scroller given to a scroll view starts.
                 self[keyPath: key] = NSScroller()
                 self[keyPath: key] = scroller
             }

@@ -18,6 +18,7 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 
     func toggle(relativeTo item: NSToolbarItem) {
         if popover.isShown { return popover.close() }
+        // The click on Aa that closed the transient popover also sends Aa's action; being the same click, it doesn't reopen it.
         if let click, click == closingClick { return }
         let content = NSHostingController(rootView: FormatPanel(window: window, views: views) { [weak self] in self?.popover.close() })
         content.sizingOptions = .preferredContentSize

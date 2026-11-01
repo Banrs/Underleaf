@@ -37,6 +37,7 @@ extension SourceTextView {
         }
     }
 
+    /// TextKit 2 only estimates the heights it hasn't laid out, so a far place is scrolled to again once those above it settle.
     func settle(_ range: NSTextRange, _ scroll: () -> Bool) {
         guard let manager = textLayoutManager else { return }
         for _ in 0..<2 {
@@ -103,6 +104,7 @@ extension SourceTextView {
 
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
+        // Until a scroll prepares content, AppKit leaves the lines under the status bar's inset undrawn.
         if !visibleRect.isEmpty, !preparedContentRect.contains(visibleRect) { prepareContent(in: visibleRect) }
         fragments.sort { $0.offset < $1.offset }
         if let from = staleColours { colour(from: from) }

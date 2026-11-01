@@ -32,7 +32,7 @@ struct FoldSet: Equatable {
             if old.location == fold.location - 1 { return .caret(NSMaxRange(fold)) }
             if old.location == NSMaxRange(fold) { return .caret(fold.location - 1) }
         }
-        ranges.removeAll { $0.contains(new.location) || $0.contains(NSMaxRange(new)) && NSMaxRange(new) > $0.location }
+        ranges.removeAll { $0.contains(new.location) || ($0.contains(NSMaxRange(new)) && NSMaxRange(new) > $0.location) }
         return nil
     }
 }

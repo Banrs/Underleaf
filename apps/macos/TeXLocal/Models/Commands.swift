@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum MenuCommand: CaseIterable {
+enum MenuCommand {
     case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectExportArxiv, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
@@ -227,9 +227,6 @@ extension WindowModel {
         case .fileSaveVersion: prompt = .saveVersion
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
         case .fileBrowseVersions: prompt = .versionHistory
-        case .openQuickly, .pdfOpen, .viewToggleInspector, .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition,
-             .findUsages, .editRename:
-            project?.views?.perform(command)
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .pdfGotoPage: prompt = .gotoPage
@@ -244,18 +241,7 @@ extension WindowModel {
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
         case .symbolLibrary: SymbolLibrary.toggle(app: app)
-        default: break
+        default: project?.views?.perform(command)
         }
-    }
-}
-
-struct EnginePicker: View {
-    let project: ProjectModel?
-
-    var body: some View {
-        Picker("Engine", selection: project.map { Bindable($0).engine } ?? .constant(nil)) {
-            ForEach(Engine.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
-        }
-        .disabled(project?.engine == nil)
     }
 }

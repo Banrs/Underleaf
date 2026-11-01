@@ -11,7 +11,6 @@ nonisolated enum DefaultsKey {
     static let folderBookmarks = "folderBookmarks"
     static let showSource = "showSource"
     static let showPDF = "showPDF"
-    static let openProject = "openProject"
     static let navigators = "navigators"
     static let syncAfterCompile = "syncAfterCompile"
     static let newProjectEngine = "newProjectEngine"
@@ -114,7 +113,6 @@ final class AppModel {
     var paper: PDFPaper { didSet { defaults.set(paper.rawValue, forKey: DefaultsKey.pdfPaper) } }
     var settingsPane: SettingsPane { didSet { defaults.set(settingsPane.rawValue, forKey: DefaultsKey.settingsPane) } }
     @ObservationIgnored var buildPanelHeight: Double { didSet { defaults.set(buildPanelHeight, forKey: DefaultsKey.buildPanelHeight) } }
-    @ObservationIgnored var launchProject: String?
 
     init(core: Core, defaults: UserDefaults = .standard) {
         self.core = core
@@ -132,7 +130,6 @@ final class AppModel {
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         recentSymbols = defaults.stringArray(forKey: DefaultsKey.recentSymbols) ?? []
-        launchProject = defaults.string(forKey: DefaultsKey.openProject)
         fontName = defaults.string(forKey: DefaultsKey.editorFontName) ?? ""
         fontSize = defaults.integer(forKey: DefaultsKey.editorFontSize)
         lineNumbers = defaults.bool(forKey: DefaultsKey.editorLineNumbers)

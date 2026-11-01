@@ -37,6 +37,7 @@ final class OpenQuickly: FloatingPanel {
 
     override func resignKey() {
         super.resignKey()
+        // Closing orders the panel out, which resigns key again, by then with no parent.
         if parent != nil { close() }
     }
 

@@ -62,10 +62,6 @@ struct SearchField: NSViewRepresentable {
 
     static let filterSymbol = "line.3.horizontal.decrease.circle"
 
-    static func filter(_ text: Binding<String>) -> SearchField {
-        SearchField(text: text, prompt: String(localized: "Filter"), symbol: filterSymbol)
-    }
-
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {

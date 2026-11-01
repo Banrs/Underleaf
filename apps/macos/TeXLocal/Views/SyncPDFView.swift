@@ -189,6 +189,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var shownPlace: (index: Int, point: CGPoint)? {
         let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
+        // Pages have no top margin, so the page whose top edge meets the bar is the one under it, not the one above.
         guard let page = page(for: CGPoint(x: top.x, y: top.y - 1 / (window?.backingScaleFactor ?? 1)), nearest: true),
               let document else { return nil }
         return (index: document.index(for: page), point: convert(top, to: page))

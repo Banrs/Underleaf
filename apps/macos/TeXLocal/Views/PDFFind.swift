@@ -21,8 +21,7 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         get { board.string(forType: .string) }
         set {
             guard let newValue, !newValue.isEmpty, newValue != shared else { return }
-            board.clearContents()
-            board.setString(newValue, forType: .string)
+            board.replaceContents(with: newValue)
         }
     }
 

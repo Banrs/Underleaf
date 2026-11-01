@@ -229,6 +229,7 @@ struct OutlineList: View {
                 }) { node in
                     HeadingRow(node: node, words: app.showWordCount ? node.words : nil).tag(node.id)
                         .simultaneousGesture(TapGesture().onEnded {
+                            // A double-click's second click is the list's primary action, which opens the heading in the source.
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
                             chosen = node.id == current ? nil : node.id
                             project.reveal(node.heading)

@@ -3,7 +3,7 @@ import SwiftUI
 struct LogPane: View {
     let text: String
     let filter: String
-    var title = "Build Log"
+    let title: String
     @State private var filtered: (filter: String, lines: String)?
 
     var body: some View {

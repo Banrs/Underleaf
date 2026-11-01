@@ -37,7 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [app] in
             await app.reloadProjects()
             for window in app.windows { await window.reopen() }
-            if let id = app.launchProject.take() { await app.front.open(id) }
         }
     }
 
