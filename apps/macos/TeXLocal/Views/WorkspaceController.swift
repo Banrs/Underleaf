@@ -10,7 +10,7 @@ final class WorkspaceController: ThinSplitViewController {
     let toolbar: WorkspaceToolbar
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
-    private let area = ThinSplitViewController(isVertical: false)
+    private let area = AreaSplitViewController(isVertical: false)
     private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
     private var pdfEmpty: NSView!
@@ -307,4 +307,13 @@ private struct Pane<Content: View>: View {
     let content: Content
 
     var body: some View { if mount?.shown ?? true { content.disabled(!project.isOpen) } }
+}
+
+/// The status bar's top edge drags the Logs panel's divider beneath it, opening the panel when it's collapsed, as dragging
+/// Xcode's debug bar does; only the edge, since a divider's rect takes clicks from the bar's buttons.
+private final class AreaSplitViewController: ThinSplitViewController {
+    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
+        let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
+        return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
+    }
 }
