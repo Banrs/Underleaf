@@ -53,6 +53,22 @@ fn a_delta_keeps_to_whole_characters() {
 }
 
 #[test]
+fn a_line_maps_back_across_a_change_to_the_line_it_stands_for() {
+    let old = "a\nb\nc\nd";
+    let map = |new: &str, lines: &[u32]| -> Vec<u32> {
+        lines
+            .iter()
+            .map(|&line| diff::map_line(old, new, line))
+            .collect()
+    };
+    assert_eq!(map(old, &[1, 2, 3, 4]), [1, 2, 3, 4]);
+    assert_eq!(map("a\nB\nc\nd", &[1, 2, 3, 4]), [1, 2, 3, 4]);
+    assert_eq!(map("a\nb\nx\ny\nc\nd", &[2, 3, 4, 5, 6]), [2, 3, 3, 3, 4]);
+    assert_eq!(map("a\nd", &[1, 2]), [1, 4]);
+    assert_eq!(map("a\nb\nc\nd\ne", &[4, 5]), [4, 4]);
+}
+
+#[test]
 fn search_finds_places_in_utf16_columns() {
     let text = "Ünïcode café\n😀 Café cafés";
     let places = |match_case, whole_word| {
