@@ -90,10 +90,12 @@ impl Tree {
         Ok((child, Self(Arc::new(Mutex::new(Some(group))))))
     }
 
-    pub(crate) fn kill(&self) {
-        if let Some(group) = &*lock(&self.0) {
+    pub(crate) fn kill(&self) -> bool {
+        let held = lock(&self.0);
+        if let Some(group) = &*held {
             sys::kill_group(group);
         }
+        held.is_some()
     }
 
     pub(crate) async fn ended(&self, child: &mut Child) -> io::Result<ExitStatus> {
