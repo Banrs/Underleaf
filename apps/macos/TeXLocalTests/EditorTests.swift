@@ -245,7 +245,7 @@ struct EditorTests {
             colour = attributes[.foregroundColor] as? NSColor
             return false
         }
-        #expect(colour === text.syntaxTheme.color(.command))
+        #expect(colour === HighlightKind.command.color)
     }
 
     private static let typed = NSRange(location: NSNotFound, length: 0)

@@ -9,13 +9,21 @@ struct WindowTests {
 
     @Test func preferencesAreKeptInTheInjectedStore() {
         let app = defaults.app()
-        #expect((app.fontName, app.fontSize, app.syntaxTheme, app.lineNumbers, app.autoPair, app.autoComplete) == ("", 13, .system, true, true, true))
+        #expect((app.fontName, app.fontSize, app.lineNumbers, app.autoPair, app.autoComplete) == ("", 13, true, true, true))
         #expect((app.spellCheck, app.syncAfterCompile, app.newProjectEngine, app.paper, app.settingsPane) == (true, false, .pdflatex, .white, .general))
-        (app.fontName, app.fontSize, app.syntaxTheme, app.lineNumbers, app.autoPair, app.autoComplete) = ("Menlo", 15, .overleaf, false, false, false)
+        (app.fontName, app.fontSize, app.lineNumbers, app.autoPair, app.autoComplete) = ("Menlo", 15, false, false, false)
         (app.spellCheck, app.syncAfterCompile, app.newProjectEngine, app.paper, app.settingsPane) = (false, true, .xelatex, .dark, .pdf)
         let again = defaults.app()
-        #expect((again.fontName, again.fontSize, again.syntaxTheme, again.lineNumbers, again.autoPair, again.autoComplete) == ("Menlo", 15, .overleaf, false, false, false))
+        #expect((again.fontName, again.fontSize, again.lineNumbers, again.autoPair, again.autoComplete) == ("Menlo", 15, false, false, false))
         #expect((again.spellCheck, again.syncAfterCompile, again.newProjectEngine, again.paper, again.settingsPane) == (false, true, .xelatex, .dark, .pdf))
+    }
+
+    @Test func aStoredOverleafOrTeXstudioThemeGivesWayToSystemColours() {
+        for theme in ["overleaf", "texstudio"] {
+            defaults.store.set(theme, forKey: "editorSyntaxTheme")
+            _ = defaults.app()
+            #expect(defaults.store.object(forKey: "editorSyntaxTheme") == nil)
+        }
     }
 
     @Test func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore() async throws {

@@ -66,10 +66,6 @@ private struct EditorSettings: View {
                     if !app.fontName.isEmpty, !Self.families.contains(app.fontName) { Text(app.fontName).tag(app.fontName) }
                 }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
-                Picker("Theme", detail: "Colours for commands, math and comments. All follow light and dark appearance.",
-                       selection: $app.syntaxTheme) {
-                    ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
-                }
                 Toggle("Show Line Numbers", isOn: $app.lineNumbers)
             }
             Section("Typing") {
