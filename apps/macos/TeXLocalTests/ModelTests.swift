@@ -179,7 +179,8 @@ struct SectionTests {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = project.texpresso
         let state = { (phase: LivePhase, failures: [Message], log: String?) in
-            project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, log: log, failures: failures, lines: [:]))))
+            project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, failures: failures, lines: [:]))))
+            project.handle(.section(.liveLog(log ?? "")))
         }
         state(.stopped, [], nil)
         #expect(live.phase == .stopped && !live.used && live.log.isEmpty && !live.needsAttention)
@@ -522,7 +523,7 @@ struct ViewsTests {
     @Test func editsWhileTheLivePDFShowsFollowTheCaretUntilLivePreviewStops() async {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = { (phase: LivePhase) in
-            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, log: nil, failures: [], lines: [:]))))
+            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, failures: [], lines: [:]))))
         }
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
         live(.running)
@@ -547,7 +548,7 @@ struct ViewsTests {
             ["main.tex": [IssueLine(line: line, error: true, message: message, short: message, compact: nil, tokens: [], others: [], index: index)]]
         }
         project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: false, result: nil, issues: [], lines: lines(3, 1)))))
-        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, log: nil, failures: [], lines: lines(5, nil)))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, failures: [], lines: lines(5, nil)))))
         project.issueClicked(atLine: 5, in: "main.tex")
         #expect(project.panel.showsLiveLog && project.chosenIssue == nil)
         project.issueClicked(atLine: 3, in: "main.tex")

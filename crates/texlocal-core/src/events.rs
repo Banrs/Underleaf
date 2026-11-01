@@ -10,6 +10,7 @@ use serde_json::value::{RawValue, to_raw_value};
 
 use crate::service::LibrarySection;
 use crate::session::{DiskConflict, SessionSection};
+use crate::synctex::ForwardLoc;
 use crate::texpresso::PageRange;
 use crate::{CoreError, lock};
 
@@ -125,6 +126,11 @@ pub(crate) enum Event {
     LiveAlert,
     LivePage(LivePage),
     LiveDocument(LiveDocument),
+    #[expect(
+        dead_code,
+        reason = "the wire contract lands before the follow that sends it"
+    )]
+    LiveFollow(ForwardLoc),
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -156,7 +162,6 @@ pub(crate) struct LivePage {
 pub(crate) struct LiveDocument {
     pub path: String,
     pub changed: Vec<PageRange>,
-    pub complete: bool,
 }
 
 static PANICS: Mutex<Option<mpsc::Sender<Said>>> = Mutex::new(None);

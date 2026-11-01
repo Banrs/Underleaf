@@ -366,7 +366,7 @@ impl Actor {
                 Timer::Halting => self.live_halted(true),
                 Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
-                Timer::Log => self.publish_live(false),
+                Timer::Log => self.publish_live_log(),
                 Timer::Issues => self.live_issues_settled(),
             }
         }

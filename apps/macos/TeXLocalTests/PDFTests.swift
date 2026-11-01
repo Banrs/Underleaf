@@ -98,14 +98,13 @@ struct PDFTests {
         let defaults = TestDefaults()
         let project = ProjectModel(id: "P", window: defaults.window())
         let views = WorkspaceViews(project: project)
-        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, log: nil, failures: [],
-                                                lines: [:]))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, failures: [], lines: [:]))))
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 0, live: true))))
         let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
         try #require(try textPDF(count: 2).dataRepresentation()).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         let typed = try #require(try textPDF(["typed"]).dataRepresentation())
-        project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [], complete: true)))
+        project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [])))
         project.handle(.livePage(LivePage(page: 1, pdf: typed)))
         await views.liveReads?.value
         let document = try #require(views.pdf.view.document)

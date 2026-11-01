@@ -16,7 +16,7 @@ use crate::events::{Event, LiveDocument, LivePage};
 use crate::paths;
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
-use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane};
+use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane, RunEnd};
 
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 
@@ -34,7 +34,6 @@ pub(crate) struct LiveState {
     phase: LivePhase,
     engine: Engine,
     halted: bool,
-    log: Option<String>,
     failures: Vec<Message>,
     lines: BTreeMap<String, Vec<IssueLine>>,
 }
@@ -102,9 +101,6 @@ impl Actor {
             phase: live.phase,
             engine: Engine::Xelatex,
             halted: live.halted,
-            log: live
-                .log_shown
-                .then(|| live.run.as_ref().map(|run| run.log()).unwrap_or_default()),
             failures: live.failure.iter().cloned().collect(),
             lines: lines.collect(),
         }
@@ -120,8 +116,13 @@ impl Actor {
 
     pub fn show_live_log(&mut self, shown: bool) {
         self.live.log_shown = shown;
-        if shown {
-            self.publish_live(false);
+        self.publish_live_log();
+    }
+
+    pub fn publish_live_log(&mut self) {
+        if self.live.log_shown {
+            let log = self.live.run.as_ref().map(|run| run.log());
+            self.publish(SessionSection::LiveLog(log.unwrap_or_default()));
         }
     }
 
@@ -162,6 +163,7 @@ impl Actor {
         self.live_reset();
         self.live.document_seen = false;
         self.publish_live(false);
+        self.publish_live_log();
         self.publish_pdf();
         if self.auto_compile {
             self.later.push_back(Later::Compile(true));
@@ -215,6 +217,7 @@ impl Actor {
                 live.sent = versions;
                 (live.sent_view, live.caret) = (live.view, caret);
                 self.publish_live(false);
+                self.publish_live_log();
                 self.flush_pending();
             }
             Err(error) => {
@@ -392,16 +395,11 @@ impl Actor {
                 if pages > 0 {
                     self.live.document_seen = true;
                     self.publish_pdf();
-                    let complete = !matches!(run.as_str(), "stopped" | "partial");
-                    self.emit(Event::LiveDocument(LiveDocument {
-                        path,
-                        changed,
-                        complete,
-                    }));
+                    self.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
-                self.run_ended(&run);
+                self.run_ended(run);
             }
-            LiveEvent::Done(run) => self.run_ended(&run),
+            LiveEvent::Done(run) => self.run_ended(run),
             LiveEvent::Synced(mark) => self.live.mark_read = mark,
             LiveEvent::Log if self.live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
@@ -420,12 +418,12 @@ impl Actor {
         }
     }
 
-    fn run_ended(&mut self, run: &str) {
+    fn run_ended(&mut self, run: RunEnd) {
         self.after(Timer::Issues);
         match run {
-            "partial" => {}
-            "stopped" => self.soon(Timer::Halting),
-            _ => {
+            RunEnd::Partial => {}
+            RunEnd::Stopped => self.soon(Timer::Halting),
+            RunEnd::Complete => {
                 self.timers.remove(&Timer::Halting);
                 self.live_halted(false);
             }

@@ -49,13 +49,30 @@ pub enum LiveEvent {
     Document {
         path: String,
         pages: u32,
-        run: String,
+        run: RunEnd,
         changed: Vec<PageRange>,
     },
-    Done(String),
+    Done(RunEnd),
     Synced(u64),
     Log,
     Ended(Option<Message>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunEnd {
+    Complete,
+    Partial,
+    Stopped,
+}
+
+impl RunEnd {
+    fn named(name: &str) -> Self {
+        match name {
+            "partial" => Self::Partial,
+            "stopped" => Self::Stopped,
+            _ => Self::Complete,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -553,7 +570,7 @@ fn apply_message(session: &Session, mut message: Value) {
             LiveEvent::Document {
                 path: session.pdf.to_string_lossy().into_owned(),
                 pages: number(2).unwrap_or(0),
-                run: run.to_owned(),
+                run: RunEnd::named(run),
                 changed: ranges
                     .iter()
                     .map(|r| PageRange {
@@ -564,7 +581,7 @@ fn apply_message(session: &Session, mut message: Value) {
             }
         }
         "done" => match message[1].as_str() {
-            Some(run) => LiveEvent::Done(run.to_owned()),
+            Some(run) => LiveEvent::Done(RunEnd::named(run)),
             None => return,
         },
         "synced" => match message[1].as_u64() {
@@ -662,7 +679,7 @@ mod tests {
             page: 0,
             pdf: "JVBER".into(),
         };
-        let done = LiveEvent::Done("complete".into());
+        let done = LiveEvent::Done(RunEnd::Complete);
         let heard: Vec<_> = events.try_iter().collect();
         use LiveEvent::Log;
         assert_eq!(heard, [Log, page, Log, Log, done]);

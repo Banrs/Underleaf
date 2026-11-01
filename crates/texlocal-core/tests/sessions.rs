@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use common::{FakePreview, Library, Rig, SESSION, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
-use texlocal_core::session::LiveEvent;
+use texlocal_core::session::{LiveEvent, RunEnd};
 use texlocal_latex::syntax::Source;
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
@@ -1175,7 +1175,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     preview.send(LiveEvent::Document {
         path: "live.pdf".into(),
         pages: 1,
-        run: "done".into(),
+        run: RunEnd::Complete,
         changed: Vec::new(),
     });
     preview.send(LiveEvent::Page {
@@ -1210,7 +1210,7 @@ async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_
     rig.call("StartLive", json!({}));
     *preview.log.lock().unwrap() =
         "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
-    preview.send(LiveEvent::Done("complete".into()));
+    preview.send(LiveEvent::Done(RunEnd::Complete));
     let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
     assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);
 }
