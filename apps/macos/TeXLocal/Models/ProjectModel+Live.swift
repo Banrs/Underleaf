@@ -56,7 +56,7 @@ extension ProjectModel {
         await restart(&syncTask) { [self] in
             do {
                 let loc = try await session.call(SynctexInverse(page: Double(page), x: x, y: y, click: click))
-                guard !Task.isCancelled, !quietly || loc.column != nil else { return }
+                guard !Task.isCancelled else { return }
                 await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {
                 if !quietly, !Task.isCancelled { reportSync(error, "Couldn’t Find This Spot in the Source") }
