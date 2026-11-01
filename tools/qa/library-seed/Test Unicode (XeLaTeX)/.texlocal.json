@@ -1,6 +1,0 @@
-{
-  "mainFile": "main.tex",
-  "engine": "xelatex",
-  "shellEscape": false,
-  "stopOnFirstError": false
-}
