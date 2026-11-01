@@ -35,12 +35,15 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func matchScroller() { pageScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark }
 
+    /// The box pages show, fixed, as drawing off the main thread can't read `displayBox`.
+    nonisolated static let box = PDFDisplayBox.cropBox
+
     override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
         context.saveGState()
         context.setFillColor(.white)
-        context.fill(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)))
+        context.fill(page.bounds(for: Self.box).applying(page.transform(for: Self.box)))
         context.restoreGState()
-        page.draw(with: .cropBox, to: context)
+        page.draw(with: Self.box, to: context)
     }
 
     private var drawsCovers = false
@@ -63,6 +66,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        displayBox = Self.box
         pageOverlayViewProvider = self
         matchPaper()
     }
@@ -100,7 +104,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
         if drawsCovers, let overlay = overlay as? PageOverlay {
             signposts.withIntervalSignpost("covers") {
-                overlay.cover(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))) { draw(page, to: $0) }
+                overlay.cover(page.bounds(for: Self.box).applying(page.transform(for: Self.box))) { draw(page, to: $0) }
             }
         }
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
