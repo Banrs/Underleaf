@@ -8,15 +8,16 @@ use serde::Serialize;
 use texlocal_latex::facts::FilePlace;
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
-use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::syntax::catalog::CATALOG;
+use texlocal_latex::syntax::{SymbolKind, sync_lines};
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 use texlocal_latex::{bib, project};
 
 use super::Pending;
 use super::actor::Actor;
+use super::live::typeset_lines;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
-use crate::{CoreError, lf, lock, lossy_string, paths, settings};
+use crate::{CoreError, lf, lock, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
 
@@ -180,18 +181,31 @@ impl Actor {
 }
 
 impl Actor {
-    fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
+    pub fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
         let shown = self.live.active() && self.live.document_seen;
         let run = self.live.run.as_ref().filter(|_| shown);
         run.map(|run| run.pdf()).transpose()
     }
 
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
+        if line < 1 {
+            return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
+        }
         let (live, project) = (self.live_pdf(), self.project.clone());
+        let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
+        let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset(&file));
         tokio::task::spawn_blocking(move || {
-            reply.send(
-                live.and_then(|live| synctex::forward(&project, &file, line, live.as_deref())),
-            );
+            reply.send(live.and_then(|live| {
+                let text = match doc {
+                    Some(doc) => doc.snapshot().0,
+                    None => lossy_string(fs::read(paths::safe_path(&project.root, &file)?)?),
+                };
+                let lines = match typeset.flatten() {
+                    Some(typeset) => typeset_lines(&typeset, &text, line),
+                    None => sync_lines(&text, line),
+                };
+                synctex::forward(&project, &file, &lines, live.as_deref())
+            }));
         });
     }
 
@@ -215,19 +229,27 @@ impl Actor {
 
     pub fn synctex_match(
         &self,
-        file: &str,
+        file: String,
         line: u32,
         column: usize,
-        pages: &[PdfPage],
-    ) -> Result<Option<PdfHit>, CoreError> {
-        let text = match self.docs.get(file) {
-            Some(doc) => doc.doc.snapshot().0,
-            None => lossy_string(fs::read(paths::safe_path(&self.project.root, file)?)?),
-        };
-        let line = line
-            .checked_sub(1)
-            .and_then(|n| text.lines().nth(n as usize));
-        Ok(line.and_then(|line| find_in_pdf(line, column, pages)))
+        pages: Vec<PdfPage>,
+        reply: Pending<Option<PdfHit>>,
+    ) {
+        let (doc, root) = (
+            self.docs.get(&file).map(|doc| doc.doc.clone()),
+            self.project.root.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let text = match doc {
+                Some(doc) => Ok(doc.with(|source| source.line(line))),
+                None => paths::safe_path(&root, &file).and_then(|path| {
+                    let text = lossy_string(fs::read(path)?);
+                    let index = line.checked_sub(1);
+                    Ok(index.and_then(|n| text.lines().nth(n as usize).map(str::to_owned)))
+                }),
+            };
+            reply.send(text.map(|line| line.and_then(|line| find_in_pdf(&line, column, &pages))));
+        });
     }
 }
 

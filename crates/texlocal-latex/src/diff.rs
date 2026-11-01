@@ -100,6 +100,23 @@ pub fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
     })
 }
 
+/// The line of `old` that `line` of `new` stands for: lines before the change keep their number,
+/// lines after it move with it, and lines in it land on the old lines it replaced.
+pub fn map_line(old: &str, new: &str, line: u32) -> u32 {
+    let (a, b): (Vec<_>, Vec<_>) = (old.split('\n').collect(), new.split('\n').collect());
+    let head = common(a.iter(), b.iter());
+    let tail = common(a[head..].iter().rev(), b[head..].iter().rev());
+    let line = line as usize;
+    let mapped = if line <= head {
+        line
+    } else if line > b.len() - tail {
+        line + a.len() - b.len()
+    } else {
+        line.min(a.len() - tail).max(head + 1).min(a.len())
+    };
+    mapped as u32
+}
+
 fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) -> usize {
     a.zip(b).take_while(|(a, b)| a == b).count()
 }

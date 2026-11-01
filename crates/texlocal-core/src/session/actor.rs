@@ -92,6 +92,7 @@ pub(crate) enum Timer {
     Symbols,
     Fs,
     Caret,
+    Follow,
     Halting,
     Restart,
     Disk,
@@ -105,6 +106,7 @@ impl Timer {
             Self::Autosave => 700,
             Self::Symbols | Self::Caret => 150,
             Self::Fs => 250,
+            Self::Follow => 120,
             Self::Halting | Self::Issues => 1000,
             Self::Restart | Self::Disk => 180,
             Self::Log => 200,
@@ -363,6 +365,7 @@ impl Actor {
                 Timer::Symbols => self.scan_symbols(),
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.caret_settled(),
+                Timer::Follow => self.follow(),
                 Timer::Halting => self.live_halted(true),
                 Timer::Restart => self.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
@@ -521,7 +524,10 @@ impl Actor {
                     pages,
                 },
                 answer,
-            ) => answer(self.synctex_match(&file.0, line, column, &pages)),
+            ) => {
+                let matching = Pending { reply, answer };
+                return self.synctex_match(file.0, line, column, pages, matching);
+            }
         };
         reply.send(answer);
     }

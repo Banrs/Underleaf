@@ -406,12 +406,16 @@ fn engine_cache(root: &Path, executable: &Path) -> PathBuf {
         |_| "unknown".into(),
         |s| format!("{}-{}", s.size, s.modified),
     );
+    root.join(key)
+}
+
+fn remove_other_caches(kept: &Path) {
+    let Some(root) = kept.parent() else { return };
     for old in fs::read_dir(root).into_iter().flatten().flatten() {
-        if old.file_name() != *key {
+        if old.path() != kept {
             let _ = fs::remove_dir_all(old.path());
         }
     }
-    root.join(key)
 }
 
 impl Preview for Manager {
@@ -441,6 +445,8 @@ impl Preview for Manager {
         sys::private(&mut folder);
         let pdf = fs::canonicalize(folder.tempdir()?.keep())?.join("live.pdf");
         let cache = engine_cache(&self.cache, &executable);
+        let kept = cache.clone();
+        tokio::task::spawn_blocking(move || remove_other_caches(&kept));
         let mut command = command(&executable, path_env, &cache, &build, &main, &root, &pdf);
         let (mut child, tree) = self.processes.spawn(None, &mut command).map_err(|err| {
             remove_pdf_folder(&pdf);
@@ -721,8 +727,12 @@ mod tests {
         let first = engine_cache(&root, &texpresso);
         fs::create_dir_all(&first).unwrap();
         assert_eq!(engine_cache(&root, &texpresso), first);
+        remove_other_caches(&first);
+        assert!(first.exists());
         fs::write(dir.path().join("texpresso-xetex"), "other").unwrap();
-        assert_ne!(engine_cache(&root, &texpresso), first);
+        let second = engine_cache(&root, &texpresso);
+        assert_ne!(second, first);
+        remove_other_caches(&second);
         assert!(!first.exists());
     }
 
