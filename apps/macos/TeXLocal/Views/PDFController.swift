@@ -153,19 +153,14 @@ final class PDFController: NSObject {
     @concurrent static func loadDocument(_ url: URL, covering wanted: CoverPages = CoverPages()) async -> sending LoadedPDF? {
         signposts.withIntervalSignpost("pdf.load") {
             guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
-            for index in 0..<document.pageCount {
-                for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
-                    let border = PDFBorder()
-                    border.lineWidth = 0
-                    link.border = border
-                }
-            }
+            for index in 0..<document.pageCount { document.page(at: index)?.hideLinkBorders() }
             return LoadedPDF(document: document, covers: SyncPDFView.covers(wanted, of: document))
         }
     }
 
     @concurrent static func loadPage(_ pdf: Data, at index: Int, covering wanted: CoverPages) async -> sending LoadedPDF? {
-        guard let document = PDFDocument(data: pdf), document.pageCount > 0 else { return nil }
+        guard let document = PDFDocument(data: pdf), let page = document.page(at: 0) else { return nil }
+        page.hideLinkBorders()
         let cover = SyncPDFView.covers(CoverPages(indices: wanted.indices.contains(index) ? [0] : [], scale: wanted.scale), of: document)
         return LoadedPDF(document: document, covers: cover[0].map { [index: $0] } ?? [:])
     }
@@ -243,5 +238,16 @@ nonisolated extension PDFDocument {
     func number(of page: PDFPage) -> Int? {
         let index = index(for: page)
         return index == NSNotFound ? nil : index + 1
+    }
+}
+
+nonisolated extension PDFPage {
+    /// hyperref boxes links by default; the boxes are for print, so the view shows none.
+    func hideLinkBorders() {
+        for link in annotations where link.type == "Link" {
+            let border = PDFBorder()
+            border.lineWidth = 0
+            link.border = border
+        }
     }
 }

@@ -79,6 +79,18 @@ struct PDFTests {
         #expect(try shown(view) == place)
     }
 
+    @Test func aLivePageHidesItsLinksBordersAsABuiltDocumentDoes() async throws {
+        let document = try textPDF(["linked"])
+        let link = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 50, height: 12), forType: .link, withProperties: nil)
+        link.border = PDFBorder()
+        link.border?.lineWidth = 1
+        try #require(document.page(at: 0)).addAnnotation(link)
+        let data = try #require(document.dataRepresentation())
+        let loaded = try #require(await PDFController.loadPage(data, at: 0, covering: CoverPages()))
+        let links = try #require(loaded.document.page(at: 0)).annotations.filter { $0.type == "Link" }
+        #expect(!links.isEmpty && links.allSatisfy { $0.border?.lineWidth == 0 })
+    }
+
     @Test func aLivePageWaitsForTheDocumentBeforeItAndClosingCancelsTheReads() async throws {
         let defaults = TestDefaults()
         let project = ProjectModel(id: "P", window: defaults.window())
