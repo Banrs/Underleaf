@@ -5,6 +5,7 @@ import os
 protocol ProjectViews: AnyObject {
     var hasPDF: Bool { get }
     var zoom: Zoom { get }
+    var pdfPlace: PdfPlace? { get }
     var shownVersion: Int { get }
     var pdfLoading: Task<Void, Never>? { get }
     func heard(_ event: Event)
@@ -162,7 +163,7 @@ final class ProjectModel {
 
     let notices = ProjectNotices()
 
-    func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom))) }
+    func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom, pdfPlace: views?.pdfPlace))) }
 
     func load() async throws {
         let interval = signposts.beginInterval("project.open")

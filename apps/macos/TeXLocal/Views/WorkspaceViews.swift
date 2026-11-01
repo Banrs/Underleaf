@@ -72,6 +72,7 @@ final class WorkspaceViews: ProjectViews {
 
     var hasPDF: Bool { pdf.pageCount > 0 }
     var zoom: Zoom { pdf.keptZoom }
+    var pdfPlace: PdfPlace? { pdf.keptPlace }
     var shownVersion: Int { pdf.shownVersion }
     var pdfLoading: Task<Void, Never>? { pdf.loading }
 
@@ -89,7 +90,7 @@ final class WorkspaceViews: ProjectViews {
         }
     }
 
-    func opened(_ ui: UiState) { pdf.restoreZoom = ui.zoom }
+    func opened(_ ui: UiState) { pdf.restore = ui.zoom.map { ($0, ui.pdfPlace) } }
 
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool) {
         guard editor.path == path else { return }

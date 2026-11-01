@@ -5,22 +5,26 @@ import Testing
 
 @Suite(.serialized)
 struct PDFTests {
-    @Test(arguments: [Zoom?.none, .scale(1.5), .fitPage])
-    func aPDFOpensAtItsStart(_ zoom: Zoom?) async throws {
+    @Test(arguments: [(Zoom?.none, PdfPlace?.none), (.scale(1.5), nil), (.fitPage, PdfPlace(page: 3, x: 0, y: 400)),
+                      (.fitWidth, PdfPlace(page: 9, x: 0, y: 792))])
+    func aPDFOpensWhereItWasLeftElseAtItsStart(_ zoom: Zoom?, _ left: PdfPlace?) async throws {
         let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
         try #require(try textPDF(count: 6).dataRepresentation()).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         let controller = PDFController(), view = controller.view
-        controller.restoreZoom = zoom
+        controller.restore = zoom.map { ($0, left) }
+        #expect(controller.keptPlace == left)
         let window = onScreen(controller)
         defer { window.close() }
         await controller.load(url).value
         #expect(controller.pageCount == 6)
-        #expect(try atStart(view))
-        if let zoom { #expect(controller.zoom == zoom && controller.restoreZoom == nil) }
+        let opened = try shown(view)
+        if let left { #expect(opened == Place(page: min(left.page, 5), y: left.y)) } else { #expect(try atStart(view)) }
+        if let zoom { #expect(controller.zoom == zoom && controller.restore == nil) }
+        #expect(controller.keptPlace.map { Place(page: $0.page, y: $0.y) } == opened)
         for width in [420, 700] as [CGFloat] {
             window.setContentSize(NSSize(width: width, height: 600))
-            #expect(try atStart(view))
+            #expect(try shown(view) == opened)
         }
         await controller.load(nil).value
         #expect(controller.pageCount == 0 && view.document == nil)

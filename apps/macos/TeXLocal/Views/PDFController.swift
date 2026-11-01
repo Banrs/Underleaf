@@ -21,7 +21,8 @@ final class PDFController: NSObject {
     var canZoomIn: Bool { scale < Self.maxScale }
     var canZoomOut: Bool { scale > Self.minScale }
 
-    @ObservationIgnored var restoreZoom: Zoom?
+    /// The zoom and place a project was left at, taken once the PDF shows with some area.
+    @ObservationIgnored var restore: (zoom: Zoom, place: PdfPlace?)?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
     @ObservationIgnored private(set) var shownVersion = 0
@@ -132,12 +133,18 @@ final class PDFController: NSObject {
     }
 
     private func restoreIfReady() {
-        guard view.document != nil, view.hasShownArea, let zoom = restoreZoom.take() else { return }
-        apply(zoom)
-        view.goToStart()
+        guard view.document != nil, view.hasShownArea, let restore = restore.take() else { return }
+        apply(restore.zoom)
+        if let place = restore.place { view.go(to: (place.page, CGPoint(x: place.x, y: place.y))) } else { view.goToStart() }
     }
 
-    var keptZoom: Zoom { restoreZoom ?? zoom }
+    var keptZoom: Zoom { restore?.zoom ?? zoom }
+
+    var keptPlace: PdfPlace? {
+        if let restore { return restore.place }
+        guard view.hasShownArea, let place = view.shownPlace else { return nil }
+        return PdfPlace(page: place.index, x: place.point.x, y: place.point.y)
+    }
 
     func load(_ url: URL?) -> Task<Void, Never> {
         let wanted = view.coverPages
