@@ -142,7 +142,7 @@ final class PDFController: NSObject {
 
     var keptPlace: PdfPlace? {
         if let restore { return restore.place }
-        guard view.hasShownArea, let place = view.shownPlace else { return nil }
+        guard let place = view.hasShownArea ? view.shownPlace : view.lastPlace, view.document != nil else { return nil }
         return PdfPlace(page: place.index, x: place.point.x, y: place.point.y)
     }
 

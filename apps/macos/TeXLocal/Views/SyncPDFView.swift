@@ -161,8 +161,14 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         let place = hasShownArea ? shownPlace : nil
         super.setFrameSize(newSize)
         onResize()
-        if let place { go(to: place) }
+        if let place {
+            go(to: place)
+            lastPlace = place
+        }
     }
+
+    /// The place shown before the last resize, which is the one to keep while the pane is collapsed.
+    private(set) var lastPlace: (index: Int, point: CGPoint)?
 
     func goToStart() {
         guard let page = document?.page(at: 0) else { return }

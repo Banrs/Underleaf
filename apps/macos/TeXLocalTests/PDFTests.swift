@@ -26,6 +26,8 @@ struct PDFTests {
             window.setContentSize(NSSize(width: width, height: 600))
             #expect(try shown(view) == opened)
         }
+        view.setFrameSize(.zero)
+        #expect(controller.keptPlace.map { Place(page: $0.page, y: $0.y) } == opened)
         await controller.load(nil).value
         #expect(controller.pageCount == 0 && view.document == nil)
     }
