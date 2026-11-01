@@ -272,11 +272,6 @@ final class WorkspaceController: ThinSplitViewController {
 
     private var animates: Bool { view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
-    private func focus(_ field: FieldHandle, in accessory: NSSplitViewItemAccessoryViewController) {
-        if field.field == nil { accessory.view.layoutSubtreeIfNeeded() }
-        field.focus()
-    }
-
     func close() {
         if !panelItem.isCollapsed { keepPanelHeight() }
         for split in splitViews { split.autosaveName = nil }
@@ -291,7 +286,8 @@ final class WorkspaceController: ThinSplitViewController {
             views.perform(action) {
                 pdf.find.isOpen = true
                 setHidden(pdfFind, false)
-                focus(pdf.find.field, in: pdfFind)
+                if pdf.find.field.field == nil { pdfFind.view.layoutSubtreeIfNeeded() }
+                pdf.find.field.focus()
             }
         }
     }
