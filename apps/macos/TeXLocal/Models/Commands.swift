@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum MenuCommand {
-    case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectExportArxiv, projectSearch
+    case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectExportArxiv, projectSearch, projectReplace
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
@@ -24,6 +24,7 @@ enum MenuCommand {
         case .projectExport: ("Export Project as ZIP…", nil)
         case .projectExportArxiv: ("Export for arXiv…", nil)
         case .projectSearch: ("Find in Project…", KeyboardShortcut("f", modifiers: [.command, .shift]))
+        case .projectReplace: ("Find and Replace in Project…", KeyboardShortcut("f", modifiers: [.command, .shift, .option]))
         case .fileNew: ("New File", KeyboardShortcut("n"))
         case .fileNewFolder: ("New Folder", KeyboardShortcut("n", modifiers: [.command, .shift, .option]))
         case .fileUpload: ("Add Files…", nil)
@@ -218,7 +219,9 @@ extension WindowModel {
                     try await project.exportZip(forArxiv: arxiv)
                 }
             }
-        case .projectSearch: controller?.focusSearch()
+        case .projectSearch, .projectReplace:
+            project?.search.replacing = command == .projectReplace
+            controller?.focusSearch()
         case .fileNew, .fileNewFolder:
             project?.showNavigator(.files)
             newEntry = NewEntry(directory: command == .fileNewFolder)

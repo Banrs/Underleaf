@@ -608,6 +608,7 @@ struct ViewsTests {
             refused.append(edits.path)
             return false
         }
+        func replace(_ hit: SearchHit, with text: String) -> Bool { false }
         func trashed(_ path: String) {}
         func beep() {}
         func requestAttention() { attention += 1 }
