@@ -94,20 +94,6 @@ class ThinSplitViewController: NSSplitViewController {
 }
 
 final class ColumnsSplitView: DraggedSplitView {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        NotificationCenter.default.addObserver(self, selector: #selector(fitToolbar), name: NSSplitView.didResizeSubviewsNotification, object: self)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        fitToolbar()
-    }
-
-    @objc private func fitToolbar() { (window?.contentViewController as? WorkspaceController)?.fitToolbar() }
-
     var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 

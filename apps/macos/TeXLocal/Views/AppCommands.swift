@@ -83,6 +83,10 @@ struct AppCommands: Commands {
         CommandMenu("Insert") {
             MathMenuItems(project: project, shortcut: MenuCommand.editMath.shortcut,
                           inlineMathEnabled: app.isEnabledInMenuBar(.editMath, on: project)) { app.main?.perform(.editMath, on: project) }
+            Section("Symbols") {
+                SymbolItems(project: project)
+                items(.symbolLibrary)
+            }
             Divider()
             InsertMenuItems(project: project)
         }
