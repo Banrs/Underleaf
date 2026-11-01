@@ -4,7 +4,7 @@ import SwiftUI
 final class SourceEditor: NSObject, NSTextViewDelegate {
     let textView = SourceTextView.plainDocument()
     let scrollView = ScrollView()
-    var onCursor: (Int, Int) -> Void = { _, _ in }
+    var onCursor: (Int, Int, Int) -> Void = { _, _, _ in }
     var onScroll: (Int) -> Void = { _ in }
     var onEdit: () -> Void = {}
 

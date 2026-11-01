@@ -55,6 +55,7 @@ final class ProjectModel {
     var words: Int? { analysis?.words }
     private(set) var cursorLine = 1
     private(set) var cursorColumn = 0
+    private(set) var shownColumn = 1
     @ObservationIgnored private var topLine = 1
     @ObservationIgnored private(set) var topHeading: Int?
     private(set) var currentHeading: Int?
@@ -178,10 +179,11 @@ final class ProjectModel {
         initialLoadComplete = true
     }
 
-    func cursorMoved(to line: Int, column: Int, caret offset: Int, in path: String?) {
+    func cursorMoved(to line: Int, column: Int, shownColumn: Int, caret offset: Int, in path: String?) {
         let moved = caret?.path != path || caret?.offset != offset
         caret = path.map { ($0, offset) }
         if moved { liveCaret() }
+        if shownColumn != self.shownColumn { self.shownColumn = shownColumn }
         guard line != cursorLine || column != cursorColumn else { return }
         (cursorLine, cursorColumn, currentLine) = (line, column, line)
         if !caretMoved {

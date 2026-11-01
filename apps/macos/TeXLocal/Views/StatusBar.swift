@@ -142,9 +142,9 @@ private struct CaretPlace: View {
     var body: some View {
         if window.showSource, project.editsText {
             Button { window.perform(.editGotoLine, on: project) } label: {
-                place(detail, "Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)",
-                      short: "\(project.cursorLine):\(project.cursorColumn + 1)",
-                      spoken: "Line \(project.cursorLine), Column \(project.cursorColumn + 1)")
+                place(detail, "Line: \(project.cursorLine)  Col: \(project.shownColumn)",
+                      short: "\(project.cursorLine):\(project.shownColumn)",
+                      spoken: "Line \(project.cursorLine), Column \(project.shownColumn)")
             }
             .help("Go to a line")
         }
