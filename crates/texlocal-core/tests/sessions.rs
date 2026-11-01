@@ -925,6 +925,11 @@ async fn an_export_holds_the_sources_and_opens_as_a_new_project() {
     let opened = rig.library.call("OpenPath", json!({ "path": dest })).await;
     assert_eq!(opened["project"]["name"], "Shared");
     assert!(rig.library.project_root("Shared").join("ch.tex").is_file());
+    let inside = rig.root().join("Shared.zip");
+    for _ in 0..2 {
+        rig.call("ExportZip", json!({ "dest": inside, "forArxiv": false }));
+    }
+    assert_eq!(zip_names(&inside), ["ch.tex", "main.tex"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
