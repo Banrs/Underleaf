@@ -206,6 +206,13 @@ final class NavigatorField: NSSearchField {
         override func searchTextRect(forBounds rect: NSRect) -> NSRect {
             NSRect(x: rect.minX + 22, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - rect.minX - 22, height: 20)
         }
+
+        // A cell without its symbol still lists the symbol's button to accessibility, as an element with no role or name.
+        override func accessibilityChildren() -> [Any]? {
+            let children = super.accessibilityChildren()
+            guard searchButtonCell == nil else { return children }
+            return children?.filter { NSStringFromClass(Swift.type(of: $0 as AnyObject)) != "NSSearchButtonCellProxy" }
+        }
     }
 
     override class var cellClass: AnyClass? {
@@ -252,7 +259,10 @@ struct NavigatorPane: View {
         .searching(project)
         .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .safeAreaBar(edge: .top, spacing: 0) { Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, 8) }
+        .safeAreaBar(edge: .top, spacing: 0) {
+            // Xcode's lists start 8 pt below the chooser, and its Find navigator's mode row 2 pt below.
+            Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
+        }
     }
 }
 
