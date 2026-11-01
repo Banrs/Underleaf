@@ -129,7 +129,7 @@ struct WindowTests {
         let app = windowedApp()
         await app.showHome().open(project.id)
         let screen = try #require(window(of: app.window(showing: project.id))?.screen?.visibleFrame)
-        let left = NSRect(x: screen.minX + 40, y: screen.minY + 40, width: 900, height: 640)
+        let left = NSRect(x: screen.minX + 40, y: screen.minY + 40, width: 800, height: 560)
         window(of: app.window(showing: project.id))?.setFrame(left, display: false)
         await close(app)
         await app.showHome().open(project.id)
