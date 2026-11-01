@@ -37,7 +37,7 @@ struct PDFTests {
         let (scale, place) = (view.scaleFactor, try shown(view))
         #expect(place.page == 3 && abs(place.y - 400) < 1)
         let rebuilt = try textPDF(count: 6)
-        controller.show(rebuilt)
+        controller.show(rebuilt, covers: SyncPDFView.covers(view.coverPages, of: rebuilt))
         #expect(view.document === rebuilt && view.scaleFactor == scale && controller.zoom == zoom && view.autoScales == (zoom == .fitWidth))
         #expect(try shown(view) == place)
         #expect(overlays(in: view).contains { $0.covered })

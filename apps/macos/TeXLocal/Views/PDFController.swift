@@ -137,14 +137,17 @@ final class PDFController: NSObject {
     var keptZoom: Zoom { restoreZoom ?? zoom }
 
     func load(_ url: URL?) -> Task<Void, Never> {
-        restart(&loading) { [self] in
-            let document: PDFDocument? = if let url { await Self.loadDocument(url) } else { nil }
+        let wanted = view.coverPages
+        return restart(&loading) { [self] in
+            let loaded: LoadedPDF? = if let url { await Self.loadDocument(url, covering: wanted) } else { nil }
             guard !Task.isCancelled else { return }
-            if let document { show(document) } else { clear() }
+            if let loaded { show(loaded.document, covers: loaded.covers) } else { clear() }
         }
     }
 
-    @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
+    /// Parses the PDF and touches every page, which creates it here rather than on the main thread when the view lays
+    /// the document out (measured on 392 pages: a swap takes 23–28 ms on the main thread without this, 7–8 ms with it).
+    @concurrent static func loadDocument(_ url: URL, covering wanted: CoverPages = CoverPages()) async -> sending LoadedPDF? {
         signposts.withIntervalSignpost("pdf.load") {
             guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
             for index in 0..<document.pageCount {
@@ -154,15 +157,19 @@ final class PDFController: NSObject {
                     link.border = border
                 }
             }
-            return document
+            return LoadedPDF(document: document, covers: SyncPDFView.covers(wanted, of: document))
         }
     }
 
-    @concurrent static func loadPage(_ pdf: Data) async -> sending PDFPage? { PDFDocument(data: pdf)?.page(at: 0) }
+    @concurrent static func loadPage(_ pdf: Data, at index: Int, covering wanted: CoverPages) async -> sending LoadedPDF? {
+        guard let document = PDFDocument(data: pdf), document.pageCount > 0 else { return nil }
+        let cover = SyncPDFView.covers(CoverPages(indices: wanted.indices.contains(index) ? [0] : [], scale: wanted.scale), of: document)
+        return LoadedPDF(document: document, covers: cover[0].map { [index: $0] } ?? [:])
+    }
 
     func print(title: String, file: URL?) {
         Task {
-            let document = if let file { await Self.loadDocument(file) } else { view.document }
+            let document = if let file { await Self.loadDocument(file)?.document } else { view.document }
             guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true),
                   let window = view.window ?? NSApp.mainWindow else { return NSSound.beep() }
             operation.jobTitle = title
@@ -170,7 +177,7 @@ final class PDFController: NSObject {
         }
     }
 
-    func show(_ document: PDFDocument) {
+    func show(_ document: PDFDocument, covers: [Int: CGImage] = [:]) {
         let interval = signposts.beginInterval("pdf.show")
         defer { signposts.endInterval("pdf.show", interval) }
         shownVersion += 1
@@ -180,7 +187,7 @@ final class PDFController: NSObject {
         view.clearSelection()
         let place = view.document == nil ? nil : view.shownPlace
         let autoScales = view.autoScales
-        view.covering {
+        view.covering(covers) {
             signposts.withIntervalSignpost("setDocument") { view.document = document }
             view.minScaleFactor = Self.minScale
             view.maxScaleFactor = Self.maxScale
@@ -196,13 +203,13 @@ final class PDFController: NSObject {
         signposts.withIntervalSignpost("find") { find.rerun() }
     }
 
-    func show(_ page: PDFPage, at index: Int) {
+    func show(_ page: PDFPage, at index: Int, covers: [Int: CGImage] = [:]) {
         let interval = signposts.beginInterval("live.page")
         defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document, let old = document.page(ifAt: index) else { return }
         find.cancel()
         view.removeMark()
-        view.covering {
+        view.covering(covers) {
             document.insert(page, at: index)
             document.removePage(at: index + 1)
         }
@@ -222,7 +229,12 @@ final class PDFController: NSObject {
     }
 }
 
-extension PDFDocument {
+nonisolated struct LoadedPDF {
+    let document: PDFDocument
+    let covers: [Int: CGImage]
+}
+
+nonisolated extension PDFDocument {
     func page(ifAt index: Int) -> PDFPage? { (0..<pageCount).contains(index) ? page(at: index) : nil }
 
     func number(of page: PDFPage) -> Int? {

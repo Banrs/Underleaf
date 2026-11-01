@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import PDFKit
 import os
 
 @Observable
@@ -185,17 +186,21 @@ final class WorkspaceViews: ProjectViews {
     }
 
     private func showLive(_ live: LiveDocument) {
+        let wanted = pdf.view.coverPages
         _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let document = await PDFController.loadDocument(URL(filePath: live.path)), project.showsLive else { return }
-            signposts.withIntervalSignpost("live.document") { pdf.show(document) }
+            guard !Task.isCancelled, let loaded = await PDFController.loadDocument(URL(filePath: live.path), covering: wanted), project.showsLive
+            else { return }
+            signposts.withIntervalSignpost("live.document") { pdf.show(loaded.document, covers: loaded.covers) }
             project.liveDocumentShown()
         }
     }
 
     private func showLive(_ live: LivePage) {
+        let wanted = pdf.view.coverPages
         _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let page = await PDFController.loadPage(live.pdf), project.showsLive else { return }
-            pdf.show(page, at: live.page)
+            guard !Task.isCancelled, let loaded = await PDFController.loadPage(live.pdf, at: live.page, covering: wanted), project.showsLive,
+                  let page = loaded.document.page(at: 0) else { return }
+            pdf.show(page, at: live.page, covers: loaded.covers)
         }
     }
 
