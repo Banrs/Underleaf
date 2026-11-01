@@ -191,16 +191,24 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     if let Some(top) = top {
         return Ok(Some(top.clone()));
     }
-    let mut nested = None;
+    // A standalone figure or subfile also has a \documentclass, so a nested main.tex wins,
+    // then the shallowest document.
+    let mut nested: Option<(bool, usize, String)> = None;
     visit_files(root, &mut |path, rel| {
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        let found = file_kind(name) == FileKind::Tex && !name.starts_with('-');
-        if found && starts_document(path) {
-            nested = Some(rel.to_owned());
+        if file_kind(name) == FileKind::Tex && !name.starts_with('-') && starts_document(path) {
+            let found = (
+                fold_case(name) != "main.tex",
+                rel.matches('/').count(),
+                rel.to_owned(),
+            );
+            if nested.as_ref().is_none_or(|best| found < *best) {
+                nested = Some(found);
+            }
         }
-        Ok(nested.is_none())
+        Ok(true)
     })?;
-    Ok(nested)
+    Ok(nested.map(|(_, _, rel)| rel))
 }
 
 pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
