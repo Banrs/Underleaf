@@ -227,9 +227,6 @@ extension WindowModel {
         case .fileSaveVersion: prompt = .saveVersion
         case .pdfSave: if let project, let url = project.buildPDF { exporting = ExportFile(name: "\(project.name).pdf", type: .pdf) { url } }
         case .fileBrowseVersions: prompt = .versionHistory
-        case .openQuickly, .pdfOpen, .viewToggleInspector, .quickHelp, .filePrint, .editShiftRight, .editShiftLeft, .jumpToDefinition,
-             .findUsages, .editRename:
-            project?.views?.perform(command)
         case .editGotoLine: prompt = .gotoLine
         case .goBack, .goForward: Task { await project?.retrace(back: command == .goBack) }
         case .pdfGotoPage: prompt = .gotoPage
@@ -244,7 +241,7 @@ extension WindowModel {
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
         case .symbolLibrary: SymbolLibrary.toggle(app: app)
-        default: break
+        default: project?.views?.perform(command)
         }
     }
 }
