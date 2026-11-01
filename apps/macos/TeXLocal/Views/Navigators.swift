@@ -1,37 +1,34 @@
 import AppKit
 import SwiftUI
 
-/// The sidebar as Xcode's navigator area: the shown navigator fills it and scrolls beneath the chooser floating at its top,
-/// its safe area starting 7 pt below the chooser, where Xcode's lists start.
+/// The sidebar's content from the toolbar's foot, so its lists scroll beneath the chooser but not on into the titlebar, as
+/// Xcode's stop.
 final class NavigatorArea: NSViewController {
-    private let list: NSViewController
-    private let chooser: NavigatorChooser
+    private let pane: NSViewController
 
-    init(list: NSViewController, project: ProjectModel) {
-        self.list = list
-        chooser = NavigatorChooser(project: project)
+    init(_ pane: NSViewController) {
+        self.pane = pane
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        view = NSView(frame: list.view.frame)
-        addChild(list)
-        list.view.frame = view.bounds
-        list.view.autoresizingMask = [.width, .height]
-        list.view.additionalSafeAreaInsets.top = chooser.intrinsicContentSize.height + 7
-        view.addSubview(list.view)
-        chooser.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(chooser)
+        view = NSView(frame: pane.view.frame)
+        addChild(pane)
+        view.addSubview(pane.view)
+        pane.view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            chooser.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            chooser.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            pane.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            pane.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            pane.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            pane.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
     }
 }
 
-/// The navigator chooser: a tabs-role segmented control at the large size, its segments the 44 pt of the macOS UI Kit's tab bar.
+/// The navigator chooser: a tabs-role segmented control at the large size, its segments sharing the sidebar's width, as
+/// Xcode's choosers do however few their choices.
 private final class NavigatorChooser: NSSegmentedControl {
     private weak var project: ProjectModel?
     private var watch: Task<Void, Never>?
@@ -44,8 +41,8 @@ private final class NavigatorChooser: NSSegmentedControl {
         for (index, navigator) in all.enumerated() {
             setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
             setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
-            setWidth(44, forSegment: index)
         }
+        segmentDistribution = .fillEqually
         trackingMode = .selectOne
         role = .tabs
         controlSize = .large
@@ -194,6 +191,15 @@ private extension Navigator {
     }
 }
 
+private struct Chooser: NSViewRepresentable {
+    let project: ProjectModel
+
+    func makeNSView(context: Context) -> NavigatorChooser { NavigatorChooser(project: project) }
+    func updateNSView(_ view: NavigatorChooser, context: Context) {}
+}
+
+/// The sidebar as Xcode's navigator area: the shown navigator scrolls beneath the chooser at its top, softly, its rows
+/// starting 8 pt below it, as Xcode's do.
 struct NavigatorPane: View {
     let project: ProjectModel
     let field: FieldHandle
@@ -209,6 +215,8 @@ struct NavigatorPane: View {
         }
         .searching(project)
         .environment(\.sidebarRowSize, .small)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .safeAreaBar(edge: .top, spacing: 0) { Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, 8) }
     }
 }
 
