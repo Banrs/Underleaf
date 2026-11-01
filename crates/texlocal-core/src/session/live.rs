@@ -559,6 +559,7 @@ impl Actor {
         }
         let doc = &self.docs[path].doc;
         let inserted = edit.map_or(0, |edit| utf16::len(&edit.text) as u32);
+        let (count, mut moved) = (self.live.issues.len(), false);
         self.live.issues.retain_mut(|issue| {
             if !ours(issue) {
                 return true;
@@ -568,13 +569,17 @@ impl Actor {
             };
             if edit.start + edit.length <= issue.at {
                 issue.at = issue.at - edit.length + inserted;
-                issue.item.line = Some(doc.with(|source| source.line_at(issue.at)));
+                let line = Some(doc.with(|source| source.line_at(issue.at)));
+                moved |= issue.item.line != line;
+                issue.item.line = line;
                 true
             } else {
                 edit.start > issue.at
             }
         });
-        self.publish_live(false);
+        if moved || self.live.issues.len() != count {
+            self.publish_live(false);
+        }
     }
 
     pub fn live_issues_opened(&mut self, path: &str) {
