@@ -372,9 +372,7 @@ final class ProjectModel {
     }
 
     func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
-        guard apply(try await session.call(RestoreVersion(id: snapshot.id, paths: paths)), named: String(localized: "Restore")) else {
-            throw AppFailure(String(localized: "The file shown changed meanwhile, so it wasn’t restored. Try again."))
-        }
+        try await editProject(RestoreVersion(id: snapshot.id, paths: paths), named: String(localized: "Restore"))
     }
 
     @discardableResult

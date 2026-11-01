@@ -17,7 +17,7 @@ use tokio::time::Instant;
 
 use super::build::{Builds, built_pdf};
 use super::documents::{Docs, Resolution};
-use super::edits::{DocumentEdits, Fixed, ProjectEdits};
+use super::edits::{Fixed, ProjectEdits};
 use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
@@ -58,7 +58,7 @@ requests! {
         ListVersions {} -> Vec<Snapshot>,
         SaveVersion { name: String } -> Option<Snapshot>,
         CompareVersion { id: String, path: RelPath } -> Vec<DiffLine>,
-        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> Option<DocumentEdits>,
+        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> ProjectEdits,
         Rename { from: RelPath, to: String } -> Option<RenameResult>,
         CreateEntry { folder: String, name: String, dir: bool } -> String,
         SetSettings { patch: SettingsPatch } -> (),
