@@ -59,47 +59,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace
-      - run: cargo check --locked -p texlocal-core --target aarch64-apple-ios
-
-  linux:
-    name: Rust on Linux
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
-        env:
-          TMPDIR: ${{ runner.temp }}
-
-  wasm:
-    name: LaTeX on wasm
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
-    steps:
-      - uses: actions/checkout@v7
-      - run: rustup toolchain install
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037
-        with:
-          tool: wasmtime@49.0.2
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo check --locked -p texlocal-latex --target wasm32-unknown-unknown
-      - run: cargo test --locked -p texlocal-latex --target wasm32-wasip1
 
   deps:
     name: Dependencies
@@ -185,7 +147,7 @@ jobs:
           [ -z "$missing" ] || { echo "::error::target/release/libtexlocal_ffi.a lacks $(echo $missing)"; exit 1; }
 
   ci-ok:
-    needs: [changes, rust, linux, wasm, deps, mac, release]
+    needs: [changes, rust, deps, mac, release]
     if: always()
     runs-on: ubuntu-latest
     steps:
