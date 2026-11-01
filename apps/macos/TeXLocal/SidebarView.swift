@@ -275,7 +275,9 @@ struct OutlineHeader: View {
             .padding(.leading, 14)
             .padding(.trailing, 18)
             .frame(height: BarMetrics.height)
-            .frame(height: open ? ((BarMetrics.height + line) / 2 + 5).rounded() : BarMetrics.height, alignment: .top)
+            .frame(height: open ? ((BarMetrics.height + line) / 2).rounded() : BarMetrics.height, alignment: .top)
+            .animation(.default, value: open)
+            .frame(maxHeight: .infinity, alignment: .bottom)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

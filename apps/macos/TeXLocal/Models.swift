@@ -145,6 +145,8 @@ nonisolated enum PDFPaper: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    func isDark(inDarkAppearance dark: Bool) -> Bool { self == .dark || self == .auto && dark }
+
     var title: LocalizedStringResource {
         switch self {
         case .white: "White"

@@ -75,7 +75,7 @@ struct PDFFindBar: View {
         HStack {
             SearchField(text: $find.text, prompt: "Find in PDF", handle: find.field,
                         step: find.next, close: find.close)
-                .frame(minWidth: 100, maxWidth: .infinity)
+                .frame(minWidth: 100, maxWidth: 240)
             ControlGroup {
                 Button("Previous Match", systemImage: "chevron.backward") { find.next(-1) }
                     .help("Go to the previous match")
@@ -84,10 +84,15 @@ struct PDFFindBar: View {
             }
             .disabled(find.matches.isEmpty)
             .fixedSize()
-            Text(label)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .layoutPriority(1)
+            ViewThatFits(in: .horizontal) {
+                Text(label)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Color.clear.frame(width: 0)
+            }
+            .layoutPriority(-1)
+            Spacer(minLength: 0)
+                .layoutPriority(-2)
             Button("Done") { find.close() }
         }
         .lineLimit(1)

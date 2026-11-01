@@ -239,6 +239,8 @@ private struct ProjectLabel<Name: View>: View {
     var dimmed = false
     let progress: String?
     @ViewBuilder let name: Name
+    @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var scale
     @State private var page: NSImage?
 
@@ -247,8 +249,16 @@ private struct ProjectLabel<Name: View>: View {
             Group {
                 if let page {
                     let paper = RoundedRectangle(cornerRadius: 2)
-                    Image(nsImage: page).resizable().aspectRatio(contentMode: .fit)
-                        .clipShape(paper)
+                    let image = Image(nsImage: page).resizable()
+                    Group {
+                        if app.paper.isDark(inDarkAppearance: colorScheme == .dark) {
+                            image.colorInvert().hueRotation(.degrees(180))
+                        } else {
+                            image
+                        }
+                    }
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(paper)
                         .overlay { paper.strokeBorder(.separator) }
                 } else {
                     Image(systemName: symbol)

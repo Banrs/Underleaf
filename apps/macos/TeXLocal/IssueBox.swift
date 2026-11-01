@@ -14,7 +14,13 @@ struct IssueBox: View, Equatable {
         }
     }
 
-    static let tint: CGFloat = 0.14
+    static func tint(error: Bool, box: Bool = false) -> NSColor {
+        NSColor(name: nil) {
+            let dark = $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let (line, boxed): (CGFloat, CGFloat) = error ? (dark ? (0.17, 0.32) : (0.08, 0.21)) : (dark ? (0.09, 0.18) : (0.16, 0.43))
+            return (error ? NSColor.systemRed : .systemYellow).withAlphaComponent(box ? boxed : line)
+        }
+    }
 
     let isError: Bool
     let issues: Int
@@ -26,21 +32,20 @@ struct IssueBox: View, Equatable {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 4)
-        let separator = Color(nsColor: .separatorColor)
-        let severity: Color = isError ? .red : .yellow
         HStack(spacing: 0) {
             if issues > 1 {
                 onBaseline(Text(verbatim: "\(issues)"))
                     .frame(width: Metrics.count, alignment: .trailing)
                     .offset(x: 1)
             }
-            Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
+            Image(systemName: isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .font(.system(size: Metrics.small(font.pointSize)))
                 .imageScale(.small)
-                .foregroundStyle(severity)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.white, isError ? .red : .yellow)
                 .frame(width: Metrics.segment(font, issues: 1))
             if let text {
-                separator.frame(width: Metrics.divider)
+                fill.frame(width: Metrics.divider)
                 onBaseline(Text(verbatim: text), cut: cutAtTail)
                     .padding(.leading, Metrics.padding)
                     .padding(.trailing, cutAtTail ? Metrics.trailing : 0)
@@ -48,9 +53,9 @@ struct IssueBox: View, Equatable {
         }
         .font(Font(font as CTFont))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(severity.opacity(Self.tint), in: shape)
+        .background(Color(nsColor: Self.tint(error: isError, box: true)), in: shape)
+        .background(.fill.tertiary, in: shape)
         .background(fill, in: shape)
-        .overlay(shape.strokeBorder(severity.opacity(3 * Self.tint), lineWidth: 1))
         .accessibilityHidden(true)
     }
 
