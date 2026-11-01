@@ -37,6 +37,7 @@ final class WorkspaceController: ThinSplitViewController {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mount: inspectorMount))
         inspectorItem.isCollapsed = true
         inspectorItem.canCollapseFromWindowResize = true
+        inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
         buildSidebar(height: size.height)
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
@@ -61,12 +62,6 @@ final class WorkspaceController: ThinSplitViewController {
         sourceItem.isCollapsed = !window.showSource
         pdfItem.isCollapsed = !window.showPDF
         fitColumns()
-    }
-
-    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect, forDrawnRect drawnRect: NSRect,
-                            ofDividerAt dividerIndex: Int) -> NSRect {
-        splitViewItems.firstIndex(of: inspectorItem) == dividerIndex + 1 ? .zero
-            : super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
     }
 
     private func fitColumns() {
