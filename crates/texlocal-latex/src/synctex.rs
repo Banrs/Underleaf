@@ -980,7 +980,7 @@ impl SyncTex {
                     for other in hboxes.filter(|&other| self.contains(hit, other)) {
                         node = self.smallest(other, node);
                     }
-                    let node = self.deepest(hit, node)?;
+                    let node = self.deepest(hit, node, false).node?;
                     (self.closest_children(hit, node), node)
                 }
                 None => {
@@ -1126,51 +1126,21 @@ impl SyncTex {
         }
     }
 
-    fn deepest(&self, hit: Point, id: u32) -> Option<u32> {
-        self.node(id).child?;
-        for child in self.children(id) {
-            if let Some(deep) = self
-                .contains(hit, child)
-                .then(|| self.deepest(hit, child))
-                .flatten()
-            {
-                return Some(deep);
-            }
-        }
-        if self.node(id).kind == Kind::VBox {
-            let mut best = NOWHERE;
-            for child in self.children(id).filter(|&c| self.node(c).child.is_some()) {
-                let distance = self.distance(hit, child);
-                if distance <= best.distance {
-                    best = Near {
-                        node: Some(child),
-                        distance,
-                    };
-                }
-            }
-            if best.node.is_some() {
-                return best.node;
-            }
-        }
-        self.contains(hit, id).then_some(id)
-    }
-
-    fn deepest_anywhere(&self, hit: Point, id: u32) -> Near {
+    fn deepest(&self, hit: Point, id: u32, anywhere: bool) -> Near {
         if self.node(id).child.is_none() {
             return NOWHERE;
         }
-        if let Some(deep) = self
-            .children(id)
-            .map(|child| self.deepest_anywhere(hit, child))
-            .find(|deep| deep.node.is_some())
-        {
+        let near = self.children(id);
+        let near = near.filter(|&child| anywhere || self.contains(hit, child));
+        let mut deep = near.map(|child| self.deepest(hit, child, anywhere));
+        if let Some(deep) = deep.find(|deep| deep.node.is_some()) {
             return deep;
         }
         if self.node(id).kind == Kind::VBox {
             let mut best = NOWHERE;
             for child in self.children(id).filter(|&c| self.node(c).child.is_some()) {
                 let distance = self.distance(hit, child);
-                if distance < best.distance {
+                if distance < best.distance || (!anywhere && distance == best.distance) {
                     best = Near {
                         node: Some(child),
                         distance,
@@ -1244,7 +1214,7 @@ impl SyncTex {
         }
         for side in [&mut left, &mut right] {
             if let Some(node) = side.node {
-                let deep = self.deepest_anywhere(hit, node);
+                let deep = self.deepest(hit, node, true);
                 if deep.node.is_some() {
                     *side = deep;
                 }
