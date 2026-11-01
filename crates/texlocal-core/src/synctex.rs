@@ -5,6 +5,7 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::syntax::{SyncLines, sync_lines};
 use texlocal_latex::wordmatch::find_in_source;
 
 use crate::error::CoreError;
@@ -68,23 +69,17 @@ fn source_file(root: &Path, name: &str) -> Option<String> {
 pub(crate) fn forward(
     project: &Project,
     file: &str,
-    line: u32,
+    lines: &SyncLines,
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    if line < 1 {
-        return Err(CoreError::bad_request(messages::invalid_line()));
-    }
     let sync = sync_for(project, live)?;
     let tag = sync
         .inputs()
         .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(file))
-        .map(|(tag, _)| tag);
-    let line = i32::try_from(line).unwrap_or(i32::MAX);
+        .map(|(tag, _)| tag)
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
     let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
-    let mut matches: Vec<_> = tag
-        .map(|tag| sync.forward(tag, line))
-        .unwrap_or_default()
-        .into_iter()
+    let mut matches: Vec<_> = (sync.forward(tag, lines).into_iter())
         .filter(|shown| shown.page >= 1)
         .map(|shown| ForwardLoc {
             page: f64::from(shown.page),
@@ -98,7 +93,7 @@ pub(crate) fn forward(
     let mut first = matches
         .first()
         .cloned()
-        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
+        .ok_or_else(|| CoreError::not_found(messages::no_output_here()))?;
     matches.sort_by(|a, b| {
         a.page
             .total_cmp(&b.page)
@@ -130,11 +125,17 @@ pub(crate) fn inverse(
         .ok_or_else(|| CoreError::not_found(messages::no_match_in_source()))?;
     let rel =
         source_file(root, name).ok_or_else(|| CoreError::not_found(messages::no_source_file()))?;
-    let found = click.and_then(|PageClick { text, at }| {
-        let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
-        let source = typeset(&rel).or_else(disk)?;
-        find_in_source(&source, line, &text, at)
-    });
+    let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
+    let source = typeset(&rel).or_else(disk);
+    if let Some(SyncLines::Whole(picture)) = source.as_deref().map(|text| sync_lines(text, line)) {
+        return Ok(InverseLoc {
+            file: rel,
+            line: *picture.start(),
+            column: None,
+        });
+    }
+    let found = click
+        .and_then(|PageClick { text, at }| find_in_source(source.as_deref()?, line, &text, at));
     Ok(InverseLoc {
         file: rel,
         line: found.map_or(line, |(line, _)| line),

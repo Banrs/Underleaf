@@ -8,15 +8,15 @@ use serde::Serialize;
 use texlocal_latex::facts::FilePlace;
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
-use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::syntax::catalog::CATALOG;
+use texlocal_latex::syntax::{SymbolKind, sync_lines};
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 use texlocal_latex::{bib, project};
 
 use super::Pending;
 use super::actor::Actor;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
-use crate::{CoreError, lf, lock, lossy_string, paths, settings};
+use crate::{CoreError, lf, lock, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
 
@@ -187,11 +187,20 @@ impl Actor {
     }
 
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
+        if line < 1 {
+            return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
+        }
         let (live, project) = (self.live_pdf(), self.project.clone());
+        let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         tokio::task::spawn_blocking(move || {
-            reply.send(
-                live.and_then(|live| synctex::forward(&project, &file, line, live.as_deref())),
-            );
+            reply.send(live.and_then(|live| {
+                let text = match doc {
+                    Some(doc) => doc.snapshot().0,
+                    None => lossy_string(fs::read(paths::safe_path(&project.root, &file)?)?),
+                };
+                let lines = sync_lines(&text, line);
+                synctex::forward(&project, &file, &lines, live.as_deref())
+            }));
         });
     }
 
