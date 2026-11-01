@@ -81,6 +81,7 @@ enum Mode {
 #[derive(Clone, Copy)]
 struct Command {
     named: bool,
+    address: bool,
     braces: usize,
     optional: bool,
 }
@@ -91,10 +92,11 @@ struct Open {
     styled_below: Option<Command>,
 }
 
-fn open(commands: &mut Stack<Open>, named: bool) {
+fn open(commands: &mut Stack<Open>, named: bool, address: bool) {
     commands.push(Open {
         command: Command {
             named,
+            address,
             braces: 0,
             optional: false,
         },
@@ -160,8 +162,9 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             "begin" if let Some(name) = verbatim_environment(&s.text[s.pos..]) => {
                 state.mode = Mode::Opening(name);
             }
-            _ => {
-                open(&mut state.commands, named(name));
+            word => {
+                let address = matches!(word, "url" | "href");
+                open(&mut state.commands, named(name), address);
                 state.mode = Mode::Arguments;
             }
         }
@@ -177,7 +180,8 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         return Some(Command);
     }
     let c = s.next();
-    if is(c, '%') {
+    let address = state.commands.top().is_some_and(|top| top.command.address);
+    if is(c, '%') && !address {
         s.pos = s.text.len();
         Some(Comment)
     } else if one_of(c, "}]") {
@@ -187,7 +191,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         state.mode = Mode::Arguments;
         None
     } else if one_of(c, "{[") {
-        open(&mut state.commands, false);
+        open(&mut state.commands, false, false);
         None
     } else if is_digit(c) {
         s.eat_while(|u| word(u) || is(u, '.'));

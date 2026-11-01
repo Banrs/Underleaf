@@ -76,6 +76,17 @@ fn a_named_argument_is_marked_after_options_and_the_options_are_not() {
 }
 
 #[test]
+fn a_percent_in_an_address_is_not_a_comment() {
+    let mut doc = SourceDocument::new("\\url{a%20b} \\href{c%d}{e} % note");
+    let found = [
+        ("\\url", "Command"),
+        ("\\href", "Command"),
+        ("% note", "Comment"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn control_symbols_are_commands_in_text_and_maths() {
     let mut doc = SourceDocument::new("caf\\'e $a \\\\ b \\: c$");
     let found = [
