@@ -49,7 +49,7 @@ final class ProjectModel {
     var openPath: String? { store.openFile?.path }
     var openKind: FileKind? { store.openFile?.kind }
     private var analysis: Analysis? { isLaTeX ? store.outline : nil }
-    var outline: [Heading] { analysis?.outline ?? [] }
+    private(set) var outline: [Heading] = []
     var outlineTree: [OutlineNode] { analysis?.tree ?? [] }
     var headingStyles: [HeadingStyle] { store.outline?.headingStyles ?? HeadingStyle.standard }
     var words: Int? { analysis?.words }
@@ -229,7 +229,10 @@ final class ProjectModel {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
         case .lifecycle, .tree, .buildLog: break
-        case .openFile, .outline: findHeadings()
+        case .openFile, .outline:
+            let now = analysis?.outline ?? []
+            if now != outline { outline = now }
+            findHeadings()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
