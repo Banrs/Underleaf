@@ -317,6 +317,9 @@ private final class ZoomControl: NSSegmentedControl {
 
     override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
+    /// Fixes the zoom segment at the width it takes around the widest label, so the control keeps its size as the zoom changes.
+    /// A fixed segment width leaves out the padding AppKit adds around a label, so the padding and the other segments (`rest`)
+    /// are read as the control's width with the segment fixed at some width, less that width.
     override func layout() {
         super.layout()
         guard let size = font?.pointSize, size != measuredSize else { return }
@@ -324,9 +327,10 @@ private final class ZoomControl: NSSegmentedControl {
         let label = label(forSegment: 1) ?? ""
         setLabel(widestLabel, forSegment: 1)
         setWidth(0, forSegment: 1)
-        let widest = intrinsicContentSize.width
-        setWidth(widest, forSegment: 1)
-        setWidth(2 * widest - intrinsicContentSize.width, forSegment: 1)
+        let fitted = intrinsicContentSize.width
+        setWidth(fitted, forSegment: 1)
+        let rest = intrinsicContentSize.width - fitted
+        setWidth(fitted - rest, forSegment: 1)
         setLabel(label, forSegment: 1)
     }
 }
