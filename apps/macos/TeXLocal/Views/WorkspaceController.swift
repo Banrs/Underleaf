@@ -12,7 +12,7 @@ final class WorkspaceController: ThinSplitViewController {
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = ThinSplitViewController(isVertical: false)
     private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
-    private var navigatorFilter, pdfFind: NSSplitViewItemAccessoryViewController!
+    private var pdfFind: NSSplitViewItemAccessoryViewController!
     private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
     private let inspectorMount = Mount()
@@ -91,8 +91,7 @@ final class WorkspaceController: ThinSplitViewController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth))
         sidebarItem.minimumThickness = 222
         sidebarItem.addTopAlignedAccessoryViewController(accessory(NavigatorBar(project: project), edge: .soft))
-        navigatorFilter = accessory(hostingView(NavigatorFilter(project: project)), edge: .soft)
-        sidebarItem.addBottomAlignedAccessoryViewController(navigatorFilter)
+        sidebarItem.addBottomAlignedAccessoryViewController(accessory(hostingView(NavigatorFilter(project: project)), edge: .soft))
         addSplitViewItem(sidebarItem)
     }
 
@@ -192,7 +191,6 @@ final class WorkspaceController: ThinSplitViewController {
         watches = [
             track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
-            track({ project.navigator.shown == .search }) { [weak self] in if let self { setHidden(navigatorFilter, $0) } },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
             track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
