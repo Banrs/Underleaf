@@ -6,9 +6,9 @@ sessions, builds and Live Preview, `texlocal-ffi` is the C ABI, and `texlocal-wi
 
 ## Checks
 
-- `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
+- `zsh tools/check.sh` runs what CI checks of the sources: fmt, clippy, the Rust tests and the Swift typecheck.
+- `zsh tools/xctest.sh . <derived-data-dir>` runs the app's tests.
 - `cargo run -p texlocal-wire -- --write` after changing a wire type; never edit `Models/Wire.swift` by hand.
-- `zsh tools/typecheck.sh`, then `zsh tools/xctest.sh . <derived-data-dir>` for the app's tests.
 - `zsh tools/install-mac.sh --dev` installs "TeXLocal Dev" with its own bundle ID and data, for trying a change on screen.
 
 ## Writing code
