@@ -180,7 +180,6 @@ final class ProjectModel {
         (expandedFolders, foldedHeadings) = (Set(ui.expandedFolders), Set(ui.foldedHeadings))
         views?.opened(ui)
         if let openPath { views?.reveal(openPath, line: openPath == ui.file ? ui.line : nil, column: nil, length: nil, atTop: false, focus: true) }
-        await views?.pdfLoading?.value
         initialLoadComplete = true
     }
 

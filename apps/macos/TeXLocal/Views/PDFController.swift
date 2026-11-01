@@ -12,6 +12,8 @@ final class PDFController: NSObject {
     let find: PDFFind
     var page = 0
     var pageCount = 0
+    /// A PDF is being read: the pane's empty state stays hidden meanwhile, as the window no longer waits for it.
+    private(set) var isLoading = false
     private(set) var scale: CGFloat = 1
     var zoom = Zoom.fitWidth
     var zoomLabel: String { Self.label(scale) }
@@ -138,6 +140,7 @@ final class PDFController: NSObject {
 
     func load(_ url: URL?) -> Task<Void, Never> {
         let wanted = view.coverPages
+        isLoading = true
         return restart(&loading) { [self] in
             let loaded: LoadedPDF? = if let url { await Self.loadDocument(url, covering: wanted) } else { nil }
             guard !Task.isCancelled else { return }
@@ -181,6 +184,7 @@ final class PDFController: NSObject {
         let interval = signposts.beginInterval("pdf.show")
         defer { signposts.endInterval("pdf.show", interval) }
         shownVersion += 1
+        isLoading = false
         loading?.cancel()
         revealing?.cancel()
         view.removeMark()
@@ -218,6 +222,7 @@ final class PDFController: NSObject {
 
     private func clear() {
         shownVersion += 1
+        isLoading = false
         pendingReveal = nil
         revealing?.cancel()
         view.removeMark()
