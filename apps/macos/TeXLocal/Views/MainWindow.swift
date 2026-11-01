@@ -56,6 +56,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     func show() {
         if !framed, let window, !window.isVisible, !window.isMiniaturized,
            let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
+            // A project shown for the first time takes the front window's size, as the shared "Main Window" frame gave it before.
+            window.setFrame(NSRect(origin: window.frame.origin, size: front.frame.size), display: false)
             window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
         showWorkspace()
