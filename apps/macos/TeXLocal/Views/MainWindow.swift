@@ -37,8 +37,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.center()
         window.setFrameAutosaveName("Main Window")
         let project = views.project
+        showWorkspace(in: window)
         watches = [
-            track({ project.initialLoadComplete }) { [weak self] _ in self?.showWorkspace() },
             track({ project.store.project?.name ?? "" }) { [weak self] in self?.window?.title = $0 },
             track({ project.openPath?.fileName ?? "" }) { [weak self] in self?.window?.subtitle = $0 },
             track({ project.url("") }) { [weak self] in self?.window?.representedURL = $0 },
@@ -53,7 +53,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
            let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
             window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
-        showWorkspace()
         showWindow(nil)
     }
 
@@ -67,8 +66,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         return window?.contentViewController as? WorkspaceController
     }
 
-    private func showWorkspace() {
-        guard workspace == nil, project.initialLoadComplete, let window else { return }
+    private func showWorkspace(in window: NSWindow) {
         let workspace = WorkspaceController(window: model, views: views, size: window.contentLayoutRect.size)
         workspace.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         let modals = NSHostingView(rootView: WindowModals(window: model, project: project).environment(views))

@@ -80,14 +80,12 @@ struct PaneTests {
         #expect(restored.project.panel.shown)
     }
 
-    @Test func theWindowControllerPassesTheInspectorToggleToTheWorkspaceItShows() throws {
+    @Test func theWindowShowsItsWorkspaceAtOnceAndItsControllerPassesTheInspectorToggleToIt() throws {
         let defaults = TestDefaults()
         let controller = MainWindowController(app: defaults.app(), project: "P")
-        #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) == nil)
-        let (window, workspace) = open(controller.model)
-        defer { workspace.close(); window.close() }
-        controller.window = window
-        window.contentViewController = workspace
+        let (window, workspace) = (try #require(controller.window), try #require(controller.workspace))
+        defer { window.close() }
+        #expect(window.contentViewController === workspace && window.toolbar === workspace.toolbar.toolbar)
         #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) as? WorkspaceController === workspace)
         #expect(controller.supplementalTarget(forAction: Self.toggleSidebar, sender: nil) == nil)
         #expect(controller.undoManager != nil && controller.undoManager === window.undoManager)
