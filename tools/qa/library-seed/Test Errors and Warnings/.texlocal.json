@@ -1,6 +1,0 @@
-{
-  "mainFile": "main.tex",
-  "engine": "pdflatex",
-  "shellEscape": false,
-  "stopOnFirstError": false
-}

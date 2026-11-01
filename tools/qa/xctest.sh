@@ -1,5 +1,5 @@
 #!/bin/zsh
-S=${QA_SCRATCH:?export QA_SCRATCH=<scratchpad>, set up by tools/qa/setup.sh}; R=${1:A}; D=$2; shift 2
+S=${QA_SCRATCH:?export QA_SCRATCH=<scratch folder>}; R=${1:A}; D=$2; shift 2
 zmodload zsh/system
 mkdir -p $S/locks $S/logs
 : >> $S/locks/xctest.lock
