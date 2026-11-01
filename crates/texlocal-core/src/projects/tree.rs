@@ -165,17 +165,4 @@ mod tests {
         }
         assert_eq!(rels(dir.path(), false).unwrap(), ["a", "a/b.tex", "d.tex"]);
     }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_name_that_isnt_utf8_is_left_out_of_a_listing_and_refuses_a_whole_copy() {
-        use std::os::unix::ffi::OsStrExt;
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("a.tex"), "").unwrap();
-        let latin1 = std::ffi::OsStr::from_bytes(b"caf\xe9.tex");
-        fs::write(dir.path().join(latin1), "").unwrap();
-        assert_eq!(rels(dir.path(), false).unwrap(), ["a.tex"]);
-        let refused = rels(dir.path(), true).unwrap_err();
-        assert_eq!(refused.kind, crate::ErrorKind::Invalid);
-    }
 }

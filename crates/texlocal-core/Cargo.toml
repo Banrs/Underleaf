@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 libc = "0.2"
 notify = "8"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
 regex = "1.12.1"
 schemars = { version = "1.2", features = ["preserve_order"] }
 serde = { version = "1", features = ["derive"] }
@@ -19,9 +20,6 @@ tempfile = "3"
 texlocal-latex = { path = "../texlocal-latex" }
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
-
-[target.'cfg(target_vendor = "apple")'.dependencies]
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
