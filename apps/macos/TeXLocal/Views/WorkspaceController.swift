@@ -10,7 +10,7 @@ final class WorkspaceController: ThinSplitViewController {
     let toolbar: WorkspaceToolbar
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
-    private let area = AreaSplitViewController(isVertical: false)
+    private let area = ThinSplitViewController(isVertical: false)
     private let sidebar = SidebarSplitViewController()
     private var sidebarItem, outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
     private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
@@ -140,21 +140,6 @@ final class WorkspaceController: ThinSplitViewController {
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
 
-        for item in [sourceItem!, pdfItem!] {
-            let space = NSView()
-            space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
-            item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
-        }
-        let bar = hostingView(StatusBar(project: project))
-        bar.sizingOptions = []
-        bar.safeAreaRegions = []
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(bar)
-        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-                                     bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-                                     bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height)])
-
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: app.buildPanelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
         panelItem.holdingPriority = .defaultLow + 1
@@ -162,6 +147,7 @@ final class WorkspaceController: ThinSplitViewController {
         panelItem.isCollapsed = true
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
+        columnsItem.addBottomAlignedAccessoryViewController(accessory(hostingView(StatusBar(project: project)), edge: .hard))
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
@@ -339,13 +325,6 @@ final class WorkspaceController: ThinSplitViewController {
                 focus(pdf.find.field, in: pdfFind)
             }
         }
-    }
-}
-
-private final class AreaSplitViewController: ThinSplitViewController {
-    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
-        let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
-        return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
     }
 }
 

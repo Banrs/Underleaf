@@ -241,7 +241,7 @@ private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short
 extension View {
     func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
         font(.subheadline).controlSize(.small).lineLimit(1)
-            .padding(.leading, leading).padding(.trailing, trailing).frame(height: BarMetrics.height)
+            .frame(minHeight: BarMetrics.target).padding(.leading, leading).padding(.trailing, trailing).padding(.vertical, 8)
     }
 
     fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect) }

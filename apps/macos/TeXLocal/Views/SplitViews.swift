@@ -125,10 +125,6 @@ final class ColumnsSplitView: DraggedSplitView {
 
     @objc private func fitToolbar() { (window?.contentViewController as? WorkspaceController)?.fitToolbar() }
 
-    override func drawDivider(in rect: NSRect) {
-        super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
-    }
-
     var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 
