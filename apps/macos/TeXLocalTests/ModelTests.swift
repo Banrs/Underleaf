@@ -142,6 +142,7 @@ struct SectionTests {
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
         project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
         #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
+        project.trail.jumped(from: Place(path: "main.tex", line: 1))
         tree([])
         #expect(!project.canRetrace(back: true))
     }

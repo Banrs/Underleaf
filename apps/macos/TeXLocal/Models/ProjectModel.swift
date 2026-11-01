@@ -354,7 +354,10 @@ final class ProjectModel {
 
     private var caretPlace: Place? { openPath.map { Place(path: $0, line: editsText ? cursorLine : 1) } }
 
-    func canRetrace(back: Bool) -> Bool { openPath != nil && (back ? trail.back : trail.forward).contains(where: exists) }
+    func canRetrace(back: Bool) -> Bool {
+        guard let at = caretPlace else { return false }
+        return (back ? trail.back : trail.forward).contains { $0 != at && exists($0) }
+    }
 
     private func exists(_ place: Place) -> Bool { tree.node(at: place.path) != nil }
 
