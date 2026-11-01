@@ -1347,6 +1347,18 @@ async fn a_stopped_build_keeps_the_last_pdf_it_did_not_touch() {
         fs::read_to_string(build.join("main.pdf")).unwrap(),
         "%PDF-1.4\n"
     );
+    write(
+        &rig.root(),
+        &[("main.tex", &main.replace("slowly", "slowly over"))],
+    );
+    fs::remove_file(build.join("started")).unwrap();
+    rig.forget();
+    rig.call("Compile", json!({ "auto": false }));
+    wait_until("the build starts over", || build.join("started").exists());
+    rig.call("StopCompile", json!({}));
+    rig.section("build", |b| b["compiling"] == false);
+    assert!(!build.join("main.pdf").exists());
+    assert_eq!(rig.section("shownPdf", |_| true)["path"], Value::Null);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -186,6 +186,8 @@ impl Actor {
             builds.pdf = Some(pdf.clone());
             builds.version += u64::from(result.pdf_changed);
             builds.outdated = self.edits != builds.built;
+        } else {
+            builds.pdf = built_pdf(&self.project);
         }
         let before = builds
             .result
