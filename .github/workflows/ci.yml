@@ -37,9 +37,9 @@ jobs:
           fi
           has() { [ "$files" = ALL ] || grep -Eq "$1" <<< "$files"; }
           shared='^(crates/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)'
-          wire='^apps/macos/(TeXLocal/Wire|TeXLocalTests/WireFixtures)\.swift$'
+          wire='^apps/macos/(TeXLocal/Models/Wire|TeXLocalTests/WireFixtures)\.swift$'
           version='^apps/macos/(Version\.xcconfig|TeXLocal\.xcodeproj/project\.pbxproj)$'
-          mac="$shared|^apps/macos/|^tools/(build-core|qa/typecheck)\.sh$"
+          mac="$shared|^apps/macos/|^tools/(build-core|typecheck)\.sh$"
           build='(^|/)Cargo\.(toml|lock)$|^(rust-toolchain\.toml|tools/build-core\.sh|apps/macos/(Version\.xcconfig|TeXLocal\.xcodeproj/.*)|\.github/workflows/ci\.yml)$'
           has "$shared|$wire|$version" && echo rust=true >> "$GITHUB_OUTPUT"
           has "$mac" && echo mac=true >> "$GITHUB_OUTPUT"
@@ -131,7 +131,7 @@ jobs:
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           xcodebuild -version
-      - run: zsh tools/qa/typecheck.sh
+      - run: zsh tools/typecheck.sh
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           key: macos-app-27.0

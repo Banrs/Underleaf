@@ -6,12 +6,9 @@ SDK=$(xcrun --sdk macosx --show-sdk-path)
 out=$(mktemp -d)
 common=(-Onone -DDEBUG -swift-version 6 -I $root/crates/texlocal-ffi/include -parse-as-library -default-isolation=MainActor -enable-upcoming-feature InferIsolatedConformances -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature MemberImportVisibility -enable-upcoming-feature ExistentialAny)
 flags=($common -sdk $SDK -target arm64-apple-macos27.0)
-models=(Wire Core Concurrency Models AppModel WindowModel Commands ProjectModel ProjectModel+Build ProjectModel+Files ProjectModel+Live
-  ProjectNotices ProjectSearch TeXpressoSession FileTree BuildPanelModel SourceDocument Undo LaTeX EditorCommand Outline
-  FoldSet EditSync TextOffsets)
 show() { grep -E "(error|warning):" | sed "s#$root/##" | sort -u }
 xcrun swiftc -emit-module -emit-module-path $out/TeXLocal.swiftmodule -module-name TeXLocal -enable-testing \
-  $flags $root/apps/macos/TeXLocal/*.swift 2>&1 | show
+  $flags $root/apps/macos/TeXLocal/**/*.swift 2>&1 | show
 app=${pipestatus[1]}
 if (( app != 0 )); then echo "typecheck: the app's sources have errors (tests not checked)"; rm -rf $out; exit 1; fi
 xcrun swiftc -typecheck -module-name TeXLocalTests $flags -I $out \
@@ -20,7 +17,7 @@ xcrun swiftc -typecheck -module-name TeXLocalTests $flags -I $out \
 tests=${pipestatus[1]}
 rm -rf $out
 xcrun swiftc -typecheck -module-name TeXLocal $common -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
-  -target arm64-apple-ios$(xcrun --sdk iphoneos --show-sdk-version) $root/apps/macos/TeXLocal/${^models}.swift 2>&1 | show
+  -target arm64-apple-ios$(xcrun --sdk iphoneos --show-sdk-version) $root/apps/macos/TeXLocal/Models/*.swift 2>&1 | show
 ios=${pipestatus[1]}
 (( tests == 0 )) || echo "typecheck: the tests have errors"
 (( ios == 0 )) || echo "typecheck: the model files have errors for iOS"
