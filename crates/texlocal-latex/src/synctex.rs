@@ -259,6 +259,7 @@ impl SyncTex {
         }
         let mut s = reader.s;
         s.unlink_refs();
+        s.nodes.shrink_to_fit();
         Some(s)
     }
 
