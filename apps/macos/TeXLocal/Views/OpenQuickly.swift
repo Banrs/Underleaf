@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class OpenQuickly: NSPanel {
+final class OpenQuickly: FloatingPanel {
     private static weak var shown: OpenQuickly?
 
     static func show(for project: ProjectModel) {
@@ -9,8 +9,7 @@ final class OpenQuickly: NSPanel {
         guard let window = NSApp.mainWindow else { return }
         let panel = OpenQuickly(project: project)
         let area = window.convertToScreen(window.contentLayoutRect), wide = min(width, area.width - 40)
-        panel.setFrame(NSRect(x: area.midX - wide / 2, y: area.maxY - 40 - fieldHeight, width: wide, height: fieldHeight), display: false)
-        window.addChildWindow(panel, ordered: .above)
+        panel.show(NSRect(x: area.midX - wide / 2, y: area.maxY - 40 - fieldHeight, width: wide, height: fieldHeight), over: window, animated: false)
         panel.makeKey()
         panel.contentView?.layoutSubtreeIfNeeded()
         panel.field.focus()
@@ -18,7 +17,7 @@ final class OpenQuickly: NSPanel {
         panel.search("")
     }
 
-    static let width: CGFloat = 600, fieldHeight: CGFloat = 48, rowHeight: CGFloat = 38, shownRows = 10
+    static let width: CGFloat = 600, fieldHeight: CGFloat = 48, rowHeight: CGFloat = 38, shownRows = 10, corner: CGFloat = 16
 
     private let project: ProjectModel
     private let rows = ChoiceRows<QuickOpenItem> { [$0.title, $0.detail] }
@@ -27,11 +26,7 @@ final class OpenQuickly: NSPanel {
 
     private init(project: ProjectModel) {
         self.project = project
-        super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        isReleasedWhenClosed = false
+        super.init(takesKeys: true)
         let host = NSHostingView(rootView: QuickOpenView(field: field, rows: rows, tree: project.tree, search: { [unowned self] in search($0) },
                                                          open: { [unowned self] in open($0) }, close: { [unowned self] in close() }))
         host.sizingOptions = []
@@ -40,8 +35,6 @@ final class OpenQuickly: NSPanel {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var canBecomeKey: Bool { true }
-
     override func resignKey() {
         super.resignKey()
         if parent != nil { close() }
@@ -49,7 +42,7 @@ final class OpenQuickly: NSPanel {
 
     override func close() {
         searching?.cancel()
-        parent?.removeChildWindow(self)
+        dismiss()
         super.close()
     }
 
@@ -58,11 +51,12 @@ final class OpenQuickly: NSPanel {
         searching = Task { [project] in
             guard let items = try? await project.session.call(QuickOpen(query: query)), !Task.isCancelled else { return }
             rows.items = items
+            guard let parent else { return }
             var frame = self.frame
             let height = Self.fieldHeight + (items.isEmpty ? 0 : CGFloat(min(items.count, Self.shownRows)) * Self.rowHeight
                 + 2 * CompletionRowsView.margin)
             (frame.origin.y, frame.size.height) = (frame.maxY - height, height)
-            setFrame(frame, display: true)
+            show(frame, over: parent, animated: true)
         }
     }
 
@@ -95,10 +89,10 @@ private struct QuickOpenView: View {
             .frame(height: OpenQuickly.fieldHeight)
             if !rows.items.isEmpty {
                 Divider()
-                ChoiceList(rows: rows, height: OpenQuickly.rowHeight, truncation: .middle, chosen: open, row: row)
+                ChoiceList(rows: rows, height: OpenQuickly.rowHeight, corner: OpenQuickly.corner, truncation: .middle, chosen: open, row: row)
             }
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .glassEffect(.regular, in: .rect(cornerRadius: OpenQuickly.corner))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Open Quickly")
     }
