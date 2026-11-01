@@ -951,7 +951,8 @@ async fn ui_state_is_written_to_the_state_folder_before_the_close_and_never_to_t
     let modified = || fs::metadata(&settings).unwrap().modified().unwrap();
     let before = (fs::read(&settings).unwrap(), modified());
     let zoom = json!({ "type": "scale", "value": 1.5 });
-    let place = json!({ "file": "ch.tex", "line": 12, "zoom": zoom });
+    let shown = json!({ "page": 3, "x": 0.0, "y": 612.5 });
+    let place = json!({ "file": "ch.tex", "line": 12, "zoom": zoom, "pdfPlace": shown });
     let patch = |patch| json!({ "patch": patch });
     rig.send(SESSION, "SetUiState", patch(json!({ "place": place })));
     let folders = json!({ "expandedFolders": ["figs"] });
@@ -968,6 +969,8 @@ async fn ui_state_is_written_to_the_state_folder_before_the_close_and_never_to_t
     );
     assert_eq!(ui["expandedFolders"], json!(["figs"]));
     assert_eq!(ui["foldedHeadings"], json!(["main.tex\tIntro"]));
+    let opened = json!({ "id": rig.id, "autoCompile": false });
+    assert_eq!(rig.call_to(2, "OpenProject", opened)["pdfPlace"], shown);
 }
 
 #[tokio::test(flavor = "multi_thread")]
