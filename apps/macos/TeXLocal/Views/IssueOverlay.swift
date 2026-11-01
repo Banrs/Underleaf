@@ -76,7 +76,7 @@ final class IssueOverlay {
         let label = labels[number] ?? IssueLabel(reported.short.text, compact: reported.compact?.text, font: font)
         labels[number] = label
         typealias Metrics = IssueBox.Metrics
-        let end = band.maxX - 1
+        let end = band.maxX
         let room = end - (left + first.typographicBounds.maxX) - gap
         let issues = said.count
         let fitted = label.text(in: room - Metrics.width(ofText: 0, font: font, issues: issues))
