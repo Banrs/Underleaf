@@ -11,9 +11,8 @@ final class WorkspaceController: ThinSplitViewController {
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = ThinSplitViewController(isVertical: false)
-    private let sidebar = SidebarSplitViewController()
-    private var sidebarItem, outlineItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
-    private var sidebarSearch, pdfFind, outlineBar: NSSplitViewItemAccessoryViewController!
+    private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
+    private var navigatorFilter, pdfFind: NSSplitViewItemAccessoryViewController!
     private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
     private let inspectorMount = Mount()
@@ -30,7 +29,7 @@ final class WorkspaceController: ThinSplitViewController {
         super.init()
         toolbar.workspace = self
         if app.savesLayout {
-            for (split, name) in zip(splitViews, ["Workspace 2", "Sidebar", "Columns", "Area"]) {
+            for (split, name) in zip(splitViews, ["Workspace 2", "Columns", "Area"]) {
                 split.autosaveName = name
             }
         }
@@ -38,10 +37,10 @@ final class WorkspaceController: ThinSplitViewController {
         inspectorItem.isCollapsed = true
         inspectorItem.canCollapseFromWindowResize = true
         inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
-        buildSidebar(height: size.height)
+        buildSidebar()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
-        for item in [sidebarItem, outlineItem, sourceItem, pdfItem, panelItem, inspectorItem] {
+        for item in [sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem] {
             item!.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
         watch()
@@ -88,33 +87,19 @@ final class WorkspaceController: ThinSplitViewController {
         if compact || quieting == (dragged ? 1 : 0) { toolbar.compactCompile = compact }
     }
 
-    private func buildSidebar(height: CGFloat) {
-        let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
-        filesItem.minimumThickness = 100
-        outlineBar = accessory(hostingView(OutlineHeader(project: project)), edge: .soft)
-        filesItem.addBottomAlignedAccessoryViewController(outlineBar)
-        outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project), height: (height * 0.45).rounded()))
-        outlineItem.minimumThickness = 80
-        outlineItem.holdingPriority = .defaultLow + 1
-        sidebar.addSplitViewItem(filesItem)
-        sidebar.addSplitViewItem(outlineItem)
-        sidebar.view.frame.size.width = inspectorItem.minimumThickness
-        if window.outlineState(of: project) != .open { outlineItem.isCollapsed = true }
-        sidebar.header = outlineBar
-
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+    private func buildSidebar() {
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth))
         sidebarItem.minimumThickness = 222
-        let search = Bindable(project.search)
-        sidebarSearch = accessory(hostingView(SearchField(
-            text: search.query, prompt: "Search Project", handle: searchField,
-            step: { [search = project.search] in if !search.step($0) { NSSound.beep() } },
-            options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords)])))
-        sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
+        sidebarItem.addTopAlignedAccessoryViewController(accessory(NavigatorBar(project: project), edge: .soft))
+        navigatorFilter = accessory(hostingView(NavigatorFilter(project: project)), edge: .soft)
+        sidebarItem.addBottomAlignedAccessoryViewController(navigatorFilter)
         addSplitViewItem(sidebarItem)
     }
 
+    private static let sidebarWidth: CGFloat = 270
+
     private func buildArea(size: CGSize) {
-        let panes = max(size.width - sidebar.view.frame.width, 2 * ColumnMetrics.paneMinimum)
+        let panes = max(size.width - Self.sidebarWidth, 2 * ColumnMetrics.paneMinimum)
         let pdfWidth = min((panes * ColumnMetrics.pdfShare).rounded(), panes - ColumnMetrics.paneMinimum)
         if app.buildPanelHeight < ColumnMetrics.panelMinimum {
             app.buildPanelHeight = max(ColumnMetrics.panelMinimum, (size.height * 0.25).rounded())
@@ -166,8 +151,10 @@ final class WorkspaceController: ThinSplitViewController {
     func revealSidebar() { setCollapsed(sidebarItem, false) }
 
     func focusSearch() {
+        project.navigator.shown = .search
         revealSidebar()
-        focus(searchField, in: sidebarSearch)
+        sidebarItem.viewController.view.layoutSubtreeIfNeeded()
+        searchField.focus()
     }
 
     func dragged(_ split: NSSplitView) {
@@ -205,11 +192,7 @@ final class WorkspaceController: ThinSplitViewController {
         watches = [
             track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
-            track({ window.outlineState(of: project) }) { [weak self] state in
-                guard let self else { return }
-                setHidden(outlineBar, state == .hidden)
-                setCollapsed(outlineItem, state != .open)
-            },
+            track({ project.navigator.shown == .search }) { [weak self] in if let self { setHidden(navigatorFilter, $0) } },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
             track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
@@ -255,7 +238,7 @@ final class WorkspaceController: ThinSplitViewController {
         }
     }
 
-    private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
+    private var splitViews: [NSSplitView] { [splitView, columns.splitView, area.splitView] }
 
     func quiet(_ resizing: Bool) {
         quieting += resizing ? 1 : -1

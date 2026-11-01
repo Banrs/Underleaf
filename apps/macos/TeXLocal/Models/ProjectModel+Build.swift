@@ -29,10 +29,11 @@ extension ProjectModel {
         guard let result else { return }
         if !finished.auto {
             if result.failed {
-                panel.openForFailedBuild()
+                navigator.showForFailedBuild()
+                window?.controller?.revealSidebar()
                 views?.requestAttention()
             } else if result.ok, issues.isEmpty {
-                panel.closeAfterCleanBuild()
+                navigator.returnAfterCleanBuild()
             }
             announceResult(result)
         } else if finished.announce {
@@ -64,7 +65,7 @@ extension ProjectModel {
 
     func issueClicked(atLine line: Int, in path: String) {
         if let index = store.build?.lines[path]?.byLine[line]?.index {
-            panel.show(.issues)
+            showNavigator(.issues)
             chooseIssue(index, focus: false, open: false)
         } else if store.live?.lines[path]?.byLine[line] != nil {
             panel.show(.texpresso)
@@ -75,7 +76,7 @@ extension ProjectModel {
         let places = issues.indices.filter { issues[$0].file != nil }
         let after = next ? places.first { $0 > chosenIssue ?? -1 } : places.last { $0 < chosenIssue ?? .max }
         guard let place = after ?? (next ? places.first : places.last) else { return }
-        if panel.shown { panel.tab = .issues }
+        navigator.shown = .issues
         chooseIssue(place, focus: true)
     }
 }

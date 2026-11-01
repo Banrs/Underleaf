@@ -12,7 +12,7 @@ nonisolated enum DefaultsKey {
     static let showSource = "showSource"
     static let showPDF = "showPDF"
     static let openProject = "openProject"
-    static let outlineCollapsed = "OutlineCollapsed"
+    static let navigators = "navigators"
     static let syncAfterCompile = "syncAfterCompile"
     static let newProjectEngine = "newProjectEngine"
     static let settingsPane = "settingsPane"
@@ -65,8 +65,6 @@ protocol AppWindow: AnyObject {
 }
 
 nonisolated enum WorkspaceLayout { case source, split, pdf }
-
-nonisolated enum OutlineState { case open, folded, hidden }
 
 struct NewProjectDraft: Identifiable {
     var template: ProjectTemplate

@@ -46,12 +46,10 @@ struct PDFEmptyState: View {
             ContentUnavailableView {
                 Label("Build Failed", systemImage: "xmark.octagon")
             } description: {
-                Text("The build made no PDF. The build panel shows what went wrong.")
+                Text("The build made no PDF. The Issues navigator shows what went wrong.")
             } actions: {
-                if !project.panel.shown {
-                    Button("Show Build Panel") { project.panel.show(.issues) }
-                        .buttonStyle(.borderedProminent)
-                }
+                Button("Show Issues") { project.showNavigator(.issues) }
+                    .buttonStyle(.borderedProminent)
             }
         } else {
             ContentUnavailableView {

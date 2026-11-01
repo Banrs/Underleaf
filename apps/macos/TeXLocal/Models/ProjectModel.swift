@@ -79,6 +79,7 @@ final class ProjectModel {
     var livePDF: Bool { store.shownPdf?.live == true }
     var buildPDF: URL? { store.shownPdf?.path.map { URL(filePath: $0) } }
     let panel = BuildPanelModel()
+    let navigator: NavigatorModel
     let texpresso: TeXpressoSession
 
     var openURL: URL? { openPath.flatMap(url) }
@@ -118,6 +119,7 @@ final class ProjectModel {
         (self.store, tree, texpresso) = (store, FileTree(store: store), TeXpressoSession(store: store))
         session = SessionClient(core: window.app.core)
         listedName = window.app.projects.first { $0.id == id }?.name ?? id
+        navigator = NavigatorModel(project: id, defaults: window.app.defaults)
         self.window = window
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
             guard let self else { return }
@@ -130,6 +132,11 @@ final class ProjectModel {
     isolated deinit { liveLogWatch?.cancel() }
 
     var isLaTeX: Bool { openKind == .tex }
+
+    func showNavigator(_ shown: Navigator) {
+        navigator.shown = shown
+        window?.controller?.revealSidebar()
+    }
     var sourceToolsEnabled: Bool { isLaTeX && window?.showSource == true }
 
     var headingCommand: String { outline.first { isOpenFile($0.file) && $0.line == cursorLine }?.command ?? "" }
@@ -349,7 +356,7 @@ final class ProjectModel {
             return
         }
         search.show(found)
-        window?.controller?.revealSidebar()
+        showNavigator(.search)
     }
 
     func quickHelp(in path: String, at offset: Int) async -> QuickHelp? {

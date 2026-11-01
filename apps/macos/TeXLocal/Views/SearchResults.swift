@@ -1,28 +1,71 @@
 import SwiftUI
 
+/// Find's header, as Xcode's: a path of small menus (Find or Replace, then how the text matches) with Match Case at its
+/// end, the query field under it, and in Replace mode the replacement and Replace All.
+struct SearchBar: View {
+    let project: ProjectModel
+    let field: FieldHandle
+    @State private var replacing = false
+
+    var body: some View {
+        let search = Bindable(project.search)
+        if let usages = project.search.usages {
+            Text(String(localized: "Usages of \(usages.name)"))
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+        } else {
+            HStack(spacing: 2) {
+                step(replacing ? "Replace" : "Find", selection: $replacing, [("Find", false), ("Replace", true)])
+                Image(systemName: "chevron.forward").imageScale(.small).foregroundStyle(.tertiary)
+                step(search.asked.wholeWords.wrappedValue ? "Matching Word" : "Containing", selection: search.asked.wholeWords,
+                     [("Containing", false), ("Matching Word", true)])
+                Spacer()
+                Toggle("Aa", isOn: search.asked.matchCase)
+                    .toggleStyle(.button)
+                    .help("Match Case")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+        SearchField(text: search.query, prompt: "Search Project", handle: field,
+                    step: { [search = project.search] in if !search.step($0) { NSSound.beep() } })
+        if replacing, project.search.usages == nil {
+            SearchField(text: search.replacement, prompt: "With", symbol: "arrow.2.squarepath")
+            HStack {
+                Spacer()
+                Button("Replace All") { Task { await project.replaceAll() } }
+                    .disabled(project.search.hitCount == 0)
+            }
+        }
+    }
+
+    private func step(_ title: LocalizedStringKey, selection: Binding<Bool>, _ choices: [(LocalizedStringKey, Bool)]) -> some View {
+        Menu(title) {
+            Picker(title, selection: selection) { ForEach(choices, id: \.1) { Text($0.0).tag($0.1) } }
+                .pickerStyle(.inline)
+                .labelsHidden()
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+}
+
 struct SearchResults: View {
     let project: ProjectModel
-    private static let inset: (side: CGFloat, below: CGFloat) = (10, 9)
+    let field: FieldHandle
 
     var body: some View {
         list
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
             .safeAreaBar(edge: .top, spacing: 0) {
-                Group {
-                    if let usages = project.search.usages {
-                        Text(String(localized: "Usages of \(usages.name)"))
-                            .font(.headline)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityAddTraits(.isHeader)
-                    } else {
-                        replaceBar
-                    }
-                }
-                .padding(.horizontal, Self.inset.side)
-                .padding(.bottom, Self.inset.below)
+                VStack(alignment: .leading, spacing: 3) { SearchBar(project: project, field: field) }
+                    .padding(.horizontal, 6)
+                    .padding(.top, 2)
+                    .padding(.bottom, 6)
             }
             .overlay {
                 if let failure = project.search.failure {
@@ -40,20 +83,8 @@ struct SearchResults: View {
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
     }
 
-    private var replaceBar: some View {
-        HStack {
-            SearchField(text: Bindable(project.search).replacement, prompt: "Replace With", symbol: "arrow.2.squarepath")
-            replaceAll
-        }
-    }
-
-    private var replaceAll: some View {
-        Button("Replace All") { Task { await project.replaceAll() } }
-            .disabled(project.search.hitCount == 0)
-    }
-
     private func sections<Row: View>(@ViewBuilder _ hit: @escaping (SearchHit) -> Row) -> some View {
-        ForEach(project.search.groups ?? []) { group in
+        ForEach(project.navigator.filtered(project.search.groups ?? [])) { group in
             Section {
                 ForEach(group.hits) { hit($0) }
             } header: {
@@ -79,6 +110,7 @@ struct SearchResults: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Line \(hit.line)")
         }
+        .navigatorRow()
         .accessibilityElement(children: .combine)
     }
 

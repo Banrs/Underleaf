@@ -20,6 +20,7 @@ struct SearchField: NSViewRepresentable {
     let prompt: String
     var symbol: String?
     var large = false
+    var trailingRoom: CGFloat = 0
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
     var move: (@MainActor (Int) -> Void)?
@@ -28,6 +29,7 @@ struct SearchField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
+        lazy var symbol = field.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
 
         init(_ field: SearchField) { self.field = field }
 
@@ -56,17 +58,21 @@ struct SearchField: NSViewRepresentable {
         }
     }
 
+    static let filterSymbol = "line.3.horizontal.decrease.circle"
+
+    static func filter(_ text: Binding<String>) -> SearchField {
+        SearchField(text: text, prompt: String(localized: "Filter"), symbol: filterSymbol)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {
-        let view = NSSearchField()
+        let view = RoomySearchField()
+        (view.cell as? RoomySearchField.Cell)?.room = trailingRoom
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))
-        if let symbol, let cell = view.cell as? NSSearchFieldCell {
-            cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        }
         if large, let cell = view.cell as? NSSearchFieldCell {
             view.font = .systemFont(ofSize: 20)
             (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
@@ -82,6 +88,10 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
+        // The cell puts its magnifier back whenever its control size changes, as SwiftUI's environment does after makeNSView.
+        if let symbol = context.coordinator.symbol, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell, button.image !== symbol {
+            button.image = symbol
+        }
         view.placeholderString = prompt
         view.setAccessibilityLabel(prompt)
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
@@ -96,6 +106,25 @@ struct SearchField: NSViewRepresentable {
             cell.searchMenuTemplate = menu
         }
     }
+}
+
+/// Keeps the text and the clear button clear of a control laid over the field's trailing end.
+final class RoomySearchField: NSSearchField {
+    final class Cell: NSSearchFieldCell {
+        var room: CGFloat = 0
+
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect { super.searchTextRect(forBounds: rect.insetBy(trailing: room)) }
+        override func cancelButtonRect(forBounds rect: NSRect) -> NSRect { super.cancelButtonRect(forBounds: rect.insetBy(trailing: room)) }
+    }
+
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
+    }
+}
+
+private extension NSRect {
+    func insetBy(trailing: CGFloat) -> NSRect { NSRect(x: minX, y: minY, width: width - trailing, height: height) }
 }
 
 final class FindPassingTextView: NSTextView {

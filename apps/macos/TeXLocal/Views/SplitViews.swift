@@ -93,23 +93,6 @@ class ThinSplitViewController: NSSplitViewController {
     }
 }
 
-final class SidebarSplitViewController: ThinSplitViewController {
-    weak var header: NSSplitViewItemAccessoryViewController?
-
-    private final class SplitView: DraggedSplitView { override func drawDivider(in rect: NSRect) {} }
-
-    init() { super.init(splitView: SplitView(), isVertical: false) }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
-                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
-        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return .zero }
-        return rect.offsetBy(dx: 0, dy: header.view.convert(header.view.bounds, to: splitView).minY - drawnRect.minY)
-    }
-}
-
 final class ColumnsSplitView: DraggedSplitView {
     override init(frame: NSRect) {
         super.init(frame: frame)

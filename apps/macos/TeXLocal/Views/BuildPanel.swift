@@ -4,7 +4,19 @@ struct BuildPanel: View {
     let project: ProjectModel
 
     var body: some View {
-        BuildPanelPage(project: project)
+        Group {
+            if project.panel.tab == .texpresso, project.texpresso.log.isEmpty {
+                ContentUnavailableView(project.texpresso.title, systemImage: "bolt", description: Text(
+                    project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
+            } else if project.panel.tab == .texpresso {
+                LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: PanelTab.texpresso.title)
+            } else if project.buildLog.isEmpty {
+                ContentUnavailableView("No Log", systemImage: "text.page", description: Text("Compile to see the log here."))
+            } else {
+                LogPane(text: project.buildLog, filter: project.panel.logFilter, title: PanelTab.log.title)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
         .scrollEdgeEffectHidden(true, for: .bottom)
         .safeAreaBar(edge: .bottom, spacing: 0) {
@@ -16,7 +28,7 @@ struct BuildPanel: View {
     }
 }
 
-struct BuildPanelBar: View {
+private struct BuildPanelBar: View {
     let project: ProjectModel
 
     var body: some View {
@@ -24,7 +36,7 @@ struct BuildPanelBar: View {
         HStack {
             Picker("Show", selection: $panel.tab) {
                 ForEach(PanelTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).selectionDisabled(tab == .texpresso && !project.texpresso.used)
+                    Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
                 }
             }
             .pickerStyle(.menu)
@@ -33,69 +45,19 @@ struct BuildPanelBar: View {
             .fixedSize()
             .layoutPriority(1)
             Spacer(minLength: 0)
-            if panel.tab == .issues {
-                Toggle(isOn: $panel.showsWarnings) { Label("Warnings", systemImage: "exclamationmark.triangle") }
-                .toggleStyle(.button)
-                .help(panel.showsWarnings ? "Hide warnings" : "Show warnings")
-                .disabled(project.warningCount == 0 && project.result?.badBoxes.isEmpty != false)
-                filter($panel.issueFilter)
-            } else {
-                let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
-                Button("Copy Log", systemImage: "document.on.document") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                }
+            let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
+            Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
-                filter($panel.logFilter)
-            }
+            SearchField.filter($panel.logFilter)
+                .controlSize(.regular)
+                .frame(maxWidth: 180)
         }
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
         .barRow(leading: 12, trailing: 17)
         .background(.textSurface)
     }
-
-    private func filter(_ text: Binding<String>) -> some View {
-        SearchField(text: text, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
-            .controlSize(.regular)
-            .frame(maxWidth: 180)
-    }
-}
-
-struct IssueList: View {
-    let items: [(offset: Int, element: LogItem)]
-    let project: ProjectModel
-
-    var body: some View {
-        let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
-        ScrollViewReader { proxy in
-            List(items, id: \.offset, selection: selection) {
-                IssueRow(item: $0.element, place: $0.offset, project: project)
-            }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
-                .accessibilityLabel("Issues")
-                .contextMenu(forSelectionType: Int.self) { rows in
-                    if let item = rows.first.flatMap(item) {
-                        if item.file != nil { Button(item.line == nil ? "Open File" : "Go to Line") { open(item) } }
-                        Button("Copy") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(item.message.text, forType: .string)
-                        }
-                    }
-                } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
-                .copyable(project.chosenIssue.flatMap(item).map { [$0.message.text] } ?? [])
-                .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
-                    if let place = project.chosenIssue { proxy.scrollTo(place) }
-                }
-        }
-    }
-
-    private func item(_ id: Int) -> LogItem? { items.first { $0.offset == id }?.element }
-
-    private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line, jump: true) } } }
 }
 
 struct LogTextView: NSViewRepresentable {

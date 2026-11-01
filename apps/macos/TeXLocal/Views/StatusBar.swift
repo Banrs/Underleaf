@@ -48,11 +48,10 @@ private struct BuildStatus: View {
     let detail: StatusBar.Detail
 
     var body: some View {
-        let showingIssues = project.panel.shown && project.panel.tab == .issues
-        Button {
-            if showingIssues { project.panel.shown = false } else { project.panel.show(.issues) }
-        } label: { label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget() }
-        .help(showingIssues ? "Hide issues" : "Show issues")
+        Button { project.showNavigator(.issues) } label: {
+            label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
+        }
+        .help("Show issues")
     }
 
     private var label: some View {
@@ -200,7 +199,7 @@ private struct PagePlace: View {
 
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
-            Button { project.panel.show(.issues) } label: {
+            Button { project.showNavigator(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
             .help("The latest build failed, so this is the last PDF that built")
@@ -221,7 +220,7 @@ private struct PanelToggle: View {
 
     var body: some View {
         Toggle(isOn: Bindable(project.panel).shown) {
-            Label("Build Panel", systemImage: differentiateWithoutColor && !project.panel.shown
+            Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
                 .frame(minHeight: BarMetrics.target)

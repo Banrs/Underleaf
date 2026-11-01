@@ -72,8 +72,21 @@ struct LayoutTests {
         window.layout = .source
         window.requestPDF(.find)
         #expect(defaults.window().layout == .split)
-        window.outlineCollapsed = true
-        #expect(defaults.window().outlineCollapsed && !other.outlineCollapsed)
+    }
+
+    @Test func eachProjectKeepsItsNavigatorAndAFailedBuildShowsIssuesUntilACleanOne() {
+        let project = ProjectModel(id: "P", window: defaults.window())
+        #expect(project.navigator.shown == .files)
+        project.navigator.shown = .outline
+        #expect(ProjectModel(id: "P", window: defaults.window()).navigator.shown == .outline)
+        #expect(ProjectModel(id: "Q", window: defaults.window()).navigator.shown == .files)
+        project.navigator.showForFailedBuild()
+        project.navigator.returnAfterCleanBuild()
+        #expect(project.navigator.shown == .outline)
+        project.navigator.showForFailedBuild()
+        project.navigator.shown = .search
+        project.navigator.returnAfterCleanBuild()
+        #expect(project.navigator.shown == .search)
     }
 
     @Test func togglingNeverHidesBothPanes() {
@@ -498,7 +511,7 @@ struct ViewsTests {
         project.handle(.buildFinished(BuildFinished(auto: true, announce: true)))
         #expect(views.attention == 0)
         project.handle(.buildFinished(BuildFinished(auto: false, announce: false)))
-        #expect(views.attention == 1 && project.panel.shown)
+        #expect(views.attention == 1 && project.navigator.shown == .issues)
     }
 
     @Test func aDoubleClickSyncsOnlyToAPaneThatShows() async {
@@ -551,10 +564,11 @@ struct ViewsTests {
         project.issueClicked(atLine: 5, in: "main.tex")
         #expect(project.panel.showsLiveLog && project.chosenIssue == nil)
         project.issueClicked(atLine: 3, in: "main.tex")
-        #expect(project.panel.tab == .issues && project.chosenIssue == 1)
+        #expect(project.navigator.shown == .issues && project.chosenIssue == 1)
         project.panel.shown = false
+        project.navigator.shown = .files
         project.issueClicked(atLine: 3, in: "other.tex")
-        #expect(!project.panel.shown)
+        #expect(!project.panel.shown && project.navigator.shown == .files)
     }
 
     @Test func aDroppedFigureIsIncludedOrCopiedInAndAProjectFileOpens() {

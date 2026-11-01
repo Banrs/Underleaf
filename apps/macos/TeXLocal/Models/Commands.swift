@@ -60,7 +60,7 @@ enum MenuCommand: CaseIterable {
         case .viewToggleSource: ("Source", KeyboardShortcut("s", modifiers: [.command, .option]))
         case .viewTogglePDF: ("PDF", KeyboardShortcut("p", modifiers: [.command, .option]))
         case .viewToggleInspector: ("Inspector", KeyboardShortcut("i", modifiers: [.command, .option]))
-        case .viewToggleLogs: ("Build Panel", KeyboardShortcut("y", modifiers: [.command, .shift]))
+        case .viewToggleLogs: ("Logs", KeyboardShortcut("y", modifiers: [.command, .shift]))
         case .viewToggleWordCount: ("Word Count", nil)
         case .viewZoomIn: ("Zoom In", KeyboardShortcut("="))
         case .viewZoomOut: ("Zoom Out", KeyboardShortcut("-"))
@@ -218,7 +218,7 @@ extension WindowModel {
             }
         case .projectSearch: controller?.focusSearch()
         case .fileNew, .fileNewFolder:
-            controller?.revealSidebar()
+            project?.showNavigator(.files)
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.save() }
