@@ -25,6 +25,7 @@ nonisolated enum DefaultsKey {
     static let editorSpellCheck = "editorSpellCheck"
     static let pdfPaper = "pdfPaper"
     static let buildPanelHeight = "buildPanelHeight"
+    static let recentSymbols = "recentSymbols"
 }
 
 enum Links {
@@ -100,6 +101,7 @@ final class AppModel {
     var showWordCount: Bool { didSet { defaults.set(showWordCount, forKey: DefaultsKey.showWordCount) } }
     var recentProjects: [String] { didSet { defaults.set(recentProjects, forKey: DefaultsKey.recentProjects) } }
     var recents: [ProjectInfo] { recentProjects.compactMap { id in projects.first { $0.id == id } } }
+    var recentSymbols: [String] { didSet { defaults.set(recentSymbols, forKey: DefaultsKey.recentSymbols) } }
 
     static let fontSizes = 10...28
     var fontName: String { didSet { defaults.set(fontName, forKey: DefaultsKey.editorFontName) } }
@@ -130,6 +132,7 @@ final class AppModel {
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
+        recentSymbols = defaults.stringArray(forKey: DefaultsKey.recentSymbols) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
         fontName = defaults.string(forKey: DefaultsKey.editorFontName) ?? ""
         fontSize = defaults.integer(forKey: DefaultsKey.editorFontSize)

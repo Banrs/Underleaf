@@ -87,8 +87,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 SectionLevelItems(project: project)
             })
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [window, project] in
-                window.perform(.editMath, on: project)
+            item = menuItem(id, "Math", "radicand.squareroot", Group { [window, project] in
+                MathMenuItems(project: project) { window.perform(.editMath, on: project) }
+                Divider()
+                Button(MenuCommand.symbolLibrary.title) { window.perform(.symbolLibrary, on: project) }
             })
         case .insert:
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))

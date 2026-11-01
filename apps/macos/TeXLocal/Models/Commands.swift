@@ -6,7 +6,7 @@ enum MenuCommand: CaseIterable {
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
-    case editFold, editUnfold, editFoldAll, editUnfoldAll
+    case editFold, editUnfold, editFoldAll, editUnfoldAll, symbolLibrary
     case pdfFind, pdfGotoPage
     case viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
@@ -55,6 +55,7 @@ enum MenuCommand: CaseIterable {
         case .findUsages: ("Find Usages", KeyboardShortcut("f", modifiers: [.command, .control, .shift]))
         case .quickHelp: ("Quick Help for Selected Item", KeyboardShortcut("?", modifiers: [.command, .control]))
         case .editRename: ("Rename…", nil)
+        case .symbolLibrary: ("Symbol Library…", KeyboardShortcut("l", modifiers: [.command, .shift]))
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSource: ("Source", KeyboardShortcut("s", modifiers: [.command, .option]))
@@ -165,6 +166,7 @@ extension AppModel {
             project?.hasPDF == true
         case .syncForward: project?.canSyncForward() == true
         case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
+        case .symbolLibrary: true
         default: project != nil
         }
     }
@@ -241,6 +243,7 @@ extension WindowModel {
         case .syncForward: Task { await project?.forwardSync() }
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
+        case .symbolLibrary: SymbolLibrary.toggle(app: app)
         default: break
         }
     }

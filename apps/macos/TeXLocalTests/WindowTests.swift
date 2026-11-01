@@ -245,6 +245,17 @@ struct WindowTests {
         try await waitUntil { !columns.dragging }
     }
 
+    @Test func theSymbolLibraryListsRecentSymbolsFirstAndSearchesTheirNames() throws {
+        let groups = Menus.shared.symbolGroups
+        let alpha = try #require(groups.flatMap(\.symbols).first { $0.command == "\\alpha" })
+        #expect(SymbolLibraryView.sections("", recents: []).map(\.title) == groups.map(\.title))
+        let recent = SymbolLibraryView.sections("", recents: [alpha.command, "\\nonesuch"])
+        #expect(recent.first?.symbols == [alpha] && recent.dropFirst().map(\.title) == groups.map(\.title))
+        #expect(SymbolLibraryView.sections("ALPHA", recents: [alpha.command]).flatMap(\.symbols).contains(alpha))
+        #expect(SymbolLibraryView.sections("arrow", recents: []).allSatisfy { !$0.symbols.isEmpty })
+        #expect(SymbolLibraryView.sections("no such symbol", recents: []).isEmpty)
+    }
+
     @Test func aSplitViewKeepsItsGestureRecognizers() {
         for split in [ColumnsSplitView(), DraggedSplitView()] { #expect(!split.gestureRecognizers.isEmpty) }
     }
