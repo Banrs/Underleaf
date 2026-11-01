@@ -18,15 +18,19 @@ struct SearchBar: View {
                 .accessibilityAddTraits(.isHeader)
         }
         SearchField(text: search.query, prompt: "Search Project", handle: field,
-                    step: { [search = project.search] in if !search.step($0) { NSSound.beep() } },
+                    step: { [project] in
+                        if !project.search.step($0, in: project.navigator.filtered(project.search.groups ?? [])) { NSSound.beep() }
+                    },
                     options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords),
                               (String(localized: "Replace"), $replacing)])
         if replacing, project.search.usages == nil {
             SearchField(text: search.replacement, prompt: "With", symbol: "arrow.2.squarepath")
             HStack {
                 Spacer()
+                // Replace All changes every match in the project, so it waits until the filter no longer hides any.
                 Button("Replace All") { Task { await project.replaceAll() } }
-                    .disabled(project.search.hitCount == 0)
+                    .disabled(project.search.hitCount == 0 || !project.navigator.searchFilter.isEmpty)
+                    .help(project.navigator.searchFilter.isEmpty ? "" : "Clear the filter to replace every match")
             }
         }
     }
