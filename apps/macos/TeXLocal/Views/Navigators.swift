@@ -259,11 +259,15 @@ private struct IssueNavigator: View {
     let project: ProjectModel
 
     var body: some View {
+        let items = project.navigator.rows(of: project.listed)
+        // The list stays when empty, as the other navigators' do, so the chooser keeps to its top over the empty state.
+        IssueList(items: items, project: project)
+            .overlay { if items.isEmpty { empty } }
+    }
+
+    @ViewBuilder private var empty: some View {
         let navigator = project.navigator
-        let items = navigator.rows(of: project.listed)
-        if !items.isEmpty {
-            IssueList(items: items, project: project)
-        } else if !navigator.showsWarnings, project.listed.contains(where: { !$0.isError && navigator.matches($0) }) {
+        if !navigator.showsWarnings, project.listed.contains(where: { !$0.isError && navigator.matches($0) }) {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
