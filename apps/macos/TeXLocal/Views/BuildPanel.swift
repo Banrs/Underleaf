@@ -57,8 +57,8 @@ private struct BuildPanelBar: View {
 
 struct LogTextView: NSViewRepresentable {
     let text: String
-    var title = "Build Log"
-    var bottomInset: CGFloat = 0
+    let title: String
+    let bottomInset: CGFloat
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
