@@ -79,7 +79,7 @@ extension PDFController {
     }
 
     /// Replaces pages in the document shown, which keeps its place, selection and find, and trims it to the new count.
-    private func replace(_ live: LivePages) {
+    func replace(_ live: LivePages) {
         let interval = signposts.beginInterval("live.page")
         defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document else { return }
@@ -121,7 +121,7 @@ extension PDFController {
         return live
     }
 
-    @concurrent private static func loadPages(_ pdfs: [Int: Data], covering wanted: CoverPages) async -> sending LivePages? {
+    @concurrent static func loadPages(_ pdfs: [Int: Data], covering wanted: CoverPages) async -> sending LivePages? {
         var live = LivePages()
         for (index, pdf) in pdfs {
             guard let document = PDFDocument(data: pdf), let page = document.page(at: 0) else { continue }
