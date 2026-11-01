@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 protocol ProjectViews: AnyObject {
     var hasPDF: Bool { get }
@@ -164,6 +165,8 @@ final class ProjectModel {
     func savePlace() { saveUIState(UiPatch(place: UiPlace(file: openPath, line: cursorLine, zoom: views?.zoom))) }
 
     func load() async throws {
+        let interval = signposts.beginInterval("project.open")
+        defer { signposts.endInterval("project.open", interval) }
         let ui: UiState
         do {
             ui = try await session.call(OpenProject(id: id, autoCompile: window?.app.autoCompile ?? false))

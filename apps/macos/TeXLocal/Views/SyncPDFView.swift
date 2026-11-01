@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
 import PDFKit
+import os
 
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?, _ quietly: Bool) -> Void = { _, _, _, _ in }
@@ -98,7 +99,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
         if drawsCovers, let overlay = overlay as? PageOverlay {
-            overlay.cover(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))) { draw(page, to: $0) }
+            signposts.withIntervalSignpost("covers") {
+                overlay.cover(page.bounds(for: .cropBox).applying(page.transform(for: .cropBox))) { draw(page, to: $0) }
+            }
         }
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
     }

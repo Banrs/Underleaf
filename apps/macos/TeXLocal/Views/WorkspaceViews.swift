@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import os
 
 @Observable
 final class WorkspaceViews: ProjectViews {
@@ -186,7 +187,7 @@ final class WorkspaceViews: ProjectViews {
     private func showLive(_ live: LiveDocument) {
         _ = enqueue(&liveReads) { [self] in
             guard !Task.isCancelled, let document = await PDFController.loadDocument(URL(filePath: live.path)), project.showsLive else { return }
-            pdf.show(document)
+            signposts.withIntervalSignpost("live.document") { pdf.show(document) }
             project.liveDocumentShown()
         }
     }

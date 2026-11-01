@@ -1,4 +1,5 @@
 import PDFKit
+import os
 import SwiftUI
 
 @Observable
@@ -144,15 +145,17 @@ final class PDFController: NSObject {
     }
 
     @concurrent static func loadDocument(_ url: URL) async -> sending PDFDocument? {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
-        for index in 0..<document.pageCount {
-            for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
-                let border = PDFBorder()
-                border.lineWidth = 0
-                link.border = border
+        signposts.withIntervalSignpost("pdf.load") {
+            guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
+            for index in 0..<document.pageCount {
+                for link in document.page(at: index)?.annotations ?? [] where link.type == "Link" {
+                    let border = PDFBorder()
+                    border.lineWidth = 0
+                    link.border = border
+                }
             }
+            return document
         }
-        return document
     }
 
     @concurrent static func loadPage(_ pdf: Data) async -> sending PDFPage? { PDFDocument(data: pdf)?.page(at: 0) }
@@ -168,6 +171,8 @@ final class PDFController: NSObject {
     }
 
     func show(_ document: PDFDocument) {
+        let interval = signposts.beginInterval("pdf.show")
+        defer { signposts.endInterval("pdf.show", interval) }
         shownVersion += 1
         loading?.cancel()
         revealing?.cancel()
@@ -176,22 +181,24 @@ final class PDFController: NSObject {
         let place = view.document == nil ? nil : view.shownPlace
         let autoScales = view.autoScales
         view.covering {
-            view.document = document
+            signposts.withIntervalSignpost("setDocument") { view.document = document }
             view.minScaleFactor = Self.minScale
             view.maxScaleFactor = Self.maxScale
             view.autoScales = autoScales
             if let place, let page = document.page(ifAt: min(place.index, document.pageCount - 1)) {
                 view.go(to: PDFDestination(page: page, at: place.point))
             }
-            view.layoutDocumentView()
+            signposts.withIntervalSignpost("layout") { view.layoutDocumentView() }
         }
         watchScrollView()
         restoreIfReady()
         pageChanged()
-        find.rerun()
+        signposts.withIntervalSignpost("find") { find.rerun() }
     }
 
     func show(_ page: PDFPage, at index: Int) {
+        let interval = signposts.beginInterval("live.page")
+        defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document, let old = document.page(ifAt: index) else { return }
         find.cancel()
         view.removeMark()

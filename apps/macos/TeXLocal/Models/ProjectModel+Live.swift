@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 extension ProjectModel {
     var livePreview: Bool {
@@ -52,7 +53,9 @@ extension ProjectModel {
             guard await save(reporting: !quietly), !Task.isCancelled, openPath == path else { return }
             let shown = views?.shownVersion
             do {
+                let interval = signposts.beginInterval("sync.forward")
                 let loc = try await session.call(request)
+                signposts.endInterval("sync.forward", interval)
                 guard !Task.isCancelled, openPath == path, views?.shownVersion == shown else { return }
                 window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, wordOnly: wordOnly)))
             } catch {

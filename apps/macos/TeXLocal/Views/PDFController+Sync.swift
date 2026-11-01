@@ -1,4 +1,5 @@
 import PDFKit
+import os
 
 extension PDFController {
     func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
@@ -62,6 +63,8 @@ extension PDFController {
     }
 
     func follow(_ loc: ForwardLoc) {
+        let interval = signposts.beginInterval("follow")
+        defer { signposts.endInterval("follow", interval) }
         guard view.hasShownArea, let page = view.document?.page(ifAt: Int(loc.page) - 1) else { return }
         let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         if !view.shownRect.contains(view.convert(rect, from: page)) { show(rect, on: page) }
@@ -72,6 +75,8 @@ extension PDFController {
     }
 
     private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [(page: PDFPage, text: PdfPage)] {
+        let interval = signposts.beginInterval("sync.pages")
+        defer { signposts.endInterval("sync.pages", interval) }
         let numbers = boxes.map { Int($0.page) }
         guard let lowest = numbers.min(), let highest = numbers.max() else { return [] }
         let first = max(1, lowest - 1), last = min(document.pageCount, highest + 1)
