@@ -228,7 +228,8 @@ final class ProjectModel {
         switch section {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
-        case .lifecycle, .tree, .buildLog: break
+        case .lifecycle, .buildLog: break
+        case .tree: tree.arrived()
         case .openFile, .outline:
             let now = analysis?.outline ?? []
             if now != outline { outline = now }
