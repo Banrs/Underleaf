@@ -33,6 +33,8 @@ private final class NavigatorChooser: NSSegmentedControl {
     private weak var project: ProjectModel?
     private var watch: Task<Void, Never>?
 
+    isolated deinit { watch?.cancel() }
+
     init(project: ProjectModel) {
         self.project = project
         super.init(frame: .zero)
@@ -90,6 +92,8 @@ final class NavigatorFilterBar: NSView {
     private let windowModel: WindowModel
     private let project: ProjectModel
     private var watch: Task<Void, Never>?
+
+    isolated deinit { watch?.cancel() }
 
     init(project: ProjectModel, window: WindowModel) {
         (self.project, windowModel) = (project, window)
