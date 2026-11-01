@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum MenuCommand: CaseIterable {
+enum MenuCommand {
     case projectNew, projectOpen, openQuickly, projectClose, projectExport, projectExportArxiv, projectSearch
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
