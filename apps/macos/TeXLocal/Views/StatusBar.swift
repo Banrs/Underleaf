@@ -1,8 +1,12 @@
 import SwiftUI
 
+/// Xcode's debug bar and its console's bar, read from their accessibility frames: 36 pt tall, their first and last
+/// controls 8 pt from their ends, and a symbol button 30 pt wide with its symbol centred.
 enum BarMetrics {
     static let height: CGFloat = 36
     static let target: CGFloat = 20
+    static let inset: CGFloat = 8
+    static let symbolWidth: CGFloat = 30
 }
 
 struct StatusBar: View {
@@ -15,7 +19,7 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .barRow(leading: 14, trailing: 16.5)
+        .barRow()
         .contentShape(.rect)
         .barEdge()
         .monospacedDigit()
@@ -224,7 +228,7 @@ private struct PanelToggle: View {
             Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
-                .frame(minHeight: BarMetrics.target)
+                .hitTarget()
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
@@ -239,16 +243,16 @@ private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short
 }
 
 extension View {
-    func barRow(leading: CGFloat, trailing: CGFloat) -> some View {
+    func barRow() -> some View {
         font(.subheadline).controlSize(.small).lineLimit(1)
-            .frame(minHeight: BarMetrics.target).padding(.leading, leading).padding(.trailing, trailing).padding(.vertical, 8)
+            .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
     }
 
     /// A bar's top edge: a hairline, as above Xcode's debug bar, there whether or not text runs beneath, which the
     /// scroll edge's own line is not.
     func barEdge() -> some View { overlay(alignment: .top) { BarEdge() } }
 
-    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect) }
+    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }
 }
 
 private struct BarEdge: View {

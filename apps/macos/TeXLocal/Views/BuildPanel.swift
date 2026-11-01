@@ -49,7 +49,7 @@ private struct BuildPanelBar: View {
         }
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        .barRow(leading: 12, trailing: 17)
+        .barRow()
         .background(.textSurface)
         .barEdge()
     }
