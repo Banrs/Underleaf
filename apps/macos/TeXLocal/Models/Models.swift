@@ -124,22 +124,6 @@ func remapPath(_ path: String, from: String, to: String) -> String {
     return path
 }
 
-enum SyntaxTheme: String, CaseIterable, Identifiable {
-    case overleaf
-    case texstudio
-    case system
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .overleaf: "Overleaf"
-        case .texstudio: "TeXstudio"
-        case .system: "System"
-        }
-    }
-}
-
 nonisolated enum PDFPaper: String, CaseIterable, Identifiable {
     case white, dark, auto
 

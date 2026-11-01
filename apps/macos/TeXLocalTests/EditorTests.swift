@@ -134,6 +134,10 @@ struct EditorTests {
         editor.open(path: "glyphs.tex", source: SourceDocument(text: "a\n\t😀😀x"))
         text.selection = .caret(8)
         #expect(editor.currentLine == 2 && editor.currentColumn == 6 && editor.shownColumn == 5)
+        let joined = "e\u{301}👨‍👩‍👧x"
+        editor.open(path: "joined.tex", source: SourceDocument(text: joined))
+        text.selection = .caret((joined as NSString).length)
+        #expect(editor.currentLine == 1 && editor.shownColumn == 4)
     }
 
     @Test func foldingHidesALinesBodyTheCaretStepsOverItAndAnEditInsideOpensIt() async throws {
@@ -245,7 +249,7 @@ struct EditorTests {
             colour = attributes[.foregroundColor] as? NSColor
             return false
         }
-        #expect(colour === text.syntaxTheme.color(.command))
+        #expect(colour === HighlightKind.command.color)
     }
 
     private static let typed = NSRange(location: NSNotFound, length: 0)

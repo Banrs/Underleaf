@@ -118,6 +118,7 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
         pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find)))
+        pdfFind.preferredScrollEdgeEffectStyle = .hard // as NSTextFinder's bar, a banner on a hard pocket
         (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
