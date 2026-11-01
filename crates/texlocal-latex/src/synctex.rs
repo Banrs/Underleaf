@@ -201,7 +201,6 @@ struct Reader {
     pending: Vec<Vec<u32>>,
     last_kern: Option<u32>,
     last_glue: Option<u32>,
-    form_depth: i32,
     ignored_forms: i32,
 }
 
@@ -251,7 +250,6 @@ impl SyncTex {
             pending: vec![Vec::new()],
             last_kern: None,
             last_glue: None,
-            form_depth: 0,
             ignored_forms: 0,
         };
         for line in lines {
@@ -349,7 +347,7 @@ impl Reader {
                 self.form = None;
                 return true;
             }
-            b'>' if self.form.is_some() && self.parent == self.form && self.form_depth > 0 => {
+            b'>' if self.form.is_some() && self.parent == self.form => {
                 self.end_form();
                 return true;
             }
@@ -654,7 +652,6 @@ impl Reader {
         let Some((tag, _)) = number(&line[1..], 0) else {
             return;
         };
-        self.form_depth += 1;
         if self
             .form
             .is_some_and(|form| self.s.node(form).parent.is_some())
@@ -670,7 +667,6 @@ impl Reader {
 
     fn end_form(&mut self) {
         let form = self.form.expect("a form is open");
-        self.form_depth -= 1;
         if let Some(outer) = self.s.node(form).parent {
             self.s.nodes[form as usize].parent = None;
             (self.child, self.form, self.parent) = (Some(form), Some(outer), Some(outer));
