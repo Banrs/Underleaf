@@ -83,7 +83,7 @@ extension Navigator {
 /// around a large search field 28 pt tall and 8 pt from the bar's edges, and in Files around a 28 pt add menu 7 pt in, 8 pt
 /// before the field; in Issues a toggle inside the field's trailing end shows only errors.
 final class NavigatorFilterBar: NSView {
-    private let field = RoomySearchField()
+    private let field = FilterField()
     private let fieldGlass = NSGlassEffectView()
     private let addGlass = NSGlassEffectView()
     private let onlyErrors = NSButton()
@@ -116,15 +116,9 @@ final class NavigatorFilterBar: NSView {
         content.addSubview(onlyErrors)
         fieldGlass.contentView = content
 
-        let add = NSPopUpButton(frame: .zero, pullsDown: true)
+        let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))!,
+                           target: self, action: #selector(showAdd(_:)))
         add.isBordered = false
-        (add.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-        add.addItem(withTitle: "")
-        add.lastItem?.image = NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))
-        for command in [MenuCommand.fileNew, .fileNewFolder, .fileUpload] {
-            add.menu?.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "").representedObject = command
-        }
-        add.itemArray.dropFirst().forEach { $0.target = self }
         add.setAccessibilityLabel(String(localized: "Add"))
         addGlass.contentView = add
 
@@ -151,7 +145,7 @@ final class NavigatorFilterBar: NSView {
         addGlass.isHidden = shown.navigator != .files
         onlyErrors.isHidden = shown.navigator != .issues
         onlyErrors.state = shown.onlyErrors ? .on : .off
-        (field.cell as? RoomySearchField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggle
+        (field.cell as? FilterField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggleRoom
         needsLayout = true
     }
 
@@ -164,12 +158,21 @@ final class NavigatorFilterBar: NSView {
         let minX = addGlass.isHidden ? 8 : addGlass.frame.maxX + 8
         fieldGlass.frame = NSRect(x: minX, y: y, width: bounds.width - minX - 8, height: Self.height)
         field.frame = fieldGlass.bounds
-        onlyErrors.frame = NSRect(x: fieldGlass.bounds.maxX - Self.toggle - 4, y: 0, width: Self.toggle, height: Self.height)
+        onlyErrors.frame = NSRect(x: fieldGlass.bounds.maxX - 7 - 17, y: fieldGlass.bounds.midY - 8.5, width: 17, height: 17)
     }
 
     @objc private func filter() { project.navigator[keyPath: project.navigator.shown.filter] = field.stringValue }
 
     @objc private func toggleErrors() { project.navigator.showsWarnings = onlyErrors.state == .off }
+
+    @objc private func showAdd(_ button: NSButton) {
+        let menu = NSMenu()
+        for command in [MenuCommand.fileNew, .fileNewFolder, .fileUpload] {
+            let item = menu.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "")
+            (item.target, item.representedObject) = (self, command)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+    }
 
     @objc private func add(_ item: NSMenuItem) {
         if let command = item.representedObject as? MenuCommand { windowModel.perform(command, on: project) }
@@ -177,7 +180,33 @@ final class NavigatorFilterBar: NSView {
 
     /// Xcode's large filter field and add menu, and the macOS UI Kit's large search field: 28 pt tall.
     private static let height: CGFloat = 28
-    private static let toggle: CGFloat = 24
+    /// Xcode's field toggles: 17 pt, 7 pt from the field's end.
+    private static let toggleRoom: CGFloat = 7 + 17
+}
+
+/// Xcode's navigator filter field, a large DVTSearchField, laid out as it lays out: its symbol 15 pt square 6 pt in, its text
+/// from 22 pt, its clear button 17 pt square 6 pt from the end, before any room kept for toggles over its end.
+private final class FilterField: NSSearchField {
+    final class Cell: NSSearchFieldCell {
+        var room: CGFloat = 0
+
+        override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
+            NSRect(x: rect.minX + 6, y: rect.midY - 7.5, width: 15, height: 15)
+        }
+
+        override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
+            NSRect(x: rect.maxX - room - 6 - 17, y: rect.midY - 8.5, width: 17, height: 17)
+        }
+
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+            NSRect(x: rect.minX + 22, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - rect.minX - 22, height: 20)
+        }
+    }
+
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
+    }
 }
 
 private extension Navigator {
@@ -319,8 +348,11 @@ private struct IssueRow: View {
         Label {
             Text(item.message.text).lineLimit(place == project.chosenIssue ? nil : 3)
         } icon: {
-            Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+            // Xcode's issue icons: an 18 pt image at the row's text size, where a sidebar row would draw its symbols larger.
+            Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
+                .font(.body)
+                .frame(width: 18, height: 18)
         }
         .navigatorRow()
         .help([item.message.text, item.explain?.text].compactMap(\.self).joined(separator: "\n\n"))

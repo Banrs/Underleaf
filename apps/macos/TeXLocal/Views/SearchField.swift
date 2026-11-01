@@ -106,25 +106,6 @@ struct SearchField: NSViewRepresentable {
     }
 }
 
-/// Keeps the text and the clear button clear of a control laid over the field's trailing end.
-final class RoomySearchField: NSSearchField {
-    final class Cell: NSSearchFieldCell {
-        var room: CGFloat = 0
-
-        override func searchTextRect(forBounds rect: NSRect) -> NSRect { super.searchTextRect(forBounds: rect.insetBy(trailing: room)) }
-        override func cancelButtonRect(forBounds rect: NSRect) -> NSRect { super.cancelButtonRect(forBounds: rect.insetBy(trailing: room)) }
-    }
-
-    override class var cellClass: AnyClass? {
-        get { Cell.self }
-        set {}
-    }
-}
-
-private extension NSRect {
-    func insetBy(trailing: CGFloat) -> NSRect { NSRect(x: minX, y: minY, width: width - trailing, height: height) }
-}
-
 final class FindPassingTextView: NSTextView {
     private static let find = #selector(NSTextView.performFindPanelAction(_:))
 

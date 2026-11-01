@@ -67,30 +67,19 @@ struct SearchResults: View {
             Section {
                 ForEach(group.hits) { hit($0) }
             } header: {
-                HStack {
-                    Text(group.file).truncationMode(.middle)
-                    Spacer()
-                    Text(group.hits.count, format: .number).monospacedDigit()
-                }
-                .accessibilityElement(children: .ignore)
+                Text("\(Text(group.file.fileName).foregroundStyle(.primary)) \(group.file.parentFolder)")
+                    .truncationMode(.middle)
+                    .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(group.file), \(Self.matches(group.hits.count))")
             }
         }
     }
 
     private func row(_ hit: SearchHit) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
-                .lineLimit(2)
-            Spacer(minLength: 4)
-            Text(verbatim: String(hit.line))
-                .font(.subheadline)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Line \(hit.line)")
-        }
-        .navigatorRow()
-        .accessibilityElement(children: .combine)
+        Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
+            .lineLimit(2)
+            .navigatorRow()
+            .accessibilityValue("Line \(hit.line)")
     }
 
     private func open(_ id: SearchHit.ID?, focus: Bool) {

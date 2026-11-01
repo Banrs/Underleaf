@@ -132,16 +132,20 @@ struct FilesList: View {
                 } else {
                     Text(node.name).truncationMode(.middle)
                 }
-                if isMain {
-                    Spacer()
-                    Image(systemName: "star.fill")
-                        .foregroundStyle(.yellow)
-                        .imageScale(.small)
-                        .help("Main File")
-                        .accessibilityHidden(true)
-                }
             }
-        } icon: { Image(systemName: node.symbol) }
+        } icon: {
+            Image(systemName: node.symbol)
+                .overlay(alignment: .bottomLeading) {
+                    if isMain {
+                        Image(systemName: "star.circle.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .foregroundStyle(.yellow)
+                            .imageScale(.small)
+                            .offset(x: -3, y: 3)
+                            .help("Main File")
+                    }
+                }
+        }
         .navigatorRow()
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
@@ -256,15 +260,14 @@ private struct HeadingRow: View {
 
     var body: some View {
         let heading = node.heading
-        HStack {
+        HStack(spacing: 4) {
             Text(heading.title)
                 .help(heading.title)
                 .foregroundStyle(heading.untitled ? .secondary : .primary)
             if let words {
-                Spacer(minLength: 4)
                 Text(words, format: .number)
-                    .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .layoutPriority(1)
                     .accessibilityLabel("^[\(words) word](inflect: true)")
             }
         }
