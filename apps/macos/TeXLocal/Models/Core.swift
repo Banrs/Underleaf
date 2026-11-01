@@ -38,21 +38,18 @@ nonisolated struct AppFailure: LocalizedError {
 final class Core {
     static let shared = Core()
 
-    static let libraryFolder = if let dir = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"], !dir.isEmpty {
-        URL(filePath: dir, directoryHint: .isDirectory)
-    } else {
-        defaultLibrary
-    }
+    static let libraryFolder = folder(
+        "TEXLOCAL_DATA",
+        else: (ProcessInfo.processInfo.environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? .homeDirectory)
+            .appending(path: "TeXLocal", directoryHint: .isDirectory))
 
-    private static var defaultLibrary: URL {
-        (ProcessInfo.processInfo.environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? .homeDirectory)
-            .appending(path: "TeXLocal", directoryHint: .isDirectory)
-    }
+    static let stateFolder = folder(
+        "TEXLOCAL_STATE",
+        else: URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "TeXLocal", directoryHint: .isDirectory))
 
-    static let stateFolder = if let dir = ProcessInfo.processInfo.environment["TEXLOCAL_STATE"], !dir.isEmpty {
-        URL(filePath: dir, directoryHint: .isDirectory)
-    } else {
-        URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "TeXLocal", directoryHint: .isDirectory)
+    private static func folder(_ variable: String, else fallback: @autoclosure () -> URL) -> URL {
+        guard let dir = ProcessInfo.processInfo.environment[variable], !dir.isEmpty else { return fallback() }
+        return URL(filePath: dir, directoryHint: .isDirectory)
     }
 
     static let helpersFolder = Bundle.main.bundleURL.appending(path: "Contents/Helpers", directoryHint: .isDirectory)
