@@ -73,7 +73,7 @@ struct SearchResults: View {
             Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
                 .lineLimit(2)
             Spacer(minLength: 4)
-            Text("\(hit.line)")
+            Text(verbatim: String(hit.line))
                 .font(.subheadline)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)

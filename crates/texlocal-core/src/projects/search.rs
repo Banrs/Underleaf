@@ -37,8 +37,8 @@ pub struct SearchGroup {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Written {
-    file: String,
-    count: usize,
+    pub file: String,
+    pub count: usize,
 }
 
 pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {

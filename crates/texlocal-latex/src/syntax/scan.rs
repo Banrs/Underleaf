@@ -326,6 +326,9 @@ impl Scanner {
     fn control(&mut self, src: &[u16], start: usize, visit: &mut impl Visit) -> (bool, usize) {
         let in_math = self.in_math();
         self.text_argument = false;
+        if src[self.i] == NEWLINE {
+            return (false, self.i + 1);
+        }
         if !letter(src[self.i]) {
             let token = start..start + 2;
             match char::from_u32(src[self.i] as u32).unwrap_or_default() {

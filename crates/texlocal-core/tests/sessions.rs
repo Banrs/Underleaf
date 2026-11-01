@@ -925,6 +925,11 @@ async fn an_export_holds_the_sources_and_opens_as_a_new_project() {
     let opened = rig.library.call("OpenPath", json!({ "path": dest })).await;
     assert_eq!(opened["project"]["name"], "Shared");
     assert!(rig.library.project_root("Shared").join("ch.tex").is_file());
+    let inside = rig.root().join("Shared.zip");
+    for _ in 0..2 {
+        rig.call("ExportZip", json!({ "dest": inside, "forArxiv": false }));
+    }
+    assert_eq!(zip_names(&inside), ["ch.tex", "main.tex"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1347,6 +1352,18 @@ async fn a_stopped_build_keeps_the_last_pdf_it_did_not_touch() {
         fs::read_to_string(build.join("main.pdf")).unwrap(),
         "%PDF-1.4\n"
     );
+    write(
+        &rig.root(),
+        &[("main.tex", &main.replace("slowly", "slowly over"))],
+    );
+    fs::remove_file(build.join("started")).unwrap();
+    rig.forget();
+    rig.call("Compile", json!({ "auto": false }));
+    wait_until("the build starts over", || build.join("started").exists());
+    rig.call("StopCompile", json!({}));
+    rig.section("build", |b| b["compiling"] == false);
+    assert!(!build.join("main.pdf").exists());
+    assert_eq!(rig.section("shownPdf", |_| true)["path"], Value::Null);
 }
 
 #[tokio::test(flavor = "multi_thread")]

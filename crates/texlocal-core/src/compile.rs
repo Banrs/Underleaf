@@ -124,10 +124,7 @@ impl CompileManager {
 
     pub fn stop(&self, root: &Path) {
         if let Some(entry) = lock(&self.running).get_mut(root) {
-            entry.stopped = true;
-            if let Some(tree) = &entry.tree {
-                tree.kill();
-            }
+            entry.stopped |= entry.tree.as_ref().is_some_and(Tree::kill);
         }
     }
 

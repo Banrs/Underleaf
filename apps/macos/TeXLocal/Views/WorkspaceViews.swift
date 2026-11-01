@@ -29,8 +29,8 @@ final class WorkspaceViews: ProjectViews {
     isolated deinit { watches.forEach { $0.cancel() } }
 
     private func connect() {
-        editor.onCursor = { [weak self] line, column in
-            if let self { project.cursorMoved(to: line, column: column, caret: editor.caret, in: editor.path) }
+        editor.onCursor = { [weak self] line, column, shown in
+            if let self { project.cursorMoved(to: line, column: column, shownColumn: shown, caret: editor.caret, in: editor.path) }
         }
         editor.onEdit = { [weak self] in self?.project.edited() }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
@@ -54,7 +54,7 @@ final class WorkspaceViews: ProjectViews {
         }
         text.headings = { [weak self] in
             guard let project = self?.project else { return [] }
-            return project.outline.filter { $0.file == project.openPath }.map { ($0.line, $0.title) }
+            return project.outline.filter { project.isOpenFile($0.file) }.map { ($0.line, $0.title) }
         }
         text.forwardSync = { [weak self] quietly in
             guard let project = self?.project, project.canSyncForward(quietly: quietly) else { return nil }

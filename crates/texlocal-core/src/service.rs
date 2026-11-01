@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak, mpsc};
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -31,7 +31,7 @@ pub struct Service {
     pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
     tex_queue: Mutex<Option<oneshot::Receiver<()>>>,
-    histories: Mutex<HashMap<PathBuf, mpsc::Sender<Job>>>,
+    histories: Mutex<HashMap<PathBuf, Weak<mpsc::Sender<Job>>>>,
     pub(crate) hub: OnceLock<mpsc::Sender<Said>>,
     sent: Mutex<Sent<LibrarySection>>,
 }
@@ -178,10 +178,15 @@ impl Service {
         Ok(library)
     }
 
-    pub(crate) fn history(&self, project: &Project) -> mpsc::Sender<Job> {
+    pub(crate) fn history(&self, project: &Project) -> Arc<mpsc::Sender<Job>> {
         let mut histories = lock(&self.histories);
-        let history = histories.entry(project.history.clone());
-        history.or_insert_with(|| History::queue(project)).clone()
+        histories.retain(|_, history| history.strong_count() > 0);
+        if let Some(history) = histories.get(&project.history).and_then(Weak::upgrade) {
+            return history;
+        }
+        let history = Arc::new(History::queue(project));
+        histories.insert(project.history.clone(), Arc::downgrade(&history));
+        history
     }
 
     fn kill_all(&self) {

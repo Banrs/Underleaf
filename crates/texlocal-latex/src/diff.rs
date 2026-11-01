@@ -16,7 +16,13 @@ pub enum DiffLine {
 const CONTEXT: usize = 3;
 
 pub fn compare(old: &str, new: &str) -> Vec<DiffLine> {
-    let (a, b): (Vec<_>, Vec<_>) = (old.lines().collect(), new.lines().collect());
+    fn lines<'a>(text: &'a str, other: &str) -> Vec<&'a str> {
+        let newline_only_here = text.ends_with('\n') && !other.ends_with('\n') && !other.is_empty();
+        text.lines()
+            .chain(newline_only_here.then_some(""))
+            .collect()
+    }
+    let (a, b) = (lines(old, new), lines(new, old));
     let head = common(a.iter(), b.iter());
     let tail = common(a[head..].iter().rev(), b[head..].iter().rev());
     let (x, y) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);

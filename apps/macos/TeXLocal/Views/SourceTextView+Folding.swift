@@ -106,10 +106,16 @@ extension SourceTextView: NSTextContentStorageDelegate {
                    respectFlipped: true, hints: nil)
     }
 
+    private static var symbols: [String: NSImage] = [:]
+
     private static func symbol(_ name: String, size: CGFloat) -> NSImage {
+        let key = "\(name) \(size)"
+        if let made = symbols[key] { return made }
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold)
             .applying(.init(hierarchicalColor: .secondaryLabelColor))
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) ?? NSImage()
+        let made = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) ?? NSImage()
+        symbols[key] = made
+        return made
     }
 
     func foldClick(at point: NSPoint) -> Bool {

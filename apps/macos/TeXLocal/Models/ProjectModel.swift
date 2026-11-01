@@ -49,12 +49,13 @@ final class ProjectModel {
     var openPath: String? { store.openFile?.path }
     var openKind: FileKind? { store.openFile?.kind }
     private var analysis: Analysis? { isLaTeX ? store.outline : nil }
-    var outline: [Heading] { analysis?.outline ?? [] }
+    private(set) var outline: [Heading] = []
     var outlineTree: [OutlineNode] { analysis?.tree ?? [] }
     var headingStyles: [HeadingStyle] { store.outline?.headingStyles ?? HeadingStyle.standard }
     var words: Int? { analysis?.words }
     private(set) var cursorLine = 1
     private(set) var cursorColumn = 0
+    private(set) var shownColumn = 1
     @ObservationIgnored private var topLine = 1
     @ObservationIgnored private(set) var topHeading: Int?
     private(set) var currentHeading: Int?
@@ -131,7 +132,9 @@ final class ProjectModel {
     var isLaTeX: Bool { openKind == .tex }
     var sourceToolsEnabled: Bool { isLaTeX && window?.showSource == true }
 
-    var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
+    var headingCommand: String { outline.first { isOpenFile($0.file) && $0.line == cursorLine }?.command ?? "" }
+
+    func isOpenFile(_ path: String) -> Bool { openPath.map { path.caseInsensitiveCompare($0) == .orderedSame } ?? false }
     var editsText: Bool { openKind?.isText == true }
 
     var saveFailure: String? {
@@ -178,8 +181,11 @@ final class ProjectModel {
         initialLoadComplete = true
     }
 
-    func cursorMoved(to line: Int, column: Int, caret offset: Int, in path: String?) {
+    func cursorMoved(to line: Int, column: Int, shownColumn: Int, caret offset: Int, in path: String?) {
+        let moved = caret?.path != path || caret?.offset != offset
         caret = path.map { ($0, offset) }
+        if moved { liveCaret() }
+        if shownColumn != self.shownColumn { self.shownColumn = shownColumn }
         guard line != cursorLine || column != cursorColumn else { return }
         (cursorLine, cursorColumn, currentLine) = (line, column, line)
         if !caretMoved {
@@ -187,7 +193,6 @@ final class ProjectModel {
             Task { [weak self] in self?.caretMoved = false }
         }
         findHeadings()
-        liveCaret()
     }
 
     func scrolled(to line: Int) {
@@ -223,8 +228,12 @@ final class ProjectModel {
         switch section {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
-        case .lifecycle, .tree, .buildLog, .liveLog: break
-        case .openFile, .outline: findHeadings()
+        case .lifecycle, .buildLog, .liveLog: break
+        case .tree: tree.arrived()
+        case .openFile, .outline:
+            let now = analysis?.outline ?? []
+            if now != outline { outline = now }
+            findHeadings()
         case .documents(let documents):
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
@@ -315,8 +324,7 @@ final class ProjectModel {
     }
 
     private func heading(at line: Int) -> Int? {
-        guard let openPath else { return nil }
-        return outline.lastIndex { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }
+        outline.lastIndex { $0.line <= line && isOpenFile($0.file) }
     }
 
     func replaceAll() async {
@@ -354,7 +362,10 @@ final class ProjectModel {
 
     private var caretPlace: Place? { openPath.map { Place(path: $0, line: editsText ? cursorLine : 1) } }
 
-    func canRetrace(back: Bool) -> Bool { openPath != nil && (back ? trail.back : trail.forward).contains(where: exists) }
+    func canRetrace(back: Bool) -> Bool {
+        guard let at = caretPlace else { return false }
+        return (back ? trail.back : trail.forward).contains { $0 != at && exists($0) }
+    }
 
     private func exists(_ place: Place) -> Bool { tree.node(at: place.path) != nil }
 
@@ -372,9 +383,7 @@ final class ProjectModel {
     }
 
     func restoreVersion(_ snapshot: Snapshot, paths: [String]?) async throws {
-        guard apply(try await session.call(RestoreVersion(id: snapshot.id, paths: paths)), named: String(localized: "Restore")) else {
-            throw AppFailure(String(localized: "The file shown changed meanwhile, so it wasn’t restored. Try again."))
-        }
+        try await editProject(RestoreVersion(id: snapshot.id, paths: paths), named: String(localized: "Restore"))
     }
 
     @discardableResult

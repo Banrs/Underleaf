@@ -123,12 +123,16 @@ struct PDFTests {
         try await found(controller)
         #expect(find.matchIndex == 0)
         find.close()
+        #expect(view.currentSelection == nil)
         view.go(to: top)
         find.next(1)
         try await found(controller)
         #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === view.document?.page(at: 2))
         find.advance(by: 2)
         #expect(find.matchIndex == 0)
+        view.setCurrentSelection(view.document?.findString("filler").first, animate: false)
+        find.close()
+        #expect(view.currentSelection?.string == "filler")
     }
 
     @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() throws {
