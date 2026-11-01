@@ -224,19 +224,27 @@ impl Actor {
 
     pub fn synctex_match(
         &self,
-        file: &str,
+        file: String,
         line: u32,
         column: usize,
-        pages: &[PdfPage],
-    ) -> Result<Option<PdfHit>, CoreError> {
-        let text = match self.docs.get(file) {
-            Some(doc) => doc.doc.snapshot().0,
-            None => lossy_string(fs::read(paths::safe_path(&self.project.root, file)?)?),
-        };
-        let line = line
-            .checked_sub(1)
-            .and_then(|n| text.lines().nth(n as usize));
-        Ok(line.and_then(|line| find_in_pdf(line, column, pages)))
+        pages: Vec<PdfPage>,
+        reply: Pending<Option<PdfHit>>,
+    ) {
+        let (doc, root) = (
+            self.docs.get(&file).map(|doc| doc.doc.clone()),
+            self.project.root.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let text = match doc {
+                Some(doc) => Ok(doc.with(|source| source.line(line))),
+                None => paths::safe_path(&root, &file).and_then(|path| {
+                    let text = lossy_string(fs::read(path)?);
+                    let index = line.checked_sub(1);
+                    Ok(index.and_then(|n| text.lines().nth(n as usize).map(str::to_owned)))
+                }),
+            };
+            reply.send(text.map(|line| line.and_then(|line| find_in_pdf(&line, column, &pages))));
+        });
     }
 }
 

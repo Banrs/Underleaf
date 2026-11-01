@@ -218,6 +218,11 @@ impl SourceDocument {
         self.text.lines[index]
     }
 
+    pub fn line(&self, line: u32) -> Option<String> {
+        let index = (line as usize).checked_sub(1)?;
+        (index < self.text.lines.len()).then(|| utf16::lossy(self.text.line(index)))
+    }
+
     pub fn line_count(&self) -> u32 {
         self.text.lines.len() as u32
     }

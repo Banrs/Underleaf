@@ -521,7 +521,10 @@ impl Actor {
                     pages,
                 },
                 answer,
-            ) => answer(self.synctex_match(&file.0, line, column, &pages)),
+            ) => {
+                let matching = Pending { reply, answer };
+                return self.synctex_match(file.0, line, column, pages, matching);
+            }
         };
         reply.send(answer);
     }
