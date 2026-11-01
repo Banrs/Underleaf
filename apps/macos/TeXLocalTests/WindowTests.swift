@@ -189,7 +189,7 @@ struct WindowTests {
         #expect(gone.project?.closed == true && !gone.app.windows.contains { $0 === gone } && gone.alert == nil)
     }
 
-    @Test func theToolbarFollowsTheLayoutAndTheColumnsWidthsAtOnceWhileADividerIsDragged() async throws {
+    @Test func theToolbarFollowsTheLayoutAndCompileTurnsCompactBeforeAnythingOverflows() async throws {
         let model = defaults.window()
         let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
         let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
@@ -200,26 +200,34 @@ struct WindowTests {
         window.toolbar = workspace.toolbar.toolbar
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
-        let format = try #require(workspace.toolbar.toolbar.items.first { $0.itemIdentifier == .format })
-        #expect(workspace.toolbar.toolbar.items.allSatisfy { !$0.isNavigational })
+        let items = workspace.toolbar.toolbar.items
+        let format = try #require(items.first { $0.itemIdentifier == .format })
+        #expect(items.allSatisfy { !$0.isNavigational })
         model.layout = .pdf
         try await waitUntil { format.isHidden }
         model.layout = .split
         try await waitUntil { !format.isHidden }
 
-        let columns = try #require(workspace.columns.splitView as? DraggedSplitView)
-        func move(to position: CGFloat) {
-            columns.setPosition(position, ofDividerAt: 0)
+        func resize(to width: CGFloat) async throws {
+            window.setContentSize(NSSize(width: width, height: 800))
+            window.layoutIfNeeded()
+            window.displayIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
             window.layoutIfNeeded()
         }
-        move(to: columns.bounds.width)
+        var width: CGFloat = 1400
+        while !workspace.toolbar.compactCompile, width > 600 {
+            width -= 10
+            try await resize(to: width)
+        }
+        let tools = items.filter { [.format, .math, .insert, .zoom, .compile].contains($0.itemIdentifier) }
+        #expect(workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
+        try await resize(to: width + 20)
         #expect(workspace.toolbar.compactCompile)
-        workspace.quiet(true)
-        move(to: ColumnMetrics.paneMinimum)
-        #expect(workspace.toolbar.compactCompile)
-        workspace.quiet(false)
-        #expect(!workspace.toolbar.compactCompile)
-        #expect(!columns.dragging)
+        try await resize(to: 1400)
+        #expect(!workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
+
+        let columns = try #require(workspace.columns.splitView as? DraggedSplitView)
         window.orderFront(nil)
         func mouse(_ type: NSEvent.EventType, at x: CGFloat) throws {
             let point = columns.convert(NSPoint(x: x, y: columns.bounds.midY), to: nil)
@@ -231,16 +239,9 @@ struct WindowTests {
         let divider = columns.arrangedSubviews[0].frame.maxX + columns.dividerThickness / 2
         try mouse(.leftMouseDown, at: divider)
         try mouse(.leftMouseDragged, at: divider + 20)
-        try mouse(.leftMouseDragged, at: columns.bounds.width)
-        #expect(columns.dragging && workspace.toolbar.compactCompile)
-        workspace.quiet(true)
-        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 20)
-        #expect(workspace.toolbar.compactCompile)
-        workspace.quiet(false)
-        try mouse(.leftMouseDragged, at: ColumnMetrics.paneMinimum + 10)
-        try await waitUntil(timeout: .seconds(1)) { !workspace.toolbar.compactCompile }
+        try mouse(.leftMouseDragged, at: divider + 40)
         #expect(columns.dragging)
-        try mouse(.leftMouseUp, at: ColumnMetrics.paneMinimum + 10)
+        try mouse(.leftMouseUp, at: divider + 40)
         try await waitUntil { !columns.dragging }
     }
 

@@ -44,6 +44,7 @@ final class WorkspaceController: ThinSplitViewController {
             item!.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
         watch()
+        NotificationCenter.default.addObserver(toolbar, selector: #selector(WorkspaceToolbar.fit), name: NSView.frameDidChangeNotification, object: area.view)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -74,18 +75,8 @@ final class WorkspaceController: ThinSplitViewController {
         if views.inspectorShown == inspectorItem.isCollapsed { views.inspectorShown.toggle() }
     }
 
-    func fitToolbar() {
-        func edges(_ item: NSSplitViewItem) -> NSRect { item.viewController.view.convert(item.viewController.view.bounds, to: splitView) }
-        let source = edges(sourceItem), area = edges(areaItem)
-        let leading = max(source.minX, ColumnMetrics.windowControls)
-        let trailing = min(area.maxX, splitView.bounds.maxX - ColumnMetrics.toggles)
-        let tools = trailing - leading - ColumnMetrics.sourceTools + (window.showSource ? 0 : ColumnMetrics.editingTools)
-        let room = pdfItem.isCollapsed ? tools - ColumnMetrics.separator
-            : min(tools, pdfItem.viewController.view.frame.width - (area.maxX - trailing)) - ColumnMetrics.zoom
-        let compact = room < ColumnMetrics.compile
-        let dragged = splitViews.contains { ($0 as? DraggedSplitView)?.dragging == true }
-        if compact || quieting == (dragged ? 1 : 0) { toolbar.compactCompile = compact }
-    }
+    /// The width of the toolbar's middle section: the columns between the sidebar and the inspector.
+    var toolbarRoom: CGFloat { areaItem.viewController.view.frame.width }
 
     private func buildSidebar() {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: NavigatorArea(host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth)))
@@ -242,10 +233,7 @@ final class WorkspaceController: ThinSplitViewController {
         guard quieting == (resizing ? 1 : 0) else { return }
         if resizing { quietScrollViews = view.descendants(of: NSScrollView.self) }
         for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
-        if !resizing {
-            quietScrollViews = []
-            fitToolbar()
-        }
+        if !resizing { quietScrollViews = [] }
     }
 
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
