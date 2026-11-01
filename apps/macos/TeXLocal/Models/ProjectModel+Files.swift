@@ -99,17 +99,15 @@ struct ImportClash {
     let names: [String]
 
     var title: String {
-        if names.count == 1, let name = names.first { "An item named “\(name.fileName)” already exists in this location." }
+        if names.count == 1 { "An item named “\(names[0].fileName)” already exists in this location." }
         else { "\(names.count) items with these names already exist in this location." }
     }
 
     var message: String {
-        let replace = names.count == 1
-            ? "Do you want to replace it with the one you’re copying? The one here goes to the Trash."
-            : "Do you want to replace them with the ones you’re copying? The ones here go to the Trash."
-        guard names.count > 1 else { return replace }
+        guard names.count > 1 else { return "Do you want to replace it with the one you’re copying? The one here goes to the Trash." }
         let shown = names.prefix(3).map { "“\($0)”" }
         let more = names.count > shown.count ? ["\(names.count - shown.count) more"] : []
-        return (shown + more).formatted(.list(type: .and)) + ". " + replace
+        return (shown + more).formatted(.list(type: .and))
+            + ". Do you want to replace them with the ones you’re copying? The ones here go to the Trash."
     }
 }
