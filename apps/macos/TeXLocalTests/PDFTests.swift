@@ -65,36 +65,61 @@ struct PDFTests {
         }
     }
 
-    @Test func aLivePageReplacesItsPageInPlaceAndASyncMarkOnlyOnThatPageGoes() throws {
+    @Test func aLivePageReplacesItsPageInPlaceAndASyncMarkOnlyOnThatPageGoes() async throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)
         defer { window.close() }
-        let document = try textPDF(count: 3)
-        controller.show(document)
+        try await showLive(["Page 1", "Page 2", "Page 3"], in: controller)
+        let document = try #require(view.document)
         view.go(to: PDFDestination(page: try #require(document.page(at: 1)), at: CGPoint(x: 0, y: 400)))
         let place = try shown(view)
         view.flash(CGRect(x: 72, y: 600, width: 100, height: 12), on: try #require(document.page(at: 2)))
-        for index in [1, 3] { controller.show(try #require(try textPDF(["typed"]).page(at: 0)), at: index) }
+        for index in [1, 3] { controller.showLive(LivePage(page: index, pdf: try typedPage())) }
+        await controller.liveReading?.value
         #expect(view.document === document && document.pageCount == 3 && view.mark?.page === document.page(at: 2))
-        controller.show(try #require(try textPDF(["typed"]).page(at: 0)), at: 2)
-        #expect(view.mark == nil)
         #expect(document.page(at: 1)?.string?.contains("typed") == true)
         #expect(try shown(view) == place)
+        controller.showLive(LivePage(page: 2, pdf: try typedPage()))
+        await controller.liveReading?.value
+        #expect(view.mark == nil)
     }
 
     @Test func aLivePageHidesItsLinksBordersAsABuiltDocumentDoes() async throws {
-        let document = try textPDF(["linked"])
+        let controller = PDFController(), view = controller.view
+        let window = onScreen(controller)
+        defer { window.close() }
+        try await showLive(["Page 1"], in: controller)
+        let linked = try textPDF(["linked"])
         let link = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 50, height: 12), forType: .link, withProperties: nil)
         link.border = PDFBorder()
         link.border?.lineWidth = 1
-        try #require(document.page(at: 0)).addAnnotation(link)
-        let data = try #require(document.dataRepresentation())
-        let loaded = try #require(await PDFController.loadPage(data, at: 0, covering: CoverPages()))
-        let links = try #require(loaded.document.page(at: 0)).annotations.filter { $0.type == "Link" }
+        try #require(linked.page(at: 0)).addAnnotation(link)
+        controller.showLive(LivePage(page: 0, pdf: try #require(linked.dataRepresentation())))
+        await controller.liveReading?.value
+        let links = try #require(view.document?.page(at: 0)).annotations.filter { $0.type == "Link" }
         #expect(!links.isEmpty && links.allSatisfy { $0.border?.lineWidth == 0 })
     }
 
-    @Test func aLivePageWaitsForTheDocumentBeforeItAndClosingCancelsTheReads() async throws {
+    @Test func aLiveDocumentChangesOnlyItsChangedPagesInPlaceAndFindsAgainOnThemAlone() async throws {
+        let controller = PDFController(), view = controller.view, find = controller.find
+        let window = onScreen(controller)
+        defer { window.close() }
+        try await showLive(["needle", "filler", "needle", "filler"], in: controller)
+        let document = try #require(view.document)
+        find.isOpen = true
+        find.text = "needle"
+        find.search("needle")
+        try await found(controller)
+        #expect(find.matches.count == 2)
+        try await showLive(["needle", "needle", "needle"], changed: [PageRange(first: 1, last: 1)], in: controller)
+        #expect(view.document === document && document.pageCount == 3 && !find.isRunning)
+        #expect(find.matches.count == 3 && find.matches.map { $0.pages.first.map(document.index) } == [0, 1, 2])
+        let many = Array(repeating: "filler", count: PDFController.changedInPlace + 2)
+        try await showLive(many, changed: [PageRange(first: 0, last: many.count - 1)], in: controller)
+        #expect(view.document !== document && view.document?.pageCount == many.count)
+    }
+
+    @Test func aLivePageWaitsForTheDocumentBeforeItAndClosingStopsTheFeed() async throws {
         let defaults = TestDefaults()
         let project = ProjectModel(id: "P", window: defaults.window())
         let views = WorkspaceViews(project: project)
@@ -103,15 +128,16 @@ struct PDFTests {
         let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
         try #require(try textPDF(count: 2).dataRepresentation()).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
-        let typed = try #require(try textPDF(["typed"]).dataRepresentation())
         project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [])))
-        project.handle(.livePage(LivePage(page: 1, pdf: typed)))
-        await views.liveReads?.value
+        project.handle(.livePage(LivePage(page: 1, pdf: try typedPage())))
+        await views.pdf.liveReading?.value
         let document = try #require(views.pdf.view.document)
         #expect(document.pageCount == 2 && document.page(at: 1)?.string?.contains("typed") == true)
-        project.handle(.livePage(LivePage(page: 0, pdf: typed)))
+        project.handle(.livePage(LivePage(page: 0, pdf: try typedPage())))
         #expect(await project.close().value)
-        try await waitUntil { views.liveReads?.isCancelled == true }
+        try await waitUntil { views.pdf.liveReading == nil }
+        project.handle(.livePage(LivePage(page: 0, pdf: try typedPage())))
+        #expect(views.pdf.liveReading == nil && views.pdf.feed.pages.isEmpty)
     }
 
     @Test func aRebuildFindsAgainInPlace() async throws {
@@ -207,6 +233,16 @@ struct PDFTests {
     }
 
     private func textPDF(count: Int) throws -> PDFDocument { try textPDF((1...count).map { "Page \($0)" }) }
+
+    private func typedPage() throws -> Data { try #require(try textPDF(["typed"]).dataRepresentation()) }
+
+    private func showLive(_ pages: [String], changed: [PageRange] = [], in controller: PDFController) async throws {
+        let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
+        try #require(try textPDF(pages).dataRepresentation()).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        controller.showLive(LiveDocument(path: url.path(percentEncoded: false), changed: changed))
+        await controller.liveReading?.value
+    }
 
     private func onScreen(_ controller: PDFController) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),

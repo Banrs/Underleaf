@@ -31,6 +31,7 @@ final class PDFController: NSObject {
 
     @ObservationIgnored var pendingReveal: (loc: ForwardLoc, source: SyncSource?)?
     @ObservationIgnored var revealing: Task<Void, Never>?
+    @ObservationIgnored var feed = LiveFeed()
 
     override init() {
         find = PDFFind(view: view)
@@ -49,7 +50,7 @@ final class PDFController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
     }
 
-    @objc private func pageChanged() {
+    @objc func pageChanged() {
         guard let document = view.document else { return }
         pageCount = document.pageCount
         if let page = view.currentPage, let number = document.number(of: page) { self.page = number }
@@ -140,6 +141,7 @@ final class PDFController: NSObject {
 
     func load(_ url: URL?) -> Task<Void, Never> {
         let wanted = view.coverPages
+        stopLive()
         isLoading = true
         return restart(&loading) { [self] in
             let loaded: LoadedPDF? = if let url { await Self.loadDocument(url, covering: wanted) } else { nil }
@@ -156,13 +158,6 @@ final class PDFController: NSObject {
             for index in 0..<document.pageCount { document.page(at: index)?.hideLinkBorders() }
             return LoadedPDF(document: document, covers: SyncPDFView.covers(wanted, of: document))
         }
-    }
-
-    @concurrent static func loadPage(_ pdf: Data, at index: Int, covering wanted: CoverPages) async -> sending LoadedPDF? {
-        guard let document = PDFDocument(data: pdf), let page = document.page(at: 0) else { return nil }
-        page.hideLinkBorders()
-        let cover = SyncPDFView.covers(CoverPages(indices: wanted.indices.contains(index) ? [0] : [], scale: wanted.scale), of: document)
-        return LoadedPDF(document: document, covers: cover[0].map { [index: $0] } ?? [:])
     }
 
     func print(title: String, file: URL?) {
@@ -198,21 +193,6 @@ final class PDFController: NSObject {
         restoreIfReady()
         pageChanged()
         signposts.withIntervalSignpost("find") { find.rerun() }
-    }
-
-    func show(_ page: PDFPage, at index: Int, covers: [Int: CGImage] = [:]) {
-        let interval = signposts.beginInterval("live.page")
-        defer { signposts.endInterval("live.page", interval) }
-        guard let document = view.document, let old = document.page(ifAt: index) else { return }
-        find.cancel()
-        if view.mark?.page === old { view.removeMark() }
-        view.covering(covers) {
-            document.insert(page, at: index)
-            document.removePage(at: index + 1)
-        }
-        if view.currentSelection?.pages.contains(old) == true { view.clearSelection() }
-        pageChanged()
-        find.rerun()
     }
 
     private func clear() {

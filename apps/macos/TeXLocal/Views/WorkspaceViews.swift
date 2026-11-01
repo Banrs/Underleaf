@@ -1,7 +1,5 @@
 import AppKit
 import Observation
-import PDFKit
-import os
 
 @Observable
 final class WorkspaceViews: ProjectViews {
@@ -9,7 +7,6 @@ final class WorkspaceViews: ProjectViews {
     let editor = SourceEditor()
     let pdf = PDFController()
     var inspectorShown = false
-    @ObservationIgnored private(set) var liveReads: Task<Void, Never>?
     @ObservationIgnored private var watches: [Task<Void, Never>] = []
 
     init(project: ProjectModel) {
@@ -21,7 +18,7 @@ final class WorkspaceViews: ProjectViews {
                 self?.editor.textView.isEditable = !closing
             },
             track({ [weak project] in project?.closed ?? true }, initial: false) { [weak self] _ in
-                self?.liveReads?.cancel()
+                self?.pdf.stopLive()
                 self?.pdf.loading?.cancel()
             },
             track({ [weak project] in project?.window?.app.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
@@ -86,8 +83,8 @@ final class WorkspaceViews: ProjectViews {
         case .section(.shownPdf): showPDF()
         case .documentReload(let path): reload(path)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
-        case .liveDocument(let document): showLive(document)
-        case .livePage(let page): showLive(page)
+        case .liveDocument(let document): if project.showsLive { pdf.showLive(document) }
+        case .livePage(let page): if project.showsLive { pdf.showLive(page) }
         default: break
         }
     }
@@ -183,25 +180,6 @@ final class WorkspaceViews: ProjectViews {
     private func reload(_ path: String) {
         guard editor.path == path, let source = SourceDocument(session: project.session, path: path) else { return }
         editor.reload(source)
-    }
-
-    private func showLive(_ live: LiveDocument) {
-        let wanted = pdf.view.coverPages
-        _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let loaded = await PDFController.loadDocument(URL(filePath: live.path), covering: wanted), project.showsLive
-            else { return }
-            signposts.withIntervalSignpost("live.document") { pdf.show(loaded.document, covers: loaded.covers) }
-            project.liveDocumentShown()
-        }
-    }
-
-    private func showLive(_ live: LivePage) {
-        let wanted = pdf.view.coverPages
-        _ = enqueue(&liveReads) { [self] in
-            guard !Task.isCancelled, let loaded = await PDFController.loadPage(live.pdf, at: live.page, covering: wanted), project.showsLive,
-                  let page = loaded.document.page(at: 0) else { return }
-            pdf.show(page, at: live.page, covers: loaded.covers)
-        }
     }
 
     private func quickHelp(at offset: Int) {

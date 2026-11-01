@@ -64,6 +64,24 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
 
     func rerun() { if isOpen { search(text, keepingPlace: true) } }
 
+    var isRunning: Bool { running != nil }
+
+    /// Live Preview swapped pages: their matches are found again on those pages alone, not in the whole document.
+    func replaced(_ swaps: [(old: PDFPage, new: PDFPage?)]) {
+        guard isOpen, !query.isEmpty, !swaps.isEmpty else { return }
+        var all = matches.filter { match in !swaps.contains { match.pages.contains($0.old) } }
+        for page in swaps.compactMap(\.new) {
+            guard let text = page.string else { continue }
+            var from = text.startIndex
+            while let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
+                if let match = page.selection(for: NSRange(range, in: text)) { all.append(match) }
+                from = range.upperBound
+            }
+        }
+        let placed = all.compactMap { match in position(match).map { (match, $0) } }.sorted { $0.1 < $1.1 }.map(\.0)
+        found(query, placed, keepingPlace: true)
+    }
+
     func cancel() {
         let document = running?.document
         running = nil
