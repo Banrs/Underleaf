@@ -1,10 +1,38 @@
 import AppKit
 import SwiftUI
 
-/// The navigator chooser across the sidebar's top: a tabs-role segmented control at the large size, its segments the
-/// 44 pt of the macOS UI Kit's tab bar and centred, as the kit's are, with Xcode's 7 pt before the list.
-final class NavigatorBar: NSView {
-    private let control = NSSegmentedControl()
+/// The sidebar as Xcode's navigator area: the shown navigator fills it and scrolls beneath the chooser floating at its top,
+/// its safe area starting 7 pt below the chooser, where Xcode's lists start.
+final class NavigatorArea: NSViewController {
+    private let list: NSViewController
+    private let chooser: NavigatorChooser
+
+    init(list: NSViewController, project: ProjectModel) {
+        self.list = list
+        chooser = NavigatorChooser(project: project)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        view = NSView(frame: list.view.frame)
+        addChild(list)
+        list.view.frame = view.bounds
+        list.view.autoresizingMask = [.width, .height]
+        list.view.additionalSafeAreaInsets.top = chooser.intrinsicContentSize.height + 7
+        view.addSubview(list.view)
+        chooser.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(chooser)
+        NSLayoutConstraint.activate([
+            chooser.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            chooser.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+        ])
+    }
+}
+
+/// The navigator chooser: a tabs-role segmented control at the large size, its segments the 44 pt of the macOS UI Kit's tab bar.
+private final class NavigatorChooser: NSSegmentedControl {
     private weak var project: ProjectModel?
     private var watch: Task<Void, Never>?
 
@@ -12,31 +40,24 @@ final class NavigatorBar: NSView {
         self.project = project
         super.init(frame: .zero)
         let all = Navigator.allCases
-        control.segmentCount = all.count
+        segmentCount = all.count
         for (index, navigator) in all.enumerated() {
-            control.setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
-            control.setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
-            control.setWidth(44, forSegment: index)
+            setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
+            setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
+            setWidth(44, forSegment: index)
         }
-        control.trackingMode = .selectOne
-        control.role = .tabs
-        control.controlSize = .large
-        control.setAccessibilityLabel(String(localized: "Navigators"))
-        control.target = self
-        control.action = #selector(choose)
-        control.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(control)
-        NSLayoutConstraint.activate([
-            control.centerXAnchor.constraint(equalTo: centerXAnchor),
-            control.topAnchor.constraint(equalTo: topAnchor),
-            control.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-        ])
-        watch = track({ project.navigator.shown }) { [weak self] in self?.control.selectedSegment = all.firstIndex(of: $0)! }
+        trackingMode = .selectOne
+        role = .tabs
+        controlSize = .large
+        setAccessibilityLabel(String(localized: "Navigators"))
+        target = self
+        action = #selector(choose)
+        watch = track({ project.navigator.shown }) { [weak self] in self?.selectedSegment = all.firstIndex(of: $0)! }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc private func choose() { project?.showNavigator(Navigator.allCases[control.selectedSegment]) }
+    @objc private func choose() { project?.showNavigator(Navigator.allCases[selectedSegment]) }
 }
 
 extension Navigator {
@@ -61,63 +82,115 @@ extension Navigator {
     var shortcut: KeyEquivalent { KeyEquivalent(Character(String(Self.allCases.firstIndex(of: self)! + 1))) }
 }
 
-/// The filter at the navigator's foot, as Xcode's: a large field in a glass capsule 7 pt in from the sidebar's sides and 8 pt
-/// from its foot, its toggles inside its trailing end, beside a glass add menu in Files.
-struct NavigatorFilter: View {
-    @Environment(WindowModel.self) private var window
-    let project: ProjectModel
+/// The filter bar at the navigator's foot, built as Xcode's large one is: interactive Liquid Glass, which swells under a press,
+/// around a large search field 28 pt tall and 8 pt from the bar's edges, and in Files around a 28 pt add menu 7 pt in, 8 pt
+/// before the field; in Issues a toggle inside the field's trailing end shows only errors.
+final class NavigatorFilterBar: NSView {
+    private let field = RoomySearchField()
+    private let fieldGlass = NSGlassEffectView()
+    private let addGlass = NSGlassEffectView()
+    private let onlyErrors = NSButton()
+    private let windowModel: WindowModel
+    private let project: ProjectModel
+    private var watch: Task<Void, Never>?
 
-    var body: some View {
-        @Bindable var navigator = project.navigator
-        GlassEffectContainer { HStack(spacing: 7) {
-            switch navigator.shown {
-            case .files:
-                Menu {
-                    ForEach([MenuCommand.fileNew, .fileNewFolder, .fileUpload], id: \.self) { command in
-                        Button(command.title) { window.perform(command, on: project) }
-                    }
-                } label: {
-                    Image(systemName: "plus").accessibilityLabel("Add")
-                }
-                .menuIndicator(.hidden)
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .frame(width: Self.height, height: Self.height)
-                .contentShape(.circle)
-                .glassEffect(.regular.interactive(), in: .circle)
-                SearchField.filter($navigator.fileFilter).glassCapsule()
-            case .outline: SearchField.filter($navigator.outlineFilter).glassCapsule()
-            case .search: SearchField.filter($navigator.searchFilter).glassCapsule()
-            case .issues:
-                SearchField(text: $navigator.issueFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol,
-                            bezeled: false, trailingRoom: Self.toggle)
-                .overlay(alignment: .trailing) {
-                    Toggle(isOn: Binding { !navigator.showsWarnings } set: { navigator.showsWarnings = !$0 }) {
-                        Label("Only Errors", systemImage: "exclamationmark.octagon")
-                    }
-                    .toggleStyle(.button)
-                    .buttonStyle(.borderless)
-                    .labelStyle(.iconOnly)
-                    .imageScale(.large)
-                    .help("Show only errors")
-                    .padding(.trailing, 7)
-                }
-                .glassCapsule()
-            }
-        } }
-        .controlSize(.large)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 8)
+    init(project: ProjectModel, window: WindowModel) {
+        (self.project, windowModel) = (project, window)
+        super.init(frame: .zero)
+        field.controlSize = .large
+        field.drawsBackground = false
+        field.placeholderString = String(localized: "Filter")
+        field.setAccessibilityLabel(String(localized: "Filter"))
+        (field.cell as? NSSearchFieldCell)?.searchButtonCell?.image = NSImage(systemSymbolName: SearchField.filterSymbol, accessibilityDescription: nil)
+        field.sendsSearchStringImmediately = true
+        field.target = self
+        field.action = #selector(filter)
+
+        onlyErrors.setButtonType(.pushOnPushOff)
+        onlyErrors.isBordered = false
+        onlyErrors.image = NSImage(systemSymbolName: "exclamationmark.octagon", accessibilityDescription: String(localized: "Only Errors"))
+        onlyErrors.alternateImage = NSImage(systemSymbolName: "exclamationmark.octagon.fill", accessibilityDescription: String(localized: "Only Errors"))
+        onlyErrors.toolTip = String(localized: "Show only errors")
+        onlyErrors.setAccessibilityLabel(String(localized: "Only Errors"))
+        onlyErrors.target = self
+        onlyErrors.action = #selector(toggleErrors)
+        let content = NSView()
+        content.addSubview(field)
+        content.addSubview(onlyErrors)
+        fieldGlass.contentView = content
+
+        let add = NSPopUpButton(frame: .zero, pullsDown: true)
+        add.isBordered = false
+        (add.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        add.addItem(withTitle: "")
+        add.lastItem?.image = NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))
+        for command in [MenuCommand.fileNew, .fileNewFolder, .fileUpload] {
+            add.menu?.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "").representedObject = command
+        }
+        add.itemArray.dropFirst().forEach { $0.target = self }
+        add.setAccessibilityLabel(String(localized: "Add"))
+        addGlass.contentView = add
+
+        for glass in [addGlass, fieldGlass] {
+            glass.cornerRadius = Self.height / 2
+            glass.effectIsInteractive = true
+            addSubview(glass)
+        }
+        watch = track({ Shown(project.navigator) }) { [weak self] in self?.show($0) }
     }
 
+    required init?(coder: NSCoder) { fatalError() }
+
+    private nonisolated struct Shown: Equatable, Sendable {
+        let navigator: Navigator, text: String, onlyErrors: Bool
+
+        @MainActor init(_ model: NavigatorModel) {
+            (navigator, text, onlyErrors) = (model.shown, model[keyPath: model.shown.filter], !model.showsWarnings)
+        }
+    }
+
+    private func show(_ shown: Shown) {
+        if field.stringValue != shown.text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = shown.text }
+        addGlass.isHidden = shown.navigator != .files
+        onlyErrors.isHidden = shown.navigator != .issues
+        onlyErrors.state = shown.onlyErrors ? .on : .off
+        (field.cell as? RoomySearchField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggle
+        needsLayout = true
+    }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height + 2 * 8) }
+
+    override func layout() {
+        super.layout()
+        let y = (bounds.height - Self.height) / 2
+        addGlass.frame = NSRect(x: 7, y: y, width: Self.height, height: Self.height)
+        let minX = addGlass.isHidden ? 8 : addGlass.frame.maxX + 8
+        fieldGlass.frame = NSRect(x: minX, y: y, width: bounds.width - minX - 8, height: Self.height)
+        field.frame = fieldGlass.bounds
+        onlyErrors.frame = NSRect(x: fieldGlass.bounds.maxX - Self.toggle - 4, y: 0, width: Self.toggle, height: Self.height)
+    }
+
+    @objc private func filter() { project.navigator[keyPath: project.navigator.shown.filter] = field.stringValue }
+
+    @objc private func toggleErrors() { project.navigator.showsWarnings = onlyErrors.state == .off }
+
+    @objc private func add(_ item: NSMenuItem) {
+        if let command = item.representedObject as? MenuCommand { windowModel.perform(command, on: project) }
+    }
+
+    /// Xcode's large filter field and add menu, and the macOS UI Kit's large search field: 28 pt tall.
+    private static let height: CGFloat = 28
     private static let toggle: CGFloat = 24
-    /// The macOS UI Kit's large search field and round button: 28 pt tall, the field's symbol 8 pt in.
-    fileprivate static let height: CGFloat = 28
 }
 
-private extension View {
-    func glassCapsule() -> some View {
-        padding(.leading, 8).padding(.trailing, 6).frame(height: NavigatorFilter.height).glassEffect(.regular, in: .capsule)
+private extension Navigator {
+    var filter: ReferenceWritableKeyPath<NavigatorModel, String> {
+        switch self {
+        case .files: \.fileFilter
+        case .outline: \.outlineFilter
+        case .search: \.searchFilter
+        case .issues: \.issueFilter
+        }
     }
 }
 

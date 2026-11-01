@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Find's header, as Xcode's: a path of small menus (Find or Replace, then how the text matches) with Match Case at its
-/// end, the query field under it, and in Replace mode the replacement and Replace All.
+/// Find's header: the query field, whose own menu holds Match Case, Whole Words and Replace, the last adding the replacement
+/// and Replace All under it.
 struct SearchBar: View {
     let project: ProjectModel
     let field: FieldHandle
@@ -16,22 +16,11 @@ struct SearchBar: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
-        } else {
-            HStack(spacing: 2) {
-                step(replacing ? "Replace" : "Find", selection: $replacing, [("Find", false), ("Replace", true)])
-                Image(systemName: "chevron.forward").imageScale(.small).foregroundStyle(.tertiary)
-                step(search.asked.wholeWords.wrappedValue ? "Matching Word" : "Containing", selection: search.asked.wholeWords,
-                     [("Containing", false), ("Matching Word", true)])
-                Spacer()
-                Toggle("Aa", isOn: search.asked.matchCase)
-                    .toggleStyle(.button)
-                    .help("Match Case")
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
         }
         SearchField(text: search.query, prompt: "Search Project", handle: field,
-                    step: { [search = project.search] in if !search.step($0) { NSSound.beep() } })
+                    step: { [search = project.search] in if !search.step($0) { NSSound.beep() } },
+                    options: [(String(localized: "Match Case"), search.asked.matchCase), (String(localized: "Whole Words"), search.asked.wholeWords),
+                              (String(localized: "Replace"), $replacing)])
         if replacing, project.search.usages == nil {
             SearchField(text: search.replacement, prompt: "With", symbol: "arrow.2.squarepath")
             HStack {
@@ -40,16 +29,6 @@ struct SearchBar: View {
                     .disabled(project.search.hitCount == 0)
             }
         }
-    }
-
-    private func step(_ title: LocalizedStringKey, selection: Binding<Bool>, _ choices: [(LocalizedStringKey, Bool)]) -> some View {
-        Menu(title) {
-            Picker(title, selection: selection) { ForEach(choices, id: \.1) { Text($0.0).tag($0.1) } }
-                .pickerStyle(.inline)
-                .labelsHidden()
-        }
-        .menuIndicator(.hidden)
-        .fixedSize()
     }
 }
 
