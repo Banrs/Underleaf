@@ -33,6 +33,9 @@ final class NavigatorModel {
             defaults.set(kept, forKey: DefaultsKey.navigators)
         }
     }
+    /// Files' selection, kept while another navigator shows as Xcode's project navigator keeps its own, so New File still goes
+    /// into the folder chosen there.
+    var fileSelection: String?
     var fileFilter = ""
     var outlineFilter = ""
     var searchFilter = ""
