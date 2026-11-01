@@ -9,6 +9,7 @@ struct LiveFeed {
     var document: (path: String, changed: IndexSet)?
     var pages: [Int: Data] = [:]
     var reading: Task<Void, Never>?
+    var follow: ForwardLoc?
     /// The live document shown, which the next one may change in place.
     weak var shown: PDFDocument?
 }
@@ -59,6 +60,7 @@ extension PDFController {
                 } else {
                     break
                 }
+                if let loc = feed.follow.take() { follow(loc, later: false) }
             }
             if !Task.isCancelled { self?.feed.reading = nil }
         }

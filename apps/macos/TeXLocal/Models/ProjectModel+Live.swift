@@ -30,19 +30,6 @@ extension ProjectModel {
         session.send(LiveCaret(path: caret.path, offset: caret.offset))
     }
 
-    func edited() { if livePDF { followsCaret = true } }
-
-    func liveDocumentShown() {
-        guard followsCaret, let path = openPath, isLaTeX else { return }
-        let line = cursorLine
-        _ = restart(&followTask) { [self] in
-            guard let loc = try? await session.call(SynctexForward(file: path, line: line)), !Task.isCancelled,
-                  livePDF, openPath == path else { return }
-            followsCaret = false
-            views?.follow(loc)
-        }
-    }
-
     func canSyncForward(quietly: Bool = false) -> Bool { hasPDF && isLaTeX && (!quietly || window?.showPDF == true) }
 
     func forwardSync(quietly: Bool = false, wordOnly: Bool = false) async {

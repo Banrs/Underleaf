@@ -520,23 +520,17 @@ struct ViewsTests {
         #expect(project.syncTask != nil)
     }
 
-    @Test func editsWhileTheLivePDFShowsFollowTheCaretUntilLivePreviewStops() async {
+    @Test func theLivePDFShowsWhileLivePreviewRunsUntilTheProjectCloses() async {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = { (phase: LivePhase) in
             project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, failures: [], lines: [:]))))
         }
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
         live(.running)
-        project.edited()
-        project.liveDocumentShown()
-        #expect(!project.followsCaret && !project.showsLive && project.followTask == nil)
+        #expect(!project.showsLive)
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 1, live: true))))
-        project.edited()
-        #expect(project.followsCaret && project.showsLive)
-        project.liveDocumentShown()
-        #expect(project.followTask != nil)
+        #expect(project.showsLive)
         live(.stopped)
-        #expect(!project.followsCaret && !project.showsLive)
+        #expect(!project.showsLive)
         live(.running)
         #expect(await project.close().value && !project.showsLive)
     }
@@ -599,7 +593,6 @@ struct ViewsTests {
             refused.append(edits.path)
             return false
         }
-        func follow(_ loc: ForwardLoc) {}
         func trashed(_ path: String) {}
         func beep() {}
         func requestAttention() { attention += 1 }

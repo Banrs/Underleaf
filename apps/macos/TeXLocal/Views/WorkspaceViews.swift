@@ -31,7 +31,6 @@ final class WorkspaceViews: ProjectViews {
         editor.onCursor = { [weak self] line, column, shown in
             if let self { project.cursorMoved(to: line, column: column, shownColumn: shown, caret: editor.caret, in: editor.path) }
         }
-        editor.onEdit = { [weak self] in self?.project.edited() }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
         editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }
         let text = editor.textView
@@ -85,6 +84,7 @@ final class WorkspaceViews: ProjectViews {
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
         case .liveDocument(let document): if project.showsLive { pdf.showLive(document) }
         case .livePage(let page): if project.showsLive { pdf.showLive(page) }
+        case .liveFollow(let loc): if project.showsLive { pdf.follow(loc) }
         default: break
         }
     }
@@ -103,7 +103,6 @@ final class WorkspaceViews: ProjectViews {
         return true
     }
 
-    func follow(_ loc: ForwardLoc) { pdf.follow(loc) }
     func trashed(_ path: String) { editor.forget(path: path) }
     func beep() { NSSound.beep() }
     func requestAttention() { if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) } }

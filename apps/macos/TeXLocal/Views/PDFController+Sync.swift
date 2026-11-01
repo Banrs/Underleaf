@@ -62,10 +62,17 @@ extension PDFController {
         highlight(found?.selection, or: rect, on: page)
     }
 
-    func follow(_ loc: ForwardLoc) {
+    /// Live Preview's caret: scrolls only when its spot is out of view. A page Live Preview hasn't shown yet is
+    /// followed after the next update, if it brings the page.
+    func follow(_ loc: ForwardLoc, later: Bool = true) {
         let interval = signposts.beginInterval("follow")
         defer { signposts.endInterval("follow", interval) }
-        guard view.hasShownArea, let page = view.document?.page(ifAt: Int(loc.page) - 1) else { return }
+        guard view.hasShownArea else { return }
+        guard let page = view.document?.page(ifAt: Int(loc.page) - 1) else {
+            if later { feed.follow = loc }
+            return
+        }
+        feed.follow = nil
         let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         if !view.shownRect.contains(view.convert(rect, from: page)) { show(rect, on: page) }
     }

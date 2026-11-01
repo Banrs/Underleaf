@@ -11,7 +11,6 @@ protocol ProjectViews: AnyObject {
     func opened(_ ui: UiState)
     func reveal(_ path: String, line: Int?, column: Int?, length: Int?, atTop: Bool, focus: Bool)
     func apply(_ edits: DocumentEdits, named name: String) -> Bool
-    func follow(_ loc: ForwardLoc)
     func trashed(_ path: String)
     func beep()
     func requestAttention()
@@ -104,8 +103,6 @@ final class ProjectModel {
     @ObservationIgnored weak var window: WindowModel?
     @ObservationIgnored weak var views: (any ProjectViews)?
     @ObservationIgnored var syncTask: Task<Void, Never>?
-    @ObservationIgnored var followTask: Task<Void, Never>?
-    @ObservationIgnored var followsCaret = false
     private var closing: Task<Bool, Never>?
     var isOpen: Bool { !closed && closing == nil }
     @ObservationIgnored private var liveLogWatch: Task<Void, Never>?
@@ -246,7 +243,6 @@ final class ProjectModel {
             if shown.live, !live, window?.showPDF == false { window?.showPDF = true }
         case .live(let state):
             texpresso.heard(state)
-            if state.phase != .running { followsCaret = false }
         }
     }
 
