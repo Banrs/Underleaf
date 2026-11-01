@@ -72,7 +72,8 @@ struct PDFFindBar: View {
         // match count inside the field; chevrons drawn 7 pt square in 16 pt segments; Done an accessory bar button.
         HStack(spacing: 8) {
             SearchField(text: $find.text, prompt: "Find", handle: find.field, step: find.next, close: find.close,
-                        status: find.query.isEmpty ? "" : find.matches.count.formatted() + (find.limited ? "+" : ""))
+                        status: find.query.isEmpty ? "" : find.matches.count.formatted() + (find.limited ? "+" : ""),
+                        spokenStatus: label.isEmpty ? nil : label)
             ControlGroup {
                 Button { find.next(-1) } label: { Label { Text("Previous Match") } icon: { Self.back } }
                     .help("Go to the previous match")

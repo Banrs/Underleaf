@@ -4,16 +4,20 @@ struct FilesList: View {
     @Environment(WindowModel.self) private var window
     @Environment(WorkspaceViews.self) private var views
     let project: ProjectModel
-    @State private var selection: String?
     @State private var rename = InPlaceRename<String>()
     @State private var created: String?
     @FocusState private var listFocused: Bool
+
+    private var selection: String? {
+        get { project.navigator.fileSelection }
+        nonmutating set { project.navigator.fileSelection = newValue }
+    }
 
     var body: some View {
         let filter = project.navigator.fileFilter
         let nodes = filtered(project.tree.nodes, \.children, by: filter) { $0.name }
         ScrollViewReader { proxy in
-            List(selection: $selection) {
+            List(selection: Bindable(project.navigator).fileSelection) {
                 TreeRows(nodes: nodes, children: \.children, isExpanded: { node in
                     filter.isEmpty ? disclosure(\.expandedFolders, of: project, key: node.path,
                                                 subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? []) : .constant(true)
@@ -71,8 +75,8 @@ struct FilesList: View {
                     }
                 }
             }
-            .onChange(of: project.openPath, initial: true) { _, path in
-                selection = path
+            .onChange(of: project.openPath, initial: true) { old, path in
+                if old != path || selection == nil { selection = path }
                 if let path { showRow(path) }
             }
             .onKeyPress(.return) {

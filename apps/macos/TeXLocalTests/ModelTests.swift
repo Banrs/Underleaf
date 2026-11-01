@@ -81,6 +81,7 @@ struct LayoutTests {
         #expect(ProjectModel(id: "P", window: defaults.window()).navigator.shown == .outline)
         #expect(ProjectModel(id: "Q", window: defaults.window()).navigator.shown == .files)
         project.navigator.showForFailedBuild()
+        project.navigator.shown = .issues
         project.navigator.returnAfterCleanBuild()
         #expect(project.navigator.shown == .outline)
         project.navigator.showForFailedBuild()

@@ -136,19 +136,20 @@ class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { takesKeys }
 
     func show(_ frame: NSRect, over window: NSWindow, animated: Bool) {
-        if parent == nil {
-            setFrame(frame, display: false)
-            alphaValue = 0
-            window.addChildWindow(self, ordered: .above)
-            NSAnimationContext.runAnimationGroup { _ in animator().alphaValue = 1 }
-        } else if frame != self.frame {
-            let animates = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            // A zero-length group also stops a resize still running, which a plain setFrame would leave to finish.
+        let opening = parent == nil
+        if opening || frame != self.frame {
+            let animates = !opening && animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            // A zero-length group also stops a resize still running, even one from before the panel last closed, which a plain
+            // setFrame would leave to finish.
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = animates ? animationResizeTime(frame) : 0
-                animator().setFrame(frame, display: true)
+                animator().setFrame(frame, display: !opening)
             }
         }
+        guard opening else { return }
+        alphaValue = 0
+        window.addChildWindow(self, ordered: .above)
+        NSAnimationContext.runAnimationGroup { _ in animator().alphaValue = 1 }
     }
 
     func dismiss() {

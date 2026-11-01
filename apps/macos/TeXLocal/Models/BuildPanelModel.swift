@@ -27,12 +27,15 @@ enum Navigator: String, CaseIterable { case files, outline, search, issues }
 final class NavigatorModel {
     var shown: Navigator {
         didSet {
-            beforeFailedBuild = nil
+            if shown != oldValue { beforeFailedBuild = nil }
             var kept = defaults.dictionary(forKey: DefaultsKey.navigators) ?? [:]
             kept[project] = shown.rawValue
             defaults.set(kept, forKey: DefaultsKey.navigators)
         }
     }
+    /// Files' selection, kept while another navigator shows as Xcode's project navigator keeps its own, so New File still goes
+    /// into the folder chosen there.
+    var fileSelection: String?
     var fileFilter = ""
     var outlineFilter = ""
     var searchFilter = ""

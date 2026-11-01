@@ -204,7 +204,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func watchOverflow(of item: NSToolbarItem) {
         item.view = compileButton
         compileItem = item
-        overflow = item.observe(\.isVisible) { [weak self] item, _ in MainActor.assumeIsolated { self?.overflowed(item) } }
+        overflow = item.observe(\.isVisible, options: .initial) { [weak self] item, _ in MainActor.assumeIsolated { self?.overflowed(item) } }
     }
 
     /// AppKit can move the item to the overflow menu for a moment while a resize settles, so it's read again once layout is done.
