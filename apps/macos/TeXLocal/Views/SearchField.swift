@@ -1,7 +1,7 @@
 import SwiftUI
 
 final class FieldHandle {
-    fileprivate(set) weak var field: NSTextField?
+    weak var field: NSTextField?
 
     func focus() {
         guard let field, let window = field.window else { return }

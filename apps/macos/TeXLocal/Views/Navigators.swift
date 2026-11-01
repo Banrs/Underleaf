@@ -85,7 +85,7 @@ extension Navigator {
 /// around a large search field 28 pt tall and 8 pt from the bar's edges, and in Files around a 28 pt add menu 7 pt in, 8 pt
 /// before the field; in Issues a toggle inside the field's trailing end shows only errors.
 final class NavigatorFilterBar: NSView {
-    private let field = FilterField()
+    private let field = NavigatorField()
     private let fieldGlass = NSGlassEffectView()
     private let addGlass = NSGlassEffectView()
     private let onlyErrors = NSButton()
@@ -149,7 +149,7 @@ final class NavigatorFilterBar: NSView {
         addGlass.isHidden = shown.navigator != .files
         onlyErrors.isHidden = shown.navigator != .issues
         onlyErrors.state = shown.onlyErrors ? .on : .off
-        (field.cell as? FilterField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggleRoom
+        (field.cell as? NavigatorField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggleRoom
         needsLayout = true
     }
 
@@ -188,9 +188,10 @@ final class NavigatorFilterBar: NSView {
     private static let toggleRoom: CGFloat = 7 + 17
 }
 
-/// Xcode's navigator filter field, a large DVTSearchField, laid out as it lays out: its symbol 15 pt square 6 pt in, its text
-/// from 22 pt, its clear button 17 pt square 6 pt from the end, before any room kept for toggles over its end.
-private final class FilterField: NSSearchField {
+/// Xcode's large navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 15 pt
+/// square 6 pt in, the text from 22 pt, with or without the symbol, and the clear button 17 pt square 6 pt from the end, before
+/// any room kept for toggles over the end.
+final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         var room: CGFloat = 0
 
