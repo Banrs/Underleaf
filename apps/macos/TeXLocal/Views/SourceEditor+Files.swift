@@ -30,7 +30,7 @@ extension SourceEditor {
         reportCursor()
     }
 
-    func forget(path: String) { kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") } }
+    func forget(path: String) { kept = kept.filter { !$0.key.isWithin(path) } }
 
     func rename(from: String, to: String) {
         forget(path: to)

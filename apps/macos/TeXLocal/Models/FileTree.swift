@@ -12,7 +12,7 @@ final class FileTree {
 
     func node(at path: String) -> TreeNode? {
         var level = store.tree
-        while let next = level.first(where: { path == $0.path || path.hasPrefix($0.path + "/") }) {
+        while let next = level.first(where: { path.isWithin($0.path) }) {
             if next.path == path { return next }
             level = next.children ?? []
         }

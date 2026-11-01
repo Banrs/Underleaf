@@ -36,6 +36,8 @@ extension [TreeNode] {
 nonisolated extension String {
     var parentFolder: String { (self as NSString).deletingLastPathComponent }
     var fileName: String { (self as NSString).lastPathComponent }
+    /// Whether this project path is the given one or lies inside it.
+    func isWithin(_ folder: String) -> Bool { self == folder || hasPrefix(folder + "/") }
 }
 
 nonisolated extension NSRange {
@@ -119,9 +121,7 @@ nonisolated extension Snapshot: Identifiable {
 }
 
 func remapPath(_ path: String, from: String, to: String) -> String {
-    if path == from { return to }
-    if path.hasPrefix(from + "/") { return to + path.dropFirst(from.count) }
-    return path
+    path.isWithin(from) ? to + path.dropFirst(from.count) : path
 }
 
 enum SyntaxTheme: String, CaseIterable, Identifiable {
