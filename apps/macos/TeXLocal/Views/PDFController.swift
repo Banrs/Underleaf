@@ -205,7 +205,7 @@ final class PDFController: NSObject {
         defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document, let old = document.page(ifAt: index) else { return }
         find.cancel()
-        view.removeMark()
+        if view.mark?.page === old { view.removeMark() }
         view.covering(covers) {
             document.insert(page, at: index)
             document.removePage(at: index + 1)

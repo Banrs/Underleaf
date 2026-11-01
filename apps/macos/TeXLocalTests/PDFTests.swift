@@ -65,7 +65,7 @@ struct PDFTests {
         }
     }
 
-    @Test func aLivePageReplacesItsPageInPlace() throws {
+    @Test func aLivePageReplacesItsPageInPlaceAndASyncMarkOnlyOnThatPageGoes() throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)
         defer { window.close() }
@@ -73,8 +73,11 @@ struct PDFTests {
         controller.show(document)
         view.go(to: PDFDestination(page: try #require(document.page(at: 1)), at: CGPoint(x: 0, y: 400)))
         let place = try shown(view)
+        view.flash(CGRect(x: 72, y: 600, width: 100, height: 12), on: try #require(document.page(at: 2)))
         for index in [1, 3] { controller.show(try #require(try textPDF(["typed"]).page(at: 0)), at: index) }
-        #expect(view.document === document && document.pageCount == 3)
+        #expect(view.document === document && document.pageCount == 3 && view.mark?.page === document.page(at: 2))
+        controller.show(try #require(try textPDF(["typed"]).page(at: 0)), at: 2)
+        #expect(view.mark == nil)
         #expect(document.page(at: 1)?.string?.contains("typed") == true)
         #expect(try shown(view) == place)
     }
