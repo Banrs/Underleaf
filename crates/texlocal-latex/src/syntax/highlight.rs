@@ -73,9 +73,16 @@ enum Mode {
     Normal,
     Math(&'static str),
     Arguments,
-    Opening(&'static str),
+    Opening(Environment),
     Verbatim(&'static str),
+    MathEnvironment(&'static str, bool),
     Verb(u16),
+}
+
+#[derive(Clone, Copy)]
+enum Environment {
+    Verbatim(&'static str),
+    Maths(&'static str, bool),
 }
 
 #[derive(Clone, Copy)]
@@ -127,7 +134,7 @@ fn named(name: &[u16]) -> bool {
 
 fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, HighlightKind)) {
     if blank_line(line) {
-        if !matches!(state.mode, Mode::Verbatim(_)) {
+        if !matches!(state.mode, Mode::Verbatim(_) | Mode::MathEnvironment(..)) {
             *state = State::default();
         }
         return;
@@ -137,10 +144,11 @@ fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, H
         let from = s.pos;
         let kind = match state.mode {
             Mode::Normal => normal(&mut s, state),
-            Mode::Math(end) => math(&mut s, state, end),
+            Mode::Math(end) => math(&mut s, state, Some(end)),
             Mode::Arguments => arguments(&mut s, state),
-            Mode::Opening(name) => opening(&mut s, state, name),
+            Mode::Opening(environment) => opening(&mut s, state, environment),
             Mode::Verbatim(name) => verbatim(&mut s, state, name),
+            Mode::MathEnvironment(name, starred) => math_environment(&mut s, state, name, starred),
             Mode::Verb(delimiter) => verb(&mut s, state, delimiter),
         };
         if let Some(kind) = kind {
@@ -159,8 +167,8 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
                     state.mode = Mode::Verb(delimiter);
                 }
             }
-            "begin" if let Some(name) = verbatim_environment(&s.text[s.pos..]) => {
-                state.mode = Mode::Opening(name);
+            "begin" if let Some(environment) = environment(&s.text[s.pos..]) => {
+                state.mode = Mode::Opening(environment);
             }
             word => {
                 let address = matches!(word, "url" | "href");
@@ -203,11 +211,25 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     }
 }
 
-fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<HighlightKind> {
+fn math_environment(
+    s: &mut Stream,
+    state: &mut State,
+    name: &'static str,
+    starred: bool,
+) -> Option<HighlightKind> {
+    let mut end = Stream { ..*s };
+    if end.eat("\\end{") && end.eat(name) && (!starred || end.eat("*")) && end.eat("}") {
+        state.mode = Mode::Normal;
+        return None;
+    }
+    math(s, state, None)
+}
+
+fn math(s: &mut Stream, state: &mut State, end: Option<&'static str>) -> Option<HighlightKind> {
     if s.eat_while(|u| char::from_u32(u.into()).is_some_and(char::is_whitespace)) {
         return None;
     }
-    if s.eat(end) {
+    if end.is_some_and(|end| s.eat(end)) {
         state.mode = Mode::Normal;
         return Some(Maths);
     }
@@ -283,25 +305,37 @@ fn control_symbol(s: &mut Stream) -> bool {
     symbol
 }
 
-fn verbatim_environment(rest: &[u16]) -> Option<&'static str> {
+fn environment(rest: &[u16]) -> Option<Environment> {
     if !rest.first().is_some_and(|&u| is(u, '{')) {
         return None;
     }
     let close = rest.iter().take(NAME).position(|&u| is(u, '}'))?;
     let mut buf = [0; NAME];
     let name = ascii(&rest[1..close], &mut buf);
-    CATALOG.verbatim_environments.get(name).map(String::as_str)
+    if let Some(name) = CATALOG.verbatim_environments.get(name) {
+        return Some(Environment::Verbatim(name));
+    }
+    let bare = name.strip_suffix('*');
+    let maths = CATALOG.math_environments.get(bare.unwrap_or(name))?;
+    Some(Environment::Maths(maths, bare.is_some()))
 }
 
-fn opening(s: &mut Stream, state: &mut State, name: &'static str) -> Option<HighlightKind> {
+fn opening(s: &mut Stream, state: &mut State, environment: Environment) -> Option<HighlightKind> {
+    let (body, length) = match environment {
+        Environment::Verbatim(name) => (Mode::Verbatim(name), name.len()),
+        Environment::Maths(name, starred) => (
+            Mode::MathEnvironment(name, starred),
+            name.len() + usize::from(starred),
+        ),
+    };
     match char::from_u32(s.next() as u32) {
         Some('{') => None,
         Some('}') => {
-            state.mode = Mode::Verbatim(name);
+            state.mode = body;
             None
         }
         _ => {
-            s.pos += name.len() - 1;
+            s.pos += length - 1;
             Some(Argument)
         }
     }

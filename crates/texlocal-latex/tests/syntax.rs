@@ -120,6 +120,31 @@ fn highlighting_carries_maths_and_verbatim_across_lines_and_follows_edits() {
 }
 
 #[test]
+fn a_maths_environment_is_maths_until_its_own_end() {
+    let text =
+        "\\begin{align*}\nx^2 \\end{aligned}\n\n\\end{align*} y \\begin{equation}a\\end{equation}";
+    let mut doc = SourceDocument::new(text);
+    let found = [
+        ("\\begin", "Command"),
+        ("align*", "Argument"),
+        ("x", "Maths"),
+        ("^", "Command"),
+        ("2", "Maths"),
+        ("\\end", "Command"),
+        ("aligned", "Maths"),
+        ("\\end", "Command"),
+        ("align", "Argument"),
+        ("*", "Argument"),
+        ("\\begin", "Command"),
+        ("equation", "Argument"),
+        ("a", "Maths"),
+        ("\\end", "Command"),
+        ("equation", "Argument"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn the_scanner_knows_where_maths_is() {
     let cases = [
         ("$a$ \\(", true),
