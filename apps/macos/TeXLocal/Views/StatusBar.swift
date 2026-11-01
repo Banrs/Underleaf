@@ -142,7 +142,7 @@ private struct CaretPlace: View {
     var body: some View {
         if window.showSource, project.editsText {
             Button { window.perform(.editGotoLine, on: project) } label: {
-                place(detail, "Line: \(project.cursorLine)  Col: \(project.shownColumn)",
+                place(detail, "Line: \(String(project.cursorLine))  Col: \(String(project.shownColumn))",
                       short: "\(project.cursorLine):\(project.shownColumn)",
                       spoken: "Line \(project.cursorLine), Column \(project.shownColumn)")
             }
@@ -192,7 +192,7 @@ private struct PagePlace: View {
             freshness
             Button { window.perform(.pdfGotoPage, on: project) } label: {
                 let (page, count) = (views.pdf.page, views.pdf.pageCount)
-                place(detail, "Page \(page) of \(count)", short: "\(page)/\(count)", spoken: "Page \(page) of \(count)")
+                place(detail, "Page \(String(page)) of \(String(count))", short: "\(page)/\(count)", spoken: "Page \(page) of \(count)")
             }
             .help("Go to a page")
         }
