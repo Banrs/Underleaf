@@ -93,6 +93,7 @@ texlocal_latex::messages! {
     no_synctex = "This PDF has no SyncTeX: compile it again.";
     invalid_line = "Invalid source line";
     no_match_in_pdf = "Nothing in the PDF matches this line.";
+    no_output_here = "Nothing on this line appears in the PDF";
     invalid_pdf_place = "Invalid PDF location";
     no_match_in_source = "Nothing in the source matches this spot.";
     no_source_file = "No source file at this location";

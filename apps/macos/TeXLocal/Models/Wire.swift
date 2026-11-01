@@ -491,6 +491,7 @@ nonisolated enum Event: Decodable, Hashable, Sendable {
     case liveAlert
     case livePage(LivePage)
     case liveDocument(LiveDocument)
+    case liveFollow(ForwardLoc)
 
     enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
@@ -508,6 +509,7 @@ nonisolated extension Event {
         case "liveAlert": self = .liveAlert
         case "livePage": self = .livePage(try wire.decode(LivePage.self, forKey: .value))
         case "liveDocument": self = .liveDocument(try wire.decode(LiveDocument.self, forKey: .value))
+        case "liveFollow": self = .liveFollow(try wire.decode(ForwardLoc.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
         }
     }
@@ -906,9 +908,8 @@ nonisolated struct LiveCaret: SessionRequest {
 nonisolated struct LiveDocument: Decodable, Hashable, Sendable {
     var path: String
     var changed: [PageRange]
-    var complete: Bool
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, changed, complete }
+    enum CodingKeys: String, CodingKey, CaseIterable { case path, changed }
 }
 
 nonisolated extension LiveDocument {
@@ -916,7 +917,6 @@ nonisolated extension LiveDocument {
         let wire = try decoder.strict(CodingKeys.self)
         path = try wire.decode(String.self, forKey: .path)
         changed = try wire.decode([PageRange].self, forKey: .changed)
-        complete = try wire.decode(Bool.self, forKey: .complete)
     }
 }
 
@@ -950,11 +950,10 @@ nonisolated struct LiveState: Decodable, Hashable, Sendable {
     var phase: LivePhase
     var engine: Engine
     var halted: Bool
-    var log: String?
     var failures: [Message]
     var lines: [String: [IssueLine]]
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, log, failures, lines }
+    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, failures, lines }
 }
 
 nonisolated extension LiveState {
@@ -963,7 +962,6 @@ nonisolated extension LiveState {
         phase = try wire.decode(LivePhase.self, forKey: .phase)
         engine = try wire.decode(Engine.self, forKey: .engine)
         halted = try wire.decode(Bool.self, forKey: .halted)
-        log = try wire.decode(String?.self, forKey: .log)
         failures = try wire.decode([Message].self, forKey: .failures)
         lines = try wire.decode([String: [IssueLine]].self, forKey: .lines)
     }
@@ -1241,6 +1239,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case noSynctex = "no_synctex"
     case invalidLine = "invalid_line"
     case noMatchInPdf = "no_match_in_pdf"
+    case noOutputHere = "no_output_here"
     case invalidPdfPlace = "invalid_pdf_place"
     case noMatchInSource = "no_match_in_source"
     case noSourceFile = "no_source_file"
@@ -1403,6 +1402,30 @@ nonisolated struct PdfPage: Encodable, Hashable, Sendable {
     var page: Int
     var text: String
     var near: [TextRange]
+}
+
+nonisolated struct PdfPlace: Codable, Hashable, Sendable {
+    var page: Int
+    var x: Double
+    var y: Double
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case page, x, y }
+}
+
+nonisolated extension PdfPlace {
+    init(from decoder: any Decoder) throws {
+        let wire = try decoder.strict(CodingKeys.self)
+        page = try wire.decode(Int.self, forKey: .page)
+        x = try wire.decode(Double.self, forKey: .x)
+        y = try wire.decode(Double.self, forKey: .y)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var wire = encoder.container(keyedBy: CodingKeys.self)
+        try wire.encode(page, forKey: .page)
+        try wire.encode(x, forKey: .x)
+        try wire.encode(y, forKey: .y)
+    }
 }
 
 nonisolated struct ProjectEdits: Decodable, Hashable, Sendable {
@@ -1825,6 +1848,7 @@ nonisolated enum SessionSection: Decodable, Hashable, Sendable {
     case buildLog(String)
     case shownPdf(ShownPdf)
     case live(LiveState)
+    case liveLog(String)
 
     enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
 }
@@ -1843,6 +1867,7 @@ nonisolated extension SessionSection {
         case "buildLog": self = .buildLog(try wire.decode(String.self, forKey: .value))
         case "shownPdf": self = .shownPdf(try wire.decode(ShownPdf.self, forKey: .value))
         case "live": self = .live(try wire.decode(LiveState.self, forKey: .value))
+        case "liveLog": self = .liveLog(try wire.decode(String.self, forKey: .value))
         case let type: throw DecodingError.dataCorruptedError(forKey: .type, in: wire, debugDescription: "No case \(type)")
         }
     }
@@ -2313,6 +2338,7 @@ nonisolated struct UiPlace: Encodable, Hashable, Sendable {
     var file: String?
     var line: Int?
     var zoom: Zoom?
+    var pdfPlace: PdfPlace?
 }
 
 nonisolated struct UiState: Decodable, Hashable, Sendable {
@@ -2321,8 +2347,9 @@ nonisolated struct UiState: Decodable, Hashable, Sendable {
     var file: String?
     var line: Int?
     var zoom: Zoom?
+    var pdfPlace: PdfPlace?
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom }
+    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom, pdfPlace }
 }
 
 nonisolated extension UiState {
@@ -2333,6 +2360,7 @@ nonisolated extension UiState {
         file = try wire.decode(String?.self, forKey: .file)
         line = try wire.decode(Int?.self, forKey: .line)
         zoom = try wire.decode(Zoom?.self, forKey: .zoom)
+        pdfPlace = try wire.decode(PdfPlace?.self, forKey: .pdfPlace)
     }
 }
 
@@ -2424,6 +2452,7 @@ final class SessionStore {
     private(set) var buildLog: String?
     private(set) var shownPdf: ShownPdf?
     private(set) var live: LiveState?
+    private(set) var liveLog: String?
 
     func apply(_ section: SessionSection) {
         switch section {
@@ -2437,6 +2466,7 @@ final class SessionStore {
         case .buildLog(let value): self.buildLog = value
         case .shownPdf(let value): self.shownPdf = value
         case .live(let value): self.live = value
+        case .liveLog(let value): self.liveLog = value
         }
     }
 }

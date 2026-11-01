@@ -203,7 +203,7 @@ final class ProjectModel {
     func handle(_ event: Event) {
         switch event {
         case .section(let section): apply(section)
-        case .documentReload, .renamed, .livePage, .liveDocument: break
+        case .documentReload, .renamed, .livePage, .liveDocument, .liveFollow: break
         case .conflict(let asked):
             conflicts.removeAll { $0.path == asked.path }
             conflicts.append(asked)
@@ -223,7 +223,7 @@ final class ProjectModel {
         switch section {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
-        case .lifecycle, .tree, .buildLog: break
+        case .lifecycle, .tree, .buildLog, .liveLog: break
         case .openFile, .outline: findHeadings()
         case .documents(let documents):
             for document in documents {
