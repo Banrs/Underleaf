@@ -13,10 +13,10 @@ use super::actor::{Actor, Later, Timer};
 use super::build::{IssueLine, issue_lines};
 use super::state::SessionSection;
 use crate::events::{Event, LiveDocument, LivePage};
-use crate::paths;
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
 use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane, RunEnd};
+use crate::{paths, synctex};
 
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 
@@ -394,6 +394,9 @@ impl Actor {
             } => {
                 if pages > 0 {
                     self.live.document_seen = true;
+                    if let Some(Ok(pdf)) = self.live.run.as_ref().map(|run| run.pdf()) {
+                        synctex::warm(pdf);
+                    }
                     self.publish_pdf();
                     self.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }

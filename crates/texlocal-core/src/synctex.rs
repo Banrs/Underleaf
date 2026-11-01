@@ -1,5 +1,5 @@
 use std::io::{Error, ErrorKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
 use texlocal_latex::syntax::{SyncLines, sync_lines};
 use texlocal_latex::wordmatch::find_in_source;
+use tokio::task::JoinHandle;
 
 use crate::error::CoreError;
 use crate::messages;
@@ -60,6 +61,10 @@ fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
         let bytes = std::fs::read(file)?;
         SyncTex::read(bytes).ok_or_else(|| Error::new(ErrorKind::InvalidData, "not a SyncTeX file"))
     })
+}
+
+pub(crate) fn warm(pdf: PathBuf) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || drop(beside(&pdf)))
 }
 
 fn source_file(root: &Path, name: &str) -> Option<String> {
@@ -141,4 +146,28 @@ pub(crate) fn inverse(
         line: found.map_or(line, |(line, _)| line),
         column: found.map(|(_, column)| column),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    use super::*;
+
+    const SYNCTEX: &str = "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{1\n[1,3:0,800:600,800,0\n(1,3:100,100:400,10,2\ng1,3:150,100\n)\n]\n}1\nPostamble:\n";
+
+    #[tokio::test]
+    async fn a_warmed_synctex_is_not_read_again_while_its_file_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pdf, file) = (dir.path().join("main.pdf"), dir.path().join("main.synctex"));
+        fs::write(&file, SYNCTEX).unwrap();
+        let modified = fs::metadata(&file).unwrap().modified().unwrap();
+        warm(pdf.clone()).await.unwrap();
+        let mut junk = File::options().write(true).open(&file).unwrap();
+        junk.write_all(&vec![b'x'; SYNCTEX.len()]).unwrap();
+        junk.set_modified(modified).unwrap();
+        drop(junk);
+        assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
+    }
 }
