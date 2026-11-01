@@ -17,6 +17,7 @@ struct StatusBar: View {
         }
         .barRow(leading: 14, trailing: 16.5)
         .contentShape(.rect)
+        .barEdge()
         .monospacedDigit()
         .buttonStyle(.borderless)
         .contextMenu { Button(window.title(.viewToggleWordCount, on: project)) { window.perform(.viewToggleWordCount, on: project) } }
@@ -243,5 +244,15 @@ extension View {
             .frame(minHeight: BarMetrics.target).padding(.leading, leading).padding(.trailing, trailing).padding(.vertical, 8)
     }
 
+    /// A bar's top edge: a hairline, as above Xcode's debug bar, there whether or not text runs beneath, which the
+    /// scroll edge's own line is not.
+    func barEdge() -> some View { overlay(alignment: .top) { BarEdge() } }
+
     fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.target, minHeight: BarMetrics.target).contentShape(.rect) }
+}
+
+private struct BarEdge: View {
+    @Environment(\.pixelLength) private var pixelLength
+
+    var body: some View { Rectangle().fill(.separator).frame(height: pixelLength) }
 }

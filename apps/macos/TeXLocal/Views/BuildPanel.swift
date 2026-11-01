@@ -18,13 +18,7 @@ struct BuildPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
-        .scrollEdgeEffectHidden(true, for: .bottom)
-        .safeAreaBar(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
-                BuildPanelBar(project: project)
-            }
-        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { BuildPanelBar(project: project) }
     }
 }
 
@@ -57,6 +51,7 @@ private struct BuildPanelBar: View {
         .labelStyle(.iconOnly)
         .barRow(leading: 12, trailing: 17)
         .background(.textSurface)
+        .barEdge()
     }
 }
 

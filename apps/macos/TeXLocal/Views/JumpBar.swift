@@ -132,6 +132,8 @@ private struct JumpChevron: View {
             .imageScale(.small)
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 2)
+            .fixedSize()
+            .layoutPriority(3)
             .accessibilityHidden(true)
     }
 }
