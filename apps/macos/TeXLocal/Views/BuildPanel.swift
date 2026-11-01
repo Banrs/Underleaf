@@ -43,7 +43,7 @@ private struct BuildPanelBar: View {
             Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
-            SearchField.filter($panel.logFilter)
+            SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol)
                 .controlSize(.regular)
                 .frame(maxWidth: 180)
         }
