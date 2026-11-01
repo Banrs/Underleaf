@@ -26,6 +26,8 @@ struct SearchField: NSViewRepresentable {
     var close: (@MainActor () -> Void)?
     var options: [(title: String, isOn: Binding<Bool>)] = []
     var status: String?
+    /// The status as VoiceOver reads it, since the drawn one isn't in the accessibility tree.
+    var spokenStatus: String?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
@@ -99,7 +101,7 @@ struct SearchField: NSViewRepresentable {
             (view.needsLayout, view.needsDisplay) = (true, true)
         }
         view.placeholderString = prompt
-        view.setAccessibilityLabel(prompt)
+        view.setAccessibilityLabel(spokenStatus.map { "\(prompt), \($0)" } ?? prompt)
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
         }
