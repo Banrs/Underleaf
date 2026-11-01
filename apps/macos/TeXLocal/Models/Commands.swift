@@ -245,14 +245,3 @@ extension WindowModel {
         }
     }
 }
-
-struct EnginePicker: View {
-    let project: ProjectModel?
-
-    var body: some View {
-        Picker("Engine", selection: project.map { Bindable($0).engine } ?? .constant(nil)) {
-            ForEach(Engine.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
-        }
-        .disabled(project?.engine == nil)
-    }
-}
