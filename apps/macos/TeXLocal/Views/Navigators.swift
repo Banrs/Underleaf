@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The navigator chooser across the sidebar's top, as Xcode's: a tabs-role segmented control at the large size,
-/// its segments filling the width and starting 8 pt in from the sidebar's edges, where Xcode's start.
+/// The navigator chooser across the sidebar's top: a tabs-role segmented control at the large size, its segments the
+/// 44 pt of the macOS UI Kit's tab bar and centred, as the kit's are, with Xcode's 7 pt before the list.
 final class NavigatorBar: NSView {
     private let control = NSSegmentedControl()
     private weak var project: ProjectModel?
@@ -16,21 +16,20 @@ final class NavigatorBar: NSView {
         for (index, navigator) in all.enumerated() {
             control.setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
             control.setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
+            control.setWidth(44, forSegment: index)
         }
         control.trackingMode = .selectOne
         control.role = .tabs
         control.controlSize = .large
-        control.segmentDistribution = .fillEqually
         control.setAccessibilityLabel(String(localized: "Navigators"))
         control.target = self
         control.action = #selector(choose)
         control.translatesAutoresizingMaskIntoConstraints = false
         addSubview(control)
         NSLayoutConstraint.activate([
-            control.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            control.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            control.centerXAnchor.constraint(equalTo: centerXAnchor),
             control.topAnchor.constraint(equalTo: topAnchor),
-            control.bottomAnchor.constraint(equalTo: bottomAnchor),
+            control.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])
         watch = track({ project.navigator.shown }) { [weak self] in self?.control.selectedSegment = all.firstIndex(of: $0)! }
     }
@@ -62,15 +61,15 @@ extension Navigator {
     var shortcut: KeyEquivalent { KeyEquivalent(Character(String(Self.allCases.firstIndex(of: self)! + 1))) }
 }
 
-/// The filter at the navigator's foot, as Xcode's: a large field 7 pt in from the sidebar's edges, its toggles inside
-/// its trailing end, beside an add menu in Files.
+/// The filter at the navigator's foot, as Xcode's: a large field in a glass capsule 7 pt in from the sidebar's sides and 8 pt
+/// from its foot, its toggles inside its trailing end, beside a glass add menu in Files.
 struct NavigatorFilter: View {
     @Environment(WindowModel.self) private var window
     let project: ProjectModel
 
     var body: some View {
         @Bindable var navigator = project.navigator
-        HStack(spacing: 6) {
+        GlassEffectContainer { HStack(spacing: 7) {
             switch navigator.shown {
             case .files:
                 Menu {
@@ -81,15 +80,17 @@ struct NavigatorFilter: View {
                     Image(systemName: "plus").accessibilityLabel("Add")
                 }
                 .menuIndicator(.hidden)
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .fixedSize()
-                SearchField.filter($navigator.fileFilter)
-            case .outline: SearchField.filter($navigator.outlineFilter)
-            case .search: SearchField.filter($navigator.searchFilter)
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .frame(width: Self.height, height: Self.height)
+                .contentShape(.circle)
+                .glassEffect(.regular.interactive(), in: .circle)
+                SearchField.filter($navigator.fileFilter).glassCapsule()
+            case .outline: SearchField.filter($navigator.outlineFilter).glassCapsule()
+            case .search: SearchField.filter($navigator.searchFilter).glassCapsule()
             case .issues:
                 SearchField(text: $navigator.issueFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol,
-                            trailingRoom: Self.toggle)
+                            bezeled: false, trailingRoom: Self.toggle)
                 .overlay(alignment: .trailing) {
                     Toggle(isOn: Binding { !navigator.showsWarnings } set: { navigator.showsWarnings = !$0 }) {
                         Label("Only Errors", systemImage: "exclamationmark.octagon")
@@ -101,13 +102,23 @@ struct NavigatorFilter: View {
                     .help("Show only errors")
                     .padding(.trailing, 7)
                 }
+                .glassCapsule()
             }
-        }
+        } }
         .controlSize(.large)
-        .padding(7)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 8)
     }
 
     private static let toggle: CGFloat = 24
+    /// The macOS UI Kit's large search field and round button: 28 pt tall, the field's symbol 8 pt in.
+    fileprivate static let height: CGFloat = 28
+}
+
+private extension View {
+    func glassCapsule() -> some View {
+        padding(.leading, 8).padding(.trailing, 6).frame(height: NavigatorFilter.height).glassEffect(.regular, in: .capsule)
+    }
 }
 
 struct NavigatorPane: View {

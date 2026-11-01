@@ -20,6 +20,7 @@ struct SearchField: NSViewRepresentable {
     let prompt: String
     var symbol: String?
     var large = false
+    var bezeled = true
     var trailingRoom: CGFloat = 0
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
@@ -61,7 +62,7 @@ struct SearchField: NSViewRepresentable {
     static let filterSymbol = "line.3.horizontal.decrease.circle"
 
     static func filter(_ text: Binding<String>) -> SearchField {
-        SearchField(text: text, prompt: String(localized: "Filter"), symbol: filterSymbol)
+        SearchField(text: text, prompt: String(localized: "Filter"), symbol: filterSymbol, bezeled: false)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -73,9 +74,9 @@ struct SearchField: NSViewRepresentable {
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))
+        if large || !bezeled { (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none) }
         if large, let cell = view.cell as? NSSearchFieldCell {
             view.font = .systemFont(ofSize: 20)
-            (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
             (cell.searchButtonCell, cell.cancelButtonCell) = (nil, nil)
         }
         handle?.field = view
