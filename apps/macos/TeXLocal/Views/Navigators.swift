@@ -238,7 +238,9 @@ struct NavigatorPane: View {
     let field: FieldHandle
 
     var body: some View {
-        Group {
+        // One container, not a Group, whose modifiers each navigator would take as its own: the chooser and the search's task
+        // last across a switch, so the chooser's capsule glides on, rather than a new chooser drawing it already arrived.
+        ZStack {
             switch project.navigator.shown {
             case .files: FilesList(project: project)
             case .outline: OutlineList(project: project)
