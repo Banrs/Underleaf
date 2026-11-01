@@ -15,6 +15,7 @@ use texlocal_latex::{bib, project};
 
 use super::Pending;
 use super::actor::Actor;
+use super::live::typeset_lines;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
 use crate::{CoreError, lf, lock, lossy_string, messages, paths, settings};
 
@@ -192,13 +193,17 @@ impl Actor {
         }
         let (live, project) = (self.live_pdf(), self.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
+        let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset(&file));
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
                 let text = match doc {
                     Some(doc) => doc.snapshot().0,
                     None => lossy_string(fs::read(paths::safe_path(&project.root, &file)?)?),
                 };
-                let lines = sync_lines(&text, line);
+                let lines = match typeset.flatten() {
+                    Some(typeset) => typeset_lines(&typeset, &text, line),
+                    None => sync_lines(&text, line),
+                };
                 synctex::forward(&project, &file, &lines, live.as_deref())
             }));
         });

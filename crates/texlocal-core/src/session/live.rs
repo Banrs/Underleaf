@@ -44,6 +44,10 @@ struct Issue {
     at: u32,
 }
 
+pub(crate) fn typeset_lines(typeset: &str, text: &str, line: u32) -> SyncLines {
+    sync_lines(typeset, map_line(typeset, text, line))
+}
+
 #[derive(Default)]
 pub(crate) struct Live {
     phase: LivePhase,
@@ -74,6 +78,10 @@ pub(crate) struct Live {
 impl Live {
     pub fn active(&self) -> bool {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
+    }
+
+    pub fn typeset(&self, path: &str) -> Option<Arc<str>> {
+        self.typeset.get(path).cloned()
     }
 
     fn running(&self) -> Option<Arc<dyn LiveRun>> {
@@ -362,7 +370,7 @@ impl Actor {
         let (generation, follows) = (live.generation, live.follows);
         tokio::task::spawn_blocking(move || {
             let (text, line) = doc.with(|source| (source.text(), source.line_at(offset as u32)));
-            let lines = sync_lines(&typeset, map_line(&typeset, &text, line));
+            let lines = typeset_lines(&typeset, &text, line);
             if matches!(lines, SyncLines::Whole(_)) {
                 return;
             }
