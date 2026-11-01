@@ -180,7 +180,7 @@ impl Actor {
 }
 
 impl Actor {
-    fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
+    pub fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
         let shown = self.live.active() && self.live.document_seen;
         let run = self.live.run.as_ref().filter(|_| shown);
         run.map(|run| run.pdf()).transpose()

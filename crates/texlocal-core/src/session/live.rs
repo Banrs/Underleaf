@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
+use texlocal_latex::diff::map_line;
 use texlocal_latex::logparse::{LogItem, parse_live_log};
 use texlocal_latex::message::Message;
-use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::syntax::{SyncLines, TextEdit, sync_lines};
 use texlocal_latex::{is_text, utf16};
 
 use super::Msg;
@@ -64,6 +65,9 @@ pub(crate) struct Live {
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
+    typeset: HashMap<String, Arc<str>>,
+    follow: bool,
+    follows: u64,
     pub run: Option<Arc<dyn LiveRun>>,
 }
 
@@ -134,7 +138,7 @@ impl Actor {
     }
 
     fn live_reset(&mut self) {
-        for timer in [Timer::Caret, Timer::Halting, Timer::Issues] {
+        for timer in [Timer::Caret, Timer::Follow, Timer::Halting, Timer::Issues] {
             self.timers.remove(&timer);
         }
         let live = &mut self.live;
@@ -145,6 +149,8 @@ impl Actor {
         (live.halted, live.sent_view, live.caret) = (false, None, None);
         (live.mark_sent, live.mark_read) = (0, 0);
         live.issues.clear();
+        live.typeset.clear();
+        live.follow = false;
     }
 
     fn live_cancel_work(&mut self) {
@@ -260,6 +266,7 @@ impl Actor {
         }
         let end = edit.start as usize + utf16::len(&edit.text);
         self.live.caret = Some((path.to_owned(), end));
+        self.follow_soon();
         let live = &self.live;
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
@@ -325,7 +332,51 @@ impl Actor {
         self.live.wanted = Some((path, offset));
         if self.live.phase == LivePhase::Running {
             self.after(Timer::Caret);
+            self.follow_soon();
         }
+    }
+
+    fn follow_soon(&mut self) {
+        self.live.follow = true;
+        self.soon(Timer::Follow);
+    }
+
+    pub fn follow(&mut self) {
+        if !std::mem::take(&mut self.live.follow) {
+            return;
+        }
+        let Some((path, offset)) = self.live.wanted.clone() else {
+            return;
+        };
+        let (Some(doc), Some(typeset)) = (self.docs.get(&path), self.live.typeset.get(&path))
+        else {
+            return;
+        };
+        let (doc, typeset) = (doc.doc.clone(), Arc::clone(typeset));
+        let Ok(Some(pdf)) = self.live_pdf() else {
+            return;
+        };
+        let live = &mut self.live;
+        live.follows += 1;
+        let (tx, project) = (self.tx.clone(), self.project.clone());
+        let (generation, follows) = (live.generation, live.follows);
+        tokio::task::spawn_blocking(move || {
+            let (text, line) = doc.with(|source| (source.text(), source.line_at(offset as u32)));
+            let lines = sync_lines(&typeset, map_line(&typeset, &text, line));
+            if matches!(lines, SyncLines::Whole(_)) {
+                return;
+            }
+            let Ok(loc) = synctex::forward(&project, &path, &lines, Some(&pdf)) else {
+                return;
+            };
+            let followed = move |actor: &mut Self| {
+                let live = &actor.live;
+                if (live.generation, live.follows) == (generation, follows) {
+                    actor.emit(Event::LiveFollow(loc));
+                }
+            };
+            let _ = tx.send(Msg::Snapshotted(Box::new(followed)));
+        });
     }
 
     pub fn caret_settled(&mut self) {
@@ -394,9 +445,7 @@ impl Actor {
             } => {
                 if pages > 0 {
                     self.live.document_seen = true;
-                    if let Some(Ok(pdf)) = self.live.run.as_ref().map(|run| run.pdf()) {
-                        synctex::warm(pdf);
-                    }
+                    self.keep_typeset();
                     self.publish_pdf();
                     self.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
@@ -419,6 +468,20 @@ impl Actor {
                 self.ended();
             }
         }
+    }
+
+    fn keep_typeset(&mut self) {
+        let Some(run) = &self.live.run else {
+            return;
+        };
+        if let Ok(pdf) = run.pdf() {
+            synctex::warm(pdf);
+        }
+        let typeset = self
+            .docs
+            .keys()
+            .filter_map(|path| Some((path.clone(), run.text(path)?.into())));
+        self.live.typeset = typeset.collect();
     }
 
     fn run_ended(&mut self, run: RunEnd) {

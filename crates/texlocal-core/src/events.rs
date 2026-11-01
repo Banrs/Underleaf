@@ -126,10 +126,6 @@ pub(crate) enum Event {
     LiveAlert,
     LivePage(LivePage),
     LiveDocument(LiveDocument),
-    #[expect(
-        dead_code,
-        reason = "the wire contract lands before the follow that sends it"
-    )]
     LiveFollow(ForwardLoc),
 }
 
