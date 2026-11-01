@@ -34,7 +34,10 @@ const MB: f64 = 1024.0 * 1024.0;
 fn the_long_fixtures_synctex_cost() {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     let project = home.join("TeXLocal/Test Long (400 pages)");
-    let bytes = std::fs::read(project.join("build/main.synctex.gz")).unwrap();
+    // CI runs every ignored test but has no fixture.
+    let Ok(bytes) = std::fs::read(project.join("build/main.synctex.gz")) else {
+        return eprintln!("no built 400-page fixture");
+    };
     let (before, started) = (LIVE.load(Relaxed), Instant::now());
     PEAK.store(before, Relaxed);
     let sync = SyncTex::read(bytes).unwrap();
