@@ -7,7 +7,6 @@ extension SourceEditor {
     }
 
     var renamable: SymbolName? {
-        _ = changes.count
         guard let found = textView.document.symbol(at: textView.selection.location),
               [.label, .citation].contains(found.kind) else { return nil }
         return found

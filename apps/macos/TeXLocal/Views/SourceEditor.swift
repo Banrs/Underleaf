@@ -6,9 +6,20 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     let scrollView = ScrollView()
     var onCursor: (Int, Int, Int) -> Void = { _, _, _ in }
     var onScroll: (Int) -> Void = { _ in }
+    /// Each edit and selection change, for views reading the text or selection to look again.
+    var onChange: () -> Void = {}
 
     var path: String?
-    var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?, folds: FoldSet)] = [:]
+    var kept: [String: Kept] = [:]
+
+    /// A file's state when another one opened in its place, given back if it opens again unchanged.
+    struct Kept {
+        let text: String
+        let undo: UndoManager
+        let selection: NSRange
+        let top: (offset: Int, below: CGFloat)?
+        let folds: FoldSet
+    }
 
     var shown = false {
         didSet {
@@ -17,8 +28,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
     var focusWhenShown = false
-
-    let changes = EditorChanges()
 
     final class ScrollView: NSScrollView {
         var scrolled: () -> Void = {}
@@ -78,7 +87,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
-        changes.count += 1
+        onChange()
     }
 
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
@@ -96,7 +105,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
-        changes.count += 1
+        onChange()
         guard !textView.loading else { return }
         reportCursor()
     }

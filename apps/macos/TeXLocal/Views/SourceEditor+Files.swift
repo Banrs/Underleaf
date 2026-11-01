@@ -3,7 +3,8 @@ import AppKit
 extension SourceEditor {
     func open(path: String, source: SourceDocument) {
         if let current = self.path {
-            kept[current] = (textView.source as String, textView.undo, textView.selection, textView.shownTop, textView.folds)
+            kept[current] = Kept(text: textView.source as String, undo: textView.undo, selection: textView.selection, top: textView.shownTop,
+                                 folds: textView.folds)
         }
         self.path = path
         textView.load(source)

@@ -32,6 +32,7 @@ final class WorkspaceViews: ProjectViews {
             if let self { project.cursorMoved(to: line, column: column, shownColumn: shown, caret: editor.caret, in: editor.path) }
         }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
+        editor.onChange = { [weak self] in self?.changes += 1 }
         editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }
         let text = editor.textView
         text.isContinuousSpellCheckingEnabled = project.window?.app.spellCheck ?? true
@@ -118,7 +119,7 @@ final class WorkspaceViews: ProjectViews {
         case .jumpToDefinition: editor.jumpToDefinition()
         case .findUsages:
             if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
-        case .editRename: project.window?.prompt = editor.renamable.map(Prompt.rename)
+        case .editRename: project.window?.prompt = renamable.map(Prompt.rename)
         case .openQuickly: OpenQuickly.show(for: project)
         case .pdfOpen: if let url = project.buildPDF { NSWorkspace.shared.open(url) }
         case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
@@ -128,7 +129,7 @@ final class WorkspaceViews: ProjectViews {
 
     func validates(_ command: MenuCommand) -> Bool {
         switch command {
-        case .editRename: editor.renamable != nil
+        case .editRename: renamable != nil
         case .viewZoomIn: pdf.canZoomIn
         case .viewZoomOut: pdf.canZoomOut
         default: true
@@ -152,10 +153,11 @@ final class WorkspaceViews: ProjectViews {
         }
     }
 
-    var changes: Int { editor.changes.count }
+    private(set) var changes = 0
     var selection: NSRange { editor.textView.selectedRange() }
     var lineCount: Int { editor.textView.document.lineCount }
     var textStyles: TextStyles { _ = changes; return editor.textStyles }
+    private var renamable: SymbolName? { _ = changes; return editor.renamable }
     func words(in selection: NSRange) -> Int { editor.textView.document.words(in: selection) }
     func focusEditor() { editor.focus() }
 
