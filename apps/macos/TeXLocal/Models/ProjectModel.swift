@@ -179,7 +179,9 @@ final class ProjectModel {
     }
 
     func cursorMoved(to line: Int, column: Int, caret offset: Int, in path: String?) {
+        let moved = caret?.path != path || caret?.offset != offset
         caret = path.map { ($0, offset) }
+        if moved { liveCaret() }
         guard line != cursorLine || column != cursorColumn else { return }
         (cursorLine, cursorColumn, currentLine) = (line, column, line)
         if !caretMoved {
@@ -187,7 +189,6 @@ final class ProjectModel {
             Task { [weak self] in self?.caretMoved = false }
         }
         findHeadings()
-        liveCaret()
     }
 
     func scrolled(to line: Int) {
