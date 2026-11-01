@@ -14,7 +14,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::files::{occupied, untrash};
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
-use super::tree::{listed, walk};
+use super::tree::{listed, visit_files, walk};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, fold_case, sanitize_name, ui_file};
@@ -177,19 +177,30 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         }
     }
     tex.sort();
-    let starts_document = |name: &&String| {
-        let bytes = fs::read(root.join(name.as_str()));
-        bytes.is_ok_and(|bytes| {
+    let starts_document = |path: &Path| {
+        fs::read(path).is_ok_and(|bytes| {
             let text = String::from_utf8_lossy(&bytes);
             SourceDocument::new(&text).document_class().is_some()
         })
     };
-    Ok(tex
+    let top = tex
         .iter()
         .find(|name| fold_case(name) == "main.tex")
-        .or_else(|| tex.iter().find(starts_document))
-        .or(tex.first())
-        .cloned())
+        .or_else(|| tex.iter().find(|name| starts_document(&root.join(name))))
+        .or(tex.first());
+    if let Some(top) = top {
+        return Ok(Some(top.clone()));
+    }
+    let mut nested = None;
+    visit_files(root, &mut |path, rel| {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        let found = file_kind(name) == FileKind::Tex && !name.starts_with('-');
+        if found && starts_document(path) {
+            nested = Some(rel.to_owned());
+        }
+        Ok(nested.is_none())
+    })?;
+    Ok(nested)
 }
 
 pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
