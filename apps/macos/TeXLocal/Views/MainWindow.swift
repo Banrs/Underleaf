@@ -12,6 +12,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private(set) var workspace: WorkspaceController?
     private var watches: [Task<Void, Never>] = []
     private let findEditor = FindPassingTextView()
+    /// The window took the frame its project was last shown in, so it isn't cascaded from the front window.
+    private let framed: Bool
 
     init(app: AppModel, project id: String) {
         let model = WindowModel(app: app)
@@ -29,13 +31,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.autorecalculatesKeyViewLoop = true
         window.contentMinSize = ColumnMetrics.contentMinimum
         window.backgroundColor = .untintedTextBackground
+        // Each project keeps its own frame; the names are unique per project, so no two open windows share one.
+        let frameName = "Project \(id)"
+        framed = window.setFrameUsingName(frameName)
+        if !framed { window.center() }
+        window.setFrameAutosaveName(frameName)
         super.init(window: window)
         window.delegate = self
         model.controller = self
         Self.kept.append(self)
         findEditor.isFieldEditor = true
-        window.center()
-        window.setFrameAutosaveName("Main Window")
         let project = views.project
         watches = [
             track({ project.initialLoadComplete }) { [weak self] _ in self?.showWorkspace() },
@@ -49,8 +54,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     required init?(coder: NSCoder) { fatalError() }
 
     func show() {
-        if let window, !window.isVisible, !window.isMiniaturized,
+        if !framed, let window, !window.isVisible, !window.isMiniaturized,
            let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
+            // A project shown for the first time takes the front window's size, as the shared "Main Window" frame gave it before.
+            window.setFrame(NSRect(origin: window.frame.origin, size: front.frame.size), display: false)
             window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
         showWorkspace()

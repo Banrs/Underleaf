@@ -26,6 +26,7 @@ pub(crate) enum SessionSection {
     BuildLog(String),
     ShownPdf(ShownPdf),
     Live(LiveState),
+    LiveLog(String),
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -87,6 +88,7 @@ impl Actor {
         self.publish(SessionSection::BuildLog(String::new()));
         self.publish_pdf();
         self.publish_live(false);
+        self.publish(SessionSection::LiveLog(String::new()));
     }
 
     pub fn show_tree(&mut self, tree: Vec<TreeNode>) -> bool {

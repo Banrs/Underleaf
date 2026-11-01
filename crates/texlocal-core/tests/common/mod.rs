@@ -301,6 +301,12 @@ impl Rig {
         seen.iter().map(kind).collect()
     }
 
+    pub fn listen(&self, quiet: Duration) {
+        while let Ok(event) = self.events.recv_timeout(quiet) {
+            self.seen.lock().unwrap().push(event);
+        }
+    }
+
     pub fn forget(&self) {
         self.seen.lock().unwrap().clear();
         while self.events.try_recv().is_ok() {}
@@ -339,6 +345,8 @@ impl Drop for Rig {
 pub struct FakePreview {
     sink: Mutex<Option<Sink>>,
     pub log: Mutex<String>,
+    texts: Mutex<HashMap<String, String>>,
+    pub pdf: Mutex<Option<PathBuf>>,
 }
 
 impl FakePreview {
@@ -363,20 +371,33 @@ impl Preview for Previewing {
     fn start(
         &self,
         _: &Project,
-        _: &[FileBuffer],
+        files: &[FileBuffer],
         _: &str,
         _: &Pane,
         sink: Sink,
     ) -> Result<Arc<dyn LiveRun>, CoreError> {
         *self.0.sink.lock().unwrap() = Some(sink);
+        let files = files
+            .iter()
+            .map(|file| (file.path.clone(), file.text.clone()));
+        *self.0.texts.lock().unwrap() = files.collect();
         Ok(self.0.clone())
     }
 }
 
 impl LiveRun for FakePreview {
-    fn update(&self, _: &str, _: &str) {}
+    fn update(&self, rel: &str, text: &str) {
+        self.texts.lock().unwrap().insert(rel.into(), text.into());
+    }
 
-    fn edit(&self, _: &str, _: usize, _: usize, _: &str) -> bool {
+    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool {
+        let mut texts = self.texts.lock().unwrap();
+        let Some(held) = texts.get_mut(rel) else {
+            return false;
+        };
+        let units: Vec<u16> = held.encode_utf16().collect();
+        let (before, after) = (&units[..start], &units[start + remove..]);
+        *held = String::from_utf16_lossy(before) + text + &String::from_utf16_lossy(after);
         true
     }
 
@@ -398,12 +419,13 @@ impl LiveRun for FakePreview {
         Some(self.log.lock().unwrap().clone())
     }
 
-    fn text(&self, _: &str) -> Option<String> {
-        None
+    fn text(&self, rel: &str) -> Option<String> {
+        self.texts.lock().unwrap().get(rel).cloned()
     }
 
     fn pdf(&self) -> Result<PathBuf, CoreError> {
-        Err(CoreError::not_found(messages::texpresso_unsynced()))
+        let pdf = self.pdf.lock().unwrap().clone();
+        pdf.ok_or_else(|| CoreError::not_found(messages::texpresso_unsynced()))
     }
 
     fn stop(&self) {

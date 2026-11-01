@@ -1,11 +1,14 @@
 use std::io::{Error, ErrorKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::syntax::{SyncLines, sync_lines};
+use texlocal_latex::utf16;
 use texlocal_latex::wordmatch::find_in_source;
+use tokio::task::JoinHandle;
 
 use crate::error::CoreError;
 use crate::messages;
@@ -61,6 +64,10 @@ fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
     })
 }
 
+pub(crate) fn warm(pdf: PathBuf) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || drop(beside(&pdf)))
+}
+
 fn source_file(root: &Path, name: &str) -> Option<String> {
     source_rel(root, name).and_then(|rel| disk_spelling(root, &rel))
 }
@@ -68,23 +75,17 @@ fn source_file(root: &Path, name: &str) -> Option<String> {
 pub(crate) fn forward(
     project: &Project,
     file: &str,
-    line: u32,
+    lines: &SyncLines,
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    if line < 1 {
-        return Err(CoreError::bad_request(messages::invalid_line()));
-    }
     let sync = sync_for(project, live)?;
     let tag = sync
         .inputs()
         .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(file))
-        .map(|(tag, _)| tag);
-    let line = i32::try_from(line).unwrap_or(i32::MAX);
+        .map(|(tag, _)| tag)
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
     let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
-    let mut matches: Vec<_> = tag
-        .map(|tag| sync.forward(tag, line))
-        .unwrap_or_default()
-        .into_iter()
+    let mut matches: Vec<_> = (sync.forward(tag, lines).into_iter())
         .filter(|shown| shown.page >= 1)
         .map(|shown| ForwardLoc {
             page: f64::from(shown.page),
@@ -98,7 +99,7 @@ pub(crate) fn forward(
     let mut first = matches
         .first()
         .cloned()
-        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
+        .ok_or_else(|| CoreError::not_found(messages::no_output_here()))?;
     matches.sort_by(|a, b| {
         a.page
             .total_cmp(&b.page)
@@ -130,14 +131,52 @@ pub(crate) fn inverse(
         .ok_or_else(|| CoreError::not_found(messages::no_match_in_source()))?;
     let rel =
         source_file(root, name).ok_or_else(|| CoreError::not_found(messages::no_source_file()))?;
-    let found = click.and_then(|PageClick { text, at }| {
-        let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
-        let source = typeset(&rel).or_else(disk)?;
-        find_in_source(&source, line, &text, at)
-    });
+    let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
+    let source = typeset(&rel).or_else(disk);
+    if let Some(text) = source.as_deref()
+        && let SyncLines::Whole(picture) = sync_lines(text, line)
+    {
+        // The caret goes to the picture's \begin, a spot found like a clicked word, so a double-click follows it.
+        let line = *picture.start();
+        let begin = text.lines().nth(line as usize - 1).unwrap_or_default();
+        let column = begin
+            .find("\\begin")
+            .map(|byte| utf16::len(&begin[..byte]) as u32);
+        return Ok(InverseLoc {
+            file: rel,
+            line,
+            column,
+        });
+    }
+    let found = click
+        .and_then(|PageClick { text, at }| find_in_source(source.as_deref()?, line, &text, at));
     Ok(InverseLoc {
         file: rel,
         line: found.map_or(line, |(line, _)| line),
         column: found.map(|(_, column)| column),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    use super::*;
+
+    const SYNCTEX: &str = "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{1\n[1,3:0,800:600,800,0\n(1,3:100,100:400,10,2\ng1,3:150,100\n)\n]\n}1\nPostamble:\n";
+
+    #[tokio::test]
+    async fn a_warmed_synctex_is_not_read_again_while_its_file_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pdf, file) = (dir.path().join("main.pdf"), dir.path().join("main.synctex"));
+        fs::write(&file, SYNCTEX).unwrap();
+        let modified = fs::metadata(&file).unwrap().modified().unwrap();
+        warm(pdf.clone()).await.unwrap();
+        let mut junk = File::options().write(true).open(&file).unwrap();
+        junk.write_all(&vec![b'x'; SYNCTEX.len()]).unwrap();
+        junk.set_modified(modified).unwrap();
+        drop(junk);
+        assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
+    }
 }

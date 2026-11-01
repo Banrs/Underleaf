@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
+use texlocal_latex::diff::map_line;
 use texlocal_latex::logparse::{LogItem, parse_live_log};
 use texlocal_latex::message::Message;
-use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::syntax::{SyncLines, TextEdit, sync_lines};
 use texlocal_latex::{is_text, utf16};
 
 use super::Msg;
@@ -13,10 +14,10 @@ use super::actor::{Actor, Later, Timer};
 use super::build::{IssueLine, issue_lines};
 use super::state::SessionSection;
 use crate::events::{Event, LiveDocument, LivePage};
-use crate::paths;
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
-use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane};
+use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane, RunEnd};
+use crate::{paths, synctex};
 
 pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
 
@@ -34,7 +35,6 @@ pub(crate) struct LiveState {
     phase: LivePhase,
     engine: Engine,
     halted: bool,
-    log: Option<String>,
     failures: Vec<Message>,
     lines: BTreeMap<String, Vec<IssueLine>>,
 }
@@ -42,6 +42,10 @@ pub(crate) struct LiveState {
 struct Issue {
     item: LogItem,
     at: u32,
+}
+
+pub(crate) fn typeset_lines(typeset: &str, text: &str, line: u32) -> SyncLines {
+    sync_lines(typeset, map_line(typeset, text, line))
 }
 
 #[derive(Default)]
@@ -65,12 +69,19 @@ pub(crate) struct Live {
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
+    typeset: HashMap<String, Arc<str>>,
+    follow: bool,
+    follows: u64,
     pub run: Option<Arc<dyn LiveRun>>,
 }
 
 impl Live {
     pub fn active(&self) -> bool {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
+    }
+
+    pub fn typeset(&self, path: &str) -> Option<Arc<str>> {
+        self.typeset.get(path).cloned()
     }
 
     fn running(&self) -> Option<Arc<dyn LiveRun>> {
@@ -102,9 +113,6 @@ impl Actor {
             phase: live.phase,
             engine: Engine::Xelatex,
             halted: live.halted,
-            log: live
-                .log_shown
-                .then(|| live.run.as_ref().map(|run| run.log()).unwrap_or_default()),
             failures: live.failure.iter().cloned().collect(),
             lines: lines.collect(),
         }
@@ -120,8 +128,13 @@ impl Actor {
 
     pub fn show_live_log(&mut self, shown: bool) {
         self.live.log_shown = shown;
-        if shown {
-            self.publish_live(false);
+        self.publish_live_log();
+    }
+
+    pub fn publish_live_log(&mut self) {
+        if self.live.log_shown {
+            let log = self.live.run.as_ref().map(|run| run.log());
+            self.publish(SessionSection::LiveLog(log.unwrap_or_default()));
         }
     }
 
@@ -133,7 +146,7 @@ impl Actor {
     }
 
     fn live_reset(&mut self) {
-        for timer in [Timer::Caret, Timer::Halting, Timer::Issues] {
+        for timer in [Timer::Caret, Timer::Follow, Timer::Halting, Timer::Issues] {
             self.timers.remove(&timer);
         }
         let live = &mut self.live;
@@ -144,6 +157,8 @@ impl Actor {
         (live.halted, live.sent_view, live.caret) = (false, None, None);
         (live.mark_sent, live.mark_read) = (0, 0);
         live.issues.clear();
+        live.typeset.clear();
+        live.follow = false;
     }
 
     fn live_cancel_work(&mut self) {
@@ -162,6 +177,7 @@ impl Actor {
         self.live_reset();
         self.live.document_seen = false;
         self.publish_live(false);
+        self.publish_live_log();
         self.publish_pdf();
         if self.auto_compile {
             self.later.push_back(Later::Compile(true));
@@ -215,6 +231,7 @@ impl Actor {
                 live.sent = versions;
                 (live.sent_view, live.caret) = (live.view, caret);
                 self.publish_live(false);
+                self.publish_live_log();
                 self.flush_pending();
             }
             Err(error) => {
@@ -257,6 +274,7 @@ impl Actor {
         }
         let end = edit.start as usize + utf16::len(&edit.text);
         self.live.caret = Some((path.to_owned(), end));
+        self.follow_soon();
         let live = &self.live;
         if live.sent.get(path).is_some_and(|sent| version <= *sent) {
             return;
@@ -322,7 +340,51 @@ impl Actor {
         self.live.wanted = Some((path, offset));
         if self.live.phase == LivePhase::Running {
             self.after(Timer::Caret);
+            self.follow_soon();
         }
+    }
+
+    fn follow_soon(&mut self) {
+        self.live.follow = true;
+        self.soon(Timer::Follow);
+    }
+
+    pub fn follow(&mut self) {
+        if !std::mem::take(&mut self.live.follow) {
+            return;
+        }
+        let Some((path, offset)) = self.live.wanted.clone() else {
+            return;
+        };
+        let (Some(doc), Some(typeset)) = (self.docs.get(&path), self.live.typeset.get(&path))
+        else {
+            return;
+        };
+        let (doc, typeset) = (doc.doc.clone(), Arc::clone(typeset));
+        let Ok(Some(pdf)) = self.live_pdf() else {
+            return;
+        };
+        let live = &mut self.live;
+        live.follows += 1;
+        let (tx, project) = (self.tx.clone(), self.project.clone());
+        let (generation, follows) = (live.generation, live.follows);
+        tokio::task::spawn_blocking(move || {
+            let (text, line) = doc.with(|source| (source.text(), source.line_at(offset as u32)));
+            let lines = typeset_lines(&typeset, &text, line);
+            if matches!(lines, SyncLines::Whole(_)) {
+                return;
+            }
+            let Ok(loc) = synctex::forward(&project, &path, &lines, Some(&pdf)) else {
+                return;
+            };
+            let followed = move |actor: &mut Self| {
+                let live = &actor.live;
+                if (live.generation, live.follows) == (generation, follows) {
+                    actor.emit(Event::LiveFollow(loc));
+                }
+            };
+            let _ = tx.send(Msg::Snapshotted(Box::new(followed)));
+        });
     }
 
     pub fn caret_settled(&mut self) {
@@ -391,17 +453,13 @@ impl Actor {
             } => {
                 if pages > 0 {
                     self.live.document_seen = true;
+                    self.keep_typeset();
                     self.publish_pdf();
-                    let complete = !matches!(run.as_str(), "stopped" | "partial");
-                    self.emit(Event::LiveDocument(LiveDocument {
-                        path,
-                        changed,
-                        complete,
-                    }));
+                    self.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
-                self.run_ended(&run);
+                self.run_ended(run);
             }
-            LiveEvent::Done(run) => self.run_ended(&run),
+            LiveEvent::Done(run) => self.run_ended(run),
             LiveEvent::Synced(mark) => self.live.mark_read = mark,
             LiveEvent::Log if self.live.log_shown => self.soon(Timer::Log),
             LiveEvent::Log => {}
@@ -420,12 +478,26 @@ impl Actor {
         }
     }
 
-    fn run_ended(&mut self, run: &str) {
+    fn keep_typeset(&mut self) {
+        let Some(run) = &self.live.run else {
+            return;
+        };
+        if let Ok(pdf) = run.pdf() {
+            synctex::warm(pdf);
+        }
+        let typeset = self
+            .docs
+            .keys()
+            .filter_map(|path| Some((path.clone(), run.text(path)?.into())));
+        self.live.typeset = typeset.collect();
+    }
+
+    fn run_ended(&mut self, run: RunEnd) {
         self.after(Timer::Issues);
         match run {
-            "partial" => {}
-            "stopped" => self.soon(Timer::Halting),
-            _ => {
+            RunEnd::Partial => {}
+            RunEnd::Stopped => self.soon(Timer::Halting),
+            RunEnd::Complete => {
                 self.timers.remove(&Timer::Halting);
                 self.live_halted(false);
             }
@@ -487,6 +559,7 @@ impl Actor {
         }
         let doc = &self.docs[path].doc;
         let inserted = edit.map_or(0, |edit| utf16::len(&edit.text) as u32);
+        let (count, mut moved) = (self.live.issues.len(), false);
         self.live.issues.retain_mut(|issue| {
             if !ours(issue) {
                 return true;
@@ -496,13 +569,17 @@ impl Actor {
             };
             if edit.start + edit.length <= issue.at {
                 issue.at = issue.at - edit.length + inserted;
-                issue.item.line = Some(doc.with(|source| source.line_at(issue.at)));
+                let line = Some(doc.with(|source| source.line_at(issue.at)));
+                moved |= issue.item.line != line;
+                issue.item.line = line;
                 true
             } else {
                 edit.start > issue.at
             }
         });
-        self.publish_live(false);
+        if moved || self.live.issues.len() != count {
+            self.publish_live(false);
+        }
     }
 
     pub fn live_issues_opened(&mut self, path: &str) {

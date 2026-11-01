@@ -115,6 +115,20 @@ struct WindowTests {
         await close(app)
     }
 
+    @Test func aProjectsWindowReopensWithTheFrameItWasLeftWith() async throws {
+        let project = try await newProject()
+        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame Project \(project.id)") }
+        let app = windowedApp()
+        await app.showHome().open(project.id)
+        let screen = try #require(window(of: app.window(showing: project.id))?.screen?.visibleFrame)
+        let left = NSRect(x: screen.minX + 40, y: screen.minY + 40, width: 800, height: 560)
+        window(of: app.window(showing: project.id))?.setFrame(left, display: false)
+        await close(app)
+        await app.showHome().open(project.id)
+        #expect(window(of: app.window(showing: project.id))?.frame == left)
+        await close(app)
+    }
+
     @Test func theProjectsWindowIsSingleAndShowsWhenTheLastProjectWindowClosesOrAProjectCloses() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = windowedApp()

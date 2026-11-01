@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 extension ProjectModel {
     var livePreview: Bool {
@@ -29,19 +30,6 @@ extension ProjectModel {
         session.send(LiveCaret(path: caret.path, offset: caret.offset))
     }
 
-    func edited() { if livePDF { followsCaret = true } }
-
-    func liveDocumentShown() {
-        guard followsCaret, let path = openPath, isLaTeX else { return }
-        let line = cursorLine
-        _ = restart(&followTask) { [self] in
-            guard let loc = try? await session.call(SynctexForward(file: path, line: line)), !Task.isCancelled,
-                  livePDF, openPath == path else { return }
-            followsCaret = false
-            views?.follow(loc)
-        }
-    }
-
     func canSyncForward(quietly: Bool = false) -> Bool { hasPDF && isLaTeX && (!quietly || window?.showPDF == true) }
 
     func forwardSync(quietly: Bool = false, wordOnly: Bool = false) async {
@@ -52,7 +40,9 @@ extension ProjectModel {
             guard await save(reporting: !quietly), !Task.isCancelled, openPath == path else { return }
             let shown = views?.shownVersion
             do {
+                let interval = signposts.beginInterval("sync.forward")
                 let loc = try await session.call(request)
+                signposts.endInterval("sync.forward", interval)
                 guard !Task.isCancelled, openPath == path, views?.shownVersion == shown else { return }
                 window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, wordOnly: wordOnly)))
             } catch {

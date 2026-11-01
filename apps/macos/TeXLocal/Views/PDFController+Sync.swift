@@ -1,4 +1,5 @@
 import PDFKit
+import os
 
 extension PDFController {
     func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
@@ -61,8 +62,17 @@ extension PDFController {
         highlight(found?.selection, or: rect, on: page)
     }
 
-    func follow(_ loc: ForwardLoc) {
-        guard view.hasShownArea, let page = view.document?.page(ifAt: Int(loc.page) - 1) else { return }
+    /// Live Preview's caret: scrolls only when its spot is out of view. A page Live Preview hasn't shown yet is
+    /// followed after the next update, if it brings the page.
+    func follow(_ loc: ForwardLoc, later: Bool = true) {
+        let interval = signposts.beginInterval("follow")
+        defer { signposts.endInterval("follow", interval) }
+        guard view.hasShownArea else { return }
+        guard let page = view.document?.page(ifAt: Int(loc.page) - 1) else {
+            if later { feed.follow = loc }
+            return
+        }
+        feed.follow = nil
         let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         if !view.shownRect.contains(view.convert(rect, from: page)) { show(rect, on: page) }
     }
@@ -72,6 +82,8 @@ extension PDFController {
     }
 
     private func syncPages(_ boxes: [ForwardLoc], in document: PDFDocument) -> [(page: PDFPage, text: PdfPage)] {
+        let interval = signposts.beginInterval("sync.pages")
+        defer { signposts.endInterval("sync.pages", interval) }
         let numbers = boxes.map { Int($0.page) }
         guard let lowest = numbers.min(), let highest = numbers.max() else { return [] }
         let first = max(1, lowest - 1), last = min(document.pageCount, highest + 1)

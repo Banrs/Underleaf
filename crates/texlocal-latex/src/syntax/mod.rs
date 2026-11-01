@@ -13,6 +13,7 @@ mod scans;
 mod snippet;
 mod stack;
 mod style;
+mod sync;
 mod typing;
 
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub use complete::{Installed, SymbolKind, Symbols};
 pub use complete::{definitions, usages};
 use highlight::Highlight;
 pub use highlight::HighlightKind;
+pub use sync::{SyncLines, sync_lines};
 
 use crate::utf16;
 
@@ -214,6 +216,11 @@ impl SourceDocument {
     pub fn line_start(&self, line: u32) -> u32 {
         let index = (line.max(1) as usize - 1).min(self.text.lines.len() - 1);
         self.text.lines[index]
+    }
+
+    pub fn line(&self, line: u32) -> Option<String> {
+        let index = (line as usize).checked_sub(1)?;
+        (index < self.text.lines.len()).then(|| utf16::lossy(self.text.line(index)))
     }
 
     pub fn line_count(&self) -> u32 {

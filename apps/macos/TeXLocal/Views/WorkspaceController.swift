@@ -230,7 +230,7 @@ final class WorkspaceController: ThinSplitViewController {
                 setCollapsed(outlineItem, state != .open)
             },
             track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
-            track({ project.hasPDF }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
+            track({ project.hasPDF || pdf.isLoading }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
         ]
     }

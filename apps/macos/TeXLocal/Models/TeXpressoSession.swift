@@ -17,7 +17,7 @@ final class TeXpressoSession {
 
     var log: String {
         guard let live = store.live else { return "" }
-        return (live.failures.map(\.text) + [live.log ?? ""]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return (live.failures.map(\.text) + [store.liveLog ?? ""]).filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
     var title: LocalizedStringResource {
