@@ -205,10 +205,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         overflow = item.observe(\.isVisible) { [weak self] item, _ in MainActor.assumeIsolated { self?.overflowed(item) } }
     }
 
+    /// AppKit can move the item to the overflow menu for a moment while a resize settles, so it's read again once layout is done.
     private func overflowed(_ item: NSToolbarItem) {
-        guard !item.isVisible, !compactCompile, toolbar.isVisible, let room = workspace?.toolbarRoom else { return }
-        wideRoom = room + compileButton.intrinsicContentSize.width
-        setCompact(true)
+        guard !item.isVisible, !compactCompile else { return }
+        Task { [weak self] in
+            guard let self, !item.isVisible, !compactCompile, toolbar.isVisible, let room = workspace?.toolbarRoom else { return }
+            wideRoom = room + compileButton.intrinsicContentSize.width
+            setCompact(true)
+        }
     }
 
     /// Called as the columns change size: Compile reads as a word again once the room has grown, since the word last didn't fit,
