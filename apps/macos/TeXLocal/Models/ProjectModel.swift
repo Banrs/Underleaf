@@ -132,7 +132,9 @@ final class ProjectModel {
     var isLaTeX: Bool { openKind == .tex }
     var sourceToolsEnabled: Bool { isLaTeX && window?.showSource == true }
 
-    var headingCommand: String { outline.first { $0.file == openPath && $0.line == cursorLine }?.command ?? "" }
+    var headingCommand: String { outline.first { isOpenFile($0.file) && $0.line == cursorLine }?.command ?? "" }
+
+    func isOpenFile(_ path: String) -> Bool { openPath.map { path.caseInsensitiveCompare($0) == .orderedSame } ?? false }
     var editsText: Bool { openKind?.isText == true }
 
     var saveFailure: String? {
@@ -318,8 +320,7 @@ final class ProjectModel {
     }
 
     private func heading(at line: Int) -> Int? {
-        guard let openPath else { return nil }
-        return outline.lastIndex { $0.line <= line && $0.file.caseInsensitiveCompare(openPath) == .orderedSame }
+        outline.lastIndex { $0.line <= line && isOpenFile($0.file) }
     }
 
     func replaceAll() async {
