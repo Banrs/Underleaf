@@ -187,7 +187,8 @@ final class WorkspaceViews: ProjectViews {
     }
 
     private func reload(_ path: String) {
-        guard editor.path == path, let source = SourceDocument(session: project.session, path: path) else { return }
+        guard editor.path == path, !editor.textView.document.editable,
+              let source = SourceDocument(session: project.session, path: path) else { return }
         editor.reload(source)
     }
 

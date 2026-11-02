@@ -100,6 +100,38 @@ struct CoreTests {
         #expect(await project.close().value)
     }
 
+    @Test func anAcceptedEditSurvivesAnExternalReloadWithItsUndoAndAConflict() async throws {
+        let info = try await newProject(template: .blank)
+        let defaults = TestDefaults(), window = defaults.window()
+        window.app.autoCompile = false
+        let project = ProjectModel(id: info.id, window: window), views = WorkspaceViews(project: project)
+        try await project.load()
+        let text = views.editor.textView, before = text.string, undo = text.undo
+        var reload: Event?
+        project.session.heard = { event in
+            if case .documentReload = event { reload = event } else { project.handle(event) }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let range = NSRange(location: 0, length: 0)
+        undo.beginUndoGrouping()
+        #expect(text.shouldChangeText(in: range, replacementString: "% accepted\n"))
+        try "external\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
+        try await waitUntil { reload != nil }
+        text.textStorage?.replaceCharacters(in: range, with: "% accepted\n")
+        text.didChangeText()
+        undo.endUndoGrouping()
+        project.handle(try #require(reload))
+        #expect(text.string == "% accepted\n" + before && text.undo === undo && undo.canUndo)
+        #expect(await project.save() == false)
+        #expect(try String(contentsOfFile: info.path + "/main.tex", encoding: .utf8) == "external\n")
+        #expect(project.conflicts.first?.path == "main.tex")
+        undo.undo()
+        #expect(text.string == before)
+        try await project.session.call(Resolve(path: "main.tex", answer: .save))
+        #expect(try String(contentsOfFile: info.path + "/main.tex", encoding: .utf8) == before)
+        #expect(await project.close().value)
+    }
+
     @Test func settingsArePlainWritesAndACorruptSettingsFileIsReportedAtOpen() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()

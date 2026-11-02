@@ -342,7 +342,12 @@ impl Actor {
             };
         }
         match message {
-            Msg::Changed { doc, version, edit } => self.changed(doc, version, &edit),
+            Msg::Changed {
+                doc,
+                version,
+                edit,
+                recovered,
+            } => self.changed(doc, version, &edit, recovered),
             Msg::Command(command, reply) => self.command(command, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),

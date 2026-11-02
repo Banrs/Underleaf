@@ -15,6 +15,7 @@ struct Text {
     version: u64,
     closed: bool,
     behind: bool,
+    recovered: bool,
 }
 
 impl Text {
@@ -47,6 +48,7 @@ impl Document {
             version: 0,
             closed: false,
             behind: false,
+            recovered: false,
         });
         Self(Arc::new(Cell { id, text, tx, scan }))
     }
@@ -75,12 +77,14 @@ impl Document {
 
     pub fn restore(&self, text: &str) {
         let mut held = lock(&self.0.text);
-        if !held.editable() {
+        if held.closed {
             return;
         }
         let had = held.source.text();
         held.source = SourceDocument::named(text, &held.source.path);
+        let behind = std::mem::take(&mut held.behind);
         if had != text {
+            held.recovered |= behind;
             let edit = TextEdit {
                 start: 0,
                 length: utf16::len(&had) as u32,
@@ -104,7 +108,12 @@ impl Document {
     fn changed(&self, held: &mut Text, edit: TextEdit) {
         held.version += 1;
         let (doc, version) = (self.0.id, held.version);
-        let _ = self.0.tx.send(Msg::Changed { doc, version, edit });
+        let _ = self.0.tx.send(Msg::Changed {
+            doc,
+            version,
+            edit,
+            recovered: held.recovered,
+        });
     }
 
     pub(crate) fn shown(&self) {
@@ -154,7 +163,42 @@ impl Document {
         (held.source.text(), held.version)
     }
 
+    pub(crate) fn save_snapshot(&self) -> Option<(String, u64)> {
+        let held = lock(&self.0.text);
+        // Recovery can beat the actor's Changed message; never save it over the external text before resolution.
+        (!held.recovered).then(|| (held.source.text(), held.version))
+    }
+
+    pub(crate) fn resolved(&self) {
+        lock(&self.0.text).recovered = false;
+    }
+
     pub fn version(&self) -> u64 {
         lock(&self.0.text).version
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_blocks_saving_even_before_the_actor_reads_its_message() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let document = Document::new(1, "main.tex", "original", tx, Arc::default());
+        assert_eq!(document.reload("external", 0), Some(1));
+        assert!(document.edit(0, 0, "accepted ", None, false).is_none());
+        document.restore("accepted original");
+        assert!(document.editable());
+        assert_eq!(document.snapshot(), ("accepted original".into(), 2));
+        assert_eq!(document.save_snapshot(), None);
+        document.resolved();
+        assert_eq!(
+            document.save_snapshot(),
+            Some(("accepted original".into(), 2))
+        );
+        document.close();
+        document.restore("late");
+        assert_eq!(document.snapshot().0, "accepted original");
     }
 }

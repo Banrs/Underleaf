@@ -50,6 +50,7 @@ pub(crate) enum Msg {
         doc: u64,
         version: u64,
         edit: TextEdit,
+        recovered: bool,
     },
     Command(Session, Reply),
     BuildDone(Result<CompileResult, CoreError>),

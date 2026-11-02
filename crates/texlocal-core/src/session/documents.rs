@@ -227,11 +227,14 @@ impl Actor {
         }
     }
 
-    pub fn changed(&mut self, id: u64, version: u64, edit: &TextEdit) {
-        let Some(doc) = self.docs.values().find(|doc| doc.doc.id() == id) else {
+    pub fn changed(&mut self, id: u64, version: u64, edit: &TextEdit, recovered: bool) {
+        let Some((path, doc)) = self.docs.iter_mut().find(|(_, doc)| doc.doc.id() == id) else {
             return;
         };
-        let path = doc.path.clone();
+        let path = path.clone();
+        if recovered && doc.conflict.replace(DiskConflict::Changed).is_none() {
+            self.ask(&path, DiskConflict::Changed);
+        }
         self.touched(&path, Some(edit));
         self.after(Timer::Autosave);
         self.live_edited(&path, version, edit);
@@ -281,7 +284,13 @@ impl Actor {
                 }
                 return Ok(false);
             }
-            let (text, version) = doc.doc.snapshot();
+            let Some((text, version)) = doc.doc.save_snapshot() else {
+                doc.conflict = Some(DiskConflict::Changed);
+                if reporting {
+                    self.ask(path, DiskConflict::Changed);
+                }
+                return Ok(false);
+            };
             let text = lf(text);
             let file = match doc.newline {
                 "\n" => Cow::Borrowed(text.as_str()),
@@ -404,6 +413,9 @@ impl Actor {
             _ => {
                 return Err(CoreError::bad_request(messages::answer_unfit()));
             }
+        }
+        if matches!(answer, Resolution::Save | Resolution::Revert) {
+            doc.doc.resolved();
         }
         self.publish_documents();
         match answer {
