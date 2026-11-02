@@ -131,6 +131,8 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
 async fn reattaching_sends_every_section_again_as_it_is_now_before_its_reply() {
     let rig = project().await;
     rig.open_document("ch.tex");
+    // A pending scan can publish after forget(); wait for the fixture's outline before measuring the replay.
+    rig.section("outline", |outline| !outline.is_null());
     rig.forget();
     rig.call("Reattach", json!({}));
     every_section_then_the_reply(&rig);
