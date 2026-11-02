@@ -25,11 +25,13 @@ final class Breadcrumb: NSView {
     private var hovered: Int?
     /// The item whose menu is open, which stays highlighted, as Xcode's pathCellItemForDisplayedPopover does.
     private var open: Int?
+    private var focused = 0 { didSet { noteFocusRingMaskChanged() } }
     private var watch: [any NSObjectProtocol] = []
 
     init(choose: @escaping (_ item: Int, _ choice: Int) -> Void) {
         self.choose = choose
         super.init(frame: .zero)
+        focusRingType = .exterior
         setAccessibilityElement(true)
         setAccessibilityRole(.list)
     }
@@ -46,6 +48,49 @@ final class Breadcrumb: NSView {
     }
 
     override var isFlipped: Bool { true }
+
+    // DVTPathControl accepts focus through the key-view loop, not a click that would take focus from Find's field.
+    override var acceptsFirstResponder: Bool {
+        guard let window else { return false }
+        return !items.isEmpty && (window.firstResponder === self || window.keyViewSelectionDirection != .directSelection)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        guard !items.isEmpty else { return false }
+        focused = window?.keyViewSelectionDirection == .selectingPrevious ? items.count - 1 : 0
+        return super.becomeFirstResponder()
+    }
+
+    override var focusRingMaskBounds: NSRect { frames.indices.contains(focused) ? frames[focused] : .zero }
+    override func drawFocusRingMask() { focusRingMaskBounds.fill() }
+
+    private func moveFocus(_ step: Int) -> Bool {
+        guard items.indices.contains(focused + step) else { return false }
+        focused += step
+        return true
+    }
+
+    @objc func selectNextKeyView(_ sender: Any?) {
+        if !moveFocus(1) { window?.selectKeyView(following: self) }
+    }
+
+    @objc func selectPreviousKeyView(_ sender: Any?) {
+        if !moveFocus(-1) { window?.selectKeyView(preceding: self) }
+    }
+
+    override func insertTab(_ sender: Any?) { selectNextKeyView(sender) }
+    override func insertBacktab(_ sender: Any?) { selectPreviousKeyView(sender) }
+    override func moveLeft(_ sender: Any?) { _ = moveFocus(-1) }
+    override func moveRight(_ sender: Any?) { _ = moveFocus(1) }
+    override func moveDown(_ sender: Any?) { if items.indices.contains(focused) { popUp(focused) } }
+    override func moveUp(_ sender: Any?) { moveDown(sender) }
+
+    override func keyDown(with event: NSEvent) {
+        switch event.charactersIgnoringModifiers {
+        case " ", "\r": moveDown(nil)
+        default: interpretKeyEvents([event])
+        }
+    }
 
     /// As tall as Xcode's in its Find navigator.
     override var intrinsicContentSize: NSSize { NSSize(width: widths().reduce(0, +), height: 19) }
