@@ -50,13 +50,13 @@ pub(crate) fn install_as_administrator(
     tlmgr: &Path,
     package: &str,
     path_env: &str,
-) -> Option<(Command, &'static str)> {
+) -> (Command, &'static str) {
     let mut command = process::tool(Path::new("/usr/bin/osascript"), path_env);
     command
         .args(["-e", AS_ADMINISTRATOR])
         .arg(tlmgr)
         .arg(package);
-    Some((command, ADMIN_CANCELLED))
+    (command, ADMIN_CANCELLED)
 }
 
 pub(crate) fn flush(file: &File, flush: Flush) -> io::Result<()> {

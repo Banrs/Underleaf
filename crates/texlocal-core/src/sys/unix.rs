@@ -54,8 +54,8 @@ pub(crate) fn private(builder: &mut tempfile::Builder) {
     builder.permissions(Permissions::from_mode(0o700));
 }
 
-pub(crate) fn identity(_: &Path, meta: &Metadata) -> io::Result<(u64, u64)> {
-    Ok((meta.dev(), meta.ino()))
+pub(crate) fn identity(meta: &Metadata) -> (u64, u64) {
+    (meta.dev(), meta.ino())
 }
 
 fn executable(path: &Path) -> bool {

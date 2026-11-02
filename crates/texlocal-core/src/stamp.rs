@@ -22,7 +22,7 @@ impl Stamp {
             Err(_) => 0,
         };
         Ok(Self {
-            identity: sys::identity(path, &meta)?,
+            identity: sys::identity(&meta),
             size: meta.len(),
             modified,
         })

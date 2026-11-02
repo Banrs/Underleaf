@@ -103,7 +103,7 @@ fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
-    sys::identity(path, &fs::metadata(path).ok()?).ok()
+    Some(sys::identity(&fs::metadata(path).ok()?))
 }
 
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
@@ -178,7 +178,7 @@ pub(crate) fn within(path: &str, entry: &str) -> bool {
 }
 
 pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
-    let entry = |path: &Path| sys::identity(path, &fs::symlink_metadata(path).ok()?).ok();
+    let entry = |path: &Path| Some(sys::identity(&fs::symlink_metadata(path).ok()?));
     entry(a).is_some_and(|a| entry(b) == Some(a))
 }
 
