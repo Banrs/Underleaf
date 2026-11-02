@@ -246,14 +246,12 @@ struct NavigatorPane: View {
     let field: FieldHandle
 
     var body: some View {
-        // One container, not a Group, whose modifiers each navigator would take as its own: the chooser and the search's task
-        // last across a switch, so the chooser's capsule glides on, rather than a new chooser drawing it already arrived.
+        // Every navigator stays built, as Xcode's do: building a list on a switch took 45-70 ms on the main thread inside the
+        // chooser's click (Instruments, Animation Hitches), so the capsule's glide started late and hitched.
         ZStack {
-            switch project.navigator.shown {
-            case .files: FilesList(project: project)
-            case .outline: OutlineList(project: project)
-            case .search: SearchResults(project: project, field: field)
-            case .issues: IssueNavigator(project: project)
+            ForEach(Navigator.allCases, id: \.self) { navigator in
+                let shown = navigator == project.navigator.shown
+                list(navigator).opacity(shown ? 1 : 0).disabled(!shown).accessibilityHidden(!shown)
             }
         }
         .searching(project)
@@ -262,6 +260,15 @@ struct NavigatorPane: View {
         .safeAreaBar(edge: .top, spacing: 0) {
             // Xcode's lists start 8 pt below the chooser, and its Find navigator's mode row 2 pt below.
             Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
+        }
+    }
+
+    @ViewBuilder private func list(_ navigator: Navigator) -> some View {
+        switch navigator {
+        case .files: FilesList(project: project)
+        case .outline: OutlineList(project: project)
+        case .search: SearchResults(project: project, field: field)
+        case .issues: IssueNavigator(project: project)
         }
     }
 }

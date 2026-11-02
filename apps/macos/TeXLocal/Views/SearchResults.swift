@@ -78,14 +78,14 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
     private nonisolated struct Shown: Equatable, Sendable {
         let query: String, replacement: String, replacing: Bool, usages: String?, matchCase: Bool, wholeWords: Bool
-        let hits: Int, files: Int, total: Int, chosen: Bool, filtered: Bool
+        let hits: Int, files: Int, total: Int, chosen: Bool, filtered: Bool, visible: Bool
 
         @MainActor init(_ project: ProjectModel) {
             let search = project.search, groups = project.navigator.filtered(search.groups ?? [])
             (query, replacement, usages) = (search.query, search.replacement, search.usages?.name)
             (replacing, matchCase, wholeWords) = (search.replacing && usages == nil, search.asked.matchCase, search.asked.wholeWords)
             (hits, files, total) = (groups.reduce(0) { $0 + $1.hits.count }, groups.count, search.hitCount)
-            (chosen, filtered) = (search.chosen != nil, !project.navigator.searchFilter.isEmpty)
+            (chosen, filtered, visible) = (search.chosen != nil, !project.navigator.searchFilter.isEmpty, project.navigator.shown == .search)
         }
     }
 
@@ -96,6 +96,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         guard shown != self.shown else { return }
         let resized = shown.replacing != self.shown?.replacing || (shown.hits > 0) != (self.shown.map { $0.hits > 0 } ?? false)
         self.shown = shown
+        // The header stays built under the other navigators, so it gives up the keyboard as it hides.
+        if !shown.visible, [query, replacement].contains(where: { $0.currentEditor() != nil }) { window?.makeFirstResponder(nil) }
         for (field, text) in [(query, shown.query), (replacement, shown.replacement)]
             where field.stringValue != text && (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             field.stringValue = text
