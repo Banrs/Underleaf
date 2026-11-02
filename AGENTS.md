@@ -30,9 +30,10 @@ sessions, builds and Live Preview, `texlocal-ffi` is the C ABI, and `texlocal-wi
   Guidelines (`design/rust-api-guidelines/`) and clippy decide Rust's. Research when unsure.
 - AppKit owns the window chrome and heavy views; SwiftUI owns content inside hosted panes. Add a bridge between them
   only when it removes code.
-- Copy Apple's real elements, don't eyeball them: accessibility frames of the running app, its classes read through
-  the Objective-C runtime, and the macOS UI Kit (`design/Apple macOS 27 UI Kit.sketch`). Screenshots only confirm,
-  from an active window, since inactive windows drop Liquid Glass.
+- Use the standard component unless TeXLocal's need requires custom. Apple's apps are evidence, not specs: read how
+  they meet the same need (accessibility frames, classes through the Objective-C runtime, the macOS UI Kit at
+  `design/Apple macOS 27 UI Kit.sketch`), discount what they keep for legacy reasons, and of two routes that meet the
+  need take the shorter. Screenshots only confirm, from an active window, since inactive windows drop Liquid Glass.
 - Use native parts: no hand-drawn chrome, invisible dividers or negative padding to imitate a look.
 - A settled UI decision is reversed only with new evidence: a failing test, or a measured side-by-side with the Apple
   app it follows.
