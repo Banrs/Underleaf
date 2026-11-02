@@ -825,6 +825,31 @@ async fn a_change_on_disk_reloads_a_document_without_edits_and_its_old_view_is_r
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn editing_a_recovered_document_keeps_a_later_file_removal_conflict() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    let path = rig.root().join("ch.tex");
+    fs::write(&path, "external\n").unwrap();
+    rig.event("documentReload", |e| e == "ch.tex");
+    doc.restore("accepted original\n");
+    rig.event("conflict", |e| e["kind"] == "changed");
+    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    fs::remove_file(&path).unwrap();
+    rig.event("conflict", |e| e["kind"] == "gone");
+    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    rig.forget();
+    doc.edit(0, 0, "more ", None, false);
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), false);
+    assert_eq!(rig.event("conflict", |_| true)["kind"], "gone");
+    assert!(!path.exists());
+    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        "more accepted original\n"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_change_on_disk_under_edits_is_asked_about_held_and_saved_with_the_edits() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");

@@ -232,7 +232,8 @@ impl Actor {
             return;
         };
         let path = path.clone();
-        if recovered && doc.conflict.replace(DiskConflict::Changed).is_none() {
+        if recovered && doc.conflict.is_none() {
+            doc.conflict = Some(DiskConflict::Changed);
             self.ask(&path, DiskConflict::Changed);
         }
         self.touched(&path, Some(edit));
