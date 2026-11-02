@@ -59,11 +59,10 @@ struct PDFPerformanceTests {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 900),
                               styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.alphaValue = 0
         controller.view.frame = window.contentView?.bounds ?? .zero
         controller.view.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(controller.view)
-        window.orderFront(nil)
+        window.makeKeyAndOrderFront(nil)
         return window
     }
 }
