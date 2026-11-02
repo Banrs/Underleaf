@@ -21,14 +21,12 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         model.controller = self
         Self.kept.append(self)
         let home = NSHostingController(rootView: HomeView()
+            .background(WindowModals(window: model, project: nil))
             .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
             .environment(app)
             .environment(model))
         home.sceneBridgingOptions = [.title, .toolbars]
         home.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
-        let modals = NSHostingView(rootView: WindowModals(window: model, project: nil))
-        modals.sizingOptions = []
-        home.view.addSubview(modals)
         window.contentViewController = home
         window.center()
         window.setFrameAutosaveName("Projects")
