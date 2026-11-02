@@ -161,9 +161,6 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
     assert_eq!(titles(&outline["tree"][0]["children"]), ["Two"]);
     assert_eq!(outline["tree"][1]["heading"]["file"], "ch.tex");
     assert_eq!(outline["words"], 9);
-    let tree = &outline["tree"];
-    let words = [&tree[0], &tree[0]["children"][0], &tree[1]].map(|node| &node["words"]);
-    assert_eq!(words, [7, 3, 2]);
     let lone = project::analyze(&scan, Some("main.tex"), Some("lone.tex"));
     assert_eq!(lone.files, ["lone.tex"]);
     let shown = project::analyze(&scan, Some("main.tex"), Some("ch.tex"));

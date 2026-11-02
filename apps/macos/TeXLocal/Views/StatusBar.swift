@@ -42,8 +42,11 @@ struct StatusBar: View {
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            if window.showSource && project.editsText || PagePlace.shows(project, window) { Divider().frame(height: 12) }
-            PanelToggle(project: project)
+            // Flush with the toggle, whose 30 pt target pads its symbol, as Xcode's debug bar sets its last divider.
+            HStack(spacing: 0) {
+                if window.showSource && project.editsText || PagePlace.shows(project, window) { Divider().frame(height: 12) }
+                PanelToggle(project: project)
+            }
         }
     }
 }
@@ -259,15 +262,9 @@ extension View {
             .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
     }
 
-    /// A bar's top edge: a hairline, as above Xcode's debug bar, there whether or not text runs beneath, which the
-    /// scroll edge's own line is not.
-    func barEdge() -> some View { overlay(alignment: .top) { BarEdge() } }
+    /// A bar's top edge: a divider, 1 pt as above Xcode's debug bar (measured), there whether or not text runs beneath,
+    /// which the scroll edge's own line is not.
+    func barEdge() -> some View { overlay(alignment: .top) { Divider() } }
 
     fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }
-}
-
-private struct BarEdge: View {
-    @Environment(\.pixelLength) private var pixelLength
-
-    var body: some View { Rectangle().fill(.separator).frame(height: pixelLength) }
 }

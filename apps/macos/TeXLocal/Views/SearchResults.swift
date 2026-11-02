@@ -2,12 +2,18 @@ import AppKit
 import SwiftUI
 
 /// Find's header, laid out as Xcode's Find navigator lays out its own (IDEFindNavigatorQueryParametersController, read from its
-/// nib and measured in Xcode) from the controls Apple documents for each part: a row 2 pt under the chooser with a borderless
-/// Find or Replace pop-up and an accessory-bar Aa toggle, the query field under it, whose menu holds Match Case and Whole Words,
-/// and in Replace the replacement field with small Replace and Replace All push buttons at its end; then the count of results,
-/// centred in a 22 pt band. The fields are large, as the chooser and the filter field are.
+/// nib and code and measured in Xcode): a row 2 pt under the chooser with Xcode's breadcrumb, borderless pop-ups without arrows,
+/// an item off its first choice in the accent colour, a chevron after each that turns down under the pointer, and a borderless
+/// Aa toggle, regular and gray off, bold and accent on; the query field under it and, in Replace, the replacement field, each
+/// keeping its recents in its symbol's menu, with Replace and Replace All push buttons at its end; then the count of results,
+/// centred in a 22 pt band. Fields and buttons are regular, 24 pt, with small button titles, as Xcode's are, and none is glass:
+/// Xcode's sit in a scroll edge's bar, and only the filter bar floats over the list.
 final class FindHeader: NSView, NSSearchFieldDelegate {
     private let mode = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let criteria = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// The mark after each breadcrumb item: Xcode's chevron between them, a down chevron after the one under the pointer.
+    private let marks = [NSImageView(), NSImageView()]
+    private var hovered: NSPopUpButton?
     private let usages = NSTextField(labelWithString: "")
     private let matchCase = NSButton(title: "Aa", target: nil, action: nil)
     private let query = NavigatorField()
@@ -26,27 +32,37 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         super.init(frame: .zero)
         let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         mode.addItems(withTitles: [String(localized: "Find"), String(localized: "Replace")])
-        mode.isBordered = false
-        mode.controlSize = .small
-        mode.font = small
+        criteria.addItems(withTitles: [String(localized: "Containing"), String(localized: "Matching Word")])
+        // A pop-up draws a choice as its menu closes but sends it only once the menu has faded, so each shows a title item set
+        // as the header lays out, rather than the chosen one in the old one's width.
+        for (pop, action) in [(mode, #selector(chooseMode)), (criteria, #selector(chooseCriteria))] {
+            pop.isBordered = false
+            (pop.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+            (pop.cell as? NSPopUpButtonCell)?.usesItemFromMenu = false
+            pop.controlSize = .small
+            pop.font = small
+            (pop.target, pop.action) = (self, action)
+        }
         mode.toolTip = String(localized: "Find or replace")
-        (mode.target, mode.action) = (self, #selector(chooseMode))
+        for mark in marks {
+            mark.contentTintColor = .secondaryLabelColor
+            mark.setAccessibilityElement(false)
+        }
+        criteria.toolTip = String(localized: "Match text anywhere, or only whole words")
 
         usages.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         usages.lineBreakMode = .byTruncatingMiddle
         usages.setAccessibilityRole(.staticText)
 
         matchCase.setButtonType(.pushOnPushOff)
-        matchCase.bezelStyle = .accessoryBar
-        matchCase.controlSize = .small
-        matchCase.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        matchCase.isBordered = false
         matchCase.toolTip = String(localized: "Match Case")
         matchCase.setAccessibilityLabel(String(localized: "Match Case"))
         (matchCase.target, matchCase.action) = (self, #selector(toggleCase))
 
         for field in [query, replacement] {
-            field.controlSize = .large
-            field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .large))
+            field.controlSize = .regular
+            field.font = .systemFont(ofSize: NSFont.systemFontSize)
             field.sendsSearchStringImmediately = true
             field.delegate = self
             (field.target, field.action) = (self, #selector(edited(_:)))
@@ -55,12 +71,12 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         query.setAccessibilityLabel(query.placeholderString)
         replacement.placeholderString = String(localized: "With")
         replacement.setAccessibilityLabel(String(localized: "Replace With"))
-        (replacement.cell as? NSSearchFieldCell)?.searchButtonCell = nil
+        query.keepRecents(as: "Find Queries")
+        replacement.keepRecents(as: "Replacements")
 
         // Neither is the default button, since Replace All can't be undone file by file.
         for (button, action) in [(replace, #selector(replaceChosen)), (replaceAll, #selector(replaceEvery))] {
             button.bezelStyle = .push
-            button.controlSize = .small
             button.font = small
             (button.target, button.action) = (self, action)
         }
@@ -69,7 +85,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         count.font = small
         count.textColor = .secondaryLabelColor
         count.alignment = .center
-        for view in [mode, usages, matchCase, query, replacement, replace, replaceAll, count] { addSubview(view) }
+        for view in [mode, criteria, usages, matchCase, query, replacement, replace, replaceAll, count] + marks { addSubview(view) }
         field.field = query
         watch = track({ Shown(project) }) { [weak self] in self?.show($0) }
     }
@@ -78,14 +94,14 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
     private nonisolated struct Shown: Equatable, Sendable {
         let query: String, replacement: String, replacing: Bool, usages: String?, matchCase: Bool, wholeWords: Bool
-        let hits: Int, files: Int, total: Int, chosen: Bool, filtered: Bool
+        let hits: Int, files: Int, total: Int, chosen: Bool, filtered: Bool, visible: Bool
 
         @MainActor init(_ project: ProjectModel) {
             let search = project.search, groups = project.navigator.filtered(search.groups ?? [])
             (query, replacement, usages) = (search.query, search.replacement, search.usages?.name)
             (replacing, matchCase, wholeWords) = (search.replacing && usages == nil, search.asked.matchCase, search.asked.wholeWords)
             (hits, files, total) = (groups.reduce(0) { $0 + $1.hits.count }, groups.count, search.hitCount)
-            (chosen, filtered) = (search.chosen != nil, !project.navigator.searchFilter.isEmpty)
+            (chosen, filtered, visible) = (search.chosen != nil, !project.navigator.searchFilter.isEmpty, project.navigator.shown == .search)
         }
     }
 
@@ -96,14 +112,24 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         guard shown != self.shown else { return }
         let resized = shown.replacing != self.shown?.replacing || (shown.hits > 0) != (self.shown.map { $0.hits > 0 } ?? false)
         self.shown = shown
+        // The header stays built under the other navigators, so it gives up the keyboard as it hides.
+        if !shown.visible, [query, replacement].contains(where: { $0.currentEditor() != nil }) { window?.makeFirstResponder(nil) }
         for (field, text) in [(query, shown.query), (replacement, shown.replacement)]
             where field.stringValue != text && (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             field.stringValue = text
         }
-        mode.selectItem(at: shown.replacing ? 1 : 0)
+        // As in Xcode's breadcrumb, whose components use the accent colour only when they're off their first, default choice.
+        for (pop, index) in [(mode, shown.replacing ? 1 : 0), (criteria, shown.wholeWords ? 1 : 0)] {
+            pop.selectItem(at: index)
+            pop.contentTintColor = index == 0 ? nil : .controlAccentColor
+            (pop.cell as? NSPopUpButtonCell)?.menuItem = NSMenuItem(title: pop.titleOfSelectedItem ?? "", action: nil, keyEquivalent: "")
+        }
         usages.stringValue = shown.usages.map { String(localized: "Usages of \($0)") } ?? ""
-        (mode.isHidden, matchCase.isHidden, usages.isHidden) = (shown.usages != nil, shown.usages != nil, shown.usages == nil)
+        for view in [mode, criteria, matchCase] + marks { view.isHidden = shown.usages != nil }
+        usages.isHidden = shown.usages == nil
         matchCase.state = shown.matchCase ? .on : .off
+        matchCase.contentTintColor = shown.matchCase ? .controlAccentColor : .secondaryLabelColor
+        matchCase.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: shown.matchCase ? .bold : .regular)
         for view in [replacement, replace, replaceAll] { view.isHidden = !shown.replacing }
         replace.isEnabled = shown.chosen
         // Replace All changes every match in the project, so it waits until the filter no longer hides any.
@@ -112,19 +138,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
             : String(localized: "Replace all search results")
         count.stringValue = String(AttributedString(localized: "^[\(shown.hits) result](inflect: true) in ^[\(shown.files) file](inflect: true)").characters)
         count.isHidden = shown.hits == 0
-        query.searchMenuTemplate = options(shown)
         if resized { invalidateIntrinsicContentSize() }
         needsLayout = true
-    }
-
-    private func options(_ shown: Shown) -> NSMenu {
-        let menu = NSMenu()
-        for (title, isOn, action) in [(String(localized: "Match Case"), shown.matchCase, #selector(toggleCase)),
-                                      (String(localized: "Whole Words"), shown.wholeWords, #selector(toggleWords))] {
-            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
-            (item.target, item.state) = (self, isOn ? .on : .off)
-        }
-        return menu
     }
 
     override var isFlipped: Bool { true }
@@ -140,6 +155,18 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         let width = bounds.width
         let pop = mode.intrinsicContentSize, aa = matchCase.intrinsicContentSize
         mode.frame = NSRect(x: 3, y: (Self.row - pop.height) / 2, width: pop.width, height: pop.height)
+        // Xcode's breadcrumb leaves 7 pt of ink before its chevron and 8 after; the pop-ups pad their titles by 3 and 6.
+        for (index, item) in [mode, criteria].enumerated() {
+            let mark = marks[index]
+            mark.image = item == hovered ? Self.down : index == 0 ? Self.forward : nil
+            if index > 0 {
+                let size = item.intrinsicContentSize
+                item.frame = NSRect(x: marks[index - 1].frame.maxX + 2, y: (Self.row - size.height) / 2, width: size.width, height: size.height)
+            }
+            let size = mark.image?.size ?? Self.forward.size
+            mark.frame = NSRect(x: item.frame.maxX + 1, y: (Self.row - size.height) / 2, width: size.width, height: size.height)
+        }
+        updateTrackingAreas()
         usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
         matchCase.frame = NSRect(x: width - 7 - aa.width, y: (Self.row - aa.height) / 2, width: aa.width, height: aa.height)
         var y = Self.row + 2
@@ -150,16 +177,41 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
             y += 6 + Self.field + 6
             let all = replaceAll.intrinsicContentSize.width, one = replace.intrinsicContentSize.width
             replaceAll.frame = NSRect(x: width - 6 - all, y: y, width: all, height: Self.button)
-            replace.frame = NSRect(x: replaceAll.frame.minX - 8 - one, y: y, width: one, height: Self.button)
+            replace.frame = NSRect(x: replaceAll.frame.minX - 7 - one, y: y, width: one, height: Self.button)
             y += Self.button
         }
         let label = count.intrinsicContentSize.height
         count.frame = NSRect(x: 6, y: y + 5 + (Self.band - label) / 2, width: width - 12, height: label)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        for item in [mode, criteria] {
+            addTrackingArea(NSTrackingArea(rect: item.frame, options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self,
+                                           userInfo: ["item": item]))
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) { hover(event.trackingArea?.userInfo?["item"] as? NSPopUpButton) }
+    override func mouseExited(with event: NSEvent) { hover(nil) }
+
+    private func hover(_ item: NSPopUpButton?) {
+        hovered = item
+        needsLayout = true
+    }
+
+    private static let forward = mark("chevron.forward"), down = mark("chevron.down")
+
+    private static func mark(_ name: String) -> NSImage {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)!
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: NSFont.smallSystemFontSize, weight: .regular))!
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         guard control === query, selector == #selector(NSResponder.insertNewline(_:)), !textView.hasMarkedText() else { return false }
         let step = NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1
+        query.remember()
         if !project.search.step(step, in: project.navigator.filtered(project.search.groups ?? [])) { NSSound.beep() }
         return true
     }
@@ -170,12 +222,20 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
     @objc private func chooseMode() { project.search.replacing = mode.indexOfSelectedItem == 1 }
     @objc private func toggleCase() { project.search.asked.matchCase.toggle() }
-    @objc private func toggleWords() { project.search.asked.wholeWords.toggle() }
-    @objc private func replaceChosen() { Task { await project.replaceChosen() } }
-    @objc private func replaceEvery() { Task { await project.replaceAll() } }
+    @objc private func chooseCriteria() { project.search.asked.wholeWords = criteria.indexOfSelectedItem == 1 }
 
-    /// The rows' heights: small accessory-bar and push buttons, large fields, and Xcode's band for the count.
-    private static let row: CGFloat = 20, field: CGFloat = 28, button: CGFloat = 20, band: CGFloat = 22
+    @objc private func replaceChosen() {
+        replacement.remember()
+        Task { await project.replaceChosen() }
+    }
+
+    @objc private func replaceEvery() {
+        replacement.remember()
+        Task { await project.replaceAll() }
+    }
+
+    /// The rows' heights: the mode row, regular fields and buttons, and Xcode's band for the count.
+    private static let row: CGFloat = 20, field: CGFloat = 24, button: CGFloat = 24, band: CGFloat = 22
 }
 
 private struct FindHeaderView: NSViewRepresentable {
@@ -215,6 +275,14 @@ struct SearchResults: View {
                 }
             }
             .onChange(of: project.search.searched) { folded = [] }
+            .task(id: project.search.asked) {
+                if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
+                guard !Task.isCancelled else { return }
+                await project.search.run(in: project.session)
+                guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
+                let count = project.search.hitCount
+                project.notices.announce(count == 0 ? String(localized: "Not found") : Self.matches(count), queued: true)
+            }
     }
 
     private func list(_ groups: [SearchGroup]) -> some View {
@@ -246,7 +314,6 @@ struct SearchResults: View {
         Label {
             Text("\(Text(group.file.fileName).fontWeight(.medium)) \(Text(group.file.parentFolder.replacing("/", with: " ▸ ")).foregroundStyle(.secondary))")
                 .lineLimit(1)
-                .truncationMode(.middle)
         } icon: {
             Image(systemName: project.tree.node(at: group.file)?.symbol ?? "text.document")
         }
@@ -277,18 +344,5 @@ struct SearchResults: View {
 
     static func matches(_ count: Int) -> String {
         String(AttributedString(localized: "^[\(count) match](inflect: true)").characters)
-    }
-}
-
-extension View {
-    func searching(_ project: ProjectModel) -> some View {
-        task(id: project.search.asked) {
-            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !Task.isCancelled else { return }
-            await project.search.run(in: project.session)
-            guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
-            let count = project.search.hitCount
-            project.notices.announce(count == 0 ? String(localized: "Not found") : SearchResults.matches(count), queued: true)
-        }
     }
 }

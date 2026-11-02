@@ -188,15 +188,16 @@ final class NavigatorFilterBar: NSView {
     private static let toggleRoom: CGFloat = 7 + 17
 }
 
-/// Xcode's large navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 15 pt
-/// square 6 pt in, the text from 22 pt, with or without the symbol, and the clear button 17 pt square 6 pt from the end, before
-/// any room kept for toggles over the end.
+/// Xcode's navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 6 pt in
+/// and 15 pt tall, the text from its end, and the clear button 17 pt square 6 pt from the end, before any room kept
+/// for toggles over the end.
 final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         var room: CGFloat = 0
 
+        /// As wide as AppKit's image, 21 pt with the menu's chevron, which a narrower rect clips.
         override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
-            NSRect(x: rect.minX + 6, y: rect.midY - 7.5, width: 15, height: 15)
+            NSRect(x: rect.minX + 6, y: rect.midY - 7.5, width: searchButtonCell?.image?.size.width ?? 16, height: 15)
         }
 
         override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
@@ -204,20 +205,33 @@ final class NavigatorField: NSSearchField {
         }
 
         override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-            NSRect(x: rect.minX + 22, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - rect.minX - 22, height: 20)
-        }
-
-        // A cell without its symbol still lists the symbol's button to accessibility, as an element with no role or name.
-        override func accessibilityChildren() -> [Any]? {
-            let children = super.accessibilityChildren()
-            guard searchButtonCell == nil else { return children }
-            return children?.filter { NSStringFromClass(Swift.type(of: $0 as AnyObject)) != "NSSearchButtonCellProxy" }
+            let minX = searchButtonRect(forBounds: rect).maxX
+            return NSRect(x: minX, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - minX, height: 20)
         }
     }
 
     override class var cellClass: AnyClass? {
         get { Cell.self }
         set {}
+    }
+
+    /// Keeps the field's past entries in its symbol's menu, as Xcode's Find and replace fields keep theirs (their controller
+    /// builds each menu from the field's history and Clear Recents), with AppKit's recents.
+    func keepRecents(as name: String) {
+        recentsAutosaveName = name
+        let menu = NSMenu()
+        for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
+                             (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
+                             (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
+            menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
+        }
+        searchMenuTemplate = menu
+    }
+
+    /// Adds the field's text to its recents, which a field sending each keystroke never does itself.
+    func remember() {
+        guard !stringValue.isEmpty else { return }
+        recentSearches = Array(([stringValue] + recentSearches.filter { $0 != stringValue }).prefix(10))
     }
 }
 
@@ -246,22 +260,28 @@ struct NavigatorPane: View {
     let field: FieldHandle
 
     var body: some View {
-        // One container, not a Group, whose modifiers each navigator would take as its own: the chooser and the search's task
-        // last across a switch, so the chooser's capsule glides on, rather than a new chooser drawing it already arrived.
+        // Every navigator stays built, as Xcode's do: building a list on a switch took 45-70 ms on the main thread inside the
+        // chooser's click (Instruments, Animation Hitches), so the capsule's glide started late and hitched.
         ZStack {
-            switch project.navigator.shown {
-            case .files: FilesList(project: project)
-            case .outline: OutlineList(project: project)
-            case .search: SearchResults(project: project, field: field)
-            case .issues: IssueNavigator(project: project)
+            ForEach(Navigator.allCases, id: \.self) { navigator in
+                let shown = navigator == project.navigator.shown
+                list(navigator).opacity(shown ? 1 : 0).disabled(!shown).accessibilityHidden(!shown)
             }
         }
-        .searching(project)
         .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaBar(edge: .top, spacing: 0) {
             // Xcode's lists start 8 pt below the chooser, and its Find navigator's mode row 2 pt below.
             Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
+        }
+    }
+
+    @ViewBuilder private func list(_ navigator: Navigator) -> some View {
+        switch navigator {
+        case .files: FilesList(project: project)
+        case .outline: OutlineList(project: project)
+        case .search: SearchResults(project: project, field: field)
+        case .issues: IssueNavigator(project: project)
         }
     }
 }

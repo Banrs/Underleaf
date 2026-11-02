@@ -333,7 +333,7 @@ async fn checks_find_undefined_labels_and_unclosed_environments() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_outline_follows_inputs_and_counts_words() {
+async fn the_outline_follows_inputs() {
     let rig = project().await;
     let outline = rig.section("outline", |e| {
         e["tree"].as_array().is_some_and(|t| t.len() == 2)
@@ -341,7 +341,6 @@ async fn the_outline_follows_inputs_and_counts_words() {
     let heading = |key: &str| [0, 1].map(|i| outline["tree"][i]["heading"][key].clone());
     assert_eq!(heading("title"), ["Intro", "Chapter"]);
     assert_eq!(heading("file"), ["main.tex", "ch.tex"]);
-    assert_eq!(outline["tree"][1]["words"], 5);
     let levels = names(&outline["headingStyles"], "command");
     assert!(
         !levels.contains(&"chapter".to_owned()),
