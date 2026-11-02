@@ -217,6 +217,14 @@ struct SearchResults: View {
                 }
             }
             .onChange(of: project.search.searched) { folded = [] }
+            .task(id: project.search.asked) {
+                if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
+                guard !Task.isCancelled else { return }
+                await project.search.run(in: project.session)
+                guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
+                let count = project.search.hitCount
+                project.notices.announce(count == 0 ? String(localized: "Not found") : Self.matches(count), queued: true)
+            }
     }
 
     private func list(_ groups: [SearchGroup]) -> some View {
@@ -278,18 +286,5 @@ struct SearchResults: View {
 
     static func matches(_ count: Int) -> String {
         String(AttributedString(localized: "^[\(count) match](inflect: true)").characters)
-    }
-}
-
-extension View {
-    func searching(_ project: ProjectModel) -> some View {
-        task(id: project.search.asked) {
-            if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
-            guard !Task.isCancelled else { return }
-            await project.search.run(in: project.session)
-            guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
-            let count = project.search.hitCount
-            project.notices.announce(count == 0 ? String(localized: "Not found") : SearchResults.matches(count), queued: true)
-        }
     }
 }

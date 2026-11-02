@@ -189,7 +189,7 @@ final class NavigatorFilterBar: NSView {
 }
 
 /// Xcode's navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 6 pt in
-/// and 15 pt tall, the text from its end, 22 pt in, and the clear button 17 pt square 6 pt from the end, before any room kept
+/// and 15 pt tall, the text from its end, and the clear button 17 pt square 6 pt from the end, before any room kept
 /// for toggles over the end.
 final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
@@ -257,7 +257,6 @@ struct NavigatorPane: View {
                 list(navigator).opacity(shown ? 1 : 0).disabled(!shown).accessibilityHidden(!shown)
             }
         }
-        .searching(project)
         .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaBar(edge: .top, spacing: 0) {
