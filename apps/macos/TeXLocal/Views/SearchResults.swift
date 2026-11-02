@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Find's header, laid out as Xcode's Find navigator lays out its own (IDEFindNavigatorQueryParametersController, read from its
 /// nib and measured in Xcode) from the controls Apple documents for each part: a row 2 pt under the chooser with a borderless
-/// Find or Replace pop-up and a borderless Aa toggle, gray off and accent on, the query field under it, whose menu holds Match
-/// Case and Whole Words, and in Replace the replacement field with Replace and Replace All push buttons at its end; then the
+/// Find or Replace pop-up and a borderless Aa toggle, gray off and accent on, the query field under it, whose menu holds Whole
+/// Words, and in Replace the replacement field with Replace and Replace All push buttons at its end; then the
 /// count of results, centred in a 22 pt band. Fields and buttons are regular, 24 pt, with small button titles, as Xcode's are,
 /// and none is glass: Xcode's sit in a scroll edge's bar, and only the filter bar floats over the list.
 final class FindHeader: NSView, NSSearchFieldDelegate {
@@ -119,13 +119,11 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         needsLayout = true
     }
 
+    /// Case is only the Aa, as in Xcode, whose field menu holds Insert Pattern instead.
     private func options(_ shown: Shown) -> NSMenu {
         let menu = NSMenu()
-        for (title, isOn, action) in [(String(localized: "Match Case"), shown.matchCase, #selector(toggleCase)),
-                                      (String(localized: "Whole Words"), shown.wholeWords, #selector(toggleWords))] {
-            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
-            (item.target, item.state) = (self, isOn ? .on : .off)
-        }
+        let item = menu.addItem(withTitle: String(localized: "Whole Words"), action: #selector(toggleWords), keyEquivalent: "")
+        (item.target, item.state) = (self, shown.wholeWords ? .on : .off)
         return menu
     }
 
