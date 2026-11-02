@@ -29,8 +29,6 @@ pub struct Heading {
     pub(crate) untitled: bool,
     pub line: usize,
     pub file: String,
-    #[serde(skip)]
-    pub(crate) words: usize,
 }
 
 impl Heading {
@@ -44,7 +42,6 @@ impl Heading {
             title: title.unwrap_or_else(|| format!("Untitled {level}")),
             line,
             file: String::new(),
-            words: 0,
         }
     }
 }
@@ -133,7 +130,6 @@ pub(crate) struct Input {
     pub(crate) name: String,
     folder: Folder,
     pub(crate) place: Place,
-    pub(crate) words: usize,
 }
 
 enum Folder {
@@ -184,7 +180,6 @@ impl Facts {
             structure: Structure::default(),
             title: None,
             heading_line: None,
-            cuts: Vec::new(),
         };
         let mut scanner = Scanner::default();
         scanner.run(&text.units, text.units.len(), &[], &mut reader);
@@ -193,22 +188,11 @@ impl Facts {
             defined,
             prose,
             structure,
-            cuts,
             ..
         } = reader;
         let (slips, end) = structure.finish(&text, scanner.groups());
         let (prose, len) = (prose.prose(), end.unwrap_or(text.units.len()));
         facts.words = prose.words(0..len);
-        let (mut headings, mut inputs) = (facts.headings.iter_mut(), facts.inputs.iter_mut());
-        for (i, &(from, heading)) in cuts.iter().enumerate() {
-            let to = cuts.get(i + 1).map_or(len, |cut| cut.0).min(len);
-            let counted = if heading {
-                &mut headings.next().expect("a heading for each cut").words
-            } else {
-                &mut inputs.next().expect("an input for each cut").words
-            };
-            *counted = prose.words(from.min(len)..to);
-        }
         facts.defined = Arc::new(defined);
         facts.slips = slips;
         facts.end = end.map(|end| Place::of(&text, end..end));
@@ -255,7 +239,6 @@ struct Reader<'a> {
     structure: Structure,
     title: Option<(usize, String)>,
     heading_line: Option<usize>,
-    cuts: Vec<(usize, bool)>,
 }
 
 impl Visit for Reader<'_> {
@@ -324,9 +307,7 @@ impl Visit for Reader<'_> {
                         name,
                         folder,
                         place: Place::of(text, at),
-                        words: 0,
                     });
-                    self.cuts.push((name_end, false));
                 }
             }
             _ => match headings::LEVELS.iter().position(|l| l.0 == name) {
@@ -364,7 +345,6 @@ impl Reader<'_> {
             {
                 let heading = Heading::new(depth, title.clone(), line);
                 self.facts.headings.push(heading);
-                self.cuts.push((name_end, true));
             }
             self.heading_line = Some(line);
         }

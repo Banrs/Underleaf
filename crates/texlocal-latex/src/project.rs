@@ -44,7 +44,6 @@ struct OutlineNode {
     index: usize,
     heading: Heading,
     fold_key: String,
-    words: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<Self>>,
 }
@@ -77,7 +76,6 @@ fn outline_tree(outline: &[Heading]) -> Vec<OutlineNode> {
                 index,
                 heading: heading.clone(),
                 fold_key,
-                words: heading.words + children.iter().map(|c| c.words).sum::<usize>(),
                 children: (!children.is_empty()).then_some(children),
             });
         }
@@ -180,9 +178,6 @@ impl<'a> Walk<'a> {
             file: file.to_owned(),
             ..heading.clone()
         };
-        let headed: usize = headings.iter().map(|h| h.words).sum();
-        let after_inputs: usize = facts.inputs.iter().map(|input| input.words).sum();
-        self.credit(facts.words - headed - after_inputs);
         let mut at = 0;
         let inputs = facts.inputs.iter();
         for input in inputs.filter(|i| facts.end.is_none_or(|end| i.place < end)) {
@@ -199,19 +194,12 @@ impl<'a> Walk<'a> {
                 Some((input, within)) => self.read(&input, &within, depth + 1),
                 None => self.missing.push((file, input)),
             }
-            self.credit(input.words);
         }
         self.outline
             .extend(headings[at..read_headings].iter().map(placed));
         self.words += facts.words;
         self.labels.extend(labels.map(|label| (file, label)));
         slips.for_each(|slip| self.slip(file, slip));
-    }
-
-    fn credit(&mut self, words: usize) {
-        if let Some(last) = self.outline.last_mut() {
-            last.words += words;
-        }
     }
 
     fn slip(&mut self, file: &'a str, slip: &'a Slip) {

@@ -1337,10 +1337,9 @@ nonisolated struct OutlineNode: Decodable, Hashable, Sendable {
     var index: Int
     var heading: Heading
     var foldKey: String
-    var words: Int
     var children: [OutlineNode]?
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case index, heading, foldKey, words, children }
+    enum CodingKeys: String, CodingKey, CaseIterable { case index, heading, foldKey, children }
 }
 
 nonisolated extension OutlineNode {
@@ -1349,7 +1348,6 @@ nonisolated extension OutlineNode {
         index = try wire.decode(Int.self, forKey: .index)
         heading = try wire.decode(Heading.self, forKey: .heading)
         foldKey = try wire.decode(String.self, forKey: .foldKey)
-        words = try wire.decode(Int.self, forKey: .words)
         children = try wire.decodeIfPresent([OutlineNode].self, forKey: .children)
     }
 }
