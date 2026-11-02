@@ -92,11 +92,26 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
     let whole = rig.event("liveDocument", |_| true);
-    assert!(Path::new(whole["path"].as_str().unwrap()).is_file());
+    let first = Path::new(whole["path"].as_str().unwrap());
+    let pdf = std::fs::read(first).unwrap();
+    let sync = std::fs::read(first.with_extension("synctex")).unwrap();
     rig.forget();
     doc.edit(40, 0, "More words. ", None, false);
     let page = rig.event("livePage", |p| p["page"] == 0);
     assert!(page["pdf"].as_str().unwrap().starts_with("JVBER"), "a PDF");
+    let next = rig.event("liveDocument", |p| p["path"] != whole["path"]);
+    assert_eq!(std::fs::read(first).unwrap(), pdf);
+    assert_eq!(
+        std::fs::read(first.with_extension("synctex")).unwrap(),
+        sync
+    );
+    let second = Path::new(next["path"].as_str().unwrap());
+    assert!(second.is_file() && second.with_extension("synctex").is_file());
+    rig.forget();
+    doc.edit(40, 0, "Another change. ", None, false);
+    rig.event("liveDocument", |p| p["path"] != next["path"]);
+    assert!(second.is_file() && second.with_extension("synctex").is_file());
+    assert!(!first.exists() && !first.with_extension("synctex").exists());
     rig.call("StopLive", json!({}));
     rig.section("live", |l| l["phase"] == "stopped");
 }

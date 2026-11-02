@@ -48,6 +48,8 @@ typedef struct
   int checked;
   uint64_t salt;
   int whole_pages;
+  int whole_serial;
+  uint64_t revision;
   bool had_complete;
   bool whole_complete;
   bool dirty;
@@ -156,11 +158,13 @@ static void interpret_command(live_state *l, vstack *stack, val command)
   switch (cmd.tag)
   {
     case EDIT_OPEN:
+      l->revision++;
       l->wish.touched = true;
       apply_open(l, cmd.open.path, cmd.open.data, cmd.open.length);
       break;
 
     case EDIT_CHANGE:
+      l->revision++;
       l->wish.touched = true;
       apply_change(l, &cmd.change);
       break;
@@ -293,13 +297,13 @@ static void live_scan(live_state *l, bool view)
   }
 }
 
-static void export_synctex(live_state *l)
+static void export_synctex(live_state *l, const char *pdf)
 {
-  size_t len = strlen(l->pdf_output);
-  if (len < 4 || len > 4000 || strcmp(l->pdf_output + len - 4, ".pdf"))
+  size_t len = strlen(pdf);
+  if (len < 4 || len > 4000 || strcmp(pdf + len - 4, ".pdf"))
     return;
   char path[4200], part[4200];
-  snprintf(path, sizeof path, "%.*s.synctex", (int)(len - 4), l->pdf_output);
+  snprintf(path, sizeof path, "%.*s.synctex", (int)(len - 4), pdf);
   snprintf(part, sizeof part, "%s.part", path);
   fz_buffer *buf = NULL;
   send(synctex, l->eng, &buf);
@@ -354,8 +358,11 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
     remove(part);
     return LIVE_INTERRUPTED;
   }
-  export_synctex(l);
-  if (rename(part, l->pdf_output) != 0)
+  char path[4200];
+  int serial = l->whole_serial + 1;
+  snprintf(path, sizeof path, "%s.%d.pdf", l->pdf_output, serial);
+  export_synctex(l, path);
+  if (rename(part, path) != 0)
   {
     perror("[pdf] rename");
     return LIVE_FAILED;
@@ -383,7 +390,17 @@ static enum live_written live_write_whole(live_state *l, int run, bool interrupt
   l->whole_complete = run == RUN_COMPLETE;
   if (run == RUN_COMPLETE)
     l->had_complete = true;
-  editor_pdf(l->pdf_output, pages, run, changed, ranges);
+  l->whole_serial = serial;
+  editor_pdf(serial, pages, run, changed, ranges, l->revision);
+  /* Retain the previous result for a reader already in flight; an obsolete read may
+     fail, but must never open a newer PDF or SyncTeX under the old result's name. */
+  if (serial > 2)
+  {
+    snprintf(path, sizeof path, "%s.%d.pdf", l->pdf_output, serial - 2);
+    remove(path);
+    snprintf(path, sizeof path, "%s.%d.synctex", l->pdf_output, serial - 2);
+    remove(path);
+  }
   fz_free(ctx, changed);
   return LIVE_WRITTEN;
 }
@@ -425,7 +442,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
   l->wish.last = 1;
   l->wish.caret_offset = -1;
   l->tail = true;
-  editor_live(3);
+  editor_live(4);
 
   struct pollfd opening = {STDIN_FILENO, POLLRDNORM, 0};
   poll(&opening, 1, 100);
@@ -493,7 +510,7 @@ static void live_loop(live_state *l, prot_parser *parser, vstack *stack)
     if (l->wish.mark != l->synced && (!stepping || count > l->wish.last))
     {
       l->synced = l->wish.mark;
-      editor_synced(l->synced);
+      editor_synced(l->synced, l->revision);
     }
 
     double now = live_ms(), wake = -1;

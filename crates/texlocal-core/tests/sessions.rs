@@ -1181,6 +1181,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
         pages: 1,
         run: RunEnd::Complete,
         changed: Vec::new(),
+        sources: [("main.tex".into(), Arc::from(BROKEN))].into(),
     });
     preview.send(LiveEvent::Page {
         page: 0,
@@ -1208,19 +1209,56 @@ const PICTURED: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{do
 const PICTURED_SYNCTEX: &str = "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{1\n[1,4:4736286,46220574:26673152,41484288,0\n(1,4:8799518,8865054:22609920,455111,0\ng1,4:11475574,8865054\n)\n(1,7:8799518,20000000:5000000,4000000,0\ng1,7:9000000,20000000\n)\n]\n}1\n{2\n[1,10:4736286,46220574:26673152,41484288,0\n(1,10:8799518,8865054:22609920,455111,0\ng1,10:11475574,8865054\n)\n]\n}2\nPostamble:\n";
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced_it() {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    let pdf = rig.library.path("live.pdf");
+    fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    doc.edit(
+        0,
+        0,
+        "% inserted before the previous PDF arrives\n",
+        None,
+        false,
+    );
+    rig.call("LiveCaret", json!({ "path": "main.tex", "offset": 0 }));
+    preview.send(LiveEvent::Document {
+        path: pdf.to_string_lossy().into_owned(),
+        pages: 2,
+        run: RunEnd::Complete,
+        changed: Vec::new(),
+        sources: [("main.tex".into(), Arc::from(PICTURED))].into(),
+    });
+    rig.event("liveDocument", |_| true);
+    let moved = json!({ "file": "main.tex", "line": 11 });
+    assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
+    let picture = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 8 }));
+    let at = json!({ "page": 1, "x": picture["h"].as_f64().unwrap() + 1.0,
+        "y": picture["v"].as_f64().unwrap() - picture["height"].as_f64().unwrap() / 2.0 });
+    let back = rig.call("SynctexInverse", at);
+    assert_eq!((&back["line"], &back["column"]), (&json!(6), &json!(0)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typeset_nothing() {
     let preview = Arc::new(FakePreview::default());
     let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
     fs::create_dir(rig.library.path("live")).unwrap();
     fs::write(rig.library.path("live/live.synctex"), PICTURED_SYNCTEX).unwrap();
-    *preview.pdf.lock().unwrap() = Some(rig.library.path("live/live.pdf"));
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     preview.send(LiveEvent::Document {
-        path: "live.pdf".into(),
+        path: rig
+            .library
+            .path("live/live.pdf")
+            .to_string_lossy()
+            .into_owned(),
         pages: 2,
         run: RunEnd::Complete,
         changed: Vec::new(),
+        sources: [("main.tex".into(), Arc::from(PICTURED))].into(),
     });
     rig.event("liveDocument", |_| true);
     let start = |line: usize| {

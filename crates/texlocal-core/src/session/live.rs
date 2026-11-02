@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -65,11 +66,11 @@ pub(crate) struct Live {
     pub disk_paths: BTreeSet<String>,
     pub intent: u64,
     generation: u64,
-    pub document_seen: bool,
+    pub pdf: Option<PathBuf>,
     mark_sent: u64,
     mark_read: u64,
     issues: Vec<Issue>,
-    typeset: HashMap<String, Arc<str>>,
+    pub typeset: HashMap<String, Arc<str>>,
     follow: bool,
     follows: u64,
     pub run: Option<Arc<dyn LiveRun>>,
@@ -175,7 +176,7 @@ impl Actor {
     fn ended(&mut self) {
         self.live.phase = LivePhase::Stopped;
         self.live_reset();
-        self.live.document_seen = false;
+        self.live.pdf = None;
         self.publish_live(false);
         self.publish_live_log();
         self.publish_pdf();
@@ -450,10 +451,12 @@ impl Actor {
                 pages,
                 run,
                 changed,
+                sources,
             } => {
                 if pages > 0 {
-                    self.live.document_seen = true;
-                    self.keep_typeset();
+                    self.live.pdf = Some(PathBuf::from(&path));
+                    self.live.typeset = sources;
+                    synctex::warm(PathBuf::from(&path));
                     self.publish_pdf();
                     self.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
@@ -476,20 +479,6 @@ impl Actor {
                 self.ended();
             }
         }
-    }
-
-    fn keep_typeset(&mut self) {
-        let Some(run) = &self.live.run else {
-            return;
-        };
-        if let Ok(pdf) = run.pdf() {
-            synctex::warm(pdf);
-        }
-        let typeset = self
-            .docs
-            .keys()
-            .filter_map(|path| Some((path.clone(), run.text(path)?.into())));
-        self.live.typeset = typeset.collect();
     }
 
     fn run_ended(&mut self, run: RunEnd) {

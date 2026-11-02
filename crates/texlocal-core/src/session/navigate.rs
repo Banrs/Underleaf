@@ -182,9 +182,13 @@ impl Actor {
 
 impl Actor {
     pub fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
-        let shown = self.live.active() && self.live.document_seen;
-        let run = self.live.run.as_ref().filter(|_| shown);
-        run.map(|run| run.pdf()).transpose()
+        let Some(pdf) = self.live.pdf.as_ref().filter(|_| self.live.active()) else {
+            return Ok(None);
+        };
+        if !pdf.with_extension("synctex").is_file() {
+            return Err(CoreError::not_found(messages::texpresso_unsynced()));
+        }
+        Ok(Some(pdf.clone()))
     }
 
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
@@ -218,10 +222,14 @@ impl Actor {
         reply: Pending<InverseLoc>,
     ) {
         let (live, project) = (self.live_pdf(), self.project.clone());
-        let run = self.live.run.clone();
+        let sources = self.live.typeset.clone();
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
-                let typeset = |rel: &str| live.as_ref().and(run.as_ref())?.text(rel);
+                let typeset = |rel: &str| {
+                    live.as_ref()
+                        .and_then(|_| sources.get(rel))
+                        .map(ToString::to_string)
+                };
                 synctex::inverse(&project, page, x, y, click, live.as_deref(), &typeset)
             }));
         });

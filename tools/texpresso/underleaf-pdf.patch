@@ -139,7 +139,7 @@ index c922019..10af953 100644
  texpresso-dev: $(BUILD)/texpresso-dev
  $(BUILD)/texpresso-dev: $(DIR)/driver.o $(DIR)/loader.o $(DIR)/logo.o | $(BUILD)/texpresso-dev.so
 diff --git a/src/frontend/editor.c b/src/frontend/editor.c
-index 6face98..6d25ba0 100644
+index 6face98..23a223e 100644
 --- a/src/frontend/editor.c
 +++ b/src/frontend/editor.c
 @@ -1,5 +1,4 @@
@@ -225,7 +225,7 @@ index 6face98..6d25ba0 100644
    int count = buf ? buf->len : 0;
  
    if (line_output && buf)
-@@ -554,6 +600,51 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+@@ -554,6 +600,48 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
    }
  }
  
@@ -249,16 +249,13 @@ index 6face98..6d25ba0 100644
 +  return run == RUN_COMPLETE ? "complete" : run == RUN_STOPPED ? "stopped" : "partial";
 +}
 +
-+/* The whole document written to `path`; `changed` holds `ranges` pairs of first and last
-+   page that differ from the document written before. */
-+void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges)
++/* A whole document and its SyncTeX, with the number of open/change commands it used. */
++void editor_pdf(int serial, int pages, enum EDITOR_RUN run, const int *changed, int ranges, unsigned long long revision)
 +{
-+  fputs("[\"pdf\", \"", stdout);
-+  output_json_string(stdout, path, strlen(path));
-+  printf("\", %d, \"%s\", [", pages, run_name(run));
++  printf("[\"pdf\", %d, %d, \"%s\", [", serial, pages, run_name(run));
 +  for (int i = 0; i < ranges; i++)
 +    printf("%s[%d, %d]", i ? ", " : "", changed[2 * i], changed[2 * i + 1]);
-+  fputs("]]\n", stdout);
++  printf("], %llu]\n", revision);
 +  fflush(stdout);
 +}
 +
@@ -268,9 +265,9 @@ index 6face98..6d25ba0 100644
 +  fflush(stdout);
 +}
 +
-+void editor_synced(int mark)
++void editor_synced(int mark, unsigned long long revision)
 +{
-+  printf("[\"synced\", %d]\n", mark);
++  printf("[\"synced\", %d, %llu]\n", mark, revision);
 +  fflush(stdout);
 +}
 +
@@ -278,7 +275,7 @@ index 6face98..6d25ba0 100644
  {
    switch (protocol)
 diff --git a/src/frontend/editor.h b/src/frontend/editor.h
-index 05fdd1c..be23096 100644
+index 05fdd1c..2c95d99 100644
 --- a/src/frontend/editor.h
 +++ b/src/frontend/editor.h
 @@ -1,9 +1,16 @@
@@ -338,9 +335,9 @@ index 05fdd1c..be23096 100644
 +enum EDITOR_RUN { RUN_PARTIAL, RUN_COMPLETE, RUN_STOPPED };
 +void editor_live(int version);
 +void editor_page(int page, const char *base64, size_t len);
-+void editor_pdf(const char *path, int pages, enum EDITOR_RUN run, const int *changed, int ranges);
++void editor_pdf(int serial, int pages, enum EDITOR_RUN run, const int *changed, int ranges, unsigned long long revision);
 +void editor_done(enum EDITOR_RUN run);
-+void editor_synced(int mark);
++void editor_synced(int mark, unsigned long long revision);
 +/* While muted TeX's output and log aren't sent: a finishing pass runs beside the document
 +   being shown. */
 +void editor_mute(bool muted);

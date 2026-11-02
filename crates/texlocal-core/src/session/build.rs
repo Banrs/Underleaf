@@ -128,7 +128,7 @@ pub(super) fn built_pdf(project: &Project) -> Option<String> {
 
 impl Actor {
     fn has_pdf(&self) -> bool {
-        self.builds.pdf.is_some() || self.live.document_seen
+        self.builds.pdf.is_some() || self.live.pdf.is_some()
     }
 
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
@@ -250,7 +250,7 @@ impl Actor {
         let shown = ShownPdf {
             path: self.builds.pdf.clone(),
             version: self.builds.version,
-            live: self.live.document_seen,
+            live: self.live.pdf.is_some(),
         };
         self.publish(SessionSection::ShownPdf(shown));
     }

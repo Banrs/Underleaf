@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -22,11 +22,14 @@ use crate::stamp::Stamp;
 use crate::tex::find_tool;
 use crate::{CoreError, lock, settings, sys, tail};
 
+mod sources;
+use sources::Sources;
+
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
-const LIVE_VERSION: u64 = 3;
+const LIVE_VERSION: u64 = 4;
 
 #[derive(Debug)]
 pub struct FileBuffer {
@@ -51,6 +54,7 @@ pub enum LiveEvent {
         pages: u32,
         run: RunEnd,
         changed: Vec<PageRange>,
+        sources: HashMap<String, Arc<str>>,
     },
     Done(RunEnd),
     Synced(u64),
@@ -58,21 +62,12 @@ pub enum LiveEvent {
     Ended(Option<Message>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RunEnd {
     Complete,
     Partial,
     Stopped,
-}
-
-impl RunEnd {
-    fn named(name: &str) -> Self {
-        match name {
-            "partial" => Self::Partial,
-            "stopped" => Self::Stopped,
-            _ => Self::Complete,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -104,8 +99,6 @@ pub trait LiveRun: Send + Sync {
     fn mark(&self, mark: u64);
     fn log(&self) -> String;
     fn tex_log(&self) -> Option<String>;
-    fn text(&self, rel: &str) -> Option<String>;
-    fn pdf(&self) -> Result<PathBuf, CoreError>;
     fn stop(&self);
 }
 
@@ -186,7 +179,7 @@ struct Session {
     root: PathBuf,
     pdf: PathBuf,
     state: Mutex<State>,
-    files: Mutex<HashMap<String, String>>,
+    files: Mutex<Sources>,
     sink: Sink,
 }
 
@@ -194,7 +187,7 @@ impl Session {
     fn new(
         root: PathBuf,
         pdf: PathBuf,
-        files: HashMap<String, String>,
+        files: Sources,
         sink: Sink,
         tree: Tree,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<Vec<u8>>) {
@@ -230,7 +223,7 @@ impl Session {
         let Some(link) = link else { return };
         link.tree.kill();
         remove_pdf_folder(&self.pdf);
-        lock(&self.files).clear();
+        *lock(&self.files) = Sources::default();
         (self.sink)(LiveEvent::Ended(error));
     }
     fn send(&self, messages: &[Value]) {
@@ -252,13 +245,20 @@ impl LiveRun for Session {
             return;
         }
         let path = self.root.join(rel);
-        let message = match files.get(rel).map(|old| delta(old, text)) {
+        let message = match files.current.get(rel).map(|old| delta(old, text)) {
             Some((_, 0, "")) => return,
-            Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
-            None => json!(["open", path, text]),
+            Some((offset, remove, inserted)) => {
+                let message = json!(["change", path, offset, remove, inserted]);
+                files.changed(rel, offset, remove, inserted);
+                message
+            }
+            None => {
+                files.changed(rel, 0, 0, text);
+                json!(["open", path, text])
+            }
         };
         self.send(&[message]);
-        files.insert(rel.to_owned(), text.to_owned());
+        files.current.insert(rel.to_owned(), text.to_owned());
     }
     fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool {
         let mut files = lock(&self.files);
@@ -266,11 +266,13 @@ impl LiveRun for Session {
             return true;
         }
         let spliced = files
+            .current
             .get_mut(rel)
             .and_then(|held| splice(held, start, remove, text));
         let Some((offset, removed)) = spliced else {
             return false;
         };
+        files.changed(rel, offset, removed, text);
         let path = self.root.join(rel);
         self.send(&[json!(["change", path, offset, removed, text])]);
         true
@@ -279,7 +281,8 @@ impl LiveRun for Session {
         self.send(&[json!(["view", first, last.max(first)])]);
     }
     fn caret(&self, rel: &str, offset: usize) {
-        let offset = (lock(&self.files).get(rel)).and_then(|text| byte_offset(text, offset));
+        let offset =
+            (lock(&self.files).current.get(rel)).and_then(|text| byte_offset(text, offset));
         if let Some(offset) = offset {
             self.send(&[json!(["caret", self.root.join(rel), offset])]);
         }
@@ -303,15 +306,6 @@ impl LiveRun for Session {
     fn tex_log(&self) -> Option<String> {
         let log = &lock(&self.state).log;
         (log.base == 0).then(|| String::from_utf8_lossy(&log.bytes).into_owned())
-    }
-    fn text(&self, rel: &str) -> Option<String> {
-        lock(&self.files).get(rel).cloned()
-    }
-    fn pdf(&self) -> Result<PathBuf, CoreError> {
-        if !self.pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(messages::texpresso_unsynced()));
-        }
-        Ok(self.pdf.clone())
     }
     fn stop(&self) {
         self.end(None);
@@ -358,22 +352,19 @@ impl Manager {
     }
 }
 
-fn opening(
-    root: &Path,
-    files: &[FileBuffer],
-    pane: &Pane,
-) -> (HashMap<String, String>, Vec<Value>) {
-    let mut buffers = HashMap::new();
+fn opening(root: &Path, files: &[FileBuffer], pane: &Pane) -> (Sources, Vec<Value>) {
+    let mut buffers = Sources::default();
     let mut opening = Vec::new();
     for file in files {
         opening.push(json!(["open", root.join(&file.path), file.text]));
-        buffers.insert(file.path.clone(), file.text.clone());
+        buffers.changed(&file.path, 0, 0, &file.text);
+        buffers.current.insert(file.path.clone(), file.text.clone());
     }
     let view = pane
         .view
         .map(|(first, last)| json!(["view", first, last.max(first)]));
     let caret = pane.caret.as_ref().and_then(|(rel, units)| {
-        let offset = byte_offset(buffers.get(rel)?, *units)?;
+        let offset = byte_offset(buffers.current.get(rel)?, *units)?;
         Some(json!(["caret", root.join(rel), offset]))
     });
     opening.extend(view.into_iter().chain(caret));
@@ -551,7 +542,7 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
 
 fn apply_message(session: &Session, mut message: Value) {
     let verb = message[0].as_str().unwrap_or_default();
-    let number = |index: usize| message[index].as_u64().map(|n| n as u32);
+    let number = |index: usize| message[index].as_u64().and_then(|n| u32::try_from(n).ok());
     let live = {
         let mut state = lock(&session.state);
         if !state.live && verb == "live" && message[1] == LIVE_VERSION {
@@ -568,32 +559,24 @@ fn apply_message(session: &Session, mut message: Value) {
             (Some(page), Value::String(pdf)) => LiveEvent::Page { page, pdf },
             _ => return,
         },
-        "pdf" => {
-            let (Some(run), Some(ranges)) = (message[3].as_str(), message[4].as_array()) else {
+        "pdf" => match document(session, message) {
+            Some(event) => event,
+            None => return,
+        },
+        "done" => match serde_json::from_value(message[1].take()) {
+            Ok(run) => LiveEvent::Done(run),
+            Err(_) => return,
+        },
+        "synced" => {
+            let (Some(mark), Some(revision)) = (message[1].as_u64(), message[2].as_u64()) else {
                 return;
             };
-            let page = |range: &Value, at: usize| range[at].as_u64().unwrap_or(0) as u32;
-            LiveEvent::Document {
-                path: session.pdf.to_string_lossy().into_owned(),
-                pages: number(2).unwrap_or(0),
-                run: RunEnd::named(run),
-                changed: ranges
-                    .iter()
-                    .map(|r| PageRange {
-                        first: page(r, 0),
-                        last: page(r, 1),
-                    })
-                    .collect(),
+            // A settled viewport can acknowledge edits without changing the whole PDF.
+            if lock(&session.files).acknowledge(revision).is_none() {
+                return session.end(Some(messages::live_unpatched()));
             }
+            LiveEvent::Synced(mark)
         }
-        "done" => match message[1].as_str() {
-            Some(run) => LiveEvent::Done(RunEnd::named(run)),
-            None => return,
-        },
-        "synced" => match message[1].as_u64() {
-            Some(mark) => LiveEvent::Synced(mark),
-            None => return,
-        },
         "truncate" | "append" => {
             let mut state = lock(&session.state);
             let output = match message[1].as_str() {
@@ -612,6 +595,42 @@ fn apply_message(session: &Session, mut message: Value) {
         _ => return,
     };
     (session.sink)(event);
+}
+
+fn document(session: &Session, message: Value) -> Option<LiveEvent> {
+    let (_, serial, pages, run, ranges, revision): (
+        String,
+        u32,
+        u32,
+        RunEnd,
+        Vec<(u32, u32)>,
+        u64,
+    ) = serde_json::from_value(message).ok()?;
+    if ranges
+        .iter()
+        .any(|&(first, last)| first > last || last >= pages)
+    {
+        return None;
+    }
+    let sources = lock(&session.files).typeset(revision);
+    let Some(sources) = sources else {
+        session.end(Some(messages::live_unpatched()));
+        return None;
+    };
+    Some(LiveEvent::Document {
+        path: session
+            .pdf
+            .with_extension(format!("pdf.{serial}.pdf"))
+            .to_string_lossy()
+            .into_owned(),
+        sources,
+        pages,
+        run,
+        changed: ranges
+            .into_iter()
+            .map(|(first, last)| PageRange { first, last })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -646,7 +665,7 @@ mod tests {
         let (tx, events) = channel();
         let sink: Sink = Box::new(move |event| drop(tx.send(event)));
         let pdf = dir.join("live/live.pdf");
-        let (session, _) = Session::new(dir.into(), pdf, HashMap::new(), sink, Tree::default());
+        let (session, _) = Session::new(dir.into(), pdf, Sources::default(), sink, Tree::default());
         (session, events)
     }
 
@@ -674,11 +693,58 @@ mod tests {
         assert_eq!((log.base, log.text().len()), (0, MAX_OUTPUT));
     }
 
+    #[test]
+    fn a_pdf_received_after_a_newer_edit_carries_the_sources_it_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = [FileBuffer {
+            path: "main.tex".into(),
+            text: "old\n".into(),
+        }];
+        let (sources, _) = opening(dir.path(), &files, &Pane::default());
+        let (tx, events) = channel();
+        let (session, _lines) = Session::new(
+            dir.path().into(),
+            dir.path().join("live.pdf"),
+            sources,
+            Box::new(move |e| tx.send(e).unwrap()),
+            Tree::default(),
+        );
+        apply_message(&session, json!(["live", LIVE_VERSION]));
+        for malformed in [
+            json!(["pdf", 1, 1, "complete", [[0, 1]], 1]),
+            json!(["pdf", 1, 2, "complete", [[1, 0]], 1]),
+            json!(["pdf", 1, 1, "complete", [[0, u64::MAX]], 1]),
+            json!(["pdf", 1, 1, "unknown", [], 1]),
+        ] {
+            apply_message(&session, malformed);
+            assert!(events.try_recv().is_err());
+        }
+        assert!(session.edit("main.tex", 0, 0, "new\n"));
+        for (serial, revision, text) in [(1, 1, "old\n"), (2, 2, "new\nold\n")] {
+            apply_message(&session, json!(["synced", serial, revision]));
+            assert_eq!(events.recv().unwrap(), LiveEvent::Synced(serial));
+            apply_message(
+                &session,
+                json!(["pdf", serial, 1, "complete", [[0, 0]], revision]),
+            );
+            let LiveEvent::Document { path, sources, .. } = events.recv().unwrap() else {
+                panic!("PDF expected")
+            };
+            assert_eq!(
+                Path::new(&path),
+                dir.path().join(format!("live.pdf.{serial}.pdf"))
+            );
+            assert_eq!(&*sources["main.tex"], text);
+        }
+        apply_message(&session, json!(["pdf", 3, 1, "complete", [], 3]));
+        assert!(matches!(events.recv().unwrap(), LiveEvent::Ended(Some(_))));
+    }
+
     #[tokio::test]
     async fn a_message_split_between_reads_is_applied_whole_after_the_handshake() {
         let dir = tempfile::tempdir().unwrap();
         let (session, events) = listening(dir.path());
-        let first: &[u8] = b"[\"live\",3]\n[\"append\",\"log\",0,\"This is \"]\n[\"page\",0,\"JV";
+        let first: &[u8] = b"[\"live\",4]\n[\"append\",\"log\",0,\"This is \"]\n[\"page\",0,\"JV";
         let second: &[u8] = b"BER\"]\nnot json\n[\"append\",\"log\",8,\"TeX\"]\n[\"append\",\"out\",0,\"o\"]\n[\"done\",\"complete\"]\n";
         read_output(first.chain(second), Arc::clone(&session), true).await;
         let page = LiveEvent::Page {

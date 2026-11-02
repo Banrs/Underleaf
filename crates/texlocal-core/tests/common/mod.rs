@@ -14,7 +14,7 @@ use texlocal_core::service::Service;
 use texlocal_core::session::{
     FileBuffer, LiveEvent, LiveRun, Pane, Preview, Project, Sessions, Sink,
 };
-use texlocal_core::{CoreError, ErrorKind, messages};
+use texlocal_core::{CoreError, ErrorKind};
 
 #[derive(Debug, Deserialize)]
 pub struct Refused {
@@ -346,7 +346,6 @@ pub struct FakePreview {
     sink: Mutex<Option<Sink>>,
     pub log: Mutex<String>,
     texts: Mutex<HashMap<String, String>>,
-    pub pdf: Mutex<Option<PathBuf>>,
 }
 
 impl FakePreview {
@@ -417,15 +416,6 @@ impl LiveRun for FakePreview {
 
     fn tex_log(&self) -> Option<String> {
         Some(self.log.lock().unwrap().clone())
-    }
-
-    fn text(&self, rel: &str) -> Option<String> {
-        self.texts.lock().unwrap().get(rel).cloned()
-    }
-
-    fn pdf(&self) -> Result<PathBuf, CoreError> {
-        let pdf = self.pdf.lock().unwrap().clone();
-        pdf.ok_or_else(|| CoreError::not_found(messages::texpresso_unsynced()))
     }
 
     fn stop(&self) {
