@@ -1,23 +1,22 @@
 # Why agent code bloats, and what we check
 
-The evidence behind AGENTS.md's "Writing code" rules, and the checks it supports in this repo. Researched 2026-11-02
-from the full texts (arXiv HTML, METR's pages); every figure is the source's own. Tags: **[E]** a source measured it
-directly; **[I]** inferred from a source that measured something next to it; **[J]** judgement, no source tested it.
+The evidence behind AGENTS.md's writing rules and this repo's checks. Updated 2026-11-03, prioritizing October–November
+2026 publications. The relevant primary studies found in that window are below; earlier research remains background,
+not evidence about today's models. **[E]** means measured by the cited study, **[I]** an inference, **[J]** judgement.
 
-## In short
+## October–November update
 
-- Bloat is iterative. Single agent patches look like human ones (Chen & Jiang); the damage accrues as an agent extends
-  its own code (SlopCodeBench) and over months of a project (He et al.).
-- Quality rules in a prompt lower where the code starts, not how fast it degrades, and cost a little correctness. So
-  measure with tools rather than add rules.
-- Agent code is longer per function, nested and layered deeper, and reuses less across files (Mao et al.).
-- Context files: hand-written beat generated; neither significantly raises success; both cost about 20% more; repo
-  overviews don't help; agents do run the commands a file names (Gloaguen et al.).
-- Passing tests is not mergeable: maintainers would reject about half of test-passing agent PRs (METR).
-- Repeated fixing decays within 2-3 attempts; restarting from the problem beats pushing on (Adnan & Kuhn).
-- An LLM reviewer rejects correct code often, more so when asked to explain and fix (Jin & Chen).
+| Publication | Finding and limit | Application here |
+| --- | --- | --- |
+| [Your Wish Is My Commit](https://arxiv.org/html/2610.36346v1), 26 October | Across 3,000 repeated refactoring turns on 50 algorithmic and 10 academic Java programs, every tested model resumed editing after stopping; some rewrote up to 31 times the initial code before first stopping. Deliberately repetitive prompts and small, selected programs limit generalization. | [I] Stop when a proposed edit has no concrete benefit. A request for comprehensive review does not justify rewriting settled code. |
+| [Do Modifications Made by Coding Agents Make Subsequent Software Maintenance Harder?](https://arxiv.org/html/2610.14768v1), 10 October | In 1,996 paired later tasks from 50 Python repositories, agent history reduced task resolution by 5.6 percentage points, or 14.0 when earlier tests also counted. Once inherited tests passed and already-solved tasks were excluded, the disadvantage disappeared (+2.7 points; CI −0.5 to +6.1). | [I] Preserve earlier behaviour and resolve inherited failures. The study does not establish that agent-written code is inherently harder to maintain. |
+| [Testing with Coding Agents](https://arxiv.org/abs/2610.35297), 26 October | Among 114,134 merged Java PRs, agents were associated with adding tests more often and modifying/deleting them less often. Most test structure and production-change coverage comparisons showed no difference; the authors call the quality relationship uncertain. Observational agent labels and 95 buildable repositories limit the coverage analysis. | [I] Review the assertions and update an existing test when its contract changes. Test count and code deletion are not quality targets. |
 
-## Sources
+These preprints narrow the older evidence: neither verbosity nor agent authorship alone proves a defect. Here, useful
+simplification removes an impossible state, duplicate ownership, redundant validation or needless indirection. Behaviour
+changes need a reproduced failure or a native contract; shorter code is not sufficient evidence. [J]
+
+## Earlier sources
 
 **1. SlopCodeBench.** Orlanski, Roy, Yun, Shin, Gu, Ge, Adila, Roberts, Sala, Albarghouthi (2026). *SlopCodeBench:
 Benchmarking How Coding Agents Degrade Over Long-Horizon Iterative Tasks.* arXiv 2603.24755v2.
@@ -194,7 +193,7 @@ Most rejections give no reason (67.9%) or are workflow, not agent failure (only 
 
 ## Checks
 
-All commands run from the repo root; each was run here on 2026-11-02 unless marked unverified.
+All commands run from the repo root. The numbers below are the 2026-11-02 baseline, unless a later measurement is stated.
 
 **1. Net lines per change** [E 7, 8]. Say the net in the report or PR, excluding generated code:
 
@@ -217,8 +216,8 @@ rg -n --type swift '^extension ' apps/macos/TeXLocal            # where shared h
 rg -nw 'helperName' apps crates                                 # its callers, before and after
 ```
 
-**3. Duplication: jscpd 4.3.0** [I 1, 16]. Verified via the npx cache (`--offline` fails rather than downloads;
-installing it is a download to ask about). Baseline at 50 tokens: Rust 6 clones, 34 lines (0.16%) in 93 files; Swift
+**3. Duplication: jscpd 4.3.0** [I 1, 16]. Verified via the local npx cache. If offline package resolution fails,
+use the installed CLI directly; a resolution failure is not a duplication result. Baseline at 50 tokens: Rust 6 clones, 34 lines (0.16%) in 93 files; Swift
 none in 79 files. A new clone after a feature is a review question. Token clones only, not same-behaviour code.
 
 ```sh
@@ -237,7 +236,7 @@ periphery scan --project apps/macos/TeXLocal.xcodeproj --schemes TeXLocal --rela
 
 **5. Clippy beyond `tools/check.sh`** [I 1, 7, 11]. Hits counted on this workspace with clippy 0.1.99:
 - Worth adding to `[workspace.lints.clippy]` (few hits now): `match_same_arms` (0), `redundant_else` (0),
-  `unnecessary_wraps` (2: private functions that always return `Ok`/`Some`), `too_many_lines` (3 over 100 lines,
+  `unnecessary_wraps` (2 originally; removed on 2026-11-03: macOS identity and administrator-command helpers), `too_many_lines` (3 over 100 lines,
   erosion's shape).
 - On demand, against a change: `single_call_fn` (168 workspace-wide, so never as `-D`) lists one-caller functions;
   `needless_pass_by_value` (14).
