@@ -21,7 +21,6 @@ struct StatusBar: View {
         }
         .barRow()
         .contentShape(.rect)
-        .barEdge()
         .monospacedDigit()
         .buttonStyle(.borderless)
         .contextMenu { Button(window.title(.viewToggleWordCount, on: project)) { window.perform(.viewToggleWordCount, on: project) } }
@@ -262,9 +261,16 @@ extension View {
             .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
     }
 
-    /// A bar's top edge: a divider, 1 pt as above Xcode's debug bar (measured), there whether or not text runs beneath,
-    /// which the scroll edge's own line is not.
-    func barEdge() -> some View { overlay(alignment: .top) { Divider() } }
+    /// A bar's top edge, one device pixel as AppKit draws the edges of the toolbar and its scroll pockets (measured in
+    /// TextEdit), rather than the 1 pt a split view draws between panes. The status bar has none of its own: its panes'
+    /// hard pockets draw it, and one over it made 1.5 pt over the editor.
+    func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
 
     fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }
+}
+
+private struct Hairline: View {
+    @Environment(\.displayScale) private var scale
+
+    var body: some View { Rectangle().fill(.separator).frame(height: 1 / scale) }
 }

@@ -114,6 +114,24 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
+        // The bar lies over an empty hard-edge accessory in each pane. One accessory across both panes has a hard pocket of
+        // no colour, resting at AppKit's gray (40 over the 30 editor in Dark, 253 over a 238 pane in Light) and no longer
+        // blurring the PDF once it has been hidden; a pane's own rests at the pane's colour, as Xcode's bar rests at its
+        // editor's (probed on 27.2).
+        for item in [sourceItem!, pdfItem!] {
+            let space = NSView()
+            space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
+            item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
+        }
+        let bar = hostingView(StatusBar(project: project))
+        bar.sizingOptions = []
+        bar.safeAreaRegions = []
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(bar)
+        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
+                                     bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
+                                     bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
+                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height)])
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: app.buildPanelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -122,7 +140,6 @@ final class WorkspaceController: ThinSplitViewController {
         panelItem.isCollapsed = true
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
-        columnsItem.addBottomAlignedAccessoryViewController(accessory(hostingView(StatusBar(project: project)), edge: .hard))
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
