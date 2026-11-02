@@ -207,7 +207,6 @@ extension View {
 }
 
 struct OutlineList: View {
-    @Environment(AppModel.self) private var app
     let project: ProjectModel
     @State private var chosen: Int?
 
@@ -227,7 +226,7 @@ struct OutlineList: View {
                     filter.isEmpty ? disclosure(\.foldedHeadings, of: project, key: node.foldKey, inverted: true,
                                                 subtree: node.descendants.map(\.foldKey)) : .constant(true)
                 }) { node in
-                    HeadingRow(node: node, words: app.showWordCount ? node.words : nil).tag(node.id)
+                    HeadingRow(node: node).tag(node.id)
                         .simultaneousGesture(TapGesture().onEnded {
                             // A double-click's second click is the list's primary action, which opens the heading in the source.
                             guard NSApp.currentEvent?.clickCount ?? 1 < 2, node.id == current || node.id == chosen else { return }
@@ -261,25 +260,15 @@ struct OutlineList: View {
 
 private struct HeadingRow: View {
     let node: OutlineNode
-    let words: Int?
 
     var body: some View {
         let heading = node.heading
-        HStack(spacing: 4) {
-            Text(heading.title)
-                .help(heading.title)
-                .foregroundStyle(heading.untitled ? .secondary : .primary)
-            if let words {
-                Text(words, format: .number)
-                    .foregroundStyle(.secondary)
-                    .layoutPriority(1)
-                    .accessibilityLabel("^[\(words) word](inflect: true)")
-            }
-        }
-        .lineLimit(1)
-        .navigatorRow()
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(heading.level)
-        .id(node.id)
+        Text(heading.title)
+            .help(heading.title)
+            .foregroundStyle(heading.untitled ? .secondary : .primary)
+            .lineLimit(1)
+            .navigatorRow()
+            .accessibilityValue(heading.level)
+            .id(node.id)
     }
 }
