@@ -3,12 +3,13 @@ import SwiftUI
 
 /// Find's header, laid out as Xcode's Find navigator lays out its own (IDEFindNavigatorQueryParametersController, read from its
 /// nib and measured in Xcode) from the controls Apple documents for each part: a row 2 pt under the chooser with a borderless
-/// Find or Replace pop-up and a borderless Aa toggle, gray off and accent on, the query field under it, whose menu holds Whole
-/// Words, and in Replace the replacement field with Replace and Replace All push buttons at its end; then the
+/// Find or Replace pop-up, then Xcode's Containing or Matching Word pop-up, and a borderless Aa toggle, gray off and accent on,
+/// the query field under it, and in Replace the replacement field with Replace and Replace All push buttons at its end; then the
 /// count of results, centred in a 22 pt band. Fields and buttons are regular, 24 pt, with small button titles, as Xcode's are,
 /// and none is glass: Xcode's sit in a scroll edge's bar, and only the filter bar floats over the list.
 final class FindHeader: NSView, NSSearchFieldDelegate {
     private let mode = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let criteria = NSPopUpButton(frame: .zero, pullsDown: false)
     private let usages = NSTextField(labelWithString: "")
     private let matchCase = NSButton(title: "Aa", target: nil, action: nil)
     private let query = NavigatorField()
@@ -27,11 +28,15 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         super.init(frame: .zero)
         let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         mode.addItems(withTitles: [String(localized: "Find"), String(localized: "Replace")])
-        mode.isBordered = false
-        mode.controlSize = .small
-        mode.font = small
+        criteria.addItems(withTitles: [String(localized: "Containing"), String(localized: "Matching Word")])
+        for (pop, action) in [(mode, #selector(chooseMode)), (criteria, #selector(chooseCriteria))] {
+            pop.isBordered = false
+            pop.controlSize = .small
+            pop.font = small
+            (pop.target, pop.action) = (self, action)
+        }
         mode.toolTip = String(localized: "Find or replace")
-        (mode.target, mode.action) = (self, #selector(chooseMode))
+        criteria.toolTip = String(localized: "Match text anywhere, or only whole words")
 
         usages.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         usages.lineBreakMode = .byTruncatingMiddle
@@ -68,7 +73,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         count.font = small
         count.textColor = .secondaryLabelColor
         count.alignment = .center
-        for view in [mode, usages, matchCase, query, replacement, replace, replaceAll, count] { addSubview(view) }
+        for view in [mode, criteria, usages, matchCase, query, replacement, replace, replaceAll, count] { addSubview(view) }
         field.field = query
         watch = track({ Shown(project) }) { [weak self] in self?.show($0) }
     }
@@ -102,8 +107,10 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
             field.stringValue = text
         }
         mode.selectItem(at: shown.replacing ? 1 : 0)
+        criteria.selectItem(at: shown.wholeWords ? 1 : 0)
         usages.stringValue = shown.usages.map { String(localized: "Usages of \($0)") } ?? ""
-        (mode.isHidden, matchCase.isHidden, usages.isHidden) = (shown.usages != nil, shown.usages != nil, shown.usages == nil)
+        for view in [mode, criteria, matchCase] { view.isHidden = shown.usages != nil }
+        usages.isHidden = shown.usages == nil
         matchCase.state = shown.matchCase ? .on : .off
         matchCase.contentTintColor = shown.matchCase ? .controlAccentColor : .secondaryLabelColor
         for view in [replacement, replace, replaceAll] { view.isHidden = !shown.replacing }
@@ -114,17 +121,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
             : String(localized: "Replace all search results")
         count.stringValue = String(AttributedString(localized: "^[\(shown.hits) result](inflect: true) in ^[\(shown.files) file](inflect: true)").characters)
         count.isHidden = shown.hits == 0
-        query.searchMenuTemplate = options(shown)
         if resized { invalidateIntrinsicContentSize() }
         needsLayout = true
-    }
-
-    /// Case is only the Aa, as in Xcode, whose field menu holds Insert Pattern instead.
-    private func options(_ shown: Shown) -> NSMenu {
-        let menu = NSMenu()
-        let item = menu.addItem(withTitle: String(localized: "Whole Words"), action: #selector(toggleWords), keyEquivalent: "")
-        (item.target, item.state) = (self, shown.wholeWords ? .on : .off)
-        return menu
     }
 
     override var isFlipped: Bool { true }
@@ -140,6 +138,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         let width = bounds.width
         let pop = mode.intrinsicContentSize, aa = matchCase.intrinsicContentSize
         mode.frame = NSRect(x: 3, y: (Self.row - pop.height) / 2, width: pop.width, height: pop.height)
+        let rule = criteria.intrinsicContentSize
+        criteria.frame = NSRect(x: mode.frame.maxX + 4, y: (Self.row - rule.height) / 2, width: rule.width, height: rule.height)
         usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
         matchCase.frame = NSRect(x: width - 7 - aa.width, y: (Self.row - aa.height) / 2, width: aa.width, height: aa.height)
         var y = Self.row + 2
@@ -170,7 +170,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
     @objc private func chooseMode() { project.search.replacing = mode.indexOfSelectedItem == 1 }
     @objc private func toggleCase() { project.search.asked.matchCase.toggle() }
-    @objc private func toggleWords() { project.search.asked.wholeWords.toggle() }
+    @objc private func chooseCriteria() { project.search.asked.wholeWords = criteria.indexOfSelectedItem == 1 }
     @objc private func replaceChosen() { Task { await project.replaceChosen() } }
     @objc private func replaceEvery() { Task { await project.replaceAll() } }
 
