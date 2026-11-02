@@ -39,7 +39,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
         matchCase.setButtonType(.pushOnPushOff)
         matchCase.isBordered = false
-        matchCase.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        matchCase.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         matchCase.toolTip = String(localized: "Match Case")
         matchCase.setAccessibilityLabel(String(localized: "Match Case"))
         (matchCase.target, matchCase.action) = (self, #selector(toggleCase))
