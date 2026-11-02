@@ -127,11 +127,13 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
     override func layout() {
         super.layout()
         let width = bounds.width
-        let aa = matchCase.intrinsicContentSize, path = crumb.intrinsicContentSize
+        let path = crumb.intrinsicContentSize
         // Where Xcode's sits: 2 pt in, and 2 pt above the field.
         crumb.frame = NSRect(x: 2, y: Self.row - path.height, width: path.width, height: path.height)
         usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
-        matchCase.frame = NSRect(x: width - 7 - aa.width, y: (Self.row - aa.height) / 2, width: aa.width, height: aa.height)
+        // Xcode's nib gives Aa a fixed 21 by 16 pt frame, 8 pt from the end and 2 pt under the breadcrumb's top, so its title
+        // grows from its centre as it turns bold.
+        matchCase.frame = NSRect(x: width - 8 - 21, y: crumb.frame.minY + 2, width: 21, height: 16)
         var y = Self.row + 2
         query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field)
         y += Self.field
