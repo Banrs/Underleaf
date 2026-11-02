@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The maths symbols in a standard utility panel the system styles, as Xcode keeps its Library on ⇧⌘L: searchable, by the
-/// catalogue's categories after the recently used ones. A click inserts at the caret of the frontmost project, and the panel
-/// becomes key only for its search field, so the editor keeps the keyboard.
+/// The maths symbols in a utility panel on Liquid Glass, as Xcode keeps its Library on ⇧⌘L (its window controller holds a glass
+/// view): searchable, by the catalogue's categories after the recently used ones. A click inserts at the caret of the frontmost
+/// project, and the panel becomes key only for its search field, so the editor keeps the keyboard.
 final class SymbolLibrary: NSPanel {
     private static var shown: SymbolLibrary?
 
@@ -21,15 +21,19 @@ final class SymbolLibrary: NSPanel {
 
     private init(app: AppModel) {
         self.app = app
-        super.init(contentRect: .zero, styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: true)
+        super.init(contentRect: .zero, styleMask: [.titled, .closable, .resizable, .utilityWindow, .fullSizeContentView],
+                   backing: .buffered, defer: true)
         title = String(localized: "Symbol Library")
+        (titlebarAppearsTransparent, isOpaque, backgroundColor) = (true, false, .clear)
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
-        let host = NSHostingController(rootView: SymbolLibraryView(app: app, insert: { [unowned self] in insert($0) },
-                                                                   close: { [unowned self] in close() }))
+        let host = NSHostingView(rootView: SymbolLibraryView(app: app, insert: { [unowned self] in insert($0) },
+                                                             close: { [unowned self] in close() }))
         host.sizingOptions = [.minSize]
-        contentViewController = host
-        let width = host.view.fittingSize.width
+        let glass = NSGlassEffectView()
+        glass.contentView = host
+        contentView = glass
+        let width = host.fittingSize.width
         contentMaxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         setContentSize(NSSize(width: width, height: SymbolLibraryView.height))
         if !app.savesLayout || !setFrameUsingName("Symbol Library") { center() }
@@ -98,6 +102,8 @@ struct SymbolLibraryView: View {
                 }
                 .padding()
             }
+            // The symbols mostly fit, so the grid stretching past them at each end only rebuilt its rows as it bounced.
+            .scrollBounceBehavior(.basedOnSize)
             .disabled(Self.target(app)?.sourceToolsEnabled != true)
             .overlay { if sections.isEmpty { ContentUnavailableView.search(text: query) } }
         }
