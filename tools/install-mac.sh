@@ -16,6 +16,7 @@ if [[ $NAME != TeXLocal ]]; then
   for key in CFBundleName CFBundleDisplayName; do plutil -replace $key -string $NAME $APP/Contents/Info.plist; done
   plutil -replace LSEnvironment -json "{\"TEXLOCAL_DATA\": \"$HOME/$NAME\"}" $APP/Contents/Info.plist
 fi
+plutil -replace TeXLocalRevision -string $(git -C $R rev-parse HEAD) $APP/Contents/Info.plist
 codesign --force --deep --sign - $APP
 
 xcrun swift -e "import AppKit
@@ -29,4 +30,4 @@ rm -rf $DEST; mv $DEST.new $DEST
 codesign --verify --deep --strict $DEST
 cmp -s $APP/Contents/MacOS/TeXLocal $DEST/Contents/MacOS/TeXLocal || { echo "installed binary differs from the build"; exit 1; }
 echo "installed $(git -C $R rev-parse --short HEAD) to $DEST"
-open $DEST
+open -g $DEST
