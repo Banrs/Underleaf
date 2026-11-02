@@ -146,6 +146,59 @@ struct PDFTests {
         #expect(views.pdf.liveReading == nil && views.pdf.feed.pages.isEmpty)
     }
 
+    @Test(arguments: [false, true])
+    func liveFindIncludesAddedPagesAndKeepsItsSelectedMatch(_ searching: Bool) async throws {
+        let controller = PDFController(), view = controller.view, find = controller.find
+        let window = onScreen(controller)
+        defer { window.close() }
+        try await showLive(["needle", "needle", "needle"], in: controller)
+        let document = try #require(view.document)
+        find.isOpen = true
+        find.text = "needle"
+        find.search("needle")
+        try await found(controller)
+        find.advance(by: 1)
+        let selected = try #require(view.currentSelection?.pages.first)
+        let replacement = try textPDF(["filler", "needle"])
+        let pages = [0: try #require(replacement.page(at: 0)), 3: try #require(replacement.page(at: 1))]
+        if searching { find.search("needle") }
+        controller.replace(LivePages(pages: pages, count: 4))
+        try await found(controller)
+        #expect(find.matches.count == 3 && view.highlightedSelections?.count == 3)
+        #expect(find.matches.map { $0.pages.first.map(document.index) } == [1, 2, 3])
+        #expect(view.currentSelection?.pages.first === selected && find.matchIndex == 0)
+        find.advance(by: 1)
+        #expect(view.currentSelection?.pages.first === document.page(at: 2))
+        find.advance(by: -1)
+        #expect(view.currentSelection?.pages.first === selected)
+        try await showLive(["needle", "needle", "needle", "needle"], changed: [PageRange(first: 0, last: 0)], in: controller)
+        #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === selected)
+        try await showLive(["needle", "filler", "needle", "needle"], changed: [PageRange(first: 1, last: 1)], in: controller)
+        #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === document.page(at: 2))
+    }
+
+    @Test func aQueuedDocumentKeepsTheFollowThatAnOlderReadCannotShow() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = onScreen(controller)
+        defer { window.close() }
+        let url = URL.temporaryDirectory.appending(path: UUID().uuidString + ".pdf")
+        try #require(try textPDF(count: 4).dataRepresentation()).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var queued = false
+        let watch = NotificationCenter.default.addObserver(forName: .PDFViewDocumentChanged, object: view, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                guard !queued, view.document?.pageCount == 2 else { return }
+                queued = true
+                controller.showLive(LiveDocument(path: url.path(percentEncoded: false), changed: [PageRange(first: 2, last: 3)]))
+                controller.follow(ForwardLoc(page: 4, h: 72, v: 300, width: 100, height: 10, matches: []))
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(watch) }
+        try await showLive(["Page 1", "Page 2"], in: controller)
+        #expect(queued && view.document?.pageCount == 4)
+        #expect(try shown(view).page == 3 && controller.feed.follow == nil)
+    }
+
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = onScreen(controller)

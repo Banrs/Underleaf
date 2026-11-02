@@ -66,10 +66,10 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
     var isRunning: Bool { running != nil }
 
     /// Live Preview swapped pages: their matches are found again on those pages alone, not in the whole document.
-    func replaced(_ swaps: [(old: PDFPage, new: PDFPage?)]) {
-        guard isOpen, !query.isEmpty, !swaps.isEmpty else { return }
-        var all = matches.filter { match in !swaps.contains { match.pages.contains($0.old) } }
-        for page in swaps.compactMap(\.new) {
+    func replaced(_ removed: [PDFPage], with added: [PDFPage]) {
+        guard isOpen, !query.isEmpty, !removed.isEmpty || !added.isEmpty else { return }
+        var all = matches.filter { !$0.pages.contains(where: removed.contains) }
+        for page in added {
             guard let text = page.string else { continue }
             var from = text.startIndex
             while let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
@@ -112,6 +112,8 @@ final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
         matches = Array(all.prefix(Self.maxMatches))
         limited = all.count > matches.count
         if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
+        if keepingPlace, let selected = view.currentSelection.flatMap(position),
+           let index = matches.firstIndex(where: { position($0).map { $0 == selected } ?? false }) { matchIndex = index }
         let start = startFrom.take()
         if let start, !matches.isEmpty { matchIndex = index(from: start.anchor, step: start.step) }
         matches.forEach { $0.color = .findHighlightColor }

@@ -60,7 +60,7 @@ extension PDFController {
                 } else {
                     break
                 }
-                if let loc = feed.follow.take() { follow(loc, later: false) }
+                if feed.document == nil, feed.pages.isEmpty, let loc = feed.follow.take() { follow(loc, later: false) }
             }
             if !Task.isCancelled { self?.feed.reading = nil }
         }
@@ -83,29 +83,30 @@ extension PDFController {
         let interval = signposts.beginInterval("live.page")
         defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document else { return }
-        let refind = find.isRunning
+        let refind = find.isRunning || find.limited
         find.cancel()
-        var swaps: [(old: PDFPage, new: PDFPage?)] = []
+        var removed: [PDFPage] = [], added: [PDFPage] = []
         view.covering(live.covers) {
             for (index, page) in live.pages.sorted(by: { $0.key < $1.key }) {
                 if let old = document.page(ifAt: index) {
                     document.insert(page, at: index)
                     document.removePage(at: index + 1)
-                    swaps.append((old, page))
+                    removed.append(old)
+                    added.append(page)
                 } else if live.count != nil, index == document.pageCount {
                     document.insert(page, at: index)
+                    added.append(page)
                 }
             }
             while let count = live.count, document.pageCount > count, let last = document.page(at: document.pageCount - 1) {
                 document.removePage(at: document.pageCount - 1)
-                swaps.append((last, nil))
+                removed.append(last)
             }
         }
-        let gone = swaps.map(\.old)
-        if let mark = view.mark, gone.contains(mark.page) { view.removeMark() }
-        if view.currentSelection?.pages.contains(where: gone.contains) == true { view.clearSelection() }
+        if let mark = view.mark, removed.contains(mark.page) { view.removeMark() }
+        if view.currentSelection?.pages.contains(where: removed.contains) == true { view.clearSelection() }
         pageChanged()
-        if refind { find.rerun() } else { find.replaced(swaps) }
+        if refind { find.rerun() } else { find.replaced(removed, with: added) }
     }
 
     @concurrent private static func loadPages(_ changed: IndexSet, of url: URL, covering wanted: CoverPages) async -> sending LivePages? {
