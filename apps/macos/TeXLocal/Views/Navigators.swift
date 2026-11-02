@@ -188,9 +188,9 @@ final class NavigatorFilterBar: NSView {
     private static let toggleRoom: CGFloat = 7 + 17
 }
 
-/// Xcode's large navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 15 pt
-/// square 6 pt in, the text from 22 pt, with or without the symbol, and the clear button 17 pt square 6 pt from the end, before
-/// any room kept for toggles over the end.
+/// Xcode's navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 15 pt
+/// square 6 pt in, the text from 22 pt, and the clear button 17 pt square 6 pt from the end, before any room kept for toggles
+/// over the end.
 final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         var room: CGFloat = 0
@@ -203,8 +203,10 @@ final class NavigatorField: NSSearchField {
             NSRect(x: rect.maxX - room - 6 - 17, y: rect.midY - 8.5, width: 17, height: 17)
         }
 
+        /// Without the symbol, the text starts where the field's round end meets its straight edge, half its height in.
         override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-            NSRect(x: rect.minX + 22, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - rect.minX - 22, height: 20)
+            let minX = rect.minX + (searchButtonCell == nil ? rect.height / 2 : 22)
+            return NSRect(x: minX, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - minX, height: 20)
         }
 
         // A cell without its symbol still lists the symbol's button to accessibility, as an element with no role or name.

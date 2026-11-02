@@ -4,8 +4,9 @@ import SwiftUI
 /// Find's header, laid out as Xcode's Find navigator lays out its own (IDEFindNavigatorQueryParametersController, read from its
 /// nib and measured in Xcode) from the controls Apple documents for each part: a row 2 pt under the chooser with a borderless
 /// Find or Replace pop-up and a borderless Aa toggle, gray off and accent on, the query field under it, whose menu holds Match
-/// Case and Whole Words, and in Replace the replacement field with small Replace and Replace All push buttons at its end; then
-/// the count of results, centred in a 22 pt band. The fields are regular, 24 pt, as Xcode's are.
+/// Case and Whole Words, and in Replace the replacement field with Replace and Replace All push buttons at its end; then the
+/// count of results, centred in a 22 pt band. Fields and buttons are regular, 24 pt, with small button titles, as Xcode's are,
+/// and none is glass: Xcode's sit in a scroll edge's bar, and only the filter bar floats over the list.
 final class FindHeader: NSView, NSSearchFieldDelegate {
     private let mode = NSPopUpButton(frame: .zero, pullsDown: false)
     private let usages = NSTextField(labelWithString: "")
@@ -59,7 +60,6 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         // Neither is the default button, since Replace All can't be undone file by file.
         for (button, action) in [(replace, #selector(replaceChosen)), (replaceAll, #selector(replaceEvery))] {
             button.bezelStyle = .push
-            button.controlSize = .small
             button.font = small
             (button.target, button.action) = (self, action)
         }
@@ -152,7 +152,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
             y += 6 + Self.field + 6
             let all = replaceAll.intrinsicContentSize.width, one = replace.intrinsicContentSize.width
             replaceAll.frame = NSRect(x: width - 6 - all, y: y, width: all, height: Self.button)
-            replace.frame = NSRect(x: replaceAll.frame.minX - 8 - one, y: y, width: one, height: Self.button)
+            replace.frame = NSRect(x: replaceAll.frame.minX - 7 - one, y: y, width: one, height: Self.button)
             y += Self.button
         }
         let label = count.intrinsicContentSize.height
@@ -176,8 +176,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
     @objc private func replaceChosen() { Task { await project.replaceChosen() } }
     @objc private func replaceEvery() { Task { await project.replaceAll() } }
 
-    /// The rows' heights: small buttons, regular fields, and Xcode's band for the count.
-    private static let row: CGFloat = 20, field: CGFloat = 24, button: CGFloat = 20, band: CGFloat = 22
+    /// The rows' heights: the mode row, regular fields and buttons, and Xcode's band for the count.
+    private static let row: CGFloat = 20, field: CGFloat = 24, button: CGFloat = 24, band: CGFloat = 22
 }
 
 private struct FindHeaderView: NSViewRepresentable {
