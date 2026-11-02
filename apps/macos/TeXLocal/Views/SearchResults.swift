@@ -223,7 +223,7 @@ struct SearchResults: View {
             .task(id: project.search.asked) {
                 if project.search.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
                 guard !Task.isCancelled else { return }
-                await project.search.run(in: project.session)
+                guard await project.search.run({ try await project.session.call($0) }) else { return }
                 guard !Task.isCancelled, project.search.groups != nil, project.search.failure == nil else { return }
                 let count = project.search.hitCount
                 project.notices.announce(count == 0 ? String(localized: "Not found") : Self.matches(count), queued: true)

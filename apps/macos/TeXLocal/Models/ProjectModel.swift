@@ -344,23 +344,21 @@ final class ProjectModel {
         let files = answer.written.count + (answer.edits == nil ? 0 : 1)
         notices.note(String(AttributedString(localized: "Replaced ^[\(count) match](inflect: true) in ^[\(files) file](inflect: true)")
             .characters))
-        await search.run(in: session)
+        await search.run { try await session.call($0) }
     }
 
     /// Replaces the chosen hit, which its file shows selected, as Xcode's Replace does, then chooses the hit after it.
     func replaceChosen() async {
         let shown = navigator.filtered(search.groups ?? []).flatMap(\.hits)
-        guard let at = shown.firstIndex(where: { $0.id == search.chosen }) else { return }
-        guard views?.replace(shown[at], with: search.replacement) == true else {
+        guard let hit = shown.first(where: { $0.id == search.chosen }) else { return }
+        let replacement = search.replacement
+        guard views?.replace(hit, with: replacement) == true else {
             // The hit's text changed since the search, so it isn't replaced unseen.
             views?.beep()
             return
         }
-        await search.run(in: session)
-        let left = navigator.filtered(search.groups ?? []).flatMap(\.hits)
-        // A replacement the query still finds stays where the hit was; the next one is then past it.
-        let next = left.indices.contains(at) && left[at].line == shown[at].line && left[at].column == shown[at].column ? at + 1 : at
-        search.chosen = left.isEmpty ? nil : left[min(next, left.count - 1)].id
+        guard await search.run({ try await session.call($0) }) else { return }
+        search.choose(after: hit, replacingWith: replacement, in: navigator.filtered(search.groups ?? []))
     }
 
     func findUsages(in path: String, at offset: Int) async {

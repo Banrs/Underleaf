@@ -7,7 +7,7 @@ final class ProjectSearch {
         var query = "", matchCase = false, wholeWords = false
     }
 
-    var asked = Asked()
+    var asked = Asked() { didSet { if asked != oldValue { generation += 1 } } }
     var query: String {
         get { asked.query }
         set { asked.query = newValue }
@@ -21,27 +21,41 @@ final class ProjectSearch {
     private(set) var failure: String?
     private(set) var usages: Usages?
     var chosen: SearchHit.ID?
+    @ObservationIgnored private var generation = 0
 
     var hitCount: Int { groups?.reduce(0) { $0 + $1.hits.count } ?? 0 }
 
     func show(_ found: Usages) {
+        generation += 1
         (usages, groups, failure, chosen) = (found, found.groups, nil, nil)
         (searched.query, query) = (found.name, found.name)
     }
 
-    func run(in session: SessionClient) async {
+    @discardableResult
+    func run(_ search: (Search) async throws -> [SearchGroup]) async -> Bool {
         let asked = asked
-        guard asked.query != usages?.name else { return }
+        guard !Task.isCancelled, asked.query != usages?.name else { return false }
+        generation += 1
+        let started = generation
         var found: [SearchGroup]?, why: String?
         if isSearching {
             do {
-                found = try await session.call(Search(query: asked.query, matchCase: asked.matchCase, wholeWord: asked.wholeWords))
+                found = try await search(Search(query: asked.query, matchCase: asked.matchCase, wholeWord: asked.wholeWords))
             } catch {
                 (found, why) = ([], error.localizedDescription)
             }
-            guard self.asked == asked else { return }
         }
+        guard generation == started, !Task.isCancelled else { return false }
         (groups, failure, searched, usages, chosen) = (found, why, asked, nil, nil)
+        return true
+    }
+
+    func choose(after hit: SearchHit, replacingWith text: String, in shown: [SearchGroup]) {
+        let lines = text.components(separatedBy: "\n")
+        let line = hit.line + lines.count - 1
+        let column = (lines.count == 1 ? hit.column : 0) + (lines.last?.utf16.count ?? 0)
+        let hits = shown.flatMap(\.hits)
+        chosen = (hits.first { ($0.file, $0.line, $0.column) >= (hit.file, line, column) } ?? hits.last)?.id
     }
 
     /// Chooses the next or previous of the hits shown, `shown` being the results as the navigator's filter leaves them.
