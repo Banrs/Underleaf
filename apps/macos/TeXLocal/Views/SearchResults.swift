@@ -3,9 +3,9 @@ import SwiftUI
 
 /// Find's header, laid out as Xcode's Find navigator lays out its own (IDEFindNavigatorQueryParametersController, read from its
 /// nib and measured in Xcode) from the controls Apple documents for each part: a row 2 pt under the chooser with a borderless
-/// Find or Replace pop-up and an accessory-bar Aa toggle, the query field under it, whose menu holds Match Case and Whole Words,
-/// and in Replace the replacement field with small Replace and Replace All push buttons at its end; then the count of results,
-/// centred in a 22 pt band. The fields are large, as the chooser and the filter field are.
+/// Find or Replace pop-up and a borderless Aa toggle, gray off and accent on, the query field under it, whose menu holds Match
+/// Case and Whole Words, and in Replace the replacement field with small Replace and Replace All push buttons at its end; then
+/// the count of results, centred in a 22 pt band. The fields are regular, 24 pt, as Xcode's are.
 final class FindHeader: NSView, NSSearchFieldDelegate {
     private let mode = NSPopUpButton(frame: .zero, pullsDown: false)
     private let usages = NSTextField(labelWithString: "")
@@ -37,16 +37,15 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         usages.setAccessibilityRole(.staticText)
 
         matchCase.setButtonType(.pushOnPushOff)
-        matchCase.bezelStyle = .accessoryBar
-        matchCase.controlSize = .small
-        matchCase.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        matchCase.isBordered = false
+        matchCase.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         matchCase.toolTip = String(localized: "Match Case")
         matchCase.setAccessibilityLabel(String(localized: "Match Case"))
         (matchCase.target, matchCase.action) = (self, #selector(toggleCase))
 
         for field in [query, replacement] {
-            field.controlSize = .large
-            field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .large))
+            field.controlSize = .regular
+            field.font = .systemFont(ofSize: NSFont.systemFontSize)
             field.sendsSearchStringImmediately = true
             field.delegate = self
             (field.target, field.action) = (self, #selector(edited(_:)))
@@ -106,6 +105,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         usages.stringValue = shown.usages.map { String(localized: "Usages of \($0)") } ?? ""
         (mode.isHidden, matchCase.isHidden, usages.isHidden) = (shown.usages != nil, shown.usages != nil, shown.usages == nil)
         matchCase.state = shown.matchCase ? .on : .off
+        matchCase.contentTintColor = shown.matchCase ? .controlAccentColor : .secondaryLabelColor
         for view in [replacement, replace, replaceAll] { view.isHidden = !shown.replacing }
         replace.isEnabled = shown.chosen
         // Replace All changes every match in the project, so it waits until the filter no longer hides any.
@@ -176,8 +176,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
     @objc private func replaceChosen() { Task { await project.replaceChosen() } }
     @objc private func replaceEvery() { Task { await project.replaceAll() } }
 
-    /// The rows' heights: small accessory-bar and push buttons, large fields, and Xcode's band for the count.
-    private static let row: CGFloat = 20, field: CGFloat = 28, button: CGFloat = 20, band: CGFloat = 22
+    /// The rows' heights: small buttons, regular fields, and Xcode's band for the count.
+    private static let row: CGFloat = 20, field: CGFloat = 24, button: CGFloat = 20, band: CGFloat = 22
 }
 
 private struct FindHeaderView: NSViewRepresentable {
@@ -248,7 +248,6 @@ struct SearchResults: View {
         Label {
             Text("\(Text(group.file.fileName).fontWeight(.medium)) \(Text(group.file.parentFolder.replacing("/", with: " ▸ ")).foregroundStyle(.secondary))")
                 .lineLimit(1)
-                .truncationMode(.middle)
         } icon: {
             Image(systemName: project.tree.node(at: group.file)?.symbol ?? "text.document")
         }
