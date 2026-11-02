@@ -204,23 +204,34 @@ final class NavigatorField: NSSearchField {
             NSRect(x: rect.maxX - room - 6 - 17, y: rect.midY - 8.5, width: 17, height: 17)
         }
 
-        /// Without the symbol, the text starts where the field's round end meets its straight edge, half its height in.
         override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-            let minX = searchButtonCell == nil ? rect.minX + rect.height / 2 : searchButtonRect(forBounds: rect).maxX
+            let minX = searchButtonRect(forBounds: rect).maxX
             return NSRect(x: minX, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - minX, height: 20)
-        }
-
-        // A cell without its symbol still lists the symbol's button to accessibility, as an element with no role or name.
-        override func accessibilityChildren() -> [Any]? {
-            let children = super.accessibilityChildren()
-            guard searchButtonCell == nil else { return children }
-            return children?.filter { NSStringFromClass(Swift.type(of: $0 as AnyObject)) != "NSSearchButtonCellProxy" }
         }
     }
 
     override class var cellClass: AnyClass? {
         get { Cell.self }
         set {}
+    }
+
+    /// Keeps the field's past entries in its symbol's menu, as Xcode's Find and replace fields keep theirs (their controller
+    /// builds each menu from the field's history and Clear Recents), with AppKit's recents.
+    func keepRecents(as name: String) {
+        recentsAutosaveName = name
+        let menu = NSMenu()
+        for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
+                             (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
+                             (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
+            menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
+        }
+        searchMenuTemplate = menu
+    }
+
+    /// Adds the field's text to its recents, which a field sending each keystroke never does itself.
+    func remember() {
+        guard !stringValue.isEmpty else { return }
+        recentSearches = Array(([stringValue] + recentSearches.filter { $0 != stringValue }).prefix(10))
     }
 }
 
