@@ -3,7 +3,7 @@ import os
 
 extension PDFController {
     func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
-        if let selection, !find.isOpen {
+        if let selection, !view.find.isOpen {
             view.removeMark()
             selection.color = .findHighlightColor
             view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -14,7 +14,7 @@ extension PDFController {
 
     func sourcePoint() -> (page: Int, point: CGPoint)? {
         guard let document = view.document else { return nil }
-        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
+        let probe = CGPoint(x: view.bounds.midX, y: view.shownRect.maxY - view.shownHeight * 0.2)
         guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
         let bounds = page.bounds(for: view.displayBox)
         var point = view.convert(probe, to: page)

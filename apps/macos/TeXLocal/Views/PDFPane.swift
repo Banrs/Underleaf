@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct PDFEmptyState: View {
@@ -60,53 +59,6 @@ struct PDFEmptyState: View {
                     .disabled(!app.isEnabled(.compileRun, on: project))
             }
         }
-    }
-}
-
-struct PDFFindBar: View {
-    @Bindable var find: PDFFind
-
-    var body: some View {
-        let label = PDFFind.count(find.matchIndex + 1, of: find.matches.count, limited: find.limited, for: find.query)
-        // NSTextFinder's bar, read from an NSTextView's own: small controls 8 pt in and apart, 6 pt from its top and foot; the
-        // match count inside the field; chevrons drawn 7 pt square in 16 pt segments; Done an accessory bar button.
-        HStack(spacing: 8) {
-            SearchField(text: $find.text, prompt: "Find", handle: find.field, step: find.next, close: find.close,
-                        status: find.query.isEmpty ? "" : find.matches.count.formatted() + (find.limited ? "+" : ""),
-                        spokenStatus: label.isEmpty ? nil : label)
-            ControlGroup {
-                Button { find.next(-1) } label: { Label { Text("Previous Match") } icon: { Self.back } }
-                    .help("Go to the previous match")
-                Button { find.next(1) } label: { Label { Text("Next Match") } icon: { Self.forward } }
-                    .help("Go to the next match")
-            }
-            .frame(width: 32)
-            .disabled(find.matches.isEmpty)
-            Button("Done") { find.close() }
-                .buttonStyle(.accessoryBarAction)
-        }
-        .labelStyle(.iconOnly)
-        .controlSize(.small)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .task(id: label) {
-            guard !label.isEmpty, (try? await Task.sleep(for: .milliseconds(500))) != nil else { return }
-            var spoken = AttributedString(label)
-            spoken.accessibilitySpeechAnnouncementPriority = .low
-            AccessibilityNotification.Announcement(spoken).post()
-        }
-        .task(id: find.text) {
-            try? await Task.sleep(for: PDFFind.debounce)
-            if !Task.isCancelled { find.typed() }
-        }
-    }
-
-    private static let back = chevron("chevron.backward"), forward = chevron("chevron.forward")
-
-    private static func chevron(_ name: String) -> Image {
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.copy() as? NSImage ?? NSImage()
-        image.size = NSSize(width: 7, height: 7)
-        return Image(nsImage: image)
     }
 }
 

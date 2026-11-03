@@ -87,24 +87,20 @@ extension PDFController {
         }
     }
 
-    /// Replaces pages in the document shown, which keeps its place, selection and find, and trims it to the new count.
+    /// Replaces pages in the document shown, which keeps its place and selection, and trims it to the new count.
     func replace(_ live: LivePages) {
         let interval = signposts.beginInterval("live.page")
         defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document else { return }
-        let refind = find.isRunning || find.limited
-        find.cancel()
-        var removed: [PDFPage] = [], added: [PDFPage] = []
+        var removed: [PDFPage] = []
         view.covering(live.covers) {
             for (index, page) in live.pages.sorted(by: { $0.key < $1.key }) {
                 if let old = document.page(ifAt: index) {
                     document.insert(page, at: index)
                     document.removePage(at: index + 1)
                     removed.append(old)
-                    added.append(page)
                 } else if live.count != nil, index == document.pageCount {
                     document.insert(page, at: index)
-                    added.append(page)
                 }
             }
             while let count = live.count, document.pageCount > count, let last = document.page(at: document.pageCount - 1) {
@@ -115,7 +111,7 @@ extension PDFController {
         if let mark = view.mark, removed.contains(mark.page) { view.removeMark() }
         if view.currentSelection?.pages.contains(where: removed.contains) == true { view.clearSelection() }
         pageChanged()
-        if refind { find.rerun() } else { find.replaced(removed, with: added) }
+        view.find.pagesChanged()
     }
 
     @concurrent private static func loadPages(_ changed: IndexSet, of url: URL, covering wanted: CoverPages) async -> sending LivePages? {

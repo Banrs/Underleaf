@@ -1,188 +1,165 @@
 import PDFKit
-import SwiftUI
+import Synchronization
 
-@Observable
-final class PDFFind: NSObject, @MainActor PDFDocumentDelegate {
-    static let maxMatches = 5000
-    static let debounce: Duration = .milliseconds(200)
+/// Find in the PDF: NSTextFinder and its bar, in PDFKit's own scroll view as the editor's is in its scroll view, over the
+/// pages' text. The view hands it the Find menu's actions.
+final class PDFFind: NSObject, NSMenuItemValidation {
+    let text: PDFText
+    private let finder = NSTextFinder()
+    private unowned let view: SyncPDFView
+    private var matches: NSKeyValueObservation?
+    private var reading: Task<Void, Never>?
 
-    private static func normalize(_ query: String) -> String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    static func count(_ index: Int, of total: Int, limited: Bool, for query: String) -> String {
-        if query.isEmpty { return "" }
-        if total == 0 { return String(localized: "Not found") }
-        let count = "\(total.formatted())\(limited ? "+" : "")"
-        return String(localized: "\(index) of \(count)")
-    }
-
-    static var board = NSPasteboard(name: .find)
-
-    static var shared: String? {
-        get { board.string(forType: .string) }
-        set {
-            guard let newValue, !newValue.isEmpty, newValue != shared else { return }
-            board.replaceContents(with: newValue)
+    init(view: SyncPDFView) {
+        self.view = view
+        text = PDFText(view: view)
+        super.init()
+        finder.client = text
+        finder.isIncrementalSearchingEnabled = true
+        // NSTextFinder dims and lights matches by drawing the content view, which leaves PDFKit's page layers out.
+        finder.incrementalSearchingShouldDimContentView = false
+        matches = finder.observe(\.incrementalMatchRanges) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.highlightMatches() }
         }
     }
 
-    private let view: SyncPDFView
-    var isOpen = false { didSet { if isOpen, !oldValue, text.isEmpty { text = Self.shared ?? "" } } }
-    var text = ""
-    let field = FieldHandle()
-    private(set) var query = ""
-    private(set) var matches: [PDFSelection] = []
-    private(set) var matchIndex = 0
-    private(set) var limited = false
+    var isOpen: Bool { view.pageScrollView?.isFindBarVisible == true }
 
-    @ObservationIgnored private var running: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
-    @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
+    @objc func performFindPanelAction(_ sender: Any?) {
+        if let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag) { perform(action) }
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { NSTextFinder.Action(rawValue: item.tag).map(validate) ?? false }
+
+    func validate(_ action: NSTextFinder.Action) -> Bool { shown?.validateAction(action) == true }
+
+    func perform(_ action: NSTextFinder.Action) { shown?.performAction(action) }
+
+    func close() { finder.performAction(.hideFindInterface) }
+
+    /// The finder, once a PDF shows in the scroll view that holds its bar.
+    private var shown: NSTextFinder? {
+        guard view.document != nil, let scrollView = view.pageScrollView else { return nil }
+        finder.findBarContainer = scrollView
+        return finder
+    }
+
+    /// Reads the shown pages' text again after they change, off the main thread and after the change rather than before
+    /// it, as it takes about a millisecond a page: 430 ms for the 392-page test PDF. A page keeps its text once read, so
+    /// after a live page only that page costs. NSTextFinder doesn't find again when told the text changes, so its matches
+    /// go only when the text did.
+    func pagesChanged() {
+        let pages = PageTexts(document: view.document)
+        _ = restart(&reading) { [weak self] in
+            let strings = await pages.read()
+            guard let self, !Task.isCancelled else { return }
+            guard strings != text.pageStrings else { return highlightMatches() }
+            finder.noteClientStringWillChange()
+            text.pageStrings = strings
+        }
+    }
+
+    private func highlightMatches() {
+        let found = finder.incrementalMatchRanges.compactMap { text.selection(for: $0.rangeValue) }
+        for match in found { match.color = .findHighlightColor }
+        view.highlightedSelections = found.isEmpty ? nil : found
+    }
+}
+
+/// The PDF's text as NSTextFinder reads it: the pages' strings in turn, each ending in a search boundary so that no match
+/// spans two pages. NSTextFinder reads them on a background queue as it finds incrementally, so they are swapped whole
+/// under a lock rather than read from the pages, and only what touches the view is the main actor's.
+nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
+    private struct Pages {
+        var strings: [String] = []
+        /// Where each page's string ends in the text, in UTF-16 units as NSTextFinder counts.
+        var ends: [Int] = []
+
+        func start(of page: Int) -> Int { page == 0 ? 0 : ends[page - 1] }
+
+        /// The page holding the character at `index`.
+        func page(at index: Int) -> Int? { ends.firstIndex { $0 > index } }
+    }
+
+    private let pages = Mutex(Pages())
+    private unowned let view: SyncPDFView
 
     init(view: SyncPDFView) { self.view = view }
 
-    isolated deinit {
-        running?.document.delegate = nil
-        running?.document.cancelFindString()
-    }
-
-    func typed() {
-        guard Self.normalize(text) != running?.query ?? query else { return }
-        Self.shared = Self.normalize(text)
-        search(text)
-    }
-
-    func search(_ value: String, keepingPlace: Bool = false) {
-        guard let document = view.document else { return }
-        let query = Self.normalize(value)
-        guard running?.document !== document || running?.query != query else { return }
-        cancel()
-        guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
-        document.delegate = self
-        running = (document, query, keepingPlace, [])
-        document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
-    }
-
-    func rerun() { if isOpen { search(text, keepingPlace: true) } }
-
-    var isRunning: Bool { running != nil }
-
-    /// Live Preview swapped pages: their matches are found again on those pages alone, not in the whole document.
-    func replaced(_ removed: [PDFPage], with added: [PDFPage]) {
-        guard isOpen, !query.isEmpty, !removed.isEmpty || !added.isEmpty else { return }
-        var all = matches.filter { !$0.pages.contains(where: removed.contains) }
-        for page in added {
-            guard let text = page.string else { continue }
-            var from = text.startIndex
-            while let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
-                if let match = page.selection(for: NSRange(range, in: text)) { all.append(match) }
-                from = range.upperBound
+    var pageStrings: [String] {
+        get { pages.withLock { $0.strings } }
+        set {
+            var end = 0
+            let ends = newValue.map { string in
+                end += (string as NSString).length
+                return end
             }
-        }
-        let placed = all.compactMap { match in position(match).map { (match, $0) } }.sorted { $0.1 < $1.1 }.map(\.0)
-        found(query, placed, keepingPlace: true)
-    }
-
-    func cancel() {
-        let document = running?.document
-        running = nil
-        document?.cancelFindString()
-    }
-
-    func reset() {
-        (isOpen, text) = (false, "")
-        cancel()
-        (query, matches, matchIndex, limited, startFrom) = ("", [], 0, false, nil)
-    }
-
-    func documentDidFindMatch(_ note: Notification) {
-        guard note.object as? PDFDocument === running?.document,
-              let match = note.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection else { return }
-        running?.found.append(match)
-        if running?.found.count ?? 0 > Self.maxMatches { running?.document.cancelFindString() }
-    }
-
-    func documentDidEndDocumentFind(_ note: Notification) {
-        guard let running, note.object as? PDFDocument === running.document else { return }
-        self.running = nil
-        found(running.query, running.found, keepingPlace: running.keepingPlace)
-    }
-
-    private func found(_ query: String, _ all: [PDFSelection], keepingPlace: Bool) {
-        let was = matches
-        self.query = query
-        matches = Array(all.prefix(Self.maxMatches))
-        limited = all.count > matches.count
-        if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
-        if keepingPlace, let selected = view.currentSelection.flatMap(position),
-           let index = matches.firstIndex(where: { position($0).map { $0 == selected } ?? false }) { matchIndex = index }
-        let start = startFrom.take()
-        if let start, !matches.isEmpty { matchIndex = index(from: start.anchor, step: start.step) }
-        matches.forEach { $0.color = .findHighlightColor }
-        view.highlightedSelections = matches.isEmpty ? nil : matches
-        if matches.isEmpty, let shown = view.currentSelection.flatMap(position),
-           was.contains(where: { position($0).map { $0 == shown } ?? false }) { view.clearSelection() }
-        if !keepingPlace || view.currentSelection == nil { select(scrolling: start.map { $0.step != 0 } ?? !keepingPlace) }
-    }
-
-    private typealias Position = (page: Int, down: CGFloat, across: CGFloat)
-
-    private func position(_ selection: PDFSelection) -> Position? {
-        guard let document = view.document, let page = selection.pages.first else { return nil }
-        let box = selection.bounds(for: page)
-        return (page: document.index(for: page), down: -box.maxY, across: box.minX)
-    }
-
-    private var anchor: Position? {
-        view.currentSelection.flatMap(position) ?? view.shownPlace.map { (page: $0.index, down: -$0.point.y, across: $0.point.x) }
-    }
-
-    private func index(from anchor: Position, step: Int) -> Int {
-        let places = matches.map { position($0) }
-        switch step {
-        case 0: return places.firstIndex { $0.map { $0 >= anchor } ?? false } ?? 0
-        case 1...: return places.firstIndex { $0.map { $0 > anchor } ?? false } ?? 0
-        default: return places.lastIndex { $0.map { $0 < anchor } ?? false } ?? matches.count - 1
+            pages.withLock { $0 = Pages(strings: newValue, ends: ends) }
         }
     }
 
-    var canNext: Bool { view.document != nil && (!matches.isEmpty || !(Self.shared ?? "").isEmpty) }
+    let isEditable = false
 
-    func next(_ step: Int) {
-        let typed = Self.normalize(text)
-        let pending = !typed.isEmpty && typed != (running?.query ?? query)
-        let value = pending ? typed : Self.shared.map(Self.normalize) ?? typed
-        guard !value.isEmpty else { return }
-        if !matches.isEmpty, value == query, running == nil { return advance(by: step) }
-        if pending { Self.shared = value }
-        (isOpen, text, startFrom) = (true, value, anchor.map { ($0, step) })
-        search(value)
+    func string(at index: Int, effectiveRange range: NSRangePointer, endsWithSearchBoundary boundary: UnsafeMutablePointer<ObjCBool>) -> String {
+        pages.withLock { pages in
+            guard let page = pages.page(at: index) else {
+                range.pointee = NSRange(location: pages.ends.last ?? 0, length: 0)
+                return ""
+            }
+            range.pointee = NSRange(location: pages.start(of: page), length: pages.ends[page] - pages.start(of: page))
+            boundary.pointee = true
+            return pages.strings[page]
+        }
     }
 
-    var canUseSelection: Bool { !(view.currentSelection?.string ?? "").isEmpty }
+    func stringLength() -> Int { pages.withLock { $0.ends.last ?? 0 } }
 
-    func useSelection() {
-        guard let selection = view.currentSelection, let value = selection.string, !value.isEmpty else { return }
-        Self.shared = value
-        (isOpen, text, startFrom) = (true, value, position(selection).map { ($0, 0) })
-        search(value)
+    /// The selection, or with none the place shown, so that the next match is found from the page in view.
+    @MainActor var firstSelectedRange: NSRange {
+        guard let document = view.document else { return NSRange() }
+        if let selection = view.currentSelection, let page = selection.pages.first,
+           case let range = selection.range(at: 0, on: page), range.location != NSNotFound,
+           let start = start(of: document.index(for: page)) {
+            return NSRange(location: start + range.location, length: range.length)
+        }
+        guard let shown = view.shownPlace, let page = document.page(ifAt: shown.index), let start = start(of: shown.index) else {
+            return NSRange()
+        }
+        // Off a glyph, as the shown area's corner usually is, PDFKit gives NSNotFound for the character there.
+        let index = page.characterIndex(at: shown.point)
+        return NSRange(location: start + ((0..<NSNotFound).contains(index) ? index : 0), length: 0)
     }
 
-    func close() {
-        let fromBar = field.hasFocus
-        (isOpen, text) = (false, "")
-        search("")
-        if fromBar { view.window?.makeFirstResponder(view) }
+    @MainActor func scrollRangeToVisible(_ range: NSRange) {
+        guard let match = selection(for: range) else { return }
+        view.setCurrentSelection(match, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        view.scrollSelectionToVisible(nil)
     }
 
-    func advance(by delta: Int) {
-        guard !matches.isEmpty else { return }
-        matchIndex = (matchIndex + delta + matches.count) % matches.count
-        select()
+    @MainActor func selection(for range: NSRange) -> PDFSelection? {
+        let found = pages.withLock { pages in pages.page(at: range.location).map { ($0, pages.start(of: $0)) } }
+        guard let (index, start) = found, let page = view.document?.page(ifAt: index) else { return nil }
+        return page.selection(for: NSRange(location: range.location - start, length: range.length))
     }
 
-    private func select(scrolling: Bool = true) {
-        guard matches.indices.contains(matchIndex), let match = matches[matchIndex].copy() as? PDFSelection else { return }
-        match.color = nil
-        view.setCurrentSelection(match, animate: scrolling && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        if scrolling { view.scrollSelectionToVisible(nil) }
+    private func start(of page: Int) -> Int? {
+        pages.withLock { pages in pages.ends.indices.contains(page) ? pages.start(of: page) : nil }
+    }
+}
+
+/// The pages of the document shown, whose text is read off the main thread, as PDFKit itself reads shown pages there to
+/// draw them and to find in them.
+private nonisolated struct PageTexts: @unchecked Sendable {
+    let pages: [PDFPage]
+
+    init(document: PDFDocument?) { pages = document.map { document in (0..<document.pageCount).compactMap { document.page(at: $0) } } ?? [] }
+
+    @concurrent func read() async -> [String] {
+        var strings: [String] = []
+        for page in pages {
+            guard !Task.isCancelled else { break }
+            strings.append(page.string ?? "")
+        }
+        return strings
     }
 }

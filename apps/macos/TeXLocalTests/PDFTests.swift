@@ -117,20 +117,16 @@ struct PDFTests {
         #expect(!links.isEmpty && links.allSatisfy { $0.border?.lineWidth == 0 })
     }
 
-    @Test func aLiveDocumentChangesOnlyItsChangedPagesInPlaceAndFindsAgainOnThemAlone() async throws {
-        let controller = PDFController(), view = controller.view, find = controller.find
+    @Test func aLiveDocumentChangesOnlyItsChangedPagesInPlaceAndFindReadsTheirText() async throws {
+        let controller = PDFController(), view = controller.view, text = view.find.text
         let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["needle", "filler", "needle", "filler"], in: controller)
         let document = try #require(view.document)
-        find.isOpen = true
-        find.text = "needle"
-        find.search("needle")
-        try await found(controller)
-        #expect(find.matches.count == 2)
+        try await waitUntil { text.pageStrings.count == 4 }
         try await showLive(["needle", "needle", "needle"], changed: [PageRange(first: 1, last: 1)], in: controller)
-        #expect(view.document === document && document.pageCount == 3 && !find.isRunning)
-        #expect(find.matches.count == 3 && find.matches.map { $0.pages.first.map(document.index) } == [0, 1, 2])
+        #expect(view.document === document && document.pageCount == 3)
+        try await waitUntil { text.pageStrings.count == 3 && text.pageStrings.allSatisfy { $0.contains("needle") } }
         let many = Array(repeating: "filler", count: PDFController.changedInPlace + 2)
         try await showLive(many, changed: [PageRange(first: 0, last: many.count - 1)], in: controller)
         #expect(view.document !== document && view.document?.pageCount == many.count)
@@ -155,37 +151,6 @@ struct PDFTests {
         try await waitUntil { views.pdf.liveReading == nil }
         project.handle(.livePage(LivePage(page: 0, pdf: try typedPage())))
         #expect(views.pdf.liveReading == nil && views.pdf.feed.pages.isEmpty)
-    }
-
-    @Test(arguments: [false, true])
-    func liveFindIncludesAddedPagesAndKeepsItsSelectedMatch(_ searching: Bool) async throws {
-        let controller = PDFController(), view = controller.view, find = controller.find
-        let window = try await onScreen(controller.view)
-        defer { window.close() }
-        try await showLive(["needle", "needle", "needle"], in: controller)
-        let document = try #require(view.document)
-        find.isOpen = true
-        find.text = "needle"
-        find.search("needle")
-        try await found(controller)
-        find.advance(by: 1)
-        let selected = try #require(view.currentSelection?.pages.first)
-        let replacement = try textPDF(["filler", "needle"])
-        let pages = [0: try #require(replacement.page(at: 0)), 3: try #require(replacement.page(at: 1))]
-        if searching { find.search("needle") }
-        controller.replace(LivePages(pages: pages, count: 4))
-        try await found(controller)
-        #expect(find.matches.count == 3 && view.highlightedSelections?.count == 3)
-        #expect(find.matches.map { $0.pages.first.map(document.index) } == [1, 2, 3])
-        #expect(view.currentSelection?.pages.first === selected && find.matchIndex == 0)
-        find.advance(by: 1)
-        #expect(view.currentSelection?.pages.first === document.page(at: 2))
-        find.advance(by: -1)
-        #expect(view.currentSelection?.pages.first === selected)
-        try await showLive(["needle", "needle", "needle", "needle"], changed: [PageRange(first: 0, last: 0)], in: controller)
-        #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === selected)
-        try await showLive(["needle", "filler", "needle", "needle"], changed: [PageRange(first: 1, last: 1)], in: controller)
-        #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === document.page(at: 2))
     }
 
     @Test func aQueuedDocumentKeepsTheFollowThatAnOlderReadCannotShow() async throws {
@@ -268,50 +233,93 @@ struct PDFTests {
         #expect(overlays(in: view).contains { $0.covered })
     }
 
-    @Test func aRebuildFindsAgainInPlace() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+    @Test func findReadsEachPageAsAStringEndingInASearchBoundary() async throws {
+        let controller = PDFController(), view = controller.view, text = view.find.text
+        let window = try await onScreen(view)
+        defer { window.close() }
+        controller.show(try textPDF(["needle", "filler", "needle"]))
+        try await waitUntil { text.pageStrings.count == 3 }
+        let strings = text.pageStrings, lengths = strings.map { ($0 as NSString).length }
+        #expect(strings.map { $0.contains("needle") } == [true, false, true] && text.stringLength() == lengths.reduce(0, +))
+        for (page, index) in [(0, 0), (1, lengths[0]), (1, lengths[0] + lengths[1] - 1), (2, lengths[0] + lengths[1])] {
+            var range = NSRange(), boundary: ObjCBool = false
+            let start = lengths[..<page].reduce(0, +)
+            #expect(text.string(at: index, effectiveRange: &range, endsWithSearchBoundary: &boundary) == strings[page])
+            #expect(range == NSRange(location: start, length: lengths[page]) && boundary.boolValue)
+        }
+        #expect(!text.isEditable)
+    }
+
+    @Test func findStartsFromTheSelectionElseFromThePageShownAndSelectsWhatItFinds() async throws {
+        let controller = PDFController(), view = controller.view, text = view.find.text
+        let window = try await onScreen(view)
         defer { window.close() }
         controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
-        controller.find.isOpen = true
-        controller.find.text = "needle"
-        controller.find.search("needle")
-        try await found(controller)
-        controller.find.advance(by: 1)
+        try await waitUntil { text.pageStrings.count == 4 }
+        let document = try #require(view.document), lengths = text.pageStrings.map { ($0 as NSString).length }
+        let second = try #require(document.page(at: 1))
+        view.go(to: PDFDestination(page: second, at: CGPoint(x: 0, y: second.bounds(for: view.displayBox).maxY)))
+        let place = text.firstSelectedRange
+        #expect(place.length == 0 && (lengths[0]..<lengths[0] + lengths[1]).contains(place.location))
+        let third = lengths[0] + lengths[1]
+        text.scrollRangeToVisible(NSRange(location: third, length: 6))
+        #expect(view.currentSelection?.pages.first === document.page(at: 2) && view.currentSelection?.string == "needle")
+        #expect(try text.firstSelectedRange == NSRange(location: third, length: 6) && shown(view).page == 2)
+    }
+
+    @Test func findsBarLiesBetweenTheToolbarAndThePagesAndARebuildWithItOpenKeepsThePlace() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = try await onScreen(view)
+        defer { window.close() }
+        controller.show(try textPDF(count: 6))
+        view.find.perform(.showFindInterface)
+        let bar = try #require(view.pageScrollView?.findBarView)
+        view.goToStart()
+        #expect(try atStart(view))
+        let first = try #require(view.document?.page(at: 0))
+        let pageTop = view.convert(CGPoint(x: 0, y: first.bounds(for: view.displayBox).maxY), from: first)
+        #expect(abs(pageTop.y - bar.convert(bar.bounds, to: view).minY) < 1)
+        view.go(to: PDFDestination(page: try #require(view.document?.page(at: 3)), at: CGPoint(x: 0, y: 400)))
         let place = try shown(view)
-        controller.show(try textPDF(["needle", "needle", "filler", "needle", "needle"]))
-        try await found(controller)
-        #expect(controller.find.matches.count == 4 && controller.find.matchIndex == 1)
-        #expect(view.currentSelection?.pages.first === controller.find.matches[1].pages.first)
+        for _ in 0..<3 { controller.show(try textPDF(count: 6)) }
         #expect(try shown(view) == place)
     }
 
-    @Test func findNextAndPreviousStartFromTheShownPage() async throws {
-        let board = PDFFind.board
-        PDFFind.board = .withUniqueName()
-        defer { PDFFind.board.releaseGlobally(); PDFFind.board = board }
-        let controller = PDFController(), view = controller.view, find = controller.find
-        let window = try await onScreen(controller.view)
+    @Test func findLightsItsMatchesTakesFindNextFromItsFieldAndDropsThemWhenALiveChangeAltersTheText() async throws {
+        let board = NSPasteboard(name: .find), kept = board.string(forType: .string)
+        defer { if let kept { board.clearContents(); board.setString(kept, forType: .string) } }
+        // A bar opening on the string about to be typed finds it, and typing it again ends that find with no matches.
+        board.clearContents()
+        let controller = PDFController(), view = controller.view, find = view.find
+        let window = try await onScreen(view)
         defer { window.close() }
-        controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
-        let second = try #require(view.document?.page(at: 1))
-        let top = PDFDestination(page: second, at: CGPoint(x: 0, y: second.bounds(for: view.displayBox).maxY))
-        view.go(to: top)
-        find.text = "needle"
-        find.next(-1)
-        try await found(controller)
-        #expect(find.matchIndex == 0)
-        find.close()
-        #expect(view.currentSelection == nil)
-        view.go(to: top)
-        find.next(1)
-        try await found(controller)
-        #expect(find.matchIndex == 1 && view.currentSelection?.pages.first === view.document?.page(at: 2))
-        find.advance(by: 2)
-        #expect(find.matchIndex == 0)
-        view.setCurrentSelection(view.document?.findString("filler").first, animate: false)
-        find.close()
-        #expect(view.currentSelection?.string == "filler")
+        try await showLive(["needle", "filler", "needle"], in: controller)
+        try await waitUntil { find.text.pageStrings.count == 3 }
+        find.perform(.showFindInterface)
+        let bar = try #require(view.pageScrollView?.findBarView)
+        #expect(find.isOpen && bar.isDescendant(of: view))
+        #expect(bar.convert(bar.bounds, to: nil).maxY <= window.contentLayoutRect.maxY + 0.5)
+        let field = try #require(bar.descendants(of: NSSearchField.self).first)
+        try #require(field.currentEditor() as? NSTextView).insertText("needle", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await waitUntil { view.highlightedSelections?.count == 2 }
+        #expect(view.currentSelection?.pages.first === view.document?.page(at: 0))
+
+        let next = NSMenuItem(title: "Find Next", action: #selector(PDFFind.performFindPanelAction(_:)), keyEquivalent: "g")
+        next.tag = NSTextFinder.Action.nextMatch.rawValue
+        let responders = sequence(first: try #require(window.firstResponder), next: \.nextResponder)
+        let target = responders.lazy.compactMap { $0.responds(to: next.action) ? $0 : $0.supplementalTarget(forAction: next.action!, sender: next) as? NSObject }.first
+        #expect(target === find && find.validateMenuItem(next))
+        find.performFindPanelAction(next)
+        #expect(view.currentSelection?.pages.first === view.document?.page(at: 2))
+
+        controller.showLive(LivePage(page: 0, pdf: try #require(try textPDF(["needle"]).dataRepresentation())))
+        await controller.liveReading?.value
+        let first = view.document?.page(at: 0)
+        try await waitUntil { view.highlightedSelections?.count == 2 && view.highlightedSelections?.first?.pages.first === first }
+        controller.showLive(LivePage(page: 1, pdf: try #require(try textPDF(["needle"]).dataRepresentation())))
+        await controller.liveReading?.value
+        try await waitUntil { find.text.pageStrings[1].contains("needle") }
+        #expect(view.highlightedSelections == nil && find.isOpen && bar.window === window)
     }
 
     @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() async throws {
@@ -402,13 +410,6 @@ struct PDFTests {
 
     private func overlays(in view: NSView) -> [PageOverlay] {
         view.subviews.flatMap { ($0 as? PageOverlay).map { [$0] } ?? overlays(in: $0) }
-    }
-
-    private func found(_ controller: PDFController) async throws {
-        try await waitUntil(timeout: .seconds(5)) {
-            guard let document = controller.view.document, !controller.find.matches.isEmpty else { return false }
-            return controller.find.matches.allSatisfy { $0.pages.first?.document === document }
-        }
     }
 
     private struct Place: Equatable {

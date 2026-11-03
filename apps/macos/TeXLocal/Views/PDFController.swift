@@ -9,7 +9,6 @@ final class PDFController: NSObject {
     private static func label(_ scale: CGFloat) -> String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
 
     @ObservationIgnored let view = SyncPDFView()
-    let find: PDFFind
     var page = 0
     var pageCount = 0
     /// A PDF is being read: the pane's empty state stays hidden meanwhile, as the window no longer waits for it.
@@ -34,7 +33,6 @@ final class PDFController: NSObject {
     @ObservationIgnored var feed = LiveFeed()
 
     override init() {
-        find = PDFFind(view: view)
         super.init()
         view.backgroundColor = .untintedTextBackground
         // As Preview's: pages keep PDFKit's side margins, and the first meets the toolbar's edge.
@@ -200,7 +198,7 @@ final class PDFController: NSObject {
         watchScrollView()
         restoreIfReady()
         pageChanged()
-        signposts.withIntervalSignpost("find") { find.rerun() }
+        view.find.pagesChanged()
     }
 
     private func clear() {
@@ -208,7 +206,8 @@ final class PDFController: NSObject {
         pendingReveal = nil
         revealing?.cancel()
         view.removeMark()
-        find.reset()
+        view.find.close()
+        view.find.pagesChanged()
         view.document = nil
         (page, pageCount) = (0, 0)
     }

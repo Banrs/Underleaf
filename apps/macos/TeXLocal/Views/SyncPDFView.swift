@@ -9,6 +9,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
     var paper = PDFPaper.white { didSet { matchPaper() } }
+    private(set) lazy var find = PDFFind(view: self)
+
+    /// The Find menu's actions go to the find, from the pages and from its bar's field, which lies within the view.
+    override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
+        action == #selector(PDFFind.performFindPanelAction(_:)) ? find : super.supplementalTarget(forAction: action, sender: sender)
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -182,14 +188,21 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         go(to: PDFDestination(page: page, at: place.point))
     }
 
-    var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
+    /// The top of the area the pages show in: below the toolbar and, while it shows, the find bar, which NSScrollView
+    /// tiles above its pages.
+    private var shownTop: CGFloat {
+        let bar = pageScrollView.flatMap { $0.isFindBarVisible ? $0.findBarView?.frame.height : nil } ?? 0
+        return bounds.maxY - safeAreaInsets.top - bar
+    }
+
+    var shownHeight: CGFloat { shownTop - bounds.minY - safeAreaInsets.bottom }
 
     var shownRect: CGRect { CGRect(x: bounds.minX, y: bounds.minY + safeAreaInsets.bottom, width: bounds.width, height: shownHeight) }
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
     var shownPlace: (index: Int, point: CGPoint)? {
-        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
+        let top = CGPoint(x: bounds.minX, y: shownTop)
         // Pages have no top margin, so the page whose top edge meets the bar is the one under it, not the one above.
         guard let page = page(for: CGPoint(x: top.x, y: top.y - 1 / (window?.backingScaleFactor ?? 1)), nearest: true),
               let document else { return nil }

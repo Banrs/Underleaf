@@ -12,7 +12,6 @@ final class WorkspaceController: ThinSplitViewController {
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = AreaSplitViewController(isVertical: false)
     private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
-    private var pdfFind: NSSplitViewItemAccessoryViewController!
     private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
     private let inspectorMount = Mount()
@@ -114,10 +113,6 @@ final class WorkspaceController: ThinSplitViewController {
         }
         pdfItem = NSSplitViewItem(viewController: pdfPane)
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
-        pdfFind = accessory(hostingView(PDFFindBar(find: pdf.find)))
-        pdfFind.preferredScrollEdgeEffectStyle = .hard // as NSTextFinder's bar, a banner on a hard pocket
-        (pdfFind.isHidden, pdfFind.view.isHidden) = (true, true)
-        pdfItem.addTopAlignedAccessoryViewController(pdfFind)
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
         for (item, side) in [(sourceItem!, StatusBar.Side.source), (pdfItem!, .pdf)] {
@@ -206,7 +201,6 @@ final class WorkspaceController: ThinSplitViewController {
         watches = [
             track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
-            track({ pdf.find.isOpen }) { [weak self] in if let self { setHidden(pdfFind, !$0) } },
             track({ project.hasPDF || pdf.isLoading }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
             track({ project.closed }, initial: false) { [weak self] _ in self?.view.window?.makeFirstResponder(nil) },
         ]
@@ -255,21 +249,6 @@ final class WorkspaceController: ThinSplitViewController {
         if !resizing { quietScrollViews = [] }
     }
 
-    private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
-        guard accessory.isHidden != hidden else { return }
-        if !hidden { accessory.view.isHidden = false }
-        guard animates else {
-            (accessory.isHidden, accessory.view.isHidden) = (hidden, hidden)
-            return
-        }
-        quiet(true)
-        Task.immediate {
-            await NSAnimationContext.runAnimationGroup { _ in accessory.animator().isHidden = hidden }
-            if hidden, accessory.isHidden { accessory.view.isHidden = true }
-            quiet(false)
-        }
-    }
-
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let split = area.splitView, panel = panelItem.viewController.view
@@ -302,12 +281,7 @@ final class WorkspaceController: ThinSplitViewController {
         fitColumns()
         setCollapsed(pdfItem, false) { [weak self] in
             guard let self else { return }
-            views.perform(action) {
-                pdf.find.isOpen = true
-                setHidden(pdfFind, false)
-                if pdf.find.field.field == nil { pdfFind.view.layoutSubtreeIfNeeded() }
-                pdf.find.field.focus()
-            }
+            views.perform(action) { pdf.view.find.perform(.showFindInterface) }
         }
     }
 }

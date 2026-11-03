@@ -11,7 +11,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var project: ProjectModel { views.project }
     private(set) var workspace: WorkspaceController?
     private var watches: [Task<Void, Never>] = []
-    private let findEditor = FindPassingTextView()
     /// The window took the frame its project was last shown in, so it isn't cascaded from the front window.
     private let framed: Bool
 
@@ -40,7 +39,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.delegate = self
         model.controller = self
         Self.kept.append(self)
-        findEditor.isFieldEditor = true
         let project = views.project
         showWorkspace(in: window)
         watches = [
@@ -101,12 +99,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         Self.kept.removeAll { $0 === self }
     }
 
-    /// The PDF find field's editor passes Find on up the responder chain to here, where a plain field editor would take it.
-    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
-        guard let field = client as? NSTextField, field === views.pdf.find.field.field else { return nil }
-        return findEditor
-    }
-
+    /// Find with neither pane's keyboard, as from the sidebar: the PDF's when only it shows, else the editor's when it
+    /// shows text. The pane with the keyboard, or its find bar's field, takes Find itself.
     @objc func performFindPanelAction(_ sender: Any?) { findAction(for: sender)?() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -116,35 +110,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private func findAction(for sender: Any?) -> (() -> Void)? {
         guard let item = sender as? any NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag),
               workspace != nil, !project.closed else { return nil }
-        let (model, project, pdf) = (model, project, views.pdf)
-        guard model.showPDF, !model.showSource || pdfPagesHaveKeyboard || pdf.find.field.hasFocus else {
-            guard project.editsText else {
-                guard action == .showFindInterface, project.hasPDF else { return nil }
-                return { model.requestPDF(.find) }
-            }
-            let editor = views.editor
-            guard editor.textView.validateUserInterfaceItem(item) else { return nil }
-            return {
-                editor.focus()
-                editor.textView.performFindPanelAction(item)
-            }
-        }
-        guard project.hasPDF else { return nil }
-        switch action {
-        case .showFindInterface:
+        let (model, editor, find) = (model, views.editor, views.pdf.view.find)
+        if model.showPDF, !model.showSource { return find.validate(action) ? { find.perform(action) } : nil }
+        guard project.editsText else {
+            guard action == .showFindInterface, project.hasPDF else { return nil }
             return { model.requestPDF(.find) }
-        case .nextMatch, .previousMatch:
-            guard pdf.find.canNext else { return nil }
-            return { pdf.find.next(action == .nextMatch ? 1 : -1) }
-        case .setSearchString:
-            guard pdf.find.canUseSelection else { return nil }
-            return { pdf.find.useSelection() }
-        default:
-            return nil
+        }
+        guard editor.textView.validateUserInterfaceItem(item) else { return nil }
+        return {
+            editor.focus()
+            editor.textView.performFindPanelAction(item)
         }
     }
-
-    private var pdfPagesHaveKeyboard: Bool { (window?.firstResponder as? NSView)?.isDescendant(of: views.pdf.view) == true }
 
     static func restoreWindow(withIdentifier identifier: NSUserInterfaceItemIdentifier, state: NSCoder,
                               completionHandler: @escaping (NSWindow?, (any Error)?) -> Void) {
