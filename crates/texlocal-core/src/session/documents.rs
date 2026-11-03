@@ -228,6 +228,7 @@ impl Actor {
             return;
         };
         let path = path.clone();
+        let conflict = doc.conflict;
         let reload = doc.reloading.take_if(|(base, _)| version > *base);
         let reloaded = reload.map(|(base, reload)| version == base + 1 && reload == *edit);
         if reloaded == Some(true) {
@@ -242,8 +243,8 @@ impl Actor {
                 self.check_disk(&path);
             }
             // An edit made before the main thread saw the reload refused it.
-            Some(false) => self.ask(&path, DiskConflict::Changed),
-            None => {}
+            Some(false) if conflict.is_none() => self.ask(&path, DiskConflict::Changed),
+            _ => {}
         }
     }
 
@@ -475,9 +476,6 @@ impl Actor {
         else {
             return;
         };
-        if doc.conflict == Some(DiskConflict::Gone) {
-            doc.conflict = None;
-        }
         if as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
             return;
         }
@@ -491,10 +489,18 @@ impl Actor {
                 return;
             }
         };
+        let returned = doc.conflict == Some(DiskConflict::Gone);
+        if returned {
+            (doc.conflict, doc.asking) = (None, false);
+        }
         doc.disk_stamp = stamp;
         if let Some((text, newline)) = &disk {
             doc.newline = *newline;
             if doc.disk_text.as_ref() == Some(text) {
+                if returned {
+                    self.publish_documents();
+                    self.after(Timer::Autosave);
+                }
                 return;
             }
         }
@@ -543,3 +549,54 @@ fn read_disk(path: &Path) -> Result<(Option<DiskText>, Option<Stamp>), CoreError
 }
 
 type DiskText = (String, &'static str);
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::service::Service;
+    use crate::session::actor::OpenProject;
+    use crate::session::{Msg, Sessions};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_delayed_edit_after_a_rejected_reload_keeps_the_deletion_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = Arc::new(Service::new(dir.path().into(), dir.path().into(), None));
+        service
+            .call("CreateProject", json!({ "name": "P", "template": "blank" }))
+            .await
+            .unwrap();
+        let compiler = Arc::new(Arc::clone(&service));
+        let preview = Arc::clone(&service.texpresso);
+        let sessions = Sessions::with_compiler(service, compiler, preview, false, Box::new(|_| {}));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let opening = OpenProject {
+            id: "P".into(),
+            auto_compile: false,
+        };
+        let (mut actor, _) =
+            Actor::new(&sessions, 1, opening, Docs::default(), Arc::default(), tx).unwrap();
+        actor.open_file("main.tex").unwrap();
+        let doc = actor.docs["main.tex"].doc.clone();
+        let original = doc.snapshot().0;
+        let path = actor.project.root.join("main.tex");
+        fs::write(&path, "external\n").unwrap();
+        actor.check_disk("main.tex");
+        assert!(actor.docs["main.tex"].reloading.is_some());
+
+        doc.edit(0, 0, "mine ", None, false).unwrap();
+        fs::remove_file(&path).unwrap();
+        actor.check_disk("main.tex");
+        assert_eq!(actor.docs["main.tex"].conflict, Some(DiskConflict::Gone));
+
+        let Msg::Edited { doc, version, edit } = rx.try_recv().unwrap() else {
+            panic!("the document sent its edit");
+        };
+        actor.edited(doc, version, &edit);
+        assert_eq!(actor.docs["main.tex"].conflict, Some(DiskConflict::Gone));
+        actor.resolve("main.tex", Resolution::Save).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), format!("mine {original}"));
+    }
+}

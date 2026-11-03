@@ -1731,3 +1731,26 @@ async fn a_folder_opened_in_place_keeps_its_own_build_folder_as_sources() {
     ];
     assert_eq!(zip_names(&dest), exported);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deleted_file_restored_unchanged_releases_its_question_and_saves_the_edits() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    let path = rig.root().join("ch.tex");
+    doc.edit(0, 0, "mine ", None, false).unwrap();
+    fs::remove_file(&path).unwrap();
+    asked(&rig, "ch.tex", "gone");
+    rig.section("tree", |tree| !names(tree, "path").contains(&"ch.tex".into()));
+    rig.forget();
+
+    fs::write(&path, CHAPTER).unwrap();
+    rig.section("tree", |tree| names(tree, "path").contains(&"ch.tex".into()));
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
+    rig.section("documents", |documents| {
+        documents.as_array().unwrap().iter().any(|doc| {
+            doc["path"] == "ch.tex" && doc["conflict"].is_null() && doc["asking"] == false
+        })
+    });
+    assert_eq!(fs::read_to_string(path).unwrap(), format!("mine {CHAPTER}"));
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+}
