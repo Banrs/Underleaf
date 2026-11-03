@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 use texlocal_latex::synctex::SyncTex;
-use texlocal_latex::syntax::sync_lines;
+use texlocal_latex::syntax::SourceDocument;
 
 struct Counting;
 
@@ -47,8 +47,9 @@ fn main() {
     let main = sync.inputs().find(|(_, name)| name.ends_with("main.tex"));
     let tag = main.unwrap().0;
     let lines = text.lines().count() as u32;
+    let mut doc = SourceDocument::new(&text);
     let started = Instant::now();
-    let found = (1..=lines).filter(|&line| !sync.forward(tag, &sync_lines(&text, line)).is_empty());
+    let found = (1..=lines).filter(|&line| !sync.forward(tag, &doc.sync_lines(line)).is_empty());
     let found = found.count();
     let per_line = started.elapsed() / lines;
     println!(

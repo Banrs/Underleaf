@@ -210,6 +210,10 @@ impl SourceDocument {
         utf16::lossy(&self.text.units)
     }
 
+    pub fn holds(&self, text: &str) -> bool {
+        self.text.units.iter().copied().eq(text.encode_utf16())
+    }
+
     pub fn line_at(&self, offset: u32) -> u32 {
         self.text.line_index(offset) as u32 + 1
     }
