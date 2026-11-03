@@ -5,9 +5,9 @@ use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use common::{FakePreview, Library, Rig, SESSION, names, write};
+use common::{FakePreview, Library, Rig, SESSION, names, wait_until, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
 use texlocal_core::session::{Document, LiveEvent, RunEnd};
@@ -70,14 +70,6 @@ fn stub_tex(library: &Library) {
     fs::write(tex.join("texmf-dist/ls-R"), ls_r).unwrap();
     program(&tex.join("bin/latexmk"), LATEXMK);
     app_settings(library, json!({ "texDir": tex.join("bin") }));
-}
-
-fn wait_until(why: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !done() {
-        assert!(Instant::now() < deadline, "{why}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 fn read_json(path: &Path) -> Value {

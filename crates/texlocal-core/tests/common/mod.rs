@@ -88,6 +88,14 @@ pub fn write(root: &Path, files: &[(&str, &str)]) {
     }
 }
 
+pub fn wait_until(why: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done() {
+        assert!(Instant::now() < deadline, "{why}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 pub struct Rig {
     pub library: Library,
     pub sessions: Arc<Sessions>,
