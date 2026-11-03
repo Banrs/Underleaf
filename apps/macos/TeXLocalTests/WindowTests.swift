@@ -216,23 +216,24 @@ struct WindowTests {
         model.layout = .split
         try await waitUntil { !format.isHidden }
 
-        func resize(to width: CGFloat) async throws {
+        func resize(to width: CGFloat) async {
             window.setContentSize(NSSize(width: width, height: 800))
             window.layoutIfNeeded()
             window.displayIfNeeded()
-            try await Task.sleep(for: .milliseconds(50))
+            // The toolbar reads Compile's leaving for the overflow menu on the main actor's next turn.
+            await Task.yield()
             window.layoutIfNeeded()
         }
         var width: CGFloat = 1400
         while !workspace.toolbar.compactCompile, width > 600 {
             width -= 10
-            try await resize(to: width)
+            await resize(to: width)
         }
         let tools = items.filter { [.format, .math, .insert, .zoom, .compile].contains($0.itemIdentifier) }
         #expect(workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
-        try await resize(to: width + 20)
+        await resize(to: width + 20)
         #expect(workspace.toolbar.compactCompile)
-        try await resize(to: 1400)
+        await resize(to: 1400)
         #expect(!workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
 
         let columns = try #require(workspace.columns.splitView as? DraggedSplitView)
