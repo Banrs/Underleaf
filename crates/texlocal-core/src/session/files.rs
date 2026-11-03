@@ -79,9 +79,7 @@ impl Actor {
                 self.core.later.push_back(Later::Compile(true));
             }
         }
-        if self.live.active() {
-            self.live.disk_paths.extend(meaning.listed.iter().cloned());
-        }
+        self.live.disk_changed(&mut self.core, &meaning.listed);
         let main = self.tree.main.clone();
         if meaning.tree {
             self.reload_tree();
@@ -95,9 +93,6 @@ impl Actor {
             }
             self.tree.publish_project(&mut self.core);
         }
-        if self.live.active() && !self.live.disk_paths.is_empty() {
-            self.core.after(Timer::Disk);
-        }
     }
 
     pub fn reload_tree(&mut self) {
@@ -105,7 +100,7 @@ impl Actor {
             && self.show_tree(tree)
         {
             self.core.after(Timer::Symbols);
-            self.live_files_changed();
+            self.live.files_changed(&mut self.core, &self.tree);
         }
     }
 
@@ -141,7 +136,7 @@ impl Actor {
         let renamed = projects::rename_entry(&self.core.project, from, to)?;
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
         self.core.emit(Event::Renamed(Renamed { from, to }));
-        self.live_restart();
+        self.live.restart(&mut self.core);
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs.within(to) {
             if !within(&path, from) {
@@ -156,7 +151,7 @@ impl Actor {
         }
         self.docs.publish(&mut self.core);
         self.builds.publish(&mut self.core, &self.docs);
-        self.publish_live(false);
+        self.live.publish(&mut self.core, &self.docs, false);
         self.reload_tree();
         if renamed.main_moved {
             self.main_file_changed();
@@ -170,7 +165,7 @@ impl Actor {
         let updated = settings::write_settings(project, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if updated.main_file != main {
-            self.live_restart();
+            self.live.restart(&mut self.core);
             self.main_file_changed();
         } else if build && self.core.auto_compile {
             self.core.later.push_back(Later::Compile(true));
@@ -181,7 +176,7 @@ impl Actor {
 
     fn main_file_changed(&mut self) {
         self.reload_tree();
-        self.live_follow();
+        self.live.restart_soon(&mut self.core);
         self.builds.main_changed(&mut self.core);
     }
 }

@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
@@ -183,21 +183,11 @@ impl Actor {
 }
 
 impl Actor {
-    pub fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
-        let Some(pdf) = self.core.pdf.live.as_ref().filter(|_| self.live.active()) else {
-            return Ok(None);
-        };
-        if !pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(messages::texpresso_unsynced()));
-        }
-        Ok(Some(pdf.clone()))
-    }
-
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
         if line < 1 {
             return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
         }
-        let (live, project) = (self.live_pdf(), self.core.project.clone());
+        let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().get(&file).cloned());
         tokio::task::spawn_blocking(move || {
@@ -226,7 +216,7 @@ impl Actor {
         click: Option<PageClick>,
         reply: Pending<InverseLoc>,
     ) {
-        let (live, project) = (self.live_pdf(), self.core.project.clone());
+        let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let sources = self.live.typeset().clone();
         let docs = self.docs.handles();
         tokio::task::spawn_blocking(move || {

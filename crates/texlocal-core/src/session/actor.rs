@@ -44,7 +44,7 @@ requests! {
         Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
         Compile { auto: bool } -> () = actor.compile(auto),
         StopCompile {} -> () = Ok(actor.builds.stop(&actor.core)),
-        Clean {} -> () => actor.builds.clean(&actor.core, (actor.live.active(), actor.live.intent), pending),
+        Clean {} -> () => actor.builds.clean(&actor.core, actor.live.asked(), pending),
         Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>
             => actor.search(Query::new(&query, match_case, whole_word), pending),
         FindUsages { path: RelPath, offset: u32 } -> Option<Usages> => actor.usages(&path.0, offset, pending),
@@ -69,10 +69,10 @@ requests! {
         SetSettings { patch: SettingsPatch } -> () = actor.set_settings(&patch, true),
         Trash { path: RelPath } -> Option<PathBuf> = actor.trash(&path.0),
         PutBack { path: RelPath, trashed: PathBuf } -> () = actor.put_back(&path.0, &trashed),
-        StartLive {} -> () = Ok(actor.live_start_asked()),
-        StopLive {} -> () = Ok(actor.live_stop_asked()),
-        LiveView { first: u32, last: u32 } -> () = Ok(actor.live_view(first, last)),
-        LiveLog { shown: bool } -> () = Ok(actor.show_live_log(shown)),
+        StartLive {} -> () = Ok(actor.live.start_asked(&mut actor.core, &actor.docs)),
+        StopLive {} -> () = Ok(actor.live.stop_asked(&mut actor.core, &actor.docs)),
+        LiveView { first: u32, last: u32 } -> () = Ok(actor.live.view(first, last)),
+        LiveLog { shown: bool } -> () = Ok(actor.live.show_log(&mut actor.core, &actor.docs, shown)),
         ReloadTree {} -> () = Ok(actor.reload_tree()),
         ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported
             = actor.import(&dir, &paths, conflict),
@@ -301,7 +301,7 @@ impl Actor {
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.docs.flush_all(&mut self.core, false);
             self.builds.stop(&self.core);
-            self.live_stop();
+            self.live.stop(&mut self.core, &self.docs);
         }));
         self.core.stop_history();
         let stopped = Stopped {
@@ -347,7 +347,7 @@ impl Actor {
             Msg::Edited { doc, version, edit } => self.edited(doc, version, &edit),
             Msg::Selected { doc, caret } => {
                 if let Some(path) = self.docs.path_of(doc) {
-                    self.live_caret(path, caret);
+                    self.live.caret(&mut self.core, path, caret);
                 }
             }
             Msg::Command(command, reply) => command.run(self, reply),
@@ -360,7 +360,10 @@ impl Actor {
                     self.core.publish(SessionSection::Outline(Some(outline)));
                 }
             }
-            Msg::Live(generation, event) => self.live_event(generation, event),
+            Msg::Live(generation, event) => {
+                self.live
+                    .event(&mut self.core, &self.docs, generation, event);
+            }
             Msg::Snapshotted(finish) => finish(self),
             Msg::Fs(changes) => self.tree.changed(&mut self.core, changes),
         }
@@ -374,13 +377,16 @@ impl Actor {
                 Timer::Autosave => self.docs.autosave(&mut self.core),
                 Timer::Symbols => self.tree.scan(&self.core, &self.docs, self.builds.clock),
                 Timer::Fs => self.files_changed_on_disk(),
-                Timer::Caret => self.caret_settled(),
-                Timer::Follow => self.follow(),
-                Timer::Halting => self.live_halted(true),
+                Timer::Caret => self.live.caret_settled(),
+                Timer::Follow => self.live.follow(&self.core, &self.docs),
+                Timer::Halting => self.live.halted(&mut self.core, &self.docs, true),
                 Timer::Restart => self.core.later.push_back(Later::Restart),
-                Timer::Disk => self.refresh_live_disk(),
-                Timer::Log => self.publish_live_log(),
-                Timer::Issues => self.live_issues_settled(),
+                Timer::Disk => self.live.refresh_disk(&self.core, &self.docs),
+                Timer::Log => self.live.publish_log(&mut self.core),
+                Timer::Issues => {
+                    self.live
+                        .issues_settled(&mut self.core, &self.docs, &self.tree);
+                }
             }
         }
     }
@@ -395,8 +401,8 @@ impl Actor {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart => self.live_start(),
-                Later::Rescan => self.live_rescan(),
+                Later::Restart => self.live.start(&mut self.core, &self.docs),
+                Later::Rescan => self.live.rescan(),
             }
         }
     }
@@ -413,7 +419,7 @@ impl Actor {
         self.core
             .publish(SessionSection::Lifecycle(Lifecycle::Closing));
         self.builds.stop(&self.core);
-        self.live_stop();
+        self.live.stop(&mut self.core, &self.docs);
         self.docs.clear();
         self.core.timers.clear();
         self.close_when_idle();

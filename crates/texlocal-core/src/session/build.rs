@@ -350,7 +350,7 @@ pub(super) fn built_pdf(project: &Project) -> Option<String> {
 
 impl Actor {
     pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
-        if auto && self.live_previewing() || self.builds.waits(&self.core, auto) {
+        if auto && self.live.previewing(&self.core) || self.builds.waits(&self.core, auto) {
             return Ok(());
         }
         if self.docs.flush_all(&mut self.core, !auto)? {
@@ -361,10 +361,9 @@ impl Actor {
 
     pub fn build_done(&mut self, result: Result<CompileResult, CoreError>) {
         if !result.as_ref().is_ok_and(|result| result.stopped) {
-            self.live_rescan();
+            self.live.rescan();
         }
-        let live = (self.live.active(), self.live.intent);
-        let (queued, built) = self.builds.done(&mut self.core, result, live);
+        let (queued, built) = self.builds.done(&mut self.core, result, self.live.asked());
         if let Some(auto) = queued {
             let _ = self.compile(auto);
         }
@@ -373,7 +372,7 @@ impl Actor {
     }
 
     pub fn cleaned(&mut self, result: Result<(), CoreError>) {
-        let intent = self.live.intent;
+        let (_, intent) = self.live.asked();
         if let Some(restart) = self
             .builds
             .cleaned(&mut self.core, &self.docs, result, intent)

@@ -10,10 +10,13 @@ use texlocal_latex::message::Message;
 use texlocal_latex::syntax::{SyncLines, TextEdit, sync_lines};
 use texlocal_latex::{is_text, utf16};
 
-use super::actor::{Actor, Later, Timer};
+use super::actor::{Actor, Core, Later, Timer};
 use super::build::{IssueLine, issue_lines};
+use super::documents::Docs;
 use super::state::SessionSection;
+use super::watch::TreeIndex;
 use super::{Document, Msg};
+use crate::CoreError;
 use crate::events::{Event, LiveDocument, LivePage};
 use crate::projects::read_capped;
 use crate::settings::{self, Engine};
@@ -81,18 +84,23 @@ pub(crate) struct Live {
     view: Option<(u32, u32)>,
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
-    pub disk_paths: BTreeSet<String>,
-    pub intent: u64,
+    disk_paths: BTreeSet<String>,
+    intent: u64,
     generation: u64,
     issues: Vec<Issue>,
     follow: bool,
     follows: u64,
-    pub run: Option<Arc<dyn LiveRun>>,
+    run: Option<Arc<dyn LiveRun>>,
 }
 
 impl Live {
     pub fn active(&self) -> bool {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
+    }
+
+    /// Whether a preview runs, and the count of starts and stops asked, which tell a clean whether to restart it.
+    pub fn asked(&self) -> (bool, u64) {
+        (self.active(), self.intent)
     }
 
     /// The text of each file that the PDF shown was typeset from.
@@ -106,271 +114,268 @@ impl Live {
             .filter(|_| self.phase == LivePhase::Running)
     }
 
-    fn stop(&mut self) {
+    fn stop_run(&mut self) {
         if let Some(run) = self.run.take() {
             run.stop();
         }
     }
-}
 
-impl Actor {
-    fn live_state(&self) -> LiveState {
-        let live = &self.live;
-        let lines = self.docs.iter().filter_map(|(path, doc)| {
-            let items = live.issues.iter().map(|issue| &issue.item);
+    pub fn pdf(&self, cx: &Core) -> Result<Option<PathBuf>, CoreError> {
+        let Some(pdf) = cx.pdf.live.as_ref().filter(|_| self.active()) else {
+            return Ok(None);
+        };
+        if !pdf.with_extension("synctex").is_file() {
+            return Err(CoreError::not_found(messages::texpresso_unsynced()));
+        }
+        Ok(Some(pdf.clone()))
+    }
+
+    fn state(&self, docs: &Docs) -> LiveState {
+        let lines = docs.iter().filter_map(|(path, doc)| {
+            let items = self.issues.iter().map(|issue| &issue.item);
             let lines = issue_lines(items, path, &doc.doc, |_| None);
             (!lines.is_empty()).then(|| (path.clone(), lines))
         });
         LiveState {
-            phase: live.phase,
+            phase: self.phase,
             engine: Engine::Xelatex,
-            halted: live.halted,
-            attention: live.halted || live.failure.is_some() && !live.seen,
-            failures: live.failure.iter().cloned().collect(),
+            halted: self.halted,
+            attention: self.halted || self.failure.is_some() && !self.seen,
+            failures: self.failure.iter().cloned().collect(),
             lines: lines.collect(),
         }
     }
 
-    pub fn publish_live(&mut self, alert: bool) {
-        let state = self.live_state();
-        self.core.publish(SessionSection::Live(state));
+    pub fn publish(&self, cx: &mut Core, docs: &Docs, alert: bool) {
+        cx.publish(SessionSection::Live(self.state(docs)));
         if alert {
-            self.core.emit(Event::LiveAlert);
+            cx.emit(Event::LiveAlert);
         }
     }
 
-    pub fn show_live_log(&mut self, shown: bool) {
-        self.live.log_shown = shown;
-        if !shown && self.live.phase == LivePhase::Stopped && !self.live.seen {
-            self.live.seen = true;
-            self.publish_live(false);
+    pub fn show_log(&mut self, cx: &mut Core, docs: &Docs, shown: bool) {
+        self.log_shown = shown;
+        if !shown && self.phase == LivePhase::Stopped && !self.seen {
+            self.seen = true;
+            self.publish(cx, docs, false);
         }
-        self.publish_live_log();
+        self.publish_log(cx);
     }
 
-    pub fn publish_live_log(&mut self) {
-        if self.live.log_shown {
-            let log = self.live.run.as_ref().map(|run| run.log());
-            self.core
-                .publish(SessionSection::LiveLog(log.unwrap_or_default()));
+    pub fn publish_log(&self, cx: &mut Core) {
+        if self.log_shown {
+            let log = self.run.as_ref().map(|run| run.log());
+            cx.publish(SessionSection::LiveLog(log.unwrap_or_default()));
         }
     }
 
-    fn report(&mut self) {
-        let failure = &self.live.failure;
-        let alert = failure.is_some() && *failure != self.live.reported;
-        self.live.reported.clone_from(failure);
-        self.live.seen &= !alert;
-        self.publish_live(alert);
+    fn report(&mut self, cx: &mut Core, docs: &Docs) {
+        let alert = self.failure.is_some() && self.failure != self.reported;
+        self.reported.clone_from(&self.failure);
+        self.seen &= !alert;
+        self.publish(cx, docs, alert);
     }
 
-    fn live_reset(&mut self) {
+    fn reset(&mut self, cx: &mut Core) {
         for timer in [Timer::Caret, Timer::Follow, Timer::Halting, Timer::Issues] {
-            self.core.timers.remove(&timer);
+            cx.timers.remove(&timer);
         }
-        let live = &mut self.live;
-        live.generation += 1;
-        (live.sources, live.sent) = (Sources::default(), HashMap::new());
-        live.typeset.clear();
-        (live.halted, live.caret) = (false, None);
-        live.issues.clear();
-        live.follow = false;
+        self.generation += 1;
+        (self.sources, self.sent) = (Sources::default(), HashMap::new());
+        self.typeset.clear();
+        (self.halted, self.caret) = (false, None);
+        self.issues.clear();
+        self.follow = false;
     }
 
-    fn live_cancel_work(&mut self) {
-        self.live.intent += 1;
-        self.core.timers.remove(&Timer::Restart);
-        self.core.timers.remove(&Timer::Disk);
-        self.live.disk_paths.clear();
+    fn cancel_work(&mut self, cx: &mut Core) {
+        self.intent += 1;
+        cx.timers.remove(&Timer::Restart);
+        cx.timers.remove(&Timer::Disk);
+        self.disk_paths.clear();
     }
 
-    pub fn live_previewing(&self) -> bool {
-        self.live.active() || self.core.timers.contains_key(&Timer::Restart)
+    pub fn previewing(&self, cx: &Core) -> bool {
+        self.active() || cx.timers.contains_key(&Timer::Restart)
     }
 
-    fn ended(&mut self) {
-        self.live.phase = LivePhase::Stopped;
-        self.live_reset();
-        self.core.pdf.live = None;
-        self.publish_live(false);
-        self.publish_live_log();
-        self.core.publish_pdf();
-        if self.core.auto_compile {
-            self.core.later.push_back(Later::Compile(true));
-        }
-    }
-
-    fn remember_live(&self, on: bool) {
-        let _ = settings::store_ui(&self.core.project.ui, |ui| {
-            ui.live_preview = on;
-            Ok(())
-        });
-    }
-
-    pub fn live_start_asked(&mut self) {
-        self.remember_live(true);
-        if self.live.phase == LivePhase::Stopped {
-            self.live_cancel_work();
-            self.live_start();
+    fn ended(&mut self, cx: &mut Core, docs: &Docs) {
+        self.phase = LivePhase::Stopped;
+        self.reset(cx);
+        cx.pdf.live = None;
+        self.publish(cx, docs, false);
+        self.publish_log(cx);
+        cx.publish_pdf();
+        if cx.auto_compile {
+            cx.later.push_back(Later::Compile(true));
         }
     }
 
-    pub fn live_start(&mut self) {
-        let live = &mut self.live;
-        live.stop();
-        live.phase = LivePhase::Starting;
-        (live.failure, live.reported) = (None, None);
-        self.live_reset();
-        self.publish_live(false);
-        let (tx, generation) = (self.core.tx.clone(), self.live.generation);
+    pub fn start_asked(&mut self, cx: &mut Core, docs: &Docs) {
+        remember(cx, true);
+        if self.phase == LivePhase::Stopped {
+            self.cancel_work(cx);
+            self.start(cx, docs);
+        }
+    }
+
+    pub fn start(&mut self, cx: &mut Core, docs: &Docs) {
+        self.stop_run();
+        self.phase = LivePhase::Starting;
+        (self.failure, self.reported) = (None, None);
+        self.reset(cx);
+        self.publish(cx, docs, false);
+        let (tx, generation) = (cx.tx.clone(), self.generation);
         let sink = Box::new(move |event| {
             let _ = tx.send(Msg::Live(generation, event));
         });
-        let path_env = self.core.service.tool_paths().1;
-        match (self.core.preview).start(&self.core.project, &path_env, sink) {
+        let path_env = cx.service.tool_paths().1;
+        match cx.preview.start(&cx.project, &path_env, sink) {
             Ok(run) => {
-                (self.live.run, self.live.phase) = (Some(Arc::clone(&run)), LivePhase::Running);
-                let paths: Vec<String> = self.docs.keys().cloned().collect();
-                for path in paths {
-                    self.live_send(&path);
+                (self.run, self.phase) = (Some(Arc::clone(&run)), LivePhase::Running);
+                for path in docs.keys() {
+                    self.send(docs, path);
                 }
-                if let Some((first, last)) = self.live.view {
+                if let Some((first, last)) = self.view {
                     run.view(first, last);
                 }
                 self.caret_settled();
                 self.mark();
-                self.publish_live(false);
-                self.publish_live_log();
+                self.publish(cx, docs, false);
+                self.publish_log(cx);
             }
             Err(error) => {
-                self.live.failure = Some(error.message);
-                self.report();
-                self.ended();
+                self.failure = Some(error.message);
+                self.report(cx, docs);
+                self.ended(cx, docs);
             }
         }
     }
 
-    pub fn live_stop_asked(&mut self) {
-        self.remember_live(false);
-        self.live_stop();
+    pub fn stop_asked(&mut self, cx: &mut Core, docs: &Docs) {
+        remember(cx, false);
+        self.stop(cx, docs);
     }
 
-    pub fn live_stop(&mut self) {
-        self.live_cancel_work();
-        self.live.stop();
-        if self.live.phase != LivePhase::Stopped {
-            self.ended();
+    pub fn stop(&mut self, cx: &mut Core, docs: &Docs) {
+        self.cancel_work(cx);
+        self.stop_run();
+        if self.phase != LivePhase::Stopped {
+            self.ended(cx, docs);
         }
     }
 
-    pub fn live_follow(&mut self) {
-        if self.live.active() {
-            self.core.after(Timer::Restart);
+    /// Restarts a preview running to take in a change to the project's files.
+    pub fn restart_soon(&self, cx: &mut Core) {
+        if self.active() {
+            cx.after(Timer::Restart);
         }
     }
 
-    pub fn live_restart(&mut self) {
-        if let Some(run) = &self.live.run {
+    pub fn restart(&self, cx: &mut Core) {
+        if let Some(run) = &self.run {
             run.stop();
         }
-        self.live_follow();
+        self.restart_soon(cx);
     }
 
-    pub fn live_edited(&mut self, path: &str, version: u64, edit: &TextEdit) {
-        let Some(run) = self.live.running() else {
+    pub fn edited(
+        &mut self,
+        cx: &mut Core,
+        docs: &Docs,
+        path: &str,
+        version: u64,
+        edit: &TextEdit,
+    ) {
+        self.issues_edited(cx, docs, path, edit);
+        let Some(run) = self.running() else {
             return;
         };
         // TeXpresso moves its caret to the end of each change it reads.
         let end = edit.start as usize + utf16::len(&edit.text);
-        self.live.caret = Some((path.to_owned(), end));
-        self.follow_soon();
-        if self
-            .live
-            .sent
-            .get(path)
-            .is_some_and(|&sent| version <= sent)
-        {
+        self.caret = Some((path.to_owned(), end));
+        self.follow_soon(cx);
+        if self.sent.get(path).is_some_and(|&sent| version <= sent) {
             return;
         }
-        if !self.live.sources.edit(&*run, path, edit) {
-            self.live_send(path);
+        if !self.sources.edit(&*run, path, edit) {
+            self.send(docs, path);
         }
         self.mark();
     }
 
-    pub fn live_opened(&mut self, path: &str) {
-        self.live_send(path);
+    pub fn opened(&mut self, cx: &mut Core, docs: &Docs, path: &str) {
+        self.issues_opened(cx, docs, path);
+        self.send(docs, path);
         self.mark();
     }
 
-    fn live_send(&mut self, path: &str) {
-        let (Some(run), Some(doc)) = (self.live.running(), self.docs.get(path)) else {
+    fn send(&mut self, docs: &Docs, path: &str) {
+        let (Some(run), Some(doc)) = (self.running(), docs.get(path)) else {
             return;
         };
         let (text, version) = doc.doc.snapshot();
-        self.live.sources.send(&*run, path, &text);
-        self.live.sent.insert(path.to_owned(), version);
+        self.sources.send(&*run, path, &text);
+        self.sent.insert(path.to_owned(), version);
     }
 
     /// Asks TeXpresso to say when it has read everything sent, which settles its issues.
     fn mark(&self) {
-        if let Some(run) = self.live.running() {
-            run.mark(self.live.sources.revision());
+        if let Some(run) = self.running() {
+            run.mark(self.sources.revision());
         }
     }
 
-    pub fn live_rescan(&mut self) {
-        if let Some(run) = self.live.running() {
+    pub fn rescan(&self) {
+        if let Some(run) = self.running() {
             run.rescan();
         }
     }
 
-    pub fn live_view(&mut self, first: u32, last: u32) {
+    pub fn view(&mut self, first: u32, last: u32) {
         let pages = Some((first, last.max(first)));
-        if self.live.view != pages {
-            self.live.view = pages;
-            if let Some(run) = self.live.running() {
+        if self.view != pages {
+            self.view = pages;
+            if let Some(run) = self.running() {
                 run.view(first, last.max(first));
             }
         }
     }
 
-    pub fn live_caret(&mut self, path: String, offset: usize) {
+    pub fn caret(&mut self, cx: &mut Core, path: String, offset: usize) {
         let wanted = Some((path, offset));
-        if self.live.wanted == wanted {
+        if self.wanted == wanted {
             return;
         }
-        self.live.wanted = wanted;
-        if self.live.phase == LivePhase::Running {
-            self.core.after(Timer::Caret);
-            self.follow_soon();
+        self.wanted = wanted;
+        if self.phase == LivePhase::Running {
+            cx.after(Timer::Caret);
+            self.follow_soon(cx);
         }
     }
 
-    fn follow_soon(&mut self) {
-        self.live.follow = true;
-        self.core.soon(Timer::Follow);
+    fn follow_soon(&mut self, cx: &mut Core) {
+        self.follow = true;
+        cx.soon(Timer::Follow);
     }
 
-    pub fn follow(&mut self) {
-        if !std::mem::take(&mut self.live.follow) {
+    pub fn follow(&mut self, cx: &Core, docs: &Docs) {
+        if !std::mem::take(&mut self.follow) {
             return;
         }
-        let Some((path, offset)) = self.live.wanted.clone() else {
+        let Some((path, offset)) = self.wanted.clone() else {
             return;
         };
-        let (Some(doc), Some(typeset)) = (self.docs.get(&path), self.live.typeset().get(&path))
-        else {
+        let (Some(doc), Some(typeset)) = (docs.get(&path), self.typeset.get(&path)) else {
             return;
         };
         let (doc, typeset) = (doc.doc.clone(), Arc::clone(typeset));
-        let Ok(Some(pdf)) = self.live_pdf() else {
+        let Ok(Some(pdf)) = self.pdf(cx) else {
             return;
         };
-        let live = &mut self.live;
-        live.follows += 1;
-        let (tx, project) = (self.core.tx.clone(), self.core.project.clone());
-        let (generation, follows) = (live.generation, live.follows);
+        self.follows += 1;
+        let (tx, project) = (cx.tx.clone(), cx.project.clone());
+        let (generation, follows) = (self.generation, self.follows);
         tokio::task::spawn_blocking(move || {
             let line = doc.with(|source| source.line_at(offset as u32));
             let lines = document_lines(&doc, Some(&typeset), line);
@@ -380,7 +385,7 @@ impl Actor {
             let Ok(loc) = synctex::forward(&project, &path, &lines, Some(&pdf)) else {
                 return;
             };
-            let followed = move |actor: &mut Self| {
+            let followed = move |actor: &mut Actor| {
                 let live = &actor.live;
                 if (live.generation, live.follows) == (generation, follows) {
                     actor.core.emit(Event::LiveFollow(loc));
@@ -391,44 +396,51 @@ impl Actor {
     }
 
     pub fn caret_settled(&mut self) {
-        let live = &mut self.live;
-        if let (Some(run), Some((path, offset))) = (live.running(), &live.wanted)
-            && live.caret != live.wanted
-            && live.sources.caret(&*run, path, *offset)
+        if let (Some(run), Some((path, offset))) = (self.running(), &self.wanted)
+            && self.caret != self.wanted
+            && self.sources.caret(&*run, path, *offset)
         {
-            live.caret.clone_from(&live.wanted);
+            self.caret.clone_from(&self.wanted);
         }
     }
 
-    pub fn live_files_changed(&mut self) {
-        if !self.live.active() {
+    pub fn files_changed(&self, cx: &mut Core, tree: &TreeIndex) {
+        if !self.active() {
             return;
         }
-        let tree = &self.tree;
-        if self.live.sources.paths().all(|path| tree.contains(path)) {
-            self.core.later.push_back(Later::Rescan);
+        if self.sources.paths().all(|path| tree.contains(path)) {
+            cx.later.push_back(Later::Rescan);
         } else {
-            self.live_follow();
+            self.restart_soon(cx);
         }
     }
 
-    pub fn refresh_live_disk(&mut self) {
-        let paths = std::mem::take(&mut self.live.disk_paths);
-        let Some(run) = self.live.running() else {
+    pub fn disk_changed(&mut self, cx: &mut Core, paths: &BTreeSet<String>) {
+        if self.active() {
+            self.disk_paths.extend(paths.iter().cloned());
+            if !self.disk_paths.is_empty() {
+                cx.after(Timer::Disk);
+            }
+        }
+    }
+
+    pub fn refresh_disk(&mut self, cx: &Core, docs: &Docs) {
+        let paths = std::mem::take(&mut self.disk_paths);
+        let Some(run) = self.running() else {
             return;
         };
         let mut others = false;
         for path in paths {
-            if self.docs.contains_key(&path) {
+            if docs.contains_key(&path) {
                 continue;
             }
             others = true;
-            let file = self.core.project.root.join(&path);
+            let file = cx.project.root.join(&path);
             if is_text(&path)
                 && let Ok(Some(bytes)) = read_capped(&file, MAX_FILE)
             {
                 let text = crate::lossy_string(bytes);
-                self.live.sources.send(&*run, &path, &text);
+                self.sources.send(&*run, &path, &text);
             }
         }
         if others {
@@ -437,14 +449,12 @@ impl Actor {
         }
     }
 
-    pub fn live_event(&mut self, generation: u64, event: LiveEvent) {
-        if generation != self.live.generation {
+    pub fn event(&mut self, cx: &mut Core, docs: &Docs, generation: u64, event: LiveEvent) {
+        if generation != self.generation {
             return;
         }
         match event {
-            LiveEvent::Page { page, pdf } => {
-                self.core.emit(Event::LivePage(LivePage { page, pdf }));
-            }
+            LiveEvent::Page { page, pdf } => cx.emit(Event::LivePage(LivePage { page, pdf })),
             LiveEvent::Document {
                 path,
                 pages,
@@ -452,81 +462,77 @@ impl Actor {
                 changed,
                 revision,
             } => {
-                if !self.acknowledged(revision) {
+                if !self.acknowledged(cx, docs, revision) {
                     return;
                 }
                 if pages > 0 {
-                    self.core.pdf.live = Some(PathBuf::from(&path));
-                    self.live.typeset.clone_from(&self.live.sources.read);
+                    cx.pdf.live = Some(PathBuf::from(&path));
+                    self.typeset.clone_from(&self.sources.read);
                     synctex::warm(PathBuf::from(&path));
-                    self.core.publish_pdf();
-                    self.core
-                        .emit(Event::LiveDocument(LiveDocument { path, changed }));
+                    cx.publish_pdf();
+                    cx.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
-                self.run_ended(run);
+                self.run_ended(cx, docs, run);
             }
-            LiveEvent::Done(run) => self.run_ended(run),
+            LiveEvent::Done(run) => self.run_ended(cx, docs, run),
             // A settled viewport can acknowledge changes without changing the whole PDF.
-            LiveEvent::Synced(revision) => drop(self.acknowledged(revision)),
-            LiveEvent::Log if self.live.log_shown => self.core.soon(Timer::Log),
+            LiveEvent::Synced(revision) => drop(self.acknowledged(cx, docs, revision)),
+            LiveEvent::Log if self.log_shown => cx.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
-                if self.core.timers.contains_key(&Timer::Restart) {
-                    self.live.phase = LivePhase::Starting;
-                    self.live_reset();
-                    return self.publish_live(false);
+                if cx.timers.contains_key(&Timer::Restart) {
+                    self.phase = LivePhase::Starting;
+                    self.reset(cx);
+                    return self.publish(cx, docs, false);
                 }
                 if let Some(error) = error {
-                    self.live.failure = Some(error);
-                    self.report();
+                    self.failure = Some(error);
+                    self.report(cx, docs);
                 }
-                self.ended();
+                self.ended(cx, docs);
             }
         }
     }
 
     /// Takes in what TeXpresso says it has read, and ends a preview that claims what it wasn't sent.
-    fn acknowledged(&mut self, revision: u64) -> bool {
-        if self.live.sources.acknowledge(revision).is_some() {
+    fn acknowledged(&mut self, cx: &mut Core, docs: &Docs, revision: u64) -> bool {
+        if self.sources.acknowledge(revision).is_some() {
             return true;
         }
-        self.live.failure = Some(messages::live_unpatched());
-        self.report();
-        self.live_stop();
+        self.failure = Some(messages::live_unpatched());
+        self.report(cx, docs);
+        self.stop(cx, docs);
         false
     }
 
-    fn run_ended(&mut self, run: RunEnd) {
-        self.core.after(Timer::Issues);
+    fn run_ended(&mut self, cx: &mut Core, docs: &Docs, run: RunEnd) {
+        cx.after(Timer::Issues);
         match run {
             RunEnd::Partial => {}
-            RunEnd::Stopped => self.core.soon(Timer::Halting),
+            RunEnd::Stopped => cx.soon(Timer::Halting),
             RunEnd::Complete => {
-                self.core.timers.remove(&Timer::Halting);
-                self.live_halted(false);
+                cx.timers.remove(&Timer::Halting);
+                self.halted(cx, docs, false);
             }
         }
     }
 
-    pub fn live_halted(&mut self, halted: bool) {
-        if self.live.halted != halted {
-            self.live.halted = halted;
-            self.publish_live(false);
+    pub fn halted(&mut self, cx: &mut Core, docs: &Docs, halted: bool) {
+        if self.halted != halted {
+            self.halted = halted;
+            self.publish(cx, docs, false);
         }
     }
-}
 
-impl Actor {
-    pub fn live_issues_settled(&mut self) {
-        let live = &self.live;
-        if live.phase != LivePhase::Running || !live.sources.settled() {
+    pub fn issues_settled(&mut self, cx: &mut Core, docs: &Docs, tree: &TreeIndex) {
+        if self.phase != LivePhase::Running || !self.sources.settled() {
             return;
         }
-        let log = live.run.as_ref().and_then(|run| run.tex_log());
-        let (Some(log), Some(main)) = (log, &self.tree.main) else {
+        let log = self.run.as_ref().and_then(|run| run.tex_log());
+        let (Some(log), Some(main)) = (log, &tree.main) else {
             return;
         };
-        let files = self.tree.files.iter();
+        let files = tree.files.iter();
         let files: HashMap<String, &String> = files.map(|f| (paths::fold_case(f), f)).collect();
         let ours = |name: &str| {
             let path = paths::rel_key(name).ok()?;
@@ -537,33 +543,29 @@ impl Actor {
         let errors = parse_live_log(&log, main, &ours);
         let placed = errors.into_iter().filter_map(|item| {
             let at = match (&item.file, item.line) {
-                (Some(file), Some(line)) => self
-                    .docs
+                (Some(file), Some(line)) => docs
                     .get(file)
                     .map_or(0, |doc| doc.doc.with(|source| source.line_start(line))),
                 _ => return None,
             };
             Some(Issue { item, at })
         });
-        self.live.issues = placed.collect();
-        self.publish_live(false);
+        self.issues = placed.collect();
+        self.publish(cx, docs, false);
     }
 
-    pub fn live_issues_edited(&mut self, path: &str, edit: Option<&TextEdit>) {
+    fn issues_edited(&mut self, cx: &mut Core, docs: &Docs, path: &str, edit: &TextEdit) {
         let ours = |issue: &Issue| issue.item.file.as_deref() == Some(path);
-        if !self.live.issues.iter().any(ours) {
+        if !self.issues.iter().any(ours) {
             return;
         }
-        let doc = &self.docs[path].doc;
-        let inserted = edit.map_or(0, |edit| utf16::len(&edit.text) as u32);
-        let (count, mut moved) = (self.live.issues.len(), false);
-        self.live.issues.retain_mut(|issue| {
+        let doc = &docs[path].doc;
+        let inserted = utf16::len(&edit.text) as u32;
+        let (count, mut moved) = (self.issues.len(), false);
+        self.issues.retain_mut(|issue| {
             if !ours(issue) {
                 return true;
             }
-            let Some(edit) = edit else {
-                return false;
-            };
             if edit.start + edit.length <= issue.at {
                 issue.at = issue.at - edit.length + inserted;
                 let line = Some(doc.with(|source| source.line_at(issue.at)));
@@ -574,18 +576,25 @@ impl Actor {
                 edit.start > issue.at
             }
         });
-        if moved || self.live.issues.len() != count {
-            self.publish_live(false);
+        if moved || self.issues.len() != count {
+            self.publish(cx, docs, false);
         }
     }
 
-    pub fn live_issues_opened(&mut self, path: &str) {
-        let doc = &self.docs[path].doc;
-        let issues = self.live.issues.iter_mut();
+    fn issues_opened(&mut self, cx: &mut Core, docs: &Docs, path: &str) {
+        let doc = &docs[path].doc;
+        let issues = self.issues.iter_mut();
         for issue in issues.filter(|issue| issue.item.file.as_deref() == Some(path)) {
             let line = issue.item.line.unwrap_or_default();
             issue.at = doc.with(|source| source.line_start(line));
         }
-        self.publish_live(false);
+        self.publish(cx, docs, false);
     }
+}
+
+fn remember(cx: &Core, on: bool) {
+    let _ = settings::store_ui(&cx.project.ui, |ui| {
+        ui.live_preview = on;
+        Ok(())
+    });
 }

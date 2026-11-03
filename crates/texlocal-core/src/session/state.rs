@@ -73,7 +73,7 @@ impl Actor {
         self.builds.publish(&mut self.core, &self.docs);
         self.core.publish(SessionSection::BuildLog(String::new()));
         self.core.publish_pdf();
-        self.publish_live(false);
+        self.live.publish(&mut self.core, &self.docs, false);
         self.core.publish(SessionSection::LiveLog(String::new()));
     }
 

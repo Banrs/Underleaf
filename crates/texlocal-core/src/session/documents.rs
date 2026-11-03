@@ -596,8 +596,7 @@ impl Actor {
     pub fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
         if self.docs.load(&mut self.core, path, &self.tree)? {
             self.builds.publish(&mut self.core, &self.docs);
-            self.live_issues_opened(path);
-            self.live_opened(path);
+            self.live.opened(&mut self.core, &self.docs, path);
         }
         Ok(())
     }
@@ -611,7 +610,7 @@ impl Actor {
     /// Shows what a document closed leaves of the build's and the live preview's issues and the file open.
     pub fn closed(&mut self) {
         self.builds.publish(&mut self.core, &self.docs);
-        self.publish_live(false);
+        self.live.publish(&mut self.core, &self.docs, false);
         self.docs.publish_open(&mut self.core, &self.tree);
     }
 
@@ -620,8 +619,8 @@ impl Actor {
             return;
         };
         self.builds.edited(&mut self.core, &self.docs, Some(&path));
-        self.live_issues_edited(&path, Some(edit));
-        self.live_edited(&path, version, edit);
+        self.live
+            .edited(&mut self.core, &self.docs, &path, version, edit);
         if self.docs.edited(&mut self.core, &path, version, edit) {
             self.closed();
         }
