@@ -2,11 +2,12 @@ import AppKit
 
 extension SourceTextView {
     func updateGutterWidth() {
-        guard gutter.fit(lineCount: document.lineCount, numbered: showsLineNumbers, padding: textContainer?.lineFragmentPadding ?? 0)
-        else { return }
-        textContainerInset.width = (gutter.width + EditorGutter.trailingMargin) / 2
+        guard gutter.fit(lineCount: document.lineCount, numbered: showsLineNumbers, padding: linePadding) else { return }
+        textContainerInset.width = (gutter.width + linePadding) / 2
         needsDisplay = true
     }
+
+    var linePadding: CGFloat { textContainer?.lineFragmentPadding ?? 0 }
 
     override var textContainerOrigin: NSPoint { NSPoint(x: gutter.width, y: textContainerInset.height) }
 
@@ -42,8 +43,7 @@ extension SourceTextView {
         let frame = fragment.layoutFragmentFrame
         let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
         let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
-        return CGRect(x: EditorGutter.bandStart, y: top, width: bounds.width - EditorGutter.bandStart - EditorGutter.trailingMargin,
-                      height: bottom - top)
+        return CGRect(x: linePadding, y: top, width: bounds.width - 2 * linePadding, height: bottom - top)
     }
 
     func drawNumbers(in rect: CGRect, current: Int?) {

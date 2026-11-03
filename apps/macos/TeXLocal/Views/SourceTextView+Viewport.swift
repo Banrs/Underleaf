@@ -70,7 +70,7 @@ extension SourceTextView {
         guard size.width != frame.width else { return super.setFrameSize(size) }
         let top = shownTop
         super.setFrameSize(size)
-        textContainer?.size.width = max(0, size.width - gutter.width - EditorGutter.trailingMargin)
+        textContainer?.size.width = max(0, size.width - gutter.width - linePadding)
         top.map(scroll(toShownTop:))
     }
 
