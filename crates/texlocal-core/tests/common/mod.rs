@@ -88,6 +88,15 @@ pub fn write(root: &Path, files: &[(&str, &str)]) {
     }
 }
 
+/// Takes what a test moved to the real Trash back out if the test stops before putting it back.
+pub struct Trashed(pub PathBuf);
+
+impl Drop for Trashed {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0).or_else(|_| std::fs::remove_file(&self.0));
+    }
+}
+
 /// How long a test waits for what it expects before it fails. Each wait ends as soon as what it
 /// waits for comes, so this only stops a hung run: 20 s failed the TeX tests at a load average of 28.
 const PATIENCE: Duration = Duration::from_secs(120);

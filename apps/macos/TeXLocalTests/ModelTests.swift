@@ -469,9 +469,14 @@ struct ViewsTests {
         try await project.load()
         let path = try #require(await project.createEntry(in: "", directory: false))
         let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        var trashed: String?
+        defer { try? trashed.map(FileManager.default.removeItem(atPath:)) }
         let undo = UndoManager()
         undo.groupsByEvent = false
-        let item = UndoableTrash(undoManager: undo, trash: { (try? await project.session.call(Trash(path: path))) ?? nil },
+        let item = UndoableTrash(undoManager: undo, trash: {
+            trashed = (try? await project.session.call(Trash(path: path))) ?? nil
+            return trashed
+        },
                                  putBack: { (try? await project.session.call(PutBack(path: path, trashed: $0))) != nil })
         undo.beginUndoGrouping()
         await item.moveToTrash()

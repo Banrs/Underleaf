@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{FakePreview, Library, Rig, SESSION, names, wait_until, write};
+use common::{FakePreview, Library, Rig, SESSION, Trashed, names, wait_until, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
 use texlocal_core::session::{Document, LiveEvent, RunEnd};
@@ -697,6 +697,7 @@ async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     let refused = rig.refuse("Trash", json!({ "path": "main.tex" }));
     assert_eq!(refused, ErrorKind::Conflict);
     let trashed = rig.call("Trash", json!({ "path": "ch.tex" }));
+    let _trashed = Trashed(trashed.as_str().unwrap().into());
     assert!(!rig.root().join("ch.tex").exists());
     rig.section("openFile", |f| f["path"] == "main.tex");
     rig.section("documents", |d| names(d, "path") == ["main.tex"]);
@@ -1092,6 +1093,7 @@ async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_ope
     assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
     rig.call("CloseProject", json!({}));
     let trashed = rig.ask_library("TrashProject", trash).unwrap();
+    let _trashed = Trashed(trashed.as_str().unwrap().into());
     rig.listed(|projects| projects.as_array().unwrap().is_empty());
     rig.ask_library("ReloadProjects", json!({})).unwrap();
     let back = json!({ "id": "P", "trashed": trashed });
