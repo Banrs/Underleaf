@@ -56,7 +56,6 @@ pub(crate) struct Doc {
     /// The version a reload was asked at and its edit, which only the main thread applies.
     reloading: Option<(u64, TextEdit)>,
     pub error: Option<Message>,
-    composing: bool,
 }
 
 impl Doc {
@@ -126,15 +125,6 @@ impl Docs {
 }
 
 impl Actor {
-    pub fn composing(&mut self, path: &str, composing: bool) {
-        if let Some(doc) = self.docs.get_mut(path) {
-            doc.composing = composing;
-            if !composing && doc.dirty() {
-                self.after(Timer::Autosave);
-            }
-        }
-    }
-
     pub fn open(&mut self, path: &str) -> Result<Option<String>, CoreError> {
         if self.opens.fetch_sub(1, Ordering::Relaxed) > 1 {
             return Ok(None);
@@ -206,7 +196,6 @@ impl Actor {
             asking: false,
             reloading: None,
             error: None,
-            composing: false,
         };
         self.docs.insert(path.to_owned(), doc);
         self.publish_documents();
@@ -294,7 +283,11 @@ impl Actor {
             if !doc.dirty() {
                 return Ok(true);
             }
-            if doc.asking || doc.reloading.is_some() || autosave && doc.composing {
+            if autosave && doc.doc.composing() {
+                self.after(Timer::Autosave);
+                return Ok(false);
+            }
+            if doc.asking || doc.reloading.is_some() {
                 return Ok(false);
             }
             if let Some(kind) = doc.conflict {

@@ -238,6 +238,16 @@ pub unsafe extern "C" fn tl_source_select(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_source_composing(source: *mut TlSource, composing: bool) {
+    let compose = |source: &mut TlSource| {
+        if let TlSource::Session(document) = source {
+            document.compose(composing);
+        }
+    };
+    unsafe { on_source(source, compose) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_text(source: *mut TlSource, len: *mut usize) -> *mut u8 {
     let Some(len) = (unsafe { len.as_mut() }) else {
         return std::ptr::null_mut();

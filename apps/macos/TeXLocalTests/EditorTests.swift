@@ -207,15 +207,13 @@ struct EditorTests {
         let (editor, window) = Self.editor("")
         defer { window.close() }
         let text = editor.textView
-        var composing: [Bool] = []
-        text.composing = { composing.append($0) }
         Self.type("\\s", in: text)
         #expect(text.completions.offered != nil)
         Self.event(text) { text.setMarkedText("e", selectedRange: .caret(1), replacementRange: Self.typed) }
-        #expect(text.hasMarkedText() && composing == [true])
+        #expect(text.hasMarkedText() && text.document.composing)
         #expect(text.completions.offered == nil && text.document.text == "\\se")
         Self.type("é", in: text)
-        #expect(!text.hasMarkedText() && composing == [true, false])
+        #expect(!text.hasMarkedText() && !text.document.composing)
         #expect(text.string == "\\sé" && text.document.text == "\\sé")
     }
 

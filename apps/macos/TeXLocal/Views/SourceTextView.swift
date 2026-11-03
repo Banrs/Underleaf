@@ -19,7 +19,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private var displayOptionsWatch: NotificationCenter.ObservationToken?
 
-    var document = SourceDocument(text: "")
+    var document = SourceDocument(text: "") { willSet { document.composing = false } }
     var source: NSString { textStorage?.mutableString ?? "" }
     var undo = UndoManager()
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
@@ -265,9 +265,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     var autoPair = true, autoComplete = true
-    var composing: (Bool) -> Void = { _ in }
     var spellCheckToggled: (Bool) -> Void = { _ in }
-    private var toldComposing = false
     private var typing = false
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
@@ -332,9 +330,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     func markedTextChanged() {
-        guard hasMarkedText() != toldComposing else { return }
-        toldComposing.toggle()
-        composing(toldComposing)
+        if hasMarkedText() != document.composing { document.composing.toggle() }
     }
 
     func finish(_ stroke: Keystroke) {

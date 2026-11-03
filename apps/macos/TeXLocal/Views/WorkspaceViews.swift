@@ -35,7 +35,6 @@ final class WorkspaceViews: ProjectViews {
         let text = editor.textView
         text.isContinuousSpellCheckingEnabled = project.window?.app.spellCheck ?? true
         text.spellCheckToggled = { [weak self] in self?.project.window?.app.spellCheck = $0 }
-        text.composing = { [weak self] in if let self { project.composing($0, in: editor.path) } }
         text.keyboardChanged = { [weak self] in self?.project.sourceHasKeyboard = $0 }
         text.fileDrop = { [weak self] url in
             guard let project = self?.project else { return nil }

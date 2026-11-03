@@ -15,6 +15,7 @@ struct Text {
     source: SourceDocument,
     version: u64,
     closed: bool,
+    composing: bool,
 }
 
 struct Cell {
@@ -40,6 +41,7 @@ impl Document {
             source,
             version: 0,
             closed: false,
+            composing: false,
         });
         Self(Arc::new(Cell { id, text, tx, scan }))
     }
@@ -94,6 +96,15 @@ impl Document {
             doc: self.0.id,
             caret,
         });
+    }
+
+    /// Marked text is being composed, which autosave waits out.
+    pub fn compose(&self, composing: bool) {
+        lock(&self.0.text).composing = composing;
+    }
+
+    pub(crate) fn composing(&self) -> bool {
+        lock(&self.0.text).composing
     }
 
     pub fn editable(&self) -> bool {

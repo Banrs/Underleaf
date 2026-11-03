@@ -30,6 +30,9 @@ final class SourceDocument {
         return answered("Edit", out) ?? []
     }
 
+    /// Marked text is being composed, which the session's autosave waits out.
+    var composing = false { didSet { tl_source_composing(raw, composing) } }
+
     func select(_ selection: NSRange, mirroring: Bool) {
         tl_source_select(raw, UInt32(selection.location), UInt32(selection.length), mirroring)
     }

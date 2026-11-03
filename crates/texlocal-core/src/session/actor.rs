@@ -42,7 +42,6 @@ requests! {
         Reattach {} -> (),
         SetOptions { auto_compile: bool } -> (),
         Open { path: RelPath } -> Option<String>,
-        Composing { path: RelPath, composing: bool } -> (),
         Save { reporting: bool } -> bool,
         Resolve { path: RelPath, answer: Resolution } -> (),
         Compile { auto: bool } -> (),
@@ -416,9 +415,6 @@ impl Actor {
                 answer(Ok(self.auto_compile = auto_compile))
             }
             Session::Open(Open { path }, answer) => answer(self.open(&path.0)),
-            Session::Composing(Composing { path, composing }, answer) => {
-                answer(Ok(self.composing(&path.0, composing)))
-            }
             Session::Save(Save { reporting }, answer) => answer(self.save_edits(reporting)),
             Session::Resolve(Resolve { path, answer: to }, answer) => {
                 answer(self.resolve(&path.0, to))

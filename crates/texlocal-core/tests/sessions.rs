@@ -731,7 +731,7 @@ fn replace_cat() -> Value {
 async fn a_version_a_snapshot_and_an_export_hold_the_edits_not_yet_saved() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
-    rig.call("Composing", json!({ "path": "ch.tex", "composing": true }));
+    doc.compose(true);
     let holds_the_edits = |id: &Value| {
         let rows = rig.call("CompareVersion", json!({ "id": id, "path": "ch.tex" }));
         rows.as_array()
@@ -1620,13 +1620,12 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 async fn autosave_waits_while_text_is_composed() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
-    let composing = |on: bool| rig.call("Composing", json!({ "path": "ch.tex", "composing": on }));
     let disk = || fs::read_to_string(rig.root().join("ch.tex")).unwrap();
-    composing(true);
+    doc.compose(true);
     doc.edit(0, 0, "ü", None, false);
     std::thread::sleep(Duration::from_millis(1200));
     assert_eq!(disk(), CHAPTER);
-    composing(false);
+    doc.compose(false);
     wait_until("the composed text was never saved", || disk() != CHAPTER);
     assert_eq!(disk(), format!("ü{CHAPTER}"));
 }

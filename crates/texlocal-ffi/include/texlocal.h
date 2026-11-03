@@ -39,6 +39,7 @@ char *tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const ui
                      const TlRange *_Nullable changing, bool mirroring);
 
 void tl_source_select(TlSource *source, uint32_t start, uint32_t length, bool mirroring);
+void tl_source_composing(TlSource *source, bool composing);
 
 uint8_t *_Nullable tl_source_text(TlSource *source, size_t *_Nullable len);
 void tl_source_free_text(uint8_t *_Nullable text, size_t len);

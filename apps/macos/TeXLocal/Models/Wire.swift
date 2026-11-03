@@ -290,14 +290,6 @@ nonisolated extension Completions {
     }
 }
 
-nonisolated struct Composing: SessionRequest {
-    typealias Reply = Done
-    static let command = "Composing"
-
-    var path: String
-    var composing: Bool
-}
-
 nonisolated struct CoreError: Decodable, Hashable, Sendable {
     var kind: ErrorKind
     var message: Message

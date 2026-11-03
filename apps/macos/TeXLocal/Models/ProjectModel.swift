@@ -66,7 +66,6 @@ final class ProjectModel {
     var trail = Trail()
 
     private var root: URL? { store.project.map { URL(filePath: $0.root, directoryHint: .isDirectory) } }
-    @ObservationIgnored private var composingPath: String?
 
     var compiling: Bool { store.build?.compiling == true }
     var outdated: Bool { store.build?.outdated == true }
@@ -258,12 +257,6 @@ final class ProjectModel {
         guard let opened = await alerting("Couldn’t Open “\(path.fileName)”", { try await session.call(Open(path: path)) }) ?? nil,
               opened == openPath, editsText else { return }
         views?.reveal(opened, line: line, column: column, length: length, atTop: atTop, focus: focus)
-    }
-
-    func composing(_ composing: Bool, in path: String?) {
-        guard let path = composing ? path : composingPath else { return }
-        composingPath = composing ? path : nil
-        session.send(Composing(path: path, composing: composing))
     }
 
     func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
