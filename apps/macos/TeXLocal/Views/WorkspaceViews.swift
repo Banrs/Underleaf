@@ -101,8 +101,7 @@ final class WorkspaceViews: ProjectViews {
 
     func apply(_ edits: DocumentEdits, named name: String) -> Bool {
         guard edits.path == editor.path, editor.textView.document.version == edits.version else { return false }
-        editor.textView.apply(edits.edits, named: name)
-        return true
+        return editor.textView.apply(edits.edits, named: name)
     }
 
     func replace(_ hit: SearchHit, with text: String) -> Bool {

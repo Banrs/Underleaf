@@ -73,7 +73,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
-        guard !edits.isEmpty else { return false }
+        guard isEditable, document.editable, !edits.isEmpty else { return false }
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {

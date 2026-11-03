@@ -95,6 +95,9 @@ struct CoreTests {
         #expect(version != stale && !views.apply(edits("main.tex", stale), named: "Restore"))
         #expect(!views.apply(edits("other.tex", version), named: "Restore"))
         #expect(text.string == shown && text.document.version == version)
+        text.isEditable = false
+        #expect(!views.apply(edits("main.tex", version), named: "Restore"))
+        text.isEditable = true
         #expect(views.apply(edits("main.tex", version), named: "Restore"))
         #expect(text.string.hasPrefix("% theirs\n"))
         #expect(await project.close().value)
