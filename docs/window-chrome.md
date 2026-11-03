@@ -21,6 +21,9 @@ The sidebar and status bar are the Xcode replicas, restored in 75648edf:
 - **Add menu:** opens upward, 4 pt above the + (`NavigatorFilterBar.showAdd`). The owner finds this too high, and placed
   beneath the +, AppKit pushed it over the + and the pointer. It still needs tuning on screen.
 
+The Projects (start) window isn't full-size content, so its toolbar is a bar of its own above the New header, where the
+list had run on beneath it and the two read as one (owner's request, 2026-11-03; not yet checked on screen).
+
 ## Rejected on 2026-11-03: don't repeat these without new evidence
 
 | Attempt | Owner's verdict |

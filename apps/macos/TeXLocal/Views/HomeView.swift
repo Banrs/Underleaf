@@ -9,7 +9,9 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     init(app: AppModel) {
         model = WindowModel(app: app)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              // Not full-size content, so the toolbar is a bar of its own above the New header rather than
+                              // one with it, as the list running on beneath it made them.
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.isRestorable = false
