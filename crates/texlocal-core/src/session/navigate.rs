@@ -123,10 +123,9 @@ impl Actor {
         let settings = settings::read_settings(&self.project.settings);
         let aux = settings.output(&self.project.build, "aux");
         tokio::task::spawn_blocking(move || {
-            let own = doc.facts();
             let found = doc.with(|source| {
-                let (kind, name, _) = source.symbol_in(&own, 0, offset)?;
-                let defined = source.defined(&own, kind, &name).into_iter().next();
+                let (kind, name, _) = source.symbol_at(offset)?;
+                let defined = source.defined(kind, &name).into_iter().next();
                 Some((kind, name, defined))
             });
             let Some((kind, name, defined)) = found else {
@@ -151,8 +150,7 @@ impl Actor {
                     let number = aux.ok().and_then(|aux| numbered(&aux, &name));
                     let number = number.unwrap_or_else(|| "Compile to number it".to_owned());
                     let symbols = doc.symbols();
-                    let mut labels = own.defined.labels.iter().chain(symbols.labels());
-                    let what = labels.find(|label| label.name == name);
+                    let what = symbols.labels().find(|label| label.name == name);
                     Some(match what.and_then(|label| label.detail.as_ref()) {
                         Some(what) => format!("{number}\n{what}"),
                         None => number,

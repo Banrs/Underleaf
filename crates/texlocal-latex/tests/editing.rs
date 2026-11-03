@@ -189,9 +189,16 @@ fn a_section_folds_to_the_next_heading() {
 }
 
 #[test]
-fn a_reference_leads_to_its_label() {
-    let mut doc = SourceDocument::new("\\label{a} \\ref{a}");
-    let answer = run(&mut doc, "DefinitionAt", json!({ "at": 15 }));
+fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
+    let text = "\\label{a} \\ref{a}";
+    let mut doc = SourceDocument::named(text, "main.tex");
+    let at = json!({ "at": 15 });
+    assert_eq!(run(&mut doc, "DefinitionAt", at.clone()), Value::Null);
+    let read = Arc::new(Facts::read(text, file_kind("main.tex")));
+    let files = vec!["main.tex".to_owned()];
+    let read = [(files[0].clone(), read)].into();
+    doc.set_symbols(Scan::new(read, files, Arc::default()).symbols);
+    let answer = run(&mut doc, "DefinitionAt", at);
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
 }

@@ -1,7 +1,5 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use texlocal_latex::facts::Facts;
-use texlocal_latex::file_kind;
 use texlocal_latex::project::Scan;
 use texlocal_latex::syntax::{SourceDocument, Symbols, TextEdit, TextRange};
 use texlocal_latex::utf16;
@@ -140,14 +138,6 @@ impl Document {
 
     pub(crate) fn moved(&self, path: &str) {
         path.clone_into(&mut lock(&self.0.text).source.path);
-    }
-
-    pub(crate) fn facts(&self) -> Facts {
-        let (text, path) = {
-            let held = lock(&self.0.text);
-            (held.source.text(), held.source.path.clone())
-        };
-        Facts::read(&text, file_kind(&path))
     }
 
     pub(crate) fn snapshot(&self) -> (String, u64) {

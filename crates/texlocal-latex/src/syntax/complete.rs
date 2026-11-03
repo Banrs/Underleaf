@@ -253,9 +253,10 @@ impl SourceDocument {
         offer(m.start(), SymbolKind::Command, items)
     }
 
-    pub(crate) fn definition(&self, at: u32) -> Option<Definition> {
-        let own = Facts::read(&self.text(), file_kind(&self.path));
-        let (kind, name, file) = self.symbol_in(&own, 0, at)?;
+    /// Definitions come from the last scan, which follows each autosave by 150 ms, so one typed
+    /// since is found about 850 ms later rather than by reading the whole document on each click.
+    pub(crate) fn definition(&mut self, at: u32) -> Option<Definition> {
+        let (kind, name, file) = self.symbol_at(at)?;
         let places = match kind {
             SymbolKind::File => {
                 let start = Place {
@@ -265,7 +266,7 @@ impl SourceDocument {
                 };
                 file.map(|file| (file, start)).into_iter().collect()
             }
-            kind => self.defined(&own, kind, &name),
+            kind => self.defined(kind, &name),
         };
         let places: Vec<FilePlace> = places
             .into_iter()
@@ -336,17 +337,10 @@ impl SourceDocument {
         Some((named.kind, named.name.clone(), file))
     }
 
-    pub fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
-        let others = self.symbols.by_file.iter();
-        let others = others.filter(|(file, _)| **file != self.path);
-        let mut files: Vec<(&str, &Definitions)> = others
-            .map(|(file, defined)| (&**file, &**defined))
-            .collect();
-        files.push((&self.path, &own.defined));
-        files.sort_by_key(|&(file, _)| file);
-        let places = files.into_iter().flat_map(|(file, defined)| {
+    pub fn defined(&self, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
+        let places = self.symbols.by_file.iter().flat_map(|(file, defined)| {
             let places = definitions(defined, kind, name).into_iter();
-            places.map(move |at| (file.to_owned(), at))
+            places.map(move |at| (file.clone(), at))
         });
         places.collect()
     }
