@@ -124,9 +124,13 @@ struct WindowTests {
         #expect(app.windows.count == 2 && windows.allSatisfy { $0.isVisible && $0.tabbingMode == .disallowed && $0.tabbedWindows == nil })
         #expect(windows.map(\.title) == [first.name, second.name] && windows.allSatisfy { $0.subtitle == "main.tex" })
         #expect(windows[1].frame.minX > windows[0].frame.minX && windows[1].frame.maxY < windows[0].frame.maxY)
-        #expect(windows[1].orderedIndex < windows[0].orderedIndex)
+        // Front to back on every Space, since `orderedIndex` puts windows off the active Space, as while a full-screen app
+        // holds it, last by window number (measured with the app hidden).
+        let numbers = windows.map(\.windowNumber)
+        func order() -> [Int] { NSWindow.windowNumbers(options: .allSpaces)?.map(\.intValue).filter(numbers.contains) ?? [] }
+        #expect(order() == numbers.reversed())
         await two.open(first.id)
-        #expect(app.windows.count == 2 && windows[0].orderedIndex < windows[1].orderedIndex)
+        #expect(app.windows.count == 2 && order() == numbers)
 
         let items = NSApp.mainMenu?.items.flatMap { $0.submenu.map(Self.items) ?? [] } ?? []
         let tabs = [#selector(NSWindow.mergeAllWindows(_:)), #selector(NSWindow.moveTabToNewWindow(_:)), #selector(NSWindow.toggleTabBar(_:)),
