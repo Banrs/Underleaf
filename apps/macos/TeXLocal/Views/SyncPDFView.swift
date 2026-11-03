@@ -94,6 +94,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         change()
         CATransaction.commit()
         self.covers = [:]
+        // PDFKit drew the last tile in view 7–13 ms after a swap and 12–18 ms after a live page (392-page test PDF, a 700 ×
+        // 900 pt pane at fit width and at 25%, the Mac otherwise idle), so 400 ms leaves room for a busy one.
         restart(&uncovering, after: .milliseconds(400)) { [weak self] in
             for case let overlay as PageOverlay in self?.overlays.objectEnumerator()?.allObjects ?? [] { overlay.uncover() }
         }
