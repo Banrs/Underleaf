@@ -215,6 +215,34 @@ fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
 }
 
 #[test]
+fn a_bibtex_cross_reference_after_a_blank_line_leads_to_its_parent() {
+    let text = "@book{child,
+  title={Child},
+
+  crossref={parent}
+}
+
+@book{parent, title={Parent}}";
+    let path = "refs.bib";
+    let mut doc = SourceDocument::named(text, path);
+    let read = Arc::new(Facts::read(text, file_kind(path)));
+    let files = vec![path.to_owned()];
+    let read = [(path.to_owned(), read)].into();
+    doc.set_symbols(Scan::new(read, files, Arc::default()).symbols);
+    let answer = run(
+        &mut doc,
+        "DefinitionAt",
+        json!({ "at": text.find("parent").unwrap() + 1 }),
+    );
+    assert_eq!(answer["kind"], "citation");
+    assert_eq!(answer["name"], "parent");
+    assert_eq!(
+        answer["places"],
+        json!([{ "file": path, "line": 7, "column": 6, "length": 6 }])
+    );
+}
+
+#[test]
 fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
     let text = "Intro \\ref{one}.\n\n\\label{fig:a} see \\cite{knuth,\n  lamport} é\n\nPlain \\input{ch} text.";
     for text in [

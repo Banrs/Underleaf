@@ -281,6 +281,12 @@ impl SourceDocument {
     }
 
     pub fn symbol_at(&mut self, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
+        let kind = file_kind(&self.path);
+        if kind == FileKind::Bib {
+            // A BibTeX entry can contain blank lines, so a paragraph may omit its header.
+            let own = Facts::read(&self.text(), kind);
+            return self.symbol_in(&own, 0, at);
+        }
         let text = &self.text;
         let line = text.line_index(at.min(text.len()));
         let blank = |&index: &usize| scan::blank_line(text.line(index));
@@ -306,7 +312,7 @@ impl SourceDocument {
         let start = text.lines[first] as usize;
         let from = start.max(scanner.i);
         let paragraph = " ".repeat(from - start) + &utf16::lossy(&text.units[from..end]);
-        let own = Facts::read(&paragraph, file_kind(&self.path));
+        let own = Facts::read(&paragraph, kind);
         self.symbol_in(&own, first, at)
     }
 
