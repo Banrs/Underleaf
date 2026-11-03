@@ -14,7 +14,7 @@ struct PDFTests {
         let controller = PDFController(), view = controller.view
         controller.restore = zoom.map { ($0, left) }
         #expect(controller.keptPlace == left)
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         await controller.load(url).value
         #expect(controller.pageCount == 6)
@@ -35,7 +35,7 @@ struct PDFTests {
     @Test(arguments: [Zoom.fitWidth, .scale(1.5), .fitPage])
     func aRebuildOrResizeKeepsThePlaceAndARebuildCoversItsPagesUntilPDFKitDrawsThem(_ zoom: Zoom) async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         controller.apply(zoom)
@@ -73,7 +73,7 @@ struct PDFTests {
 
     @Test func aLivePageReplacesItsPageInPlaceAndASyncMarkOnlyOnThatPageGoes() async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["Page 1", "Page 2", "Page 3"], in: controller)
         let document = try #require(view.document)
@@ -92,7 +92,7 @@ struct PDFTests {
 
     @Test func aLivePageHidesItsLinksBordersAsABuiltDocumentDoes() async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["Page 1"], in: controller)
         let linked = try textPDF(["linked"])
@@ -108,7 +108,7 @@ struct PDFTests {
 
     @Test func aLiveDocumentChangesOnlyItsChangedPagesInPlaceAndFindsAgainOnThemAlone() async throws {
         let controller = PDFController(), view = controller.view, find = controller.find
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["needle", "filler", "needle", "filler"], in: controller)
         let document = try #require(view.document)
@@ -149,7 +149,7 @@ struct PDFTests {
     @Test(arguments: [false, true])
     func liveFindIncludesAddedPagesAndKeepsItsSelectedMatch(_ searching: Bool) async throws {
         let controller = PDFController(), view = controller.view, find = controller.find
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["needle", "needle", "needle"], in: controller)
         let document = try #require(view.document)
@@ -179,7 +179,7 @@ struct PDFTests {
 
     @Test func aQueuedDocumentKeepsTheFollowThatAnOlderReadCannotShow() async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         let url = URL.temporaryDirectory.appending(path: UUID().uuidString + ".pdf")
         try #require(try textPDF(count: 4).dataRepresentation()).write(to: url)
@@ -201,7 +201,7 @@ struct PDFTests {
 
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
         controller.find.isOpen = true
@@ -222,7 +222,7 @@ struct PDFTests {
         PDFFind.board = .withUniqueName()
         defer { PDFFind.board.releaseGlobally(); PDFFind.board = board }
         let controller = PDFController(), view = controller.view, find = controller.find
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         controller.show(try textPDF(["needle", "filler", "needle", "needle"]))
         let second = try #require(view.document?.page(at: 1))
@@ -245,9 +245,9 @@ struct PDFTests {
         #expect(view.currentSelection?.string == "filler")
     }
 
-    @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() throws {
+    @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         let start = try shown(view)
@@ -263,7 +263,7 @@ struct PDFTests {
 
     @Test func followingAPageNotShownYetWaitsForTheNextLiveUpdate() async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["Page 1", "Page 2"], in: controller)
         let start = try shown(view)
@@ -276,7 +276,7 @@ struct PDFTests {
     @Test(arguments: [false, true])
     func aSyncWithNoWordFallsBackToItsBoxUnlessItNeedsAWord(_ wordOnly: Bool) async throws {
         let controller = PDFController(), view = controller.view
-        let window = onScreen(controller)
+        let window = try await onScreen(controller.view)
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         let start = try shown(view)
@@ -313,19 +313,6 @@ struct PDFTests {
         defer { try? FileManager.default.removeItem(at: url) }
         controller.showLive(LiveDocument(path: url.path(percentEncoded: false), changed: changed))
         await controller.liveReading?.value
-    }
-
-    private func onScreen(_ controller: PDFController) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
-                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.toolbar = NSToolbar()
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        controller.view.frame = window.contentView?.bounds ?? .zero
-        controller.view.autoresizingMask = [.width, .height]
-        window.contentView?.addSubview(controller.view)
-        window.orderFront(nil)
-        return window
     }
 
     private func shown(_ view: SyncPDFView) throws -> Place {
