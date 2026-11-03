@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
 use texlocal_latex::project::Scan;
-use texlocal_latex::syntax::{Source, SourceDocument, Symbols, Syntax};
+use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
 
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
@@ -248,10 +248,8 @@ fn the_projects_symbols_reach_the_engine_as_data() {
     });
     let names = files.map(|(file, _)| file.to_owned()).to_vec();
     let symbols = Scan::new(read.into(), names, Arc::default()).symbols;
-    let sent: Symbols = serde_json::from_str(&serde_json::to_string(&symbols).unwrap()).unwrap();
-    assert_eq!(sent, *symbols);
     let mut doc = SourceDocument::named(files[1].1, "main.tex");
-    doc.set_symbols(Arc::new(sent));
+    doc.set_symbols(symbols);
     let answer = run(&mut doc, "DefinitionAt", json!({ "at": 6 }));
     assert_eq!(
         answer["places"],

@@ -45,8 +45,7 @@ pub enum SymbolKind {
     File,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Symbols {
     pub files: Vec<String>,
     pub by_file: BTreeMap<String, Arc<Definitions>>,
@@ -79,7 +78,7 @@ impl Symbols {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Installed {
     pub packages: Vec<String>,
     pub classes: Vec<String>,

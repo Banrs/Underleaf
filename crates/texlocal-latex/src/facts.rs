@@ -3,7 +3,7 @@ use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::bib;
 use crate::message::Message;
@@ -61,7 +61,7 @@ pub struct Facts {
     pub(crate) end: Option<Place>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Definitions {
     pub labels: Vec<Named>,
     pub citations: Vec<Named>,
@@ -69,7 +69,7 @@ pub struct Definitions {
     pub environments: Vec<Named>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -109,7 +109,7 @@ pub struct FilePlace {
     pub length: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Named {
     pub(crate) kind: SymbolKind,
     pub name: String,
@@ -117,7 +117,7 @@ pub struct Named {
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Defined {
     pub name: String,
     pub(crate) arguments: usize,
