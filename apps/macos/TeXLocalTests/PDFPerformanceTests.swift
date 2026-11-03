@@ -6,8 +6,10 @@ import Testing
 private nonisolated let longPDF = URL.homeDirectory.appending(path: "TeXLocal/Test Long (400 pages)/build/main.pdf")
 
 /// Main-thread budgets on the 400-page test project's PDF. A show is measured as the longest run of the main run loop
-/// between waits, so work PDFKit defers to its next pass counts too.
-@Suite(.serialized, .enabled(if: FileManager.default.fileExists(atPath: longPDF.path(percentEncoded: false))))
+/// between waits, so work PDFKit defers to its next pass counts too. They take 6.4 s, so they run only when asked:
+/// `TEST_RUNNER_TEXLOCAL_PERFORMANCE=1 zsh tools/xctest.sh …`, whose prefix xcodebuild strips for the test host.
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PERFORMANCE"] != nil),
+       .enabled(if: FileManager.default.fileExists(atPath: longPDF.path(percentEncoded: false))))
 struct PDFPerformanceTests {
     @Test func showingAndSwappingTheLongPDFStayWithinBudget() async throws {
         let controller = PDFController(), view = controller.view
