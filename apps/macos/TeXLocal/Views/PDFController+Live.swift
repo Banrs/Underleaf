@@ -60,6 +60,8 @@ extension PDFController {
                 } else {
                     break
                 }
+                // A read stopped while it loaded leaves the feed alone, as it belongs to the next read by then.
+                guard !Task.isCancelled else { return }
                 if feed.document == nil, feed.pages.isEmpty, let loc = feed.follow.take() { follow(loc, later: false) }
             }
             if !Task.isCancelled { self?.feed.reading = nil }
@@ -69,10 +71,14 @@ extension PDFController {
     private func readLive(_ url: URL, changed: IndexSet) async {
         let shown = view.document, wanted = view.coverPages
         if shown != nil, shown === feed.shown, changed.count <= Self.changedInPlace {
-            guard let live = await Self.loadPages(changed, of: url, covering: wanted), !Task.isCancelled else { return feed.shown = nil }
+            let live = await Self.loadPages(changed, of: url, covering: wanted)
+            guard !Task.isCancelled else { return }
+            guard let live else { return feed.shown = nil }
             replace(live)
         } else {
-            guard let loaded = await Self.loadDocument(url, covering: wanted), !Task.isCancelled else { return feed.shown = nil }
+            let loaded = await Self.loadDocument(url, covering: wanted)
+            guard !Task.isCancelled else { return }
+            guard let loaded else { return feed.shown = nil }
             signposts.withIntervalSignpost("live.document") { show(loaded.document, covers: loaded.covers) }
             feed.shown = loaded.document
         }

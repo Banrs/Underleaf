@@ -197,6 +197,25 @@ struct PDFTests {
         #expect(try shown(view).page == 3 && controller.feed.follow == nil)
     }
 
+    @Test func aReadStoppedWhileLoadingLeavesTheNextFeedItsFollow() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = try await onScreen(view)
+        defer { window.close() }
+        controller.show(try textPDF(count: 2))
+        let (old, new) = (try written(textPDF(count: 1)), try written(textPDF(count: 30)))
+        defer { [old, new].forEach { try? FileManager.default.removeItem(at: $0) } }
+        controller.showLive(LiveDocument(path: old.path(percentEncoded: false), changed: []))
+        let stopped = try #require(controller.liveReading)
+        await Task.yield()
+        controller.stopLive()
+        controller.showLive(LiveDocument(path: new.path(percentEncoded: false), changed: []))
+        controller.follow(ForwardLoc(page: 20, h: 72, v: 300, width: 100, height: 10, matches: []))
+        await stopped.value
+        await controller.liveReading?.value
+        #expect(view.document?.pageCount == 30 && controller.feed.follow == nil)
+        #expect(try shown(view).page == 19)
+    }
+
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view)
@@ -304,6 +323,12 @@ struct PDFTests {
     private func textPDF(count: Int) throws -> PDFDocument { try textPDF((1...count).map { "Page \($0)" }) }
 
     private func typedPage() throws -> Data { try #require(try textPDF(["typed"]).dataRepresentation()) }
+
+    private func written(_ document: PDFDocument) throws -> URL {
+        let url = URL.temporaryDirectory.appending(path: UUID().uuidString + ".pdf")
+        try #require(document.dataRepresentation()).write(to: url)
+        return url
+    }
 
     private func showLive(_ pages: [String], changed: [PageRange] = [], in controller: PDFController) async throws {
         let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
