@@ -44,7 +44,6 @@ struct BuildPanelBar: View {
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
             SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol)
-                .controlSize(.regular)
                 .frame(maxWidth: 180)
         }
         .buttonStyle(.accessoryBar)
