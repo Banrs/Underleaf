@@ -6,18 +6,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'crates/texlocal-core/src/compile.rs'
-      - 'crates/texlocal-core/src/packages.rs'
-      - 'crates/texlocal-core/src/process.rs'
-      - 'crates/texlocal-core/src/synctex.rs'
-      - 'crates/texlocal-core/src/tex.rs'
-      - 'crates/texlocal-core/src/texpresso.rs'
-      - 'crates/texlocal-core/src/tinytex.rs'
-      - 'crates/texlocal-core/src/session/build.rs'
-      - 'crates/texlocal-core/src/session/live.rs'
-      - 'crates/texlocal-core/src/session/navigate.rs'
-      - 'crates/texlocal-core/tests/common/**'
-      - 'crates/texlocal-core/tests/tex.rs'
+      - 'crates/texlocal-core/**'
       - 'crates/texlocal-latex/src/logparse.rs'
       - 'crates/texlocal-latex/src/synctex.rs'
       - 'tools/texpresso/**'
