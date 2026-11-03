@@ -16,7 +16,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private let framed: Bool
 
     init(app: AppModel, project id: String) {
-        let model = WindowModel(app: app)
+        let model = WindowModel(app: app, project: id)
         let views = WorkspaceViews(project: ProjectModel(id: id, window: model))
         model.project = views.project
         (self.model, self.views) = (model, views)

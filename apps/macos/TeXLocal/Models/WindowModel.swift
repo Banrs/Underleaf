@@ -17,15 +17,27 @@ final class WindowModel {
     var isMain = false { didSet { if isMain { app.cameForward(self) } } }
     @ObservationIgnored weak var controller: (any AppWindow)?
 
-    var showSource: Bool { didSet { app.defaults.set(showSource, forKey: DefaultsKey.showSource) } }
-    var showPDF: Bool { didSet { app.defaults.set(showPDF, forKey: DefaultsKey.showPDF) } }
+    var showSource: Bool { didSet { keepLayout() } }
+    var showPDF: Bool { didSet { keepLayout() } }
+    /// A project's window reopens in the layout it was left in, as it does with its frame; a new one takes the last used.
+    @ObservationIgnored private let layoutKey: String?
 
-    init(app: AppModel) {
+    init(app: AppModel, project id: String? = nil) {
         self.app = app
         let defaults = app.defaults
+        layoutKey = id.map { "Layout \($0)" }
         showSource = defaults.bool(forKey: DefaultsKey.showSource) || !defaults.bool(forKey: DefaultsKey.showPDF)
         showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
+        if let kept = layoutKey.flatMap({ defaults.string(forKey: $0) }).flatMap(WorkspaceLayout.init) {
+            (showSource, showPDF) = (kept != .pdf, kept != .source)
+        }
         app.opened(self)
+    }
+
+    private func keepLayout() {
+        app.defaults.set(showSource, forKey: DefaultsKey.showSource)
+        app.defaults.set(showPDF, forKey: DefaultsKey.showPDF)
+        if let layoutKey { app.defaults.set(layout.rawValue, forKey: layoutKey) }
     }
 
     var shownProject: ProjectModel? { project?.closed == false ? project : nil }

@@ -351,6 +351,19 @@ struct SwitchTests {
         #expect(app.front === other)
     }
 
+    @Test func eachProjectReopensInTheLayoutItWasLeftInAndANewOneInTheLastLayoutUsed() {
+        let app = defaults.app()
+        func shown(_ id: String, _ layout: WorkspaceLayout? = nil) -> WorkspaceLayout {
+            let controller = MainWindowController(app: app, project: id)
+            defer { controller.window?.close() }
+            if let layout { controller.model.layout = layout }
+            return controller.model.layout
+        }
+        _ = shown("A", .pdf)
+        _ = shown("B", .source)
+        #expect(shown("A") == .pdf && shown("B") == .source && shown("C") == .source)
+    }
+
     @Test func theMenusKeepActingOnTheProjectWindowWhileAPanelSuchAsTheSymbolLibraryIsKey() throws {
         let app = defaults.app()
         let controller = MainWindowController(app: app, project: "P")

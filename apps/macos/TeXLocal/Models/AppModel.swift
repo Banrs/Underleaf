@@ -63,7 +63,7 @@ protocol AppWindow: AnyObject {
     func close()
 }
 
-nonisolated enum WorkspaceLayout { case source, split, pdf }
+nonisolated enum WorkspaceLayout: String { case source, split, pdf }
 
 struct NewProjectDraft: Identifiable {
     var template: ProjectTemplate
