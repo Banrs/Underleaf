@@ -30,36 +30,11 @@ pub fn compare(old: &str, new: &str) -> Vec<DiffLine> {
         .iter()
         .map(|&line| DiffLine::Same(line.into()))
         .collect();
-    if x.len() * y.len() > 4_000_000 {
+    if let Some(changed) = myers(x, y) {
+        rows.extend(changed);
+    } else {
         rows.extend(x.iter().map(|&line| DiffLine::Removed(line.into())));
         rows.extend(y.iter().map(|&line| DiffLine::Added(line.into())));
-    } else {
-        let w = y.len() + 1;
-        let mut common = vec![0u32; (x.len() + 1) * w];
-        for i in (0..x.len()).rev() {
-            for j in (0..y.len()).rev() {
-                common[i * w + j] = if x[i] == y[j] {
-                    common[(i + 1) * w + j + 1] + 1
-                } else {
-                    common[(i + 1) * w + j].max(common[i * w + j + 1])
-                };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < x.len() || j < y.len() {
-            if i < x.len() && j < y.len() && x[i] == y[j] {
-                rows.push(DiffLine::Same(x[i].into()));
-                (i, j) = (i + 1, j + 1);
-            } else if j == y.len()
-                || i < x.len() && common[(i + 1) * w + j] >= common[i * w + j + 1]
-            {
-                rows.push(DiffLine::Removed(x[i].into()));
-                i += 1;
-            } else {
-                rows.push(DiffLine::Added(y[j].into()));
-                j += 1;
-            }
-        }
     }
     rows.extend(
         a[a.len() - tail..]
@@ -85,6 +60,71 @@ pub fn compare(old: &str, new: &str) -> Vec<DiffLine> {
         }
     }
     folded
+}
+
+fn myers(a: &[&str], b: &[&str]) -> Option<Vec<DiffLine>> {
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    let mut trace: Vec<Vec<usize>> = Vec::new();
+    // Bound both the search work and the retained trace when most lines differ.
+    let mut remaining = 2_000_000usize;
+    for d in 0..=a.len() + b.len() {
+        let mut frontier = Vec::with_capacity(d + 1);
+        for j in 0..=d {
+            remaining = remaining.checked_sub(1)?;
+            let mut x = if d == 0 {
+                0
+            } else {
+                let previous = &trace[d - 1];
+                if j == 0 || j < d && previous[j - 1] < previous[j] {
+                    previous[j]
+                } else {
+                    previous[j - 1] + 1
+                }
+            };
+            let mut y = x + d - 2 * j;
+            while x < a.len() && y < b.len() && a[x] == b[y] {
+                remaining = remaining.checked_sub(1)?;
+                x += 1;
+                y += 1;
+            }
+            frontier.push(x);
+            if x == a.len() && y == b.len() {
+                return Some(backtrack(a, b, &trace));
+            }
+        }
+        trace.push(frontier);
+    }
+    None
+}
+
+fn backtrack(a: &[&str], b: &[&str], trace: &[Vec<usize>]) -> Vec<DiffLine> {
+    let (mut x, mut y) = (a.len(), b.len());
+    let mut rows = Vec::new();
+    for d in (1..=trace.len()).rev() {
+        let previous = &trace[d - 1];
+        let j = (x + d - y) / 2;
+        let inserted = j == 0 || j < d && previous[j - 1] < previous[j];
+        let at = if inserted { j } else { j - 1 };
+        let px = previous[at];
+        let py = px + d - 1 - 2 * at;
+        while x > px && y > py {
+            x -= 1;
+            y -= 1;
+            rows.push(DiffLine::Same(a[x].into()));
+        }
+        if inserted {
+            y -= 1;
+            rows.push(DiffLine::Added(b[y].into()));
+        } else {
+            x -= 1;
+            rows.push(DiffLine::Removed(a[x].into()));
+        }
+    }
+    rows.extend(a[..x].iter().rev().map(|&line| DiffLine::Same(line.into())));
+    rows.reverse();
+    rows
 }
 
 pub fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
