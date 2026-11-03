@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use texlocal_latex::syntax::{Source, SourceDocument};
+use texlocal_latex::syntax::{Source, SourceDocument, TextRange};
 use texlocal_latex::utf16;
 
 const FRAGMENTS: &[&str] = &[
@@ -188,6 +188,8 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
                 }
             }
             doc.highlights(rng.offset(len), rng.offset(len));
+            let (start, length) = (rng.offset(len), rng.below(12) as u32);
+            doc.select(TextRange { start, length }, rng.chance(4));
             doc.command_ranges(doc.line_at(rng.offset(len)), "\\section");
             assert_eq!(doc.text(), utf16::lossy(&model), "seed {seed}, step {step}");
             let lines = model.iter().filter(|&&u| u == u16::from(b'\n')).count();

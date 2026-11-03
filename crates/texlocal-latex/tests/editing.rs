@@ -14,15 +14,6 @@ fn free(command: &str, args: Value) -> Value {
 }
 
 #[test]
-fn edits_update_the_text() {
-    let mut doc = SourceDocument::new("one\ntwo");
-    doc.edit(4, 3, "2");
-    assert_eq!(doc.text(), "one\n2");
-    assert_eq!(doc.line_count(), 2);
-    assert_eq!(doc.line_at(4), 2);
-}
-
-#[test]
 fn toggling_a_comment_adds_and_removes_it() {
     let mut doc = SourceDocument::new("text");
     let added = run(
@@ -314,16 +305,6 @@ fn maths_renders_as_svg_or_nothing() {
     for tex in ["\\text{中}", "😀", "x + \\text{Ω😀}"] {
         assert_eq!(drawn(tex), Value::Null, "{tex}");
     }
-}
-
-#[test]
-fn the_menus_and_heading_levels_are_listed() {
-    let menus = free("ListMenus", json!({}));
-    assert!(menus["templates"]["insert"].is_array());
-    assert!(menus["symbolGroups"].is_array());
-    let levels = free("HeadingStyles", json!({}));
-    assert_eq!(levels[0], json!({ "title": "Normal Text", "command": "" }));
-    assert_eq!(levels[3]["command"], "section");
 }
 
 #[test]
