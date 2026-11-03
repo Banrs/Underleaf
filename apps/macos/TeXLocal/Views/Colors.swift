@@ -62,5 +62,6 @@ extension NSColor {
         NSColor(srgbRed: CGFloat(rgba[0]), green: CGFloat(rgba[1]), blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3]))
     }
 
+    /// PDFKit tints a system colour it's given with the wallpaper, which would set it a shade apart from the editor's.
     static let untintedTextBackground = NSColor(name: nil) { srgb(NSColor.textBackgroundColor.rgba(in: $0)) }
 }
