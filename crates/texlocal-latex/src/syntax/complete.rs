@@ -293,7 +293,7 @@ impl SourceDocument {
         let mut scanner = self.scans.resume(text, start, start).scanner;
         scanner.run(&text.units, start, &[], &mut ());
         let first = if scanner.i > start {
-            text.line_index(scanner.i as u32) + 1
+            text.line_index(scanner.i as u32)
         } else {
             first
         };
@@ -303,7 +303,9 @@ impl SourceDocument {
         let last = (line + 1..text.lines.len()).take(PARAGRAPH).find(blank);
         let window = (line + PARAGRAPH).min(text.lines.len() - 1);
         let end = last.map_or_else(|| text.bounds(window).end, |last| text.lines[last] as usize);
-        let paragraph = utf16::lossy(&text.units[text.lines[first] as usize..end]);
+        let start = text.lines[first] as usize;
+        let from = start.max(scanner.i);
+        let paragraph = " ".repeat(from - start) + &utf16::lossy(&text.units[from..end]);
         let own = Facts::read(&paragraph, file_kind(&self.path));
         self.symbol_in(&own, first, at)
     }

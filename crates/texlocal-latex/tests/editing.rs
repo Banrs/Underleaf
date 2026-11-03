@@ -211,6 +211,8 @@ fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
         "\\begin{verbatim}\nx\n\n\\ref{y}\n\\end{verbatim}\n",
         "\\begin{comment}\nx\n\n\\ref{y}\n\\end{comment}\n",
         "\\begin{verbatim}\n\n\\ref{y}\n\\end{verbatim}\n\\ref{z}",
+        "\\begin{verbatim}\n\n\\ref{y}\n\\end{verbatim}\\ref{z}",
+        "\\begin{verbatim}\n\n\\ref{y}\\end{verbatim}\\ref{z}",
     ] {
         let mut doc = SourceDocument::named(text, "main.tex");
         let whole = Facts::read(text, file_kind("main.tex"));
