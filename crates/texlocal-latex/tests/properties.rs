@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use serde_json::{Value, json};
 use texlocal_latex::syntax::{Source, SourceDocument, TextRange};
 use texlocal_latex::utf16;
@@ -162,10 +164,25 @@ fn apply(
     mirrors.iter().map(|edit| json!(edit)).collect()
 }
 
+/// Runs each seed on a thread of its own: one after another the seeds took 2.3 s, the longest
+/// wait in `cargo test`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the crate's code starts no threads, which its tests may"
+)]
+fn each_seed(seeds: RangeInclusive<u64>, run: impl Fn(u64) + Sync) {
+    std::thread::scope(|scope| {
+        for seed in seeds {
+            let run = &run;
+            scope.spawn(move || run(seed));
+        }
+    });
+}
+
 #[test]
 fn random_edits_and_calls_never_panic_and_keep_the_text() {
     let calls = calls();
-    for seed in 1..=100_u64 {
+    each_seed(1..=100, |seed| {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         let mut model: Vec<u16> = rng.text(30).encode_utf16().collect();
         let mut doc =
@@ -195,7 +212,7 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
             let lines = model.iter().filter(|&&u| u == u16::from(b'\n')).count();
             assert_eq!(doc.line_count() as usize, lines + 1);
         }
-    }
+    });
 }
 
 fn run(doc: &mut SourceDocument, call: &str, args: Value) -> Value {
@@ -237,7 +254,7 @@ fn answers(doc: &mut SourceDocument, rng: &mut Rng) -> Vec<Value> {
 
 #[test]
 fn incremental_answers_equal_a_fresh_documents() {
-    for seed in 1..=30_u64 {
+    each_seed(1..=30, |seed| {
         let mut rng = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03));
         let text: String = (0..2400).map(|_| *rng.pick(FRAGMENTS)).collect();
         let mut doc = SourceDocument::named(&text, "main.tex");
@@ -252,5 +269,5 @@ fn incremental_answers_equal_a_fresh_documents() {
             let warm = answers(&mut doc, &mut Rng(probe));
             assert_eq!(warm, answers(&mut fresh, &mut Rng(probe)), "seed {seed}");
         }
-    }
+    });
 }
