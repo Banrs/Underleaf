@@ -1385,12 +1385,15 @@ async fn a_live_output_claiming_more_than_was_sent_ends_the_preview_which_needs_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
     let preview = Arc::new(FakePreview::default());
-    let files = [("sub/main.tex", MAIN), ("ch.tex", BROKEN)];
+    let files = [
+        ("sub/main.tex", MAIN),
+        ("ch.tex", BROKEN),
+        (".texlocal.json", r#"{"mainFile":"sub/main.tex"}"#),
+    ];
     let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
-    let main = json!({ "patch": { "mainFile": "sub/main.tex" } });
-    rig.call("SetSettings", main);
-    rig.open_document("ch.tex");
+    // A later watcher read must not send a new source after this fake's only acknowledgement.
     rig.call("StartLive", json!({}));
+    rig.open_document("ch.tex");
     *preview.log.lock().unwrap() =
         "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
     preview.send(LiveEvent::Synced(preview.revision()));
