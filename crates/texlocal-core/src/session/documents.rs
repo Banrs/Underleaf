@@ -201,7 +201,7 @@ impl Actor {
         self.publish_documents();
         self.publish_build();
         self.live_issues_opened(path);
-        self.live_whole(path);
+        self.live_opened(path);
         Ok(())
     }
 

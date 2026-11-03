@@ -1229,7 +1229,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
         pages: 1,
         run: RunEnd::Complete,
         changed: Vec::new(),
-        sources: [("main.tex".into(), Arc::from(BROKEN))].into(),
+        revision: preview.revision(),
     });
     preview.send(LiveEvent::Page {
         page: 0,
@@ -1264,6 +1264,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
     fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
+    let typeset = preview.revision();
     doc.edit(
         0,
         0,
@@ -1277,7 +1278,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
         pages: 2,
         run: RunEnd::Complete,
         changed: Vec::new(),
-        sources: [("main.tex".into(), Arc::from(PICTURED))].into(),
+        revision: typeset,
     });
     rig.event("liveDocument", |_| true);
     let moved = json!({ "file": "main.tex", "line": 11 });
@@ -1306,7 +1307,7 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
         pages: 2,
         run: RunEnd::Complete,
         changed: Vec::new(),
-        sources: [("main.tex".into(), Arc::from(PICTURED))].into(),
+        revision: preview.revision(),
     });
     rig.event("liveDocument", |_| true);
     let start = |line: usize| {
@@ -1356,6 +1357,19 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_live_output_claiming_more_than_was_sent_ends_the_preview() {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", MAIN)], |_| {}, Arc::clone(&preview)).await;
+    rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.send(LiveEvent::Synced(preview.revision() + 1));
+    let failed =
+        |l: &Value| l["phase"] == "stopped" && l["failures"].as_array().unwrap().len() == 1;
+    rig.section("live", failed);
+    assert!(!preview.running());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
     let preview = Arc::new(FakePreview::default());
     let files = [("sub/main.tex", MAIN), ("ch.tex", BROKEN)];
@@ -1366,6 +1380,7 @@ async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_
     rig.call("StartLive", json!({}));
     *preview.log.lock().unwrap() =
         "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    preview.send(LiveEvent::Synced(preview.revision()));
     preview.send(LiveEvent::Done(RunEnd::Complete));
     let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
     assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);

@@ -11,9 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_core::session::{
-    FileBuffer, LiveEvent, LiveRun, Pane, Preview, Project, Sessions, Sink,
-};
+use texlocal_core::session::{LiveEvent, LiveRun, Preview, Project, Sessions, Sink};
 use texlocal_core::{CoreError, ErrorKind};
 
 #[derive(Debug, Deserialize)]
@@ -345,12 +343,17 @@ impl Drop for Rig {
 pub struct FakePreview {
     sink: Mutex<Option<Sink>>,
     pub log: Mutex<String>,
-    texts: Mutex<HashMap<String, String>>,
+    revision: AtomicU64,
 }
 
 impl FakePreview {
     pub fn running(&self) -> bool {
         self.sink.lock().unwrap().is_some()
+    }
+
+    /// The count of opens and changes read, as TeXpresso names it in each output.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
     }
 
     pub fn send(&self, event: LiveEvent) {
@@ -367,37 +370,20 @@ impl Preview for Previewing {
         true
     }
 
-    fn start(
-        &self,
-        _: &Project,
-        files: &[FileBuffer],
-        _: &str,
-        _: &Pane,
-        sink: Sink,
-    ) -> Result<Arc<dyn LiveRun>, CoreError> {
+    fn start(&self, _: &Project, _: &str, sink: Sink) -> Result<Arc<dyn LiveRun>, CoreError> {
         *self.0.sink.lock().unwrap() = Some(sink);
-        let files = files
-            .iter()
-            .map(|file| (file.path.clone(), file.text.clone()));
-        *self.0.texts.lock().unwrap() = files.collect();
+        self.0.revision.store(0, Ordering::Relaxed);
         Ok(self.0.clone())
     }
 }
 
 impl LiveRun for FakePreview {
-    fn update(&self, rel: &str, text: &str) {
-        self.texts.lock().unwrap().insert(rel.into(), text.into());
+    fn open(&self, _: &str, _: &str) {
+        self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool {
-        let mut texts = self.texts.lock().unwrap();
-        let Some(held) = texts.get_mut(rel) else {
-            return false;
-        };
-        let units: Vec<u16> = held.encode_utf16().collect();
-        let (before, after) = (&units[..start], &units[start + remove..]);
-        *held = String::from_utf16_lossy(before) + text + &String::from_utf16_lossy(after);
-        true
+    fn change(&self, _: &str, _: usize, _: usize, _: &str) {
+        self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
     fn view(&self, _: u32, _: u32) {}
@@ -406,9 +392,7 @@ impl LiveRun for FakePreview {
 
     fn rescan(&self) {}
 
-    fn mark(&self, mark: u64) {
-        self.send(LiveEvent::Synced(mark));
-    }
+    fn mark(&self, _: u64) {}
 
     fn log(&self) -> String {
         String::new()

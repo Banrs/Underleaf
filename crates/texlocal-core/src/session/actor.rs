@@ -80,7 +80,6 @@ requests! {
 pub(crate) enum Later {
     Compile(bool),
     Restart,
-    FlushLive,
     Rescan,
 }
 
@@ -395,7 +394,6 @@ impl Actor {
                     let _ = self.compile(auto);
                 }
                 Later::Restart => self.live_start(),
-                Later::FlushLive => self.flush_pending(),
                 Later::Rescan => self.live_rescan(),
             }
         }

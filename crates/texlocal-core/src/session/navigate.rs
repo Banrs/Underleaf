@@ -199,7 +199,7 @@ impl Actor {
         }
         let (live, project) = (self.live_pdf(), self.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
-        let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset(&file));
+        let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().get(&file).cloned());
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
                 let text = match doc {
@@ -224,7 +224,7 @@ impl Actor {
         reply: Pending<InverseLoc>,
     ) {
         let (live, project) = (self.live_pdf(), self.project.clone());
-        let sources = self.live.typeset.clone();
+        let sources = self.live.typeset().clone();
         let docs = self
             .docs
             .iter()
