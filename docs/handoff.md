@@ -4,10 +4,10 @@ Last updated 2026-11-03. Any agent can pick up from here. Read `AGENTS.md` first
 
 ## Branches
 
-- **`rewrite/native`:** pull request #128. It holds the native rewrite since #127; see the pull request for its latest
-  CI run. Install it to try with `zsh tools/install-mac.sh --dev`, which installs "TeXLocal Dev" with its own bundle ID
-  and data. It now includes `rewrite/session-parts` (merged in 13cc6d20): the session actor runs as Core, Docs, Tree,
-  Builds and Live parts.
+- **`main`:** holds everything. The November issue batch (#127) and the native rewrite (#128, merged in 61822a0d,
+  including `rewrite/session-parts` from 13cc6d20) reached it on 2026-11-04 as a fast-forward; their branches are
+  deleted. Install it to try with `zsh tools/install-mac.sh --dev`, which installs "TeXLocal Dev" with its own bundle
+  ID and data.
 
 ## Open decisions (the owner's)
 
