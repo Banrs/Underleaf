@@ -145,6 +145,30 @@ fn a_maths_environment_is_maths_until_its_own_end() {
 }
 
 #[test]
+fn inline_code_and_text_in_maths_open_and_close_maths_where_the_scanner_does() {
+    for (text, command) in [
+        ("\\lstinline|a$b| c", "\\lstinline"),
+        ("\\lstinline[language=sh]{a{$}b} c", "\\lstinline"),
+        ("\\mintinline{py}{a$b} c", "\\mintinline"),
+    ] {
+        let found = [(command, "Command")];
+        assert_eq!(kinds(&mut SourceDocument::new(text)), pairs(&found));
+    }
+    let mut doc = SourceDocument::new("$x \\text{ if $y$ } z$");
+    let found = [
+        ("$", "Maths"),
+        ("x", "Maths"),
+        ("\\text", "Command"),
+        ("$", "Maths"),
+        ("y", "Maths"),
+        ("$", "Maths"),
+        ("z", "Maths"),
+        ("$", "Maths"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn the_scanner_knows_where_maths_is() {
     let cases = [
         ("$a$ \\(", true),
