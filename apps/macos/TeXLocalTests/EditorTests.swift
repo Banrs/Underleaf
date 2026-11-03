@@ -137,6 +137,22 @@ struct EditorTests {
         #expect(!text.apply([TextEdit(.caret(0), "x")], named: "Edit") && text.string == "text")
     }
 
+    @Test func theEditorTakesTheFocusARevealAskedForOnlyTheNextTimeItShows() {
+        let (editor, window) = Self.editor("text")
+        defer { window.close() }
+        let showing = {
+            editor.shown = false
+            window.makeFirstResponder(nil)
+            editor.shown = true
+            return window.firstResponder === editor.textView
+        }
+        editor.focusWhenShown = true
+        #expect(showing() && !showing())
+        editor.focusWhenShown = true
+        editor.focus()
+        #expect(!showing())
+    }
+
     @Test func switchingFilesKeepsEachFilesSelectionFoldsAndUndoUnlessItsTextChanged() {
         let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
         defer { window.close() }

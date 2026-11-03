@@ -41,6 +41,7 @@ extension SourceEditor {
 
     func focus() {
         guard shown else { return }
+        focusWhenShown = false
         textView.window?.makeFirstResponder(textView)
     }
 
