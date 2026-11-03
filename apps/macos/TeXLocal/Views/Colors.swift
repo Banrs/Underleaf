@@ -6,9 +6,7 @@ extension ShapeStyle where Self == Color { static var textSurface: Color { Color
 extension NSColor {
     static let textAppearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
-    static let currentLine = NSColor(name: nil) {
-        srgb($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? [0.138526, 0.146864, 0.169283, 1] : [0.909804, 0.94902, 1, 1])
-    }
+    static let currentLine = NSColor.controlAccentColor.withAlphaComponent(0.1)
 
     func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
         guard let appearance = NSAppearance(named: name) else { return self }

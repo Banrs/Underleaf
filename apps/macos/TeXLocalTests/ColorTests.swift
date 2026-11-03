@@ -37,6 +37,19 @@ struct ColorTests {
         #expect(NSColor.contrast([0.5, 0.5, 0.5, 1], [0.5, 0.5, 0.5, 1]) == 1)
     }
 
+    @Test func theCurrentLineIsAFaintAccentColourThatRaisedTextStaysLegibleOver() throws {
+        for name in NSColor.textAppearances {
+            let appearance = try #require(NSAppearance(named: name))
+            let line = NSColor.currentLine.rgba(in: appearance), accent = NSColor.controlAccentColor.rgba(in: appearance)
+            #expect(line.prefix(3) == accent.prefix(3) && abs(line[3] - 0.1) < 0.001, "\(name.rawValue): \(line)")
+            let shown = zip(NSColor.textBackgroundColor.rgba(in: appearance), line).map { $0 * (1 - line[3]) + $1 * line[3] }
+            for color in [NSColor.systemPink, .systemTeal, .systemYellow, .secondaryLabelColor] {
+                let ratio = NSColor.contrast(color.legibleAsText(in: name).rgba(in: appearance), shown)
+                #expect(ratio >= (name == .aqua || name == .darkAqua ? 4.45 : 6.95), "\(color) in \(name.rawValue): \(ratio)")
+            }
+        }
+    }
+
     @Test func issueUnderlinesStandOutFromTheText() throws {
         for name in NSColor.textAppearances {
             for error in [false, true] {
