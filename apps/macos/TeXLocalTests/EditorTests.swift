@@ -307,6 +307,61 @@ struct EditorTests {
         #expect(shown.offset == top.offset && abs(shown.below - top.below) < 0.5, "\(top) became \(shown)")
     }
 
+    @Test func aFileShownAgainHasItsSelectionScrollFoldsAndUndo() throws {
+        let block = ["\\begin{itemize}", "\\item a", "\\item b", "\\end{itemize}"]
+        let (editor, window) = Self.editor(Array(repeating: block, count: 60).flatMap { $0 }.joined(separator: "\n"))
+        defer { window.close() }
+        let undo = editor.textView.undo
+        Self.type("x", in: editor.textView)
+        editor.textView.selection = .caret(21)
+        editor.textView.foldAtCaret()
+        window.displayIfNeeded()
+        editor.textView.scroll(toTop: editor.textView.document.lineStart(101))
+        window.displayIfNeeded()
+        let a = editor.textView, (text, selection, folds) = (a.string, a.selection, a.folds.ranges), top = try #require(a.shownTop)
+        editor.open(path: "b.tex", source: SourceDocument(text: (1...200).map { "b \($0)" }.joined(separator: "\n")))
+        window.displayIfNeeded()
+        editor.textView.scroll(toTop: editor.textView.document.lineStart(150))
+        editor.textView.selection = .caret(3)
+        editor.open(path: "main.tex", source: SourceDocument(text: text))
+        window.displayIfNeeded()
+        let shown = try #require(editor.textView.shownTop)
+        #expect(editor.textView.undo === undo && editor.textView.selection == selection && editor.textView.folds.ranges == folds)
+        #expect(shown.offset == top.offset && abs(shown.below - top.below) < 0.5, "\(top) became \(shown)")
+        undo.undo()
+        #expect(editor.textView.string == String(text.dropFirst()) && editor.textView.document.text == editor.textView.string)
+    }
+
+    @Test func undoInOneFileNeverUndoesAnother() {
+        let (editor, window) = Self.editor("a")
+        defer { window.close() }
+        Self.type("1", in: editor.textView)
+        editor.open(path: "b.tex", source: SourceDocument(text: "b"))
+        let b = editor.textView.undo
+        b.groupsByEvent = false
+        Self.type("2", in: editor.textView)
+        while b.canUndo { b.undo() }
+        #expect(editor.textView.string == "b" && editor.textView.document.text == "b")
+        editor.open(path: "main.tex", source: SourceDocument(text: "1a"))
+        #expect(editor.textView.string == "1a" && editor.textView.undo !== b)
+        editor.textView.undo.undo()
+        #expect(editor.textView.string == "a" && editor.textView.document.text == "a")
+    }
+
+    @Test func aFileChangedWhileHiddenShowsItsNewTextFromTheStart() throws {
+        let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
+        defer { window.close() }
+        Self.type("x", in: editor.textView)
+        editor.textView.selection = .caret(21)
+        editor.textView.foldAtCaret()
+        editor.open(path: "b.tex", source: SourceDocument(text: "b"))
+        editor.open(path: "main.tex", source: SourceDocument(text: "changed on disk"))
+        window.displayIfNeeded()
+        let text = editor.textView
+        #expect(text.string == "changed on disk" && text.document.text == text.string)
+        #expect(text.selection == .caret(0) && text.folds.isEmpty && !text.undo.canUndo && text.shownTop?.offset == 0)
+    }
+
     private static let typed = NSRange(location: NSNotFound, length: 0)
 
     private static func event(_ text: SourceTextView, _ body: () -> Void) {
