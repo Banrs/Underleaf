@@ -59,7 +59,9 @@ impl Actor {
         let docs: Vec<String> = self.docs.keys().cloned().collect();
         let meaning = watch::classify(&self.project, &changes, &self.tree, &docs);
         if !meaning.tree
-            && changes.iter().any(|change| change.structural && change.path.is_symlink())
+            && changes
+                .iter()
+                .any(|change| change.structural && change.path.is_symlink())
             && let Some(watcher) = &mut self.watcher
         {
             watcher.refresh(&self.project, &self.tree);

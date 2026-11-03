@@ -51,7 +51,10 @@ pub(crate) fn watch(
         links,
     };
     watching.refresh(project, index);
-    watching.paths.contains_key(&project.root).then_some(watching)
+    watching
+        .paths
+        .contains_key(&project.root)
+        .then_some(watching)
 }
 
 impl Watching {
@@ -246,7 +249,11 @@ pub(crate) fn classify(
         meaning.settings |= fold_case(&rel) == SETTINGS_FILE;
         if change.structural && index.folders.contains(&rel) {
             meaning.listed.extend(
-                index.files.iter().filter(|file| within(file, &rel)).cloned(),
+                index
+                    .files
+                    .iter()
+                    .filter(|file| within(file, &rel))
+                    .cloned(),
             );
         }
         if index.contains(&rel) {
