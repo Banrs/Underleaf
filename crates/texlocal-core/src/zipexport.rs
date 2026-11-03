@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use zip::write::SimpleFileOptions;
@@ -9,10 +9,10 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, in_build_dir, relative, safe_rel_file};
+use crate::paths::{Project, fold_case, relative, safe_rel_file};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
-use crate::{SETTINGS_FILE, atomic, sys};
+use crate::{SETTINGS_FILE, atomic};
 
 pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Result<(), CoreError> {
     let added = match for_arxiv {
@@ -30,7 +30,7 @@ pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Res
     let mut writer = ZipWriter::new(file);
     walk(
         &project.root,
-        &|rel| !left_out(rel) && !replaced(rel) && own.as_deref() != Some(rel),
+        &|rel| !left_out(project, rel) && !replaced(rel) && own.as_deref() != Some(rel),
         true,
         &mut |entry| {
             if entry.dir {
@@ -94,16 +94,34 @@ fn arxiv_files(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     Ok(added)
 }
 
-pub(crate) fn left_out(rel: &str) -> bool {
-    in_build_dir(rel) || fold_case(rel) == SETTINGS_FILE || rel.split('/').any(is_litter)
+pub(crate) fn left_out(project: &Project, rel: &str) -> bool {
+    project.builds_in(rel) || private(rel)
+}
+
+pub(crate) fn private(rel: &str) -> bool {
+    fold_case(rel) == SETTINGS_FILE || rel.split('/').any(is_litter)
 }
 
 fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {
     fn local(modified: SystemTime) -> Option<zip::DateTime> {
-        let (year, month, day, hour, minute, second) = sys::local_time(modified)?;
+        let (year, month, day, hour, minute, second) = local_time(modified)?;
         zip::DateTime::from_date_and_time(year, month, day, hour, minute, second).ok()
     }
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let date = modified.ok().and_then(local);
     date.map_or(options, |date| options.last_modified_time(date))
+}
+
+fn local_time(time: SystemTime) -> Option<(u16, u8, u8, u8, u8, u8)> {
+    let secs = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let secs = libc::time_t::try_from(secs).ok()?;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
+        return None;
+    }
+    let field = |value: libc::c_int| u8::try_from(value).ok();
+    let year = u16::try_from(tm.tm_year + 1900).ok()?;
+    let (month, day) = (field(tm.tm_mon + 1)?, field(tm.tm_mday)?);
+    let (hour, minute, second) = (field(tm.tm_hour)?, field(tm.tm_min)?, field(tm.tm_sec)?);
+    Some((year, month, day, hour, minute, second))
 }

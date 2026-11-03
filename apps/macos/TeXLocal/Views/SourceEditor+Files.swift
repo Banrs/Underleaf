@@ -21,16 +21,6 @@ extension SourceEditor {
         reportCursor()
     }
 
-    func reload(_ source: SourceDocument) {
-        let selection = textView.selection, top = textView.shownTop
-        textView.load(source)
-        textView.undo = UndoManager()
-        let length = textView.length, start = min(selection.location, length)
-        textView.selection = NSRange(location: start, length: min(NSMaxRange(selection), length) - start)
-        top.map(textView.scroll(toShownTop:))
-        reportCursor()
-    }
-
     func forget(path: String) { kept = kept.filter { !$0.key.isWithin(path) } }
 
     func rename(from: String, to: String) {
@@ -41,6 +31,7 @@ extension SourceEditor {
 
     func focus() {
         guard shown else { return }
+        focusWhenShown = false
         textView.window?.makeFirstResponder(textView)
     }
 

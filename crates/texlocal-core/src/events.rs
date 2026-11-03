@@ -9,7 +9,7 @@ use serde_json::Value;
 use serde_json::value::{RawValue, to_raw_value};
 
 use crate::service::LibrarySection;
-use crate::session::{DiskConflict, SessionSection};
+use crate::session::{DocumentEdits, SessionSection};
 use crate::synctex::ForwardLoc;
 use crate::texpresso::PageRange;
 use crate::{CoreError, lock};
@@ -102,10 +102,6 @@ impl<S: Serialize> Sent<S> {
         }
         Some(said)
     }
-
-    pub fn each(&self) -> impl Iterator<Item = Box<RawValue>> {
-        self.0.iter().map(|(_, said)| said.clone())
-    }
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -118,9 +114,8 @@ pub(crate) struct SessionEvent {
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum Event {
     Section(#[schemars(with = "SessionSection")] Box<RawValue>),
-    DocumentReload(String),
+    Reload(DocumentEdits),
     Renamed(Renamed),
-    Conflict(Conflict),
     FilesChanged(Vec<String>),
     BuildFinished(BuildFinished),
     LiveAlert,
@@ -133,12 +128,6 @@ pub(crate) enum Event {
 pub(crate) struct Renamed {
     pub from: String,
     pub to: String,
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct Conflict {
-    pub path: String,
-    pub kind: DiskConflict,
 }
 
 #[derive(Serialize, JsonSchema)]

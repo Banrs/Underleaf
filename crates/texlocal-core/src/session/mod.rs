@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::project::{Analysis, Scan};
-use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::syntax::{SourceDocument, TextEdit};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
@@ -35,22 +35,25 @@ use actor::OpenProject;
 pub(crate) use actor::Session;
 pub use build::Compiler;
 pub use document::Document;
-pub(crate) use documents::DiskConflict;
 use documents::{Docs, Shared};
+pub(crate) use edits::DocumentEdits;
 pub(crate) use state::SessionSection;
 #[cfg(test)]
 pub(crate) use state::{Lifecycle, Stopped};
 use watch::Change;
 
 pub use crate::paths::Project;
-pub use crate::texpresso::{FileBuffer, LiveEvent, LiveRun, Pane, Preview, RunEnd, Sink};
+pub use crate::texpresso::{LiveEvent, LiveRun, Preview, RunEnd, Sink};
 
 pub(crate) enum Msg {
-    Changed {
+    Edited {
         doc: u64,
         version: u64,
         edit: TextEdit,
-        recovered: bool,
+    },
+    Selected {
+        doc: u64,
+        caret: usize,
     },
     Command(Session, Reply),
     BuildDone(Result<CompileResult, CoreError>),
@@ -169,7 +172,7 @@ impl Sessions {
         let path = paths::rel_key(path).ok()?;
         let docs = Arc::clone(&lock(&self.open).get(&session)?.docs);
         let document = lock(&docs).get(&path).cloned()?;
-        document.shown();
+        document.with(SourceDocument::reset_typing);
         Some(document)
     }
 
@@ -218,11 +221,11 @@ impl Sessions {
     ) {
         let session = *entry.key();
         let (tx, rx) = mpsc::unbounded_channel();
-        let (docs, opens) = (Docs::default(), Arc::default());
+        let docs = Docs::default();
         entry.insert(Open {
             tx: tx.clone(),
             docs: docs.shared(),
-            opens: Arc::clone(&opens),
+            opens: Arc::clone(&docs.opens),
         });
         let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
         let (mut alive, runtime_gone) = oneshot::channel::<()>();
@@ -233,7 +236,7 @@ impl Sessions {
                 ACTOR.set(true);
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
-                    match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
+                    match actor::Actor::new(&sessions, session, opening, docs, tx.clone()) {
                         Ok((actor, ui)) => {
                             reply.send(Ok(ui));
                             runtime.block_on(actor.run(rx, runtime_gone));

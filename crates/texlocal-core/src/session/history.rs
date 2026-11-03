@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use texlocal_latex::diff::{DiffLine, compare, edit_to};
 
-use super::actor::Actor;
+use super::actor::{Actor, Core};
 use super::edits::{DocumentEdits, ProjectEdits};
 use super::{Msg, Pending};
 use crate::messages;
@@ -23,7 +23,7 @@ fn now() -> i64 {
     since.map_or(0, |since| since.as_millis() as i64)
 }
 
-impl Actor {
+impl Core {
     fn off_thread<T: 'static>(
         &self,
         job: impl FnOnce(&History) -> T + Send + 'static,
@@ -35,8 +35,11 @@ impl Actor {
     }
 
     pub fn snapshot_soon(&self) {
-        let root = self.project.root.clone();
-        self.off_thread(move |history| history.take(&root, now(), Taken::Auto), drop);
+        let project = self.project.clone();
+        self.off_thread(
+            move |history| history.take(&project, now(), Taken::Auto),
+            drop,
+        );
     }
 
     pub fn stop_history(&self) {
@@ -45,13 +48,15 @@ impl Actor {
         let _ = self.history.send(Box::new(move |_| drop(done)));
         let _ = drained.recv();
     }
+}
 
+impl Actor {
     fn beside<T: 'static>(
         &self,
         job: impl FnOnce(&History) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
     ) {
-        self.off_thread(job, |done| {
+        self.core.off_thread(job, |done| {
             reply.send(done.unwrap_or_else(|| Err(super::gone())));
         });
     }
@@ -65,12 +70,12 @@ impl Actor {
         if name.is_empty() {
             return reply.send(Err(CoreError::bad_request(messages::version_needs_name())));
         }
-        if let Err(err) = self.save_first() {
+        if let Err(err) = self.docs.save_first(&mut self.core) {
             return reply.send(Err(err));
         }
-        let root = self.project.root.clone();
+        let project = self.core.project.clone();
         let save = move |history: &History| {
-            history.take(&root, now(), Taken::Named(name))?;
+            history.take(&project, now(), Taken::Named(name))?;
             Ok(history.list()?.into_iter().next())
         };
         self.then_on_actor(save, |_, saved| Ok(saved), reply);
@@ -82,7 +87,7 @@ impl Actor {
             return reply.send(Err(refused));
         }
         let edited = self.docs.get(&path).map(|doc| doc.doc.snapshot().0);
-        let abs = self.project.root.join(&path);
+        let abs = self.core.project.root.join(&path);
         let compared = move |history: &History| {
             let text = |bytes| lf(lossy_string(bytes));
             let old = history.files(&id, |p| p == path)?.pop();
@@ -109,19 +114,19 @@ impl Actor {
             let queued = move |actor: &mut Self| actor.then_on_actor(job, then, reply);
             return self.queued.push_back(Box::new(queued));
         }
-        if !self.writes_history.load(Ordering::Acquire) {
+        if !self.core.writes_history.load(Ordering::Acquire) {
             return reply.send(Err(super::stopped()));
         }
         self.snapshots += 1;
-        let tx = self.tx.clone();
+        let tx = self.core.tx.clone();
         let job = move |history: &History| {
             catch_unwind(AssertUnwindSafe(|| job(history))).unwrap_or_else(|_| Err(super::failed()))
         };
-        self.off_thread(job, move |done| {
+        self.core.off_thread(job, move |done| {
             let finish = move |actor: &mut Self| {
                 actor.snapshots -= 1;
                 reply.send(match done {
-                    Some(done) if actor.writes_history.load(Ordering::Acquire) => {
+                    Some(done) if actor.core.writes_history.load(Ordering::Acquire) => {
                         done.and_then(|done| then(actor, done))
                     }
                     _ => Err(super::stopped()),
@@ -144,9 +149,9 @@ impl Actor {
             Ok(then) => then,
             Err(err) => return reply.send(Err(err)),
         };
-        let root = self.project.root.clone();
+        let project = self.core.project.clone();
         let take = move |history: &History| {
-            let id = history.take(&root, now(), Taken::Before(reason))?;
+            let id = history.take(&project, now(), Taken::Before(reason))?;
             Ok(id.map(|id| id.to_string()))
         };
         self.then_on_actor(take, then, reply);
@@ -162,7 +167,7 @@ impl Actor {
             Ok(open) => open,
             Err(err) => return reply.send(Err(err)),
         };
-        let root = self.project.root.clone();
+        let project = self.core.project.clone();
         let restore = move |history: &History| {
             let chosen = |path: &str| {
                 paths
@@ -188,11 +193,11 @@ impl Actor {
             if edits.len() > 1 {
                 return Err(CoreError::conflict(messages::one_document()));
             }
-            let snapshot = history.take(&root, now(), Taken::Before(Reason::Restore))?;
+            let snapshot = history.take(&project, now(), Taken::Before(Reason::Restore))?;
             Ok((edits.pop(), others, snapshot.map(|id| id.to_string())))
         };
         let put_back = |actor: &mut Self, (edits, others, snapshot)| {
-            let written = projects::put_back(&actor.project.root, others)?;
+            let written = projects::put_back(&actor.core.project, others)?;
             if !written.is_empty() {
                 actor.reload_tree();
             }

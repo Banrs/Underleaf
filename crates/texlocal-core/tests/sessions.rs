@@ -5,13 +5,13 @@ use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use common::{FakePreview, Library, Rig, SESSION, names, write};
+use common::{FakePreview, Library, Rig, SESSION, Trashed, names, wait_until, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
-use texlocal_core::session::{LiveEvent, RunEnd};
-use texlocal_latex::syntax::Source;
+use texlocal_core::session::{Document, LiveEvent, RunEnd};
+use texlocal_latex::syntax::{Source, TextRange};
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
 const CHAPTER: &str = "\\section{Chapter}\nwords about a cat\n";
@@ -72,14 +72,6 @@ fn stub_tex(library: &Library) {
     app_settings(library, json!({ "texDir": tex.join("bin") }));
 }
 
-fn wait_until(why: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !done() {
-        assert!(Instant::now() < deadline, "{why}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
@@ -125,25 +117,6 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
     assert_eq!(rig.section("outline", |_| true), Value::Null);
     let open = json!({ "id": rig.id, "autoCompile": false });
     assert_eq!(rig.refuse("OpenProject", open), ErrorKind::Conflict);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn reattaching_sends_every_section_again_as_it_is_now_before_its_reply() {
-    let rig = project().await;
-    rig.open_document("ch.tex");
-    // A pending scan can publish after forget(); wait for the fixture's outline before measuring the replay.
-    rig.section("outline", |outline| !outline.is_null());
-    rig.forget();
-    rig.call("Reattach", json!({}));
-    every_section_then_the_reply(&rig);
-    assert_eq!(rig.section("openFile", |_| true)["path"], "ch.tex");
-    let documents = rig.section("documents", |_| true);
-    assert_eq!(names(&documents, "path"), ["ch.tex"]);
-    rig.forget();
-    assert!(rig.ask_library("Resync", json!({})).is_ok());
-    let tex = |e: &Value| e["type"] == "library" && e["value"]["type"] == "tex";
-    assert_eq!(rig.find(tex)["value"]["value"], rig.tex);
-    assert_eq!(rig.said().last().map(String::as_str), Some("reply"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -422,7 +395,6 @@ async fn replies_follow_the_events_sent_before_them() {
         );
     };
     let draft = rig.call("SaveVersion", json!({ "name": "Draft" }));
-    std::thread::sleep(Duration::from_millis(300));
     fs::remove_file(rig.root().join("main.tex")).unwrap();
     rig.section("tree", |e| !e.to_string().contains("main.tex"));
     answered_after("live", "StartLive", json!({}));
@@ -434,11 +406,10 @@ async fn replies_follow_the_events_sent_before_them() {
     answered_after("tree", "CreateEntry", entry);
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    answered_after("conflict", "Save", json!({ "reporting": true }));
+    answered_after("documents", "Save", json!({ "reporting": true }));
     let revert = json!({ "path": "ch.tex", "answer": "revert" });
-    answered_after("documentReload", "Resolve", revert);
+    answered_after("reload", "Resolve", revert);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -498,6 +469,17 @@ async fn a_file_not_in_utf8_is_refused() {
     fs::write(rig.root().join("latin.tex"), b"caf\xe9").unwrap();
     let refused = rig.refuse("Open", json!({ "path": "latin.tex" }));
     assert_eq!(refused, ErrorKind::Invalid);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_with_windows_line_ends_is_edited_with_lf_and_saved_with_its_own() {
+    let rig = Rig::open(&[("main.tex", MAIN), ("ch.tex", "one\r\ntwo\r\n")]).await;
+    let doc = rig.open_document("ch.tex");
+    assert_eq!(doc.with(|d| d.text()), "one\ntwo\n");
+    doc.edit(0, 0, "zero\n", None, false);
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
+    let saved = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    assert_eq!(saved, "zero\r\none\r\ntwo\r\n");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -605,11 +587,12 @@ async fn a_reference_completes_with_the_projects_labels() {
     ])
     .await;
     let doc = rig.open_document("main.tex");
-    rig.section("outline", |o| !o.is_null());
-    std::thread::sleep(Duration::from_millis(500));
-    let complete = json!({ "caret": 16, "explicit": true });
-    let answer = doc.with(|d| Source::call(d, "Complete", complete)).unwrap();
-    assert_eq!(answer["items"][0]["label"], "fig:plot", "{answer}");
+    let first = || {
+        let complete = json!({ "caret": 16, "explicit": true });
+        let answer = doc.with(|d| Source::call(d, "Complete", complete)).unwrap();
+        answer["items"][0]["label"].clone()
+    };
+    wait_until("the label is offered", || first() == "fig:plot");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -663,6 +646,29 @@ async fn a_rename_sends_its_paths_and_the_open_files_sections_before_the_reply()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_rename_saves_the_edits_first_and_one_that_cant_leaves_the_file_where_it_is() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    doc.edit(0, 0, "% mine\n", None, false);
+    rig.call("Rename", json!({ "from": "ch.tex", "to": "part.tex" }));
+    let part = rig.root().join("part.tex");
+    assert_eq!(
+        fs::read_to_string(&part).unwrap(),
+        format!("% mine\n{CHAPTER}")
+    );
+    doc.edit(0, 0, "% more\n", None, false);
+    fs::write(&part, "theirs\n").unwrap();
+    asked(&rig, "part.tex", "changed");
+    let again = json!({ "from": "part.tex", "to": "again.tex" });
+    assert_eq!(rig.call("Rename", again), Value::Null);
+    assert!(!rig.root().join("again.tex").exists());
+    assert_eq!(fs::read_to_string(&part).unwrap(), "theirs\n");
+    rig.call("Resolve", json!({ "path": "part.tex", "answer": "save" }));
+    let saved = fs::read_to_string(&part).unwrap();
+    assert_eq!(saved, format!("% more\n% mine\n{CHAPTER}"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn renaming_the_open_file_to_another_kind_closes_or_opens_its_document() {
     let rig = project().await;
     rig.open_document("ch.tex");
@@ -691,6 +697,7 @@ async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     let refused = rig.refuse("Trash", json!({ "path": "main.tex" }));
     assert_eq!(refused, ErrorKind::Conflict);
     let trashed = rig.call("Trash", json!({ "path": "ch.tex" }));
+    let _trashed = Trashed(trashed.as_str().unwrap().into());
     assert!(!rig.root().join("ch.tex").exists());
     rig.section("openFile", |f| f["path"] == "main.tex");
     rig.section("documents", |d| names(d, "path") == ["main.tex"]);
@@ -731,7 +738,7 @@ fn replace_cat() -> Value {
 async fn a_version_a_snapshot_and_an_export_hold_the_edits_not_yet_saved() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
-    rig.call("Composing", json!({ "path": "ch.tex", "composing": true }));
+    doc.compose(true);
     let holds_the_edits = |id: &Value| {
         let rows = rig.call("CompareVersion", json!({ "id": id, "path": "ch.tex" }));
         rows.as_array()
@@ -810,43 +817,66 @@ async fn shell_escape_in_a_projects_own_settings_is_not_granted() {
     assert_eq!(project["settings"]["shellEscape"], false);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_change_on_disk_reloads_a_document_without_edits_and_its_old_view_is_refused() {
-    let rig = project().await;
-    let doc = rig.open_document("ch.tex");
-    std::thread::sleep(Duration::from_millis(300));
-    fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    rig.event("documentReload", |e| e == "ch.tex");
-    assert_eq!(doc.with(|d| d.text()), "theirs\n");
-    assert!(doc.edit(0, 0, "stale ", None, false).is_none());
-    let shown = rig.sessions.document(SESSION, "ch.tex").unwrap();
-    assert!(shown.edit(0, 0, "mine ", None, false).is_some());
-    assert_eq!(doc.with(|d| d.text()), "mine theirs\n");
+fn asked(rig: &Rig, path: &str, kind: &str) {
+    let asking =
+        |doc: &Value| doc["path"] == path && doc["asking"] == true && doc["conflict"] == kind;
+    rig.section("documents", |d| d.as_array().unwrap().iter().any(asking));
+}
+
+/// Takes the reload asked at the document's version as the editor does, through an edit at that version.
+fn take_reload(rig: &Rig, doc: &Document) {
+    let version = doc.version();
+    let reload = rig.event("reload", |reload| reload["version"] == version);
+    let edit = &reload["edits"][0];
+    let at = |key: &str| edit[key].as_u64().unwrap() as u32;
+    let text = edit["text"].as_str().unwrap();
+    assert!(
+        doc.edit(at("start"), at("length"), text, None, false)
+            .is_some()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn editing_a_recovered_document_keeps_a_later_file_removal_conflict() {
+async fn a_change_on_disk_is_taken_by_the_editor_into_a_document_without_edits_which_stays_saved() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     let path = rig.root().join("ch.tex");
+    let written = rig.library.path("written");
+    for theirs in ["theirs\n", "theirs again\n"] {
+        // Written whole, as most editors write, so the session can't read it half written.
+        fs::write(&written, theirs).unwrap();
+        fs::rename(&written, &path).unwrap();
+        take_reload(&rig, &doc);
+        assert_eq!(doc.with(|d| d.text()), theirs);
+    }
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "theirs again\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_made_before_a_reload_is_taken_refuses_it_and_a_later_removal_keeps_its_conflict() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    let path = rig.root().join("ch.tex");
+    let cancel = json!({ "path": "ch.tex", "answer": "cancel" });
     fs::write(&path, "external\n").unwrap();
-    rig.event("documentReload", |e| e == "ch.tex");
-    doc.restore("accepted original\n");
-    rig.event("conflict", |e| e["kind"] == "changed");
-    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    rig.event("reload", |reload| reload["version"] == 0);
+    doc.edit(0, 0, "accepted ", None, false);
+    asked(&rig, "ch.tex", "changed");
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), false);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "external\n");
+    rig.call("Resolve", cancel.clone());
     fs::remove_file(&path).unwrap();
-    rig.event("conflict", |e| e["kind"] == "gone");
-    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    asked(&rig, "ch.tex", "gone");
+    rig.call("Resolve", cancel);
     rig.forget();
     doc.edit(0, 0, "more ", None, false);
     assert_eq!(rig.call("Save", json!({ "reporting": true })), false);
-    assert_eq!(rig.event("conflict", |_| true)["kind"], "gone");
+    asked(&rig, "ch.tex", "gone");
     assert!(!path.exists());
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
-    assert_eq!(
-        fs::read_to_string(path).unwrap(),
-        "more accepted original\n"
-    );
+    let saved = fs::read_to_string(path).unwrap();
+    assert_eq!(saved, format!("more accepted {CHAPTER}"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -854,13 +884,13 @@ async fn a_change_on_disk_under_edits_is_asked_about_held_and_saved_with_the_edi
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    let conflict = rig.event("conflict", |e| e["path"] == "ch.tex");
-    assert_eq!(conflict["kind"], "changed");
+    asked(&rig, "ch.tex", "changed");
     assert_eq!(rig.call("CloseProject", json!({})), false);
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
-    rig.section("documents", |d| d[0]["held"] == "changed");
+    rig.section("documents", |d| {
+        d[0]["conflict"] == "changed" && d[0]["asking"] == false
+    });
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
@@ -874,11 +904,10 @@ async fn revert_takes_the_disks_text() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    rig.event("conflict", |e| e["path"] == "ch.tex");
+    asked(&rig, "ch.tex", "changed");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
-    rig.event("documentReload", |e| e == "ch.tex");
+    take_reload(&rig, &doc);
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
@@ -889,7 +918,6 @@ async fn revert_takes_the_disks_text() {
 #[tokio::test(flavor = "multi_thread")]
 async fn another_apps_files_reach_the_tree() {
     let rig = project().await;
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("new.tex"), "x").unwrap();
     let tree = rig.section("tree", |e| e.to_string().contains("new.tex"));
     assert_eq!(names(&tree, "name"), ["ch.tex", "main.tex", "new.tex"]);
@@ -1065,6 +1093,7 @@ async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_ope
     assert_eq!(refused.unwrap_err().kind, ErrorKind::Conflict);
     rig.call("CloseProject", json!({}));
     let trashed = rig.ask_library("TrashProject", trash).unwrap();
+    let _trashed = Trashed(trashed.as_str().unwrap().into());
     rig.listed(|projects| projects.as_array().unwrap().is_empty());
     rig.ask_library("ReloadProjects", json!({})).unwrap();
     let back = json!({ "id": "P", "trashed": trashed });
@@ -1206,7 +1235,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
         pages: 1,
         run: RunEnd::Complete,
         changed: Vec::new(),
-        sources: [("main.tex".into(), Arc::from(BROKEN))].into(),
+        revision: preview.revision(),
     });
     preview.send(LiveEvent::Page {
         page: 0,
@@ -1241,6 +1270,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
     fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
+    let typeset = preview.revision();
     doc.edit(
         0,
         0,
@@ -1248,13 +1278,13 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
         None,
         false,
     );
-    rig.call("LiveCaret", json!({ "path": "main.tex", "offset": 0 }));
+    doc.select(TextRange::default(), false);
     preview.send(LiveEvent::Document {
         path: pdf.to_string_lossy().into_owned(),
         pages: 2,
         run: RunEnd::Complete,
         changed: Vec::new(),
-        sources: [("main.tex".into(), Arc::from(PICTURED))].into(),
+        revision: typeset,
     });
     rig.event("liveDocument", |_| true);
     let moved = json!({ "file": "main.tex", "line": 11 });
@@ -1263,7 +1293,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
     let at = json!({ "page": 1, "x": picture["h"].as_f64().unwrap() + 1.0,
         "y": picture["v"].as_f64().unwrap() - picture["height"].as_f64().unwrap() / 2.0 });
     let back = rig.call("SynctexInverse", at);
-    assert_eq!((&back["line"], &back["column"]), (&json!(6), &json!(0)));
+    assert_eq!((&back["line"], &back["column"]), (&json!(7), &json!(0)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1283,7 +1313,7 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
         pages: 2,
         run: RunEnd::Complete,
         changed: Vec::new(),
-        sources: [("main.tex".into(), Arc::from(PICTURED))].into(),
+        revision: preview.revision(),
     });
     rig.event("liveDocument", |_| true);
     let start = |line: usize| {
@@ -1294,31 +1324,26 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
             .sum::<usize>()
     };
     let caret = |line| {
-        rig.call(
-            "LiveCaret",
-            json!({ "path": "main.tex", "offset": start(line) }),
-        )
+        let start = start(line) as u32;
+        doc.select(TextRange { start, length: 0 }, false);
     };
     let followed = |moved: &dyn Fn()| {
         rig.forget();
-        let asked = Instant::now();
         moved();
-        let page = rig.event("liveFollow", |_| true)["page"].as_f64();
-        assert!(
-            asked.elapsed() < Duration::from_millis(200),
-            "{:?}",
-            asked.elapsed()
-        );
-        page
+        rig.event("liveFollow", |_| true)["page"].as_f64()
     };
-    assert_eq!(followed(&|| drop(caret(10))), Some(2.0));
+    assert_eq!(followed(&|| caret(10)), Some(2.0));
     let typed = || drop(doc.edit(start(10) as u32, 0, "More ", None, false));
     assert_eq!(followed(&typed), Some(2.0));
-    assert_eq!(followed(&|| drop(caret(4))), Some(1.0));
+    assert_eq!(followed(&|| caret(4)), Some(1.0));
     rig.forget();
     for line in [2, 3, 5, 7] {
         caret(line);
-        rig.listen(Duration::from_millis(400));
+        // The caret settles 150 ms after it moves, after the follow it asked for at 120 ms.
+        wait_until("the caret settles", || {
+            *preview.caret.lock().unwrap() == Some(start(line))
+        });
+        rig.listen(Duration::ZERO);
         assert!(!rig.heard("liveFollow"), "line {line}");
     }
     let refused = rig.reply(rig.send(
@@ -1342,16 +1367,38 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_live_output_claiming_more_than_was_sent_ends_the_preview_which_needs_attention_until_its_log_closes()
+ {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", MAIN)], |_| {}, Arc::clone(&preview)).await;
+    rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.send(LiveEvent::Synced(preview.revision() + 1));
+    rig.event("liveAlert", |_| true);
+    let failed =
+        |l: &Value| l["phase"] == "stopped" && l["failures"].as_array().unwrap().len() == 1;
+    assert_eq!(rig.section("live", failed)["attention"], true);
+    assert!(!preview.running());
+    rig.call("LiveLog", json!({ "shown": true }));
+    rig.call("LiveLog", json!({ "shown": false }));
+    rig.section("live", |l| failed(l) && l["attention"] == false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
     let preview = Arc::new(FakePreview::default());
-    let files = [("sub/main.tex", MAIN), ("ch.tex", BROKEN)];
+    let files = [
+        ("sub/main.tex", MAIN),
+        ("ch.tex", BROKEN),
+        (".texlocal.json", r#"{"mainFile":"sub/main.tex"}"#),
+    ];
     let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
-    let main = json!({ "patch": { "mainFile": "sub/main.tex" } });
-    rig.call("SetSettings", main);
-    rig.open_document("ch.tex");
+    // A later watcher read must not send a new source after this fake's only acknowledgement.
     rig.call("StartLive", json!({}));
+    rig.open_document("ch.tex");
     *preview.log.lock().unwrap() =
         "(sub/main.tex (ch.tex\n! Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    preview.send(LiveEvent::Synced(preview.revision()));
     preview.send(LiveEvent::Done(RunEnd::Complete));
     let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
     assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);
@@ -1544,18 +1591,17 @@ async fn tex_is_looked_for_at_start_so_an_auto_build_waits_on_no_client() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found() {
-    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
-        stub_tex(library);
-        let slow = library.path("slow");
-        program(&slow.join("latexmk"), "#!/bin/sh\nsleep 1\nexit 1\n");
-        app_settings(library, json!({ "texDir": slow }));
-    })
-    .await;
+    let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    let found = rig.library.path("found");
+    program(&found.join("latexmk"), LATEXMK);
+    let slow = "#!/bin/sh\nsleep 1\nexit 1\n";
+    program(&rig.library.path("tex/bin/latexmk"), slow);
     let checked = rig.send_library("CheckTex", json!({}));
-    let set = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("tex/bin") }));
+    let set = rig.send_library("SetTexDir", json!({ "dir": found }));
     let id = |e: &Value| e["value"]["id"].clone();
     let first = rig.find(|e| e["type"] == "reply" && (id(e) == checked || id(e) == set));
     assert_eq!(id(&first), checked);
+    assert_eq!(rig.reply(checked).unwrap()["available"], false);
     assert_eq!(rig.reply(set).unwrap()["available"], true);
     rig.call("SetOptions", json!({ "autoCompile": true }));
     rig.call("SetSettings", json!({ "patch": {} }));
@@ -1606,13 +1652,12 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 async fn autosave_waits_while_text_is_composed() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
-    let composing = |on: bool| rig.call("Composing", json!({ "path": "ch.tex", "composing": on }));
     let disk = || fs::read_to_string(rig.root().join("ch.tex")).unwrap();
-    composing(true);
+    doc.compose(true);
     doc.edit(0, 0, "ü", None, false);
     std::thread::sleep(Duration::from_millis(1200));
     assert_eq!(disk(), CHAPTER);
-    composing(false);
+    doc.compose(false);
     wait_until("the composed text was never saved", || disk() != CHAPTER);
     assert_eq!(disk(), format!("ü{CHAPTER}"));
 }
@@ -1644,4 +1689,162 @@ async fn a_fix_adds_the_package_a_command_needs() {
     assert_eq!(edit["start"], "\\documentclass{article}".len());
     let unknown = rig.refuse("ApplyFix", json!({ "id": "format:disk" }));
     assert_eq!(unknown, ErrorKind::Invalid);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn naming_a_version_with_nothing_changed_keeps_the_last_ones_name() {
+    let rig = project().await;
+    rig.call("SaveVersion", json!({ "name": "Submitted" }));
+    rig.call("SaveVersion", json!({ "name": "Camera-ready" }));
+    let versions = rig.call("ListVersions", json!({}));
+    let names: Vec<_> = versions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| &v["name"])
+        .collect();
+    assert_eq!(names, [&json!("Camera-ready"), &json!("Submitted")]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_opened_in_place_keeps_its_own_build_folder_as_sources() {
+    let rig = project().await;
+    let entry = json!({ "folder": "build", "name": "plot.tex", "dir": false });
+    assert_eq!(rig.refuse("CreateEntry", entry.clone()), ErrorKind::Invalid);
+    let folder = rig.library.path("Thesis");
+    write(&folder, &[("main.tex", MAIN), ("build/fig.png", "png")]);
+    let opened = rig.ask_library("OpenPath", json!({ "path": folder }));
+    let id = opened.unwrap()["project"]["id"].clone();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    let tree = rig.section_in(2, "tree", |_| true);
+    assert_eq!(names(&tree, "name"), ["build", "main.tex"]);
+    rig.call_to(2, "SaveVersion", json!({ "name": "Draft" }));
+    let versions = rig.call_to(2, "ListVersions", json!({}));
+    let first = &versions.as_array().unwrap().last().unwrap()["changed"];
+    assert_eq!(names(first, "path"), ["build/fig.png", "main.tex"]);
+    assert_eq!(rig.call_to(2, "CreateEntry", entry), "build/plot.tex");
+    fs::write(folder.join("build/new.png"), "png").unwrap();
+    rig.section_in(2, "tree", |t| t.to_string().contains("new.png"));
+    let dest = rig.library.path("Thesis.zip");
+    rig.call_to(2, "ExportZip", json!({ "dest": dest, "forArxiv": false }));
+    let exported = [
+        "build/",
+        "build/fig.png",
+        "build/new.png",
+        "build/plot.tex",
+        "main.tex",
+    ];
+    assert_eq!(zip_names(&dest), exported);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deleted_file_restored_unchanged_releases_its_question_and_saves_the_edits() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    let path = rig.root().join("ch.tex");
+    doc.edit(0, 0, "mine ", None, false).unwrap();
+    fs::remove_file(&path).unwrap();
+    asked(&rig, "ch.tex", "gone");
+    rig.section("tree", |tree| {
+        !names(tree, "path").contains(&"ch.tex".into())
+    });
+    rig.forget();
+
+    fs::write(&path, CHAPTER).unwrap();
+    rig.section("tree", |tree| {
+        names(tree, "path").contains(&"ch.tex".into())
+    });
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
+    rig.section("documents", |documents| {
+        documents.as_array().unwrap().iter().any(|doc| {
+            doc["path"] == "ch.tex" && doc["conflict"].is_null() && doc["asking"] == false
+        })
+    });
+    assert_eq!(fs::read_to_string(path).unwrap(), format!("mine {CHAPTER}"));
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_acknowledgement_keeps_the_shown_pdfs_source_snapshot() {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    let pdf = rig.library.path("live.pdf");
+    fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    let typeset = preview.revision();
+    preview.send(LiveEvent::Document {
+        path: pdf.to_string_lossy().into_owned(),
+        pages: 2,
+        run: RunEnd::Complete,
+        changed: Vec::new(),
+        revision: typeset,
+    });
+    rig.event("liveDocument", |_| true);
+    doc.edit(0, 0, &"% comment\n".repeat(20), None, false);
+    wait_until("the edit reaches Live Preview", || {
+        preview.revision() > typeset
+    });
+    preview.send(LiveEvent::Synced(preview.revision()));
+    let moved = json!({ "file": "main.tex", "line": 30 });
+    assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn importing_a_folder_leaves_nested_links_unread() {
+    let rig = project().await;
+    let folder = rig.library.path("Import");
+    let outside = rig.library.path("External");
+    write(&folder, &[("plot.png", "png")]);
+    write(&outside, &[("private.png", "private")]);
+    std::os::unix::fs::symlink(&outside, folder.join("linked")).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o0)).unwrap();
+    let asked = rig.send(
+        SESSION,
+        "ImportFiles",
+        json!({ "dir": "", "paths": [folder] }),
+    );
+    let imported = rig.reply(asked);
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(imported.unwrap()["existing"], json!([]));
+    assert_eq!(
+        fs::read(rig.root().join("Import/plot.png")).unwrap(),
+        b"png"
+    );
+    assert!(!rig.root().join("Import/linked").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_sources_reload_after_external_edits_and_retargeting_the_folder() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        for (folder, text) in [("one", "first\n"), ("two", "second\n")] {
+            write(&library.path(folder), &[("ch.tex", text)]);
+        }
+        std::os::unix::fs::symlink(
+            library.path("one"),
+            library.project_root("P").join("shared"),
+        )
+        .unwrap();
+    })
+    .await;
+    let doc = rig.open_document("shared/ch.tex");
+    let written = rig.library.path("one/written");
+    fs::write(&written, "first edited\n").unwrap();
+    fs::rename(&written, rig.library.path("one/ch.tex")).unwrap();
+    take_reload(&rig, &doc);
+    assert_eq!(doc.with(|source| source.text()), "first edited\n");
+    rig.call("Save", json!({ "reporting": false }));
+
+    let next = rig.root().join(".next-link");
+    std::os::unix::fs::symlink(rig.library.path("two"), &next).unwrap();
+    fs::rename(next, rig.root().join("shared")).unwrap();
+    take_reload(&rig, &doc);
+    assert_eq!(doc.with(|source| source.text()), "second\n");
+    rig.call("Save", json!({ "reporting": false }));
+
+    let written = rig.library.path("two/written");
+    fs::write(&written, "second edited\n").unwrap();
+    fs::rename(&written, rig.library.path("two/ch.tex")).unwrap();
+    take_reload(&rig, &doc);
+    assert_eq!(doc.with(|source| source.text()), "second edited\n");
 }

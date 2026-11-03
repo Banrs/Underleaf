@@ -190,3 +190,25 @@ fn magic_comments_name_the_root_and_program_near_the_top() {
     assert_eq!(facts::magic_comments(&late), (None, None));
     assert_eq!(facts::magic_comments("% TeX root = x"), (None, None));
 }
+
+#[test]
+fn macro_argument_counts_stay_within_texs_limit() {
+    for (options, accepted) in [
+        ("", true),
+        ("[0]", true),
+        ("[9]", true),
+        ("[9][default]", true),
+        ("[10]", false),
+        ("[10][default]", false),
+        ("[999999999999999999999999999999]", false),
+        ("[two]", false),
+    ] {
+        let source = format!("\\newcommand{{\\test}}{options}{{}}");
+        let facts = Facts::read(&source, FileKind::Tex);
+        assert_eq!(
+            facts.defined.commands.len(),
+            usize::from(accepted),
+            "{options}"
+        );
+    }
+}

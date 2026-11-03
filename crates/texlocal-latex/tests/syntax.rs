@@ -145,6 +145,30 @@ fn a_maths_environment_is_maths_until_its_own_end() {
 }
 
 #[test]
+fn inline_code_and_text_in_maths_open_and_close_maths_where_the_scanner_does() {
+    for (text, command) in [
+        ("\\lstinline|a$b| c", "\\lstinline"),
+        ("\\lstinline[language=sh]{a{$}b} c", "\\lstinline"),
+        ("\\mintinline{py}{a$b} c", "\\mintinline"),
+    ] {
+        let found = [(command, "Command")];
+        assert_eq!(kinds(&mut SourceDocument::new(text)), pairs(&found));
+    }
+    let mut doc = SourceDocument::new("$x \\text{ if $y$ } z$");
+    let found = [
+        ("$", "Maths"),
+        ("x", "Maths"),
+        ("\\text", "Command"),
+        ("$", "Maths"),
+        ("y", "Maths"),
+        ("$", "Maths"),
+        ("z", "Maths"),
+        ("$", "Maths"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn the_scanner_knows_where_maths_is() {
     let cases = [
         ("$a$ \\(", true),
@@ -257,29 +281,6 @@ fn an_argument_completes_what_the_command_takes() {
 }
 
 #[test]
-fn a_completion_is_accepted_from_the_list_offered_over_what_was_typed_since() {
-    let mut doc = SourceDocument::new("a \\fr");
-    let offered = complete(&mut doc, 5);
-    let accept = |doc: &mut SourceDocument, index: u32, caret: u32| {
-        run(
-            doc,
-            "AcceptCompletion",
-            json!({ "index": index, "caret": caret }),
-        )
-    };
-    doc.apply_edit(5, 0, "a", None, false);
-    let accepted = accept(&mut doc, 0, 6);
-    let edit = json!({ "start": 2, "length": 4, "text": "\\frac{}{}" });
-    assert_eq!((&accepted["edit"], &accepted["caret"]), (&edit, &json!(11)));
-    assert_eq!(accepted["fields"], offered["items"][0]["fields"]);
-    assert_eq!(accept(&mut doc, 0, 6), Value::Null);
-    complete(&mut doc, 6);
-    assert_eq!(accept(&mut doc, 999, 6), Value::Null);
-    complete(&mut doc, 6);
-    assert_eq!(accept(&mut doc, 0, 1), Value::Null);
-}
-
-#[test]
 fn words_leave_out_commands_names_maths_and_comments() {
     let text = "See \\cite{knuth} and \\ref{fig} on $x^2$ % a note\n";
     let mut doc = SourceDocument::new(text);
@@ -382,6 +383,24 @@ fn renaming_an_environment_renames_its_end() {
     doc.select(inside, false);
     typed(&mut doc, 7, 7, "enumerate");
     assert_eq!(doc.text(), "\\begin{enumerate}\n\\item a\n\\end{enumerate}");
+}
+
+#[test]
+fn renaming_an_environment_looks_for_its_end_only_so_far_ahead() {
+    let text = format!(
+        "\\begin{{itemize}}\n{}\\end{{itemize}}",
+        "word ".repeat(6000)
+    );
+    let mut doc = SourceDocument::new(&text);
+    doc.select(
+        TextRange {
+            start: 9,
+            length: 0,
+        },
+        false,
+    );
+    typed(&mut doc, 7, 7, "enumerate");
+    assert!(doc.text().ends_with("\\end{itemize}"));
 }
 
 #[test]

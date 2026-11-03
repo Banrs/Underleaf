@@ -6,9 +6,7 @@ extension ShapeStyle where Self == Color { static var textSurface: Color { Color
 extension NSColor {
     static let textAppearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
-    static let currentLine = NSColor(name: nil) {
-        srgb($0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? [0.138526, 0.146864, 0.169283, 1] : [0.909804, 0.94902, 1, 1])
-    }
+    static let currentLine = NSColor.controlAccentColor.withAlphaComponent(0.1)
 
     func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
         guard let appearance = NSAppearance(named: name) else { return self }
@@ -17,6 +15,10 @@ extension NSColor {
         let line = Self.over(NSColor.currentLine.rgba(in: appearance), background)
         let raised = Self.contrasting(Self.contrasting(Self.over(rgba(in: appearance), background), background, ratio), line, ratio)
         return Self.srgb(raised)
+    }
+
+    func legible(ratio: Double) -> NSColor {
+        .adapting(Dictionary(uniqueKeysWithValues: Self.textAppearances.map { ($0, legibleAsText(in: $0, ratio: ratio)) }), fallback: self)
     }
 
     static func luminance(_ c: [Double]) -> Double {
@@ -62,5 +64,6 @@ extension NSColor {
         NSColor(srgbRed: CGFloat(rgba[0]), green: CGFloat(rgba[1]), blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3]))
     }
 
+    /// PDFKit tints a system colour it's given with the wallpaper, which would set it a shade apart from the editor's.
     static let untintedTextBackground = NSColor(name: nil) { srgb(NSColor.textBackgroundColor.rgba(in: $0)) }
 }

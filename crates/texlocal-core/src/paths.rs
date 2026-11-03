@@ -48,6 +48,12 @@ impl Project {
         name.to_string_lossy().into_owned()
     }
 
+    /// Only a library project builds inside its root: a folder opened in place builds into the
+    /// state store, so its own `build` folder holds sources like any other.
+    pub(crate) fn builds_in(&self, rel: &str) -> bool {
+        relative(&self.root, &self.build).is_some_and(|build| within(rel, &build))
+    }
+
     pub(crate) fn in_library(service: &Service, name: &str) -> io::Result<Self> {
         let root = fs::canonicalize(service.data_dir.join(name))?;
         Ok(Self {
@@ -70,7 +76,7 @@ pub(crate) fn move_device_state(data_dir: &Path, state_dir: &Path) {
     for name in [OPENED_DIR, APP_SETTINGS_FILE] {
         let (from, to) = (data_dir.join(name), state_dir.join(name));
         if !to.exists()
-            && let Err(err) = atomic::rename_exclusive(&from, &to)
+            && let Err(err) = sys::rename_exclusive(&from, &to)
             && err.kind() == io::ErrorKind::CrossesDevices
         {
             let _ = copy_over(&from, &to);
@@ -82,7 +88,7 @@ fn copy_over(from: &Path, to: &Path) -> io::Result<()> {
     let temp = atomic::temp_builder().tempdir_in(to.parent().expect("in the state folder"))?;
     let copy = temp.path().join("copy");
     copy_all(from, &copy)?;
-    atomic::rename_exclusive(&copy, to)?;
+    sys::rename_exclusive(&copy, to)?;
     if from.is_dir() {
         fs::remove_dir_all(from)
     } else {
@@ -120,22 +126,16 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     }
 }
 
-pub(crate) fn in_build_dir(rel: &str) -> bool {
-    rel.split('/')
-        .next()
-        .is_some_and(|top| fold_case(top) == BUILD_DIR)
-}
-
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(root.join(rel_key(rel)?))
 }
 
-pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+pub fn safe_write_path(project: &Project, rel: &str) -> Result<PathBuf, CoreError> {
     let rel = rel_key(rel)?;
-    if in_build_dir(&rel) {
+    if project.builds_in(&rel) {
         return Err(CoreError::bad_request(messages::build_folder()));
     }
-    Ok(root.join(rel))
+    Ok(project.root.join(rel))
 }
 
 pub(crate) fn in_folder(dir: &str, name: &str) -> String {
@@ -220,7 +220,8 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     Ok(clean)
 }
 
-pub fn source_rel(root: &Path, input: &str) -> Option<String> {
+pub fn source_rel(project: &Project, input: &str) -> Option<String> {
+    let root = &project.root;
     let input_path = Path::new(input);
     let rel = if input_path.is_absolute() {
         let canonical = fs::canonicalize(root).ok()?;
@@ -235,7 +236,7 @@ pub fn source_rel(root: &Path, input: &str) -> Option<String> {
         input
     };
     let rel = safe_rel_file(rel).ok()?;
-    (!in_build_dir(&rel) && root.join(&rel).is_file()).then_some(rel)
+    (!project.builds_in(&rel) && root.join(&rel).is_file()).then_some(rel)
 }
 
 pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {

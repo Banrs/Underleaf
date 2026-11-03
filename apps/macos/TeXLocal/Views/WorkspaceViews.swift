@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import PDFKit
 
 @Observable
 final class WorkspaceViews: ProjectViews {
@@ -28,16 +29,13 @@ final class WorkspaceViews: ProjectViews {
     isolated deinit { watches.forEach { $0.cancel() } }
 
     private func connect() {
-        editor.onCursor = { [weak self] line, column, shown in
-            if let self { project.cursorMoved(to: line, column: column, shownColumn: shown, caret: editor.caret, in: editor.path) }
-        }
+        editor.onCursor = { [weak self] line, column, shown in self?.project.cursorMoved(to: line, column: column, shownColumn: shown) }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
         editor.onChange = { [weak self] in self?.changes += 1 }
         editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }
         let text = editor.textView
         text.isContinuousSpellCheckingEnabled = project.window?.app.spellCheck ?? true
         text.spellCheckToggled = { [weak self] in self?.project.window?.app.spellCheck = $0 }
-        text.composing = { [weak self] in if let self { project.composing($0, in: editor.path) } }
         text.keyboardChanged = { [weak self] in self?.project.sourceHasKeyboard = $0 }
         text.fileDrop = { [weak self] url in
             guard let project = self?.project else { return nil }
@@ -74,7 +72,7 @@ final class WorkspaceViews: ProjectViews {
     var hasPDF: Bool { pdf.pageCount > 0 }
     var zoom: Zoom { pdf.keptZoom }
     var pdfPlace: PdfPlace? { pdf.keptPlace }
-    var shownVersion: Int { pdf.shownVersion }
+    var shownPDF: AnyObject? { pdf.view.document }
     var pdfLoading: Task<Void, Never>? { pdf.loading }
 
     func heard(_ event: Event) {
@@ -82,7 +80,7 @@ final class WorkspaceViews: ProjectViews {
         case .section(.openFile): showOpenFile()
         case .section(.build), .section(.live): showIssues()
         case .section(.shownPdf): showPDF()
-        case .documentReload(let path): reload(path)
+        case .reload(let edits): reload(edits)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
         case .liveDocument(let document): if project.showsLive { pdf.showLive(document) }
         case .livePage(let page): if project.showsLive { pdf.showLive(page) }
@@ -101,8 +99,7 @@ final class WorkspaceViews: ProjectViews {
 
     func apply(_ edits: DocumentEdits, named name: String) -> Bool {
         guard edits.path == editor.path, editor.textView.document.version == edits.version else { return false }
-        editor.textView.apply(edits.edits, named: name)
-        return true
+        return editor.textView.apply(edits.edits, named: name)
     }
 
     func replace(_ hit: SearchHit, with text: String) -> Bool {
@@ -186,10 +183,10 @@ final class WorkspaceViews: ProjectViews {
         _ = pdf.load(shown.path.map { URL(filePath: $0) })
     }
 
-    private func reload(_ path: String) {
-        guard editor.path == path, !editor.textView.document.editable,
-              let source = SourceDocument(session: project.session, path: path) else { return }
-        editor.reload(source)
+    /// Takes the disk's text through an undoable edit, which an edit made since the session asked refuses.
+    private func reload(_ edits: DocumentEdits) {
+        let top = editor.textView.shownTop
+        if apply(edits, named: String(localized: "Reload")) { top.map(editor.textView.scroll(toShownTop:)) }
     }
 
     private func quickHelp(at offset: Int) {

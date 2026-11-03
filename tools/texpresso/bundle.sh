@@ -2,6 +2,10 @@
 set -e
 [[ $# == 2 && -n $2 ]] || { echo "usage: bundle.sh <TeXpresso build> <app>/Contents" >&2; exit 1 }
 B=$1 H=$2/Helpers F=$2/Frameworks
+# The same listing build.sh writes beside what it built.
+sources=$(cd ${0:A:h} && find underleaf-pdf.patch src -type f | LC_ALL=C sort | xargs shasum -a 256)
+[[ $sources == "$(<$B/sources.sha256)" ]] 2>/dev/null || {
+  echo "bundle.sh: $B wasn't built from the current tools/texpresso sources; run tools/texpresso/build.sh" >&2; exit 1 }
 fresh() { [[ $(stat -f %m $B/$1) == "$(stat -f %m $H/$1 2>/dev/null)" ]] }
 fresh texpresso && fresh texpresso-xetex && exit 0
 rm -rf $H $F; mkdir -p $H $F

@@ -63,7 +63,7 @@ protocol AppWindow: AnyObject {
     func close()
 }
 
-nonisolated enum WorkspaceLayout { case source, split, pdf }
+nonisolated enum WorkspaceLayout: String { case source, split, pdf }
 
 struct NewProjectDraft: Identifiable {
     var template: ProjectTemplate
@@ -82,7 +82,7 @@ final class AppModel {
     private(set) var installingTeX = false
     private(set) var libraryProblem: AppAlert?
     private(set) var windows: [WindowModel] = []
-    var main: WindowModel? { windows.first(where: \.isKey) }
+    var main: WindowModel? { windows.first(where: \.isMain) }
     var home: WindowModel? { windows.first { $0.project == nil } }
     @ObservationIgnored var newWindow: ((String?) -> WindowModel)?
     @ObservationIgnored var recentLimit: () -> Int = { 10 }

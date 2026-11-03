@@ -9,6 +9,12 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
     var paper = PDFPaper.white { didSet { matchPaper() } }
+    private(set) lazy var find = PDFFind(view: self)
+
+    /// The Find menu's actions go to the find, from the pages and from its bar's field, which lies within the view.
+    override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
+        action == #selector(PDFFind.performFindPanelAction(_:)) ? find : super.supplementalTarget(forAction: action, sender: sender)
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -50,15 +56,15 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// The pages in view, by index, and the pixels per point they show at: what covers are drawn for.
     var coverPages: CoverPages {
-        guard let document, hasShownArea, !UserDefaults.standard.bool(forKey: "PDFCoversOff") else { return CoverPages() }
         let shown = shownRect
-        var indices: [Int] = []
-        for y in [shown.maxY - 1, shown.midY, shown.minY + 1] {
-            if let page = page(for: CGPoint(x: shown.midX, y: y), nearest: true), !indices.contains(document.index(for: page)) {
-                indices.append(document.index(for: page))
-            }
-        }
-        return CoverPages(indices: indices, scale: scaleFactor * (window?.backingScaleFactor ?? 2))
+        // Every page from the top of the shown area to its foot, as at a low zoom many show; not `visiblePages`, which
+        // lags a zoom or scroll (it held the first of the 7 pages in view right after a zoom to 10%).
+        guard let document, hasShownArea, !UserDefaults.standard.bool(forKey: "PDFCoversOff"),
+              let top = page(for: CGPoint(x: shown.midX, y: shown.maxY - 1), nearest: true),
+              let foot = page(for: CGPoint(x: shown.midX, y: shown.minY + 1), nearest: true) else { return CoverPages() }
+        let (first, last) = (document.index(for: top), document.index(for: foot))
+        return CoverPages(indices: Array(min(first, last)...max(first, last)), scale: scaleFactor * (window?.backingScaleFactor ?? 2),
+                          space: window?.colorSpace?.cgColorSpace ?? CoverPages().space)
     }
 
     /// Whole pages drawn off the main thread, on a document no other thread touches, to stand in for its pages while
@@ -72,7 +78,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                 let box = page.bounds(for: box).applying(page.transform(for: box))
                 let scale = min(wanted.scale, (24e6 / Double(pages.count) / (box.width * box.height)).squareRoot())
                 guard let context = CGContext(data: nil, width: Int((box.width * scale).rounded(.up)), height: Int((box.height * scale).rounded(.up)),
-                                              bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                              bitsPerComponent: 8, bytesPerRow: 0, space: wanted.space,
                                               bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
                 else { continue }
                 context.scaleBy(x: scale, y: scale)
@@ -84,7 +90,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    private nonisolated static let space = CGColorSpace(name: CGColorSpace.sRGB)!
     private var covers: [Int: CGImage] = [:]
     private var uncovering: Task<Void, Never>?
 
@@ -95,6 +100,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         change()
         CATransaction.commit()
         self.covers = [:]
+        // PDFKit drew the last tile in view 7–13 ms after a swap and 12–18 ms after a live page (392-page test PDF, a 700 ×
+        // 900 pt pane at fit width and at 25%, the Mac otherwise idle), so 400 ms leaves room for a busy one.
         restart(&uncovering, after: .milliseconds(400)) { [weak self] in
             for case let overlay as PageOverlay in self?.overlays.objectEnumerator()?.allObjects ?? [] { overlay.uncover() }
         }
@@ -181,14 +188,21 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         go(to: PDFDestination(page: page, at: place.point))
     }
 
-    var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
+    /// The top of the area the pages show in: below the toolbar and, while it shows, the find bar, which NSScrollView
+    /// tiles above its pages.
+    private var shownTop: CGFloat {
+        let bar = pageScrollView.flatMap { $0.isFindBarVisible ? $0.findBarView?.frame.height : nil } ?? 0
+        return bounds.maxY - safeAreaInsets.top - bar
+    }
+
+    var shownHeight: CGFloat { shownTop - bounds.minY - safeAreaInsets.bottom }
 
     var shownRect: CGRect { CGRect(x: bounds.minX, y: bounds.minY + safeAreaInsets.bottom, width: bounds.width, height: shownHeight) }
 
     var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 
     var shownPlace: (index: Int, point: CGPoint)? {
-        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
+        let top = CGPoint(x: bounds.minX, y: shownTop)
         // Pages have no top margin, so the page whose top edge meets the bar is the one under it, not the one above.
         guard let page = page(for: CGPoint(x: top.x, y: top.y - 1 / (window?.backingScaleFactor ?? 1)), nearest: true),
               let document else { return nil }
@@ -230,6 +244,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 nonisolated struct CoverPages: Sendable {
     var indices: [Int] = []
     var scale: CGFloat = 0
+    /// The window's, as the commit that shows a cover drawn in another converts it on the main thread: a live page's
+    /// replace took 20 ms with its cover in sRGB and 8 ms in the window's (400-page test PDF, a 700 × 900 pt pane on the
+    /// built-in display), and 38 ms in Display P3.
+    var space = CGColorSpace(name: CGColorSpace.sRGB)!
 }
 
 final class PageOverlay: NSView {
@@ -254,9 +272,11 @@ final class PageOverlay: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    /// The cover is the whole page, so it follows the overlay, which PDFKit trims by a fraction of a point after a page is
+    /// inserted in place (612 × 792 to 611.94 × 791.74 for a Letter page), rather than going.
     override func setFrameSize(_ newSize: NSSize) {
-        if newSize != frame.size { uncover() }
         super.setFrameSize(newSize)
+        drawing.frame = bounds
     }
 
     func cover(_ image: CGImage) {

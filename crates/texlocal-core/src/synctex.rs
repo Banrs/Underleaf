@@ -68,8 +68,8 @@ pub(crate) fn warm(pdf: PathBuf) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || drop(beside(&pdf)))
 }
 
-fn source_file(root: &Path, name: &str) -> Option<String> {
-    source_rel(root, name).and_then(|rel| disk_spelling(root, &rel))
+fn source_file(project: &Project, name: &str) -> Option<String> {
+    source_rel(project, name).and_then(|rel| disk_spelling(&project.root, &rel))
 }
 
 pub(crate) fn forward(
@@ -81,7 +81,7 @@ pub(crate) fn forward(
     let sync = sync_for(project, live)?;
     let tag = sync
         .inputs()
-        .find(|(_, name)| source_file(&project.root, name).as_deref() == Some(file))
+        .find(|(_, name)| source_file(project, name).as_deref() == Some(file))
         .map(|(tag, _)| tag)
         .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
     let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
@@ -129,8 +129,8 @@ pub(crate) fn inverse(
         .inverse(page as i32, x as f32, y as f32)
         .and_then(|(name, line)| Some((name, u32::try_from(line).ok()?)))
         .ok_or_else(|| CoreError::not_found(messages::no_match_in_source()))?;
-    let rel =
-        source_file(root, name).ok_or_else(|| CoreError::not_found(messages::no_source_file()))?;
+    let rel = source_file(project, name)
+        .ok_or_else(|| CoreError::not_found(messages::no_source_file()))?;
     let disk = || Some(crate::lossy_string(std::fs::read(root.join(&rel)).ok()?));
     let source = typeset(&rel).or_else(disk);
     if let Some(text) = source.as_deref()

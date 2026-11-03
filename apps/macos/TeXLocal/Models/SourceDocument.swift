@@ -30,6 +30,9 @@ final class SourceDocument {
         return answered("Edit", out) ?? []
     }
 
+    /// Marked text is being composed, which the session's autosave waits out.
+    var composing = false { didSet { tl_source_composing(raw, composing) } }
+
     func select(_ selection: NSRange, mirroring: Bool) {
         tl_source_select(raw, UInt32(selection.location), UInt32(selection.length), mirroring)
     }
@@ -64,7 +67,6 @@ final class SourceDocument {
     }
 
     func complete(caret: Int, explicit: Bool) -> Completions? { call(Complete(caret: caret, explicit: explicit)) ?? nil }
-    func acceptCompletion(_ index: Int, caret: Int) -> Insertion? { call(AcceptCompletion(index: index, caret: caret)) ?? nil }
     func toggleComment(_ selections: [NSRange]) -> [TextEdit] { call(ToggleComment(selections: selections.map(TextRange.init))) ?? [] }
     func setHeading(caret: Int, command: String) -> Insertion? { call(SetHeading(caret: caret, command: command)) }
     func insertBlock(_ id: String, replacing selection: NSRange) -> Insertion? {

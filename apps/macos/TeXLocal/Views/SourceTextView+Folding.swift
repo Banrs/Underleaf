@@ -69,7 +69,7 @@ extension SourceTextView: NSTextContentStorageDelegate {
         needsDisplay = true
     }
 
-    private var chevronX: CGFloat { (gutter.numbersEnd + textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0)) / 2 }
+    private var chevronX: CGFloat { (gutter.numbersEnd + textContainerOrigin.x + linePadding) / 2 }
 
     func inChevrons(_ point: NSPoint) -> Bool { point.x >= gutter.numbersEnd && point.x < textContainerOrigin.x }
 

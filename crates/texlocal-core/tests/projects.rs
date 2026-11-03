@@ -108,6 +108,28 @@ async fn a_duplicate_copies_the_sources_but_not_the_build() {
 }
 
 #[tokio::test]
+async fn a_duplicate_copies_a_linked_folder_once_even_when_a_link_loops() {
+    let library = Library::new();
+    library.create("Paper", "article").await;
+    let root = library.project_root("Paper");
+    write(&library.path("shared"), &[("figs/plot.png", "png")]);
+    std::os::unix::fs::symlink(library.path("shared/figs"), root.join("figs")).unwrap();
+    std::os::unix::fs::symlink(".", root.join("here")).unwrap();
+    let copy = library
+        .call(
+            "DuplicateProject",
+            json!({ "id": "Paper", "name": "Paper copy" }),
+        )
+        .await;
+    let root = library.project_root(copy["id"].as_str().unwrap());
+    assert_eq!(
+        fs::read_to_string(root.join("figs/plot.png")).unwrap(),
+        "png"
+    );
+    assert!(!root.join("here").exists());
+}
+
+#[tokio::test]
 async fn a_folder_opens_where_it_is() {
     let library = Library::new();
     let folder = library.path("Thesis");

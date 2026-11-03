@@ -13,6 +13,7 @@ use super::read_capped;
 use super::tree::visit_files;
 use crate::error::CoreError;
 use crate::messages;
+use crate::paths::Project;
 use crate::{lf, lossy_string, newline};
 
 const SEARCH_FILE_MAX: u64 = 8 << 20;
@@ -60,14 +61,14 @@ fn cap(rel: &str) -> u64 {
 }
 
 pub fn search_project(
-    root: &Path,
+    project: &Project,
     open: &HashMap<String, String>,
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     limit: usize,
 ) -> Result<Vec<SearchHit>, CoreError> {
     let mut hits = Vec::new();
-    visit_files(root, &mut |abs, rel| {
+    visit_files(project, &mut |abs, rel| {
         if !chosen(rel) {
             return Ok(true);
         }
@@ -120,7 +121,7 @@ pub fn search_project(
 }
 
 pub(crate) fn replace_in_files(
-    root: &Path,
+    project: &Project,
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     to: &str,
@@ -147,8 +148,8 @@ pub(crate) fn replace_in_files(
         Ok(Some((now, places.len(), file)))
     };
     let mut edited = BTreeMap::new();
-    visit_files(root, &mut |abs, rel| {
-        if chosen(rel) && inside(root, abs) && replace(abs, rel)?.is_some() {
+    visit_files(project, &mut |abs, rel| {
+        if chosen(rel) && inside(&project.root, abs) && replace(abs, rel)?.is_some() {
             edited.insert(rel.to_owned(), abs.to_owned());
         }
         Ok(true)

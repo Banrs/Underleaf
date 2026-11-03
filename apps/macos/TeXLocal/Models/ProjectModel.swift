@@ -6,7 +6,7 @@ protocol ProjectViews: AnyObject {
     var hasPDF: Bool { get }
     var zoom: Zoom { get }
     var pdfPlace: PdfPlace? { get }
-    var shownVersion: Int { get }
+    var shownPDF: AnyObject? { get }
     var pdfLoading: Task<Void, Never>? { get }
     func heard(_ event: Event)
     func opened(_ ui: UiState)
@@ -63,11 +63,9 @@ final class ProjectModel {
     private(set) var currentHeading: Int?
     @ObservationIgnored private var currentLine = 1
     @ObservationIgnored private var caretMoved = false
-    @ObservationIgnored private(set) var caret: (path: String, offset: Int)?
     var trail = Trail()
 
     private var root: URL? { store.project.map { URL(filePath: $0.root, directoryHint: .isDirectory) } }
-    @ObservationIgnored private var composingPath: String?
 
     var compiling: Bool { store.build?.compiling == true }
     var outdated: Bool { store.build?.outdated == true }
@@ -85,7 +83,9 @@ final class ProjectModel {
     let texpresso: TeXpressoSession
 
     var openURL: URL? { openPath.flatMap(url) }
-    private(set) var conflicts: [Conflict] = []
+    /// What the session asks about, less the answers sent and not yet heard back, so an answered alert isn't shown again.
+    var conflicts: [DocumentState] { store.documents.filter { $0.asking && !answered.contains($0.path) } }
+    private var answered: Set<String> = []
     private(set) var askingToDiscard: [String]?
     @ObservationIgnored private var discardAnswer: CheckedContinuation<Bool, Never>?
     @ObservationIgnored private var discarded = false
@@ -122,9 +122,7 @@ final class ProjectModel {
         navigator = NavigatorModel(project: id, defaults: window.app.defaults)
         self.window = window
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
-            guard let self else { return }
-            session.send(LiveLog(shown: shown))
-            if !shown { texpresso.logClosed() }
+            self?.session.send(LiveLog(shown: shown))
         }
         session.heard = { [weak self] in self?.handle($0) }
     }
@@ -147,7 +145,7 @@ final class ProjectModel {
     var saveFailure: String? {
         for document in store.documents {
             let name = document.path.fileName
-            switch (document.error, document.held) {
+            switch (document.error, document.conflict) {
             case (let error?, _): return error.text
             case (nil, .changed): return String(localized: "Another app changed “\(name)”.")
             case (nil, .gone): return String(localized: "Another app moved or deleted “\(name)”.")
@@ -189,10 +187,7 @@ final class ProjectModel {
         initialLoadComplete = true
     }
 
-    func cursorMoved(to line: Int, column: Int, shownColumn: Int, caret offset: Int, in path: String?) {
-        let moved = caret?.path != path || caret?.offset != offset
-        caret = path.map { ($0, offset) }
-        if moved { liveCaret() }
+    func cursorMoved(to line: Int, column: Int, shownColumn: Int) {
         if shownColumn != self.shownColumn { self.shownColumn = shownColumn }
         guard line != cursorLine || column != cursorColumn else { return }
         (cursorLine, cursorColumn, currentLine) = (line, column, line)
@@ -216,16 +211,11 @@ final class ProjectModel {
     func handle(_ event: Event) {
         switch event {
         case .section(let section): apply(section)
-        case .documentReload, .renamed, .livePage, .liveDocument, .liveFollow: break
-        case .conflict(let asked):
-            conflicts.removeAll { $0.path == asked.path }
-            conflicts.append(asked)
+        case .reload, .renamed, .livePage, .liveDocument, .liveFollow: break
         case .buildFinished(let finished): buildFinished(finished)
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
-        case .liveAlert:
-            texpresso.alerted()
-            panel.show(.texpresso)
+        case .liveAlert: panel.show(.texpresso)
         }
         views?.heard(event)
     }
@@ -243,6 +233,7 @@ final class ProjectModel {
             if now != outline { outline = now }
             findHeadings()
         case .documents(let documents):
+            answered = answered.filter { path in documents.contains { $0.path == path && $0.asking } }
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
                 window?.report(notSavedTitle(document.path), error.text)
@@ -262,12 +253,6 @@ final class ProjectModel {
         guard let opened = await alerting("Couldn’t Open “\(path.fileName)”", { try await session.call(Open(path: path)) }) ?? nil,
               opened == openPath, editsText else { return }
         views?.reveal(opened, line: line, column: column, length: length, atTop: atTop, focus: focus)
-    }
-
-    func composing(_ composing: Bool, in path: String?) {
-        guard let path = composing ? path : composingPath else { return }
-        composingPath = composing ? path : nil
-        session.send(Composing(path: path, composing: composing))
     }
 
     func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
@@ -437,7 +422,7 @@ final class ProjectModel {
     }
 
     func answer(_ path: String, _ answer: Resolution) {
-        conflicts.removeAll { $0.path == path }
+        answered.insert(path)
         session.send(Resolve(path: path, answer: answer), else: reporting(notSavedTitle(path)))
     }
 

@@ -22,7 +22,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var project: ProjectModel { views.project }
     private var pdf: PDFController { views.pdf }
     private var watch: Task<Void, Never>?
-    private lazy var format = FormatPopover(window: window, views: views)
     private lazy var compileButton = CompileButton(target: self, action: #selector(compile))
     private var compileItem: NSToolbarItem?
     private var overflow: NSKeyValueObservation?
@@ -44,7 +43,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func close() {
         watch?.cancel()
         overflow?.invalidate()
-        format.popover.close()
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -72,20 +70,19 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let item: NSToolbarItem
         switch id {
         case .format:
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = "Format"
-            item.toolTip = "Choose a style to apply to text"
-            item.image = NSImage(systemSymbolName: "textformat", accessibilityDescription: item.label)
-            item.target = self
-            item.action = #selector(showFormat)
-            item.menuFormRepresentation = NSMenuItem(title: item.label, action: nil, keyEquivalent: "")
-            item.menuFormRepresentation?.submenu = menu(id, Group { [window, project] in
-                ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
-                    Button(command.title, systemImage: command.style!.symbol) { window.perform(command, on: project) }
+            item = menuItem(id, "Format", "textformat", Group { [window, views] in
+                ControlGroup {
+                    let styles = [(MenuCommand.editBold, \TextStyles.bold), (.editItalic, \.italic), (.editUnderline, \.underline)]
+                    ForEach(styles, id: \.0) { command, style in
+                        let on = Binding(get: { views.textStyles[keyPath: style] != nil }, set: { _ in window.perform(command, on: views.project) })
+                        Toggle(command.title, systemImage: command.style!.symbol, isOn: on).help(command.style!.help)
+                    }
                 }
+                .controlGroupStyle(.palette)
                 Divider()
-                SectionLevelItems(project: project)
+                SectionLevelItems(project: views.project)
             })
+            item.toolTip = "Choose a style to apply to text"
         case .math:
             item = menuItem(id, "Math", "radicand.squareroot", Group { [window, project] in
                 MathMenuItems(project: project) { window.perform(.editMath, on: project) }
@@ -273,7 +270,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool { project.isOpen && (item.action != #selector(compile) || state.canCompile) }
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
-    @objc private func showFormat(_ item: NSToolbarItem) { format.toggle(relativeTo: item) }
     @objc private func zoom(_ control: NSSegmentedControl) {
         if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }
     }

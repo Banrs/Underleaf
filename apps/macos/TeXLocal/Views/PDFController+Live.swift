@@ -4,7 +4,7 @@ import os
 /// Live Preview's feed. While you type TeXpresso sends the pages in view, each as a one-page PDF; after a pause it
 /// writes the whole document, with the pages that changed since the one it wrote before. One read runs at a time, off
 /// the main thread; what arrives meanwhile waits coalesced: one document, whose changed pages merge, and pages by index,
-/// the newest winning, which a newer document drops.
+/// the newest winning, which a newer document replaces with its own.
 struct LiveFeed {
     var document: (path: String, changed: IndexSet)?
     var pages: [Int: Data] = [:]
@@ -32,6 +32,9 @@ extension PDFController {
     func showLive(_ live: LiveDocument) {
         var changed = feed.document?.changed ?? []
         for range in live.changed { changed.insert(integersIn: range.first...range.last) }
+        // The pages waiting are taken from the document instead, as one may undo an edit shown since the last document,
+        // which leaves the page out of its changed ones.
+        changed.formUnion(IndexSet(feed.pages.keys))
         feed.document = (live.path, changed)
         feed.pages = [:]
         readLive()
@@ -60,6 +63,8 @@ extension PDFController {
                 } else {
                     break
                 }
+                // A read stopped while it loaded leaves the feed alone, as it belongs to the next read by then.
+                guard !Task.isCancelled else { return }
                 if feed.document == nil, feed.pages.isEmpty, let loc = feed.follow.take() { follow(loc, later: false) }
             }
             if !Task.isCancelled { self?.feed.reading = nil }
@@ -69,33 +74,33 @@ extension PDFController {
     private func readLive(_ url: URL, changed: IndexSet) async {
         let shown = view.document, wanted = view.coverPages
         if shown != nil, shown === feed.shown, changed.count <= Self.changedInPlace {
-            guard let live = await Self.loadPages(changed, of: url, covering: wanted), !Task.isCancelled else { return feed.shown = nil }
+            let live = await Self.loadPages(changed, of: url, covering: wanted)
+            guard !Task.isCancelled else { return }
+            guard let live else { return feed.shown = nil }
             replace(live)
         } else {
-            guard let loaded = await Self.loadDocument(url, covering: wanted), !Task.isCancelled else { return feed.shown = nil }
+            let loaded = await Self.loadDocument(url, covering: wanted)
+            guard !Task.isCancelled else { return }
+            guard let loaded else { return feed.shown = nil }
             signposts.withIntervalSignpost("live.document") { show(loaded.document, covers: loaded.covers) }
             feed.shown = loaded.document
         }
     }
 
-    /// Replaces pages in the document shown, which keeps its place, selection and find, and trims it to the new count.
+    /// Replaces pages in the document shown, which keeps its place and selection, and trims it to the new count.
     func replace(_ live: LivePages) {
         let interval = signposts.beginInterval("live.page")
         defer { signposts.endInterval("live.page", interval) }
         guard let document = view.document else { return }
-        let refind = find.isRunning || find.limited
-        find.cancel()
-        var removed: [PDFPage] = [], added: [PDFPage] = []
+        var removed: [PDFPage] = []
         view.covering(live.covers) {
             for (index, page) in live.pages.sorted(by: { $0.key < $1.key }) {
                 if let old = document.page(ifAt: index) {
                     document.insert(page, at: index)
                     document.removePage(at: index + 1)
                     removed.append(old)
-                    added.append(page)
                 } else if live.count != nil, index == document.pageCount {
                     document.insert(page, at: index)
-                    added.append(page)
                 }
             }
             while let count = live.count, document.pageCount > count, let last = document.page(at: document.pageCount - 1) {
@@ -106,13 +111,13 @@ extension PDFController {
         if let mark = view.mark, removed.contains(mark.page) { view.removeMark() }
         if view.currentSelection?.pages.contains(where: removed.contains) == true { view.clearSelection() }
         pageChanged()
-        if refind { find.rerun() } else { find.replaced(removed, with: added) }
+        view.find.pagesChanged()
     }
 
     @concurrent private static func loadPages(_ changed: IndexSet, of url: URL, covering wanted: CoverPages) async -> sending LivePages? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
         var live = LivePages(count: document.pageCount)
-        live.covers = SyncPDFView.covers(CoverPages(indices: wanted.indices.filter(changed.contains), scale: wanted.scale), of: document)
+        live.covers = SyncPDFView.covers(CoverPages(indices: wanted.indices.filter(changed.contains), scale: wanted.scale, space: wanted.space), of: document)
         for index in changed.reversed() {
             guard let page = document.page(ifAt: index) else { continue }
             page.hideLinkBorders()
@@ -127,7 +132,7 @@ extension PDFController {
         for (index, pdf) in pdfs {
             guard let document = PDFDocument(data: pdf), let page = document.page(at: 0) else { continue }
             if wanted.indices.contains(index) {
-                live.covers[index] = SyncPDFView.covers(CoverPages(indices: [0], scale: wanted.scale), of: document)[0]
+                live.covers[index] = SyncPDFView.covers(CoverPages(indices: [0], scale: wanted.scale, space: wanted.space), of: document)[0]
             }
             page.hideLinkBorders()
             document.removePage(at: 0)

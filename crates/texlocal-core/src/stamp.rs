@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,17 +28,37 @@ impl Stamp {
             modified,
         })
     }
+
+    // A time in whole seconds may come from a filesystem that keeps only seconds, where a file
+    // written again within that second keeps its stamp.
+    fn trusted(&self) -> bool {
+        self.modified % 1_000_000_000 != 0
+    }
 }
 
-pub(crate) struct Kept<T>(Mutex<Vec<(Read, Arc<T>)>>);
+/// Values read from files, read again when a file's stamp changes, keeping the most recently
+/// used up to a capacity.
+pub(crate) struct Kept<T> {
+    capacity: usize,
+    held: Mutex<(u64, BTreeMap<PathBuf, Held<T>>)>,
+}
 
-type Read = (PathBuf, Option<Stamp>);
-
-const KEPT: usize = 4;
+struct Held<T> {
+    stamp: Stamp,
+    used: u64,
+    value: Arc<T>,
+}
 
 impl<T> Kept<T> {
     pub(crate) const fn new() -> Self {
-        Self(Mutex::new(Vec::new()))
+        Self::holding(4)
+    }
+
+    pub(crate) const fn holding(capacity: usize) -> Self {
+        Self {
+            capacity,
+            held: Mutex::new((0, BTreeMap::new())),
+        }
     }
 
     pub(crate) fn get<E>(
@@ -46,18 +67,32 @@ impl<T> Kept<T> {
         read: impl FnOnce(&Path) -> Result<T, E>,
     ) -> Result<Arc<T>, E> {
         let stamp = Stamp::at(path).ok();
-        let read_as = (path.to_owned(), stamp);
-        let mut kept = lock(&self.0);
-        if let Some(at) = kept.iter().position(|(was, _)| *was == read_as) {
-            kept[..=at].rotate_right(1);
-            return Ok(Arc::clone(&kept[0].1));
+        {
+            let (uses, held) = &mut *lock(&self.held);
+            if let Some(kept) = held.get_mut(path)
+                && stamp.is_some_and(|stamp| stamp == kept.stamp && stamp.trusted())
+            {
+                *uses += 1;
+                kept.used = *uses;
+                return Ok(Arc::clone(&kept.value));
+            }
         }
-        drop(kept);
         let value = Arc::new(read(path)?);
-        let mut kept = lock(&self.0);
-        kept.retain(|((was, _), _)| was != path);
-        kept.truncate(KEPT - 1);
-        kept.insert(0, (read_as, Arc::clone(&value)));
+        if let Some(stamp) = stamp {
+            let (uses, held) = &mut *lock(&self.held);
+            *uses += 1;
+            let kept = Held {
+                stamp,
+                used: *uses,
+                value: Arc::clone(&value),
+            };
+            held.insert(path.to_owned(), kept);
+            if held.len() > self.capacity {
+                let oldest = held.iter().min_by_key(|(_, kept)| kept.used);
+                let oldest = oldest.map(|(path, _)| path.clone());
+                held.remove(&oldest.expect("over capacity, so not empty"));
+            }
+        }
         Ok(value)
     }
 }

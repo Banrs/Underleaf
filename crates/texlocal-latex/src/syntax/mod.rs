@@ -25,6 +25,7 @@ pub use call::{Source, Syntax};
 use complete::SnippetField;
 pub use complete::{Installed, SymbolKind, Symbols};
 pub use complete::{definitions, usages};
+pub use headings::document_class;
 use highlight::Highlight;
 pub use highlight::HighlightKind;
 pub use sync::{SyncLines, sync_lines};
@@ -207,6 +208,10 @@ impl SourceDocument {
 
     pub fn text(&self) -> String {
         utf16::lossy(&self.text.units)
+    }
+
+    pub fn holds(&self, text: &str) -> bool {
+        self.text.units.iter().copied().eq(text.encode_utf16())
     }
 
     pub fn line_at(&self, offset: u32) -> u32 {

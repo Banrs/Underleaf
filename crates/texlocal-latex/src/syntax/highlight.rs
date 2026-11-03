@@ -76,7 +76,7 @@ enum Mode {
     Opening(Environment),
     Verbatim(&'static str),
     MathEnvironment(&'static str, bool),
-    Verb(u16),
+    Verb(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -91,6 +91,7 @@ struct Command {
     address: bool,
     braces: usize,
     optional: bool,
+    maths: Option<Mode>,
 }
 
 #[derive(Clone, Copy)]
@@ -99,13 +100,14 @@ struct Open {
     styled_below: Option<Command>,
 }
 
-fn open(commands: &mut Stack<Open>, named: bool, address: bool) {
+fn open(commands: &mut Stack<Open>, named: bool, address: bool, maths: Option<Mode>) {
     commands.push(Open {
         command: Command {
             named,
             address,
             braces: 0,
             optional: false,
+            maths,
         },
         styled_below: styled(commands),
     });
@@ -149,7 +151,7 @@ fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, H
             Mode::Opening(environment) => opening(&mut s, state, environment),
             Mode::Verbatim(name) => verbatim(&mut s, state, name),
             Mode::MathEnvironment(name, starred) => math_environment(&mut s, state, name, starred),
-            Mode::Verb(delimiter) => verb(&mut s, state, delimiter),
+            Mode::Verb(end) => verb(&mut s, state, end),
         };
         if let Some(kind) = kind {
             run(from, s.pos, kind);
@@ -161,10 +163,11 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     if let Some(name) = control_word(s) {
         let name = &s.text[name];
         match ascii(name, &mut [0; NAME]) {
-            "verb" => {
+            word @ ("verb" | "lstinline" | "mintinline") => {
                 s.eat("*");
-                if let Some(delimiter) = s.peek() {
-                    state.mode = Mode::Verb(delimiter);
+                let end = inline_code_end(s.text, s.pos, word);
+                if end > s.pos {
+                    state.mode = Mode::Verb(end);
                 }
             }
             "begin" if let Some(environment) = environment(&s.text[s.pos..]) => {
@@ -172,7 +175,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             }
             word => {
                 let address = matches!(word, "url" | "href");
-                open(&mut state.commands, named(name), address);
+                open(&mut state.commands, named(name), address, None);
                 state.mode = Mode::Arguments;
             }
         }
@@ -193,13 +196,19 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         s.pos = s.text.len();
         Some(Comment)
     } else if one_of(c, "}]") {
-        if state.commands.top().is_none() {
+        let Some(top) = state.commands.top() else {
             return Some(Invalid);
+        };
+        match top.command.maths.filter(|_| is(c, '}')) {
+            Some(maths) => {
+                state.commands.pop();
+                state.mode = maths;
+            }
+            None => state.mode = Mode::Arguments,
         }
-        state.mode = Mode::Arguments;
         None
     } else if one_of(c, "{[") {
-        open(&mut state.commands, false, false);
+        open(&mut state.commands, false, false, None);
         None
     } else if is_digit(c) {
         s.eat_while(|u| word(u) || is(u, '.'));
@@ -233,7 +242,18 @@ fn math(s: &mut Stream, state: &mut State, end: Option<&'static str>) -> Option<
         state.mode = Mode::Normal;
         return Some(Maths);
     }
-    if control_word(s).is_some() || control_symbol(s) {
+    if let Some(name) = control_word(s) {
+        let mut buf = [0; NAME];
+        if CATALOG
+            .text_commands
+            .contains(ascii(&s.text[name], &mut buf))
+        {
+            open(&mut state.commands, false, false, Some(state.mode));
+            state.mode = Mode::Arguments;
+        }
+        return Some(Command);
+    }
+    if control_symbol(s) {
         return Some(Command);
     }
     let c = s.peek()?;
@@ -283,9 +303,13 @@ fn arguments(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         s.pos += 1;
         return None;
     }
-    state.mode = Mode::Normal;
+    let maths = state.commands.top().and_then(|top| top.command.maths);
     state.commands.pop();
-    normal(s, state)
+    state.mode = maths.unwrap_or(Mode::Normal);
+    match maths {
+        Some(_) => None,
+        None => normal(s, state),
+    }
 }
 
 fn control_word(s: &mut Stream) -> Option<Range<usize>> {
@@ -353,12 +377,37 @@ fn verbatim(s: &mut Stream, state: &mut State, name: &'static str) -> Option<Hig
     None
 }
 
-fn verb(s: &mut Stream, state: &mut State, delimiter: u16) -> Option<HighlightKind> {
-    s.pos += 1;
-    s.eat_while(|u| u != delimiter);
-    s.pos = (s.pos + 1).min(s.text.len());
+fn verb(s: &mut Stream, state: &mut State, end: usize) -> Option<HighlightKind> {
+    s.pos = end;
     state.mode = Mode::Normal;
     None
+}
+
+// Ends inline code where `Scanner::verb` does, so no `$` inside it opens maths.
+fn inline_code_end(line: &[u16], mut i: usize, name: &str) -> usize {
+    let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
+    let past = |i: usize, close: u16| {
+        let found = line[i..].iter().position(|&u| u == close);
+        found.map_or(line.len(), |at| i + at + 1)
+    };
+    if name != "verb" && at(i, '[') {
+        i = past(i, b']'.into());
+    }
+    if name == "mintinline" && at(i, '{') {
+        i = past(i, b'}'.into());
+    }
+    let Some(&delimiter) = line.get(i) else {
+        return i;
+    };
+    if name != "verb" && is(delimiter, '{') {
+        let mut depth = 0;
+        let close = line[i..].iter().position(|&u| {
+            depth += is(u, '{') as i32 - is(u, '}') as i32;
+            depth == 0
+        });
+        return close.map_or(line.len(), |close| i + close + 1);
+    }
+    past(i + 1, delimiter)
 }
 
 struct Stream<'a> {

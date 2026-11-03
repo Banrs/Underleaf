@@ -127,3 +127,92 @@ fn ls_r_lists_what_tex_and_bibtex_can_load() {
     };
     assert_eq!(Installed::from_ls_r(ls_r), installed);
 }
+
+#[test]
+fn a_diff_keeps_unchanged_lines_between_distant_edits() {
+    let old: String = (0..3000).map(|i| format!("line {i}\n")).collect();
+    let new = old
+        .replacen("line 0\n", "first\n", 1)
+        .replace("line 2999\n", "last\n");
+    assert_eq!(
+        diff::compare(&old, &new),
+        [
+            Removed("line 0".into()),
+            Added("first".into()),
+            Same("line 1".into()),
+            Same("line 2".into()),
+            Same("line 3".into()),
+            Skipped(2992),
+            Same("line 2996".into()),
+            Same("line 2997".into()),
+            Same("line 2998".into()),
+            Removed("line 2999".into()),
+            Added("last".into()),
+        ]
+    );
+}
+
+#[test]
+fn a_diff_can_replace_every_line_of_a_large_file() {
+    let old = "old\n".repeat(2100);
+    let new = "new\n".repeat(2100);
+    let rows = diff::compare(&old, &new);
+    assert_eq!(rows.len(), 4200);
+    assert!(rows[..2100].iter().all(|row| *row == Removed("old".into())));
+    assert!(rows[2100..].iter().all(|row| *row == Added("new".into())));
+}
+
+#[test]
+fn short_diffs_reconstruct_both_texts_with_the_fewest_edits() {
+    let mut texts = vec![vec![]];
+    for len in 1..=4 {
+        for bits in 0..1 << len {
+            texts.push(
+                (0..len)
+                    .map(|i| if bits & (1 << i) == 0 { "a" } else { "b" })
+                    .collect(),
+            );
+        }
+    }
+    for a in &texts {
+        for b in &texts {
+            let rows = diff::compare(&a.join("\n"), &b.join("\n"));
+            if a == b {
+                assert!(rows.is_empty());
+                continue;
+            }
+            let mut lengths = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+            for (i, x) in a.iter().enumerate() {
+                for (j, y) in b.iter().enumerate() {
+                    lengths[i + 1][j + 1] = if x == y {
+                        lengths[i][j] + 1
+                    } else {
+                        lengths[i][j + 1].max(lengths[i + 1][j])
+                    };
+                }
+            }
+            let (mut before, mut after) = (Vec::new(), Vec::new());
+            let mut edits = 0;
+            for row in &rows {
+                match row {
+                    Same(line) => {
+                        before.push(line.as_str());
+                        after.push(line.as_str());
+                    }
+                    Removed(line) => {
+                        before.push(line.as_str());
+                        edits += 1;
+                    }
+                    Added(line) => {
+                        after.push(line.as_str());
+                        edits += 1;
+                    }
+                    Skipped(_) => panic!("four-line inputs need no folded context"),
+                }
+            }
+            assert_eq!(&before, a);
+            assert_eq!(&after, b);
+            assert_eq!(edits, a.len() + b.len() - 2 * lengths[a.len()][b.len()]);
+        }
+    }
+}

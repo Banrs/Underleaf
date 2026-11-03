@@ -41,9 +41,9 @@ private struct GeneralSettings: View {
                 Text("New and imported projects are kept here.").frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("New Projects") {
-                Picker("Engine", detail: "Each project can change its engine in the inspector.", selection: $app.newProjectEngine) {
+                Picker(selection: $app.newProjectEngine) {
                     ForEach(Engine.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
+                } label: { Text("Engine"); Text("Each project can change its engine in the inspector.") }
             }
         }
     }
@@ -69,8 +69,8 @@ private struct EditorSettings: View {
                 Toggle("Show Line Numbers", isOn: $app.lineNumbers)
             }
             Section("Typing") {
-                Toggle("Close Brackets Automatically", detail: "Typing (, [ or { adds its partner.", isOn: $app.autoPair)
-                Toggle("Suggest Completions While Typing", detail: "When off, press Option-Escape to see suggestions.", isOn: $app.autoComplete)
+                Toggle(isOn: $app.autoPair) { Text("Close Brackets Automatically"); Text("Typing (, [ or { adds its partner.") }
+                Toggle(isOn: $app.autoComplete) { Text("Suggest Completions While Typing"); Text("When off, press Option-Escape to see suggestions.") }
             }
         }
     }
@@ -89,8 +89,8 @@ private struct CompilingSettings: View {
         @Bindable var app = app
         Form {
             Section {
-                Toggle("Compile Automatically", detail: "Compiles shortly after you stop typing.", isOn: $app.autoCompile)
-                Toggle("Scroll to Cursor After Compiling", detail: "Scrolls the PDF to the line you are editing.", isOn: $app.syncAfterCompile)
+                Toggle(isOn: $app.autoCompile) { Text("Compile Automatically"); Text("Compiles shortly after you stop typing.") }
+                Toggle(isOn: $app.syncAfterCompile) { Text("Scroll to Cursor After Compiling"); Text("Scrolls the PDF to the line you are editing.") }
             }
             Section {
                 ProgramFolder(program: .tex)
@@ -105,10 +105,11 @@ private struct PDFSettings: View {
     var body: some View {
         @Bindable var app = app
         Form {
-            Picker("Page Colour",
-                   detail: "Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.",
-                   selection: $app.paper) {
+            Picker(selection: $app.paper) {
                 ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
+            } label: {
+                Text("Page Colour")
+                Text("Dark inverts the PDF’s pages for reading at night, keeping their colours’ hues. Printing and saving are unaffected.")
             }
         }
     }

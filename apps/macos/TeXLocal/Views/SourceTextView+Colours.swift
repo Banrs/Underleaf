@@ -19,12 +19,14 @@ extension SourceTextView {
         }
     }
 
+    /// 27.2 redraws no fragment whose rendering attributes change; redrawing only those whose runs differ cut typing CPU by 41% (3bef49e7).
     func colour(from start: Int) {
         guard let manager = textLayoutManager else { return }
         staleColours = nil
         let line = document.lineStart(document.line(at: start))
         let stale = textRange(.caret(line)).flatMap { NSTextRange(location: $0.location, end: manager.documentRange.endLocation) }
         manager.invalidateRenderingAttributes(for: stale ?? manager.documentRange)
+        // A fragment laid out but not shown keeps runs that may now be stale, so it's coloured again when it scrolls in.
         let shown = Set(fragments.map { ObjectIdentifier($0.fragment) })
         for case let fragment as NSTextLayoutFragment in fragmentColours.keyEnumerator().allObjects
         where !shown.contains(ObjectIdentifier(fragment)) {
@@ -35,6 +37,7 @@ extension SourceTextView {
         for (index, (_, fragment)) in fragments.enumerated().dropFirst(first) {
             let before = fragmentColours.object(forKey: fragment)
             manager.renderingAttributesValidator?(manager, fragment)
+            // The edited fragment always: TextKit may have coloured it anew while laying it out.
             if index == first || before == nil || before != fragmentColours.object(forKey: fragment) {
                 changed.append(fragment.layoutFragmentFrame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y))
             }
@@ -52,6 +55,7 @@ extension SourceTextView {
         return rect.isNull ? nil : rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
     }
 
+    /// 27.2 draws each shown fragment in a view of its own, which neither new rendering attributes nor the text view's display redraw.
     func redrawFragments(in rects: [CGRect]) {
         guard !rects.isEmpty else { return }
         func redraw(_ view: NSView) {

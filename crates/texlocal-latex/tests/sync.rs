@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde_json::{Value, json};
 use texlocal_latex::synctex::SyncTex;
-use texlocal_latex::syntax::{SyncLines, sync_lines};
+use texlocal_latex::syntax::{SourceDocument, SyncLines, sync_lines};
 use texlocal_latex::wordmatch::{PdfPage, find_in_pdf, find_in_source};
 
 const TWO_PAGES: &[u8] = include_bytes!("fixtures/two-pages.synctex");
@@ -161,13 +161,18 @@ fn a_word_is_found_in_the_pdf_by_the_words_around_it() {
 fn a_word_twice_in_the_pdf_needs_the_box_synctex_gives() {
     let twice = json!([{ "page": 1, "text": "a cat. a cat.", "near": [] }]);
     assert_eq!(in_pdf("cat", 1, &pages(twice)), Value::Null);
-    let near = pages(
-        json!([{ "page": 1, "text": "a cat. a cat.", "near": [{ "start": 9, "length": 3 }] }]),
-    );
-    assert_eq!(
-        in_pdf("cat", 1, &near),
-        json!({ "page": 1, "start": 9, "end": 12 })
-    );
+    for length in [3, u32::MAX] {
+        let near = pages(json!([{
+            "page": 1,
+            "text": "a cat. a cat.",
+            "near": [{ "start": 9, "length": length }]
+        }]));
+        assert_eq!(
+            in_pdf("cat", 1, &near),
+            json!({ "page": 1, "start": 9, "end": 12 }),
+            "length {length}"
+        );
+    }
 }
 
 #[test]
@@ -175,4 +180,29 @@ fn a_click_in_the_pdf_is_found_in_the_source_near_its_line() {
     let source = "world\nHello \\emph{world}.\nthree";
     assert_eq!(find_in_source(source, 2, "Hello world.", 7), Some((2, 13)));
     assert_eq!(find_in_source(source, 2, "Hello world.", 40), None);
+}
+
+#[test]
+fn a_documents_lines_read_on_from_its_checkpoints_match_a_scan_of_its_whole_text() {
+    let (preamble, body) = PICTURED.split_once("\\begin{document}\n").unwrap();
+    let body = body.split_once("\\end{document}").unwrap().0.repeat(4);
+    let items = "\\item one\n\n% a note\n\\item two\n".repeat(140);
+    let verbatim = "\\begin{verbatim}\n\n\\end{verbatim}";
+    let long = format!(
+        "{preamble}\\begin{{document}}\n{body}\\begin{{itemize}}\n{items}\\end{{itemize}}\n{verbatim}\nEnd.\n\\end{{document}}\nAfter.\n"
+    );
+    let chapter = "\\section{One}\n\\label{one}\n\nWords.\n";
+    let unclosed = "\\begin{document}\nWords.\n\\begin{itemize}\n\\item one\n";
+    let same = |doc: &mut SourceDocument, text: &str| {
+        for line in (0..=text.lines().count() as u32 + 1).rev() {
+            assert_eq!(doc.sync_lines(line), sync_lines(text, line), "line {line}");
+        }
+    };
+    for text in [PICTURED, &long, chapter, unclosed] {
+        let mut doc = SourceDocument::new(text);
+        same(&mut doc, text);
+        doc.edit(text.len() as u32 / 2, 0, "\n\\begin{quote}\n");
+        let edited = doc.text();
+        same(&mut doc, &edited);
+    }
 }

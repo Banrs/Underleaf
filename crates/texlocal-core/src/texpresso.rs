@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -11,9 +10,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use texlocal_latex::diff::delta;
 use texlocal_latex::message::Message;
-use texlocal_latex::utf16::byte_offset;
 
 use crate::messages;
 use crate::paths::{self, Project};
@@ -22,26 +19,11 @@ use crate::stamp::Stamp;
 use crate::tex::find_tool;
 use crate::{CoreError, lock, settings, sys, tail};
 
-mod sources;
-use sources::Sources;
-
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_LOG: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
 const UNREAD: Duration = Duration::from_secs(60);
 const LIVE_VERSION: u64 = 4;
-
-#[derive(Debug)]
-pub struct FileBuffer {
-    pub path: String,
-    pub text: String,
-}
-
-#[derive(Debug, Default)]
-pub struct Pane {
-    pub view: Option<(u32, u32)>,
-    pub caret: Option<(String, usize)>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveEvent {
@@ -54,7 +36,7 @@ pub enum LiveEvent {
         pages: u32,
         run: RunEnd,
         changed: Vec<PageRange>,
-        sources: HashMap<String, Arc<str>>,
+        revision: u64,
     },
     Done(RunEnd),
     Synced(u64),
@@ -83,16 +65,15 @@ pub trait Preview: Send + Sync {
     fn start(
         &self,
         project: &Project,
-        files: &[FileBuffer],
         path_env: &str,
-        pane: &Pane,
         sink: Sink,
     ) -> Result<Arc<dyn LiveRun>, CoreError>;
 }
 
+/// A running TeXpresso, which takes the messages of its protocol; offsets are in bytes.
 pub trait LiveRun: Send + Sync {
-    fn update(&self, rel: &str, text: &str);
-    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool;
+    fn open(&self, rel: &str, text: &str);
+    fn change(&self, rel: &str, offset: usize, remove: usize, text: &str);
     fn view(&self, first: u32, last: u32);
     fn caret(&self, rel: &str, offset: usize);
     fn rescan(&self);
@@ -147,18 +128,6 @@ impl Output {
     }
 }
 
-fn splice(
-    text: &mut String,
-    start: usize,
-    remove: usize,
-    inserted: &str,
-) -> Option<(usize, usize)> {
-    let offset = byte_offset(text, start)?;
-    let removed = byte_offset(&text[offset..], remove)?;
-    text.replace_range(offset..offset + removed, inserted);
-    Some((offset, removed))
-}
-
 struct Link {
     lines: mpsc::UnboundedSender<Vec<u8>>,
     tree: Tree,
@@ -179,7 +148,6 @@ struct Session {
     root: PathBuf,
     pdf: PathBuf,
     state: Mutex<State>,
-    files: Mutex<Sources>,
     sink: Sink,
 }
 
@@ -187,7 +155,6 @@ impl Session {
     fn new(
         root: PathBuf,
         pdf: PathBuf,
-        files: Sources,
         sink: Sink,
         tree: Tree,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<Vec<u8>>) {
@@ -195,7 +162,6 @@ impl Session {
         let session = Arc::new(Self {
             root,
             pdf,
-            files: Mutex::new(files),
             sink,
             state: Mutex::new(State {
                 link: Some(Link { lines, tree }),
@@ -207,9 +173,6 @@ impl Session {
             }),
         });
         (session, queued)
-    }
-    fn running(&self) -> bool {
-        lock(&self.state).link.is_some()
     }
     fn end(&self, error: Option<Message>) {
         let link = {
@@ -223,75 +186,41 @@ impl Session {
         let Some(link) = link else { return };
         link.tree.kill();
         remove_pdf_folder(&self.pdf);
-        *lock(&self.files) = Sources::default();
         (self.sink)(LiveEvent::Ended(error));
     }
-    fn send(&self, messages: &[Value]) {
-        let mut lines = Vec::new();
-        for message in messages {
-            serde_json::to_writer(&mut lines, message).expect("JSON values serialize");
-            lines.push(b'\n');
-        }
+    fn send(&self, message: &Value) {
+        let mut line = serde_json::to_vec(message).expect("JSON values serialize");
+        line.push(b'\n');
         if let Some(link) = &lock(&self.state).link {
-            let _ = link.lines.send(lines);
+            let _ = link.lines.send(line);
         }
     }
 }
 
 impl LiveRun for Session {
-    fn update(&self, rel: &str, text: &str) {
-        let mut files = lock(&self.files);
-        if !self.running() {
-            return;
-        }
-        let path = self.root.join(rel);
-        let message = match files.current.get(rel).map(|old| delta(old, text)) {
-            Some((_, 0, "")) => return,
-            Some((offset, remove, inserted)) => {
-                let message = json!(["change", path, offset, remove, inserted]);
-                files.changed(rel, offset, remove, inserted);
-                message
-            }
-            None => {
-                files.changed(rel, 0, 0, text);
-                json!(["open", path, text])
-            }
-        };
-        self.send(&[message]);
-        files.current.insert(rel.to_owned(), text.to_owned());
+    fn open(&self, rel: &str, text: &str) {
+        self.send(&json!(["open", self.root.join(rel), text]));
     }
-    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool {
-        let mut files = lock(&self.files);
-        if !self.running() {
-            return true;
-        }
-        let spliced = files
-            .current
-            .get_mut(rel)
-            .and_then(|held| splice(held, start, remove, text));
-        let Some((offset, removed)) = spliced else {
-            return false;
-        };
-        files.changed(rel, offset, removed, text);
-        let path = self.root.join(rel);
-        self.send(&[json!(["change", path, offset, removed, text])]);
-        true
+    fn change(&self, rel: &str, offset: usize, remove: usize, text: &str) {
+        self.send(&json!([
+            "change",
+            self.root.join(rel),
+            offset,
+            remove,
+            text
+        ]));
     }
     fn view(&self, first: u32, last: u32) {
-        self.send(&[json!(["view", first, last.max(first)])]);
+        self.send(&json!(["view", first, last.max(first)]));
     }
     fn caret(&self, rel: &str, offset: usize) {
-        let offset =
-            (lock(&self.files).current.get(rel)).and_then(|text| byte_offset(text, offset));
-        if let Some(offset) = offset {
-            self.send(&[json!(["caret", self.root.join(rel), offset])]);
-        }
+        self.send(&json!(["caret", self.root.join(rel), offset]));
     }
     fn rescan(&self) {
-        self.send(&[json!(["rescan"])]);
+        self.send(&json!(["rescan"]));
     }
     fn mark(&self, mark: u64) {
-        self.send(&[json!(["mark", mark])]);
+        self.send(&json!(["mark", mark]));
     }
     fn log(&self) -> String {
         let state = lock(&self.state);
@@ -352,25 +281,6 @@ impl Manager {
     }
 }
 
-fn opening(root: &Path, files: &[FileBuffer], pane: &Pane) -> (Sources, Vec<Value>) {
-    let mut buffers = Sources::default();
-    let mut opening = Vec::new();
-    for file in files {
-        opening.push(json!(["open", root.join(&file.path), file.text]));
-        buffers.changed(&file.path, 0, 0, &file.text);
-        buffers.current.insert(file.path.clone(), file.text.clone());
-    }
-    let view = pane
-        .view
-        .map(|(first, last)| json!(["view", first, last.max(first)]));
-    let caret = pane.caret.as_ref().and_then(|(rel, units)| {
-        let offset = byte_offset(buffers.current.get(rel)?, *units)?;
-        Some(json!(["caret", root.join(rel), offset]))
-    });
-    opening.extend(view.into_iter().chain(caret));
-    (buffers, opening)
-}
-
 fn command(
     executable: &Path,
     path_env: &str,
@@ -416,9 +326,7 @@ impl Preview for Manager {
     fn start(
         &self,
         project: &Project,
-        files: &[FileBuffer],
         path_env: &str,
-        pane: &Pane,
         sink: Sink,
     ) -> Result<Arc<dyn LiveRun>, CoreError> {
         let root = fs::canonicalize(&project.root)?;
@@ -443,8 +351,7 @@ impl Preview for Manager {
             remove_pdf_folder(&pdf);
             CoreError::internal(messages::texpresso_unstarted(err))
         })?;
-        let (buffers, opening) = opening(&root, files, pane);
-        let (session, queued) = Session::new(root, pdf, buffers, sink, tree.clone());
+        let (session, queued) = Session::new(root, pdf, sink, tree.clone());
         let mut sessions = lock(&self.sessions);
         sessions.retain(|session| session.strong_count() > 0);
         sessions.push(Arc::downgrade(&session));
@@ -461,7 +368,6 @@ impl Preview for Manager {
             }
         };
         tokio::spawn(stop_on_exit(exit, weak));
-        session.send(&opening);
         Ok(session)
     }
 }
@@ -555,28 +461,22 @@ fn apply_message(session: &Session, mut message: Value) {
         return session.end(Some(messages::live_unpatched()));
     }
     let event = match verb {
-        "page" => match (number(1), message[2].take()) {
-            (Some(page), Value::String(pdf)) => LiveEvent::Page { page, pdf },
+        "page" => match (number(1), message.get_mut(2).map(Value::take)) {
+            (Some(page), Some(Value::String(pdf))) => LiveEvent::Page { page, pdf },
             _ => return,
         },
         "pdf" => match document(session, message) {
             Some(event) => event,
             None => return,
         },
-        "done" => match serde_json::from_value(message[1].take()) {
+        "done" => match serde_json::from_value(message.get_mut(1).map(Value::take).into()) {
             Ok(run) => LiveEvent::Done(run),
             Err(_) => return,
         },
-        "synced" => {
-            let (Some(mark), Some(revision)) = (message[1].as_u64(), message[2].as_u64()) else {
-                return;
-            };
-            // A settled viewport can acknowledge edits without changing the whole PDF.
-            if lock(&session.files).acknowledge(revision).is_none() {
-                return session.end(Some(messages::live_unpatched()));
-            }
-            LiveEvent::Synced(mark)
-        }
+        "synced" => match message[2].as_u64() {
+            Some(revision) => LiveEvent::Synced(revision),
+            None => return,
+        },
         "truncate" | "append" => {
             let mut state = lock(&session.state);
             let output = match message[1].as_str() {
@@ -612,18 +512,13 @@ fn document(session: &Session, message: Value) -> Option<LiveEvent> {
     {
         return None;
     }
-    let sources = lock(&session.files).typeset(revision);
-    let Some(sources) = sources else {
-        session.end(Some(messages::live_unpatched()));
-        return None;
-    };
     Some(LiveEvent::Document {
         path: session
             .pdf
             .with_extension(format!("pdf.{serial}.pdf"))
             .to_string_lossy()
             .into_owned(),
-        sources,
+        revision,
         pages,
         run,
         changed: ranges
@@ -656,7 +551,7 @@ mod tests {
 
     async fn typed(run: &dyn LiveRun, at: usize, keys: &str) {
         for (i, key) in keys.char_indices() {
-            assert!(run.edit("main.tex", at + i, 0, &key.to_string()));
+            run.change("main.tex", at + i, 0, &key.to_string());
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
@@ -665,7 +560,7 @@ mod tests {
         let (tx, events) = channel();
         let sink: Sink = Box::new(move |event| drop(tx.send(event)));
         let pdf = dir.join("live/live.pdf");
-        let (session, _) = Session::new(dir.into(), pdf, Sources::default(), sink, Tree::default());
+        let (session, _) = Session::new(dir.into(), pdf, sink, Tree::default());
         (session, events)
     }
 
@@ -694,50 +589,29 @@ mod tests {
     }
 
     #[test]
-    fn a_pdf_received_after_a_newer_edit_carries_the_sources_it_used() {
+    fn a_pdf_names_its_file_and_the_revision_it_typeset_and_malformed_messages_are_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let files = [FileBuffer {
-            path: "main.tex".into(),
-            text: "old\n".into(),
-        }];
-        let (sources, _) = opening(dir.path(), &files, &Pane::default());
-        let (tx, events) = channel();
-        let (session, _lines) = Session::new(
-            dir.path().into(),
-            dir.path().join("live.pdf"),
-            sources,
-            Box::new(move |e| tx.send(e).unwrap()),
-            Tree::default(),
-        );
+        let (session, events) = listening(dir.path());
         apply_message(&session, json!(["live", LIVE_VERSION]));
         for malformed in [
             json!(["pdf", 1, 1, "complete", [[0, 1]], 1]),
             json!(["pdf", 1, 2, "complete", [[1, 0]], 1]),
             json!(["pdf", 1, 1, "complete", [[0, u64::MAX]], 1]),
             json!(["pdf", 1, 1, "unknown", [], 1]),
+            json!(["page", 1]),
+            json!(["done"]),
         ] {
             apply_message(&session, malformed);
             assert!(events.try_recv().is_err());
         }
-        assert!(session.edit("main.tex", 0, 0, "new\n"));
-        for (serial, revision, text) in [(1, 1, "old\n"), (2, 2, "new\nold\n")] {
-            apply_message(&session, json!(["synced", serial, revision]));
-            assert_eq!(events.recv().unwrap(), LiveEvent::Synced(serial));
-            apply_message(
-                &session,
-                json!(["pdf", serial, 1, "complete", [[0, 0]], revision]),
-            );
-            let LiveEvent::Document { path, sources, .. } = events.recv().unwrap() else {
-                panic!("PDF expected")
-            };
-            assert_eq!(
-                Path::new(&path),
-                dir.path().join(format!("live.pdf.{serial}.pdf"))
-            );
-            assert_eq!(&*sources["main.tex"], text);
-        }
-        apply_message(&session, json!(["pdf", 3, 1, "complete", [], 3]));
-        assert!(matches!(events.recv().unwrap(), LiveEvent::Ended(Some(_))));
+        apply_message(&session, json!(["synced", 4, 2]));
+        assert_eq!(events.recv().unwrap(), LiveEvent::Synced(2));
+        apply_message(&session, json!(["pdf", 3, 1, "complete", [[0, 0]], 5]));
+        let LiveEvent::Document { path, revision, .. } = events.recv().unwrap() else {
+            panic!("PDF expected")
+        };
+        assert_eq!(Path::new(&path), dir.path().join("live/live.pdf.3.pdf"));
+        assert_eq!(revision, 5);
     }
 
     #[tokio::test]
@@ -770,7 +644,7 @@ mod tests {
             read_output(output, Arc::clone(&session), true).await;
             let heard: Vec<_> = events.try_iter().collect();
             assert_eq!(heard, [LiveEvent::Ended(Some(messages::live_unpatched()))]);
-            assert!(!session.running());
+            assert!(lock(&session.state).link.is_none());
         }
     }
 
@@ -830,18 +704,12 @@ mod tests {
         let (tx, events) = channel();
         let sink: Sink = Box::new(move |event| drop(tx.send(event)));
         let manager = Manager::new(Arc::default(), dir.path().join("cache"));
-        let files = [FileBuffer {
-            path: "main.tex".into(),
-            text: text.clone(),
-        }];
-        let pane = Pane {
-            view: Some((0, 0)),
-            caret: None,
-        };
         let helpers = std::env::var_os("TEXLOCAL_TEXPRESSO")
             .and_then(|program| Some(Path::new(&program).parent()?.to_path_buf()));
         let path = tool_paths(&AppSettings::default(), helpers.as_ref()).1;
-        let run = manager.start(&project, &files, &path, &pane, sink).unwrap();
+        let run = manager.start(&project, &path, sink).unwrap();
+        run.open("main.tex", &text);
+        run.view(0, 0);
         let mut started = std::iter::from_fn(|| events.recv_timeout(Duration::from_secs(120)).ok());
         assert!(started.any(|event| matches!(event, LiveEvent::Done(_))));
         heard(&events, Duration::from_secs(5));

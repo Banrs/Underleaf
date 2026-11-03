@@ -1,28 +1,26 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use notify::RecommendedWatcher;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
-use texlocal_latex::project::Scan;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
 use tokio::sync::{mpsc, oneshot, watch as signal};
 use tokio::time::Instant;
 
-use super::build::{Builds, built_pdf};
+use super::build::{Builds, Shown, built_pdf};
 use super::documents::{Docs, Resolution};
 use super::edits::{Fixed, ProjectEdits};
 use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::{Lifecycle, Stopped};
-use super::watch::{self, Change, TreeIndex};
+use super::watch::Tree;
 use super::{Compiler, Msg, OnActor, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
 use crate::events::{Event, Said, Sent, SessionEvent};
@@ -36,53 +34,61 @@ use crate::settings::{self, SettingsPatch, UiPatch, UiState};
 use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
 
 requests! {
-    Session {
-        OpenProject { id: String, auto_compile: bool } -> UiState,
-        CloseProject {} -> bool,
-        Reattach {} -> (),
-        SetOptions { auto_compile: bool } -> (),
-        Open { path: RelPath } -> Option<String>,
-        Composing { path: RelPath, composing: bool } -> (),
-        Save { reporting: bool } -> bool,
-        Resolve { path: RelPath, answer: Resolution } -> (),
-        Compile { auto: bool } -> (),
-        StopCompile {} -> (),
-        Clean {} -> (),
-        Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>,
-        FindUsages { path: RelPath, offset: u32 } -> Option<Usages>,
-        LookUp { path: RelPath, offset: u32 } -> Option<QuickHelp>,
-        QuickOpen { query: String } -> Vec<QuickOpenItem>,
-        Replace { query: String, replacement: String, match_case: bool, whole_word: bool } -> ProjectEdits,
-        RenameSymbol { kind: SymbolKind, from: String, to: String } -> ProjectEdits,
-        ApplyFix { #[schemars(with = "String")] id: Fix } -> Option<Fixed>,
-        ListVersions {} -> Vec<Snapshot>,
-        SaveVersion { name: String } -> Option<Snapshot>,
-        CompareVersion { id: String, path: RelPath } -> Vec<DiffLine>,
-        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> ProjectEdits,
-        Rename { from: RelPath, to: String } -> Option<RenameResult>,
-        CreateEntry { folder: String, name: String, dir: bool } -> String,
-        SetSettings { patch: SettingsPatch } -> (),
-        Trash { path: RelPath } -> Option<PathBuf>,
-        PutBack { path: RelPath, trashed: PathBuf } -> (),
-        StartLive {} -> (),
-        StopLive {} -> (),
-        LiveView { first: u32, last: u32 } -> (),
-        LiveCaret { path: RelPath, offset: usize } -> (),
-        LiveLog { shown: bool } -> (),
-        ReloadTree {} -> (),
-        ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
-        ExportZip { dest: PathBuf, for_arxiv: bool } -> (),
-        SetUiState { patch: UiPatch } -> (),
-        SynctexForward { file: RelPath, line: u32 } -> ForwardLoc,
-        SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc,
-        SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
+    Session(actor: Actor, pending) {
+        OpenProject { id: String, auto_compile: bool } -> UiState
+            = Err(CoreError::conflict(messages::session_open())),
+        CloseProject {} -> bool => actor.close(pending),
+        SetOptions { auto_compile: bool } -> () = Ok(actor.core.auto_compile = auto_compile),
+        Open { path: RelPath } -> Option<String> = actor.open(&path.0),
+        Save { reporting: bool } -> bool = actor.docs.save_edits(&mut actor.core, reporting),
+        Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
+        Compile { auto: bool } -> () = actor.compile(auto),
+        StopCompile {} -> () = Ok(actor.builds.stop(&actor.core)),
+        Clean {} -> () => actor.builds.clean(&actor.core, actor.live.asked(), pending),
+        Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>
+            => actor.search(Query::new(&query, match_case, whole_word), pending),
+        FindUsages { path: RelPath, offset: u32 } -> Option<Usages> => actor.usages(&path.0, offset, pending),
+        LookUp { path: RelPath, offset: u32 } -> Option<QuickHelp> => actor.quick_help(&path.0, offset, pending),
+        QuickOpen { query: String } -> Vec<QuickOpenItem> => actor.tree.quick_open(query, pending),
+        Replace { query: String, replacement: String, match_case: bool, whole_word: bool } -> ProjectEdits => {
+            let replace = actor.replace(Query::new(&query, match_case, whole_word), replacement);
+            actor.before(Reason::ReplaceAll, replace, pending);
+        },
+        RenameSymbol { kind: SymbolKind, from: String, to: String } -> ProjectEdits => {
+            let rename = actor.rename_symbol(kind, from, to);
+            actor.before(Reason::Rename, rename, pending);
+        },
+        ApplyFix { #[schemars(with = "String")] id: Fix } -> Option<Fixed> => actor.fix(id, pending),
+        ListVersions {} -> Vec<Snapshot> => actor.history_list(pending),
+        SaveVersion { name: String } -> Option<Snapshot> => actor.history_save(name, pending),
+        CompareVersion { id: String, path: RelPath } -> Vec<DiffLine> => actor.history_compare(id, path.0, pending),
+        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> ProjectEdits
+            => actor.history_restore(id, paths, pending),
+        Rename { from: RelPath, to: String } -> Option<RenameResult> = actor.rename(&from.0, &to),
+        CreateEntry { folder: String, name: String, dir: bool } -> String = actor.create_entry(&folder, &name, dir),
+        SetSettings { patch: SettingsPatch } -> () = actor.set_settings(&patch, true),
+        Trash { path: RelPath } -> Option<PathBuf> = actor.trash(&path.0),
+        PutBack { path: RelPath, trashed: PathBuf } -> () = actor.put_back(&path.0, &trashed),
+        StartLive {} -> () = Ok(actor.live.start_asked(&mut actor.core, &actor.docs)),
+        StopLive {} -> () = Ok(actor.live.stop_asked(&mut actor.core, &actor.docs)),
+        LiveView { first: u32, last: u32 } -> () = Ok(actor.live.view(first, last)),
+        LiveLog { shown: bool } -> () = Ok(actor.live.show_log(&mut actor.core, &actor.docs, shown)),
+        ReloadTree {} -> () = Ok(actor.reload_tree()),
+        ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported
+            = actor.import(&dir, &paths, conflict),
+        ExportZip { dest: PathBuf, for_arxiv: bool } -> () => actor.export(dest, for_arxiv, pending),
+        SetUiState { patch: UiPatch } -> () = actor.write_ui(patch),
+        SynctexForward { file: RelPath, line: u32 } -> ForwardLoc => actor.synctex_forward(file.0, line, pending),
+        SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc
+            => actor.synctex_inverse(page, x, y, click, pending),
+        SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>
+            => actor.synctex_match(file.0, line, column, pages, pending),
     }
 }
 
 pub(crate) enum Later {
     Compile(bool),
     Restart,
-    FlushLive,
     Rescan,
 }
 
@@ -126,8 +132,9 @@ enum Wake {
     TexFound,
 }
 
-pub(crate) struct Actor {
-    pub id: u64,
+/// What every part of a session uses: its project, services and channels, and the work it does later.
+pub(crate) struct Core {
+    id: u64,
     pub children: u64,
     pub project: Project,
     pub service: Arc<Service>,
@@ -135,29 +142,51 @@ pub(crate) struct Actor {
     pub preview: Arc<dyn Preview>,
     events: std::sync::mpsc::Sender<Said>,
     pub tx: mpsc::UnboundedSender<Msg>,
-    pub docs: Docs,
-    pub next_doc: u64,
-    pub open: Option<String>,
-    pub opens: Arc<AtomicU64>,
-    pub scan: Arc<RwLock<Arc<Scan>>>,
-    pub symbols_seq: u64,
-    pub facts: Arc<projects::Files>,
-    pub edits: u64,
-    pub last_edits: HashMap<String, u64>,
-    pub auto_compile: bool,
-    pub builds: Builds,
-    tex: signal::Receiver<bool>,
-    pub timers: BTreeMap<Timer, Instant>,
-    pub fs_pending: Vec<Change>,
-    pub tree: TreeIndex,
-    _watcher: Option<RecommendedWatcher>,
-    pub live: Live,
+    sent: Sent<SessionSection>,
     pub later: VecDeque<Later>,
+    pub timers: BTreeMap<Timer, Instant>,
+    pub auto_compile: bool,
+    pub pdf: Shown,
     pub history: Arc<std::sync::mpsc::Sender<Job>>,
     pub writes_history: Arc<AtomicBool>,
+}
+
+impl Core {
+    pub fn emit(&self, event: Event) {
+        let session = self.id;
+        let _ = self
+            .events
+            .send(Said::Event(SessionEvent { session, event }));
+    }
+
+    pub fn publish(&mut self, section: SessionSection) -> bool {
+        let Some(said) = self.sent.changed(&section) else {
+            return false;
+        };
+        self.emit(Event::Section(said));
+        true
+    }
+
+    pub fn after(&mut self, timer: Timer) {
+        self.timers.insert(timer, Instant::now() + timer.wait());
+    }
+
+    pub fn soon(&mut self, timer: Timer) {
+        self.timers
+            .entry(timer)
+            .or_insert(Instant::now() + timer.wait());
+    }
+}
+
+pub(crate) struct Actor {
+    pub core: Core,
+    pub docs: Docs,
+    pub builds: Builds,
+    tex: signal::Receiver<bool>,
+    pub tree: Tree,
+    pub live: Live,
     pub snapshots: usize,
     pub queued: VecDeque<OnActor>,
-    pub sent: Sent<SessionSection>,
     stage: Stage,
 }
 
@@ -167,7 +196,6 @@ impl Actor {
         id: u64,
         opening: OpenProject,
         docs: Docs,
-        opens: Arc<AtomicU64>,
         tx: mpsc::UnboundedSender<Msg>,
     ) -> Result<(Self, UiState), CoreError> {
         let OpenProject {
@@ -175,24 +203,23 @@ impl Actor {
             auto_compile,
         } = opening;
         let (project, in_session) = sessions.service.in_session(&project_id)?;
-        let tree = projects::file_tree(&project)?;
-        let watcher = sessions
-            .watch
-            .then(|| watch::watch(&project.root, tx.clone()))
-            .flatten();
-        let mut builds = Builds::default();
-        builds.pdf = built_pdf(&project);
+        let nodes = projects::file_tree(&project)?;
+        let tree = Tree::new(&project, &nodes, sessions.watch.then(|| tx.clone()));
+        let pdf = Shown {
+            built: built_pdf(&project),
+            ..Shown::default()
+        };
         settings::migrate(&project);
         let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
         if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
             later.push_back(Later::Restart);
         }
-        if auto_compile && builds.pdf.is_none() {
+        if auto_compile && pdf.built.is_none() {
             later.push_back(Later::Compile(true));
         }
         let history = sessions.service.history(&project);
-        let mut actor = Self {
+        let core = Core {
             id,
             children: sessions.service.processes.owner(),
             project,
@@ -201,34 +228,28 @@ impl Actor {
             preview: Arc::clone(&sessions.preview),
             events: sessions.hub.queue.clone(),
             tx,
-            docs,
-            next_doc: 1,
-            open: None,
-            opens,
-            scan: Arc::default(),
-            symbols_seq: 0,
-            facts: Arc::default(),
-            edits: 0,
-            last_edits: HashMap::new(),
-            auto_compile,
-            builds,
-            tex: sessions.service.tex_found.subscribe(),
-            timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
-            fs_pending: Vec::new(),
-            tree: TreeIndex::of(&tree),
-            _watcher: watcher,
-            live: Live::default(),
+            sent: Sent::default(),
             later,
+            timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
+            auto_compile,
+            pdf,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
+        };
+        let mut actor = Self {
+            core,
+            docs,
+            builds: Builds::default(),
+            tex: sessions.service.tex_found.subscribe(),
+            tree,
+            live: Live::default(),
             snapshots: 0,
             queued: VecDeque::new(),
-            sent: Sent::default(),
             stage: Stage::Open(in_session),
         };
         actor.reopen(ui.file.clone());
-        actor.publish_all(tree);
-        actor.snapshot_soon();
+        actor.publish_all(nodes);
+        actor.core.snapshot_soon();
         Ok((actor, ui))
     }
 
@@ -254,7 +275,7 @@ impl Actor {
             if matches!(self.stage, Stage::Closed) {
                 return;
             }
-            let deadline = self.timers.values().min().copied();
+            let deadline = self.core.timers.values().min().copied();
             let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
             let waiting_for_tex = self.builds.waiting_for_tex;
             woken = tokio::select! {
@@ -272,33 +293,23 @@ impl Actor {
 
     fn tex_changed(&mut self) {
         if *self.tex.borrow_and_update() {
-            self.builds.waiting_for_tex = false;
-            if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
-            }
+            self.builds.tex_found(&mut self.core);
         }
     }
 
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _ = self.flush_all(false);
-            self.stop_compile();
-            self.live_stop();
+            let _ = self.docs.flush_all(&mut self.core, false);
+            self.builds.stop(&self.core);
+            self.live.stop(&mut self.core, &self.docs);
         }));
-        self.stop_history();
+        self.core.stop_history();
         let stopped = Stopped {
-            unsaved: self.dirty_paths(),
+            unsaved: self.docs.dirty_paths(),
         };
-        for (_, doc) in self.docs.iter_mut() {
-            doc.doc.close();
-            doc.error = Some(if doc.dirty() {
-                messages::stopped_unsaved()
-            } else {
-                messages::stopped_saved()
-            });
-        }
-        self.publish_documents();
-        self.publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
+        self.docs.stopped(&mut self.core);
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
         for close in self.end() {
             close.send(Err(super::stopped()));
         }
@@ -313,16 +324,7 @@ impl Actor {
         while let Some(queued) = self.queued.pop_front() {
             queued(self);
         }
-        for reply in std::mem::take(&mut self.builds.cleaners) {
-            reply.send(Err(super::stopped()));
-        }
-    }
-
-    pub fn emit(&self, event: Event) {
-        let session = self.id;
-        let _ = self
-            .events
-            .send(Said::Event(SessionEvent { session, event }));
+        self.builds.stopped();
     }
 
     fn handle(&mut self, message: Msg) {
@@ -341,204 +343,67 @@ impl Actor {
                 _ => {}
             };
         }
+        let (cx, docs) = (&mut self.core, &self.docs);
         match message {
-            Msg::Changed {
-                doc,
-                version,
-                edit,
-                recovered,
-            } => self.changed(doc, version, &edit, recovered),
-            Msg::Command(command, reply) => self.command(command, reply),
+            Msg::Edited { doc, version, edit } => self.edited(doc, version, &edit),
+            Msg::Selected { doc, caret } => {
+                if let Some(path) = docs.path_of(doc) {
+                    self.live.caret(cx, path, caret);
+                }
+            }
+            Msg::Command(command, reply) => command.run(self, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
-            Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
-            Msg::Live(generation, event) => self.live_event(generation, event),
-            Msg::Snapshotted(finish) => finish(self),
-            Msg::Fs(changes) => {
-                self.fs_pending.extend(changes);
-                self.soon(Timer::Fs);
+            Msg::Symbols { seq, edits, result } => {
+                if let Some((checks, outline)) = self.tree.scanned(seq, result) {
+                    self.builds.checks_done(cx, docs, checks, edits);
+                    cx.publish(SessionSection::Outline(Some(outline)));
+                }
             }
+            Msg::Live(generation, event) => self.live.event(cx, docs, generation, event),
+            Msg::Snapshotted(finish) => finish(self),
+            Msg::Fs(changes) => self.tree.changed(cx, changes),
         }
     }
 
     fn fire(&mut self) {
         let now = Instant::now();
-        while let Some((&timer, _)) = self.timers.iter().find(|(_, at)| **at <= now) {
-            self.timers.remove(&timer);
+        while let Some((&timer, _)) = self.core.timers.iter().find(|(_, at)| **at <= now) {
+            self.core.timers.remove(&timer);
+            let (cx, docs) = (&mut self.core, &self.docs);
             match timer {
-                Timer::Autosave => self.autosave(),
-                Timer::Symbols => self.scan_symbols(),
+                Timer::Autosave => self.docs.autosave(cx),
+                Timer::Symbols => self.tree.scan(cx, docs, self.builds.clock),
                 Timer::Fs => self.files_changed_on_disk(),
-                Timer::Caret => self.caret_settled(),
-                Timer::Follow => self.follow(),
-                Timer::Halting => self.live_halted(true),
-                Timer::Restart => self.later.push_back(Later::Restart),
-                Timer::Disk => self.refresh_live_disk(),
-                Timer::Log => self.publish_live_log(),
-                Timer::Issues => self.live_issues_settled(),
+                Timer::Caret => self.live.caret_settled(),
+                Timer::Follow => self.live.follow(cx, docs),
+                Timer::Halting => self.live.halted(cx, docs, true),
+                Timer::Restart => cx.later.push_back(Later::Restart),
+                Timer::Disk => self.live.refresh_disk(cx, docs),
+                Timer::Log => self.live.publish_log(cx),
+                Timer::Issues => self.live.issues_settled(cx, docs, &self.tree),
             }
         }
     }
 
-    pub fn after(&mut self, timer: Timer) {
-        self.timers.insert(timer, Instant::now() + timer.wait());
-    }
-
-    pub fn soon(&mut self, timer: Timer) {
-        self.timers
-            .entry(timer)
-            .or_insert(Instant::now() + timer.wait());
-    }
-
     fn run_later(&mut self) {
-        while let Some(next) = self.later.pop_front() {
+        while let Some(next) = self.core.later.pop_front() {
             if !matches!(self.stage, Stage::Open(_)) {
-                self.later.clear();
+                self.core.later.clear();
                 return;
             }
             match next {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart => self.live_start(),
-                Later::FlushLive => self.flush_pending(),
-                Later::Rescan => self.live_rescan(),
+                Later::Restart => self.live.start(&mut self.core, &self.docs),
+                Later::Rescan => self.live.rescan(),
             }
         }
     }
 
-    #[expect(clippy::unit_arg)]
-    fn command(&mut self, command: Session, reply: Reply) {
-        let answer = match command {
-            Session::OpenProject(_, answer) => {
-                answer(Err(CoreError::conflict(messages::session_open())))
-            }
-            Session::CloseProject(CloseProject {}, answer) => {
-                return self.close(Pending { reply, answer });
-            }
-            Session::Reattach(Reattach {}, answer) => answer(Ok(self.resync())),
-            Session::SetOptions(SetOptions { auto_compile }, answer) => {
-                answer(Ok(self.auto_compile = auto_compile))
-            }
-            Session::Open(Open { path }, answer) => answer(self.open(&path.0)),
-            Session::Composing(Composing { path, composing }, answer) => {
-                answer(Ok(self.composing(&path.0, composing)))
-            }
-            Session::Save(Save { reporting }, answer) => answer(self.save_edits(reporting)),
-            Session::Resolve(Resolve { path, answer: to }, answer) => {
-                answer(self.resolve(&path.0, to))
-            }
-            Session::Compile(Compile { auto }, answer) => answer(self.compile(auto)),
-            Session::StopCompile(StopCompile {}, answer) => answer(Ok(self.stop_compile())),
-            Session::Clean(Clean {}, answer) => return self.clean(Pending { reply, answer }),
-            Session::Search(
-                Search {
-                    query,
-                    match_case,
-                    whole_word,
-                },
-                answer,
-            ) => {
-                let query = Query::new(&query, match_case, whole_word);
-                return self.search(query, Pending { reply, answer });
-            }
-            Session::FindUsages(FindUsages { path, offset }, answer) => {
-                return self.usages(&path.0, offset, Pending { reply, answer });
-            }
-            Session::LookUp(LookUp { path, offset }, answer) => {
-                return self.quick_help(&path.0, offset, Pending { reply, answer });
-            }
-            Session::QuickOpen(QuickOpen { query }, answer) => {
-                return self.quick_open(query, Pending { reply, answer });
-            }
-            Session::Replace(
-                Replace {
-                    query,
-                    replacement,
-                    match_case,
-                    whole_word,
-                },
-                answer,
-            ) => {
-                let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
-                return self.before(Reason::ReplaceAll, replace, Pending { reply, answer });
-            }
-            Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
-                let rename = self.rename_symbol(kind, from, to);
-                return self.before(Reason::Rename, rename, Pending { reply, answer });
-            }
-            Session::ApplyFix(ApplyFix { id }, answer) => {
-                return self.fix(id, Pending { reply, answer });
-            }
-            Session::ListVersions(ListVersions {}, answer) => {
-                return self.history_list(Pending { reply, answer });
-            }
-            Session::SaveVersion(SaveVersion { name }, answer) => {
-                return self.history_save(name, Pending { reply, answer });
-            }
-            Session::CompareVersion(CompareVersion { id, path }, answer) => {
-                return self.history_compare(id, path.0, Pending { reply, answer });
-            }
-            Session::RestoreVersion(RestoreVersion { id, paths }, answer) => {
-                return self.history_restore(id, paths, Pending { reply, answer });
-            }
-            Session::Rename(Rename { from, to }, answer) => answer(self.rename(&from.0, &to)),
-            Session::CreateEntry(CreateEntry { folder, name, dir }, answer) => {
-                answer(self.create_entry(&folder, &name, dir))
-            }
-            Session::SetSettings(SetSettings { patch }, answer) => {
-                answer(self.set_settings(&patch, true))
-            }
-            Session::Trash(Trash { path }, answer) => answer(self.trash(&path.0)),
-            Session::PutBack(PutBack { path, trashed }, answer) => {
-                answer(self.put_back(&path.0, &trashed))
-            }
-            Session::StartLive(StartLive {}, answer) => answer(Ok(self.live_start_asked())),
-            Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),
-            Session::LiveView(LiveView { first, last }, answer) => {
-                answer(Ok(self.live_view(first, last)))
-            }
-            Session::LiveCaret(LiveCaret { path, offset }, answer) => {
-                answer(Ok(self.live_caret(path.0, offset)))
-            }
-            Session::LiveLog(LiveLog { shown }, answer) => answer(Ok(self.show_live_log(shown))),
-            Session::ReloadTree(ReloadTree {}, answer) => answer(Ok(self.reload_tree())),
-            Session::ImportFiles(
-                ImportFiles {
-                    dir,
-                    paths,
-                    conflict,
-                },
-                answer,
-            ) => answer(self.import(&dir, &paths, conflict)),
-            Session::ExportZip(ExportZip { dest, for_arxiv }, answer) => {
-                return self.export(dest, for_arxiv, Pending { reply, answer });
-            }
-            Session::SetUiState(SetUiState { patch }, answer) => answer(self.write_ui(patch)),
-            Session::SynctexForward(SynctexForward { file, line }, answer) => {
-                return self.synctex_forward(file.0, line, Pending { reply, answer });
-            }
-            Session::SynctexInverse(SynctexInverse { page, x, y, click }, answer) => {
-                return self.synctex_inverse(page, x, y, click, Pending { reply, answer });
-            }
-            Session::SynctexMatch(
-                SynctexMatch {
-                    file,
-                    line,
-                    column,
-                    pages,
-                },
-                answer,
-            ) => {
-                let matching = Pending { reply, answer };
-                return self.synctex_match(file.0, line, column, pages, matching);
-            }
-        };
-        reply.send(answer);
-    }
-
     fn close(&mut self, reply: Pending<bool>) {
-        match self.flush_all(true) {
+        match self.docs.flush_all(&mut self.core, true) {
             Ok(true) => {}
             flushed => return reply.send(flushed),
         }
@@ -546,11 +411,12 @@ impl Actor {
             unreachable!("a closing session queues its closes")
         };
         self.stage = Stage::Closing(held, vec![reply]);
-        self.publish(SessionSection::Lifecycle(Lifecycle::Closing));
-        self.stop_compile();
-        self.live_stop();
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Closing));
+        self.builds.stop(&self.core);
+        self.live.stop(&mut self.core, &self.docs);
         self.docs.clear();
-        self.timers.clear();
+        self.core.timers.clear();
         self.close_when_idle();
     }
 
@@ -558,17 +424,18 @@ impl Actor {
         if self.builds.busy() || self.snapshots > 0 || !matches!(self.stage, Stage::Closing(..)) {
             return;
         }
-        self.stop_history();
+        self.core.stop_history();
         let closes = self.end();
-        self.publish(SessionSection::Lifecycle(Lifecycle::Closed));
-        self.service.relist();
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Closed));
+        self.core.service.relist();
         for close in closes {
             close.send(Ok(true));
         }
     }
 
     fn end(&mut self) -> Vec<Pending<bool>> {
-        self.service.processes.end(self.children);
+        self.core.service.processes.end(self.core.children);
         match std::mem::replace(&mut self.stage, Stage::Closed) {
             Stage::Closing(held, closes) => {
                 drop(held);

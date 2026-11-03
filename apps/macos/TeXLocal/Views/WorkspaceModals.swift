@@ -39,21 +39,21 @@ struct WorkspaceModals: ViewModifier {
             } message: { clash in
                 Text(clash.message)
             }
-            .alert(project.conflicts.first.map { $0.kind == .changed ? "“\($0.path.fileName)” Changed on Disk"
-                                                                     : "“\($0.path.fileName)” Was Moved or Deleted" } ?? "",
+            .alert(project.conflicts.first.map { $0.conflict == .gone ? "“\($0.path.fileName)” Was Moved or Deleted"
+                                                                       : "“\($0.path.fileName)” Changed on Disk" } ?? "",
                    item: Binding(get: { project.conflicts.first }, set: { _ in })) { asked in
-                switch asked.kind {
-                case .changed:
-                    Button("Save Anyway") { project.answer(asked.path, .save) }
-                    Button("Revert", role: .destructive) { project.answer(asked.path, .revert) }
-                case .gone:
+                switch asked.conflict {
+                case .gone?:
                     Button("Save Again") { project.answer(asked.path, .save) }
                     Button("Discard Changes", role: .destructive) { project.answer(asked.path, .close) }
+                default:
+                    Button("Save Anyway") { project.answer(asked.path, .save) }
+                    Button("Revert", role: .destructive) { project.answer(asked.path, .revert) }
                 }
                 Button("Cancel", role: .cancel) { project.answer(asked.path, .cancel) }
             } message: { asked in
-                Text(asked.kind == .changed ? "Another app changed “\(asked.path)” while it has unsaved changes here."
-                     : "Another app moved or deleted “\(asked.path)”, which has unsaved changes here.")
+                Text(asked.conflict == .gone ? "Another app moved or deleted “\(asked.path)”, which has unsaved changes here."
+                     : "Another app changed “\(asked.path)” while it has unsaved changes here.")
             }
             .alert("Close “\(project.name)” Without Saving?", isPresented: Binding(get: { project.askingToDiscard != nil }, set: { _ in })) {
                 Button("Close Without Saving", role: .destructive) { project.answerDiscard(true) }

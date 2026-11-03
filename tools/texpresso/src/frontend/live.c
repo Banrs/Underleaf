@@ -149,11 +149,27 @@ static void apply_open(live_state *l, const char *path, const void *data, int si
     send(notify_file_changes, l->eng, l->ctx, e, changed);
 }
 
+static bool is_edit(fz_context *ctx, vstack *stack, val command)
+{
+  if (!val_is_array(command) || val_array_length(ctx, stack, command) == 0)
+    return false;
+  val verb = val_array_get(ctx, stack, command, 0);
+  const char *name = val_is_name(verb)     ? val_as_name(ctx, stack, verb)
+                     : val_is_string(verb) ? val_as_string(ctx, stack, verb)
+                                           : "";
+  return strcmp(name, "open") == 0 || strcmp(name, "change") == 0;
+}
+
 static void interpret_command(live_state *l, vstack *stack, val command)
 {
   struct editor_command cmd;
   if (!editor_parse(l->ctx, stack, command, &cmd))
+  {
+    // Rust counts every open and change it sends, so one that doesn't parse still counts here.
+    if (is_edit(l->ctx, stack, command))
+      l->revision++;
     return;
+  }
 
   switch (cmd.tag)
   {
@@ -183,6 +199,9 @@ static void interpret_command(live_state *l, vstack *stack, val command)
       break;
 
     case EDIT_CARET:
+      // A path cut short to fit would name another file.
+      if (strlen(cmd.caret.path) >= sizeof l->wish.caret_path)
+        break;
       snprintf(l->wish.caret_path, sizeof l->wish.caret_path, "%s", cmd.caret.path);
       l->wish.caret_offset = fz_maxi(cmd.caret.offset, 0);
       break;

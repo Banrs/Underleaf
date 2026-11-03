@@ -42,14 +42,6 @@ nonisolated protocol SourceRequest: WireRequest {}
 
 nonisolated protocol SyntaxRequest: WireRequest {}
 
-nonisolated struct AcceptCompletion: SourceRequest {
-    typealias Reply = Insertion?
-    static let command = "AcceptCompletion"
-
-    var index: Int
-    var caret: Int
-}
-
 nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
@@ -290,29 +282,6 @@ nonisolated extension Completions {
     }
 }
 
-nonisolated struct Composing: SessionRequest {
-    typealias Reply = Done
-    static let command = "Composing"
-
-    var path: String
-    var composing: Bool
-}
-
-nonisolated struct Conflict: Decodable, Hashable, Sendable {
-    var path: String
-    var kind: DiskConflict
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, kind }
-}
-
-nonisolated extension Conflict {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        kind = try wire.decode(DiskConflict.self, forKey: .kind)
-    }
-}
-
 nonisolated struct CoreError: Decodable, Hashable, Sendable {
     var kind: ErrorKind
     var message: Message
@@ -431,9 +400,10 @@ nonisolated extension DocumentEdits {
 nonisolated struct DocumentState: Decodable, Hashable, Sendable {
     var path: String
     var error: Message?
-    var held: DiskConflict?
+    var conflict: DiskConflict?
+    var asking: Bool
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, error, held }
+    enum CodingKeys: String, CodingKey, CaseIterable { case path, error, conflict, asking }
 }
 
 nonisolated extension DocumentState {
@@ -441,7 +411,8 @@ nonisolated extension DocumentState {
         let wire = try decoder.strict(CodingKeys.self)
         path = try wire.decode(String.self, forKey: .path)
         error = try wire.decode(Message?.self, forKey: .error)
-        held = try wire.decode(DiskConflict?.self, forKey: .held)
+        conflict = try wire.decode(DiskConflict?.self, forKey: .conflict)
+        asking = try wire.decode(Bool.self, forKey: .asking)
     }
 }
 
@@ -483,9 +454,8 @@ nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable 
 
 nonisolated enum Event: Decodable, Hashable, Sendable {
     case section(SessionSection)
-    case documentReload(String)
+    case reload(DocumentEdits)
     case renamed(Renamed)
-    case conflict(Conflict)
     case filesChanged([String])
     case buildFinished(BuildFinished)
     case liveAlert
@@ -501,9 +471,8 @@ nonisolated extension Event {
         let wire = try decoder.strict(CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
-        case "documentReload": self = .documentReload(try wire.decode(String.self, forKey: .value))
+        case "reload": self = .reload(try wire.decode(DocumentEdits.self, forKey: .value))
         case "renamed": self = .renamed(try wire.decode(Renamed.self, forKey: .value))
-        case "conflict": self = .conflict(try wire.decode(Conflict.self, forKey: .value))
         case "filesChanged": self = .filesChanged(try wire.decode([String].self, forKey: .value))
         case "buildFinished": self = .buildFinished(try wire.decode(BuildFinished.self, forKey: .value))
         case "liveAlert": self = .liveAlert
@@ -897,14 +866,6 @@ nonisolated struct ListVersions: SessionRequest {
     static let command = "ListVersions"
 }
 
-nonisolated struct LiveCaret: SessionRequest {
-    typealias Reply = Done
-    static let command = "LiveCaret"
-
-    var path: String
-    var offset: Int
-}
-
 nonisolated struct LiveDocument: Decodable, Hashable, Sendable {
     var path: String
     var changed: [PageRange]
@@ -950,10 +911,11 @@ nonisolated struct LiveState: Decodable, Hashable, Sendable {
     var phase: LivePhase
     var engine: Engine
     var halted: Bool
+    var attention: Bool
     var failures: [Message]
     var lines: [String: [IssueLine]]
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, failures, lines }
+    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, attention, failures, lines }
 }
 
 nonisolated extension LiveState {
@@ -962,6 +924,7 @@ nonisolated extension LiveState {
         phase = try wire.decode(LivePhase.self, forKey: .phase)
         engine = try wire.decode(Engine.self, forKey: .engine)
         halted = try wire.decode(Bool.self, forKey: .halted)
+        attention = try wire.decode(Bool.self, forKey: .attention)
         failures = try wire.decode([Message].self, forKey: .failures)
         lines = try wire.decode([String: [IssueLine]].self, forKey: .lines)
     }
@@ -1186,7 +1149,6 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case diskFull = "disk_full"
     case notSaved = "not_saved"
     case trashFailed = "trash_failed"
-    case noTrash = "no_trash"
     case unreadable
     case overOneMb = "over_one_mb"
     case openedElsewhere = "opened_elsewhere"
@@ -1599,11 +1561,6 @@ nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
     }
 }
 
-nonisolated struct Reattach: SessionRequest {
-    typealias Reply = Done
-    static let command = "Reattach"
-}
-
 nonisolated struct ReloadProjects: LibraryRequest {
     typealias Reply = Done
     static let command = "ReloadProjects"
@@ -1721,11 +1678,6 @@ nonisolated struct RestoreVersion: SessionRequest {
 
     var id: String
     var paths: [String]?
-}
-
-nonisolated struct Resync: LibraryRequest {
-    typealias Reply = Done
-    static let command = "Resync"
 }
 
 nonisolated enum Said<Payload: Decodable & Sendable>: Decodable, Sendable {

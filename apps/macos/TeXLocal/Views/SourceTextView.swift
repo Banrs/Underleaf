@@ -19,7 +19,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private var displayOptionsWatch: NotificationCenter.ObservationToken?
 
-    var document = SourceDocument(text: "")
+    var document = SourceDocument(text: "") { willSet { document.composing = false } }
     var source: NSString { textStorage?.mutableString ?? "" }
     var undo = UndoManager()
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
@@ -73,16 +73,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
-        guard !edits.isEmpty else { return false }
+        guard isEditable, document.editable, !edits.isEmpty else { return false }
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
             textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-            didChangeText()
+            super.didChangeText()
         }
+        if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
+        // The selections are set before mirroring, so the mirror's edits move them as typing's do.
+        mirror()
         undoManager?.setActionName(name)
         undoManager?.endUndoGrouping()
-        if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         scrollRangeToVisible(selectedRange())
         return true
     }
@@ -263,9 +265,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     var autoPair = true, autoComplete = true
-    var composing: (Bool) -> Void = { _ in }
     var spellCheckToggled: (Bool) -> Void = { _ in }
-    private var toldComposing = false
     private var typing = false
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
@@ -330,9 +330,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     func markedTextChanged() {
-        guard hasMarkedText() != toldComposing else { return }
-        toldComposing.toggle()
-        composing(toldComposing)
+        if hasMarkedText() != document.composing { document.composing.toggle() }
     }
 
     func finish(_ stroke: Keystroke) {

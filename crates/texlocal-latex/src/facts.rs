@@ -3,7 +3,7 @@ use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::bib;
 use crate::message::Message;
@@ -61,7 +61,7 @@ pub struct Facts {
     pub(crate) end: Option<Place>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Definitions {
     pub labels: Vec<Named>,
     pub citations: Vec<Named>,
@@ -69,7 +69,7 @@ pub struct Definitions {
     pub environments: Vec<Named>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Place {
     pub line: u32,
     pub column: u32,
@@ -109,7 +109,7 @@ pub struct FilePlace {
     pub length: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Named {
     pub(crate) kind: SymbolKind,
     pub name: String,
@@ -117,7 +117,7 @@ pub struct Named {
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Defined {
     pub name: String,
     pub(crate) arguments: usize,
@@ -269,9 +269,7 @@ impl Visit for Reader<'_> {
                 self.defined.citations.extend(keys);
             }
             "documentclass" if facts.class.is_none() => {
-                facts.class = braced(&text.units, name_end)
-                    .0
-                    .map(|(class, _)| class.trim().to_owned());
+                facts.class = headings::class(&text.units, name_end);
                 facts.new_package = Some(after_line(text, name_end));
             }
             "usepackage" | "RequirePackage" => {
@@ -433,10 +431,14 @@ fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
             options.push(String::from_utf16_lossy(&units[piece]));
         }
     });
-    let count = options.first().and_then(|count| count.trim().parse().ok());
-    let arguments = count
-        .unwrap_or(0_usize)
-        .saturating_sub(usize::from(options.len() > 1));
+    let count = match options.first() {
+        Some(count) => count.trim().parse::<usize>().ok()?,
+        None => 0,
+    };
+    if count > 9 {
+        return None;
+    }
+    let arguments = count.saturating_sub(usize::from(options.len() > 1));
     let body = String::from_utf16_lossy(&body);
     let parameters = |count| (1..=count).map(|n| format!("#{n}")).collect::<String>();
     let tex = match (command, options.get(1)) {

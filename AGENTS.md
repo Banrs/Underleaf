@@ -4,6 +4,8 @@ A Mac LaTeX editor: an AppKit shell with SwiftUI panes, a TextKit 2 editor and P
 `crates`. `texlocal-latex` is LaTeX logic with no I/O (its `clippy.toml` forbids it), `texlocal-core` runs projects,
 sessions, builds and Live Preview, `texlocal-ffi` is the C ABI, and `texlocal-wire` writes the Swift side of the protocol.
 
+Where the work stands, with open decisions, known issues and what was tried: `docs/handoff.md`.
+
 ## Checks
 
 - `zsh tools/check.sh` runs what CI checks of the sources: fmt, clippy, the Rust tests and the Swift typecheck.
@@ -37,6 +39,8 @@ sessions, builds and Live Preview, `texlocal-ffi` is the C ABI, and `texlocal-wi
 - Use native parts: no hand-drawn chrome, invisible dividers or negative padding to imitate a look.
 - A settled UI decision is reversed only with new evidence: a failing test, or a measured side-by-side with the Apple
   app it follows.
+- See a look on screen yourself before showing it, agree the picture with the owner first, and change one thing per
+  round. `docs/window-chrome.md` records the window's sizes and the looks already rejected.
 
 ## Commits
 

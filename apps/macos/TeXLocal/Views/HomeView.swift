@@ -47,11 +47,11 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         item.action != #selector(performFindPanelAction(_:)) || NSTextFinder.Action(rawValue: item.tag) == .showFindInterface
     }
 
-    func windowDidBecomeKey(_ notification: Notification) { model.isKey = true }
-    func windowDidResignKey(_ notification: Notification) { model.isKey = false }
+    func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
+    func windowDidResignMain(_ notification: Notification) { model.isMain = false }
 
     func windowWillClose(_ notification: Notification) {
-        model.isKey = false
+        model.isMain = false
         model.windowClosed()
         Self.kept.removeAll { $0 === self }
     }
@@ -94,13 +94,15 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates.padding(.horizontal, -TemplateButtonStyle.edge)
-                    .selectionDisabled()
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets())
-            } header: { Text("New") }
-            .listSectionSeparator(.hidden)
+            }
+            .selectionDisabled()
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("New")
             Section {
                 ForEach(copying, id: \.self) { url in
                     ProjectLabel(detail: Text("Opening…"), progress: "Opening") { Text(url.lastPathComponent).font(.headline) }

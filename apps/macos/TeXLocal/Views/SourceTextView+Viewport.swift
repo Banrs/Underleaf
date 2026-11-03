@@ -52,6 +52,9 @@ extension SourceTextView {
         previewMath()
     }
 
+    // The shown fragments are copied at each layout rather than enumerated over the viewport's range when read: with 99 shown,
+    // a read took 61 µs against 2.7 µs and typing 95 keys 10% more CPU (2.08 s against 1.88 s). The copy's offsets are stale only
+    // between an edit and the layout after it, which places the issues and redraws the current line again.
     override func textViewportLayoutControllerWillLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerWillLayout(controller)
         fragments.removeAll(keepingCapacity: true)
@@ -70,7 +73,7 @@ extension SourceTextView {
         guard size.width != frame.width else { return super.setFrameSize(size) }
         let top = shownTop
         super.setFrameSize(size)
-        textContainer?.size.width = max(0, size.width - gutter.width - EditorGutter.trailingMargin)
+        textContainer?.size.width = max(0, size.width - gutter.width - linePadding)
         top.map(scroll(toShownTop:))
     }
 

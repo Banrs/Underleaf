@@ -1,7 +1,5 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use texlocal_latex::facts::Facts;
-use texlocal_latex::file_kind;
 use texlocal_latex::project::Scan;
 use texlocal_latex::syntax::{SourceDocument, Symbols, TextEdit, TextRange};
 use texlocal_latex::utf16;
@@ -10,18 +8,12 @@ use tokio::sync::mpsc;
 use super::Msg;
 use crate::lock;
 
+/// The main thread is the text's one writer: the session reads it and asks the main thread for reloads.
 struct Text {
     source: SourceDocument,
     version: u64,
     closed: bool,
-    behind: bool,
-    recovered: bool,
-}
-
-impl Text {
-    fn editable(&self) -> bool {
-        !self.closed && !self.behind
-    }
+    composing: bool,
 }
 
 struct Cell {
@@ -47,8 +39,7 @@ impl Document {
             source,
             version: 0,
             closed: false,
-            behind: false,
-            recovered: false,
+            composing: false,
         });
         Self(Arc::new(Cell { id, text, tx, scan }))
     }
@@ -62,7 +53,7 @@ impl Document {
         mirroring: bool,
     ) -> Option<Vec<TextEdit>> {
         let mut held = lock(&self.0.text);
-        if !held.editable() {
+        if held.closed {
             return None;
         }
         let mirrors = (held.source).apply_edit(start, length, text, changing, mirroring);
@@ -71,63 +62,62 @@ impl Document {
             length,
             text: text.to_owned(),
         };
-        self.changed(&mut held, edit);
+        self.edited(&mut held, edit);
         Some(mirrors)
     }
 
     pub fn restore(&self, text: &str) {
         let mut held = lock(&self.0.text);
-        if held.closed {
+        let had = held.source.text();
+        if held.closed || had == text {
             return;
         }
-        let had = held.source.text();
         held.source = SourceDocument::named(text, &held.source.path);
-        let behind = std::mem::take(&mut held.behind);
-        if had != text {
-            held.recovered |= behind;
-            let edit = TextEdit {
-                start: 0,
-                length: utf16::len(&had) as u32,
-                text: text.to_owned(),
-            };
-            self.changed(&mut held, edit);
-        }
+        let edit = TextEdit {
+            start: 0,
+            length: utf16::len(&had) as u32,
+            text: text.to_owned(),
+        };
+        self.edited(&mut held, edit);
     }
 
-    pub(crate) fn reload(&self, text: &str, seen: u64) -> Option<u64> {
-        let mut held = lock(&self.0.text);
-        if held.version != seen {
-            return None;
-        }
-        held.source = SourceDocument::named(text, &held.source.path);
-        held.version += 1;
-        held.behind = true;
-        Some(held.version)
-    }
-
-    fn changed(&self, held: &mut Text, edit: TextEdit) {
+    fn edited(&self, held: &mut Text, edit: TextEdit) {
         held.version += 1;
         let (doc, version) = (self.0.id, held.version);
-        let _ = self.0.tx.send(Msg::Changed {
-            doc,
-            version,
-            edit,
-            recovered: held.recovered,
+        let _ = self.0.tx.send(Msg::Edited { doc, version, edit });
+    }
+
+    pub fn select(&self, selection: TextRange, mirroring: bool) {
+        lock(&self.0.text).source.select(selection, mirroring);
+        let caret = selection.start as usize;
+        let _ = self.0.tx.send(Msg::Selected {
+            doc: self.0.id,
+            caret,
         });
     }
 
-    pub(crate) fn shown(&self) {
-        let mut held = lock(&self.0.text);
-        held.source.reset_typing();
-        held.behind = false;
+    /// Marked text is being composed, which autosave waits out.
+    pub fn compose(&self, composing: bool) {
+        lock(&self.0.text).composing = composing;
+    }
+
+    pub(crate) fn composing(&self) -> bool {
+        lock(&self.0.text).composing
     }
 
     pub fn editable(&self) -> bool {
-        lock(&self.0.text).editable()
+        !lock(&self.0.text).closed
     }
 
     pub(crate) fn close(&self) {
         lock(&self.0.text).closed = true;
+    }
+
+    /// Closes the document only if nothing was typed since `saved`, deciding under the lock an edit takes.
+    pub(crate) fn close_if(&self, saved: u64) -> bool {
+        let mut held = lock(&self.0.text);
+        held.closed |= held.version == saved;
+        held.closed
     }
 
     pub fn with<T>(&self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
@@ -150,27 +140,9 @@ impl Document {
         path.clone_into(&mut lock(&self.0.text).source.path);
     }
 
-    pub(crate) fn facts(&self) -> Facts {
-        let (text, path) = {
-            let held = lock(&self.0.text);
-            (held.source.text(), held.source.path.clone())
-        };
-        Facts::read(&text, file_kind(&path))
-    }
-
     pub(crate) fn snapshot(&self) -> (String, u64) {
         let held = lock(&self.0.text);
         (held.source.text(), held.version)
-    }
-
-    pub(crate) fn save_snapshot(&self) -> Option<(String, u64)> {
-        let held = lock(&self.0.text);
-        // Recovery can beat the actor's Changed message; never save it over the external text before resolution.
-        (!held.recovered).then(|| (held.source.text(), held.version))
-    }
-
-    pub(crate) fn resolved(&self) {
-        lock(&self.0.text).recovered = false;
     }
 
     pub fn version(&self) -> u64 {
@@ -183,22 +155,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recovery_blocks_saving_even_before_the_actor_reads_its_message() {
+    fn a_document_closes_only_at_the_version_saved_so_an_edit_since_survives() {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let document = Document::new(1, "main.tex", "original", tx, Arc::default());
-        assert_eq!(document.reload("external", 0), Some(1));
-        assert!(document.edit(0, 0, "accepted ", None, false).is_none());
-        document.restore("accepted original");
-        assert!(document.editable());
-        assert_eq!(document.snapshot(), ("accepted original".into(), 2));
-        assert_eq!(document.save_snapshot(), None);
-        document.resolved();
-        assert_eq!(
-            document.save_snapshot(),
-            Some(("accepted original".into(), 2))
-        );
-        document.close();
+        let document = Document::new(1, "main.tex", "text", tx, Arc::default());
+        assert!(document.edit(0, 0, "typed ", None, false).is_some());
+        assert!(!document.close_if(0) && document.editable());
+        assert!(document.close_if(1));
+        assert!(document.edit(0, 0, "late ", None, false).is_none());
         document.restore("late");
-        assert_eq!(document.snapshot().0, "accepted original");
+        assert_eq!(document.snapshot(), ("typed text".into(), 1));
     }
 }

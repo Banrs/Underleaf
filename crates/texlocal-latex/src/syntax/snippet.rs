@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use super::preview::AHEAD;
 use super::scan::environment_name;
 use super::typing::is_closing;
 use super::{
@@ -173,7 +174,7 @@ impl SourceDocument {
         let units = &self.text.units;
         let command = line + units[line..start].iter().rposition(|&u| is(u, '\\'))?;
         let here = name_field(units, command).filter(|f| f.holds(start, end))?;
-        let partner = self.environment_partner(command)?;
+        let partner = self.environment_partner(command, command + AHEAD)?;
         let there = name_field(&self.text.units, partner)?;
         Some(Snippet {
             fields: vec![here, there],

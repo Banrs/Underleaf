@@ -2,7 +2,6 @@ import AppKit
 import Testing
 @testable import TeXLocal
 
-@Suite(.serialized)
 struct PaneTests {
     private static let toggleSidebar = #selector(NSSplitViewController.toggleSidebar(_:))
     private static let toggleInspector = #selector(NSSplitViewController.toggleInspector(_:))
@@ -53,6 +52,38 @@ struct PaneTests {
         #expect(parts.count == 2 && parts.allSatisfy { $0.accessibilityRole() == .popUpButton })
     }
 
+    @Test func tabbingOutOfFilesSkipsTheHiddenNavigatorsAndFindGivesUpTheKeyboardAsItHides() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        window.autorecalculatesKeyViewLoop = true
+        let project = workspace.project
+        (project.search.replacing, project.navigator.shown) = (true, .files)
+        let sidebar = workspace.splitViewItems[0].viewController.view
+        sidebar.layoutSubtreeIfNeeded()
+        let fields = sidebar.descendants(of: NSSearchField.self), lists = sidebar.descendants(of: NSOutlineView.self)
+        #expect(fields.count == 2 && lists.count == Navigator.allCases.count)
+        func inFind() -> Bool { fields.contains { $0.currentEditor() != nil } }
+        for step in [NSWindow.selectNextKeyView(_:), NSWindow.selectPreviousKeyView(_:)] {
+            #expect(window.makeFirstResponder(lists[0]))
+            var reached: Set<ObjectIdentifier> = []
+            for _ in 0..<20 {
+                step(window)(nil)
+                let responder = try #require(window.firstResponder)
+                #expect(!inFind() && !lists.dropFirst().contains { $0 === responder })
+                reached.insert(ObjectIdentifier(responder))
+            }
+            reached.remove(ObjectIdentifier(lists[0]))
+            #expect(!reached.isEmpty)
+        }
+
+        workspace.focusSearch()
+        #expect(project.navigator.shown == .search && fields[0].currentEditor() != nil)
+        project.navigator.shown = .files
+        sidebar.layoutSubtreeIfNeeded()
+        #expect(!inFind())
+    }
+
     @Test func theStandardActionsCollapseAndRestoreTheSidebarAndTheInspectorFromAnywhereInTheWindow() async throws {
         let defaults = TestDefaults()
         let model = defaults.window()
@@ -83,7 +114,7 @@ struct PaneTests {
         #expect(item.keyEquivalent == "s" && item.keyEquivalentModifierMask == [.command, .control])
     }
 
-    @Test func draggingTheBuildPanelShutOrOpenIsWhatTheProjectShows() throws {
+    @Test func theBuildPanelShownIsWhatItsSplitItemSaysHoweverItCollapsesAndFocusLeavesIt() throws {
         let defaults = TestDefaults()
         let (window, workspace) = open(defaults.window())
         defer { workspace.close(); window.close() }
@@ -91,13 +122,24 @@ struct PaneTests {
         let panel = try #require(area.splitViewItems.last)
         #expect(panel.isCollapsed && !workspace.project.panel.shown)
         panel.isCollapsed = false
-        workspace.dragged(workspace.columns.splitView)
-        #expect(!workspace.project.panel.shown)
-        workspace.dragged(area.splitView)
         #expect(workspace.project.panel.shown)
+        window.layoutIfNeeded()
+        let field = try #require(panel.viewController.view.descendants(of: NSSearchField.self).first)
+        #expect(window.makeFirstResponder(field))
         panel.isCollapsed = true
-        workspace.dragged(area.splitView)
-        #expect(!workspace.project.panel.shown)
+        #expect(!workspace.project.panel.shown && window.firstResponder === workspace.pdf.view)
+    }
+
+    @Test func onlyTheStatusBarsTopEdgeDragsTheBuildPanelLeavingItsButtonsAndTheEditorTheirClicks() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        let split = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController).splitView
+        let content = try #require(window.contentView)
+        let edge = split.arrangedSubviews[0].frame.maxY - BarMetrics.height
+        func hit(_ y: CGFloat) -> NSView? { content.hitTest(content.superview!.convert(split.convert(NSPoint(x: 300, y: y), to: nil), from: nil)) }
+        #expect(hit(edge) === split)
+        #expect(hit(edge + BarMetrics.height / 2) !== split && hit(edge - 20) !== split)
     }
 
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {

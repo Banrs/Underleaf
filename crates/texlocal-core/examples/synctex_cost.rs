@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 use texlocal_latex::synctex::SyncTex;
-use texlocal_latex::syntax::sync_lines;
+use texlocal_latex::syntax::SourceDocument;
 
 struct Counting;
 
@@ -29,15 +29,15 @@ static COUNTING: Counting = Counting;
 
 const MB: f64 = 1024.0 * 1024.0;
 
-#[test]
-#[ignore = "needs the 400-page fixture in ~/TeXLocal, built"]
-fn the_long_fixtures_synctex_cost() {
+/// What reading a long project's SyncTeX costs: `cargo run --release -p texlocal-core --example synctex_cost [project]`,
+/// by default the 400-page fixture in ~/TeXLocal, built.
+fn main() {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-    let project = home.join("TeXLocal/Test Long (400 pages)");
-    // CI runs every ignored test but has no fixture.
-    let Ok(bytes) = std::fs::read(project.join("build/main.synctex.gz")) else {
-        return eprintln!("no built 400-page fixture");
-    };
+    let fixture = || home.join("TeXLocal/Test Long (400 pages)");
+    let project = std::env::args_os()
+        .nth(1)
+        .map_or_else(fixture, PathBuf::from);
+    let bytes = std::fs::read(project.join("build/main.synctex.gz")).expect("a built project");
     let (before, started) = (LIVE.load(Relaxed), Instant::now());
     PEAK.store(before, Relaxed);
     let sync = SyncTex::read(bytes).unwrap();
@@ -47,8 +47,9 @@ fn the_long_fixtures_synctex_cost() {
     let main = sync.inputs().find(|(_, name)| name.ends_with("main.tex"));
     let tag = main.unwrap().0;
     let lines = text.lines().count() as u32;
+    let mut doc = SourceDocument::new(&text);
     let started = Instant::now();
-    let found = (1..=lines).filter(|&line| !sync.forward(tag, &sync_lines(&text, line)).is_empty());
+    let found = (1..=lines).filter(|&line| !sync.forward(tag, &doc.sync_lines(line)).is_empty());
     let found = found.count();
     let per_line = started.elapsed() / lines;
     println!(

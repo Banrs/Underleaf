@@ -92,6 +92,21 @@ struct WindowTests {
         await close(app)
     }
 
+    /// At rest nothing is pinned beneath the Projects window's toolbar, so its scroll pocket spans the toolbar alone and
+    /// stays clear; New as a section header pinned there grew the pocket over it, which tinted the toolbar with nothing
+    /// beneath it and joined the two (AppKit's NSScrollPocket, 27.2).
+    @Test func theProjectsToolbarStaysClearAtRestWithNothingPinnedBeneathIt() async throws {
+        let app = windowedApp()
+        let window = try #require(window(of: app.showHome()))
+        let bar = window.frame.height - window.contentLayoutRect.height
+        func pockets() -> [NSView] {
+            window.contentView?.superview?.descendants(of: NSView.self).filter { String(describing: type(of: $0)) == "NSScrollPocket" } ?? []
+        }
+        try await waitUntil(timeout: .seconds(5)) { window.layoutIfNeeded(); return !pockets().isEmpty }
+        #expect(pockets().allSatisfy { $0.frame.height == bar })
+        await close(app)
+    }
+
     @Test func eachProjectOpensInAWindowOfItsOwnThatNeverTabsAndOpeningItAgainBringsItForward() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = windowedApp()
@@ -109,9 +124,13 @@ struct WindowTests {
         #expect(app.windows.count == 2 && windows.allSatisfy { $0.isVisible && $0.tabbingMode == .disallowed && $0.tabbedWindows == nil })
         #expect(windows.map(\.title) == [first.name, second.name] && windows.allSatisfy { $0.subtitle == "main.tex" })
         #expect(windows[1].frame.minX > windows[0].frame.minX && windows[1].frame.maxY < windows[0].frame.maxY)
-        #expect(windows[1].orderedIndex < windows[0].orderedIndex)
+        // Front to back on every Space, since `orderedIndex` puts windows off the active Space, as while a full-screen app
+        // holds it, last by window number (measured with the app hidden).
+        let numbers = windows.map(\.windowNumber)
+        func order() -> [Int] { NSWindow.windowNumbers(options: .allSpaces)?.map(\.intValue).filter(numbers.contains) ?? [] }
+        #expect(order() == numbers.reversed())
         await two.open(first.id)
-        #expect(app.windows.count == 2 && windows[0].orderedIndex < windows[1].orderedIndex)
+        #expect(app.windows.count == 2 && order() == numbers)
 
         let items = NSApp.mainMenu?.items.flatMap { $0.submenu.map(Self.items) ?? [] } ?? []
         let tabs = [#selector(NSWindow.mergeAllWindows(_:)), #selector(NSWindow.moveTabToNewWindow(_:)), #selector(NSWindow.toggleTabBar(_:)),
@@ -216,23 +235,24 @@ struct WindowTests {
         model.layout = .split
         try await waitUntil { !format.isHidden }
 
-        func resize(to width: CGFloat) async throws {
+        func resize(to width: CGFloat) async {
             window.setContentSize(NSSize(width: width, height: 800))
             window.layoutIfNeeded()
             window.displayIfNeeded()
-            try await Task.sleep(for: .milliseconds(50))
+            // The toolbar reads Compile's leaving for the overflow menu on the main actor's next turn.
+            await Task.yield()
             window.layoutIfNeeded()
         }
         var width: CGFloat = 1400
         while !workspace.toolbar.compactCompile, width > 600 {
             width -= 10
-            try await resize(to: width)
+            await resize(to: width)
         }
         let tools = items.filter { [.format, .math, .insert, .zoom, .compile].contains($0.itemIdentifier) }
         #expect(workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
-        try await resize(to: width + 20)
+        await resize(to: width + 20)
         #expect(workspace.toolbar.compactCompile)
-        try await resize(to: 1400)
+        await resize(to: 1400)
         #expect(!workspace.toolbar.compactCompile && tools.allSatisfy(\.isVisible))
 
         let columns = try #require(workspace.columns.splitView as? DraggedSplitView)

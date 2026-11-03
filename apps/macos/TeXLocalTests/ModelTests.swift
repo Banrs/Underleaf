@@ -131,7 +131,7 @@ struct SectionTests {
         let sections: [SessionSection] = [
             .project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil)),
             .tree([file("main.tex"), TreeNode(name: "figs", path: "figs", kind: nil, children: [], main: false), file("b.tex")]),
-            .documents([DocumentState(path: "b.tex", error: nil, held: .changed)]),
+            .documents([DocumentState(path: "b.tex", error: nil, conflict: .changed, asking: false)]),
         ]
         for section in sections { project.handle(.section(section)) }
         #expect(project.name == "Paper")
@@ -141,7 +141,8 @@ struct SectionTests {
         project.handle(.section(.tree([file("main.tex"), file("a.tex")])))
         #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
-        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."), held: nil)])))
+        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."),
+                                                          conflict: nil, asking: false)])))
         #expect(window.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
@@ -189,37 +190,42 @@ struct SectionTests {
         #expect(project.livePDF && window.showPDF)
     }
 
-    @Test func liveStateIsTheStoresAndAFailureNeedsAttentionUntilItsLogCloses() {
+    @Test func liveStateIsTheStoresAndAFailureNeedsAttentionWhileTheSessionSaysSo() {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = project.texpresso
-        let state = { (phase: LivePhase, failures: [Message], log: String?) in
-            project.handle(.section(.live(LiveState(phase: phase, engine: .xelatex, halted: false, failures: failures, lines: [:]))))
+        let state = { (phase: LivePhase, failures: [Message], attention: Bool, log: String?) in
+            let state = LiveState(phase: phase, engine: .xelatex, halted: false, attention: attention, failures: failures, lines: [:])
+            project.handle(.section(.live(state)))
             project.handle(.section(.liveLog(log ?? "")))
         }
-        state(.stopped, [], nil)
+        state(.stopped, [], false, nil)
         #expect(live.phase == .stopped && !live.used && live.log.isEmpty && !live.needsAttention)
-        state(.running, [], "Output written.")
+        state(.running, [], false, "Output written.")
         #expect(live.active && live.used && live.log == "Output written." && String(localized: live.title) == "Live Preview On")
         let failed = Message(id: .texpressoExited, args: [:], text: "TeXpresso stopped.")
-        state(.stopped, [failed], nil)
+        state(.stopped, [failed], true, nil)
         project.handle(.liveAlert)
         #expect(live.needsAttention && live.log == "TeXpresso stopped." && project.panel.showsLiveLog)
-        live.logClosed()
+        state(.stopped, [failed], false, nil)
         #expect(!live.needsAttention && String(localized: live.title) == "Live Preview Stopped")
-        state(.starting, [], nil)
-        state(.stopped, [failed], nil)
-        #expect(live.needsAttention)
     }
 
-    @Test func diskConflictsQueueSoEachIsAskedOnce() {
+    @Test func eachDiskConflictTheSessionAsksAboutIsAskedUntilItIsAnswered() {
         let project = ProjectModel(id: "P", window: defaults.window())
-        project.handle(.conflict(Conflict(path: "a.tex", kind: .changed)))
-        project.handle(.conflict(Conflict(path: "b.tex", kind: .changed)))
-        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"])
-        project.handle(.conflict(Conflict(path: "a.tex", kind: .gone)))
-        #expect(project.conflicts == [Conflict(path: "b.tex", kind: .changed), Conflict(path: "a.tex", kind: .gone)])
+        let documents = { (asking: [String]) in
+            project.handle(.section(.documents(["a.tex", "b.tex"].map {
+                DocumentState(path: $0, error: nil, conflict: $0 == "a.tex" ? .gone : .changed, asking: asking.contains($0))
+            })))
+        }
+        documents(["a.tex", "b.tex"])
+        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"] && project.conflicts[0].conflict == .gone)
         project.answer("b.tex", .cancel)
         #expect(project.conflicts.map(\.path) == ["a.tex"])
+        documents(["a.tex", "b.tex"])
+        #expect(project.conflicts.map(\.path) == ["a.tex"])
+        documents(["a.tex"])
+        documents(["a.tex", "b.tex"])
+        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"])
     }
 }
 
@@ -335,20 +341,47 @@ struct SwitchTests {
         #expect(await window.close())
     }
 
-    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
+    @Test func theMenusActOnTheMainWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
         let app = defaults.app()
         let home = app.front
         #expect(app.main == nil && app.home === home && app.windows.count == 1)
         let (window, other) = (app.openWindow("A"), app.openWindow("B"))
         #expect(app.front === home)
-        other.isKey = true
+        other.isMain = true
         #expect(app.main === other && app.front === other)
-        (other.isKey, window.isKey) = (false, true)
+        (other.isMain, window.isMain) = (false, true)
         #expect(app.main === window && app.windows.first === window)
-        window.isKey = false
+        window.isMain = false
         #expect(app.main == nil && app.front === window)
         window.windowClosed()
         #expect(app.front === other)
+    }
+
+    @Test func eachProjectReopensInTheLayoutItWasLeftInAndANewOneInTheLastLayoutUsed() {
+        let app = defaults.app()
+        func shown(_ id: String, _ layout: WorkspaceLayout? = nil) -> WorkspaceLayout {
+            let controller = MainWindowController(app: app, project: id)
+            defer { controller.window?.close() }
+            if let layout { controller.model.layout = layout }
+            return controller.model.layout
+        }
+        _ = shown("A", .pdf)
+        _ = shown("B", .source)
+        #expect(shown("A") == .pdf && shown("B") == .source && shown("C") == .source)
+    }
+
+    @Test func theMenusKeepActingOnTheProjectWindowWhileAPanelSuchAsTheSymbolLibraryIsKey() throws {
+        let app = defaults.app()
+        let controller = MainWindowController(app: app, project: "P")
+        let window = try #require(controller.window)
+        defer { window.close() }
+        let post = { NotificationCenter.default.post(name: $0, object: window) }
+        post(NSWindow.didBecomeMainNotification)
+        post(NSWindow.didBecomeKeyNotification)
+        post(NSWindow.didResignKeyNotification)
+        #expect(app.main === controller.model)
+        post(NSWindow.didResignMainNotification)
+        #expect(app.main == nil)
     }
 
     @Test func aStoppedProjectClosesAtOnceWithNothingUnsavedAndOtherwiseOnlyOnceItsEditsAreLetGo() async throws {
@@ -392,7 +425,6 @@ struct SwitchTests {
         let (window, held) = (try #require(app.window(showing: first.id)), try #require(app.window(showing: second.id)?.project))
         let document = try #require(SourceDocument(session: held.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
-        try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: second.path + "/main.tex", atomically: true, encoding: .utf8)
         try await waitUntil { !held.conflicts.isEmpty }
         #expect(await !app.quit())
@@ -437,9 +469,14 @@ struct ViewsTests {
         try await project.load()
         let path = try #require(await project.createEntry(in: "", directory: false))
         let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        var trashed: String?
+        defer { try? trashed.map(FileManager.default.removeItem(atPath:)) }
         let undo = UndoManager()
         undo.groupsByEvent = false
-        let item = UndoableTrash(undoManager: undo, trash: { (try? await project.session.call(Trash(path: path))) ?? nil },
+        let item = UndoableTrash(undoManager: undo, trash: {
+            trashed = (try? await project.session.call(Trash(path: path))) ?? nil
+            return trashed
+        },
                                  putBack: { (try? await project.session.call(PutBack(path: path, trashed: $0))) != nil })
         undo.beginUndoGrouping()
         await item.moveToTrash()
@@ -537,7 +574,7 @@ struct ViewsTests {
     @Test func theLivePDFShowsWhileLivePreviewRunsUntilTheProjectCloses() async {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = { (phase: LivePhase) in
-            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, failures: [], lines: [:]))))
+            project.handle(.section(.live(LiveState(phase: phase, engine: .pdflatex, halted: false, attention: false, failures: [], lines: [:]))))
         }
         live(.running)
         #expect(!project.showsLive)
@@ -556,7 +593,7 @@ struct ViewsTests {
             ["main.tex": [IssueLine(line: line, error: true, message: message, short: message, compact: nil, tokens: [], others: [], index: index)]]
         }
         project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: false, result: nil, issues: [], lines: lines(3, 1)))))
-        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, failures: [], lines: lines(5, nil)))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .pdflatex, halted: false, attention: false, failures: [], lines: lines(5, nil)))))
         project.issueClicked(atLine: 5, in: "main.tex")
         #expect(project.panel.showsLiveLog && project.chosenIssue == nil)
         project.issueClicked(atLine: 3, in: "main.tex")
@@ -592,7 +629,7 @@ struct ViewsTests {
             project.views = self
         }
 
-        let zoom = Zoom.fitWidth, pdfPlace: PdfPlace? = nil, shownVersion = 0, inspectorShown = false, pdfLoading: Task<Void, Never>? = nil
+        let zoom = Zoom.fitWidth, pdfPlace: PdfPlace? = nil, shownPDF: AnyObject? = nil, inspectorShown = false, pdfLoading: Task<Void, Never>? = nil
 
         func heard(_ event: Event) {
             if case .section(.openFile(let file?)) = event, project.openPath == file.path { shown.append(file.path) }

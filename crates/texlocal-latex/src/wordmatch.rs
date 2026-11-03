@@ -167,10 +167,11 @@ pub fn find_in_pdf(line: &str, column: usize, pages: &[PdfPage]) -> Option<PdfHi
     let mut boxes: Vec<Range<usize>> = Vec::new();
     for (group, page) in (0..).zip(pages) {
         pdf.push(&page.text, group, false);
-        let near = page
-            .near
-            .iter()
-            .map(|r| pdf.between(group, r.start as usize, (r.start + r.length) as usize));
+        let near = page.near.iter().map(|r| {
+            let start = r.start as usize;
+            let end = start.saturating_add(r.length as usize);
+            pdf.between(group, start, end)
+        });
         boxes.extend(near.filter(|r| r.start < r.end));
     }
     let dist = |i: usize| {

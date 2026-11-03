@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::scan::{self, Group, Scanner};
-use super::{INDENT, Insertion, SourceDocument, Text, catalog, edit, indentation};
+use super::{INDENT, SourceDocument, Text, catalog, indentation};
 use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, fold_case, segments};
@@ -45,8 +45,7 @@ pub enum SymbolKind {
     File,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Symbols {
     pub files: Vec<String>,
     pub by_file: BTreeMap<String, Arc<Definitions>>,
@@ -79,7 +78,7 @@ impl Symbols {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Installed {
     pub packages: Vec<String>,
     pub classes: Vec<String>,
@@ -147,23 +146,7 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$
 static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 impl SourceDocument {
-    pub(crate) fn complete(&mut self, caret: u32, explicit: bool) -> Option<&Completions> {
-        self.typing.offered = self.completions(caret, explicit);
-        self.typing.offered.as_ref()
-    }
-
-    pub(crate) fn accept_completion(&mut self, index: u32, caret: u32) -> Option<Insertion> {
-        let Completions { start, items, .. } = self.typing.offered.take()?;
-        let typed = caret.min(self.text.len()).checked_sub(start)?;
-        let item = items.into_iter().nth(index as usize)?;
-        Some(Insertion {
-            caret: start + utf16::len(&item.text) as u32,
-            edit: edit(start, typed, item.text),
-            fields: item.fields,
-        })
-    }
-
-    fn completions(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
+    pub(crate) fn complete(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
         let from = text.lines[line].max(caret.saturating_sub(250));
@@ -270,9 +253,10 @@ impl SourceDocument {
         offer(m.start(), SymbolKind::Command, items)
     }
 
-    pub(crate) fn definition(&self, at: u32) -> Option<Definition> {
-        let own = Facts::read(&self.text(), file_kind(&self.path));
-        let (kind, name, file) = self.symbol_at(&own, at)?;
+    /// Definitions come from the last scan, which follows each autosave by 150 ms, so one typed
+    /// since is found about 850 ms later rather than by reading the whole document on each click.
+    pub(crate) fn definition(&mut self, at: u32) -> Option<Definition> {
+        let (kind, name, file) = self.symbol_at(at)?;
         let places = match kind {
             SymbolKind::File => {
                 let start = Place {
@@ -282,7 +266,7 @@ impl SourceDocument {
                 };
                 file.map(|file| (file, start)).into_iter().collect()
             }
-            kind => self.defined(&own, kind, &name),
+            kind => self.defined(kind, &name),
         };
         let places: Vec<FilePlace> = places
             .into_iter()
@@ -292,6 +276,17 @@ impl SourceDocument {
     }
 
     pub(crate) fn symbol(&mut self, at: u32) -> Option<SymbolName> {
+        let (kind, name, _) = self.symbol_at(at)?;
+        Some(SymbolName { kind, name })
+    }
+
+    pub fn symbol_at(&mut self, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
+        let kind = file_kind(&self.path);
+        if kind == FileKind::Bib {
+            // A BibTeX entry can contain blank lines, so a paragraph may omit its header.
+            let own = Facts::read(&self.text(), kind);
+            return self.symbol_in(&own, 0, at);
+        }
         let text = &self.text;
         let line = text.line_index(at.min(text.len()));
         let blank = |&index: &usize| scan::blank_line(text.line(index));
@@ -304,7 +299,7 @@ impl SourceDocument {
         let mut scanner = self.scans.resume(text, start, start).scanner;
         scanner.run(&text.units, start, &[], &mut ());
         let first = if scanner.i > start {
-            text.line_index(scanner.i as u32) + 1
+            text.line_index(scanner.i as u32)
         } else {
             first
         };
@@ -314,17 +309,14 @@ impl SourceDocument {
         let last = (line + 1..text.lines.len()).take(PARAGRAPH).find(blank);
         let window = (line + PARAGRAPH).min(text.lines.len() - 1);
         let end = last.map_or_else(|| text.bounds(window).end, |last| text.lines[last] as usize);
-        let paragraph = utf16::lossy(&text.units[text.lines[first] as usize..end]);
-        let own = Facts::read(&paragraph, file_kind(&self.path));
-        let (kind, name, _) = self.symbol_in(&own, first, at)?;
-        Some(SymbolName { kind, name })
+        let start = text.lines[first] as usize;
+        let from = start.max(scanner.i);
+        let paragraph = " ".repeat(from - start) + &utf16::lossy(&text.units[from..end]);
+        let own = Facts::read(&paragraph, kind);
+        self.symbol_in(&own, first, at)
     }
 
-    pub fn symbol_at(&self, own: &Facts, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
-        self.symbol_in(own, 0, at)
-    }
-
-    fn symbol_in(
+    pub fn symbol_in(
         &self,
         own: &Facts,
         first: usize,
@@ -353,17 +345,10 @@ impl SourceDocument {
         Some((named.kind, named.name.clone(), file))
     }
 
-    pub fn defined(&self, own: &Facts, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
-        let others = self.symbols.by_file.iter();
-        let others = others.filter(|(file, _)| **file != self.path);
-        let mut files: Vec<(&str, &Definitions)> = others
-            .map(|(file, defined)| (&**file, &**defined))
-            .collect();
-        files.push((&self.path, &own.defined));
-        files.sort_by_key(|&(file, _)| file);
-        let places = files.into_iter().flat_map(|(file, defined)| {
+    pub fn defined(&self, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
+        let places = self.symbols.by_file.iter().flat_map(|(file, defined)| {
             let places = definitions(defined, kind, name).into_iter();
-            places.map(move |at| (file.to_owned(), at))
+            places.map(move |at| (file.clone(), at))
         });
         places.collect()
     }

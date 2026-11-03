@@ -49,7 +49,6 @@ struct SearchTests {
     }
 }
 
-@Suite(.serialized)
 struct SearchIntegrationTests {
     @Test(arguments: [
         ("needle", "done", "b.tex", 0),

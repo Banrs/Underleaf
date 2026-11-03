@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind::{NotFound, PermissionDenied};
 use std::path::{Path, PathBuf};
@@ -7,10 +8,9 @@ use serde::Serialize;
 use texlocal_latex::{FileKind, file_kind};
 
 use super::skip_unreadable;
-use crate::BUILD_DIR;
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, relative};
+use crate::paths::{Project, fold_case, identity, relative};
 use crate::settings::read_settings;
 
 #[derive(Serialize, JsonSchema)]
@@ -29,20 +29,26 @@ pub(crate) struct Entry {
     pub rel: String,
     pub name: String,
     pub dir: bool,
+    /// A link, or reached through a linked folder.
     pub link: bool,
 }
 
 pub(crate) fn listed(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    !name.starts_with('.') && fold_case(rel) != BUILD_DIR
+    !name.starts_with('.')
+}
+
+pub(crate) fn shown(project: &Project, rel: &str) -> bool {
+    listed(rel) && !project.builds_in(rel)
 }
 
 fn entries(
     root: &Path,
-    dir: &Path,
+    folder: Option<&Entry>,
     keep: &dyn Fn(&str) -> bool,
     whole: bool,
 ) -> Result<Vec<Entry>, CoreError> {
+    let (dir, linked) = folder.map_or((root, false), |f| (&*f.path, f.link));
     let read = match fs::read_dir(dir) {
         Err(err) if dir == root => return Err(err.into()),
         Err(err) if err.kind() == NotFound || !whole && err.kind() == PermissionDenied => {
@@ -67,21 +73,32 @@ fn entries(
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };
-        let link = kind.is_symlink();
-        if keep(&rel) && (kind.is_dir() || kind.is_file() || link && path.is_file()) {
+        let symlink = kind.is_symlink();
+        let dir = kind.is_dir() || symlink && path.is_dir();
+        if keep(&rel) && (dir || kind.is_file() || symlink && path.is_file()) {
             let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
-            let dir = kind.is_dir();
             out.push(Entry {
                 path,
                 rel,
                 name,
                 dir,
-                link,
+                link: linked || symlink,
             });
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+/// A linked folder is walked only the first time it's met, so a link to itself or to a folder
+/// above it doesn't loop.
+fn walked_again(walked: &mut HashSet<(u64, u64)>, entry: &Entry) -> bool {
+    let first = entry.dir && identity(&entry.path).is_some_and(|id| walked.insert(id));
+    entry.dir && entry.link && !first
+}
+
+fn walked_from(root: &Path) -> HashSet<(u64, u64)> {
+    identity(root).into_iter().collect()
 }
 
 pub(crate) fn walk(
@@ -92,26 +109,33 @@ pub(crate) fn walk(
 ) -> Result<(), CoreError> {
     fn walk_in(
         root: &Path,
-        dir: &Path,
+        folder: Option<&Entry>,
+        walked: &mut HashSet<(u64, u64)>,
         keep: &dyn Fn(&str) -> bool,
         whole: bool,
         visit: &mut dyn FnMut(&Entry) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in entries(root, dir, keep, whole)? {
-            if !visit(&entry)? || entry.dir && !walk_in(root, &entry.path, keep, whole, visit)? {
+        for entry in entries(root, folder, keep, whole)? {
+            if walked_again(walked, &entry) {
+                continue;
+            }
+            if !visit(&entry)?
+                || entry.dir && !walk_in(root, Some(&entry), walked, keep, whole, visit)?
+            {
                 return Ok(false);
             }
         }
         Ok(true)
     }
-    walk_in(root, root, keep, whole, visit).map(drop)
+    walk_in(root, None, &mut walked_from(root), keep, whole, visit).map(drop)
 }
 
 pub(super) fn visit_files(
-    root: &Path,
+    project: &Project,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
-    walk(root, &listed, false, &mut |entry| {
+    let shown = |rel: &str| shown(project, rel);
+    walk(&project.root, &shown, false, &mut |entry| {
         if entry.dir {
             return Ok(true);
         }
@@ -120,11 +144,20 @@ pub(super) fn visit_files(
 }
 
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
-    fn nodes(root: &Path, dir: &Path, main: &str) -> Result<Vec<TreeNode>, CoreError> {
+    fn nodes(
+        project: &Project,
+        folder: Option<&Entry>,
+        walked: &mut HashSet<(u64, u64)>,
+        main: &str,
+    ) -> Result<Vec<TreeNode>, CoreError> {
         let mut found = Vec::new();
-        for entry in entries(root, dir, &listed, false)? {
+        let shown = |rel: &str| shown(project, rel);
+        for entry in entries(&project.root, folder, &shown, false)? {
+            if walked_again(walked, &entry) {
+                continue;
+            }
             let children = if entry.dir {
-                Some(nodes(root, &entry.path, main)?)
+                Some(nodes(project, Some(&entry), walked, main)?)
             } else {
                 None
             };
@@ -139,7 +172,8 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
         Ok(found)
     }
     let main = read_settings(&project.settings).main_file;
-    nodes(&project.root, &project.root, &fold_case(&main))
+    let walked = &mut walked_from(&project.root);
+    nodes(project, None, walked, &fold_case(&main))
 }
 
 #[cfg(test)]

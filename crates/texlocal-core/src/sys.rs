@@ -1,15 +1,16 @@
-use std::ffi::OsString;
-use std::fs::{self, Metadata, Permissions};
+use std::ffi::{CString, OsString};
+use std::fs::{File, Metadata, Permissions};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use objc2_foundation::{NSFileManager, NSURL};
 use tokio::process::{Child, Command};
 
-use crate::process;
-
-pub(crate) const TEXLIVE: &str = "/usr/local/texlive";
+use crate::atomic::Flush;
+use crate::error::CoreError;
+use crate::messages;
 
 pub(crate) struct Group(u32);
 
@@ -22,48 +23,12 @@ pub(crate) fn latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBu
         .find(|rc| rc.is_file())
 }
 
-pub(crate) fn download(url: &str, to: &Path, path_env: &str) -> Command {
-    let mut command = process::tool(Path::new("/usr/bin/curl"), path_env);
-    command
-        .args(["--fail", "--location", "--silent", "--show-error"])
-        .args([
-            "--connect-timeout",
-            "30",
-            "--speed-limit",
-            "1000",
-            "--speed-time",
-            "60",
-        ])
-        .arg("--output")
-        .arg(to)
-        .arg(url);
-    command
-}
-
-pub(crate) fn unpack(archive: &Path, into: &Path, path_env: &str) -> Command {
-    let mut command = process::tool(Path::new("/usr/bin/tar"), path_env);
-    command.arg("-xf").arg(archive).arg("-C").arg(into);
-    command
-}
-
-pub(crate) fn default_permissions(builder: &mut tempfile::Builder) {
-    builder.permissions(Permissions::from_mode(0o666));
-}
-
 pub(crate) fn private(builder: &mut tempfile::Builder) {
     builder.permissions(Permissions::from_mode(0o700));
 }
 
 pub(crate) fn identity(meta: &Metadata) -> (u64, u64) {
     (meta.dev(), meta.ino())
-}
-
-fn executable(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
-}
-
-pub(crate) fn program(dir: &Path, name: &str) -> Option<PathBuf> {
-    Some(dir.join(name)).filter(|path| executable(path))
 }
 
 pub(crate) fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
@@ -102,18 +67,50 @@ pub(crate) fn default_signals(command: &mut Command) {
     }
 }
 
-pub(crate) fn local_time(time: SystemTime) -> Option<(u16, u8, u8, u8, u8, u8)> {
-    let secs = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
-    let secs = libc::time_t::try_from(secs).ok()?;
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
-        return None;
+pub(crate) fn trash(path: &Path) -> Result<PathBuf, CoreError> {
+    let failed = |said: String| CoreError::internal(messages::trash_failed(said));
+    let unnamed = || failed(path.display().to_string());
+    let url = NSURL::from_file_path(path).ok_or_else(unnamed)?;
+    let mut trashed = None;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
+        .map_err(|err| failed(err.localizedDescription().to_string()))?;
+    trashed
+        .and_then(|url| url.to_file_path())
+        .ok_or_else(unnamed)
+}
+
+pub(crate) fn flush(file: &File, flush: Flush) -> io::Result<()> {
+    match flush {
+        Flush::Full => file.sync_all(),
+        Flush::Ordered => match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } {
+            -1 => Err(io::Error::last_os_error()),
+            _ => Ok(()),
+        },
     }
-    let field = |value: libc::c_int| u8::try_from(value).ok();
-    let year = u16::try_from(tm.tm_year + 1900).ok()?;
-    let (month, day) = (field(tm.tm_mon + 1)?, field(tm.tm_mday)?);
-    let (hour, minute, second) = (field(tm.tm_hour)?, field(tm.tm_min)?, field(tm.tm_sec)?);
-    Some((year, month, day, hour, minute, second))
+}
+
+pub(crate) fn copy_xattrs(from: &Path, to: &File) {
+    if let Ok(from) = File::open(from) {
+        unsafe {
+            libc::fcopyfile(
+                from.as_raw_fd(),
+                to.as_raw_fd(),
+                std::ptr::null_mut(),
+                libc::COPYFILE_XATTR,
+            );
+        }
+    }
+}
+
+pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let from = CString::new(from.as_os_str().as_encoded_bytes())?;
+    let to = CString::new(to.as_os_str().as_encoded_bytes())?;
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 #[cfg(test)]
@@ -121,6 +118,7 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
 
     use super::*;
+    use crate::process;
 
     #[tokio::test]
     async fn a_child_starts_with_the_signals_the_app_ignores_back_at_their_defaults() {

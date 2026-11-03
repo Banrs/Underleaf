@@ -17,17 +17,11 @@ extension ProjectModel {
 
     func startTeXpresso() {
         guard texpresso.phase == .stopped else { return }
-        if let caret { session.send(LiveCaret(path: caret.path, offset: caret.offset)) }
         session.send(StartLive())
     }
 
     func liveView(_ pages: ClosedRange<Int>) {
         session.send(LiveView(first: pages.lowerBound, last: pages.upperBound))
-    }
-
-    func liveCaret() {
-        guard texpresso.active, let caret else { return }
-        session.send(LiveCaret(path: caret.path, offset: caret.offset))
     }
 
     func canSyncForward(quietly: Bool = false) -> Bool { hasPDF && isLaTeX && (!quietly || window?.showPDF == true) }
@@ -38,12 +32,12 @@ extension ProjectModel {
         let request = SynctexForward(file: path, line: line)
         await restart(&syncTask) { [self] in
             guard await save(reporting: !quietly), !Task.isCancelled, openPath == path else { return }
-            let shown = views?.shownVersion
+            weak let shown = views?.shownPDF
             do {
                 let interval = signposts.beginInterval("sync.forward")
                 let loc = try await session.call(request)
                 signposts.endInterval("sync.forward", interval)
-                guard !Task.isCancelled, openPath == path, views?.shownVersion == shown else { return }
+                guard !Task.isCancelled, openPath == path, views?.shownPDF === shown else { return }
                 window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, wordOnly: wordOnly)))
             } catch {
                 if !quietly, !Task.isCancelled { reportSync(error, "Couldn’t Find This Line in the PDF") }

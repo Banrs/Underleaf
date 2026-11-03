@@ -3,7 +3,7 @@ import os
 
 extension PDFController {
     func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
-        if let selection, !find.isOpen {
+        if let selection, !view.find.isOpen {
             view.removeMark()
             selection.color = .findHighlightColor
             view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -14,7 +14,7 @@ extension PDFController {
 
     func sourcePoint() -> (page: Int, point: CGPoint)? {
         guard let document = view.document else { return nil }
-        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
+        let probe = CGPoint(x: view.bounds.midX, y: view.shownRect.maxY - view.shownHeight * 0.2)
         guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
         let bounds = page.bounds(for: view.displayBox)
         var point = view.convert(probe, to: page)
@@ -119,11 +119,10 @@ enum SyncTeXGeometry {
 extension PDFPage {
     func click(at point: CGPoint) -> PageClick? {
         guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }
-        let range = word.range(at: 0, on: self)
-        guard range.location != NSNotFound else { return nil }
-        let offset = (0..<range.length).first { i in
-            selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
-        }
-        return PageClick(text: text, at: range.location + (offset ?? 0))
+        let start = word.range(at: 0, on: self).location
+        guard start != NSNotFound else { return nil }
+        let index = characterIndex(at: point)
+        // Off a glyph, as just above one on the word's line, PDFKit gives NSNotFound rather than the -1 it documents.
+        return PageClick(text: text, at: (0..<NSNotFound).contains(index) ? index : start)
     }
 }

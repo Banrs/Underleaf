@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -6,8 +7,7 @@ use tokio::process::Command;
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::process::{self, Processes, drive};
-use crate::sys;
+use crate::process::{self, Processes};
 use crate::tex::find_tool;
 
 const TIMEOUT: Duration = Duration::from_secs(600);
@@ -19,6 +19,10 @@ static UNREACHABLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 const OLDER: &str = "is older than remote repository";
 const NOT_WRITABLE: &str = "don't have permission to change the installation";
+const AS_ADMINISTRATOR: &str = r#"on run {tlmgr, package}
+do shell script quoted form of tlmgr & " install " & quoted form of package with prompt "TeXLocal wants to install the TeX package “" & package & "”." with administrator privileges
+end run"#;
+const ADMIN_CANCELLED: &str = "(-128)";
 
 pub(crate) async fn install_package(
     processes: &Processes,
@@ -41,8 +45,7 @@ pub(crate) async fn install_package(
         .ok_or_else(|| CoreError::not_found(messages::no_package_has(file)))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
-        let (as_administrator, cancelled) =
-            sys::install_as_administrator(&tlmgr, &package, path_env);
+        let (as_administrator, cancelled) = install_as_administrator(&tlmgr, &package, path_env);
         installed = run(processes, Some(owner), as_administrator).await?;
         if installed.1.contains(cancelled) {
             let message = messages::install_cancelled(&package);
@@ -51,6 +54,19 @@ pub(crate) async fn install_package(
     }
     checked(installed)?;
     Ok(package)
+}
+
+fn install_as_administrator(
+    tlmgr: &Path,
+    package: &str,
+    path_env: &str,
+) -> (Command, &'static str) {
+    let mut command = process::tool(Path::new("/usr/bin/osascript"), path_env);
+    command
+        .args(["-e", AS_ADMINISTRATOR])
+        .arg(tlmgr)
+        .arg(package);
+    (command, ADMIN_CANCELLED)
 }
 
 fn holder(found: &str, slashed: &str) -> Option<String> {
@@ -72,10 +88,9 @@ fn holder(found: &str, slashed: &str) -> Option<String> {
 pub(crate) async fn run(
     processes: &Processes,
     owner: Option<u64>,
-    mut command: Command,
+    command: Command,
 ) -> Result<(i32, String), CoreError> {
-    let (mut child, tree) = processes.spawn(owner, &mut command)?;
-    match drive(&mut child, &tree, Some(TIMEOUT)).await {
+    match process::run(processes, owner, command, Some(TIMEOUT)).await? {
         (.., true) => Err(CoreError::unavailable(messages::install_timed_out())),
         (code, out, false) => Ok((code, out)),
     }

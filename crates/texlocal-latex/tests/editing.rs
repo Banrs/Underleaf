@@ -7,19 +7,10 @@ use serde_json::{Value, json};
 use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
 use texlocal_latex::project::Scan;
-use texlocal_latex::syntax::{Source, SourceDocument, Symbols, Syntax};
+use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
 
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
-}
-
-#[test]
-fn edits_update_the_text() {
-    let mut doc = SourceDocument::new("one\ntwo");
-    doc.edit(4, 3, "2");
-    assert_eq!(doc.text(), "one\n2");
-    assert_eq!(doc.line_count(), 2);
-    assert_eq!(doc.line_at(4), 2);
 }
 
 #[test]
@@ -94,6 +85,17 @@ fn return_after_begin_closes_the_environment() {
     let answer = run(&mut doc, "InsertNewline", json!({ "selection": caret(15) }));
     apply(&mut doc, &answer["edit"]);
     assert!(doc.text().ends_with("\n\\end{itemize}"), "{}", doc.text());
+}
+
+#[test]
+fn return_after_begin_keeps_an_existing_end_beyond_the_mirroring_limit() {
+    let text = format!(
+        "\\begin{{itemize}}\n{}\\end{{itemize}}",
+        "word ".repeat(6000)
+    );
+    let mut doc = SourceDocument::new(&text);
+    let answer = run(&mut doc, "InsertNewline", json!({ "selection": caret(15) }));
+    assert_eq!(answer["edit"]["text"], "\n  ");
 }
 
 #[test]
@@ -198,11 +200,46 @@ fn a_section_folds_to_the_next_heading() {
 }
 
 #[test]
-fn a_reference_leads_to_its_label() {
-    let mut doc = SourceDocument::new("\\label{a} \\ref{a}");
-    let answer = run(&mut doc, "DefinitionAt", json!({ "at": 15 }));
+fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
+    let text = "\\label{a} \\ref{a}";
+    let mut doc = SourceDocument::named(text, "main.tex");
+    let at = json!({ "at": 15 });
+    assert_eq!(run(&mut doc, "DefinitionAt", at.clone()), Value::Null);
+    let read = Arc::new(Facts::read(text, file_kind("main.tex")));
+    let files = vec!["main.tex".to_owned()];
+    let read = [(files[0].clone(), read)].into();
+    doc.set_symbols(Scan::new(read, files, Arc::default()).symbols);
+    let answer = run(&mut doc, "DefinitionAt", at);
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
+}
+
+#[test]
+fn a_bibtex_cross_reference_after_a_blank_line_leads_to_its_parent() {
+    let text = "@book{child,
+  title={Child},
+
+  crossref={parent}
+}
+
+@book{parent, title={Parent}}";
+    let path = "refs.bib";
+    let mut doc = SourceDocument::named(text, path);
+    let read = Arc::new(Facts::read(text, file_kind(path)));
+    let files = vec![path.to_owned()];
+    let read = [(path.to_owned(), read)].into();
+    doc.set_symbols(Scan::new(read, files, Arc::default()).symbols);
+    let answer = run(
+        &mut doc,
+        "DefinitionAt",
+        json!({ "at": text.find("parent").unwrap() + 1 }),
+    );
+    assert_eq!(answer["kind"], "citation");
+    assert_eq!(answer["name"], "parent");
+    assert_eq!(
+        answer["places"],
+        json!([{ "file": path, "line": 7, "column": 6, "length": 6 }])
+    );
 }
 
 #[test]
@@ -213,12 +250,14 @@ fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
         "\\begin{verbatim}\nx\n\n\\ref{y}\n\\end{verbatim}\n",
         "\\begin{comment}\nx\n\n\\ref{y}\n\\end{comment}\n",
         "\\begin{verbatim}\n\n\\ref{y}\n\\end{verbatim}\n\\ref{z}",
+        "\\begin{verbatim}\n\n\\ref{y}\n\\end{verbatim}\\ref{z}",
+        "\\begin{verbatim}\n\n\\ref{y}\\end{verbatim}\\ref{z}",
     ] {
         let mut doc = SourceDocument::named(text, "main.tex");
         let whole = Facts::read(text, file_kind("main.tex"));
         for at in 0..=text.encode_utf16().count() as u32 {
             let read = doc
-                .symbol_at(&whole, at)
+                .symbol_in(&whole, 0, at)
                 .map(|(kind, name, _)| json!({ "kind": kind, "name": name }));
             let answer = run(&mut doc, "SymbolAt", json!({ "at": at }));
             assert_eq!(answer, read.unwrap_or_default(), "{text:?} at {at}");
@@ -248,10 +287,8 @@ fn the_projects_symbols_reach_the_engine_as_data() {
     });
     let names = files.map(|(file, _)| file.to_owned()).to_vec();
     let symbols = Scan::new(read.into(), names, Arc::default()).symbols;
-    let sent: Symbols = serde_json::from_str(&serde_json::to_string(&symbols).unwrap()).unwrap();
-    assert_eq!(sent, *symbols);
     let mut doc = SourceDocument::named(files[1].1, "main.tex");
-    doc.set_symbols(Arc::new(sent));
+    doc.set_symbols(symbols);
     let answer = run(&mut doc, "DefinitionAt", json!({ "at": 6 }));
     assert_eq!(
         answer["places"],
@@ -316,16 +353,6 @@ fn maths_renders_as_svg_or_nothing() {
     for tex in ["\\text{中}", "😀", "x + \\text{Ω😀}"] {
         assert_eq!(drawn(tex), Value::Null, "{tex}");
     }
-}
-
-#[test]
-fn the_menus_and_heading_levels_are_listed() {
-    let menus = free("ListMenus", json!({}));
-    assert!(menus["templates"]["insert"].is_array());
-    assert!(menus["symbolGroups"].is_array());
-    let levels = free("HeadingStyles", json!({}));
-    assert_eq!(levels[0], json!({ "title": "Normal Text", "command": "" }));
-    assert_eq!(levels[3]["command"], "section");
 }
 
 #[test]

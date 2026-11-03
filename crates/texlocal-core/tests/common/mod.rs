@@ -11,9 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_core::session::{
-    FileBuffer, LiveEvent, LiveRun, Pane, Preview, Project, Sessions, Sink,
-};
+use texlocal_core::session::{LiveEvent, LiveRun, Preview, Project, Sessions, Sink};
 use texlocal_core::{CoreError, ErrorKind};
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +85,28 @@ pub fn write(root: &Path, files: &[(&str, &str)]) {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
+    }
+}
+
+/// Takes what a test moved to the real Trash back out if the test stops before putting it back.
+pub struct Trashed(pub PathBuf);
+
+impl Drop for Trashed {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0).or_else(|_| std::fs::remove_file(&self.0));
+    }
+}
+
+/// How long a test waits for what it expects before it fails. Each wait ends as soon as what it
+/// waits for comes, so this only stops a hung run: 20 s failed the TeX tests at a load average of 28.
+const PATIENCE: Duration = Duration::from_secs(120);
+
+#[track_caller]
+pub fn wait_until(why: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + PATIENCE;
+    while !done() {
+        assert!(Instant::now() < deadline, "{why}");
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -171,20 +191,24 @@ impl Rig {
         self.library.project_root(&self.id)
     }
 
+    #[track_caller]
     pub fn call(&self, command: &str, args: Value) -> Value {
         self.call_to(SESSION, command, args)
     }
 
+    #[track_caller]
     pub fn call_to(&self, session: u64, command: &str, args: Value) -> Value {
         answer(command, self.reply(self.send(session, command, args)))
     }
 
+    #[track_caller]
     pub fn refuse(&self, command: &str, args: Value) -> ErrorKind {
         self.reply(self.send(SESSION, command, args))
             .unwrap_err()
             .kind
     }
 
+    #[track_caller]
     pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, Refused> {
         self.reply(self.send_library(command, args))
     }
@@ -195,6 +219,7 @@ impl Rig {
         id
     }
 
+    #[track_caller]
     pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
         let listed = |e: &Value| {
             e["type"] == "library"
@@ -214,6 +239,7 @@ impl Rig {
         id
     }
 
+    #[track_caller]
     pub fn reply(&self, id: u64) -> Result<Value, Refused> {
         let mut reply = self.find(|e| e["type"] == "reply" && e["value"]["id"] == id);
         let mut answer = reply["value"]["answer"].take();
@@ -234,6 +260,7 @@ impl Rig {
         self.sessions.document(SESSION, path).unwrap()
     }
 
+    #[track_caller]
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| {
             let event = &e["value"]["event"];
@@ -242,11 +269,13 @@ impl Rig {
         self.find(event)["value"]["event"]["value"].take()
     }
 
+    #[track_caller]
     pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
         self.event("section", section)["value"].take()
     }
 
+    #[track_caller]
     pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| {
             let event = &e["value"]["event"];
@@ -258,22 +287,23 @@ impl Rig {
         self.find(event)["value"]["event"]["value"].take()
     }
 
+    #[track_caller]
     pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
         self.event_in(session, "section", section)["value"].take()
     }
 
+    #[track_caller]
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
         if let Some(found) = self.seen.lock().unwrap().iter().find(|e| matching(e)) {
             return found.clone();
         }
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + PATIENCE;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let event = self
-                .events
-                .recv_timeout(left)
-                .unwrap_or_else(|_| panic!("no matching event came"));
+            let Ok(event) = self.events.recv_timeout(left) else {
+                panic!("no matching event came");
+            };
             self.seen.lock().unwrap().push(event.clone());
             if matching(&event) {
                 return event;
@@ -333,11 +363,9 @@ impl Drop for Rig {
                 "session {session} closes at the end of the test: {closed:?}"
             );
         }
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while Arc::strong_count(&self.sessions) > 1 {
-            assert!(Instant::now() < deadline, "the session threads end");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until("the session threads end", || {
+            Arc::strong_count(&self.sessions) == 1
+        });
     }
 }
 
@@ -345,12 +373,19 @@ impl Drop for Rig {
 pub struct FakePreview {
     sink: Mutex<Option<Sink>>,
     pub log: Mutex<String>,
-    texts: Mutex<HashMap<String, String>>,
+    revision: AtomicU64,
+    /// The offset of the caret last sent, which the session sends once the caret has settled.
+    pub caret: Mutex<Option<usize>>,
 }
 
 impl FakePreview {
     pub fn running(&self) -> bool {
         self.sink.lock().unwrap().is_some()
+    }
+
+    /// The count of opens and changes read, as TeXpresso names it in each output.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
     }
 
     pub fn send(&self, event: LiveEvent) {
@@ -367,48 +402,31 @@ impl Preview for Previewing {
         true
     }
 
-    fn start(
-        &self,
-        _: &Project,
-        files: &[FileBuffer],
-        _: &str,
-        _: &Pane,
-        sink: Sink,
-    ) -> Result<Arc<dyn LiveRun>, CoreError> {
+    fn start(&self, _: &Project, _: &str, sink: Sink) -> Result<Arc<dyn LiveRun>, CoreError> {
         *self.0.sink.lock().unwrap() = Some(sink);
-        let files = files
-            .iter()
-            .map(|file| (file.path.clone(), file.text.clone()));
-        *self.0.texts.lock().unwrap() = files.collect();
+        self.0.revision.store(0, Ordering::Relaxed);
         Ok(self.0.clone())
     }
 }
 
 impl LiveRun for FakePreview {
-    fn update(&self, rel: &str, text: &str) {
-        self.texts.lock().unwrap().insert(rel.into(), text.into());
+    fn open(&self, _: &str, _: &str) {
+        self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn edit(&self, rel: &str, start: usize, remove: usize, text: &str) -> bool {
-        let mut texts = self.texts.lock().unwrap();
-        let Some(held) = texts.get_mut(rel) else {
-            return false;
-        };
-        let units: Vec<u16> = held.encode_utf16().collect();
-        let (before, after) = (&units[..start], &units[start + remove..]);
-        *held = String::from_utf16_lossy(before) + text + &String::from_utf16_lossy(after);
-        true
+    fn change(&self, _: &str, _: usize, _: usize, _: &str) {
+        self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
     fn view(&self, _: u32, _: u32) {}
 
-    fn caret(&self, _: &str, _: usize) {}
+    fn caret(&self, _: &str, offset: usize) {
+        *self.caret.lock().unwrap() = Some(offset);
+    }
 
     fn rescan(&self) {}
 
-    fn mark(&self, mark: u64) {
-        self.send(LiveEvent::Synced(mark));
-    }
+    fn mark(&self, _: u64) {}
 
     fn log(&self) -> String {
         String::new()

@@ -1,8 +1,8 @@
 use std::cmp::Reverse;
 use std::ops::{Range, RangeInclusive};
 
-use super::Text;
 use super::scan::{Group, Scanner, Visit, blank_line, tex_space};
+use super::{SourceDocument, Text};
 
 /// The source lines a forward sync from one line may land on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,11 +58,66 @@ impl Visit for Found {
 }
 
 pub fn sync_lines(text: &str, line: u32) -> SyncLines {
-    let text = Text::new(text);
-    let units = &text.units;
+    scanned_whole(&Text::new(text), line)
+}
+
+fn scanned_whole(text: &Text, line: u32) -> SyncLines {
     let mut found = Found::default();
     let mut scanner = Scanner::default();
-    scanner.run(units, units.len(), &[], &mut found);
+    scanner.run(&text.units, text.units.len(), &[], &mut found);
+    lines_at(text, found, &scanner, line)
+}
+
+fn is_document(group: &Group) -> bool {
+    group
+        .environment()
+        .is_some_and(|name| kind(name) == Kind::Document)
+}
+
+impl SourceDocument {
+    /// Scans from the checkpoint before the line to the next blank line and the close of each environment open at the
+    /// line's end, rather than the whole text: 13 µs a line with SyncTeX's lookup on the 400-page fixture's 1 MB
+    /// main.tex, against 4.9 ms. A line outside the document environment is still read whole, as only that tells the
+    /// preamble from a file without one.
+    pub fn sync_lines(&mut self, line: u32) -> SyncLines {
+        let text = &self.text;
+        let Some(index) = (line as usize)
+            .checked_sub(1)
+            .filter(|&i| i < text.lines.len())
+        else {
+            return SyncLines::Nowhere;
+        };
+        let (units, start) = (&text.units, text.lines[index] as usize);
+        let mut scanner = self.scans.resume(text, start, start).scanner;
+        let mut found = Found::default();
+        scanner.run(units, start, &[], &mut found);
+        if !scanner.groups().any(is_document) {
+            return scanned_whole(text, line);
+        }
+        let end = |index: usize| {
+            text.lines
+                .get(index + 1)
+                .map_or(units.len(), |&at| at as usize)
+        };
+        scanner.run(units, end(index), &[], &mut found);
+        let open = scanner
+            .groups()
+            .filter(|g| g.environment().is_some() && !is_document(g));
+        let open: Vec<usize> = open.map(|group| group.open).collect();
+        let blank = (index + 1..text.lines.len()).find(|&i| blank_line(text.line(i)));
+        scanner.run(units, blank.map_or(units.len(), end), &[], &mut found);
+        while scanner.i < units.len() && scanner.groups().any(|g| open.contains(&g.open)) {
+            let line_end = end(text.line_index(scanner.i as u32));
+            scanner.run(units, line_end, &[], &mut found);
+        }
+        lines_at(text, found, &scanner, line)
+    }
+}
+
+/// The lines from what a scan found, given the scanner where it stopped, whose open environments are taken to run to
+/// the end of the text.
+fn lines_at(text: &Text, mut found: Found, scanner: &Scanner, line: u32) -> SyncLines {
+    let units = &text.units;
     let unclosed = scanner
         .groups()
         .filter_map(|group| group.environment().map(|name| (group, name)));

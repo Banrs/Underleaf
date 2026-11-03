@@ -67,7 +67,6 @@ class DraggedSplitView: NSSplitView {
             guard !panning else { return endDrag() }
             dragging = false
             workspace?.quiet(false)
-            workspace?.dragged(self)
         }
     }
 }

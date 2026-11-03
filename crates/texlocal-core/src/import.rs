@@ -13,13 +13,13 @@ use zip::result::ZipError;
 
 use crate::messages;
 use crate::paths::{
-    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file,
+    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file, within,
 };
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, copy_ui, new_settings};
-use crate::zipexport::left_out;
-use crate::{CoreError, SETTINGS_FILE, atomic};
+use crate::zipexport::{left_out, private};
+use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, atomic, sys};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -76,7 +76,7 @@ pub(crate) fn import_files(
         } else if meta.is_dir() {
             walk(
                 abs,
-                &|rel| !rel.split('/').any(is_litter),
+                &|rel| !rel.split('/').any(is_litter) && !abs.join(rel).is_symlink(),
                 true,
                 &mut |entry| {
                     if !entry.dir && !entry.link {
@@ -87,8 +87,11 @@ pub(crate) fn import_files(
             )?;
         }
     }
+    let (rels, taken) = validate(files.iter().map(|(path, _)| path.as_str()))?;
+    for rel in &rels {
+        paths::safe_write_path(project, &in_folder(dir, rel))?;
+    }
     let root = &project.root;
-    let (rels, taken) = validate(root, dir, files.iter().map(|(path, _)| path.as_str()))?;
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
@@ -105,15 +108,12 @@ pub(crate) fn import_files(
 }
 
 fn validate<'a>(
-    root: &Path,
-    dir: &str,
     files: impl Iterator<Item = &'a str>,
 ) -> Result<(Vec<String>, HashSet<String>), CoreError> {
     let mut seen = HashSet::new();
     let mut folders = HashSet::new();
     let mut rels = Vec::new();
     for file in files {
-        paths::safe_write_path(root, &in_folder(dir, file))?;
         let rel = rel_key(file)?;
         let key = fold_case(&rel);
         let parents = || key.match_indices('/').map(|(i, _)| &key[..i]);
@@ -169,7 +169,7 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
 
 fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<(), CoreError> {
     let root = &project.root;
-    let abs = paths::safe_write_path(root, rel)?;
+    let abs = paths::safe_write_path(project, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
     let (mut file, temp) = atomic::create_temp(folder.unwrap_or(root))?;
     let mut origin = File::open(source).map_err(CoreError::at(source))?;
@@ -183,7 +183,7 @@ fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<()
         projects::discard_replaced(project, &taken)?;
     }
     fs::create_dir_all(abs.parent().unwrap_or(root))?;
-    atomic::rename_exclusive(&temp, &abs)?;
+    sys::rename_exclusive(&temp, &abs)?;
     let _ = temp.keep();
     Ok(())
 }
@@ -319,7 +319,8 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         mut files,
         main,
     } = open(src)?;
-    files.retain(|(path, _)| !left_out(path));
+    // A library project builds into its build folder, so a zip's own can't land there.
+    files.retain(|(path, _)| !within(path, BUILD_DIR) && !private(path));
     if !files
         .iter()
         .any(|(path, _)| file_kind(path) == FileKind::Tex)
@@ -344,7 +345,7 @@ fn write_files(
     files: &[(String, Source)],
     mut zip: Option<&mut ZipArchive<File>>,
 ) -> Result<(), CoreError> {
-    validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
+    validate(files.iter().map(|(path, _)| path.as_str()))?;
     if let Some(zip) = zip.as_deref_mut() {
         let mut unzipped = 0;
         for (_, source) in files {
@@ -389,7 +390,7 @@ pub(crate) fn duplicate_project(
     let source = service.project(id)?;
     let root = &source.root;
     let mut files = Vec::new();
-    walk(root, &|rel| !left_out(rel), true, &mut |entry| {
+    walk(root, &|rel| !left_out(&source, rel), true, &mut |entry| {
         if !entry.dir {
             files.push((entry.rel.clone(), Source::File(entry.path.clone())));
         }
