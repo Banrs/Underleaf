@@ -26,21 +26,22 @@ final class IssueOverlay {
     }
 
     private func changed() {
-        labels.removeAll()
+        measured.removeAll()
         place()
         view.redrawLineAndGutter()
     }
 
     private(set) var rows: [Row] = []
-    private var labels: [Int: IssueLabel] = [:]
+    private var measured: [Int: [Fit]] = [:]
     private var font = NSFont.systemFont(ofSize: NSFont.systemFontSize - 1)
+    private lazy var sizer = NSHostingView(rootView: IssueBox(isError: true, isLive: false, issues: 1, text: nil, truncates: false, font: font))
     private var gap: CGFloat = 0
     private var tips: [(tag: NSView.ToolTipTag, rect: NSRect, text: NSString)] = []
 
     func fontChanged(size: CGFloat, text: NSFont) {
         font = .systemFont(ofSize: size)
         gap = ("0" as NSString).size(withAttributes: [.font: text]).width
-        labels.removeAll()
+        measured.removeAll()
     }
 
     func place() {
@@ -74,27 +75,18 @@ final class IssueOverlay {
         let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX
         let top = view.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         let said = ([reported.message] + reported.others).map(\.text)
-        let label = labels[number] ?? IssueLabel(reported.short.text, compact: reported.compact?.text, font: font)
-        labels[number] = label
-        typealias Metrics = IssueBox.Metrics
-        let end = band.maxX
-        let room = end - (left + first.typographicBounds.maxX) - gap
-        let issues = said.count
-        let fitted = label.text(in: (room - Metrics.width(ofText: 0, font: font, issues: issues)).rounded(.down))
-        let width = fitted?.cut == true ? room.rounded(.down) : Metrics.width(ofText: fitted?.width, font: font, issues: issues)
-        if width <= room {
+        let room = (band.maxX - (left + first.typographicBounds.maxX) - gap).rounded(.down)
+        if let fit = fits(number, reported, live: live, issues: said.count).first(where: { $0.width <= room }) {
+            let width = fit.box.truncates ? room : fit.width
             let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
-            let rect = CGRect(x: end - width, y: band.minY, width: width, height: foot - band.minY)
-            let box = IssueBox(isError: reported.error, isLive: live, issues: issues, text: fitted?.text,
-                               cutAtTail: fitted != nil && fitted?.width == nil, font: font,
-                               background: Color(nsColor: view.backgroundColor), height: rect.height)
-            let message = former ?? IssueMessageView(box)
-            if message.rootView != box { message.rootView = box }
+            let rect = CGRect(x: band.maxX - width, y: band.minY, width: width, height: foot - band.minY)
+            let message = former ?? IssueMessageView(fit.box)
+            if message.rootView != fit.box { message.rootView = fit.box }
             if message.frame != rect { message.frame = rect }
             if message.superview !== view { view.addSubview(message) }
-            issue.message = (message, rect, fitted?.cut ?? true)
+            issue.message = (message, rect, fit.cut)
         }
-        if issue.message?.cut != false || issues > 1 { issue.tip = said.joined(separator: "\n") }
+        if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
         if !reported.tokens.isEmpty, let textFont = view.font {
             let thickness = max(1, view.onPixels(CTFontGetUnderlineThickness(textFont as CTFont)))
             for token in reported.tokens {
@@ -110,6 +102,38 @@ final class IssueOverlay {
             }
         }
         return issue
+    }
+
+    /// A box an issue can show, the width it needs, and whether it leaves some of the message to its tooltip.
+    private struct Fit {
+        let box: IssueBox
+        let width: CGFloat
+        let cut: Bool
+    }
+
+    /// Widest first: the message, its compact form, its first ten characters cut at the tail (a box that then takes all the
+    /// room it's given), and the symbol alone.
+    private func fits(_ number: Int, _ reported: IssueLine, live: Bool, issues: Int) -> [Fit] {
+        if let found = measured[number] { return found }
+        func box(_ text: String?, truncates: Bool = false) -> IssueBox {
+            IssueBox(isError: reported.error, isLive: live, issues: issues, text: text, truncates: truncates, font: font)
+        }
+        func fit(_ box: IssueBox, cut: Bool, measuring shown: IssueBox? = nil) -> Fit {
+            sizer.rootView = shown ?? box
+            return Fit(box: box, width: sizer.fittingSize.width.rounded(.up), cut: cut)
+        }
+        let whole = reported.short.text, compact = reported.compact?.text
+        var found = [fit(box(whole), cut: false)]
+        if let compact { found.append(fit(box(compact), cut: true)) }
+        let most = (compact ?? whole) as NSString
+        let least = most.rangeOfComposedCharacterSequences(for: NSRange(location: 0, length: min(10, most.length)))
+        if least.length >= 10 {
+            let shown = most.substring(with: least).trimmingCharacters(in: .whitespaces) + "…"
+            found.append(fit(box(most as String, truncates: true), cut: true, measuring: box(shown)))
+        }
+        found.append(fit(box(nil), cut: true))
+        measured[number] = found
+        return found
     }
 
     private func updateTips() {
@@ -128,12 +152,11 @@ final class IssueOverlay {
 
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
-            let palette = IssueBox.Palette.of(error: issue.error, live: issue.live)
             if issue.line != currentLine {
-                palette.line.setFill()
+                IssueBox.line(error: issue.error, live: issue.live).setFill()
                 NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
             }
-            palette.range.setFill()
+            IssueBox.underlines[issue.error]?.setFill()
             issue.tokens.forEach { $0.fill() }
         }
     }

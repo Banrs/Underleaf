@@ -36,4 +36,13 @@ struct ColorTests {
         #expect(NSColor.contrast([0, 0, 0, 1], [1, 1, 1, 1]) == 21)
         #expect(NSColor.contrast([0.5, 0.5, 0.5, 1], [0.5, 0.5, 0.5, 1]) == 1)
     }
+
+    @Test func issueUnderlinesStandOutFromTheText() throws {
+        for name in NSColor.textAppearances {
+            for error in [false, true] {
+                let shown = ratio(try #require(IssueBox.underlines[error]), in: name)
+                #expect(shown >= 2.95, "\(error) in \(name.rawValue): \(shown)")
+            }
+        }
+    }
 }

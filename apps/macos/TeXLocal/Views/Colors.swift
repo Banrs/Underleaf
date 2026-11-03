@@ -19,6 +19,10 @@ extension NSColor {
         return Self.srgb(raised)
     }
 
+    func legible(ratio: Double) -> NSColor {
+        .adapting(Dictionary(uniqueKeysWithValues: Self.textAppearances.map { ($0, legibleAsText(in: $0, ratio: ratio)) }), fallback: self)
+    }
+
     static func luminance(_ c: [Double]) -> Double {
         let linear = { (v: Double) in v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
         return 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])

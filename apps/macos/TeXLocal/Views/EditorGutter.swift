@@ -57,3 +57,9 @@ extension NSTextLayoutFragment {
         return extra ? lines.suffix(1) : lines.dropLast()
     }
 }
+
+nonisolated func typeset(_ string: String, in font: NSFont) -> (line: CTLine, width: CGFloat) {
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [
+        .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]))
+    return (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
+}
