@@ -3,7 +3,7 @@ mod common;
 use std::path::Path;
 use std::process::Command;
 
-use common::{Rig, SESSION, write};
+use common::{Rig, SESSION, wait_until, write};
 use serde_json::json;
 
 const ARTICLE: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nA first paragraph of words.\n\nSee section~\\ref{sec:intro} and \\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
@@ -102,7 +102,10 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     doc.edit(40, 0, "Another change. ", None, false);
     rig.event("liveDocument", |p| p["path"] != next["path"]);
     assert!(second.is_file() && second.with_extension("synctex").is_file());
-    assert!(!first.exists() && !first.with_extension("synctex").exists());
+    // TeXpresso removes the result before last just after it announces the next one.
+    wait_until("the first result is removed", || {
+        !first.exists() && !first.with_extension("synctex").exists()
+    });
     rig.call("StopLive", json!({}));
     rig.section("live", |l| l["phase"] == "stopped");
 }
