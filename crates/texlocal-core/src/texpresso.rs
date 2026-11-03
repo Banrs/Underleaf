@@ -555,15 +555,15 @@ fn apply_message(session: &Session, mut message: Value) {
         return session.end(Some(messages::live_unpatched()));
     }
     let event = match verb {
-        "page" => match (number(1), message[2].take()) {
-            (Some(page), Value::String(pdf)) => LiveEvent::Page { page, pdf },
+        "page" => match (number(1), message.get_mut(2).map(Value::take)) {
+            (Some(page), Some(Value::String(pdf))) => LiveEvent::Page { page, pdf },
             _ => return,
         },
         "pdf" => match document(session, message) {
             Some(event) => event,
             None => return,
         },
-        "done" => match serde_json::from_value(message[1].take()) {
+        "done" => match serde_json::from_value(message.get_mut(1).map(Value::take).into()) {
             Ok(run) => LiveEvent::Done(run),
             Err(_) => return,
         },
@@ -715,6 +715,8 @@ mod tests {
             json!(["pdf", 1, 2, "complete", [[1, 0]], 1]),
             json!(["pdf", 1, 1, "complete", [[0, u64::MAX]], 1]),
             json!(["pdf", 1, 1, "unknown", [], 1]),
+            json!(["page", 1]),
+            json!(["done"]),
         ] {
             apply_message(&session, malformed);
             assert!(events.try_recv().is_err());
