@@ -47,11 +47,11 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         item.action != #selector(performFindPanelAction(_:)) || NSTextFinder.Action(rawValue: item.tag) == .showFindInterface
     }
 
-    func windowDidBecomeKey(_ notification: Notification) { model.isKey = true }
-    func windowDidResignKey(_ notification: Notification) { model.isKey = false }
+    func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
+    func windowDidResignMain(_ notification: Notification) { model.isMain = false }
 
     func windowWillClose(_ notification: Notification) {
-        model.isKey = false
+        model.isMain = false
         model.windowClosed()
         Self.kept.removeAll { $0 === self }
     }

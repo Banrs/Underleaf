@@ -84,8 +84,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.workspace = workspace
     }
 
-    func windowDidBecomeKey(_ notification: Notification) { model.isKey = true }
-    func windowDidResignKey(_ notification: Notification) { model.isKey = false }
+    func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
+    func windowDidResignMain(_ notification: Notification) { model.isMain = false }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard model.shownProject != nil else { return true }
@@ -94,7 +94,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     func windowWillClose(_ notification: Notification) {
-        model.isKey = false
+        model.isMain = false
         model.windowClosed()
         watches.forEach { $0.cancel() }
         workspace?.close()

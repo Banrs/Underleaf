@@ -335,20 +335,34 @@ struct SwitchTests {
         #expect(await window.close())
     }
 
-    @Test func theMenusActOnTheKeyWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
+    @Test func theMenusActOnTheMainWindowAndOpenRecentOnTheLastOneUsedOrOnHomeWhenNoneIsOpen() {
         let app = defaults.app()
         let home = app.front
         #expect(app.main == nil && app.home === home && app.windows.count == 1)
         let (window, other) = (app.openWindow("A"), app.openWindow("B"))
         #expect(app.front === home)
-        other.isKey = true
+        other.isMain = true
         #expect(app.main === other && app.front === other)
-        (other.isKey, window.isKey) = (false, true)
+        (other.isMain, window.isMain) = (false, true)
         #expect(app.main === window && app.windows.first === window)
-        window.isKey = false
+        window.isMain = false
         #expect(app.main == nil && app.front === window)
         window.windowClosed()
         #expect(app.front === other)
+    }
+
+    @Test func theMenusKeepActingOnTheProjectWindowWhileAPanelSuchAsTheSymbolLibraryIsKey() throws {
+        let app = defaults.app()
+        let controller = MainWindowController(app: app, project: "P")
+        let window = try #require(controller.window)
+        defer { window.close() }
+        let post = { NotificationCenter.default.post(name: $0, object: window) }
+        post(NSWindow.didBecomeMainNotification)
+        post(NSWindow.didBecomeKeyNotification)
+        post(NSWindow.didResignKeyNotification)
+        #expect(app.main === controller.model)
+        post(NSWindow.didResignMainNotification)
+        #expect(app.main == nil)
     }
 
     @Test func aStoppedProjectClosesAtOnceWithNothingUnsavedAndOtherwiseOnlyOnceItsEditsAreLetGo() async throws {

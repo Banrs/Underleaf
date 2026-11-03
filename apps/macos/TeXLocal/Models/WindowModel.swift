@@ -14,7 +14,7 @@ final class WindowModel {
     var addingFiles = false
     var exporting: ExportFile?
     var chosenItem: ItemActions?
-    var isKey = false { didSet { if isKey { app.cameForward(self) } } }
+    var isMain = false { didSet { if isMain { app.cameForward(self) } } }
     @ObservationIgnored weak var controller: (any AppWindow)?
 
     var showSource: Bool { didSet { app.defaults.set(showSource, forKey: DefaultsKey.showSource) } }
