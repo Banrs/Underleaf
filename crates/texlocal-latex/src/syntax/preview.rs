@@ -22,7 +22,7 @@ static NUMBERING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\(?:nonumber|notag)(?-u:\b)").unwrap());
 static CONTROL_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[A-Za-z@]+").unwrap());
 
-const AHEAD: usize = 20_000;
+pub(super) const AHEAD: usize = 20_000;
 
 fn display(group: &Group) -> bool {
     matches!(group.end, End::Dollars | End::Bracket)

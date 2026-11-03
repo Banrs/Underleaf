@@ -409,6 +409,24 @@ fn renaming_an_environment_renames_its_end() {
 }
 
 #[test]
+fn renaming_an_environment_looks_for_its_end_only_so_far_ahead() {
+    let text = format!(
+        "\\begin{{itemize}}\n{}\\end{{itemize}}",
+        "word ".repeat(6000)
+    );
+    let mut doc = SourceDocument::new(&text);
+    doc.select(
+        TextRange {
+            start: 9,
+            length: 0,
+        },
+        false,
+    );
+    typed(&mut doc, 7, 7, "enumerate");
+    assert!(doc.text().ends_with("\\end{itemize}"));
+}
+
+#[test]
 fn renaming_an_environment_from_its_end_renames_its_begin() {
     let mut doc = SourceDocument::new("\\begin{itemize}\n\\item a\n\\end{itemize}");
     for start in [9, 31] {

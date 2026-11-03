@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::complete::Completions;
+use super::preview::AHEAD;
 use super::scan::{End, Group, Scanner, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
@@ -329,13 +330,12 @@ impl SourceDocument {
     pub(super) fn environment_partner(&mut self, at: usize) -> Option<usize> {
         let mut scanner = self.scans.resume(&self.text, at, at).scanner;
         let units = &self.text.units;
+        let ahead = (at + AHEAD).min(units.len());
         let mut partner = Partner { at, found: None };
         scanner.run(units, at + 1, &[], &mut partner);
-        while partner.found.is_none()
-            && scanner.i < units.len()
-            && scanner.groups().any(|g| g.open == at)
+        while partner.found.is_none() && scanner.i < ahead && scanner.groups().any(|g| g.open == at)
         {
-            scanner.run(units, scanner.i + 1024, &[], &mut partner);
+            scanner.run(units, (scanner.i + 1024).min(ahead), &[], &mut partner);
         }
         partner.found
     }
