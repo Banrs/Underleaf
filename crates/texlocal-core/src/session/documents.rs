@@ -249,8 +249,7 @@ impl Actor {
     }
 
     fn touched(&mut self, path: &str, edit: Option<&TextEdit>) {
-        self.edits += 1;
-        self.last_edits.insert(path.to_owned(), self.edits);
+        self.builds.edited(Some(path));
         self.mark_outdated(Some(path));
         self.live_issues_edited(path, edit);
     }

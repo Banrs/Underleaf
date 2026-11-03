@@ -79,6 +79,10 @@ pub(crate) struct ShownPdf {
 
 #[derive(Default)]
 pub(crate) struct Builds {
+    /// Counts each change to the project's text, which builds and checks are dated by.
+    pub clock: u64,
+    /// The time on the clock that each document was last edited.
+    pub edited_at: HashMap<String, u64>,
     pub compiling: bool,
     pub queued: Option<bool>,
     auto: bool,
@@ -97,6 +101,13 @@ pub(crate) struct Builds {
 }
 
 impl Builds {
+    pub fn edited(&mut self, path: Option<&str>) {
+        self.clock += 1;
+        if let Some(path) = path {
+            self.edited_at.insert(path.to_owned(), self.clock);
+        }
+    }
+
     pub fn busy(&self) -> bool {
         self.compiling || self.cleaning.is_some()
     }
@@ -147,7 +158,7 @@ impl Actor {
             return Ok(());
         }
         (self.builds.compiling, self.builds.auto) = (true, auto);
-        self.builds.built = self.edits;
+        self.builds.built = self.builds.clock;
         self.publish_build();
         let (build, tx) = (
             self.compiler.compile(self.project.clone(), auto),
@@ -190,7 +201,7 @@ impl Actor {
             }
             builds.pdf = Some(pdf.clone());
             builds.version += u64::from(result.pdf_changed);
-            builds.outdated = self.edits != builds.built;
+            builds.outdated = builds.clock != builds.built;
         } else {
             builds.pdf = built_pdf(&self.project);
         }
@@ -219,7 +230,7 @@ impl Actor {
     pub fn publish_build(&mut self) {
         let builds = &self.builds;
         let lines = self.docs.iter().filter_map(|(path, doc)| {
-            let edits = self.last_edits.get(path).copied().unwrap_or(0);
+            let edits = builds.edited_at.get(path).copied().unwrap_or(0);
             let shown = edits <= builds.result_edits;
             let built = builds.built().filter(|_| shown);
             let checks = builds

@@ -75,7 +75,7 @@ impl Actor {
             self.emit(Event::FilesChanged(paths));
         }
         if meaning.tree || !others.is_empty() {
-            self.edits += 1;
+            self.builds.edited(None);
             self.mark_outdated(None);
             if self.auto_compile {
                 self.later.push_back(Later::Compile(true));
@@ -158,8 +158,8 @@ impl Actor {
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
             self.docs.insert(new.clone(), doc);
-            if let Some(edit) = self.last_edits.remove(&old) {
-                self.last_edits.insert(new, edit);
+            if let Some(edit) = self.builds.edited_at.remove(&old) {
+                self.builds.edited_at.insert(new, edit);
             }
         }
         if open.is_some() {

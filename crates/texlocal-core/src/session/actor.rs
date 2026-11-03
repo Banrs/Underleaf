@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -138,8 +138,6 @@ pub(crate) struct Actor {
     pub scan: Arc<RwLock<Arc<Scan>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
-    pub edits: u64,
-    pub last_edits: HashMap<String, u64>,
     pub auto_compile: bool,
     pub builds: Builds,
     tex: signal::Receiver<bool>,
@@ -204,8 +202,6 @@ impl Actor {
             scan: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
-            edits: 0,
-            last_edits: HashMap::new(),
             auto_compile,
             builds,
             tex: sessions.service.tex_found.subscribe(),

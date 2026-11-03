@@ -33,7 +33,7 @@ impl Actor {
         let (service, main, edits) = (
             Arc::clone(&self.service),
             self.tree.main.clone(),
-            self.edits,
+            self.builds.clock,
         );
         let shown = self.open.clone();
         tokio::task::spawn_blocking(move || {
