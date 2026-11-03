@@ -59,9 +59,13 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037
+        with:
+          tool: cargo-shear@1.14.0
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+      - run: cargo shear
 
   deps:
     name: Dependencies
@@ -74,9 +78,8 @@ jobs:
       - run: rustup toolchain install
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037
         with:
-          tool: cargo-deny@0.20.2,cargo-shear@1.14.0
+          tool: cargo-deny@0.20.2
       - run: cargo deny --locked check
-      - run: cargo shear
 
   mac:
     name: Mac app
