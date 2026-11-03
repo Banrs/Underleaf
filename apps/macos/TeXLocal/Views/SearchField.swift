@@ -13,17 +13,17 @@ final class FieldHandle {
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
+    var symbol: String?
     var large = false
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
     var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
     var options: [(title: String, isOn: Binding<Bool>)] = []
-    /// The name the field keeps its past entries under, in its symbol's menu.
-    var recents: String?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
+        lazy var symbol = field.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
 
         init(_ field: SearchField) { self.field = field }
 
@@ -31,19 +31,10 @@ struct SearchField: NSViewRepresentable {
 
         @objc func toggle(_ item: NSMenuItem) { field.options[item.tag].isOn.wrappedValue.toggle() }
 
-        func controlTextDidEndEditing(_ note: Notification) { remember(note.object) }
-
-        /// Adds the text to the field's recents, which a field sending each keystroke never does itself.
-        private func remember(_ control: Any?) {
-            guard field.recents != nil, let view = control as? NSSearchField, !view.stringValue.isEmpty else { return }
-            view.recentSearches = Array(([view.stringValue] + view.recentSearches.filter { $0 != view.stringValue }).prefix(10))
-        }
-
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
-                remember(control)
                 guard let step = field.step else { return false }
                 step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
                 return true
@@ -61,6 +52,8 @@ struct SearchField: NSViewRepresentable {
         }
     }
 
+    static let filterSymbol = "line.3.horizontal.decrease.circle"
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {
@@ -74,16 +67,6 @@ struct SearchField: NSViewRepresentable {
             (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
             (cell.searchButtonCell, cell.cancelButtonCell) = (nil, nil)
         }
-        if let recents {
-            view.recentsAutosaveName = recents
-            let menu = NSMenu()
-            for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
-                                 (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
-                                 (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
-                menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
-            }
-            view.searchMenuTemplate = menu
-        }
         handle?.field = view
         return view
     }
@@ -94,6 +77,10 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
+        // The cell puts its magnifier back whenever its control size changes, as SwiftUI's environment does after makeNSView.
+        if let symbol = context.coordinator.symbol, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell, button.image !== symbol {
+            button.image = symbol
+        }
         if !large, view.font?.pointSize != NSFont.systemFontSize(for: view.controlSize) {
             view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
         }

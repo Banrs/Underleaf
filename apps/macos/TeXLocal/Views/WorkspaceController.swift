@@ -82,11 +82,9 @@ final class WorkspaceController: ThinSplitViewController {
     var toolbarRoom: CGFloat { areaItem.viewController.view.frame.width }
 
     private func buildSidebar() {
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth))
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: NavigatorArea(host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth)))
         sidebarItem.minimumThickness = 222
-        let filter = accessory(hostingView(NavigatorFilter(project: project)))
-        filter.preferredScrollEdgeEffectStyle = .soft
-        sidebarItem.addBottomAlignedAccessoryViewController(filter)
+        sidebarItem.addBottomAlignedAccessoryViewController(accessory(NavigatorFilterBar(project: project, window: window), edge: .soft))
         addSplitViewItem(sidebarItem)
     }
 
@@ -115,17 +113,30 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        for (item, side) in [(sourceItem!, StatusBar.Side.source), (pdfItem!, .pdf)] {
-            item.addBottomAlignedAccessoryViewController(accessory(hostingView(StatusBar(project: project, side: side))))
+        // The bar lies over an empty hard-edge accessory in each pane. One accessory across both panes has a hard pocket of
+        // no colour, resting at AppKit's gray (40 over the 30 editor in Dark, 253 over a 238 pane in Light) and no longer
+        // blurring the PDF once it has been hidden; a pane's own rests at the pane's colour, as Xcode's bar rests at its
+        // editor's (probed on 27.2).
+        for item in [sourceItem!, pdfItem!] {
+            let space = NSView()
+            space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
+            item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
         }
-        area.columns = columns
+        let bar = hostingView(StatusBar(project: project))
+        bar.sizingOptions = []
+        bar.safeAreaRegions = []
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        columns.view.addSubview(bar)
+        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
+                                     bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
+                                     bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
+                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height)])
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: app.buildPanelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
         panelItem.holdingPriority = .defaultLow + 1
         panelItem.canCollapse = true
         panelItem.isCollapsed = true
-        panelItem.addBottomAlignedAccessoryViewController(accessory(hostingView(BuildPanelBar(project: project))))
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
         area.addSplitViewItem(columnsItem)
@@ -301,14 +312,8 @@ private struct Pane<Content: View>: View {
 /// The status bar's top edge drags the Logs panel's divider beneath it, opening the panel when it's collapsed, as dragging
 /// Xcode's debug bar does; only the edge, since a divider's rect takes clicks from the bar's buttons.
 private final class AreaSplitViewController: ThinSplitViewController {
-    weak var columns: NSSplitViewController?
-
     override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
-        let given = super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex)
-        guard let bar = columns?.splitViewItems.first(where: { !$0.isCollapsed })?.bottomAlignedAccessoryViewControllers.first
-        else { return given }
-        let line = splitView.arrangedSubviews[0].frame.maxY - bar.view.frame.height
-        let edge = NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
-        return given.isEmpty ? edge : given.union(edge)
+        let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
+        return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
     }
 }

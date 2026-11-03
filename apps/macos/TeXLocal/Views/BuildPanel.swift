@@ -18,36 +18,46 @@ struct BuildPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
+        .safeAreaInset(edge: .bottom, spacing: 0) { BuildPanelBar(project: project) }
     }
 }
 
-/// The panel's bottom split accessory.
-struct BuildPanelBar: View {
+private struct BuildPanelBar: View {
     let project: ProjectModel
 
     var body: some View {
         @Bindable var panel = project.panel
-        let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
-        FilterBar(text: $panel.logFilter) {
+        HStack {
             Picker("Show", selection: $panel.tab) {
                 ForEach(PanelTab.allCases, id: \.self) { tab in
                     Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
                 }
             }
+            .pickerStyle(.menu)
+            .buttonStyle(.borderless)
             .labelsHidden()
             .fixedSize()
-        } trailing: {
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+            let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
             Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
-                .labelStyle(.iconOnly)
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
+            SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol)
+                .frame(maxWidth: 180)
         }
+        .buttonStyle(.accessoryBar)
+        .labelStyle(.iconOnly)
+        .barRow()
+        .background(.textSurface)
+        .barEdge()
     }
 }
 
 struct LogTextView: NSViewRepresentable {
     let text: String
     let title: String
+    let bottomInset: CGFloat
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -69,6 +79,13 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
+        if scroll.contentInsets.bottom != bottomInset {
+            let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets.bottom = bottomInset
+            scroll.scrollerInsets.bottom = bottomInset
+            if atEnd { view.scrollToEndOfDocument(nil) }
+        }
         guard context.coordinator.shown != text else { return }
         updateText(in: scroll)
         context.coordinator.shown = text

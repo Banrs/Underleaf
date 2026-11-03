@@ -1,13 +1,17 @@
 import SwiftUI
 
-/// A pane's half of the status bar, its bottom split accessory. The project's status leads the first pane shown and the
-/// Logs toggle ends the last.
-struct StatusBar: View {
-    enum Side { case source, pdf }
+/// Xcode's debug bar and its console's bar, read from their accessibility frames: 36 pt tall, their first and last
+/// controls 8 pt from their ends, and a symbol button 30 pt wide with its symbol centred.
+enum BarMetrics {
+    static let height: CGFloat = 36
+    static let target: CGFloat = 20
+    static let inset: CGFloat = 8
+    static let symbolWidth: CGFloat = 30
+}
 
+struct StatusBar: View {
     @Environment(WindowModel.self) private var window
     let project: ProjectModel
-    let side: Side
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -15,7 +19,7 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .font(.subheadline).controlSize(.small).lineLimit(1)
+        .barRow()
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -26,28 +30,21 @@ struct StatusBar: View {
 
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: 9) {
-            if side == .source || !window.showSource {
-                BuildStatus(project: project, detail: detail)
-                LiveStatus(project: project)
-                SaveStatus(project: project)
-                if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
-            }
+            BuildStatus(project: project, detail: detail)
+            LiveStatus(project: project)
+            SaveStatus(project: project)
+            if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
             HStack(spacing: 16) {
-                switch side {
-                case .source:
-                    CaretPlace(project: project, detail: detail)
-                    WordCount(project: project, detail: detail)
-                case .pdf:
-                    PagePlace(project: project, detail: detail)
-                }
+                CaretPlace(project: project, detail: detail)
+                WordCount(project: project, detail: detail)
+                PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            if side == .pdf || !window.showPDF {
-                HStack(spacing: 0) {
-                    if side == .source ? project.editsText : PagePlace.shows(project, window) { Divider().frame(height: 12) }
-                    PanelToggle(project: project)
-                }
+            // Flush with the toggle, whose 30 pt target pads its symbol, as Xcode's debug bar sets its last divider.
+            HStack(spacing: 0) {
+                if window.showSource && project.editsText || PagePlace.shows(project, window) { Divider().frame(height: 12) }
+                PanelToggle(project: project)
             }
         }
     }
@@ -259,6 +256,21 @@ private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short
 }
 
 extension View {
-    /// The HIG's least hit region on macOS, 20 by 20 pt.
-    fileprivate func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
+    func barRow() -> some View {
+        font(.subheadline).controlSize(.small).lineLimit(1)
+            .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
+    }
+
+    /// A bar's top edge, one device pixel as AppKit draws the edges of the toolbar and its scroll pockets (measured in
+    /// TextEdit), rather than the 1 pt a split view draws between panes. The status bar has none of its own: its panes'
+    /// hard pockets draw it, and one over it made 1.5 pt over the editor.
+    func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
+
+    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }
+}
+
+private struct Hairline: View {
+    @Environment(\.displayScale) private var scale
+
+    var body: some View { Rectangle().fill(.separator).frame(height: 1 / scale) }
 }

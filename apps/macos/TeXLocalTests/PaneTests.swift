@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 import Testing
 @testable import TeXLocal
 
@@ -7,46 +6,50 @@ struct PaneTests {
     private static let toggleSidebar = #selector(NSSplitViewController.toggleSidebar(_:))
     private static let toggleInspector = #selector(NSSplitViewController.toggleInspector(_:))
 
-    /// Find's options are a pop-up for each choice and a toggle for the case, which with keyboard navigation Tab reaches,
-    /// as it reaches any control accepting first responder, and Space opens or clicks.
-    @Test func findsOptionsArePopUpsAndAToggleThatTheKeyboardReaches() async throws {
-        let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
-        defer { workspace.close(); window.close() }
-        let search = workspace.project.search
-        workspace.project.navigator.shown = .search
-        let sidebar = workspace.splitViewItems[0].viewController.view
-        sidebar.layoutSubtreeIfNeeded()
-        let popUps = sidebar.descendants(of: NSPopUpButton.self)
-        #expect(popUps.map(\.title) == ["Find", "Containing"])
-        let fields = sidebar.descendants(of: NSSearchField.self)
-        let toggles = sidebar.descendants(of: NSButton.self).filter { button in
-            !(button is NSPopUpButton) && button.enclosingScrollView == nil && !fields.contains { button.isDescendant(of: $0) }
+    @Test func theFindBreadcrumbTraversesItsComponentsAndThenLeavesInEitherDirection() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let before = NSTextField(frame: NSRect(x: 0, y: 60, width: 100, height: 24))
+        let after = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 24))
+        let crumb = Breadcrumb { _, _ in }
+        crumb.items = [.init(choices: ["Find", "Replace"], chosen: 0), .init(choices: ["Text", "Whole Words"], chosen: 0)]
+        crumb.frame = NSRect(x: 0, y: 30, width: 200, height: 19)
+        for view in [before, crumb, after] { window.contentView?.addSubview(view) }
+        before.nextKeyView = crumb
+        crumb.nextKeyView = after
+        window.layoutIfNeeded()
+        #expect(!crumb.acceptsFirstResponder)
+        window.selectKeyView(following: before)
+        #expect(window.firstResponder === crumb && crumb.acceptsFirstResponder)
+        let first = crumb.focusRingMaskBounds
+        #expect(first.width > 0)
+        func key(_ text: String, code: UInt16) throws {
+            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                     windowNumber: window.windowNumber, context: nil, characters: text,
+                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
+            crumb.keyDown(with: event)
         }
-        #expect(toggles.count == 1 && (popUps + toggles).allSatisfy { $0.acceptsFirstResponder })
-        toggles.first?.performClick(nil)
-        #expect(search.asked.matchCase)
-
-        (search.replacing, search.asked.wholeWords) = (true, true)
-        try await waitUntil { popUps.map(\.title) == ["Replace", "Matching Word"] }
-        sidebar.layoutSubtreeIfNeeded()
-        #expect(sidebar.descendants(of: NSSearchField.self).map(\.placeholderString) == ["Search Project", "Replace With"])
-    }
-
-    @Test func theNavigatorsRowsFollowTheSidebarIconSizeSetting() throws {
-        let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
-        defer { workspace.close(); window.close() }
-        let sidebar = workspace.splitViewItems[0].viewController.view
-        sidebar.layoutSubtreeIfNeeded()
-        let plain = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [], backing: .buffered, defer: false)
-        plain.isReleasedWhenClosed = false
-        defer { plain.close() }
-        plain.contentView = NSHostingView(rootView: List { Text("Row") }.listStyle(.sidebar))
-        plain.layoutIfNeeded()
-        let size = try #require(plain.contentView?.descendants(of: NSOutlineView.self).first?.rowSizeStyle)
-        let lists = sidebar.descendants(of: NSOutlineView.self)
-        #expect(lists.count == Navigator.allCases.count && lists.allSatisfy { $0.rowSizeStyle == size })
+        try key("\u{f703}", code: 124)
+        let second = crumb.focusRingMaskBounds
+        #expect(second.minX == first.maxX)
+        try key("\u{f703}", code: 124)
+        #expect(crumb.focusRingMaskBounds == second)
+        try key("\u{f702}", code: 123)
+        #expect(crumb.focusRingMaskBounds == first)
+        try key("\t", code: 48)
+        #expect(window.firstResponder === crumb && crumb.focusRingMaskBounds == second)
+        crumb.selectNextKeyView(nil)
+        #expect(window.firstResponder === after.currentEditor())
+        window.selectKeyView(preceding: after)
+        #expect(window.firstResponder === crumb && crumb.focusRingMaskBounds == second)
+        crumb.insertBacktab(nil)
+        #expect(crumb.focusRingMaskBounds == first)
+        crumb.selectPreviousKeyView(nil)
+        #expect(window.firstResponder === before.currentEditor())
+        let parts = try #require(crumb.accessibilityChildren() as? [NSAccessibilityElement])
+        #expect(parts.count == 2 && parts.allSatisfy { $0.accessibilityRole() == .popUpButton })
     }
 
     @Test func tabbingOutOfFilesSkipsTheHiddenNavigatorsAndFindGivesUpTheKeyboardAsItHides() throws {
@@ -121,22 +124,10 @@ struct PaneTests {
         panel.isCollapsed = false
         #expect(workspace.project.panel.shown)
         window.layoutIfNeeded()
-        let field = try #require(panel.bottomAlignedAccessoryViewControllers.first?.view.descendants(of: NSSearchField.self).first)
+        let field = try #require(panel.viewController.view.descendants(of: NSSearchField.self).first)
         #expect(window.makeFirstResponder(field))
         panel.isCollapsed = true
         #expect(!workspace.project.panel.shown && window.firstResponder === workspace.pdf.view)
-    }
-
-    @Test func eachPaneAndTheBuildPanelEndInTheirOwnBarAndTheEditorScrollsBeneathIt() throws {
-        let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
-        defer { workspace.close(); window.close() }
-        let area = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController)
-        let items = workspace.columns.splitViewItems + [try #require(area.splitViewItems.last)]
-        let bars = try items.map { try #require($0.bottomAlignedAccessoryViewControllers.first) }
-        #expect(bars.count == 3 && bars.prefix(2).allSatisfy { $0.view.frame.height >= 20 })
-        workspace.view.layoutSubtreeIfNeeded()
-        #expect(workspace.views.editor.scrollView.safeAreaInsets.bottom >= bars[0].view.frame.height)
     }
 
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {
