@@ -557,8 +557,7 @@ mod tests {
 
     use super::*;
     use crate::service::Service;
-    use crate::session::actor::OpenProject;
-    use crate::session::{Msg, Sessions};
+    use crate::session::{Msg, Session, Sessions};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_delayed_edit_after_a_rejected_reload_keeps_the_deletion_conflict() {
@@ -572,9 +571,9 @@ mod tests {
         let preview = Arc::clone(&service.texpresso);
         let sessions = Sessions::with_compiler(service, compiler, preview, false, Box::new(|_| {}));
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let opening = OpenProject {
-            id: "P".into(),
-            auto_compile: false,
+        let request = Session::parse("OpenProject", json!({ "id": "P", "autoCompile": false }));
+        let Session::OpenProject(opening, _) = request.unwrap() else {
+            unreachable!();
         };
         let (mut actor, _) =
             Actor::new(&sessions, 1, opening, Docs::default(), Arc::default(), tx).unwrap();
@@ -597,6 +596,9 @@ mod tests {
         actor.edited(doc, version, &edit);
         assert_eq!(actor.docs["main.tex"].conflict, Some(DiskConflict::Gone));
         actor.resolve("main.tex", Resolution::Save).unwrap();
-        assert_eq!(fs::read_to_string(path).unwrap(), format!("mine {original}"));
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            format!("mine {original}")
+        );
     }
 }
