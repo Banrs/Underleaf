@@ -182,25 +182,6 @@ final class NavigatorField: NSSearchField {
         get { Cell.self }
         set {}
     }
-
-    /// Keeps the field's past entries in its symbol's menu, as Xcode's Find and replace fields keep theirs (their controller
-    /// builds each menu from the field's history and Clear Recents), with AppKit's recents.
-    func keepRecents(as name: String) {
-        recentsAutosaveName = name
-        let menu = NSMenu()
-        for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
-                             (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
-                             (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
-            menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
-        }
-        searchMenuTemplate = menu
-    }
-
-    /// Adds the field's text to its recents, which a field sending each keystroke never does itself.
-    func remember() {
-        guard !stringValue.isEmpty else { return }
-        recentSearches = Array(([stringValue] + recentSearches.filter { $0 != stringValue }).prefix(10))
-    }
 }
 
 private extension Navigator {

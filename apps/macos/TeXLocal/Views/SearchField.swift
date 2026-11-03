@@ -25,6 +25,8 @@ struct SearchField: NSViewRepresentable {
     var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
     var options: [(title: String, isOn: Binding<Bool>)] = []
+    /// The name the field keeps its past entries under, in its symbol's menu.
+    var recents: String?
     var status: String?
     /// The status as VoiceOver reads it, since the drawn one isn't in the accessibility tree.
     var spokenStatus: String?
@@ -39,10 +41,19 @@ struct SearchField: NSViewRepresentable {
 
         @objc func toggle(_ item: NSMenuItem) { field.options[item.tag].isOn.wrappedValue.toggle() }
 
+        func controlTextDidEndEditing(_ note: Notification) { remember(note.object) }
+
+        /// Adds the text to the field's recents, which a field sending each keystroke never does itself.
+        private func remember(_ control: Any?) {
+            guard field.recents != nil, let view = control as? NSSearchField, !view.stringValue.isEmpty else { return }
+            view.recentSearches = Array(([view.stringValue] + view.recentSearches.filter { $0 != view.stringValue }).prefix(10))
+        }
+
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
+                remember(control)
                 guard let step = field.step else { return false }
                 step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
                 return true
@@ -74,6 +85,16 @@ struct SearchField: NSViewRepresentable {
             view.font = .systemFont(ofSize: 20)
             (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
             (cell.searchButtonCell, cell.cancelButtonCell) = (nil, nil)
+        }
+        if let recents {
+            view.recentsAutosaveName = recents
+            let menu = NSMenu()
+            for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
+                                 (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
+                                 (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
+                menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
+            }
+            view.searchMenuTemplate = menu
         }
         handle?.field = view
         return view
