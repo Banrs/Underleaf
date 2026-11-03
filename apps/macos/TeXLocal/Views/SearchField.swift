@@ -8,11 +8,6 @@ final class FieldHandle {
         if window.firstResponder !== field.currentEditor() { window.makeFirstResponder(field) }
         field.currentEditor()?.selectAll(nil)
     }
-
-    var hasFocus: Bool {
-        guard let field, let first = field.window?.firstResponder else { return false }
-        return first === field || first === field.currentEditor()
-    }
 }
 
 struct SearchField: NSViewRepresentable {

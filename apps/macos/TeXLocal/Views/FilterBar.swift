@@ -16,7 +16,3 @@ struct FilterBar<Leading: View, Trailing: View>: View {
         .controlSize(.small)
     }
 }
-
-extension FilterBar where Leading == EmptyView, Trailing == EmptyView {
-    init(text: Binding<String>) { self.init(text: text, leading: { EmptyView() }, trailing: { EmptyView() }) }
-}
