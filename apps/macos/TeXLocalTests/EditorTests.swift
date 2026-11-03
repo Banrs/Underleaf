@@ -116,6 +116,19 @@ struct EditorTests {
         #expect(text.selection == .caret(20))
     }
 
+    @Test func acceptingACompletionInAnEndsNameLeavesTheCaretAfterItOnceItsBeginIsMirrored() throws {
+        let (editor, window) = Self.editor("\\begin{i}\n\\end{i}")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(16)
+        Self.type("te", in: text)
+        let offered = try #require(text.completions.offered)
+        text.completions.move(try #require(offered.items.firstIndex { $0.label == "itemize" }))
+        Self.event(text) { text.doCommand(by: #selector(NSResponder.insertNewline(_:))) }
+        #expect(text.string == "\\begin{itemize}\n\\end{itemize}" && text.document.text == text.string)
+        #expect(text.selection == .caret(28))
+    }
+
     @Test func switchingFilesKeepsEachFilesSelectionFoldsAndUndoUnlessItsTextChanged() {
         let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
         defer { window.close() }

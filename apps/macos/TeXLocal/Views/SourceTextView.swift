@@ -78,11 +78,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
             textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-            didChangeText()
+            super.didChangeText()
         }
+        if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
+        // The selections are set before mirroring, so the mirror's edits move them as typing's do.
+        mirror()
         undoManager?.setActionName(name)
         undoManager?.endUndoGrouping()
-        if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         scrollRangeToVisible(selectedRange())
         return true
     }
