@@ -425,7 +425,6 @@ struct SwitchTests {
         let (window, held) = (try #require(app.window(showing: first.id)), try #require(app.window(showing: second.id)?.project))
         let document = try #require(SourceDocument(session: held.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
-        try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: second.path + "/main.tex", atomically: true, encoding: .utf8)
         try await waitUntil { !held.conflicts.isEmpty }
         #expect(await !app.quit())

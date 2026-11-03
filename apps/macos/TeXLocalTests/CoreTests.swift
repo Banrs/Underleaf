@@ -58,7 +58,6 @@ struct CoreTests {
         let views = WorkspaceViews(project: project), editor = views.editor
         try await project.load()
         #expect(project.openPath == "main.tex" && editor.path == "main.tex")
-        try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
         try await waitUntil { editor.textView.string == "theirs\n" }
         #expect(editor.textView.undo.undoActionName == "Reload")
@@ -115,7 +114,6 @@ struct CoreTests {
         project.session.heard = { event in
             if case .reload = event { reload = event } else { project.handle(event) }
         }
-        try await Task.sleep(for: .milliseconds(300))
         let range = NSRange(location: 0, length: 0)
         undo.beginUndoGrouping()
         #expect(text.shouldChangeText(in: range, replacementString: "% accepted\n"))
