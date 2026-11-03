@@ -67,7 +67,6 @@ final class SourceDocument {
     }
 
     func complete(caret: Int, explicit: Bool) -> Completions? { call(Complete(caret: caret, explicit: explicit)) ?? nil }
-    func acceptCompletion(_ index: Int, caret: Int) -> Insertion? { call(AcceptCompletion(index: index, caret: caret)) ?? nil }
     func toggleComment(_ selections: [NSRange]) -> [TextEdit] { call(ToggleComment(selections: selections.map(TextRange.init))) ?? [] }
     func setHeading(caret: Int, command: String) -> Insertion? { call(SetHeading(caret: caret, command: command)) }
     func insertBlock(_ id: String, replacing selection: NSRange) -> Insertion? {

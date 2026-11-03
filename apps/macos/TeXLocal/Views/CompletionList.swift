@@ -45,9 +45,13 @@ final class CompletionList {
     func accept() { accept(rows.selection) }
 
     private func accept(_ index: Int) {
-        guard offered != nil else { return }
+        guard let offered else { return }
         close()
-        editor.insert(editor.document.acceptCompletion(index, caret: editor.caret), named: String(localized: "Completion"))
+        guard offered.items.indices.contains(index), editor.caret >= offered.start else { return }
+        let item = offered.items[index]
+        let edit = TextEdit(start: offered.start, length: editor.caret - offered.start, text: item.text)
+        let insertion = Insertion(edit: edit, caret: offered.start + item.text.utf16.count, fields: item.fields)
+        editor.insert(insertion, named: String(localized: "Completion"))
     }
 
     private func show(reload: Bool) {

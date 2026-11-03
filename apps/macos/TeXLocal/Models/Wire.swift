@@ -42,14 +42,6 @@ nonisolated protocol SourceRequest: WireRequest {}
 
 nonisolated protocol SyntaxRequest: WireRequest {}
 
-nonisolated struct AcceptCompletion: SourceRequest {
-    typealias Reply = Insertion?
-    static let command = "AcceptCompletion"
-
-    var index: Int
-    var caret: Int
-}
-
 nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int

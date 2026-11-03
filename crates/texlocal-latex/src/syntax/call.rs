@@ -13,8 +13,7 @@ use crate::protocol::calls;
 
 calls! {
     Source(doc: &mut SourceDocument) {
-        Complete { caret: u32, explicit: bool } -> Option<&Completions> = doc.complete(caret, explicit);
-        AcceptCompletion { index: u32, caret: u32 } -> Option<Insertion> = doc.accept_completion(index, caret);
+        Complete { caret: u32, explicit: bool } -> Option<Completions> = doc.complete(caret, explicit);
         ToggleComment { selections: Vec<TextRange> } -> Vec<TextEdit> = doc.toggle_comment(&selections);
         SetHeading { caret: u32, command: String } -> Insertion = doc.set_heading(caret, &command);
         InsertBlock { id: String, selection: TextRange } -> Option<Insertion> = doc.insert_block(&id, selection);
