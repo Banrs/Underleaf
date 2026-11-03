@@ -431,10 +431,14 @@ fn defined(text: &Text, command: &str, name_end: usize) -> Option<Defined> {
             options.push(String::from_utf16_lossy(&units[piece]));
         }
     });
-    let count = options.first().and_then(|count| count.trim().parse().ok());
-    let arguments = count
-        .unwrap_or(0_usize)
-        .saturating_sub(usize::from(options.len() > 1));
+    let count = match options.first() {
+        Some(count) => count.trim().parse::<usize>().ok()?,
+        None => 0,
+    };
+    if count > 9 {
+        return None;
+    }
+    let arguments = count.saturating_sub(usize::from(options.len() > 1));
     let body = String::from_utf16_lossy(&body);
     let parameters = |count| (1..=count).map(|n| format!("#{n}")).collect::<String>();
     let tex = match (command, options.get(1)) {
