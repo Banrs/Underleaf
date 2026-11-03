@@ -184,18 +184,16 @@ struct PDFTests {
         let url = URL.temporaryDirectory.appending(path: UUID().uuidString + ".pdf")
         try #require(try textPDF(count: 4).dataRepresentation()).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
-        var queued = false
         let watch = NotificationCenter.default.addObserver(forName: .PDFViewDocumentChanged, object: view, queue: .main) { _ in
             MainActor.assumeIsolated {
-                guard !queued, view.document?.pageCount == 2 else { return }
-                queued = true
+                guard controller.view.document?.pageCount == 2 else { return }
                 controller.showLive(LiveDocument(path: url.path(percentEncoded: false), changed: [PageRange(first: 2, last: 3)]))
                 controller.follow(ForwardLoc(page: 4, h: 72, v: 300, width: 100, height: 10, matches: []))
             }
         }
         defer { NotificationCenter.default.removeObserver(watch) }
         try await showLive(["Page 1", "Page 2"], in: controller)
-        #expect(queued && view.document?.pageCount == 4)
+        #expect(view.document?.pageCount == 4)
         #expect(try shown(view).page == 3 && controller.feed.follow == nil)
     }
 
