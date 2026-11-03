@@ -229,6 +229,21 @@ struct PDFTests {
         #expect(view.document?.page(at: 1)?.string?.contains("two") == true)
     }
 
+    @Test func coversAreDrawnForEveryPageInViewAtLowZoom() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = try await onScreen(view)
+        defer { window.close() }
+        controller.show(try textPDF(count: 20))
+        controller.setScale(0.1)
+        view.layoutDocumentView()
+        let document = try #require(view.document)
+        let shown = try (0..<document.pageCount).filter { index in
+            let page = try #require(document.page(at: index))
+            return view.convert(page.bounds(for: view.displayBox), from: page).intersects(view.shownRect)
+        }
+        #expect(shown.count > 3 && Set(view.coverPages.indices).isSuperset(of: shown))
+    }
+
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view)

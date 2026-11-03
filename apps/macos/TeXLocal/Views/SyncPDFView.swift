@@ -50,15 +50,14 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// The pages in view, by index, and the pixels per point they show at: what covers are drawn for.
     var coverPages: CoverPages {
-        guard let document, hasShownArea, !UserDefaults.standard.bool(forKey: "PDFCoversOff") else { return CoverPages() }
         let shown = shownRect
-        var indices: [Int] = []
-        for y in [shown.maxY - 1, shown.midY, shown.minY + 1] {
-            if let page = page(for: CGPoint(x: shown.midX, y: y), nearest: true), !indices.contains(document.index(for: page)) {
-                indices.append(document.index(for: page))
-            }
-        }
-        return CoverPages(indices: indices, scale: scaleFactor * (window?.backingScaleFactor ?? 2))
+        // Every page from the top of the shown area to its foot, as at a low zoom many show; not `visiblePages`, which
+        // lags a zoom or scroll (it held the first of the 7 pages in view right after a zoom to 10%).
+        guard let document, hasShownArea, !UserDefaults.standard.bool(forKey: "PDFCoversOff"),
+              let top = page(for: CGPoint(x: shown.midX, y: shown.maxY - 1), nearest: true),
+              let foot = page(for: CGPoint(x: shown.midX, y: shown.minY + 1), nearest: true) else { return CoverPages() }
+        let (first, last) = (document.index(for: top), document.index(for: foot))
+        return CoverPages(indices: Array(min(first, last)...max(first, last)), scale: scaleFactor * (window?.backingScaleFactor ?? 2))
     }
 
     /// Whole pages drawn off the main thread, on a document no other thread touches, to stand in for its pages while
