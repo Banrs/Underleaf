@@ -354,6 +354,8 @@ pub struct FakePreview {
     sink: Mutex<Option<Sink>>,
     pub log: Mutex<String>,
     revision: AtomicU64,
+    /// The offset of the caret last sent, which the session sends once the caret has settled.
+    pub caret: Mutex<Option<usize>>,
 }
 
 impl FakePreview {
@@ -398,7 +400,9 @@ impl LiveRun for FakePreview {
 
     fn view(&self, _: u32, _: u32) {}
 
-    fn caret(&self, _: &str, _: usize) {}
+    fn caret(&self, _: &str, offset: usize) {
+        *self.caret.lock().unwrap() = Some(offset);
+    }
 
     fn rescan(&self) {}
 

@@ -395,7 +395,6 @@ async fn replies_follow_the_events_sent_before_them() {
         );
     };
     let draft = rig.call("SaveVersion", json!({ "name": "Draft" }));
-    std::thread::sleep(Duration::from_millis(300));
     fs::remove_file(rig.root().join("main.tex")).unwrap();
     rig.section("tree", |e| !e.to_string().contains("main.tex"));
     answered_after("live", "StartLive", json!({}));
@@ -407,7 +406,6 @@ async fn replies_follow_the_events_sent_before_them() {
     answered_after("tree", "CreateEntry", entry);
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     answered_after("documents", "Save", json!({ "reporting": true }));
     let revert = json!({ "path": "ch.tex", "answer": "revert" });
@@ -578,11 +576,12 @@ async fn a_reference_completes_with_the_projects_labels() {
     ])
     .await;
     let doc = rig.open_document("main.tex");
-    rig.section("outline", |o| !o.is_null());
-    std::thread::sleep(Duration::from_millis(500));
-    let complete = json!({ "caret": 16, "explicit": true });
-    let answer = doc.with(|d| Source::call(d, "Complete", complete)).unwrap();
-    assert_eq!(answer["items"][0]["label"], "fig:plot", "{answer}");
+    let first = || {
+        let complete = json!({ "caret": 16, "explicit": true });
+        let answer = doc.with(|d| Source::call(d, "Complete", complete)).unwrap();
+        answer["items"][0]["label"].clone()
+    };
+    wait_until("the label is offered", || first() == "fig:plot");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -807,9 +806,11 @@ async fn a_change_on_disk_is_taken_by_the_editor_into_a_document_without_edits_w
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     let path = rig.root().join("ch.tex");
+    let written = rig.library.path("written");
     for theirs in ["theirs\n", "theirs again\n"] {
-        std::thread::sleep(Duration::from_millis(300));
-        fs::write(&path, theirs).unwrap();
+        // Written whole, as most editors write, so the session can't read it half written.
+        fs::write(&written, theirs).unwrap();
+        fs::rename(&written, &path).unwrap();
         take_reload(&rig, &doc);
         assert_eq!(doc.with(|d| d.text()), theirs);
     }
@@ -823,7 +824,6 @@ async fn an_edit_made_before_a_reload_is_taken_refuses_it_and_a_later_removal_ke
     let doc = rig.open_document("ch.tex");
     let path = rig.root().join("ch.tex");
     let cancel = json!({ "path": "ch.tex", "answer": "cancel" });
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(&path, "external\n").unwrap();
     rig.event("reload", |reload| reload["version"] == 0);
     doc.edit(0, 0, "accepted ", None, false);
@@ -849,7 +849,6 @@ async fn a_change_on_disk_under_edits_is_asked_about_held_and_saved_with_the_edi
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     asked(&rig, "ch.tex", "changed");
     assert_eq!(rig.call("CloseProject", json!({})), false);
@@ -870,7 +869,6 @@ async fn revert_takes_the_disks_text() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     asked(&rig, "ch.tex", "changed");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
@@ -885,7 +883,6 @@ async fn revert_takes_the_disks_text() {
 #[tokio::test(flavor = "multi_thread")]
 async fn another_apps_files_reach_the_tree() {
     let rig = project().await;
-    std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("new.tex"), "x").unwrap();
     let tree = rig.section("tree", |e| e.to_string().contains("new.tex"));
     assert_eq!(names(&tree, "name"), ["ch.tex", "main.tex", "new.tex"]);
@@ -1306,7 +1303,11 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
     rig.forget();
     for line in [2, 3, 5, 7] {
         caret(line);
-        rig.listen(Duration::from_millis(400));
+        // The caret settles 150 ms after it moves, after the follow it asked for at 120 ms.
+        wait_until("the caret settles", || {
+            *preview.caret.lock().unwrap() == Some(start(line))
+        });
+        rig.listen(Duration::ZERO);
         assert!(!rig.heard("liveFollow"), "line {line}");
     }
     let refused = rig.reply(rig.send(
@@ -1551,18 +1552,17 @@ async fn tex_is_looked_for_at_start_so_an_auto_build_waits_on_no_client() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tex_commands_run_in_the_order_sent_so_the_last_one_says_if_tex_is_found() {
-    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
-        stub_tex(library);
-        let slow = library.path("slow");
-        program(&slow.join("latexmk"), "#!/bin/sh\nsleep 1\nexit 1\n");
-        app_settings(library, json!({ "texDir": slow }));
-    })
-    .await;
+    let rig = Rig::open_with(&[("main.tex", MAIN)], stub_tex).await;
+    let found = rig.library.path("found");
+    program(&found.join("latexmk"), LATEXMK);
+    let slow = "#!/bin/sh\nsleep 1\nexit 1\n";
+    program(&rig.library.path("tex/bin/latexmk"), slow);
     let checked = rig.send_library("CheckTex", json!({}));
-    let set = rig.send_library("SetTexDir", json!({ "dir": rig.library.path("tex/bin") }));
+    let set = rig.send_library("SetTexDir", json!({ "dir": found }));
     let id = |e: &Value| e["value"]["id"].clone();
     let first = rig.find(|e| e["type"] == "reply" && (id(e) == checked || id(e) == set));
     assert_eq!(id(&first), checked);
+    assert_eq!(rig.reply(checked).unwrap()["available"], false);
     assert_eq!(rig.reply(set).unwrap()["available"], true);
     rig.call("SetOptions", json!({ "autoCompile": true }));
     rig.call("SetSettings", json!({ "patch": {} }));
