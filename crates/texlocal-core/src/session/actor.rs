@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use texlocal_latex::diff::DiffLine;
@@ -40,7 +40,7 @@ requests! {
         CloseProject {} -> bool => actor.close(pending),
         SetOptions { auto_compile: bool } -> () = Ok(actor.core.auto_compile = auto_compile),
         Open { path: RelPath } -> Option<String> = actor.open(&path.0),
-        Save { reporting: bool } -> bool = actor.save_edits(reporting),
+        Save { reporting: bool } -> bool = actor.docs.save_edits(&mut actor.core, reporting),
         Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
         Compile { auto: bool } -> () = actor.compile(auto),
         StopCompile {} -> () = Ok(actor.builds.stop(&actor.core)),
@@ -181,9 +181,6 @@ impl Core {
 pub(crate) struct Actor {
     pub core: Core,
     pub docs: Docs,
-    pub next_doc: u64,
-    pub open: Option<String>,
-    pub opens: Arc<AtomicU64>,
     pub builds: Builds,
     tex: signal::Receiver<bool>,
     pub tree: Tree,
@@ -199,7 +196,6 @@ impl Actor {
         id: u64,
         opening: OpenProject,
         docs: Docs,
-        opens: Arc<AtomicU64>,
         tx: mpsc::UnboundedSender<Msg>,
     ) -> Result<(Self, UiState), CoreError> {
         let OpenProject {
@@ -243,9 +239,6 @@ impl Actor {
         let mut actor = Self {
             core,
             docs,
-            next_doc: 1,
-            open: None,
-            opens,
             builds: Builds::default(),
             tex: sessions.service.tex_found.subscribe(),
             tree,
@@ -306,23 +299,15 @@ impl Actor {
 
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _ = self.flush_all(false);
+            let _ = self.docs.flush_all(&mut self.core, false);
             self.builds.stop(&self.core);
             self.live_stop();
         }));
         self.core.stop_history();
         let stopped = Stopped {
-            unsaved: self.dirty_paths(),
+            unsaved: self.docs.dirty_paths(),
         };
-        for (_, doc) in self.docs.iter_mut() {
-            doc.doc.close();
-            doc.error = Some(if doc.dirty() {
-                messages::stopped_unsaved()
-            } else {
-                messages::stopped_saved()
-            });
-        }
-        self.publish_documents();
+        self.docs.stopped(&mut self.core);
         self.core
             .publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
         for close in self.end() {
@@ -360,7 +345,11 @@ impl Actor {
         }
         match message {
             Msg::Edited { doc, version, edit } => self.edited(doc, version, &edit),
-            Msg::Selected { doc, caret } => self.selected(doc, caret),
+            Msg::Selected { doc, caret } => {
+                if let Some(path) = self.docs.path_of(doc) {
+                    self.live_caret(path, caret);
+                }
+            }
             Msg::Command(command, reply) => command.run(self, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
@@ -382,11 +371,8 @@ impl Actor {
         while let Some((&timer, _)) = self.core.timers.iter().find(|(_, at)| **at <= now) {
             self.core.timers.remove(&timer);
             match timer {
-                Timer::Autosave => self.autosave(),
-                Timer::Symbols => {
-                    let (shown, edits) = (self.open.clone(), self.builds.clock);
-                    self.tree.scan(&self.core, &self.docs, shown, edits);
-                }
+                Timer::Autosave => self.docs.autosave(&mut self.core),
+                Timer::Symbols => self.tree.scan(&self.core, &self.docs, self.builds.clock),
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.caret_settled(),
                 Timer::Follow => self.follow(),
@@ -416,7 +402,7 @@ impl Actor {
     }
 
     fn close(&mut self, reply: Pending<bool>) {
-        match self.flush_all(true) {
+        match self.docs.flush_all(&mut self.core, true) {
             Ok(true) => {}
             flushed => return reply.send(flushed),
         }

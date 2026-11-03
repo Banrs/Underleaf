@@ -148,7 +148,7 @@ impl Actor {
         if let Some(doc) = self.docs.values().find(unsettled) {
             return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }
-        self.save_first()?;
+        self.docs.save_first(&mut self.core)?;
         let text = |doc: &Doc| {
             let (text, version) = doc.doc.snapshot();
             (doc.path.clone(), text, version)

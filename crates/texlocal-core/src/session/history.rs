@@ -70,7 +70,7 @@ impl Actor {
         if name.is_empty() {
             return reply.send(Err(CoreError::bad_request(messages::version_needs_name())));
         }
-        if let Err(err) = self.save_first() {
+        if let Err(err) = self.docs.save_first(&mut self.core) {
             return reply.send(Err(err));
         }
         let project = self.core.project.clone();

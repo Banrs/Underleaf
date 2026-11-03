@@ -14,7 +14,7 @@ use crate::{CoreError, sys, zipexport};
 
 impl Actor {
     pub fn trash(&mut self, path: &str) -> Result<Option<PathBuf>, CoreError> {
-        if !self.flush_all(true)? {
+        if !self.docs.flush_all(&mut self.core, true)? {
             return Ok(None);
         }
         let main = settings::read_settings(&self.core.project.settings).main_file;
@@ -22,12 +22,12 @@ impl Actor {
             return Err(CoreError::conflict(messages::main_file_trash()));
         }
         let trashed = sys::trash(&paths::safe_path(&self.core.project.root, path)?)?;
-        if self.open.as_ref().is_some_and(|open| within(open, path))
+        if matches!(&self.docs.open, Some(open) if within(open, path))
             && let Some(main) = self.tree.main.clone()
         {
             let _ = self.open_file(&main);
         }
-        for doc in self.docs_within(path) {
+        for doc in self.docs.within(path) {
             self.close_doc(&doc, false);
         }
         self.reload_tree();
@@ -56,7 +56,9 @@ impl Actor {
         let docs: Vec<String> = self.docs.keys().cloned().collect();
         let meaning = self.tree.take_changes(&self.core, &docs);
         for path in &meaning.docs {
-            self.check_disk(path);
+            if self.docs.check_disk(&mut self.core, path) {
+                self.closed();
+            }
         }
         let others: Vec<&String> = meaning
             .listed
@@ -119,7 +121,7 @@ impl Actor {
     }
 
     pub fn export(&mut self, dest: PathBuf, for_arxiv: bool, reply: Pending<()>) {
-        if let Err(err) = self.save_first() {
+        if let Err(err) = self.docs.save_first(&mut self.core) {
             return reply.send(Err(err));
         }
         let project = self.core.project.clone();
@@ -133,7 +135,7 @@ impl Actor {
     }
 
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
-        if !self.save_edits(true)? {
+        if !self.docs.save_edits(&mut self.core, true)? {
             return Ok(None);
         }
         let renamed = projects::rename_entry(&self.core.project, from, to)?;
@@ -141,33 +143,18 @@ impl Actor {
         self.core.emit(Event::Renamed(Renamed { from, to }));
         self.live_restart();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
-        for path in self.docs_within(to) {
+        for path in self.docs.within(to) {
             if !within(&path, from) {
                 self.close_doc(&path, false);
             }
         }
-        let moved = |path: &str| Some(format!("{to}{}", paths::after_entry(path, from)?));
-        let open = self.open.as_deref().and_then(moved);
-        for old in self.docs_within(from) {
-            let new = moved(&old).expect("within");
-            let mut doc = self.docs.remove(&old).expect("listed");
-            doc.path.clone_from(&new);
-            doc.doc.moved(&new);
-            self.docs.insert(new.clone(), doc);
+        for (old, new) in self.docs.moved(from, to) {
             self.builds.moved(&old, &new);
         }
-        if open.is_some() {
-            self.open = open;
-        }
-        for path in self.docs_within(to) {
-            if !is_text(&path) {
-                self.docs.close(&path);
-            }
-        }
-        if let Some(open) = self.open.clone().filter(|open| is_text(open)) {
+        if let Some(open) = self.docs.open.clone().filter(|open| is_text(open)) {
             let _ = self.open_document(&open);
         }
-        self.publish_documents();
+        self.docs.publish(&mut self.core);
         self.builds.publish(&mut self.core, &self.docs);
         self.publish_live(false);
         self.reload_tree();

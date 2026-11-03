@@ -4,20 +4,21 @@ use std::fs;
 use std::io::ErrorKind;
 use std::ops::Deref;
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use texlocal_latex::diff::edit_to;
-use texlocal_latex::is_text;
 use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextEdit;
+use texlocal_latex::{file_kind, is_text};
 
 use super::Document;
-use super::actor::{Actor, Later, Timer};
+use super::actor::{Actor, Core, Later, Timer};
 use super::edits::DocumentEdits;
-use super::state::DocumentState;
+use super::state::{DocumentState, OpenFile, SessionSection};
+use super::watch::{Tree, TreeIndex};
 use crate::events::Event;
 use crate::messages;
 use crate::paths::{self, within};
@@ -75,10 +76,15 @@ impl Doc {
 
 pub(crate) type Shared = Arc<Mutex<HashMap<String, Document>>>;
 
+/// The documents open, which the main thread edits, and the file the editor shows.
 #[derive(Default)]
 pub(crate) struct Docs {
     docs: BTreeMap<String, Doc>,
     shared: Shared,
+    opened: u64,
+    pub open: Option<String>,
+    /// The opens asked and not yet run, so only the last one asked runs.
+    pub opens: Arc<AtomicU64>,
 }
 
 impl Deref for Docs {
@@ -99,25 +105,17 @@ impl Docs {
         lock(&self.shared).clone()
     }
 
-    pub fn get_mut(&mut self, path: &str) -> Option<&mut Doc> {
-        self.docs.get_mut(path)
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut Doc)> {
-        self.docs.iter_mut()
-    }
-
-    pub fn insert(&mut self, path: String, doc: Doc) {
+    fn insert(&mut self, path: String, doc: Doc) {
         lock(&self.shared).insert(path.clone(), doc.doc.clone());
         self.docs.insert(path, doc);
     }
 
-    pub fn remove(&mut self, path: &str) -> Option<Doc> {
+    fn remove(&mut self, path: &str) -> Option<Doc> {
         lock(&self.shared).remove(path);
         self.docs.remove(path)
     }
 
-    pub fn close(&mut self, path: &str) -> bool {
+    fn discard(&mut self, path: &str) -> bool {
         self.remove(path).map(|doc| doc.doc.close()).is_some()
     }
 
@@ -127,58 +125,33 @@ impl Docs {
             doc.doc.close();
         }
     }
-}
 
-impl Actor {
-    pub fn open(&mut self, path: &str) -> Result<Option<String>, CoreError> {
-        if self.opens.fetch_sub(1, Ordering::Relaxed) > 1 {
-            return Ok(None);
-        }
-        let path =
-            paths::disk_spelling(&self.core.project.root, path).unwrap_or_else(|| path.to_owned());
-        if !self.tree.contains(&path) {
-            self.reload_tree();
-        }
-        if !is_text(&path) && !self.tree.files.contains(&path) {
-            return Err(CoreError::not_found(messages::not_in_project(&path)));
-        }
-        self.open_file(&path)?;
-        Ok(Some(path))
+    pub fn publish(&self, cx: &mut Core) {
+        let documents = self.docs.values().map(Doc::state).collect();
+        cx.publish(SessionSection::Documents(documents));
     }
 
-    pub fn open_file(&mut self, path: &str) -> Result<(), CoreError> {
-        if is_text(path) {
-            self.open_document(path)?;
+    pub fn publish_open(&mut self, cx: &mut Core, tree: &TreeIndex) {
+        let gone = |open: &String| match is_text(open) {
+            true => !self.docs.contains_key(open),
+            false => !tree.files.contains(open),
+        };
+        if self.open.as_ref().is_some_and(gone) {
+            self.open = None;
         }
-        let was = self.open.replace(path.to_owned());
-        if was.as_deref() != Some(path) {
-            self.core.after(Timer::Symbols);
-            self.publish_open();
-            if let Some(was) = was
-                && self.flush(Some(&was), true).unwrap_or(false)
-            {
-                self.close_doc(&was, true);
-            }
-        }
-        Ok(())
+        let open = self.open.clone().map(|path| OpenFile {
+            kind: file_kind(&path),
+            path,
+        });
+        cx.publish(SessionSection::OpenFile(open));
     }
 
-    pub fn reopen(&mut self, file: Option<String>) {
-        let file = file
-            .filter(|file| self.tree.files.contains(file))
-            .or_else(|| self.tree.main.clone());
-        if let Some(file) = file
-            && (!is_text(&file) || self.open_document(&file).is_ok())
-        {
-            self.open = Some(file);
-        }
-    }
-
-    pub fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
+    /// Reads a document in from disk, true when it wasn't open already.
+    pub fn load(&mut self, cx: &mut Core, path: &str, tree: &Tree) -> Result<bool, CoreError> {
         if self.docs.contains_key(path) {
-            return Ok(());
+            return Ok(false);
         }
-        let abs = paths::safe_path(&self.core.project.root, path)?;
+        let abs = paths::safe_path(&cx.project.root, path)?;
         let size = fs::metadata(&abs).map_err(CoreError::at(&abs))?.len();
         if size > MAX_EDITED {
             return Err(CoreError::bad_request(messages::too_large_to_edit(
@@ -187,16 +160,10 @@ impl Actor {
         }
         let (disk, stamp) = read_disk(&abs)?;
         let (text, newline) = disk.ok_or_else(|| CoreError::bad_request(messages::not_utf8()))?;
-        let id = self.next_doc;
-        self.next_doc += 1;
+        self.opened += 1;
+        let scan = Arc::clone(&tree.scan);
         let doc = Doc {
-            doc: Document::new(
-                id,
-                path,
-                &text,
-                self.core.tx.clone(),
-                Arc::clone(&self.tree.scan),
-            ),
+            doc: Document::new(self.opened, path, &text, cx.tx.clone(), scan),
             path: path.to_owned(),
             saved: 0,
             force: false,
@@ -208,74 +175,97 @@ impl Actor {
             reloading: None,
             error: None,
         };
-        self.docs.insert(path.to_owned(), doc);
-        self.publish_documents();
-        self.builds.publish(&mut self.core, &self.docs);
-        self.live_issues_opened(path);
-        self.live_opened(path);
-        Ok(())
+        self.insert(path.to_owned(), doc);
+        self.publish(cx);
+        Ok(true)
+    }
+
+    /// Shows a file, closing the document shown before if it saves; true when that closed.
+    pub fn show(&mut self, cx: &mut Core, tree: &TreeIndex, path: &str) -> bool {
+        let was = self.open.replace(path.to_owned());
+        if was.as_deref() == Some(path) {
+            return false;
+        }
+        cx.after(Timer::Symbols);
+        self.publish_open(cx, tree);
+        was.is_some_and(|was| {
+            self.flush(cx, Some(&was), true).unwrap_or(false) && self.close(cx, &was, true)
+        })
     }
 
     /// Closes a document, or with `if_saved` only one with nothing typed since it was saved.
-    pub fn close_doc(&mut self, path: &str, if_saved: bool) -> bool {
+    pub fn close(&mut self, cx: &mut Core, path: &str, if_saved: bool) -> bool {
         let saved = |doc: &Doc| !doc.force && doc.doc.close_if(doc.saved);
-        if if_saved && !self.docs.get(path).is_some_and(saved) || !self.docs.close(path) {
+        if if_saved && !self.docs.get(path).is_some_and(saved) || !self.discard(path) {
             return false;
         }
-        self.publish_documents();
-        self.builds.publish(&mut self.core, &self.docs);
-        self.publish_live(false);
-        self.publish_open();
+        self.publish(cx);
         true
     }
 
-    pub fn edited(&mut self, id: u64, version: u64, edit: &TextEdit) {
-        let Some((path, doc)) = self.docs.iter_mut().find(|(_, doc)| doc.doc.id() == id) else {
-            return;
+    /// Moves the documents within `from` to `to`, giving back each one's old and new path.
+    pub fn moved(&mut self, from: &str, to: &str) -> Vec<(String, String)> {
+        let moved = |path: &str| Some(format!("{to}{}", paths::after_entry(path, from)?));
+        if let Some(open) = self.open.as_deref().and_then(moved) {
+            self.open = Some(open);
+        }
+        let mut renamed = Vec::new();
+        for old in self.within(from) {
+            let new = moved(&old).expect("within");
+            let mut doc = self.remove(&old).expect("listed");
+            doc.path.clone_from(&new);
+            doc.doc.moved(&new);
+            self.insert(new.clone(), doc);
+            renamed.push((old, new));
+        }
+        for path in self.within(to) {
+            if !is_text(&path) {
+                self.discard(&path);
+            }
+        }
+        renamed
+    }
+
+    pub fn path_of(&self, id: u64) -> Option<String> {
+        let doc = self.docs.values().find(|doc| doc.doc.id() == id);
+        doc.map(|doc| doc.path.clone())
+    }
+
+    /// Takes in an edit the main thread made, true when the reload it was closes its document.
+    pub fn edited(&mut self, cx: &mut Core, path: &str, version: u64, edit: &TextEdit) -> bool {
+        let Some(doc) = self.docs.get_mut(path) else {
+            return false;
         };
-        let path = path.clone();
         let conflict = doc.conflict;
         let reload = doc.reloading.take_if(|(base, _)| version > *base);
         let reloaded = reload.map(|(base, reload)| version == base + 1 && reload == *edit);
         if reloaded == Some(true) {
             doc.saved = version;
         }
-        self.touched(&path, Some(edit));
-        self.core.after(Timer::Autosave);
-        self.live_edited(&path, version, edit);
+        cx.after(Timer::Autosave);
         match reloaded {
             Some(true) => {
-                self.core.after(Timer::Symbols);
-                self.check_disk(&path);
+                cx.after(Timer::Symbols);
+                return self.check_disk(cx, path);
             }
             // An edit made before the main thread saw the reload refused it.
-            Some(false) if conflict.is_none() => self.ask(&path, DiskConflict::Changed),
+            Some(false) if conflict.is_none() => self.ask(cx, path, DiskConflict::Changed),
             _ => {}
         }
+        false
     }
 
-    pub fn selected(&mut self, id: u64, caret: usize) {
-        if let Some(path) = self.docs.values().find(|doc| doc.doc.id() == id) {
-            self.live_caret(path.path.clone(), caret);
-        }
-    }
-
-    fn touched(&mut self, path: &str, edit: Option<&TextEdit>) {
-        self.builds.edited(&mut self.core, &self.docs, Some(path));
-        self.live_issues_edited(path, edit);
-    }
-
-    pub fn autosave(&mut self) {
+    pub fn autosave(&mut self, cx: &mut Core) {
         let mut ok = true;
         for path in self.dirty_paths() {
-            ok &= self.save_doc(&path, false, true).unwrap_or(false);
+            ok &= self.save_doc(cx, &path, false, true).unwrap_or(false);
         }
-        if ok && self.core.auto_compile {
-            self.core.later.push_back(Later::Compile(true));
+        if ok && cx.auto_compile {
+            cx.later.push_back(Later::Compile(true));
         }
     }
 
-    pub fn docs_within(&self, dir: &str) -> Vec<String> {
+    pub fn within(&self, dir: &str) -> Vec<String> {
         let docs = self.docs.keys();
         docs.filter(|p| within(p, dir)).cloned().collect()
     }
@@ -285,7 +275,13 @@ impl Actor {
         docs.map(|doc| doc.path.clone()).collect()
     }
 
-    fn save_doc(&mut self, path: &str, reporting: bool, autosave: bool) -> Result<bool, CoreError> {
+    fn save_doc(
+        &mut self,
+        cx: &mut Core,
+        path: &str,
+        reporting: bool,
+        autosave: bool,
+    ) -> Result<bool, CoreError> {
         for _ in 0..2 {
             let Some(doc) = self.docs.get_mut(path) else {
                 return Ok(true);
@@ -294,7 +290,7 @@ impl Actor {
                 return Ok(true);
             }
             if autosave && doc.doc.composing() {
-                self.core.after(Timer::Autosave);
+                cx.after(Timer::Autosave);
                 return Ok(false);
             }
             if doc.asking || doc.reloading.is_some() {
@@ -302,7 +298,7 @@ impl Actor {
             }
             if let Some(kind) = doc.conflict {
                 if reporting {
-                    self.ask(path, kind);
+                    self.ask(cx, path, kind);
                 }
                 return Ok(false);
             }
@@ -312,22 +308,23 @@ impl Actor {
                 "\n" => Cow::Borrowed(text.as_str()),
                 ending => Cow::Owned(text.replace('\n', ending)),
             };
-            let written = paths::safe_write_path(&self.core.project, path).and_then(|abs| {
+            let written = paths::safe_write_path(&cx.project, path).and_then(|abs| {
                 if !as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
                     return Ok(None);
                 }
                 projects::write_creating(&abs, file.as_bytes()).map(Some)
             });
             let result = match written {
+                // A dirty document stays open, so the check can't close it.
                 Ok(None) => {
-                    self.check_disk(path);
+                    self.check_disk(cx, path);
                     continue;
                 }
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
                     (doc.saved, doc.force, doc.error) = (version, false, None);
-                    self.core.after(Timer::Symbols);
-                    self.core.snapshot_soon();
+                    cx.after(Timer::Symbols);
+                    cx.snapshot_soon();
                     Ok(true)
                 }
                 Err(err) => {
@@ -335,18 +332,23 @@ impl Actor {
                     Err(err)
                 }
             };
-            self.publish_documents();
+            self.publish(cx);
             return result;
         }
         Ok(false)
     }
 
-    pub fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
-        self.core.timers.remove(&Timer::Autosave);
-        self.flush(None, reporting)
+    pub fn flush_all(&mut self, cx: &mut Core, reporting: bool) -> Result<bool, CoreError> {
+        cx.timers.remove(&Timer::Autosave);
+        self.flush(cx, None, reporting)
     }
 
-    fn flush(&mut self, only: Option<&str>, reporting: bool) -> Result<bool, CoreError> {
+    fn flush(
+        &mut self,
+        cx: &mut Core,
+        only: Option<&str>,
+        reporting: bool,
+    ) -> Result<bool, CoreError> {
         let mut failure = None;
         for _ in 0..3 {
             let mut dirty = self.dirty_paths();
@@ -356,7 +358,7 @@ impl Actor {
             }
             let mut all = true;
             for path in dirty {
-                match self.save_doc(&path, reporting, false) {
+                match self.save_doc(cx, &path, reporting, false) {
                     Ok(saved) => all &= saved,
                     Err(err) => {
                         all = false;
@@ -377,37 +379,56 @@ impl Actor {
             .all(|(path, doc)| only.is_some_and(|only| only != path) || !doc.dirty()))
     }
 
-    pub fn save_first(&mut self) -> Result<(), CoreError> {
-        if self.flush_all(true)? {
+    pub fn save_first(&mut self, cx: &mut Core) -> Result<(), CoreError> {
+        if self.flush_all(cx, true)? {
             Ok(())
         } else {
             Err(CoreError::conflict(messages::edits_unsaved()))
         }
     }
 
-    pub fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {
+    pub fn save_edits(&mut self, cx: &mut Core, reporting: bool) -> Result<bool, CoreError> {
         let edited = !self.dirty_paths().is_empty();
-        let saved = self.flush_all(reporting)?;
-        if saved && edited && self.core.auto_compile {
-            self.core.later.push_back(Later::Compile(true));
+        let saved = self.flush_all(cx, reporting)?;
+        if saved && edited && cx.auto_compile {
+            cx.later.push_back(Later::Compile(true));
         }
         Ok(saved)
     }
 
-    fn ask(&mut self, path: &str, kind: DiskConflict) {
+    /// Closes every document of a session that stopped, saying of each whether its edits were saved.
+    pub fn stopped(&mut self, cx: &mut Core) {
+        for doc in self.docs.values_mut() {
+            doc.doc.close();
+            doc.error = Some(if doc.dirty() {
+                messages::stopped_unsaved()
+            } else {
+                messages::stopped_saved()
+            });
+        }
+        self.publish(cx);
+    }
+
+    fn ask(&mut self, cx: &mut Core, path: &str, kind: DiskConflict) {
         if let Some(doc) = self.docs.get_mut(path) {
             (doc.conflict, doc.asking) = (Some(kind), true);
-            self.publish_documents();
+            self.publish(cx);
         }
     }
 
-    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<(), CoreError> {
+    /// Takes the answer to a conflict with the disk, true when it closes the document.
+    pub fn resolve(
+        &mut self,
+        cx: &mut Core,
+        path: &str,
+        answer: Resolution,
+    ) -> Result<bool, CoreError> {
         let doc = self
             .docs
             .get_mut(path)
             .ok_or_else(|| CoreError::not_found(messages::document_not_open()))?;
         let Some(kind) = doc.conflict else {
-            return Ok(());
+            return Ok(false);
         };
         match (kind, answer) {
             (_, Resolution::Cancel) => doc.asking = false,
@@ -420,36 +441,33 @@ impl Actor {
                 (doc.asking, doc.conflict, doc.force, doc.saved) = (false, None, false, version);
             }
             (DiskConflict::Gone, Resolution::Save) => (doc.asking, doc.conflict) = (false, None),
-            (DiskConflict::Gone, Resolution::Close) => {
-                self.close_doc(path, false);
-                return Ok(());
-            }
+            (DiskConflict::Gone, Resolution::Close) => return Ok(self.close(cx, path, false)),
             _ => {
                 return Err(CoreError::bad_request(messages::answer_unfit()));
             }
         }
-        self.publish_documents();
+        self.publish(cx);
         match answer {
-            Resolution::Save => self.save_edits(true).map(drop),
-            Resolution::Revert => {
-                match self.docs[path].disk_text.clone() {
-                    Some(text) => self.reload(path, &text),
-                    None => drop(self.close_doc(path, false)),
+            Resolution::Save => self.save_edits(cx, true).map(|_| false),
+            Resolution::Revert => Ok(match self.docs[path].disk_text.clone() {
+                Some(text) => {
+                    self.reload(cx, path, &text);
+                    false
                 }
-                Ok(())
-            }
-            _ => Ok(()),
+                None => self.close(cx, path, false),
+            }),
+            _ => Ok(false),
         }
     }
 
     /// Asks the main thread, the text's one writer, to take the disk's text, which an edit made first refuses.
-    fn reload(&mut self, path: &str, text: &str) {
+    fn reload(&mut self, cx: &mut Core, path: &str, text: &str) {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
         let (shown, version) = doc.doc.snapshot();
         if version != doc.saved {
-            return self.ask(path, DiskConflict::Changed);
+            return self.ask(cx, path, DiskConflict::Changed);
         }
         let Some(edit) = edit_to(&shown, text) else {
             return;
@@ -461,17 +479,18 @@ impl Actor {
         doc.reloading = Some((version, edit));
         let path = path.to_owned();
         let edits = vec![asked];
-        self.core.emit(Event::Reload(DocumentEdits {
+        cx.emit(Event::Reload(DocumentEdits {
             path,
             version,
             edits,
         }));
     }
 
-    pub fn check_disk(&mut self, path: &str) {
-        let abs = self.core.project.root.join(path);
+    /// Takes in a document's file as the disk has it now, true when that closes the document.
+    pub fn check_disk(&mut self, cx: &mut Core, path: &str) -> bool {
+        let abs = cx.project.root.join(path);
         if fs::metadata(&abs).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
-            return self.file_gone(path);
+            return self.file_gone(cx, path);
         }
         // A reload in flight checks the disk again once the main thread has taken it.
         let Some(doc) = self
@@ -479,19 +498,19 @@ impl Actor {
             .get_mut(path)
             .filter(|doc| doc.reloading.is_none())
         else {
-            return;
+            return false;
         };
         if as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
-            return;
+            return false;
         }
         let (disk, stamp) = match read_disk(&abs) {
             Ok(read) => read,
             Err(err) => {
                 if doc.dirty() {
                     doc.error = Some(err.message);
-                    self.publish_documents();
+                    self.publish(cx);
                 }
-                return;
+                return false;
             }
         };
         let returned = doc.conflict == Some(DiskConflict::Gone);
@@ -503,32 +522,116 @@ impl Actor {
             doc.newline = *newline;
             if doc.disk_text.as_ref() == Some(text) {
                 if returned {
-                    self.publish_documents();
-                    self.core.after(Timer::Autosave);
+                    self.publish(cx);
+                    cx.after(Timer::Autosave);
                 }
-                return;
+                return false;
             }
         }
         doc.disk_text = disk.map(|(text, _)| text);
         match (doc.disk_text.clone(), doc.dirty()) {
             (_, true) if doc.conflict.is_some() => {}
-            (Some(text), false) if self.open.as_deref() == Some(path) => self.reload(path, &text),
-            (_, false) if self.close_doc(path, true) => {}
-            _ => self.ask(path, DiskConflict::Changed),
+            (Some(text), false) if self.open.as_deref() == Some(path) => {
+                self.reload(cx, path, &text);
+            }
+            (_, false) if self.close(cx, path, true) => return true,
+            _ => self.ask(cx, path, DiskConflict::Changed),
         }
+        false
     }
 
-    fn file_gone(&mut self, path: &str) {
-        if self.close_doc(path, true) {
-            return;
+    fn file_gone(&mut self, cx: &mut Core, path: &str) -> bool {
+        if self.close(cx, path, true) {
+            return true;
         }
         let Some(doc) = self.docs.get_mut(path) else {
-            return;
+            return false;
         };
         doc.disk_stamp = None;
         if doc.conflict != Some(DiskConflict::Gone) {
-            self.ask(path, DiskConflict::Gone);
+            self.ask(cx, path, DiskConflict::Gone);
         }
+        false
+    }
+}
+
+impl Actor {
+    pub fn open(&mut self, path: &str) -> Result<Option<String>, CoreError> {
+        if self.docs.opens.fetch_sub(1, Ordering::Relaxed) > 1 {
+            return Ok(None);
+        }
+        let path =
+            paths::disk_spelling(&self.core.project.root, path).unwrap_or_else(|| path.to_owned());
+        if !self.tree.contains(&path) {
+            self.reload_tree();
+        }
+        if !is_text(&path) && !self.tree.files.contains(&path) {
+            return Err(CoreError::not_found(messages::not_in_project(&path)));
+        }
+        self.open_file(&path)?;
+        Ok(Some(path))
+    }
+
+    pub fn open_file(&mut self, path: &str) -> Result<(), CoreError> {
+        if is_text(path) {
+            self.open_document(path)?;
+        }
+        if self.docs.show(&mut self.core, &self.tree, path) {
+            self.closed();
+        }
+        Ok(())
+    }
+
+    pub fn reopen(&mut self, file: Option<String>) {
+        let file = file
+            .filter(|file| self.tree.files.contains(file))
+            .or_else(|| self.tree.main.clone());
+        if let Some(file) = file
+            && (!is_text(&file) || self.open_document(&file).is_ok())
+        {
+            self.docs.open = Some(file);
+        }
+    }
+
+    pub fn open_document(&mut self, path: &str) -> Result<(), CoreError> {
+        if self.docs.load(&mut self.core, path, &self.tree)? {
+            self.builds.publish(&mut self.core, &self.docs);
+            self.live_issues_opened(path);
+            self.live_opened(path);
+        }
+        Ok(())
+    }
+
+    pub fn close_doc(&mut self, path: &str, if_saved: bool) {
+        if self.docs.close(&mut self.core, path, if_saved) {
+            self.closed();
+        }
+    }
+
+    /// Shows what a document closed leaves of the build's and the live preview's issues and the file open.
+    pub fn closed(&mut self) {
+        self.builds.publish(&mut self.core, &self.docs);
+        self.publish_live(false);
+        self.docs.publish_open(&mut self.core, &self.tree);
+    }
+
+    pub fn edited(&mut self, id: u64, version: u64, edit: &TextEdit) {
+        let Some(path) = self.docs.path_of(id) else {
+            return;
+        };
+        self.builds.edited(&mut self.core, &self.docs, Some(&path));
+        self.live_issues_edited(&path, Some(edit));
+        self.live_edited(&path, version, edit);
+        if self.docs.edited(&mut self.core, &path, version, edit) {
+            self.closed();
+        }
+    }
+
+    pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<(), CoreError> {
+        if self.docs.resolve(&mut self.core, path, answer)? {
+            self.closed();
+        }
+        Ok(())
     }
 }
 
@@ -580,19 +683,18 @@ mod tests {
         let Session::OpenProject(opening, _) = request.unwrap() else {
             unreachable!();
         };
-        let (mut actor, _) =
-            Actor::new(&sessions, 1, opening, Docs::default(), Arc::default(), tx).unwrap();
+        let (mut actor, _) = Actor::new(&sessions, 1, opening, Docs::default(), tx).unwrap();
         actor.open_file("main.tex").unwrap();
         let doc = actor.docs["main.tex"].doc.clone();
         let original = doc.snapshot().0;
         let path = actor.core.project.root.join("main.tex");
         fs::write(&path, "external\n").unwrap();
-        actor.check_disk("main.tex");
+        actor.docs.check_disk(&mut actor.core, "main.tex");
         assert!(actor.docs["main.tex"].reloading.is_some());
 
         doc.edit(0, 0, "mine ", None, false).unwrap();
         fs::remove_file(&path).unwrap();
-        actor.check_disk("main.tex");
+        actor.docs.check_disk(&mut actor.core, "main.tex");
         assert_eq!(actor.docs["main.tex"].conflict, Some(DiskConflict::Gone));
 
         let Msg::Edited { doc, version, edit } = rx.try_recv().unwrap() else {

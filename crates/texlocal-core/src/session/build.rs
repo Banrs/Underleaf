@@ -353,7 +353,7 @@ impl Actor {
         if auto && self.live_previewing() || self.builds.waits(&self.core, auto) {
             return Ok(());
         }
-        if self.flush_all(!auto)? {
+        if self.docs.flush_all(&mut self.core, !auto)? {
             self.builds.start(&mut self.core, &self.docs, auto);
         }
         Ok(())

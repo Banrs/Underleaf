@@ -100,10 +100,11 @@ impl Tree {
         meaning
     }
 
-    pub fn scan(&mut self, cx: &Core, docs: &Docs, shown: Option<String>, edits: u64) {
+    pub fn scan(&mut self, cx: &Core, docs: &Docs, edits: u64) {
         self.scans += 1;
         let (seq, project, tx) = (self.scans, cx.project.clone(), cx.tx.clone());
-        let (facts, docs) = (Arc::clone(&self.facts), docs.handles());
+        let (shown, facts) = (docs.open.clone(), Arc::clone(&self.facts));
+        let docs = docs.handles();
         let mut files: Vec<String> = self.files.iter().cloned().collect();
         files.sort_unstable();
         let (service, main) = (Arc::clone(&cx.service), self.main.clone());

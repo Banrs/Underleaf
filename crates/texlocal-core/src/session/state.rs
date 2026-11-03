@@ -1,12 +1,12 @@
 use schemars::JsonSchema;
 use serde::Serialize;
+use texlocal_latex::FileKind;
 use texlocal_latex::message::Message;
 use texlocal_latex::project::Analysis;
-use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::actor::Actor;
 use super::build::{BuildState, ShownPdf};
-use super::documents::{DiskConflict, Doc};
+use super::documents::DiskConflict;
 use super::live::LiveState;
 use crate::projects::TreeNode;
 use crate::settings::ProjectSettings;
@@ -59,8 +59,8 @@ pub(crate) struct DocumentState {
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct OpenFile {
-    path: String,
-    kind: FileKind,
+    pub path: String,
+    pub kind: FileKind,
 }
 
 impl Actor {
@@ -68,7 +68,7 @@ impl Actor {
         self.core
             .publish(SessionSection::Lifecycle(Lifecycle::Open));
         self.show_tree(tree);
-        self.publish_documents();
+        self.docs.publish(&mut self.core);
         self.core.publish(SessionSection::Outline(None));
         self.builds.publish(&mut self.core, &self.docs);
         self.core.publish(SessionSection::BuildLog(String::new()));
@@ -79,27 +79,7 @@ impl Actor {
 
     pub fn show_tree(&mut self, tree: Vec<TreeNode>) -> bool {
         let changed = self.tree.show(&mut self.core, tree);
-        self.publish_open();
+        self.docs.publish_open(&mut self.core, &self.tree);
         changed
-    }
-
-    pub fn publish_documents(&mut self) {
-        let documents = self.docs.values().map(Doc::state).collect();
-        self.core.publish(SessionSection::Documents(documents));
-    }
-
-    pub fn publish_open(&mut self) {
-        let gone = |open: &String| match is_text(open) {
-            true => !self.docs.contains_key(open),
-            false => !self.tree.files.contains(open),
-        };
-        if self.open.as_ref().is_some_and(gone) {
-            self.open = None;
-        }
-        let open = self.open.clone().map(|path| OpenFile {
-            kind: file_kind(&path),
-            path,
-        });
-        self.core.publish(SessionSection::OpenFile(open));
     }
 }
