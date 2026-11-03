@@ -19,7 +19,7 @@ use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, copy_ui, new_settings};
 use crate::zipexport::left_out;
-use crate::{CoreError, SETTINGS_FILE, atomic};
+use crate::{CoreError, SETTINGS_FILE, atomic, sys};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -183,7 +183,7 @@ fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<()
         projects::discard_replaced(project, &taken)?;
     }
     fs::create_dir_all(abs.parent().unwrap_or(root))?;
-    atomic::rename_exclusive(&temp, &abs)?;
+    sys::rename_exclusive(&temp, &abs)?;
     let _ = temp.keep();
     Ok(())
 }

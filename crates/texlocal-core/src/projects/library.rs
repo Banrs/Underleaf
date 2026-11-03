@@ -135,7 +135,7 @@ pub(crate) fn new_project(
     fill(temp.path())?;
     let id: String = project_names(&name)
         .find_map(
-            |id| match atomic::rename_exclusive(temp.path(), &data_dir.join(&id)) {
+            |id| match sys::rename_exclusive(temp.path(), &data_dir.join(&id)) {
                 Err(err) if err.kind() == ErrorKind::AlreadyExists => None,
                 moved => Some(moved.map(|()| id)),
             },
@@ -221,7 +221,7 @@ pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<Project
     if occupied(&project.root, &dest) {
         return Err(CoreError::conflict(messages::project_exists()));
     }
-    atomic::rename_exclusive(&project.root, &dest)?;
+    sys::rename_exclusive(&project.root, &dest)?;
     let ui = ui_file(&service.state_dir, &clean);
     if let Err(err) = fs::rename(&project.ui, &ui)
         && err.kind() == ErrorKind::NotFound

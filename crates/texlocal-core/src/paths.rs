@@ -70,7 +70,7 @@ pub(crate) fn move_device_state(data_dir: &Path, state_dir: &Path) {
     for name in [OPENED_DIR, APP_SETTINGS_FILE] {
         let (from, to) = (data_dir.join(name), state_dir.join(name));
         if !to.exists()
-            && let Err(err) = atomic::rename_exclusive(&from, &to)
+            && let Err(err) = sys::rename_exclusive(&from, &to)
             && err.kind() == io::ErrorKind::CrossesDevices
         {
             let _ = copy_over(&from, &to);
@@ -82,7 +82,7 @@ fn copy_over(from: &Path, to: &Path) -> io::Result<()> {
     let temp = atomic::temp_builder().tempdir_in(to.parent().expect("in the state folder"))?;
     let copy = temp.path().join("copy");
     copy_all(from, &copy)?;
-    atomic::rename_exclusive(&copy, to)?;
+    sys::rename_exclusive(&copy, to)?;
     if from.is_dir() {
         fs::remove_dir_all(from)
     } else {

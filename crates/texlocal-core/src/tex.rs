@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -11,7 +12,10 @@ use texlocal_latex::syntax::Installed;
 use crate::process::{self, Processes};
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
-use crate::sys;
+use crate::tinytex;
+
+const TEX_DIRS: [&str; 3] = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"];
+const TEXLIVE: &str = "/usr/local/texlive";
 
 fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
     std::fs::read_dir(dir)
@@ -22,7 +26,7 @@ fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
 }
 
 fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let mut years: Vec<_> = children(sys::TEXLIVE)
+    let mut years: Vec<_> = children(TEXLIVE)
         .filter(|year| {
             year.file_name()
                 .and_then(|name| name.to_str())
@@ -38,8 +42,8 @@ pub(crate) fn tool_paths(app: &AppSettings, helpers: Option<&PathBuf>) -> (Strin
     let user = std::env::var_os("PATH").unwrap_or_default();
     let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
         .chain(absolute_dirs(&user))
-        .chain(sys::TEX_DIRS.map(PathBuf::from))
-        .chain(sys::tinytex_root().map(|root| sys::tinytex_bin(&root)))
+        .chain(TEX_DIRS.map(PathBuf::from))
+        .chain(tinytex::root().map(|root| tinytex::bin(&root)))
         .chain(texlive_bins())
         .collect();
     let texpresso = join_path(app.texpresso_dir.iter().chain(helpers).chain(&tex).cloned());
@@ -59,8 +63,15 @@ fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
+fn executable(dir: &Path, name: &str) -> Option<PathBuf> {
+    let runs = |path: &PathBuf| {
+        std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+    };
+    Some(dir.join(name)).filter(runs)
+}
+
 pub(crate) fn find_tool(program: &str, path_env: &str) -> Option<PathBuf> {
-    absolute_dirs(OsStr::new(path_env)).find_map(|dir| sys::program(&dir, program))
+    absolute_dirs(OsStr::new(path_env)).find_map(|dir| executable(&dir, program))
 }
 
 pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
@@ -68,7 +79,7 @@ pub(crate) fn bin_dir(dir: &Path, program: &str) -> Option<PathBuf> {
     [dir.to_path_buf(), bin.clone()]
         .into_iter()
         .chain(children(bin))
-        .find(|c| c.is_absolute() && sys::program(c, program).is_some())
+        .find(|c| c.is_absolute() && executable(c, program).is_some())
 }
 
 static LATEXMK_VERSION: LazyLock<Regex> =

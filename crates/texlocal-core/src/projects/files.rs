@@ -141,7 +141,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     let main_file = read_settings(&project.settings).main_file;
     let moved = |path: &str| after_entry(path, &from).map(|rest| format!("{to}{rest}"));
     let moved_main = moved(&main_file);
-    atomic::rename_exclusive(&src, &dest)?;
+    sys::rename_exclusive(&src, &dest)?;
     if let Some(main_file) = &moved_main
         && let Err(err) = write_settings(
             project,
@@ -151,7 +151,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
             },
         )
     {
-        return Err(match atomic::rename_exclusive(&dest, &src) {
+        return Err(match sys::rename_exclusive(&dest, &src) {
             Ok(()) => err,
             Err(rollback) => CoreError::internal(messages::rollback_failed(err, rollback)),
         });
@@ -173,7 +173,7 @@ pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreE
 
 pub(crate) fn untrash(trashed: &Path, to: &Path) -> Result<(), CoreError> {
     fs::create_dir_all(to.parent().unwrap_or(to))?;
-    sys::untrash(trashed, to).map_err(|err| match err.kind() {
+    sys::rename_exclusive(trashed, to).map_err(|err| match err.kind() {
         ErrorKind::AlreadyExists => {
             let name = to.file_name().unwrap_or_default().to_string_lossy();
             CoreError::conflict(messages::exists_already(name))

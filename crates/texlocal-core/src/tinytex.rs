@@ -1,19 +1,29 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use tokio::process::Command;
 
 use crate::error::CoreError;
 use crate::messages;
 use crate::packages::{checked, run};
+use crate::process;
 use crate::process::Processes;
 use crate::tex::{find_tool, join_path};
-use crate::{process, sys};
 
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
 const UNFINISHED: &str = ".texlocal-tinytex-";
+const BUNDLE: (&str, &str) = ("TinyTeX-1-darwin-", ".tar.xz");
+
+pub(crate) fn root() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/TinyTeX"))
+}
+
+pub(crate) fn bin(root: &Path) -> PathBuf {
+    root.join("bin/universal-darwin")
+}
 
 pub(crate) async fn install(processes: &Processes, path_env: &str) -> Result<(), CoreError> {
-    let root = sys::tinytex_root().ok_or_else(|| CoreError::internal(messages::no_home()))?;
+    let root = root().ok_or_else(|| CoreError::internal(messages::no_home()))?;
     install_into(processes, &root, path_env).await
 }
 
@@ -60,7 +70,7 @@ async fn unpack(processes: &Processes, temp: &Path, path_env: &str) -> Result<()
     if crate::sha256(&std::fs::read(&archive)?) != digest {
         return Err(CoreError::internal(messages::tinytex_mismatch()));
     }
-    match run(processes, None, sys::unpack(&archive, temp, path_env)).await? {
+    match run(processes, None, untar(&archive, temp, path_env)).await? {
         (0, _) => Ok(()),
         (_, out) => Err(CoreError::internal(messages::tinytex_unpack_failed(
             crate::tail(out.trim(), 2000),
@@ -81,7 +91,7 @@ struct Asset {
 }
 
 fn bundle(release: &Release) -> Option<(&str, &str)> {
-    let (start, end) = sys::TINYTEX_BUNDLE;
+    let (start, end) = BUNDLE;
     let asset =
         (release.assets.iter()).find(|a| a.name.starts_with(start) && a.name.ends_with(end))?;
     let digest = asset.digest.as_deref()?.strip_prefix("sha256:")?;
@@ -96,7 +106,7 @@ async fn fetch(
 ) -> Result<(), CoreError> {
     // No overall limit: curl's --speed-limit already ends a stalled download, and a slow but
     // steady one over tlmgr's 600 s is still worth finishing.
-    let download = sys::download(url, to, path_env);
+    let download = download(url, to, path_env);
     match process::run(processes, None, download, None).await? {
         (0, ..) => Ok(()),
         (6 | 7, ..) => Err(CoreError::unavailable(messages::github_unreachable())),
@@ -107,14 +117,37 @@ async fn fetch(
     }
 }
 
+fn download(url: &str, to: &Path, path_env: &str) -> Command {
+    let mut command = process::tool(Path::new("/usr/bin/curl"), path_env);
+    command
+        .args(["--fail", "--location", "--silent", "--show-error"])
+        .args([
+            "--connect-timeout",
+            "30",
+            "--speed-limit",
+            "1000",
+            "--speed-time",
+            "60",
+        ])
+        .arg("--output")
+        .arg(to)
+        .arg(url);
+    command
+}
+
+fn untar(archive: &Path, into: &Path, path_env: &str) -> Command {
+    let mut command = process::tool(Path::new("/usr/bin/tar"), path_env);
+    command.arg("-xf").arg(archive).arg("-C").arg(into);
+    command
+}
+
 async fn tlmgr(
     processes: &Processes,
     root: &Path,
     path_env: &str,
     args: &[&str],
 ) -> Result<(), CoreError> {
-    let path =
-        join_path(std::iter::once(sys::tinytex_bin(root)).chain(std::env::split_paths(path_env)));
+    let path = join_path(std::iter::once(bin(root)).chain(std::env::split_paths(path_env)));
     let tlmgr = find_tool("tlmgr", &path)
         .ok_or_else(|| CoreError::internal(messages::no_tinytex_tlmgr()))?;
     let mut command = process::tool(&tlmgr, &path);
