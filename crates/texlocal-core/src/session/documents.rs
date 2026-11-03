@@ -9,12 +9,14 @@ use std::sync::{Arc, Mutex};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use texlocal_latex::diff::edit_to;
 use texlocal_latex::is_text;
 use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextEdit;
 
 use super::Document;
 use super::actor::{Actor, Later, Timer};
+use super::edits::DocumentEdits;
 use super::state::DocumentState;
 use crate::events::Event;
 use crate::messages;
@@ -41,12 +43,6 @@ pub(crate) enum Resolution {
     Close,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reload {
-    Disk,
-    Revert,
-}
-
 pub(crate) struct Doc {
     pub doc: Document,
     pub path: String,
@@ -57,6 +53,8 @@ pub(crate) struct Doc {
     disk_stamp: Option<Stamp>,
     pub conflict: Option<DiskConflict>,
     asking: bool,
+    /// The version a reload was asked at and its edit, which only the main thread applies.
+    reloading: Option<(u64, TextEdit)>,
     pub error: Option<Message>,
     composing: bool,
 }
@@ -164,7 +162,7 @@ impl Actor {
             if let Some(was) = was
                 && self.flush(Some(&was), true).unwrap_or(false)
             {
-                self.close_doc(&was);
+                self.close_doc(&was, true);
             }
         }
         Ok(())
@@ -206,6 +204,7 @@ impl Actor {
             disk_stamp: stamp,
             conflict: None,
             asking: false,
+            reloading: None,
             error: None,
             composing: false,
         };
@@ -217,26 +216,41 @@ impl Actor {
         Ok(())
     }
 
-    pub fn close_doc(&mut self, path: &str) {
-        if self.docs.close(path) {
-            self.publish_documents();
-            self.publish_build();
-            self.publish_live(false);
-            self.publish_open();
+    /// Closes a document, or with `if_saved` only one with nothing typed since it was saved.
+    pub fn close_doc(&mut self, path: &str, if_saved: bool) -> bool {
+        let saved = |doc: &Doc| !doc.force && doc.doc.close_if(doc.saved);
+        if if_saved && !self.docs.get(path).is_some_and(saved) || !self.docs.close(path) {
+            return false;
         }
+        self.publish_documents();
+        self.publish_build();
+        self.publish_live(false);
+        self.publish_open();
+        true
     }
 
-    pub fn changed(&mut self, id: u64, version: u64, edit: &TextEdit, recovered: bool) {
+    pub fn edited(&mut self, id: u64, version: u64, edit: &TextEdit) {
         let Some((path, doc)) = self.docs.iter_mut().find(|(_, doc)| doc.doc.id() == id) else {
             return;
         };
         let path = path.clone();
-        if recovered && doc.conflict.is_none() {
-            self.ask(&path, DiskConflict::Changed);
+        let reload = doc.reloading.take_if(|(base, _)| version > *base);
+        let reloaded = reload.map(|(base, reload)| version == base + 1 && reload == *edit);
+        if reloaded == Some(true) {
+            doc.saved = version;
         }
         self.touched(&path, Some(edit));
         self.after(Timer::Autosave);
         self.live_edited(&path, version, edit);
+        match reloaded {
+            Some(true) => {
+                self.after(Timer::Symbols);
+                self.check_disk(&path);
+            }
+            // An edit made before the main thread saw the reload refused it.
+            Some(false) => self.ask(&path, DiskConflict::Changed),
+            None => {}
+        }
     }
 
     fn touched(&mut self, path: &str, edit: Option<&TextEdit>) {
@@ -274,7 +288,7 @@ impl Actor {
             if !doc.dirty() {
                 return Ok(true);
             }
-            if doc.asking || autosave && doc.composing {
+            if doc.asking || doc.reloading.is_some() || autosave && doc.composing {
                 return Ok(false);
             }
             if let Some(kind) = doc.conflict {
@@ -283,13 +297,7 @@ impl Actor {
                 }
                 return Ok(false);
             }
-            let Some((text, version)) = doc.doc.save_snapshot() else {
-                doc.conflict = Some(DiskConflict::Changed);
-                if reporting {
-                    self.ask(path, DiskConflict::Changed);
-                }
-                return Ok(false);
-            };
+            let (text, version) = doc.doc.snapshot();
             let text = lf(text);
             let file = match doc.newline {
                 "\n" => Cow::Borrowed(text.as_str()),
@@ -397,28 +405,27 @@ impl Actor {
             (DiskConflict::Changed, Resolution::Save) => {
                 (doc.asking, doc.conflict, doc.force) = (false, None, true);
             }
-            (DiskConflict::Changed, Resolution::Revert)
-            | (DiskConflict::Gone, Resolution::Save) => {
-                (doc.asking, doc.conflict) = (false, None);
+            // The edits are let go, so the document counts as saved while the main thread takes the disk's text.
+            (DiskConflict::Changed, Resolution::Revert) => {
+                let version = doc.doc.version();
+                (doc.asking, doc.conflict, doc.force, doc.saved) = (false, None, false, version);
             }
+            (DiskConflict::Gone, Resolution::Save) => (doc.asking, doc.conflict) = (false, None),
             (DiskConflict::Gone, Resolution::Close) => {
-                self.close_doc(path);
+                self.close_doc(path, false);
                 return Ok(());
             }
             _ => {
                 return Err(CoreError::bad_request(messages::answer_unfit()));
             }
         }
-        if matches!(answer, Resolution::Save | Resolution::Revert) {
-            doc.doc.resolved();
-        }
         self.publish_documents();
         match answer {
             Resolution::Save => self.save_edits(true).map(drop),
             Resolution::Revert => {
                 match self.docs[path].disk_text.clone() {
-                    Some(text) => self.reload(path, &text, Reload::Revert),
-                    None => self.close_doc(path),
+                    Some(text) => self.reload(path, &text),
+                    None => drop(self.close_doc(path, false)),
                 }
                 Ok(())
             }
@@ -426,30 +433,30 @@ impl Actor {
         }
     }
 
-    fn reload(&mut self, path: &str, text: &str, reason: Reload) {
+    /// Asks the main thread, the text's one writer, to take the disk's text, which an edit made first refuses.
+    fn reload(&mut self, path: &str, text: &str) {
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
-        let seen = match reason {
-            Reload::Disk => doc.saved,
-            Reload::Revert => doc.doc.version(),
-        };
-        let Some(version) = doc.doc.reload(text, seen) else {
+        let (shown, version) = doc.doc.snapshot();
+        if version != doc.saved {
             return self.ask(path, DiskConflict::Changed);
-        };
-        doc.saved = version;
-        doc.force |= reason == Reload::Revert;
-        self.touched(path, None);
-        self.after(Timer::Symbols);
-        self.live_whole(path);
-        self.emit(Event::DocumentReload(path.to_owned()));
-        let saved = match reason {
-            Reload::Revert => self.save_doc(path, true, false).unwrap_or(false),
-            Reload::Disk => true,
-        };
-        if saved && self.auto_compile {
-            self.later.push_back(Later::Compile(true));
         }
+        let Some(edit) = edit_to(&shown, text) else {
+            return;
+        };
+        let asked = TextEdit {
+            text: edit.text.clone(),
+            ..edit
+        };
+        doc.reloading = Some((version, edit));
+        let path = path.to_owned();
+        let edits = vec![asked];
+        self.emit(Event::Reload(DocumentEdits {
+            path,
+            version,
+            edits,
+        }));
     }
 
     pub fn check_disk(&mut self, path: &str) {
@@ -457,7 +464,12 @@ impl Actor {
         if fs::metadata(&abs).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
             return self.file_gone(path);
         }
-        let Some(doc) = self.docs.get_mut(path) else {
+        // A reload in flight checks the disk again once the main thread has taken it.
+        let Some(doc) = self
+            .docs
+            .get_mut(path)
+            .filter(|doc| doc.reloading.is_none())
+        else {
             return;
         };
         if doc.conflict == Some(DiskConflict::Gone) {
@@ -485,25 +497,22 @@ impl Actor {
         }
         doc.disk_text = disk.map(|(text, _)| text);
         match (doc.disk_text.clone(), doc.dirty()) {
-            (_, true) => {
-                if doc.conflict.replace(DiskConflict::Changed).is_none() {
-                    self.ask(path, DiskConflict::Changed);
-                }
-            }
-            (Some(text), false) => self.reload(path, &text, Reload::Disk),
-            (None, false) => self.close_doc(path),
+            (_, true) if doc.conflict.is_some() => {}
+            (Some(text), false) if self.open.as_deref() == Some(path) => self.reload(path, &text),
+            (_, false) if self.close_doc(path, true) => {}
+            _ => self.ask(path, DiskConflict::Changed),
         }
     }
 
     fn file_gone(&mut self, path: &str) {
+        if self.close_doc(path, true) {
+            return;
+        }
         let Some(doc) = self.docs.get_mut(path) else {
             return;
         };
-        if !doc.dirty() {
-            return self.close_doc(path);
-        }
         doc.disk_stamp = None;
-        if doc.conflict.replace(DiskConflict::Gone) != Some(DiskConflict::Gone) {
+        if doc.conflict != Some(DiskConflict::Gone) {
             self.ask(path, DiskConflict::Gone);
         }
     }

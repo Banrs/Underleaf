@@ -470,7 +470,7 @@ nonisolated enum ErrorKind: String, Decodable, CaseIterable, Hashable, Sendable 
 
 nonisolated enum Event: Decodable, Hashable, Sendable {
     case section(SessionSection)
-    case documentReload(String)
+    case reload(DocumentEdits)
     case renamed(Renamed)
     case filesChanged([String])
     case buildFinished(BuildFinished)
@@ -487,7 +487,7 @@ nonisolated extension Event {
         let wire = try decoder.strict(CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
-        case "documentReload": self = .documentReload(try wire.decode(String.self, forKey: .value))
+        case "reload": self = .reload(try wire.decode(DocumentEdits.self, forKey: .value))
         case "renamed": self = .renamed(try wire.decode(Renamed.self, forKey: .value))
         case "filesChanged": self = .filesChanged(try wire.decode([String].self, forKey: .value))
         case "buildFinished": self = .buildFinished(try wire.decode(BuildFinished.self, forKey: .value))

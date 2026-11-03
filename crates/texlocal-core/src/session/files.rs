@@ -30,7 +30,7 @@ impl Actor {
             let _ = self.open_file(&main);
         }
         for doc in self.docs_within(path) {
-            self.close_doc(&doc);
+            self.close_doc(&doc, false);
         }
         self.reload_tree();
         Ok(Some(trashed))
@@ -147,7 +147,7 @@ impl Actor {
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
             if !within(&path, from) {
-                self.close_doc(&path);
+                self.close_doc(&path, false);
             }
         }
         let moved = |path: &str| Some(format!("{to}{}", paths::after_entry(path, from)?));

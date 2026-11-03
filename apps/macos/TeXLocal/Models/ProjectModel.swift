@@ -218,7 +218,7 @@ final class ProjectModel {
     func handle(_ event: Event) {
         switch event {
         case .section(let section): apply(section)
-        case .documentReload, .renamed, .livePage, .liveDocument, .liveFollow: break
+        case .reload, .renamed, .livePage, .liveDocument, .liveFollow: break
         case .buildFinished(let finished): buildFinished(finished)
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }

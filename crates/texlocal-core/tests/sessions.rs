@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use common::{FakePreview, Library, Rig, SESSION, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
-use texlocal_core::session::{LiveEvent, RunEnd};
+use texlocal_core::session::{Document, LiveEvent, RunEnd};
 use texlocal_latex::syntax::Source;
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
@@ -438,7 +438,7 @@ async fn replies_follow_the_events_sent_before_them() {
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     answered_after("documents", "Save", json!({ "reporting": true }));
     let revert = json!({ "path": "ch.tex", "answer": "revert" });
-    answered_after("documentReload", "Resolve", revert);
+    answered_after("reload", "Resolve", revert);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -816,43 +816,59 @@ fn asked(rig: &Rig, path: &str, kind: &str) {
     rig.section("documents", |d| d.as_array().unwrap().iter().any(asking));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_change_on_disk_reloads_a_document_without_edits_and_its_old_view_is_refused() {
-    let rig = project().await;
-    let doc = rig.open_document("ch.tex");
-    std::thread::sleep(Duration::from_millis(300));
-    fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    rig.event("documentReload", |e| e == "ch.tex");
-    assert_eq!(doc.with(|d| d.text()), "theirs\n");
-    assert!(doc.edit(0, 0, "stale ", None, false).is_none());
-    let shown = rig.sessions.document(SESSION, "ch.tex").unwrap();
-    assert!(shown.edit(0, 0, "mine ", None, false).is_some());
-    assert_eq!(doc.with(|d| d.text()), "mine theirs\n");
+/// Takes the reload asked at the document's version as the editor does, through an edit at that version.
+fn take_reload(rig: &Rig, doc: &Document) {
+    let version = doc.version();
+    let reload = rig.event("reload", |reload| reload["version"] == version);
+    let edit = &reload["edits"][0];
+    let at = |key: &str| edit[key].as_u64().unwrap() as u32;
+    let text = edit["text"].as_str().unwrap();
+    assert!(
+        doc.edit(at("start"), at("length"), text, None, false)
+            .is_some()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn editing_a_recovered_document_keeps_a_later_file_removal_conflict() {
+async fn a_change_on_disk_is_taken_by_the_editor_into_a_document_without_edits_which_stays_saved() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
     let path = rig.root().join("ch.tex");
+    for theirs in ["theirs\n", "theirs again\n"] {
+        std::thread::sleep(Duration::from_millis(300));
+        fs::write(&path, theirs).unwrap();
+        take_reload(&rig, &doc);
+        assert_eq!(doc.with(|d| d.text()), theirs);
+    }
+    assert_eq!(rig.call("CloseProject", json!({})), true);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "theirs again\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_made_before_a_reload_is_taken_refuses_it_and_a_later_removal_keeps_its_conflict() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    let path = rig.root().join("ch.tex");
+    let cancel = json!({ "path": "ch.tex", "answer": "cancel" });
+    std::thread::sleep(Duration::from_millis(300));
     fs::write(&path, "external\n").unwrap();
-    rig.event("documentReload", |e| e == "ch.tex");
-    doc.restore("accepted original\n");
+    rig.event("reload", |reload| reload["version"] == 0);
+    doc.edit(0, 0, "accepted ", None, false);
     asked(&rig, "ch.tex", "changed");
-    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), false);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "external\n");
+    rig.call("Resolve", cancel.clone());
     fs::remove_file(&path).unwrap();
     asked(&rig, "ch.tex", "gone");
-    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    rig.call("Resolve", cancel);
     rig.forget();
     doc.edit(0, 0, "more ", None, false);
     assert_eq!(rig.call("Save", json!({ "reporting": true })), false);
     asked(&rig, "ch.tex", "gone");
     assert!(!path.exists());
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
-    assert_eq!(
-        fs::read_to_string(path).unwrap(),
-        "more accepted original\n"
-    );
+    let saved = fs::read_to_string(path).unwrap();
+    assert_eq!(saved, format!("more accepted {CHAPTER}"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -885,7 +901,7 @@ async fn revert_takes_the_disks_text() {
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     asked(&rig, "ch.tex", "changed");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
-    rig.event("documentReload", |e| e == "ch.tex");
+    take_reload(&rig, &doc);
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),

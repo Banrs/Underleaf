@@ -61,6 +61,7 @@ struct CoreTests {
         try await Task.sleep(for: .milliseconds(300))
         try "theirs\n".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
         try await waitUntil { editor.textView.string == "theirs\n" }
+        #expect(editor.textView.undo.undoActionName == "Reload")
         let main = editor.textView.document
         #expect(main.editable)
         #expect(await project.createEntry(in: "", directory: false) == "untitled.tex")
@@ -112,7 +113,7 @@ struct CoreTests {
         let text = views.editor.textView, before = text.string, undo = text.undo
         var reload: Event?
         project.session.heard = { event in
-            if case .documentReload = event { reload = event } else { project.handle(event) }
+            if case .reload = event { reload = event } else { project.handle(event) }
         }
         try await Task.sleep(for: .milliseconds(300))
         let range = NSRange(location: 0, length: 0)

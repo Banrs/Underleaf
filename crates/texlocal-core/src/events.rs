@@ -9,7 +9,7 @@ use serde_json::Value;
 use serde_json::value::{RawValue, to_raw_value};
 
 use crate::service::LibrarySection;
-use crate::session::SessionSection;
+use crate::session::{DocumentEdits, SessionSection};
 use crate::synctex::ForwardLoc;
 use crate::texpresso::PageRange;
 use crate::{CoreError, lock};
@@ -118,7 +118,7 @@ pub(crate) struct SessionEvent {
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub(crate) enum Event {
     Section(#[schemars(with = "SessionSection")] Box<RawValue>),
-    DocumentReload(String),
+    Reload(DocumentEdits),
     Renamed(Renamed),
     FilesChanged(Vec<String>),
     BuildFinished(BuildFinished),

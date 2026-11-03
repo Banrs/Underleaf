@@ -82,7 +82,7 @@ final class WorkspaceViews: ProjectViews {
         case .section(.openFile): showOpenFile()
         case .section(.build), .section(.live): showIssues()
         case .section(.shownPdf): showPDF()
-        case .documentReload(let path): reload(path)
+        case .reload(let edits): reload(edits)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
         case .liveDocument(let document): if project.showsLive { pdf.showLive(document) }
         case .livePage(let page): if project.showsLive { pdf.showLive(page) }
@@ -185,10 +185,10 @@ final class WorkspaceViews: ProjectViews {
         _ = pdf.load(shown.path.map { URL(filePath: $0) })
     }
 
-    private func reload(_ path: String) {
-        guard editor.path == path, !editor.textView.document.editable,
-              let source = SourceDocument(session: project.session, path: path) else { return }
-        editor.reload(source)
+    /// Takes the disk's text through an undoable edit, which an edit made since the session asked refuses.
+    private func reload(_ edits: DocumentEdits) {
+        let top = editor.textView.shownTop
+        if apply(edits, named: String(localized: "Reload")) { top.map(editor.textView.scroll(toShownTop:)) }
     }
 
     private func quickHelp(at offset: Int) {
