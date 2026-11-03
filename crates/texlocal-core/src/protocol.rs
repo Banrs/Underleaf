@@ -65,7 +65,27 @@ pub fn protocol() -> Protocol {
     }
 }
 
+/// Declares a group of requests, and with an actor and a name for the pending answer, what each one runs:
+/// `= expr` answers now with its result, and `=> expr` hands the pending answer to the handler it calls.
 macro_rules! requests {
+    ($group:ident($actor:ident: $target:ty, $pending:ident) {
+        $($request:ident { $($(#[$attr:meta])* $field:ident: $type:ty),* $(,)? } -> $reply:ty
+            $(= $now:expr)? $(=> $later:expr)?,)*
+    }) => {
+        $crate::protocol::requests!($group { $($request { $($(#[$attr])* $field: $type),* } -> $reply,)* });
+
+        impl $group {
+            #[allow(clippy::unit_arg, unused_variables)]
+            pub(crate) fn run(self, $actor: &mut $target, reply: Reply) {
+                match self {
+                    $(Self::$request($request { $($field),* }, answer) => {
+                        $(reply.send(answer($now));)?
+                        $(let $pending = Pending { reply, answer }; $later;)?
+                    })*
+                }
+            }
+        }
+    };
     ($group:ident { $($request:ident { $($(#[$attr:meta])* $field:ident: $type:ty),* $(,)? } -> $reply:ty,)* }) => {
         $(
             #[derive(serde::Deserialize, schemars::JsonSchema)]

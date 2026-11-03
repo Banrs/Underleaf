@@ -36,43 +36,55 @@ use crate::settings::{self, SettingsPatch, UiPatch, UiState};
 use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
 
 requests! {
-    Session {
-        OpenProject { id: String, auto_compile: bool } -> UiState,
-        CloseProject {} -> bool,
-        SetOptions { auto_compile: bool } -> (),
-        Open { path: RelPath } -> Option<String>,
-        Save { reporting: bool } -> bool,
-        Resolve { path: RelPath, answer: Resolution } -> (),
-        Compile { auto: bool } -> (),
-        StopCompile {} -> (),
-        Clean {} -> (),
-        Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>,
-        FindUsages { path: RelPath, offset: u32 } -> Option<Usages>,
-        LookUp { path: RelPath, offset: u32 } -> Option<QuickHelp>,
-        QuickOpen { query: String } -> Vec<QuickOpenItem>,
-        Replace { query: String, replacement: String, match_case: bool, whole_word: bool } -> ProjectEdits,
-        RenameSymbol { kind: SymbolKind, from: String, to: String } -> ProjectEdits,
-        ApplyFix { #[schemars(with = "String")] id: Fix } -> Option<Fixed>,
-        ListVersions {} -> Vec<Snapshot>,
-        SaveVersion { name: String } -> Option<Snapshot>,
-        CompareVersion { id: String, path: RelPath } -> Vec<DiffLine>,
-        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> ProjectEdits,
-        Rename { from: RelPath, to: String } -> Option<RenameResult>,
-        CreateEntry { folder: String, name: String, dir: bool } -> String,
-        SetSettings { patch: SettingsPatch } -> (),
-        Trash { path: RelPath } -> Option<PathBuf>,
-        PutBack { path: RelPath, trashed: PathBuf } -> (),
-        StartLive {} -> (),
-        StopLive {} -> (),
-        LiveView { first: u32, last: u32 } -> (),
-        LiveLog { shown: bool } -> (),
-        ReloadTree {} -> (),
-        ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
-        ExportZip { dest: PathBuf, for_arxiv: bool } -> (),
-        SetUiState { patch: UiPatch } -> (),
-        SynctexForward { file: RelPath, line: u32 } -> ForwardLoc,
-        SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc,
-        SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>,
+    Session(actor: Actor, pending) {
+        OpenProject { id: String, auto_compile: bool } -> UiState
+            = Err(CoreError::conflict(messages::session_open())),
+        CloseProject {} -> bool => actor.close(pending),
+        SetOptions { auto_compile: bool } -> () = Ok(actor.auto_compile = auto_compile),
+        Open { path: RelPath } -> Option<String> = actor.open(&path.0),
+        Save { reporting: bool } -> bool = actor.save_edits(reporting),
+        Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
+        Compile { auto: bool } -> () = actor.compile(auto),
+        StopCompile {} -> () = Ok(actor.stop_compile()),
+        Clean {} -> () => actor.clean(pending),
+        Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>
+            => actor.search(Query::new(&query, match_case, whole_word), pending),
+        FindUsages { path: RelPath, offset: u32 } -> Option<Usages> => actor.usages(&path.0, offset, pending),
+        LookUp { path: RelPath, offset: u32 } -> Option<QuickHelp> => actor.quick_help(&path.0, offset, pending),
+        QuickOpen { query: String } -> Vec<QuickOpenItem> => actor.quick_open(query, pending),
+        Replace { query: String, replacement: String, match_case: bool, whole_word: bool } -> ProjectEdits => {
+            let replace = actor.replace(Query::new(&query, match_case, whole_word), replacement);
+            actor.before(Reason::ReplaceAll, replace, pending);
+        },
+        RenameSymbol { kind: SymbolKind, from: String, to: String } -> ProjectEdits => {
+            let rename = actor.rename_symbol(kind, from, to);
+            actor.before(Reason::Rename, rename, pending);
+        },
+        ApplyFix { #[schemars(with = "String")] id: Fix } -> Option<Fixed> => actor.fix(id, pending),
+        ListVersions {} -> Vec<Snapshot> => actor.history_list(pending),
+        SaveVersion { name: String } -> Option<Snapshot> => actor.history_save(name, pending),
+        CompareVersion { id: String, path: RelPath } -> Vec<DiffLine> => actor.history_compare(id, path.0, pending),
+        RestoreVersion { id: String, paths: Option<Vec<RelPath>> } -> ProjectEdits
+            => actor.history_restore(id, paths, pending),
+        Rename { from: RelPath, to: String } -> Option<RenameResult> = actor.rename(&from.0, &to),
+        CreateEntry { folder: String, name: String, dir: bool } -> String = actor.create_entry(&folder, &name, dir),
+        SetSettings { patch: SettingsPatch } -> () = actor.set_settings(&patch, true),
+        Trash { path: RelPath } -> Option<PathBuf> = actor.trash(&path.0),
+        PutBack { path: RelPath, trashed: PathBuf } -> () = actor.put_back(&path.0, &trashed),
+        StartLive {} -> () = Ok(actor.live_start_asked()),
+        StopLive {} -> () = Ok(actor.live_stop_asked()),
+        LiveView { first: u32, last: u32 } -> () = Ok(actor.live_view(first, last)),
+        LiveLog { shown: bool } -> () = Ok(actor.show_live_log(shown)),
+        ReloadTree {} -> () = Ok(actor.reload_tree()),
+        ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported
+            = actor.import(&dir, &paths, conflict),
+        ExportZip { dest: PathBuf, for_arxiv: bool } -> () => actor.export(dest, for_arxiv, pending),
+        SetUiState { patch: UiPatch } -> () = actor.write_ui(patch),
+        SynctexForward { file: RelPath, line: u32 } -> ForwardLoc => actor.synctex_forward(file.0, line, pending),
+        SynctexInverse { page: f64, x: f64, y: f64, click: Option<PageClick> } -> InverseLoc
+            => actor.synctex_inverse(page, x, y, click, pending),
+        SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>
+            => actor.synctex_match(file.0, line, column, pages, pending),
     }
 }
 
@@ -336,7 +348,7 @@ impl Actor {
         match message {
             Msg::Edited { doc, version, edit } => self.edited(doc, version, &edit),
             Msg::Selected { doc, caret } => self.selected(doc, caret),
-            Msg::Command(command, reply) => self.command(command, reply),
+            Msg::Command(command, reply) => command.run(self, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
@@ -392,129 +404,6 @@ impl Actor {
                 Later::Rescan => self.live_rescan(),
             }
         }
-    }
-
-    #[expect(clippy::unit_arg)]
-    fn command(&mut self, command: Session, reply: Reply) {
-        let answer = match command {
-            Session::OpenProject(_, answer) => {
-                answer(Err(CoreError::conflict(messages::session_open())))
-            }
-            Session::CloseProject(CloseProject {}, answer) => {
-                return self.close(Pending { reply, answer });
-            }
-            Session::SetOptions(SetOptions { auto_compile }, answer) => {
-                answer(Ok(self.auto_compile = auto_compile))
-            }
-            Session::Open(Open { path }, answer) => answer(self.open(&path.0)),
-            Session::Save(Save { reporting }, answer) => answer(self.save_edits(reporting)),
-            Session::Resolve(Resolve { path, answer: to }, answer) => {
-                answer(self.resolve(&path.0, to))
-            }
-            Session::Compile(Compile { auto }, answer) => answer(self.compile(auto)),
-            Session::StopCompile(StopCompile {}, answer) => answer(Ok(self.stop_compile())),
-            Session::Clean(Clean {}, answer) => return self.clean(Pending { reply, answer }),
-            Session::Search(
-                Search {
-                    query,
-                    match_case,
-                    whole_word,
-                },
-                answer,
-            ) => {
-                let query = Query::new(&query, match_case, whole_word);
-                return self.search(query, Pending { reply, answer });
-            }
-            Session::FindUsages(FindUsages { path, offset }, answer) => {
-                return self.usages(&path.0, offset, Pending { reply, answer });
-            }
-            Session::LookUp(LookUp { path, offset }, answer) => {
-                return self.quick_help(&path.0, offset, Pending { reply, answer });
-            }
-            Session::QuickOpen(QuickOpen { query }, answer) => {
-                return self.quick_open(query, Pending { reply, answer });
-            }
-            Session::Replace(
-                Replace {
-                    query,
-                    replacement,
-                    match_case,
-                    whole_word,
-                },
-                answer,
-            ) => {
-                let replace = self.replace(Query::new(&query, match_case, whole_word), replacement);
-                return self.before(Reason::ReplaceAll, replace, Pending { reply, answer });
-            }
-            Session::RenameSymbol(RenameSymbol { kind, from, to }, answer) => {
-                let rename = self.rename_symbol(kind, from, to);
-                return self.before(Reason::Rename, rename, Pending { reply, answer });
-            }
-            Session::ApplyFix(ApplyFix { id }, answer) => {
-                return self.fix(id, Pending { reply, answer });
-            }
-            Session::ListVersions(ListVersions {}, answer) => {
-                return self.history_list(Pending { reply, answer });
-            }
-            Session::SaveVersion(SaveVersion { name }, answer) => {
-                return self.history_save(name, Pending { reply, answer });
-            }
-            Session::CompareVersion(CompareVersion { id, path }, answer) => {
-                return self.history_compare(id, path.0, Pending { reply, answer });
-            }
-            Session::RestoreVersion(RestoreVersion { id, paths }, answer) => {
-                return self.history_restore(id, paths, Pending { reply, answer });
-            }
-            Session::Rename(Rename { from, to }, answer) => answer(self.rename(&from.0, &to)),
-            Session::CreateEntry(CreateEntry { folder, name, dir }, answer) => {
-                answer(self.create_entry(&folder, &name, dir))
-            }
-            Session::SetSettings(SetSettings { patch }, answer) => {
-                answer(self.set_settings(&patch, true))
-            }
-            Session::Trash(Trash { path }, answer) => answer(self.trash(&path.0)),
-            Session::PutBack(PutBack { path, trashed }, answer) => {
-                answer(self.put_back(&path.0, &trashed))
-            }
-            Session::StartLive(StartLive {}, answer) => answer(Ok(self.live_start_asked())),
-            Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),
-            Session::LiveView(LiveView { first, last }, answer) => {
-                answer(Ok(self.live_view(first, last)))
-            }
-            Session::LiveLog(LiveLog { shown }, answer) => answer(Ok(self.show_live_log(shown))),
-            Session::ReloadTree(ReloadTree {}, answer) => answer(Ok(self.reload_tree())),
-            Session::ImportFiles(
-                ImportFiles {
-                    dir,
-                    paths,
-                    conflict,
-                },
-                answer,
-            ) => answer(self.import(&dir, &paths, conflict)),
-            Session::ExportZip(ExportZip { dest, for_arxiv }, answer) => {
-                return self.export(dest, for_arxiv, Pending { reply, answer });
-            }
-            Session::SetUiState(SetUiState { patch }, answer) => answer(self.write_ui(patch)),
-            Session::SynctexForward(SynctexForward { file, line }, answer) => {
-                return self.synctex_forward(file.0, line, Pending { reply, answer });
-            }
-            Session::SynctexInverse(SynctexInverse { page, x, y, click }, answer) => {
-                return self.synctex_inverse(page, x, y, click, Pending { reply, answer });
-            }
-            Session::SynctexMatch(
-                SynctexMatch {
-                    file,
-                    line,
-                    column,
-                    pages,
-                },
-                answer,
-            ) => {
-                let matching = Pending { reply, answer };
-                return self.synctex_match(file.0, line, column, pages, matching);
-            }
-        };
-        reply.send(answer);
     }
 
     fn close(&mut self, reply: Pending<bool>) {
