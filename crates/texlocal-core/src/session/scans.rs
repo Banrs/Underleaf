@@ -26,7 +26,7 @@ pub(crate) struct Usages {
 impl Actor {
     pub fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
-        let (seq, root, tx) = (self.symbols_seq, self.project.root.clone(), self.tx.clone());
+        let (seq, project, tx) = (self.symbols_seq, self.project.clone(), self.tx.clone());
         let (facts, docs) = (Arc::clone(&self.facts), self.docs.handles());
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
@@ -37,7 +37,7 @@ impl Actor {
         );
         let shown = self.open.clone();
         tokio::task::spawn_blocking(move || {
-            let read = projects::scan_facts(&root, &facts, &texts(&docs));
+            let read = projects::scan_facts(&project, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
             let result = read.map(|read| {
                 let scan = Scan::new(read, files, installed);
@@ -68,12 +68,12 @@ impl Actor {
     }
 
     pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
-        let (root, docs) = (self.project.root.clone(), self.docs.handles());
+        let (project, docs) = (self.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
             let hits =
-                projects::search_project(&root, &open, &texlocal_latex::is_text, &found, 100);
+                projects::search_project(&project, &open, &texlocal_latex::is_text, &found, 100);
             reply.send(hits.map(projects::search_groups));
         });
     }
@@ -82,7 +82,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.project.root.clone(), self.docs.handles());
+        let (project, docs) = (self.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let own = doc.facts();
             let symbol = doc.with(|source| source.symbol_at(&own, offset));
@@ -98,7 +98,7 @@ impl Actor {
                 let facts = Facts::read(text, file_kind(rel));
                 syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
             };
-            let hits = projects::search_project(&root, &texts(&docs), &tex, &found, usize::MAX);
+            let hits = projects::search_project(&project, &texts(&docs), &tex, &found, usize::MAX);
             let name = match kind {
                 SymbolKind::Label => format!("\\label{{{name}}}"),
                 SymbolKind::Citation => format!("\\cite{{{name}}}"),

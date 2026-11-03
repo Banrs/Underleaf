@@ -35,8 +35,11 @@ impl Actor {
     }
 
     pub fn snapshot_soon(&self) {
-        let root = self.project.root.clone();
-        self.off_thread(move |history| history.take(&root, now(), Taken::Auto), drop);
+        let project = self.project.clone();
+        self.off_thread(
+            move |history| history.take(&project, now(), Taken::Auto),
+            drop,
+        );
     }
 
     pub fn stop_history(&self) {
@@ -68,9 +71,9 @@ impl Actor {
         if let Err(err) = self.save_first() {
             return reply.send(Err(err));
         }
-        let root = self.project.root.clone();
+        let project = self.project.clone();
         let save = move |history: &History| {
-            history.take(&root, now(), Taken::Named(name))?;
+            history.take(&project, now(), Taken::Named(name))?;
             Ok(history.list()?.into_iter().next())
         };
         self.then_on_actor(save, |_, saved| Ok(saved), reply);
@@ -144,9 +147,9 @@ impl Actor {
             Ok(then) => then,
             Err(err) => return reply.send(Err(err)),
         };
-        let root = self.project.root.clone();
+        let project = self.project.clone();
         let take = move |history: &History| {
-            let id = history.take(&root, now(), Taken::Before(reason))?;
+            let id = history.take(&project, now(), Taken::Before(reason))?;
             Ok(id.map(|id| id.to_string()))
         };
         self.then_on_actor(take, then, reply);
@@ -162,7 +165,7 @@ impl Actor {
             Ok(open) => open,
             Err(err) => return reply.send(Err(err)),
         };
-        let root = self.project.root.clone();
+        let project = self.project.clone();
         let restore = move |history: &History| {
             let chosen = |path: &str| {
                 paths
@@ -188,11 +191,11 @@ impl Actor {
             if edits.len() > 1 {
                 return Err(CoreError::conflict(messages::one_document()));
             }
-            let snapshot = history.take(&root, now(), Taken::Before(Reason::Restore))?;
+            let snapshot = history.take(&project, now(), Taken::Before(Reason::Restore))?;
             Ok((edits.pop(), others, snapshot.map(|id| id.to_string())))
         };
         let put_back = |actor: &mut Self, (edits, others, snapshot)| {
-            let written = projects::put_back(&actor.project.root, others)?;
+            let written = projects::put_back(&actor.project, others)?;
             if !written.is_empty() {
                 actor.reload_tree();
             }

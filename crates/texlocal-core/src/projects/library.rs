@@ -14,7 +14,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::files::{occupied, untrash};
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
-use super::tree::{listed, visit_files, walk};
+use super::tree::{listed, walk};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, fold_case, sanitize_name, ui_file};
@@ -55,7 +55,7 @@ impl ProjectInfo {
             opened: is_opened(&id),
             id,
             name: project.name(),
-            mtime: newest(&project.root).max(built),
+            mtime: newest(project).max(built),
             main_file: settings.main_file,
             path: project.root.to_string_lossy().into_owned(),
             missing,
@@ -76,7 +76,8 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-fn newest(root: &Path) -> u64 {
+fn newest(project: &Project) -> u64 {
+    let root = &project.root;
     let mut newest = fs::metadata(root).map_or(0, |meta| mtime_ms(&meta));
     let _ = walk(root, &listed, false, &mut |entry| {
         if (entry.dir || !entry.rel.contains('/'))
@@ -194,8 +195,10 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     // A standalone figure or subfile also has a \documentclass, so a nested main.tex wins,
     // then the shallowest document.
     let mut nested: Option<(bool, usize, String)> = None;
-    visit_files(root, &mut |path, rel| {
+    walk(root, &listed, false, &mut |entry| {
+        let (path, rel) = (&entry.path, &entry.rel);
         let name = rel.rsplit('/').next().unwrap_or(rel);
+        // A folder named like a .tex file fails to read, so it never starts a document.
         if file_kind(name) == FileKind::Tex && !name.starts_with('-') && starts_document(path) {
             let found = (
                 fold_case(name) != "main.tex",

@@ -184,7 +184,7 @@ impl Actor {
         let tree = projects::file_tree(&project)?;
         let watcher = sessions
             .watch
-            .then(|| watch::watch(&project.root, tx.clone()))
+            .then(|| watch::watch(&project, tx.clone()))
             .flatten();
         let mut builds = Builds::default();
         builds.pdf = built_pdf(&project);

@@ -37,7 +37,7 @@ impl Actor {
     }
 
     pub fn put_back(&mut self, path: &str, trashed: &Path) -> Result<(), CoreError> {
-        projects::untrash(trashed, &paths::safe_write_path(&self.project.root, path)?)?;
+        projects::untrash(trashed, &paths::safe_write_path(&self.project, path)?)?;
         self.reload_tree();
         Ok(())
     }
@@ -49,7 +49,7 @@ impl Actor {
         dir: bool,
     ) -> Result<String, CoreError> {
         let path = paths::in_folder(folder, name);
-        let made = projects::create_free(&self.project.root, &path, dir)?;
+        let made = projects::create_free(&self.project, &path, dir)?;
         self.reload_tree();
         Ok(made)
     }
@@ -57,7 +57,7 @@ impl Actor {
     pub fn files_changed_on_disk(&mut self) {
         let changes = std::mem::take(&mut self.fs_pending);
         let docs: Vec<String> = self.docs.keys().cloned().collect();
-        let meaning = watch::classify(&self.project.root, &changes, &self.tree, &docs);
+        let meaning = watch::classify(&self.project, &changes, &self.tree, &docs);
         for path in &meaning.docs {
             self.check_disk(path);
         }

@@ -135,13 +135,13 @@ impl History {
         Ok(())
     }
 
-    fn files_now(&self, root: &Path) -> Result<BTreeMap<String, String>, CoreError> {
+    fn files_now(&self, project: &Project) -> Result<BTreeMap<String, String>, CoreError> {
         // Every file of a large project, so an auto snapshot reads and hashes only the files
         // whose stamps changed rather than each one of up to 20 MB.
         static HASHES: Kept<Option<String>> = Kept::holding(16_384);
         let objects = self.objects();
         let mut files = BTreeMap::new();
-        visit_files(root, &mut |abs, rel| {
+        visit_files(project, &mut |abs, rel| {
             let kept = HASHES.get(abs, |abs| store(&objects, abs))?;
             let hash = match kept.as_deref() {
                 Some(hash) if !objects.join(hash).exists() => store(&objects, abs)?,
@@ -153,14 +153,19 @@ impl History {
         Ok(files)
     }
 
-    pub fn take(&self, root: &Path, now: i64, taken: Taken) -> Result<Option<i64>, CoreError> {
+    pub fn take(
+        &self,
+        project: &Project,
+        now: i64,
+        taken: Taken,
+    ) -> Result<Option<i64>, CoreError> {
         let ids = self.ids()?;
         let latest = ids.iter().find_map(|&id| Some((id, self.read(id).ok()?)));
         let recent = |(id, _): &(i64, Version)| (0..=10 * MINUTE).contains(&(now - id));
         if matches!(taken, Taken::Auto) && latest.as_ref().is_some_and(recent) {
             return Ok(None);
         }
-        let files = self.files_now(root)?;
+        let files = self.files_now(project)?;
         let next = ids.first().map_or(now, |id| now.max(id + 1));
         let unchanged = latest.filter(|(_, last)| last.files == files);
         let (id, snapshot) = match (taken, unchanged) {
@@ -292,12 +297,14 @@ fn store(objects: &Path, abs: &Path) -> Result<Option<String>, CoreError> {
 }
 
 pub(crate) fn put_back(
-    root: &Path,
+    project: &Project,
     files: Vec<(String, Vec<u8>)>,
 ) -> Result<Vec<String>, CoreError> {
     write_all(files, |(rel, bytes)| {
-        let abs = safe_write_path(root, &rel)?;
-        if !inside(root, &abs) || fs::metadata(&abs).is_ok_and(|meta| meta.len() > MAX_KEPT) {
+        let abs = safe_write_path(project, &rel)?;
+        if !inside(&project.root, &abs)
+            || fs::metadata(&abs).is_ok_and(|meta| meta.len() > MAX_KEPT)
+        {
             return Ok(None);
         }
         let was = match fs::read(&abs) {

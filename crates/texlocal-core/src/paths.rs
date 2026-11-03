@@ -130,12 +130,12 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(root.join(rel_key(rel)?))
 }
 
-pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+pub fn safe_write_path(project: &Project, rel: &str) -> Result<PathBuf, CoreError> {
     let rel = rel_key(rel)?;
     if in_build_dir(&rel) {
         return Err(CoreError::bad_request(messages::build_folder()));
     }
-    Ok(root.join(rel))
+    Ok(project.root.join(rel))
 }
 
 pub(crate) fn in_folder(dir: &str, name: &str) -> String {
@@ -220,7 +220,8 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     Ok(clean)
 }
 
-pub fn source_rel(root: &Path, input: &str) -> Option<String> {
+pub fn source_rel(project: &Project, input: &str) -> Option<String> {
+    let root = &project.root;
     let input_path = Path::new(input);
     let rel = if input_path.is_absolute() {
         let canonical = fs::canonicalize(root).ok()?;

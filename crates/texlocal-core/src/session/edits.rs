@@ -73,7 +73,7 @@ impl Actor {
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
-        let read = projects::scan_facts(&self.project.root, &self.facts, &texts.collect())?;
+        let read = projects::scan_facts(&self.project, &self.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = read.values();
             files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
@@ -188,7 +188,7 @@ fn edit_project(
     let open: Vec<String> = open.iter().map(|(path, ..)| path.clone()).collect();
     Ok(Box::new(move |actor, snapshot| {
         let others = |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel);
-        let written = projects::replace_in_files(&actor.project.root, &others, &found, &to)?;
+        let written = projects::replace_in_files(&actor.project, &others, &found, &to)?;
         Ok(ProjectEdits {
             edits,
             written,

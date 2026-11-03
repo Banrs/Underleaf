@@ -306,7 +306,7 @@ impl Actor {
                 "\n" => Cow::Borrowed(text.as_str()),
                 ending => Cow::Owned(text.replace('\n', ending)),
             };
-            let written = paths::safe_write_path(&self.project.root, path).and_then(|abs| {
+            let written = paths::safe_write_path(&self.project, path).and_then(|abs| {
                 if !as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
                     return Ok(None);
                 }

@@ -7,7 +7,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
-use crate::paths::{disk_spelling, fold_case, in_build_dir, relative, within};
+use crate::paths::{Project, disk_spelling, fold_case, in_build_dir, relative, within};
 use crate::projects::{TreeNode, listed};
 use crate::{HISTORY_DIR, SETTINGS_FILE};
 
@@ -16,13 +16,16 @@ pub(crate) struct Change {
     pub structural: bool,
 }
 
-pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<RecommendedWatcher> {
-    let base = root.to_path_buf();
+pub(crate) fn watch(
+    project: &Project,
+    tx: mpsc::UnboundedSender<Msg>,
+) -> Option<RecommendedWatcher> {
+    let base = project.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let changes = match event {
             Ok(event) if !event.need_rescan() => changes(event, &base),
             _ => vec![Change {
-                path: base.clone(),
+                path: base.root.clone(),
                 structural: true,
             }],
         };
@@ -31,11 +34,13 @@ pub(crate) fn watch(root: &Path, tx: mpsc::UnboundedSender<Msg>) -> Option<Recom
         }
     })
     .ok()?;
-    watcher.watch(root, RecursiveMode::Recursive).ok()?;
+    watcher
+        .watch(&project.root, RecursiveMode::Recursive)
+        .ok()?;
     Some(watcher)
 }
 
-fn changes(event: notify::Event, root: &Path) -> Vec<Change> {
+fn changes(event: notify::Event, project: &Project) -> Vec<Change> {
     let structural = match event.kind {
         EventKind::Access(_) => return Vec::new(),
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) => {
@@ -45,7 +50,7 @@ fn changes(event: notify::Event, root: &Path) -> Vec<Change> {
     };
     let ours = |path: &PathBuf| {
         let top = path
-            .strip_prefix(root)
+            .strip_prefix(&project.root)
             .ok()
             .and_then(|rest| rest.iter().next());
         top.and_then(OsStr::to_str)
@@ -99,14 +104,14 @@ pub(crate) struct Meaning {
 }
 
 pub(crate) fn classify(
-    root: &Path,
+    project: &Project,
     changes: &[Change],
     index: &TreeIndex,
     docs: &[String],
 ) -> Meaning {
     let mut meaning = Meaning::default();
     for change in changes {
-        let Some(rel) = relative(root, &change.path) else {
+        let Some(rel) = relative(&project.root, &change.path) else {
             continue;
         };
         if rel.is_empty() {
@@ -125,7 +130,7 @@ pub(crate) fn classify(
         }
         let parent = rel.rsplit_once('/').map_or("", |(parent, _)| parent);
         let shown_folder = parent.is_empty() || index.folders.contains(parent);
-        if change.structural && shown_folder && !listed_as_before(root, &rel, index) {
+        if change.structural && shown_folder && !listed_as_before(&project.root, &rel, index) {
             meaning.tree = true;
         }
         meaning.settings |= fold_case(&rel) == SETTINGS_FILE;

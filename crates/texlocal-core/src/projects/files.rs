@@ -22,9 +22,9 @@ pub struct RenameResult {
     pub main_moved: bool,
 }
 
-pub fn create_free(root: &Path, rel: &str, dir: bool) -> Result<String, CoreError> {
+pub fn create_free(project: &Project, rel: &str, dir: bool) -> Result<String, CoreError> {
     for path in copy_paths(rel) {
-        let abs = safe_write_path(root, &path)?;
+        let abs = safe_write_path(project, &path)?;
         let error = |err| {
             if dir {
                 CoreError::from(err)
@@ -126,7 +126,7 @@ pub(super) fn occupied(src: &Path, dest: &Path) -> bool {
 
 pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let root = &project.root;
-    let (src, dest) = (safe_path(root, from)?, safe_write_path(root, to)?);
+    let (src, dest) = (safe_path(root, from)?, safe_write_path(project, to)?);
     let (from, to) = (rel_key(from)?, rel_key(to)?);
     if fs::symlink_metadata(&src).is_err() {
         return Err(CoreError::not_found(messages::not_found()));

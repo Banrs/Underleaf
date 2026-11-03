@@ -7,7 +7,7 @@ use texlocal_latex::{FileKind, file_kind};
 
 use super::MAX_FILES;
 use super::library::{Located, ProjectInfo, locate};
-use super::tree::visit_files;
+use super::tree::{listed, walk};
 use crate::atomic::{self, Flush};
 use crate::error::{CoreError, ErrorKind};
 use crate::messages;
@@ -142,9 +142,11 @@ fn open_folder(
         return Err(CoreError::bad_request(messages::holds_library(name)));
     }
     let (mut files, mut tex) = (0, false);
-    visit_files(root, &mut |_, rel| {
-        files += 1;
-        tex |= file_kind(rel) == FileKind::Tex;
+    walk(root, &listed, false, &mut |entry| {
+        if !entry.dir {
+            files += 1;
+            tex |= file_kind(&entry.rel) == FileKind::Tex;
+        }
         Ok(files <= MAX_FILES)
     })?;
     if files > MAX_FILES {

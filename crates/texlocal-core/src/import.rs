@@ -87,8 +87,11 @@ pub(crate) fn import_files(
             )?;
         }
     }
+    let (rels, taken) = validate(files.iter().map(|(path, _)| path.as_str()))?;
+    for rel in &rels {
+        paths::safe_write_path(project, &in_folder(dir, rel))?;
+    }
     let root = &project.root;
-    let (rels, taken) = validate(root, dir, files.iter().map(|(path, _)| path.as_str()))?;
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported { existing });
@@ -105,15 +108,12 @@ pub(crate) fn import_files(
 }
 
 fn validate<'a>(
-    root: &Path,
-    dir: &str,
     files: impl Iterator<Item = &'a str>,
 ) -> Result<(Vec<String>, HashSet<String>), CoreError> {
     let mut seen = HashSet::new();
     let mut folders = HashSet::new();
     let mut rels = Vec::new();
     for file in files {
-        paths::safe_write_path(root, &in_folder(dir, file))?;
         let rel = rel_key(file)?;
         let key = fold_case(&rel);
         let parents = || key.match_indices('/').map(|(i, _)| &key[..i]);
@@ -169,7 +169,7 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
 
 fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<(), CoreError> {
     let root = &project.root;
-    let abs = paths::safe_write_path(root, rel)?;
+    let abs = paths::safe_write_path(project, rel)?;
     let folder = abs.ancestors().skip(1).find(|dir| dir.is_dir());
     let (mut file, temp) = atomic::create_temp(folder.unwrap_or(root))?;
     let mut origin = File::open(source).map_err(CoreError::at(source))?;
@@ -344,7 +344,7 @@ fn write_files(
     files: &[(String, Source)],
     mut zip: Option<&mut ZipArchive<File>>,
 ) -> Result<(), CoreError> {
-    validate(root, "", files.iter().map(|(path, _)| path.as_str()))?;
+    validate(files.iter().map(|(path, _)| path.as_str()))?;
     if let Some(zip) = zip.as_deref_mut() {
         let mut unzipped = 0;
         for (_, source) in files {

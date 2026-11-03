@@ -128,10 +128,10 @@ pub(crate) fn walk(
 }
 
 pub(super) fn visit_files(
-    root: &Path,
+    project: &Project,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
-    walk(root, &listed, false, &mut |entry| {
+    walk(&project.root, &listed, false, &mut |entry| {
         if entry.dir {
             return Ok(true);
         }

@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::Path;
 use std::sync::Arc;
 
 use texlocal_latex::FileKind;
@@ -10,15 +9,16 @@ use texlocal_latex::file_kind;
 use super::skip_unreadable;
 use super::tree::visit_files;
 use crate::error::CoreError;
+use crate::paths::Project;
 use crate::stamp::Kept;
 
 pub fn scan_facts(
-    root: &Path,
+    project: &Project,
     facts: &Files,
     open: &HashMap<String, String>,
 ) -> Result<BTreeMap<String, Arc<Facts>>, CoreError> {
     let mut files = BTreeMap::new();
-    visit_files(root, &mut |abs, rel| {
+    visit_files(project, &mut |abs, rel| {
         let kind = file_kind(rel);
         if !matches!(kind, FileKind::Tex | FileKind::Bib) {
             return Ok(true);
