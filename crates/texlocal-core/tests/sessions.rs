@@ -1796,7 +1796,7 @@ async fn importing_a_folder_leaves_nested_links_unread() {
     write(&folder, &[("plot.png", "png")]);
     write(&outside, &[("private.png", "private")]);
     std::os::unix::fs::symlink(&outside, folder.join("linked")).unwrap();
-    fs::set_permissions(&outside, fs::Permissions::from_mode(0)).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o0)).unwrap();
     let asked = rig.send(
         SESSION,
         "ImportFiles",
