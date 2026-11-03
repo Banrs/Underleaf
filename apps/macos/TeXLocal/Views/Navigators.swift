@@ -175,7 +175,11 @@ final class NavigatorFilterBar: NSView {
             let item = menu.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "")
             (item.target, item.representedObject) = (self, command)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+        // Opens up from the +, its left edge on the glass's and 4 pt above it, as a menu from a bar at the window's foot does;
+        // a menu placed beneath ran off the screen's foot and AppKit moved it up over the + and the pointer.
+        guard let window = button.window else { return }
+        let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: frame.maxY + 4 + menu.size.height), in: nil)
     }
 
     @objc private func add(_ item: NSMenuItem) {
