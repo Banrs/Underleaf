@@ -14,16 +14,20 @@ struct InspectorView: View {
                     if !texFiles.contains(where: { $0 == main }) { Text(main ?? "").tag(main) }
                 }
                 EnginePicker(project: project)
-                Toggle("Shell Escape", detail: "Lets packages such as minted run programs. Only for projects you trust.",
-                       isOn: Bindable(project).shellEscape)
-                Toggle("Stop on First Error", detail: "Ends the build at its first error, rather than showing them all.",
-                       isOn: Bindable(project).stopOnFirstError)
+                Toggle(isOn: Bindable(project).shellEscape) {
+                    Text("Shell Escape"); Text("Lets packages such as minted run programs. Only for projects you trust.")
+                }
+                Toggle(isOn: Bindable(project).stopOnFirstError) {
+                    Text("Stop on First Error"); Text("Ends the build at its first error, rather than showing them all.")
+                }
                 Button("Clean Build Folder") { Task { await project.cleanBuildFolder() } }
             }
             .disabled(project.settings == nil)
             Section {
-                Toggle("Live Preview", detail: app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling."
-                           : Self.livePreviewMissing, isOn: Bindable(project).livePreview)
+                Toggle(isOn: Bindable(project).livePreview) {
+                    Text("Live Preview")
+                    Text(app.canPreviewLive ? "Experimental. Updates the preview as you type, without compiling." : Self.livePreviewMissing)
+                }
                 .disabled(!project.canSwitchLivePreview)
                 if !app.canPreviewLive {
                     SettingsLink { Text("Open Settings…") }
