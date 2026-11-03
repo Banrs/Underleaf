@@ -298,21 +298,6 @@ nonisolated struct Composing: SessionRequest {
     var composing: Bool
 }
 
-nonisolated struct Conflict: Decodable, Hashable, Sendable {
-    var path: String
-    var kind: DiskConflict
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, kind }
-}
-
-nonisolated extension Conflict {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        kind = try wire.decode(DiskConflict.self, forKey: .kind)
-    }
-}
-
 nonisolated struct CoreError: Decodable, Hashable, Sendable {
     var kind: ErrorKind
     var message: Message
@@ -431,9 +416,10 @@ nonisolated extension DocumentEdits {
 nonisolated struct DocumentState: Decodable, Hashable, Sendable {
     var path: String
     var error: Message?
-    var held: DiskConflict?
+    var conflict: DiskConflict?
+    var asking: Bool
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, error, held }
+    enum CodingKeys: String, CodingKey, CaseIterable { case path, error, conflict, asking }
 }
 
 nonisolated extension DocumentState {
@@ -441,7 +427,8 @@ nonisolated extension DocumentState {
         let wire = try decoder.strict(CodingKeys.self)
         path = try wire.decode(String.self, forKey: .path)
         error = try wire.decode(Message?.self, forKey: .error)
-        held = try wire.decode(DiskConflict?.self, forKey: .held)
+        conflict = try wire.decode(DiskConflict?.self, forKey: .conflict)
+        asking = try wire.decode(Bool.self, forKey: .asking)
     }
 }
 
@@ -485,7 +472,6 @@ nonisolated enum Event: Decodable, Hashable, Sendable {
     case section(SessionSection)
     case documentReload(String)
     case renamed(Renamed)
-    case conflict(Conflict)
     case filesChanged([String])
     case buildFinished(BuildFinished)
     case liveAlert
@@ -503,7 +489,6 @@ nonisolated extension Event {
         case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
         case "documentReload": self = .documentReload(try wire.decode(String.self, forKey: .value))
         case "renamed": self = .renamed(try wire.decode(Renamed.self, forKey: .value))
-        case "conflict": self = .conflict(try wire.decode(Conflict.self, forKey: .value))
         case "filesChanged": self = .filesChanged(try wire.decode([String].self, forKey: .value))
         case "buildFinished": self = .buildFinished(try wire.decode(BuildFinished.self, forKey: .value))
         case "liveAlert": self = .liveAlert

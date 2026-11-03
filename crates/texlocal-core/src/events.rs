@@ -9,7 +9,7 @@ use serde_json::Value;
 use serde_json::value::{RawValue, to_raw_value};
 
 use crate::service::LibrarySection;
-use crate::session::{DiskConflict, SessionSection};
+use crate::session::SessionSection;
 use crate::synctex::ForwardLoc;
 use crate::texpresso::PageRange;
 use crate::{CoreError, lock};
@@ -120,7 +120,6 @@ pub(crate) enum Event {
     Section(#[schemars(with = "SessionSection")] Box<RawValue>),
     DocumentReload(String),
     Renamed(Renamed),
-    Conflict(Conflict),
     FilesChanged(Vec<String>),
     BuildFinished(BuildFinished),
     LiveAlert,
@@ -133,12 +132,6 @@ pub(crate) enum Event {
 pub(crate) struct Renamed {
     pub from: String,
     pub to: String,
-}
-
-#[derive(Serialize, JsonSchema)]
-pub(crate) struct Conflict {
-    pub path: String,
-    pub kind: DiskConflict,
 }
 
 #[derive(Serialize, JsonSchema)]

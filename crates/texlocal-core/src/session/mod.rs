@@ -35,7 +35,6 @@ use actor::OpenProject;
 pub(crate) use actor::Session;
 pub use build::Compiler;
 pub use document::Document;
-pub(crate) use documents::DiskConflict;
 use documents::{Docs, Shared};
 pub(crate) use state::SessionSection;
 #[cfg(test)]

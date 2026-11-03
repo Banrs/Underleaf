@@ -144,7 +144,7 @@ impl Actor {
     }
 
     pub fn texts_to_edit(&mut self) -> Result<Vec<(String, String, u64)>, CoreError> {
-        let unsettled = |doc: &&Doc| doc.conflict.is_some() || doc.asking.is_some();
+        let unsettled = |doc: &&Doc| doc.conflict.is_some();
         if let Some(doc) = self.docs.values().find(unsettled) {
             return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }

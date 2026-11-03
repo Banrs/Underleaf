@@ -85,7 +85,9 @@ final class ProjectModel {
     let texpresso: TeXpressoSession
 
     var openURL: URL? { openPath.flatMap(url) }
-    private(set) var conflicts: [Conflict] = []
+    /// What the session asks about, less the answers sent and not yet heard back, so an answered alert isn't shown again.
+    var conflicts: [DocumentState] { store.documents.filter { $0.asking && !answered.contains($0.path) } }
+    private var answered: Set<String> = []
     private(set) var askingToDiscard: [String]?
     @ObservationIgnored private var discardAnswer: CheckedContinuation<Bool, Never>?
     @ObservationIgnored private var discarded = false
@@ -147,7 +149,7 @@ final class ProjectModel {
     var saveFailure: String? {
         for document in store.documents {
             let name = document.path.fileName
-            switch (document.error, document.held) {
+            switch (document.error, document.conflict) {
             case (let error?, _): return error.text
             case (nil, .changed): return String(localized: "Another app changed “\(name)”.")
             case (nil, .gone): return String(localized: "Another app moved or deleted “\(name)”.")
@@ -217,9 +219,6 @@ final class ProjectModel {
         switch event {
         case .section(let section): apply(section)
         case .documentReload, .renamed, .livePage, .liveDocument, .liveFollow: break
-        case .conflict(let asked):
-            conflicts.removeAll { $0.path == asked.path }
-            conflicts.append(asked)
         case .buildFinished(let finished): buildFinished(finished)
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
@@ -243,6 +242,7 @@ final class ProjectModel {
             if now != outline { outline = now }
             findHeadings()
         case .documents(let documents):
+            answered = answered.filter { path in documents.contains { $0.path == path && $0.asking } }
             for document in documents {
                 guard let error = document.error, before.first(where: { $0.path == document.path })?.error == nil else { continue }
                 window?.report(notSavedTitle(document.path), error.text)
@@ -437,7 +437,7 @@ final class ProjectModel {
     }
 
     func answer(_ path: String, _ answer: Resolution) {
-        conflicts.removeAll { $0.path == path }
+        answered.insert(path)
         session.send(Resolve(path: path, answer: answer), else: reporting(notSavedTitle(path)))
     }
 

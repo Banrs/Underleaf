@@ -131,7 +131,7 @@ struct SectionTests {
         let sections: [SessionSection] = [
             .project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil)),
             .tree([file("main.tex"), TreeNode(name: "figs", path: "figs", kind: nil, children: [], main: false), file("b.tex")]),
-            .documents([DocumentState(path: "b.tex", error: nil, held: .changed)]),
+            .documents([DocumentState(path: "b.tex", error: nil, conflict: .changed, asking: false)]),
         ]
         for section in sections { project.handle(.section(section)) }
         #expect(project.name == "Paper")
@@ -141,7 +141,8 @@ struct SectionTests {
         project.handle(.section(.tree([file("main.tex"), file("a.tex")])))
         #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
-        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."), held: nil)])))
+        project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."),
+                                                          conflict: nil, asking: false)])))
         #expect(window.alert?.title == "“b.tex” Wasn’t Saved")
         #expect(project.saveFailure == "The disk is full.")
     }
@@ -211,15 +212,22 @@ struct SectionTests {
         #expect(live.needsAttention)
     }
 
-    @Test func diskConflictsQueueSoEachIsAskedOnce() {
+    @Test func eachDiskConflictTheSessionAsksAboutIsAskedUntilItIsAnswered() {
         let project = ProjectModel(id: "P", window: defaults.window())
-        project.handle(.conflict(Conflict(path: "a.tex", kind: .changed)))
-        project.handle(.conflict(Conflict(path: "b.tex", kind: .changed)))
-        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"])
-        project.handle(.conflict(Conflict(path: "a.tex", kind: .gone)))
-        #expect(project.conflicts == [Conflict(path: "b.tex", kind: .changed), Conflict(path: "a.tex", kind: .gone)])
+        let documents = { (asking: [String]) in
+            project.handle(.section(.documents(["a.tex", "b.tex"].map {
+                DocumentState(path: $0, error: nil, conflict: $0 == "a.tex" ? .gone : .changed, asking: asking.contains($0))
+            })))
+        }
+        documents(["a.tex", "b.tex"])
+        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"] && project.conflicts[0].conflict == .gone)
         project.answer("b.tex", .cancel)
         #expect(project.conflicts.map(\.path) == ["a.tex"])
+        documents(["a.tex", "b.tex"])
+        #expect(project.conflicts.map(\.path) == ["a.tex"])
+        documents(["a.tex"])
+        documents(["a.tex", "b.tex"])
+        #expect(project.conflicts.map(\.path) == ["a.tex", "b.tex"])
     }
 }
 

@@ -436,7 +436,7 @@ async fn replies_follow_the_events_sent_before_them() {
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    answered_after("conflict", "Save", json!({ "reporting": true }));
+    answered_after("documents", "Save", json!({ "reporting": true }));
     let revert = json!({ "path": "ch.tex", "answer": "revert" });
     answered_after("documentReload", "Resolve", revert);
 }
@@ -810,6 +810,12 @@ async fn shell_escape_in_a_projects_own_settings_is_not_granted() {
     assert_eq!(project["settings"]["shellEscape"], false);
 }
 
+fn asked(rig: &Rig, path: &str, kind: &str) {
+    let asking =
+        |doc: &Value| doc["path"] == path && doc["asking"] == true && doc["conflict"] == kind;
+    rig.section("documents", |d| d.as_array().unwrap().iter().any(asking));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_on_disk_reloads_a_document_without_edits_and_its_old_view_is_refused() {
     let rig = project().await;
@@ -832,15 +838,15 @@ async fn editing_a_recovered_document_keeps_a_later_file_removal_conflict() {
     fs::write(&path, "external\n").unwrap();
     rig.event("documentReload", |e| e == "ch.tex");
     doc.restore("accepted original\n");
-    rig.event("conflict", |e| e["kind"] == "changed");
+    asked(&rig, "ch.tex", "changed");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
     fs::remove_file(&path).unwrap();
-    rig.event("conflict", |e| e["kind"] == "gone");
+    asked(&rig, "ch.tex", "gone");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
     rig.forget();
     doc.edit(0, 0, "more ", None, false);
     assert_eq!(rig.call("Save", json!({ "reporting": true })), false);
-    assert_eq!(rig.event("conflict", |_| true)["kind"], "gone");
+    asked(&rig, "ch.tex", "gone");
     assert!(!path.exists());
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
     assert_eq!(
@@ -856,11 +862,12 @@ async fn a_change_on_disk_under_edits_is_asked_about_held_and_saved_with_the_edi
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    let conflict = rig.event("conflict", |e| e["path"] == "ch.tex");
-    assert_eq!(conflict["kind"], "changed");
+    asked(&rig, "ch.tex", "changed");
     assert_eq!(rig.call("CloseProject", json!({})), false);
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
-    rig.section("documents", |d| d[0]["held"] == "changed");
+    rig.section("documents", |d| {
+        d[0]["conflict"] == "changed" && d[0]["asking"] == false
+    });
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
     assert_eq!(
         fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
@@ -876,7 +883,7 @@ async fn revert_takes_the_disks_text() {
     doc.edit(0, 0, "mine ", None, false);
     std::thread::sleep(Duration::from_millis(300));
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
-    rig.event("conflict", |e| e["path"] == "ch.tex");
+    asked(&rig, "ch.tex", "changed");
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
     rig.event("documentReload", |e| e == "ch.tex");
     assert_eq!(doc.with(|d| d.text()), "theirs\n");

@@ -55,7 +55,8 @@ pub(crate) struct ProjectState {
 pub(crate) struct DocumentState {
     pub path: String,
     pub error: Option<Message>,
-    pub held: Option<DiskConflict>,
+    pub conflict: Option<DiskConflict>,
+    pub asking: bool,
 }
 
 #[derive(Serialize, JsonSchema)]

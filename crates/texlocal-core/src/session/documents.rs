@@ -16,7 +16,7 @@ use texlocal_latex::syntax::TextEdit;
 use super::Document;
 use super::actor::{Actor, Later, Timer};
 use super::state::DocumentState;
-use crate::events::{Conflict, Event};
+use crate::events::Event;
 use crate::messages;
 use crate::paths::{self, within};
 use crate::projects;
@@ -56,8 +56,7 @@ pub(crate) struct Doc {
     newline: &'static str,
     disk_stamp: Option<Stamp>,
     pub conflict: Option<DiskConflict>,
-    pub asking: Option<DiskConflict>,
-    held: Option<DiskConflict>,
+    asking: bool,
     pub error: Option<Message>,
     composing: bool,
 }
@@ -71,7 +70,8 @@ impl Doc {
         DocumentState {
             path: self.path.clone(),
             error: self.error.clone(),
-            held: self.held,
+            conflict: self.conflict,
+            asking: self.asking,
         }
     }
 }
@@ -205,8 +205,7 @@ impl Actor {
             newline,
             disk_stamp: stamp,
             conflict: None,
-            asking: None,
-            held: None,
+            asking: false,
             error: None,
             composing: false,
         };
@@ -233,7 +232,6 @@ impl Actor {
         };
         let path = path.clone();
         if recovered && doc.conflict.is_none() {
-            doc.conflict = Some(DiskConflict::Changed);
             self.ask(&path, DiskConflict::Changed);
         }
         self.touched(&path, Some(edit));
@@ -276,7 +274,7 @@ impl Actor {
             if !doc.dirty() {
                 return Ok(true);
             }
-            if doc.asking.is_some() || autosave && doc.composing {
+            if doc.asking || autosave && doc.composing {
                 return Ok(false);
             }
             if let Some(kind) = doc.conflict {
@@ -310,7 +308,7 @@ impl Actor {
                 }
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
-                    (doc.saved, doc.force, doc.held, doc.error) = (version, false, None, None);
+                    (doc.saved, doc.force, doc.error) = (version, false, None);
                     self.after(Timer::Symbols);
                     self.snapshot_soon();
                     Ok(true)
@@ -381,12 +379,8 @@ impl Actor {
 
     fn ask(&mut self, path: &str, kind: DiskConflict) {
         if let Some(doc) = self.docs.get_mut(path) {
-            doc.asking = Some(kind);
-            let asked = Conflict {
-                path: path.to_owned(),
-                kind,
-            };
-            self.emit(Event::Conflict(asked));
+            (doc.conflict, doc.asking) = (Some(kind), true);
+            self.publish_documents();
         }
     }
 
@@ -395,17 +389,17 @@ impl Actor {
             .docs
             .get_mut(path)
             .ok_or_else(|| CoreError::not_found(messages::document_not_open()))?;
-        let Some(kind) = doc.asking.or(doc.conflict) else {
+        let Some(kind) = doc.conflict else {
             return Ok(());
         };
         match (kind, answer) {
-            (_, Resolution::Cancel) => (doc.asking, doc.held) = (None, Some(kind)),
+            (_, Resolution::Cancel) => doc.asking = false,
             (DiskConflict::Changed, Resolution::Save) => {
-                (doc.asking, doc.conflict, doc.force) = (None, None, true);
+                (doc.asking, doc.conflict, doc.force) = (false, None, true);
             }
             (DiskConflict::Changed, Resolution::Revert)
             | (DiskConflict::Gone, Resolution::Save) => {
-                (doc.asking, doc.conflict) = (None, None);
+                (doc.asking, doc.conflict) = (false, None);
             }
             (DiskConflict::Gone, Resolution::Close) => {
                 self.close_doc(path);
@@ -441,7 +435,6 @@ impl Actor {
             Reload::Revert => doc.doc.version(),
         };
         let Some(version) = doc.doc.reload(text, seen) else {
-            doc.conflict = Some(DiskConflict::Changed);
             return self.ask(path, DiskConflict::Changed);
         };
         doc.saved = version;
