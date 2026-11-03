@@ -15,6 +15,7 @@ use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, safe_write_path};
+use crate::stamp::Kept;
 
 const MINUTE: i64 = 60_000;
 const HOUR: i64 = 60 * MINUTE;
@@ -135,19 +136,18 @@ impl History {
     }
 
     fn files_now(&self, root: &Path) -> Result<BTreeMap<String, String>, CoreError> {
+        // Every file of a large project, so an auto snapshot reads and hashes only the files
+        // whose stamps changed rather than each one of up to 20 MB.
+        static HASHES: Kept<Option<String>> = Kept::holding(16_384);
         let objects = self.objects();
         let mut files = BTreeMap::new();
         visit_files(root, &mut |abs, rel| {
-            let Some(bytes) = read_capped(abs, MAX_KEPT)? else {
-                return Ok(true);
+            let kept = HASHES.get(abs, |abs| store(&objects, abs))?;
+            let hash = match kept.as_deref() {
+                Some(hash) if !objects.join(hash).exists() => store(&objects, abs)?,
+                hash => hash.map(str::to_owned),
             };
-            let hash = crate::sha256(&bytes);
-            let object = objects.join(&hash);
-            if !object.exists() {
-                fs::create_dir_all(&objects)?;
-                atomic::write(&object, &bytes, Flush::Ordered)?;
-            }
-            files.insert(rel.to_owned(), hash);
+            files.extend(hash.map(|hash| (rel.to_owned(), hash)));
             Ok(true)
         })?;
         Ok(files)
@@ -276,6 +276,19 @@ fn changes(
         Some(ChangedFile { path, change })
     });
     changed.collect()
+}
+
+fn store(objects: &Path, abs: &Path) -> Result<Option<String>, CoreError> {
+    let Some(bytes) = read_capped(abs, MAX_KEPT)? else {
+        return Ok(None);
+    };
+    let hash = crate::sha256(&bytes);
+    let object = objects.join(&hash);
+    if !object.exists() {
+        fs::create_dir_all(objects)?;
+        atomic::write(&object, &bytes, Flush::Ordered)?;
+    }
+    Ok(Some(hash))
 }
 
 pub(crate) fn put_back(
