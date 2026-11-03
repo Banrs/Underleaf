@@ -25,7 +25,6 @@ pub(crate) struct Change {
     pub structural: bool,
 }
 
-/// The project's files as listed, the watcher on them, and the symbols scanned from them.
 #[derive(Default)]
 pub(crate) struct Tree {
     index: TreeIndex,

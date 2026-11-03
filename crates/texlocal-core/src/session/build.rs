@@ -259,7 +259,6 @@ impl Builds {
         cx.publish(SessionSection::Build(build));
     }
 
-    /// Dates a change to the project's text, which marks the PDF and the issues on a document edited out of date.
     pub fn edited(&mut self, cx: &mut Core, docs: &Docs, path: Option<&str>) {
         self.clock += 1;
         if let Some(path) = path {
@@ -311,9 +310,9 @@ impl Builds {
         cx: &mut Core,
         docs: &Docs,
         result: Result<(), CoreError>,
-        intent: u64,
+        (_, asked): (bool, u64),
     ) -> Option<bool> {
-        let (live, asked) = self.cleaning.take()?;
+        let (live, intent) = self.cleaning.take()?;
         if result.is_ok() {
             (cx.pdf.built, self.outdated, self.result) = (None, false, None);
             self.publish(cx, docs);
@@ -327,7 +326,7 @@ impl Builds {
         for reply in std::mem::take(&mut self.cleaners) {
             reply.send(result.clone());
         }
-        Some(result.is_ok() && live && asked == intent)
+        Some(result.is_ok() && live && intent == asked)
     }
 
     pub fn checks_done(&mut self, cx: &mut Core, docs: &Docs, checks: Vec<LogItem>, edits: u64) {
@@ -372,13 +371,10 @@ impl Actor {
     }
 
     pub fn cleaned(&mut self, result: Result<(), CoreError>) {
-        let (_, intent) = self.live.asked();
-        if let Some(restart) = self
-            .builds
-            .cleaned(&mut self.core, &self.docs, result, intent)
-        {
+        let (cx, live) = (&mut self.core, self.live.asked());
+        if let Some(restart) = self.builds.cleaned(cx, &self.docs, result, live) {
             if restart {
-                self.core.after(Timer::Restart);
+                cx.after(Timer::Restart);
             }
             self.close_when_idle();
         }

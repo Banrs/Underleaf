@@ -76,7 +76,6 @@ impl Doc {
 
 pub(crate) type Shared = Arc<Mutex<HashMap<String, Document>>>;
 
-/// The documents open, which the main thread edits, and the file the editor shows.
 #[derive(Default)]
 pub(crate) struct Docs {
     docs: BTreeMap<String, Doc>,
@@ -239,18 +238,15 @@ impl Docs {
         let conflict = doc.conflict;
         let reload = doc.reloading.take_if(|(base, _)| version > *base);
         let reloaded = reload.map(|(base, reload)| version == base + 1 && reload == *edit);
+        cx.after(Timer::Autosave);
         if reloaded == Some(true) {
             doc.saved = version;
+            cx.after(Timer::Symbols);
+            return self.check_disk(cx, path);
         }
-        cx.after(Timer::Autosave);
-        match reloaded {
-            Some(true) => {
-                cx.after(Timer::Symbols);
-                return self.check_disk(cx, path);
-            }
-            // An edit made before the main thread saw the reload refused it.
-            Some(false) if conflict.is_none() => self.ask(cx, path, DiskConflict::Changed),
-            _ => {}
+        // An edit made before the main thread saw the reload refused it.
+        if reloaded == Some(false) && conflict.is_none() {
+            self.ask(cx, path, DiskConflict::Changed);
         }
         false
     }
@@ -396,7 +392,6 @@ impl Docs {
         Ok(saved)
     }
 
-    /// Closes every document of a session that stopped, saying of each whether its edits were saved.
     pub fn stopped(&mut self, cx: &mut Core) {
         for doc in self.docs.values_mut() {
             doc.doc.close();
@@ -618,10 +613,10 @@ impl Actor {
         let Some(path) = self.docs.path_of(id) else {
             return;
         };
-        self.builds.edited(&mut self.core, &self.docs, Some(&path));
-        self.live
-            .edited(&mut self.core, &self.docs, &path, version, edit);
-        if self.docs.edited(&mut self.core, &path, version, edit) {
+        let (cx, docs) = (&mut self.core, &self.docs);
+        self.builds.edited(cx, docs, Some(&path));
+        self.live.edited(cx, docs, &path, version, edit);
+        if self.docs.edited(cx, &path, version, edit) {
             self.closed();
         }
     }

@@ -343,11 +343,12 @@ impl Actor {
                 _ => {}
             };
         }
+        let (cx, docs) = (&mut self.core, &self.docs);
         match message {
             Msg::Edited { doc, version, edit } => self.edited(doc, version, &edit),
             Msg::Selected { doc, caret } => {
-                if let Some(path) = self.docs.path_of(doc) {
-                    self.live.caret(&mut self.core, path, caret);
+                if let Some(path) = docs.path_of(doc) {
+                    self.live.caret(cx, path, caret);
                 }
             }
             Msg::Command(command, reply) => command.run(self, reply),
@@ -355,17 +356,13 @@ impl Actor {
             Msg::Cleaned(result) => self.cleaned(result),
             Msg::Symbols { seq, edits, result } => {
                 if let Some((checks, outline)) = self.tree.scanned(seq, result) {
-                    self.builds
-                        .checks_done(&mut self.core, &self.docs, checks, edits);
-                    self.core.publish(SessionSection::Outline(Some(outline)));
+                    self.builds.checks_done(cx, docs, checks, edits);
+                    cx.publish(SessionSection::Outline(Some(outline)));
                 }
             }
-            Msg::Live(generation, event) => {
-                self.live
-                    .event(&mut self.core, &self.docs, generation, event);
-            }
+            Msg::Live(generation, event) => self.live.event(cx, docs, generation, event),
             Msg::Snapshotted(finish) => finish(self),
-            Msg::Fs(changes) => self.tree.changed(&mut self.core, changes),
+            Msg::Fs(changes) => self.tree.changed(cx, changes),
         }
     }
 
@@ -373,20 +370,18 @@ impl Actor {
         let now = Instant::now();
         while let Some((&timer, _)) = self.core.timers.iter().find(|(_, at)| **at <= now) {
             self.core.timers.remove(&timer);
+            let (cx, docs) = (&mut self.core, &self.docs);
             match timer {
-                Timer::Autosave => self.docs.autosave(&mut self.core),
-                Timer::Symbols => self.tree.scan(&self.core, &self.docs, self.builds.clock),
+                Timer::Autosave => self.docs.autosave(cx),
+                Timer::Symbols => self.tree.scan(cx, docs, self.builds.clock),
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.live.caret_settled(),
-                Timer::Follow => self.live.follow(&self.core, &self.docs),
-                Timer::Halting => self.live.halted(&mut self.core, &self.docs, true),
-                Timer::Restart => self.core.later.push_back(Later::Restart),
-                Timer::Disk => self.live.refresh_disk(&self.core, &self.docs),
-                Timer::Log => self.live.publish_log(&mut self.core),
-                Timer::Issues => {
-                    self.live
-                        .issues_settled(&mut self.core, &self.docs, &self.tree);
-                }
+                Timer::Follow => self.live.follow(cx, docs),
+                Timer::Halting => self.live.halted(cx, docs, true),
+                Timer::Restart => cx.later.push_back(Later::Restart),
+                Timer::Disk => self.live.refresh_disk(cx, docs),
+                Timer::Log => self.live.publish_log(cx),
+                Timer::Issues => self.live.issues_settled(cx, docs, &self.tree),
             }
         }
     }
