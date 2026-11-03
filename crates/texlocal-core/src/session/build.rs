@@ -9,7 +9,8 @@ use texlocal_latex::logparse::{Fix, LogItem, Severity};
 use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextRange;
 
-use super::actor::{Actor, Later, Timer};
+use super::actor::{Actor, Core, Later, Timer};
+use super::documents::Docs;
 use super::state::SessionSection;
 use super::{Document, Msg, Pending};
 use crate::CoreError;
@@ -77,37 +78,50 @@ pub(crate) struct ShownPdf {
     live: bool,
 }
 
+/// The PDF shown: a live preview's while it has pages, or else the last build's.
+#[derive(Default)]
+pub(crate) struct Shown {
+    pub built: Option<String>,
+    pub version: u64,
+    pub live: Option<PathBuf>,
+}
+
+impl Core {
+    pub fn publish_pdf(&mut self) {
+        let shown = ShownPdf {
+            path: self.pdf.built.clone(),
+            version: self.pdf.version,
+            live: self.pdf.live.is_some(),
+        };
+        self.publish(SessionSection::ShownPdf(shown));
+    }
+}
+
+/// A finished build's log and announcement, which wait for the build queued behind it to start.
+pub(crate) struct Built(String, BuildFinished);
+
 #[derive(Default)]
 pub(crate) struct Builds {
     /// Counts each change to the project's text, which builds and checks are dated by.
     pub clock: u64,
     /// The time on the clock that each document was last edited.
-    pub edited_at: HashMap<String, u64>,
-    pub compiling: bool,
-    pub queued: Option<bool>,
+    edited_at: HashMap<String, u64>,
+    compiling: bool,
+    queued: Option<bool>,
     auto: bool,
     built: u64,
     pub waiting_for_tex: bool,
-    pub pdf: Option<String>,
-    version: u64,
     outdated: bool,
     result: Option<CompileResult>,
     result_edits: u64,
     checks: Vec<LogItem>,
     checked: u64,
     marked: BTreeSet<String>,
-    pub cleaners: Vec<Pending<()>>,
+    cleaners: Vec<Pending<()>>,
     cleaning: Option<(bool, u64)>,
 }
 
 impl Builds {
-    pub fn edited(&mut self, path: Option<&str>) {
-        self.clock += 1;
-        if let Some(path) = path {
-            self.edited_at.insert(path.to_owned(), self.clock);
-        }
-    }
-
     pub fn busy(&self) -> bool {
         self.compiling || self.cleaning.is_some()
     }
@@ -129,55 +143,50 @@ impl Builds {
     fn listed(&self) -> impl Iterator<Item = &LogItem> {
         self.built().chain(self.checks())
     }
-}
 
-pub(super) fn built_pdf(project: &Project) -> Option<String> {
-    let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
-    let pdf = pdf.ok().filter(|pdf| pdf.is_file())?;
-    Some(pdf.to_string_lossy().into_owned())
-}
-
-impl Actor {
-    fn has_pdf(&self) -> bool {
-        self.builds.pdf.is_some() || self.live.pdf.is_some()
+    /// Holds a build back while an auto build waits for TeX, or queues it behind the build or clean running.
+    pub fn waits(&mut self, cx: &Core, auto: bool) -> bool {
+        if auto && !*cx.service.tex_found.borrow() {
+            self.waiting_for_tex = true;
+        } else if self.busy() {
+            self.queued = Some(self.queued.unwrap_or(true) && auto);
+        } else {
+            return false;
+        }
+        true
     }
 
-    pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
-        if auto && self.live_previewing() {
-            return Ok(());
-        }
-        if auto && !*self.core.service.tex_found.borrow() {
-            self.builds.waiting_for_tex = true;
-            return Ok(());
-        }
-        if self.builds.busy() {
-            self.builds.queued = Some(self.builds.queued.unwrap_or(true) && auto);
-            return Ok(());
-        }
-        if !self.flush_all(!auto)? {
-            return Ok(());
-        }
-        (self.builds.compiling, self.builds.auto) = (true, auto);
-        self.builds.built = self.builds.clock;
-        self.publish_build();
-        let (build, tx) = (
-            self.core.compiler.compile(self.core.project.clone(), auto),
-            self.core.tx.clone(),
-        );
+    pub fn start(&mut self, cx: &mut Core, docs: &Docs, auto: bool) {
+        (self.compiling, self.auto) = (true, auto);
+        self.built = self.clock;
+        self.publish(cx, docs);
+        let (build, tx) = (cx.compiler.compile(cx.project.clone(), auto), cx.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });
-        Ok(())
     }
 
-    pub fn stop_compile(&mut self) {
-        self.builds.queued = None;
-        if self.builds.compiling {
-            self.core.compiler.stop_compile(&self.core.project.root);
+    pub fn stop(&mut self, cx: &Core) {
+        self.queued = None;
+        if self.compiling {
+            cx.compiler.stop_compile(&cx.project.root);
         }
     }
 
-    pub fn build_done(&mut self, result: Result<CompileResult, CoreError>) {
+    pub fn tex_found(&mut self, cx: &mut Core) {
+        self.waiting_for_tex = false;
+        if cx.auto_compile {
+            cx.later.push_back(Later::Compile(true));
+        }
+    }
+
+    /// Takes in a build's result, and gives back the build queued behind it with what it announces once that starts.
+    pub fn done(
+        &mut self,
+        cx: &mut Core,
+        result: Result<CompileResult, CoreError>,
+        live: (bool, u64),
+    ) -> (Option<bool>, Built) {
         let mut result = result.unwrap_or_else(|err| CompileResult {
             errors: vec![LogItem::error(err.message)],
             ..CompileResult::default()
@@ -188,140 +197,192 @@ impl Actor {
             .chain(&mut result.bad_boxes)
             .filter_map(|item| item.file.as_mut());
         for file in files {
-            let disk =
-                || disk_spelling(&self.core.project.root, file).unwrap_or_else(|| file.clone());
+            let disk = || disk_spelling(&cx.project.root, file).unwrap_or_else(|| file.clone());
             *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
         }
-        if !result.stopped {
-            self.live_rescan();
-        }
-        let builds = &mut self.builds;
         if let Some(pdf) = &result.pdf {
             if result.pdf_changed {
                 synctex::warm(pdf.into());
             }
-            builds.pdf = Some(pdf.clone());
-            builds.version += u64::from(result.pdf_changed);
-            builds.outdated = builds.clock != builds.built;
+            cx.pdf.built = Some(pdf.clone());
+            cx.pdf.version += u64::from(result.pdf_changed);
+            self.outdated = self.clock != self.built;
         } else {
-            builds.pdf = built_pdf(&self.core.project);
+            cx.pdf.built = built_pdf(&cx.project);
         }
-        let before = builds
-            .result
-            .as_ref()
-            .map_or(0, |result| result.errors.len());
-        let auto = builds.auto;
+        let before = self.result.as_ref().map_or(0, |result| result.errors.len());
+        let auto = self.auto;
         let announce = !result.stopped && (!auto || result.errors.len() != before);
         let log = std::mem::take(&mut result.log);
-        (builds.result, builds.result_edits) = (Some(result), builds.built);
-        builds.compiling = false;
-        if !builds.cleaners.is_empty() {
-            self.start_clean();
+        (self.result, self.result_edits) = (Some(result), self.built);
+        self.compiling = false;
+        if !self.cleaners.is_empty() {
+            self.start_clean(cx, live);
         }
-        if let Some(auto) = self.builds.queued.take() {
-            let _ = self.compile(auto);
-        }
-        self.publish_build();
-        self.core.publish(SessionSection::BuildLog(log));
-        self.publish_pdf();
-        self.core
-            .emit(Event::BuildFinished(BuildFinished { auto, announce }));
-        self.close_when_idle();
+        let built = Built(log, BuildFinished { auto, announce });
+        (self.queued.take(), built)
     }
 
-    pub fn publish_build(&mut self) {
-        let builds = &self.builds;
-        let lines = self.docs.iter().filter_map(|(path, doc)| {
-            let edits = builds.edited_at.get(path).copied().unwrap_or(0);
-            let shown = edits <= builds.result_edits;
-            let built = builds.built().filter(|_| shown);
-            let checks = builds
+    pub fn announce(&mut self, cx: &mut Core, docs: &Docs, Built(log, finished): Built) {
+        self.publish(cx, docs);
+        cx.publish(SessionSection::BuildLog(log));
+        cx.publish_pdf();
+        cx.emit(Event::BuildFinished(finished));
+    }
+
+    pub fn publish(&mut self, cx: &mut Core, docs: &Docs) {
+        let lines = docs.iter().filter_map(|(path, doc)| {
+            let edits = self.edited_at.get(path).copied().unwrap_or(0);
+            let shown = edits <= self.result_edits;
+            let built = self.built().filter(|_| shown);
+            let checks = self
                 .checks
                 .iter()
-                .filter(|check| edits <= builds.checked && !(shown && builds.covered(check)));
+                .filter(|check| edits <= self.checked && !(shown && self.covered(check)));
             let index = |line| {
                 let on =
                     |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
-                builds.listed().position(on)
+                self.listed().position(on)
             };
             let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             (!lines.is_empty()).then(|| (path.clone(), lines))
         });
         let build = BuildState {
-            compiling: builds.compiling,
-            auto: builds.compiling && builds.auto,
-            outdated: builds.outdated,
-            result: builds.result.clone(),
-            issues: builds.listed().cloned().collect(),
+            compiling: self.compiling,
+            auto: self.compiling && self.auto,
+            outdated: self.outdated,
+            result: self.result.clone(),
+            issues: self.listed().cloned().collect(),
             lines: lines.collect(),
         };
-        self.builds.marked = build.lines.keys().cloned().collect();
-        self.core.publish(SessionSection::Build(build));
+        self.marked = build.lines.keys().cloned().collect();
+        cx.publish(SessionSection::Build(build));
     }
 
-    pub fn publish_pdf(&mut self) {
-        let shown = ShownPdf {
-            path: self.builds.pdf.clone(),
-            version: self.builds.version,
-            live: self.live.pdf.is_some(),
-        };
-        self.core.publish(SessionSection::ShownPdf(shown));
-    }
-
-    pub fn mark_outdated(&mut self, edited: Option<&str>) {
-        let outdated = self.has_pdf() && !self.builds.outdated;
-        self.builds.outdated |= outdated;
-        if outdated || edited.is_some_and(|path| self.builds.marked.contains(path)) {
-            self.publish_build();
+    /// Dates a change to the project's text, which marks the PDF and the issues on a document edited out of date.
+    pub fn edited(&mut self, cx: &mut Core, docs: &Docs, path: Option<&str>) {
+        self.clock += 1;
+        if let Some(path) = path {
+            self.edited_at.insert(path.to_owned(), self.clock);
+        }
+        let outdated = (cx.pdf.built.is_some() || cx.pdf.live.is_some()) && !self.outdated;
+        self.outdated |= outdated;
+        if outdated || path.is_some_and(|path| self.marked.contains(path)) {
+            self.publish(cx, docs);
         }
     }
 
-    pub fn clean(&mut self, reply: Pending<()>) {
-        self.stop_compile();
-        self.builds.cleaners.push(reply);
-        if !self.builds.compiling && self.builds.cleaning.is_none() {
-            self.start_clean();
+    pub fn moved(&mut self, from: &str, to: &str) {
+        if let Some(edit) = self.edited_at.remove(from) {
+            self.edited_at.insert(to.to_owned(), edit);
         }
     }
 
-    fn start_clean(&mut self) {
-        self.builds.cleaning = Some((self.live.active(), self.live.intent));
-        let (clean, tx) = (
-            self.core.compiler.clean(self.core.project.build.clone()),
-            self.core.tx.clone(),
-        );
+    pub fn main_changed(&mut self, cx: &mut Core) {
+        cx.pdf.built = built_pdf(&cx.project);
+        cx.publish_pdf();
+        let building = self.compiling;
+        self.stop(cx);
+        if cx.auto_compile || building {
+            cx.later.push_back(Later::Compile(cx.auto_compile));
+        }
+    }
+
+    pub fn clean(&mut self, cx: &Core, live: (bool, u64), reply: Pending<()>) {
+        self.stop(cx);
+        self.cleaners.push(reply);
+        if !self.compiling && self.cleaning.is_none() {
+            self.start_clean(cx, live);
+        }
+    }
+
+    /// Notes the live preview running and the starts and stops asked of it, to restart it after the clean.
+    fn start_clean(&mut self, cx: &Core, live: (bool, u64)) {
+        self.cleaning = Some(live);
+        let (clean, tx) = (cx.compiler.clean(cx.project.build.clone()), cx.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Msg::Cleaned(clean.await));
         });
     }
 
-    pub fn cleaned(&mut self, result: Result<(), CoreError>) {
-        let Some((live, intent)) = self.builds.cleaning.take() else {
-            return;
-        };
+    /// Whether to restart the live preview the clean stopped, or None for a clean not started.
+    pub fn cleaned(
+        &mut self,
+        cx: &mut Core,
+        docs: &Docs,
+        result: Result<(), CoreError>,
+        intent: u64,
+    ) -> Option<bool> {
+        let (live, asked) = self.cleaning.take()?;
         if result.is_ok() {
-            if live && intent == self.live.intent {
-                self.core.after(Timer::Restart);
-            }
-            let builds = &mut self.builds;
-            (builds.pdf, builds.outdated, builds.result) = (None, false, None);
-            self.publish_build();
-            self.core.publish(SessionSection::BuildLog(String::new()));
-            self.publish_pdf();
+            (cx.pdf.built, self.outdated, self.result) = (None, false, None);
+            self.publish(cx, docs);
+            cx.publish(SessionSection::BuildLog(String::new()));
+            cx.publish_pdf();
         }
-        let queued = self.builds.queued.take();
-        if let Some(auto) = queued.or((result.is_ok() && self.core.auto_compile).then_some(true)) {
-            self.core.later.push_back(Later::Compile(auto));
+        let queued = self.queued.take();
+        if let Some(auto) = queued.or((result.is_ok() && cx.auto_compile).then_some(true)) {
+            cx.later.push_back(Later::Compile(auto));
         }
-        for reply in std::mem::take(&mut self.builds.cleaners) {
+        for reply in std::mem::take(&mut self.cleaners) {
             reply.send(result.clone());
         }
+        Some(result.is_ok() && live && asked == intent)
+    }
+
+    pub fn checks_done(&mut self, cx: &mut Core, docs: &Docs, checks: Vec<LogItem>, edits: u64) {
+        (self.checked, self.checks) = (edits, checks);
+        self.publish(cx, docs);
+    }
+
+    pub fn stopped(&mut self) {
+        for reply in std::mem::take(&mut self.cleaners) {
+            reply.send(Err(super::stopped()));
+        }
+    }
+}
+
+pub(super) fn built_pdf(project: &Project) -> Option<String> {
+    let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
+    let pdf = pdf.ok().filter(|pdf| pdf.is_file())?;
+    Some(pdf.to_string_lossy().into_owned())
+}
+
+impl Actor {
+    pub fn compile(&mut self, auto: bool) -> Result<(), CoreError> {
+        if auto && self.live_previewing() || self.builds.waits(&self.core, auto) {
+            return Ok(());
+        }
+        if self.flush_all(!auto)? {
+            self.builds.start(&mut self.core, &self.docs, auto);
+        }
+        Ok(())
+    }
+
+    pub fn build_done(&mut self, result: Result<CompileResult, CoreError>) {
+        if !result.as_ref().is_ok_and(|result| result.stopped) {
+            self.live_rescan();
+        }
+        let live = (self.live.active(), self.live.intent);
+        let (queued, built) = self.builds.done(&mut self.core, result, live);
+        if let Some(auto) = queued {
+            let _ = self.compile(auto);
+        }
+        self.builds.announce(&mut self.core, &self.docs, built);
         self.close_when_idle();
     }
 
-    pub fn checks_done(&mut self, checks: Vec<LogItem>, edits: u64) {
-        (self.builds.checked, self.builds.checks) = (edits, checks);
-        self.publish_build();
+    pub fn cleaned(&mut self, result: Result<(), CoreError>) {
+        let intent = self.live.intent;
+        if let Some(restart) = self
+            .builds
+            .cleaned(&mut self.core, &self.docs, result, intent)
+        {
+            if restart {
+                self.core.after(Timer::Restart);
+            }
+            self.close_when_idle();
+        }
     }
 }
 

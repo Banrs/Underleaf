@@ -71,9 +71,9 @@ impl Actor {
         self.show_tree(tree);
         self.publish_documents();
         self.core.publish(SessionSection::Outline(None));
-        self.publish_build();
+        self.builds.publish(&mut self.core, &self.docs);
         self.core.publish(SessionSection::BuildLog(String::new()));
-        self.publish_pdf();
+        self.core.publish_pdf();
         self.publish_live(false);
         self.core.publish(SessionSection::LiveLog(String::new()));
     }

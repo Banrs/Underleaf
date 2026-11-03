@@ -84,7 +84,6 @@ pub(crate) struct Live {
     pub disk_paths: BTreeSet<String>,
     pub intent: u64,
     generation: u64,
-    pub pdf: Option<PathBuf>,
     issues: Vec<Issue>,
     follow: bool,
     follows: u64,
@@ -192,10 +191,10 @@ impl Actor {
     fn ended(&mut self) {
         self.live.phase = LivePhase::Stopped;
         self.live_reset();
-        self.live.pdf = None;
+        self.core.pdf.live = None;
         self.publish_live(false);
         self.publish_live_log();
-        self.publish_pdf();
+        self.core.publish_pdf();
         if self.core.auto_compile {
             self.core.later.push_back(Later::Compile(true));
         }
@@ -457,10 +456,10 @@ impl Actor {
                     return;
                 }
                 if pages > 0 {
-                    self.live.pdf = Some(PathBuf::from(&path));
+                    self.core.pdf.live = Some(PathBuf::from(&path));
                     self.live.typeset.clone_from(&self.live.sources.read);
                     synctex::warm(PathBuf::from(&path));
-                    self.publish_pdf();
+                    self.core.publish_pdf();
                     self.core
                         .emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }

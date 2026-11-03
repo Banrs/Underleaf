@@ -210,7 +210,7 @@ impl Actor {
         };
         self.docs.insert(path.to_owned(), doc);
         self.publish_documents();
-        self.publish_build();
+        self.builds.publish(&mut self.core, &self.docs);
         self.live_issues_opened(path);
         self.live_opened(path);
         Ok(())
@@ -223,7 +223,7 @@ impl Actor {
             return false;
         }
         self.publish_documents();
-        self.publish_build();
+        self.builds.publish(&mut self.core, &self.docs);
         self.publish_live(false);
         self.publish_open();
         true
@@ -261,8 +261,7 @@ impl Actor {
     }
 
     fn touched(&mut self, path: &str, edit: Option<&TextEdit>) {
-        self.builds.edited(Some(path));
-        self.mark_outdated(Some(path));
+        self.builds.edited(&mut self.core, &self.docs, Some(path));
         self.live_issues_edited(path, edit);
     }
 

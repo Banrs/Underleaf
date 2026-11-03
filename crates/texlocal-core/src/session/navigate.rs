@@ -181,7 +181,7 @@ impl Actor {
 
 impl Actor {
     pub fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
-        let Some(pdf) = self.live.pdf.as_ref().filter(|_| self.live.active()) else {
+        let Some(pdf) = self.core.pdf.live.as_ref().filter(|_| self.live.active()) else {
             return Ok(None);
         };
         if !pdf.with_extension("synctex").is_file() {

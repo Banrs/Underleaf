@@ -66,7 +66,8 @@ impl Actor {
         {
             let (scan, checks, outline) = *scanned;
             *self.scan.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
-            self.checks_done(checks, edits);
+            self.builds
+                .checks_done(&mut self.core, &self.docs, checks, edits);
             self.core.publish(SessionSection::Outline(Some(outline)));
         }
     }

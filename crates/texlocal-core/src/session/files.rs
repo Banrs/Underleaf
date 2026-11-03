@@ -4,7 +4,6 @@ use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
-use super::build::built_pdf;
 use super::watch;
 use crate::events::{Event, Renamed};
 use crate::import::{self, ImportConflict, Imported};
@@ -83,8 +82,7 @@ impl Actor {
             self.core.emit(Event::FilesChanged(paths));
         }
         if meaning.tree || !others.is_empty() {
-            self.builds.edited(None);
-            self.mark_outdated(None);
+            self.builds.edited(&mut self.core, &self.docs, None);
             if self.core.auto_compile {
                 self.core.later.push_back(Later::Compile(true));
             }
@@ -166,9 +164,7 @@ impl Actor {
             doc.path.clone_from(&new);
             doc.doc.moved(&new);
             self.docs.insert(new.clone(), doc);
-            if let Some(edit) = self.builds.edited_at.remove(&old) {
-                self.builds.edited_at.insert(new, edit);
-            }
+            self.builds.moved(&old, &new);
         }
         if open.is_some() {
             self.open = open;
@@ -182,7 +178,7 @@ impl Actor {
             let _ = self.open_document(&open);
         }
         self.publish_documents();
-        self.publish_build();
+        self.builds.publish(&mut self.core, &self.docs);
         self.publish_live(false);
         self.reload_tree();
         if renamed.main_moved {
@@ -209,14 +205,6 @@ impl Actor {
     fn main_file_changed(&mut self) {
         self.reload_tree();
         self.live_follow();
-        self.builds.pdf = built_pdf(&self.core.project);
-        self.publish_pdf();
-        let building = self.builds.compiling;
-        self.stop_compile();
-        if self.core.auto_compile || building {
-            self.core
-                .later
-                .push_back(Later::Compile(self.core.auto_compile));
-        }
+        self.builds.main_changed(&mut self.core);
     }
 }

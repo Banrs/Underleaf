@@ -14,7 +14,7 @@ use texlocal_latex::wordmatch::{PdfHit, PdfPage};
 use tokio::sync::{mpsc, oneshot, watch as signal};
 use tokio::time::Instant;
 
-use super::build::{Builds, built_pdf};
+use super::build::{Builds, Shown, built_pdf};
 use super::documents::{Docs, Resolution};
 use super::edits::{Fixed, ProjectEdits};
 use super::live::Live;
@@ -44,8 +44,8 @@ requests! {
         Save { reporting: bool } -> bool = actor.save_edits(reporting),
         Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
         Compile { auto: bool } -> () = actor.compile(auto),
-        StopCompile {} -> () = Ok(actor.stop_compile()),
-        Clean {} -> () => actor.clean(pending),
+        StopCompile {} -> () = Ok(actor.builds.stop(&actor.core)),
+        Clean {} -> () => actor.builds.clean(&actor.core, (actor.live.active(), actor.live.intent), pending),
         Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>
             => actor.search(Query::new(&query, match_case, whole_word), pending),
         FindUsages { path: RelPath, offset: u32 } -> Option<Usages> => actor.usages(&path.0, offset, pending),
@@ -147,6 +147,7 @@ pub(crate) struct Core {
     pub later: VecDeque<Later>,
     pub timers: BTreeMap<Timer, Instant>,
     pub auto_compile: bool,
+    pub pdf: Shown,
     pub history: Arc<std::sync::mpsc::Sender<Job>>,
     pub writes_history: Arc<AtomicBool>,
 }
@@ -218,15 +219,17 @@ impl Actor {
             .watch
             .then(|| watch::watch(&project, &index, tx.clone()))
             .flatten();
-        let mut builds = Builds::default();
-        builds.pdf = built_pdf(&project);
+        let pdf = Shown {
+            built: built_pdf(&project),
+            ..Shown::default()
+        };
         settings::migrate(&project);
         let ui = settings::read_ui(&project.ui);
         let mut later = VecDeque::new();
         if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
             later.push_back(Later::Restart);
         }
-        if auto_compile && builds.pdf.is_none() {
+        if auto_compile && pdf.built.is_none() {
             later.push_back(Later::Compile(true));
         }
         let history = sessions.service.history(&project);
@@ -243,6 +246,7 @@ impl Actor {
             later,
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             auto_compile,
+            pdf,
             history,
             writes_history: Arc::new(AtomicBool::new(true)),
         };
@@ -255,7 +259,7 @@ impl Actor {
             scan: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
-            builds,
+            builds: Builds::default(),
             tex: sessions.service.tex_found.subscribe(),
             fs_pending: Vec::new(),
             tree: index,
@@ -311,17 +315,14 @@ impl Actor {
 
     fn tex_changed(&mut self) {
         if *self.tex.borrow_and_update() {
-            self.builds.waiting_for_tex = false;
-            if self.core.auto_compile {
-                self.core.later.push_back(Later::Compile(true));
-            }
+            self.builds.tex_found(&mut self.core);
         }
     }
 
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.flush_all(false);
-            self.stop_compile();
+            self.builds.stop(&self.core);
             self.live_stop();
         }));
         self.core.stop_history();
@@ -353,9 +354,7 @@ impl Actor {
         while let Some(queued) = self.queued.pop_front() {
             queued(self);
         }
-        for reply in std::mem::take(&mut self.builds.cleaners) {
-            reply.send(Err(super::stopped()));
-        }
+        self.builds.stopped();
     }
 
     fn handle(&mut self, message: Msg) {
@@ -436,7 +435,7 @@ impl Actor {
         self.stage = Stage::Closing(held, vec![reply]);
         self.core
             .publish(SessionSection::Lifecycle(Lifecycle::Closing));
-        self.stop_compile();
+        self.builds.stop(&self.core);
         self.live_stop();
         self.docs.clear();
         self.core.timers.clear();
