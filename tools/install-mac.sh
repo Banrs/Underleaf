@@ -10,11 +10,12 @@ else
 fi
 REV=$(git -C $R describe --always --dirty)
 APP=$D/Build/Products/Release/TeXLocal.app
+B=${TEXPRESSO_BUILD:-$R/tools/texpresso/source/build}
+[[ -x $B/texpresso && -x $B/texpresso-xetex ]] || { echo "no TeXpresso to bundle: run tools/texpresso/build.sh first"; exit 1; }
 
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
   -destination 'platform=macOS' -derivedDataPath $D TEXLOCAL_APP_IDENTIFIER=$ID CURRENT_PROJECT_VERSION=$(git -C $R rev-list --count HEAD) CODE_SIGNING_ALLOWED=NO build > $D.log 2>&1 \
   || { grep -E "error:" $D.log | sort -u | tail -20; echo "build failed: $D.log"; exit 1; }
-[[ -x $APP/Contents/Helpers/texpresso ]] || { echo "no TeXpresso to bundle: run tools/texpresso/build.sh first"; exit 1; }
 if [[ $NAME != TeXLocal ]]; then
   for key in CFBundleName CFBundleDisplayName; do plutil -replace $key -string $NAME $APP/Contents/Info.plist; done
   plutil -replace LSEnvironment -json "{\"TEXLOCAL_DATA\": \"$HOME/$NAME\"}" $APP/Contents/Info.plist
