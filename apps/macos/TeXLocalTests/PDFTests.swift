@@ -216,6 +216,19 @@ struct PDFTests {
         #expect(try shown(view).page == 19)
     }
 
+    @Test func aLiveDocumentReadsAgainThePagesItDropsAsAnUndoneEditLeavesThemUnchangedInIt() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = try await onScreen(view)
+        defer { window.close() }
+        try await showLive(["one", "two"], in: controller)
+        controller.showLive(LivePage(page: 1, pdf: try typedPage()))
+        await controller.liveReading?.value
+        #expect(view.document?.page(at: 1)?.string?.contains("typed") == true)
+        controller.showLive(LivePage(page: 1, pdf: try #require(try textPDF(["two"]).dataRepresentation())))
+        try await showLive(["one", "two"], in: controller)
+        #expect(view.document?.page(at: 1)?.string?.contains("two") == true)
+    }
+
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view)

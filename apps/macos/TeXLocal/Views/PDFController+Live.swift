@@ -4,7 +4,7 @@ import os
 /// Live Preview's feed. While you type TeXpresso sends the pages in view, each as a one-page PDF; after a pause it
 /// writes the whole document, with the pages that changed since the one it wrote before. One read runs at a time, off
 /// the main thread; what arrives meanwhile waits coalesced: one document, whose changed pages merge, and pages by index,
-/// the newest winning, which a newer document drops.
+/// the newest winning, which a newer document replaces with its own.
 struct LiveFeed {
     var document: (path: String, changed: IndexSet)?
     var pages: [Int: Data] = [:]
@@ -32,6 +32,9 @@ extension PDFController {
     func showLive(_ live: LiveDocument) {
         var changed = feed.document?.changed ?? []
         for range in live.changed { changed.insert(integersIn: range.first...range.last) }
+        // The pages waiting are taken from the document instead, as one may undo an edit shown since the last document,
+        // which leaves the page out of its changed ones.
+        changed.formUnion(IndexSet(feed.pages.keys))
         feed.document = (live.path, changed)
         feed.pages = [:]
         readLive()
