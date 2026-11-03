@@ -100,6 +100,16 @@ struct PaneTests {
         #expect(!workspace.project.panel.shown)
     }
 
+    @Test func eachPaneEndsInItsHalfOfTheStatusBarAndTheEditorScrollsBeneathIt() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        let bars = try workspace.columns.splitViewItems.map { try #require($0.bottomAlignedAccessoryViewControllers.first) }
+        #expect(bars.count == 2 && bars.allSatisfy { $0.view.frame.height >= 20 })
+        workspace.view.layoutSubtreeIfNeeded()
+        #expect(workspace.views.editor.scrollView.safeAreaInsets.bottom >= bars[0].view.frame.height)
+    }
+
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {
         let names = ["Workspace 2", "Columns", "Area"]
         let keys = names.map { "NSSplitView Subview Frames \($0)" } + [DefaultsKey.buildPanelHeight]
