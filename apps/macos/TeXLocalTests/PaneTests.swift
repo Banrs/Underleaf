@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import TeXLocal
 
@@ -31,6 +32,22 @@ struct PaneTests {
         try await waitUntil { popUps.map(\.title) == ["Replace", "Matching Word"] }
         sidebar.layoutSubtreeIfNeeded()
         #expect(sidebar.descendants(of: NSSearchField.self).map(\.placeholderString) == ["Search Project", "Replace With"])
+    }
+
+    @Test func theNavigatorsRowsFollowTheSidebarIconSizeSetting() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        let sidebar = workspace.splitViewItems[0].viewController.view
+        sidebar.layoutSubtreeIfNeeded()
+        let plain = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [], backing: .buffered, defer: false)
+        plain.isReleasedWhenClosed = false
+        defer { plain.close() }
+        plain.contentView = NSHostingView(rootView: List { Text("Row") }.listStyle(.sidebar))
+        plain.layoutIfNeeded()
+        let size = try #require(plain.contentView?.descendants(of: NSOutlineView.self).first?.rowSizeStyle)
+        let lists = sidebar.descendants(of: NSOutlineView.self)
+        #expect(lists.count == Navigator.allCases.count && lists.allSatisfy { $0.rowSizeStyle == size })
     }
 
     @Test func tabbingOutOfFilesSkipsTheHiddenNavigatorsAndFindGivesUpTheKeyboardAsItHides() throws {

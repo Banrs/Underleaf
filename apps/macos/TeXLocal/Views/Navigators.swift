@@ -105,7 +105,6 @@ struct NavigatorPane: View {
                 list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: []).accessibilityHidden(!shown)
             }
         }
-        .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaBar(edge: .top) { chooser }
     }
@@ -192,7 +191,6 @@ private struct IssueList: View {
                                 }
                         }
                         .lineLimit(1)
-                        .navigatorRow()
                         .accessibilityElement(children: .combine)
                     }
                 }
@@ -239,13 +237,8 @@ private struct IssueRow: View {
         Label {
             Text(item.message.text).lineLimit(place == project.chosenIssue ? nil : 3)
         } icon: {
-            // Xcode's issue icons: an 18 pt image at the row's text size, where a sidebar row would draw its symbols larger.
-            Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
-                .symbolRenderingMode(.multicolor)
-                .font(.body)
-                .frame(width: 18, height: 18)
+            Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
         }
-        .navigatorRow()
         .help([item.message.text, item.explain?.text].compactMap(\.self).joined(separator: "\n\n"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message.text)")
@@ -272,13 +265,6 @@ private struct IssueRow: View {
     private func run(_ fix: Fix) { Task { await project.run(fix) } }
 
     private var location: String? { item.file.map { file in item.line.map { "\(file), line \($0)" } ?? file } }
-}
-
-extension View {
-    /// Xcode's navigator rows: body text, about 16 pt more for each further line. A small sidebar row pads its content by
-    /// 11 pt where Xcode's pad by 6, and List on the Mac takes no row insets, so the content gives back 5 pt; the small
-    /// size's 24 pt floor stays, against Xcode's 22.
-    func navigatorRow() -> some View { font(.body).padding(.vertical, -2.5) }
 }
 
 func filtered<Node>(_ nodes: [Node], _ children: WritableKeyPath<Node, [Node]?>, by text: String, name: (Node) -> String) -> [Node] {
