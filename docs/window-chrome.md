@@ -21,6 +21,11 @@ The sidebar and status bar are the Xcode replicas, restored in 75648edf:
 - **Add menu:** opens upward, 4 pt above the + (`NavigatorFilterBar.showAdd`). The owner finds this too high, and placed
   beneath the +, AppKit pushed it over the + and the pointer. It still needs tuning on screen.
 
+The Projects (start) window's New templates are a heading row, not a section header. As a header, New pinned at the
+list's top at rest, and AppKit grew the toolbar's scroll pocket over it, from 52 pt to 80. That tinted the toolbar with
+nothing beneath it and joined the two. `WindowTests.theProjectsToolbarStaysClearAtRestWithNothingPinnedBeneathIt` holds
+this; keep the window full-size content.
+
 ## Rejected on 2026-11-03: don't repeat these without new evidence
 
 | Attempt | Owner's verdict |

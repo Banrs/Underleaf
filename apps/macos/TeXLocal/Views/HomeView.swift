@@ -94,13 +94,15 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates.padding(.horizontal, -TemplateButtonStyle.edge)
-                    .selectionDisabled()
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets())
-            } header: { Text("New") }
-            .listSectionSeparator(.hidden)
+            }
+            .selectionDisabled()
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("New")
             Section {
                 ForEach(copying, id: \.self) { url in
                     ProjectLabel(detail: Text("Opening…"), progress: "Opening") { Text(url.lastPathComponent).font(.headline) }
