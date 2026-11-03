@@ -25,7 +25,6 @@ final class PDFController: NSObject {
     @ObservationIgnored var restore: (zoom: Zoom, place: PdfPlace?)?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
-    @ObservationIgnored private(set) var shownVersion = 0
     @ObservationIgnored private(set) var loading: Task<Void, Never>?
     @ObservationIgnored private var magnification: NSKeyValueObservation?
     @ObservationIgnored private weak var watched: NSScrollView?
@@ -183,7 +182,6 @@ final class PDFController: NSObject {
     func show(_ document: PDFDocument, covers: [Int: CGImage] = [:]) {
         let interval = signposts.beginInterval("pdf.show")
         defer { signposts.endInterval("pdf.show", interval) }
-        shownVersion += 1
         isLoading = false
         loading?.cancel()
         revealing?.cancel()
@@ -206,7 +204,6 @@ final class PDFController: NSObject {
     }
 
     private func clear() {
-        shownVersion += 1
         isLoading = false
         pendingReveal = nil
         revealing?.cancel()

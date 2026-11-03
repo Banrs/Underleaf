@@ -6,7 +6,7 @@ protocol ProjectViews: AnyObject {
     var hasPDF: Bool { get }
     var zoom: Zoom { get }
     var pdfPlace: PdfPlace? { get }
-    var shownVersion: Int { get }
+    var shownPDF: AnyObject? { get }
     var pdfLoading: Task<Void, Never>? { get }
     func heard(_ event: Event)
     func opened(_ ui: UiState)

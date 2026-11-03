@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import PDFKit
 
 @Observable
 final class WorkspaceViews: ProjectViews {
@@ -71,7 +72,7 @@ final class WorkspaceViews: ProjectViews {
     var hasPDF: Bool { pdf.pageCount > 0 }
     var zoom: Zoom { pdf.keptZoom }
     var pdfPlace: PdfPlace? { pdf.keptPlace }
-    var shownVersion: Int { pdf.shownVersion }
+    var shownPDF: AnyObject? { pdf.view.document }
     var pdfLoading: Task<Void, Never>? { pdf.loading }
 
     func heard(_ event: Event) {
