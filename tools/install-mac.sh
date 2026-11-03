@@ -1,11 +1,14 @@
 #!/bin/zsh
 set -e
 R=${0:A:h:h}
+# Each worktree builds into its own folder, so one never installs another's products.
+W=$(print -rn -- $R | shasum | cut -c1-10)
 if [[ $1 == --dev ]]; then
-  shift; NAME="TeXLocal Dev"; ID=com.texlocal.mac.devbuild; DEST=~/Applications/$NAME.app; D=${1:-/private/tmp/underleaf-dev}
+  shift; NAME="TeXLocal Dev"; ID=com.texlocal.mac.devbuild; DEST=~/Applications/$NAME.app; D=${1:-/private/tmp/underleaf-dev-$W}
 else
-  NAME=TeXLocal; ID=com.texlocal.mac; DEST=/Applications/TeXLocal.app; D=${1:-/private/tmp/underleaf-release}
+  NAME=TeXLocal; ID=com.texlocal.mac; DEST=/Applications/TeXLocal.app; D=${1:-/private/tmp/underleaf-release-$W}
 fi
+REV=$(git -C $R describe --always --dirty)
 APP=$D/Build/Products/Release/TeXLocal.app
 
 xcodebuild -project $R/apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
@@ -16,7 +19,7 @@ if [[ $NAME != TeXLocal ]]; then
   for key in CFBundleName CFBundleDisplayName; do plutil -replace $key -string $NAME $APP/Contents/Info.plist; done
   plutil -replace LSEnvironment -json "{\"TEXLOCAL_DATA\": \"$HOME/$NAME\"}" $APP/Contents/Info.plist
 fi
-plutil -replace TeXLocalRevision -string $(git -C $R rev-parse HEAD) $APP/Contents/Info.plist
+plutil -replace TeXLocalRevision -string $REV $APP/Contents/Info.plist
 codesign --force --deep --sign - $APP
 
 xcrun swift -e "import AppKit
@@ -29,5 +32,5 @@ rm -rf $DEST.new; ditto $APP $DEST.new
 rm -rf $DEST; mv $DEST.new $DEST
 codesign --verify --deep --strict $DEST
 cmp -s $APP/Contents/MacOS/TeXLocal $DEST/Contents/MacOS/TeXLocal || { echo "installed binary differs from the build"; exit 1; }
-echo "installed $(git -C $R rev-parse --short HEAD) to $DEST"
+echo "installed $REV to $DEST"
 open -g $DEST
