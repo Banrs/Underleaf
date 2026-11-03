@@ -101,6 +101,7 @@ impl Drop for Trashed {
 /// waits for comes, so this only stops a hung run: 20 s failed the TeX tests at a load average of 28.
 const PATIENCE: Duration = Duration::from_secs(120);
 
+#[track_caller]
 pub fn wait_until(why: &str, done: impl Fn() -> bool) {
     let deadline = Instant::now() + PATIENCE;
     while !done() {
@@ -190,20 +191,24 @@ impl Rig {
         self.library.project_root(&self.id)
     }
 
+    #[track_caller]
     pub fn call(&self, command: &str, args: Value) -> Value {
         self.call_to(SESSION, command, args)
     }
 
+    #[track_caller]
     pub fn call_to(&self, session: u64, command: &str, args: Value) -> Value {
         answer(command, self.reply(self.send(session, command, args)))
     }
 
+    #[track_caller]
     pub fn refuse(&self, command: &str, args: Value) -> ErrorKind {
         self.reply(self.send(SESSION, command, args))
             .unwrap_err()
             .kind
     }
 
+    #[track_caller]
     pub fn ask_library(&self, command: &str, args: Value) -> Result<Value, Refused> {
         self.reply(self.send_library(command, args))
     }
@@ -214,6 +219,7 @@ impl Rig {
         id
     }
 
+    #[track_caller]
     pub fn listed(&self, matching: impl Fn(&Value) -> bool) -> Value {
         let listed = |e: &Value| {
             e["type"] == "library"
@@ -233,6 +239,7 @@ impl Rig {
         id
     }
 
+    #[track_caller]
     pub fn reply(&self, id: u64) -> Result<Value, Refused> {
         let mut reply = self.find(|e| e["type"] == "reply" && e["value"]["id"] == id);
         let mut answer = reply["value"]["answer"].take();
@@ -253,6 +260,7 @@ impl Rig {
         self.sessions.document(SESSION, path).unwrap()
     }
 
+    #[track_caller]
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| {
             let event = &e["value"]["event"];
@@ -261,11 +269,13 @@ impl Rig {
         self.find(event)["value"]["event"]["value"].take()
     }
 
+    #[track_caller]
     pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
         self.event("section", section)["value"].take()
     }
 
+    #[track_caller]
     pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let event = |e: &Value| {
             let event = &e["value"]["event"];
@@ -277,11 +287,13 @@ impl Rig {
         self.find(event)["value"]["event"]["value"].take()
     }
 
+    #[track_caller]
     pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
         let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
         self.event_in(session, "section", section)["value"].take()
     }
 
+    #[track_caller]
     pub fn find(&self, matching: impl Fn(&Value) -> bool) -> Value {
         if let Some(found) = self.seen.lock().unwrap().iter().find(|e| matching(e)) {
             return found.clone();
@@ -289,10 +301,9 @@ impl Rig {
         let deadline = Instant::now() + PATIENCE;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let event = self
-                .events
-                .recv_timeout(left)
-                .unwrap_or_else(|_| panic!("no matching event came"));
+            let Ok(event) = self.events.recv_timeout(left) else {
+                panic!("no matching event came");
+            };
             self.seen.lock().unwrap().push(event.clone());
             if matching(&event) {
                 return event;
