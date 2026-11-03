@@ -472,6 +472,17 @@ async fn a_file_not_in_utf8_is_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_file_with_windows_line_ends_is_edited_with_lf_and_saved_with_its_own() {
+    let rig = Rig::open(&[("main.tex", MAIN), ("ch.tex", "one\r\ntwo\r\n")]).await;
+    let doc = rig.open_document("ch.tex");
+    assert_eq!(doc.with(|d| d.text()), "one\ntwo\n");
+    doc.edit(0, 0, "zero\n", None, false);
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
+    let saved = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    assert_eq!(saved, "zero\r\none\r\ntwo\r\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn search_reads_unsaved_text() {
     let rig = project().await;
     let doc = rig.open_document("main.tex");
@@ -632,6 +643,29 @@ async fn a_rename_sends_its_paths_and_the_open_files_sections_before_the_reply()
     rig.call("Rename", json!({ "from": "ch.tex", "to": "parts/ch.tex" }));
     let renamed = rig.event("renamed", |_| true);
     assert_eq!(renamed, json!({ "from": "ch.tex", "to": "parts/ch.tex" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_saves_the_edits_first_and_one_that_cant_leaves_the_file_where_it_is() {
+    let rig = project().await;
+    let doc = rig.open_document("ch.tex");
+    doc.edit(0, 0, "% mine\n", None, false);
+    rig.call("Rename", json!({ "from": "ch.tex", "to": "part.tex" }));
+    let part = rig.root().join("part.tex");
+    assert_eq!(
+        fs::read_to_string(&part).unwrap(),
+        format!("% mine\n{CHAPTER}")
+    );
+    doc.edit(0, 0, "% more\n", None, false);
+    fs::write(&part, "theirs\n").unwrap();
+    asked(&rig, "part.tex", "changed");
+    let again = json!({ "from": "part.tex", "to": "again.tex" });
+    assert_eq!(rig.call("Rename", again), Value::Null);
+    assert!(!rig.root().join("again.tex").exists());
+    assert_eq!(fs::read_to_string(&part).unwrap(), "theirs\n");
+    rig.call("Resolve", json!({ "path": "part.tex", "answer": "save" }));
+    let saved = fs::read_to_string(&part).unwrap();
+    assert_eq!(saved, format!("% more\n% mine\n{CHAPTER}"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
