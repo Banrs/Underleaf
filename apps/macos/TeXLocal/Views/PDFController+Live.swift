@@ -117,7 +117,7 @@ extension PDFController {
     @concurrent private static func loadPages(_ changed: IndexSet, of url: URL, covering wanted: CoverPages) async -> sending LivePages? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }
         var live = LivePages(count: document.pageCount)
-        live.covers = SyncPDFView.covers(CoverPages(indices: wanted.indices.filter(changed.contains), scale: wanted.scale), of: document)
+        live.covers = SyncPDFView.covers(CoverPages(indices: wanted.indices.filter(changed.contains), scale: wanted.scale, space: wanted.space), of: document)
         for index in changed.reversed() {
             guard let page = document.page(ifAt: index) else { continue }
             page.hideLinkBorders()
@@ -132,7 +132,7 @@ extension PDFController {
         for (index, pdf) in pdfs {
             guard let document = PDFDocument(data: pdf), let page = document.page(at: 0) else { continue }
             if wanted.indices.contains(index) {
-                live.covers[index] = SyncPDFView.covers(CoverPages(indices: [0], scale: wanted.scale), of: document)[0]
+                live.covers[index] = SyncPDFView.covers(CoverPages(indices: [0], scale: wanted.scale, space: wanted.space), of: document)[0]
             }
             page.hideLinkBorders()
             document.removePage(at: 0)

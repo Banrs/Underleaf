@@ -63,7 +63,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
               let top = page(for: CGPoint(x: shown.midX, y: shown.maxY - 1), nearest: true),
               let foot = page(for: CGPoint(x: shown.midX, y: shown.minY + 1), nearest: true) else { return CoverPages() }
         let (first, last) = (document.index(for: top), document.index(for: foot))
-        return CoverPages(indices: Array(min(first, last)...max(first, last)), scale: scaleFactor * (window?.backingScaleFactor ?? 2))
+        return CoverPages(indices: Array(min(first, last)...max(first, last)), scale: scaleFactor * (window?.backingScaleFactor ?? 2),
+                          space: window?.colorSpace?.cgColorSpace ?? CoverPages().space)
     }
 
     /// Whole pages drawn off the main thread, on a document no other thread touches, to stand in for its pages while
@@ -77,7 +78,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                 let box = page.bounds(for: box).applying(page.transform(for: box))
                 let scale = min(wanted.scale, (24e6 / Double(pages.count) / (box.width * box.height)).squareRoot())
                 guard let context = CGContext(data: nil, width: Int((box.width * scale).rounded(.up)), height: Int((box.height * scale).rounded(.up)),
-                                              bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                              bitsPerComponent: 8, bytesPerRow: 0, space: wanted.space,
                                               bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
                 else { continue }
                 context.scaleBy(x: scale, y: scale)
@@ -89,7 +90,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    private nonisolated static let space = CGColorSpace(name: CGColorSpace.sRGB)!
     private var covers: [Int: CGImage] = [:]
     private var uncovering: Task<Void, Never>?
 
@@ -244,6 +244,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 nonisolated struct CoverPages: Sendable {
     var indices: [Int] = []
     var scale: CGFloat = 0
+    /// The window's, as the commit that shows a cover drawn in another converts it on the main thread: a live page's
+    /// replace took 20 ms with its cover in sRGB and 8 ms in the window's (400-page test PDF, a 700 × 900 pt pane on the
+    /// built-in display), and 38 ms in Display P3.
+    var space = CGColorSpace(name: CGColorSpace.sRGB)!
 }
 
 final class PageOverlay: NSView {
