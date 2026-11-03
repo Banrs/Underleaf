@@ -6,7 +6,7 @@ use tokio::process::Command;
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::process::{self, Processes, drive};
+use crate::process::{self, Processes};
 use crate::sys;
 use crate::tex::find_tool;
 
@@ -72,10 +72,9 @@ fn holder(found: &str, slashed: &str) -> Option<String> {
 pub(crate) async fn run(
     processes: &Processes,
     owner: Option<u64>,
-    mut command: Command,
+    command: Command,
 ) -> Result<(i32, String), CoreError> {
-    let (mut child, tree) = processes.spawn(owner, &mut command)?;
-    match drive(&mut child, &tree, Some(TIMEOUT)).await {
+    match process::run(processes, owner, command, Some(TIMEOUT)).await? {
         (.., true) => Err(CoreError::unavailable(messages::install_timed_out())),
         (code, out, false) => Ok((code, out)),
     }

@@ -11,7 +11,6 @@ use tokio::process::{Child, Command};
 use crate::tex::find_tool;
 use crate::{lock, sys};
 
-const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: u64 = 1_000_000;
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
@@ -147,14 +146,12 @@ async fn read_capped(mut reader: impl AsyncRead + Unpin, kept: &mut Vec<u8>) {
 
 pub(crate) async fn run(
     processes: &Processes,
-    program: &str,
-    args: &[&str],
-    path_env: &str,
-) -> io::Result<(i32, String)> {
-    let mut cmd = command(program, None, path_env)?;
-    let (mut child, tree) = processes.spawn(None, cmd.args(args))?;
-    let (code, output, _) = drive(&mut child, &tree, Some(PROBE_TIMEOUT)).await;
-    Ok((code, output))
+    owner: Option<u64>,
+    mut command: Command,
+    timeout: Option<Duration>,
+) -> io::Result<(i32, String, bool)> {
+    let (mut child, tree) = processes.spawn(owner, &mut command)?;
+    Ok(drive(&mut child, &tree, timeout).await)
 }
 
 pub(crate) async fn drive(

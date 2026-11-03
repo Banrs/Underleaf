@@ -1,13 +1,14 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::syntax::Installed;
 
-use crate::process::{Processes, run};
+use crate::process::{self, Processes};
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
 use crate::sys;
@@ -84,8 +85,15 @@ pub struct TexStatus {
     pub texpresso_dir: Option<String>,
 }
 
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub(crate) async fn tex_available(processes: &Processes, path_env: &str) -> TexStatus {
-    let Ok((0, stdout)) = run(processes, "latexmk", &["-version"], path_env).await else {
+    let Ok(mut latexmk) = process::command("latexmk", None, path_env) else {
+        return TexStatus::default();
+    };
+    latexmk.arg("-version");
+    let probe = process::run(processes, None, latexmk, Some(PROBE_TIMEOUT));
+    let Ok((0, stdout, _)) = probe.await else {
         return TexStatus::default();
     };
     TexStatus {
