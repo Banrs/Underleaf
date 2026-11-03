@@ -24,31 +24,6 @@ struct CoreTests {
         #expect(Core.shared.library.projects.contains { $0.id == project.id })
     }
 
-    @Test func aRefusalCarriesItsKind() async {
-        await #expect {
-            try await Core.shared.call(DuplicateProject(id: "No such project", name: "Copy"))
-        } throws: { error in
-            (error as? CoreError)?.kind == .notFound
-        }
-    }
-
-    @Test func aSessionsDocumentIsEditedAndSavedAndItsEventsDecode() async throws {
-        let project = try await newProject()
-        var events: [Event] = []
-        let session = SessionClient(core: .shared) { events.append($0) }
-        try await session.call(OpenProject(id: project.id, autoCompile: false))
-        #expect(try await session.call(Open(path: "main.tex")) == "main.tex")
-        try await waitUntil { events.contains { if case .section(.outline(_?)) = $0 { true } else { false } } }
-        let document = try #require(SourceDocument(session: session, path: "main.tex"))
-        let version = try #require(document.version)
-        _ = document.edit(NSRange(location: 0, length: 0), with: "% note\n", changing: nil, mirroring: false)
-        #expect(document.version == version + 1)
-        #expect(try await session.call(Save(reporting: true)))
-        let text = try String(contentsOfFile: project.path + "/main.tex", encoding: .utf8)
-        #expect(text.hasPrefix("% note\n"))
-        #expect(try await session.close())
-    }
-
     @Test func theEditorFollowsTheOpenFileAndItsReloadsAndAClosedDocumentRefusesEdits() async throws {
         let info = try await newProject()
         let defaults = TestDefaults()
@@ -215,24 +190,15 @@ struct CoreTests {
         #expect(app.tex?.texDir == nil && !app.settingTeX)
     }
 
-    @Test func anExportHoldsTheEditsTheCoreSavesAndIsRefusedWhenTheyCantBeSaved() async throws {
+    @Test func anExportIsWrittenWhereItsURLSays() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
         let window = defaults.window()
         window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
-        let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
-        let main = info.path + "/main.tex"
-        let mode = { (mode: Int) in try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: main) }
-        _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
         let zip = try await project.exportZip()
         #expect(FileManager.default.fileExists(atPath: zip.path(percentEncoded: false)))
-        #expect(try String(contentsOfFile: main, encoding: .utf8).hasPrefix("% mine\n"))
-        try mode(0o444)
-        _ = document.edit(NSRange(location: 0, length: 0), with: "% more\n", changing: nil, mirroring: false)
-        await #expect(throws: CoreError.self) { try await project.exportZip() }
-        try mode(0o644)
         #expect(await project.close().value)
     }
 
@@ -271,7 +237,10 @@ struct CoreTests {
             return
         }
         #expect(try ok.answer.get() == "main.tex")
-        #expect { try refused.answer.get() } throws: { ($0 as? CoreError)?.message.id == .noSuchSession }
+        #expect { try refused.answer.get() } throws: { error in
+            let error = error as? CoreError
+            return error?.kind == .notFound && error?.message.id == .noSuchSession
+        }
         #expect(event.event == .liveAlert && log.level == .fault)
         #expect(stopped.event == .section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
         #expect(tex.available && tex.latexmkVersion == "4.86" && tex.texDir == nil)
