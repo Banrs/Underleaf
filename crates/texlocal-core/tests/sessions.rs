@@ -1800,3 +1800,38 @@ async fn importing_a_folder_leaves_nested_links_unread() {
     assert_eq!(fs::read(rig.root().join("Import/plot.png")).unwrap(), b"png");
     assert!(!rig.root().join("Import/linked").exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_sources_reload_after_external_edits_and_retargeting_the_folder() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        for (folder, text) in [("one", "first\n"), ("two", "second\n")] {
+            write(&library.path(folder), &[("ch.tex", text)]);
+        }
+        std::os::unix::fs::symlink(
+            library.path("one"),
+            library.project_root("P").join("shared"),
+        )
+        .unwrap();
+    })
+    .await;
+    let doc = rig.open_document("shared/ch.tex");
+    let written = rig.library.path("one/written");
+    fs::write(&written, "first edited\n").unwrap();
+    fs::rename(&written, rig.library.path("one/ch.tex")).unwrap();
+    take_reload(&rig, &doc);
+    assert_eq!(doc.with(|source| source.text()), "first edited\n");
+    rig.call("Save", json!({ "reporting": false }));
+
+    let next = rig.root().join(".next-link");
+    std::os::unix::fs::symlink(rig.library.path("two"), &next).unwrap();
+    fs::rename(next, rig.root().join("shared")).unwrap();
+    take_reload(&rig, &doc);
+    assert_eq!(doc.with(|source| source.text()), "second\n");
+    rig.call("Save", json!({ "reporting": false }));
+
+    let written = rig.library.path("two/written");
+    fs::write(&written, "second edited\n").unwrap();
+    fs::rename(&written, rig.library.path("two/ch.tex")).unwrap();
+    take_reload(&rig, &doc);
+    assert_eq!(doc.with(|source| source.text()), "second edited\n");
+}

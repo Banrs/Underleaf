@@ -88,6 +88,9 @@ impl Actor {
 
     pub fn show_tree(&mut self, tree: Vec<TreeNode>) -> bool {
         self.tree = TreeIndex::of(&tree);
+        if let Some(watcher) = &mut self.watcher {
+            watcher.refresh(&self.project, &self.tree);
+        }
         let changed = self.publish(SessionSection::Tree(tree));
         self.publish_project();
         self.publish_open();

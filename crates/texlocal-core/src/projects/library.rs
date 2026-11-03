@@ -245,7 +245,7 @@ pub fn put_back_project(service: &Service, id: &str, trashed: &Path) -> Result<(
     untrash(trashed, &service.data_dir.join(sanitize_name(id)?))
 }
 
-fn real_path(path: &Path) -> PathBuf {
+pub(crate) fn real_path(path: &Path) -> PathBuf {
     let (mut head, mut tail) = (path, Vec::new());
     loop {
         if let Ok(real) = std::fs::canonicalize(head) {

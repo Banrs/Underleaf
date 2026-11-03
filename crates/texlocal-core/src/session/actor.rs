@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use notify::RecommendedWatcher;
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::project::Scan;
@@ -156,7 +155,7 @@ pub(crate) struct Actor {
     pub timers: BTreeMap<Timer, Instant>,
     pub fs_pending: Vec<Change>,
     pub tree: TreeIndex,
-    _watcher: Option<RecommendedWatcher>,
+    pub watcher: Option<watch::Watching>,
     pub live: Live,
     pub later: VecDeque<Later>,
     pub history: Arc<std::sync::mpsc::Sender<Job>>,
@@ -182,9 +181,10 @@ impl Actor {
         } = opening;
         let (project, in_session) = sessions.service.in_session(&project_id)?;
         let tree = projects::file_tree(&project)?;
+        let index = TreeIndex::of(&tree);
         let watcher = sessions
             .watch
-            .then(|| watch::watch(&project, tx.clone()))
+            .then(|| watch::watch(&project, &index, tx.clone()))
             .flatten();
         let mut builds = Builds::default();
         builds.pdf = built_pdf(&project);
@@ -219,8 +219,8 @@ impl Actor {
             tex: sessions.service.tex_found.subscribe(),
             timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
-            tree: TreeIndex::of(&tree),
-            _watcher: watcher,
+            tree: index,
+            watcher,
             live: Live::default(),
             later,
             history,

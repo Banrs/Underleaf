@@ -1,6 +1,8 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsStr;
+use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -8,22 +10,31 @@ use tokio::sync::mpsc;
 
 use super::Msg;
 use crate::paths::{Project, disk_spelling, fold_case, relative, within};
-use crate::projects::{TreeNode, shown};
-use crate::{HISTORY_DIR, SETTINGS_FILE};
+use crate::projects::{TreeNode, real_path, shown};
+use crate::{HISTORY_DIR, SETTINGS_FILE, lock};
 
 pub(crate) struct Change {
     pub path: PathBuf,
     pub structural: bool,
 }
 
+pub(crate) struct Watching {
+    watcher: RecommendedWatcher,
+    paths: BTreeMap<PathBuf, bool>,
+    links: Arc<Mutex<BTreeMap<PathBuf, PathBuf>>>,
+}
+
 pub(crate) fn watch(
     project: &Project,
+    index: &TreeIndex,
     tx: mpsc::UnboundedSender<Msg>,
-) -> Option<RecommendedWatcher> {
+) -> Option<Watching> {
     let base = project.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let links = Arc::new(Mutex::new(BTreeMap::new()));
+    let aliases = Arc::clone(&links);
+    let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let changes = match event {
-            Ok(event) if !event.need_rescan() => changes(event, &base),
+            Ok(event) if !event.need_rescan() => changes(event, &base, &lock(&aliases)),
             _ => vec![Change {
                 path: base.root.clone(),
                 structural: true,
@@ -34,13 +45,96 @@ pub(crate) fn watch(
         }
     })
     .ok()?;
-    watcher
-        .watch(&project.root, RecursiveMode::Recursive)
-        .ok()?;
-    Some(watcher)
+    let mut watching = Watching {
+        watcher,
+        paths: BTreeMap::new(),
+        links,
+    };
+    watching.refresh(project, index);
+    watching.paths.contains_key(&project.root).then_some(watching)
 }
 
-fn changes(event: notify::Event, project: &Project) -> Vec<Change> {
+impl Watching {
+    pub fn refresh(&mut self, project: &Project, index: &TreeIndex) {
+        let links = linked(project, index);
+        let mut paths = BTreeMap::from([(project.root.clone(), true)]);
+        for target in links
+            .values()
+            .filter(|target| !target.starts_with(&project.root))
+        {
+            if target.exists() {
+                paths.insert(target.clone(), true);
+            }
+            // A parent watch survives an atomic replacement or removal of the target itself.
+            if let Some(parent) = target.ancestors().skip(1).find(|parent| parent.is_dir()) {
+                paths.entry(parent.to_owned()).or_insert(false);
+            }
+        }
+        *lock(&self.links) = links;
+        for (path, recursive) in &paths {
+            if self.paths.get(path) == Some(recursive) {
+                continue;
+            }
+            if self.paths.remove(path).is_some() {
+                let _ = self.watcher.unwatch(path);
+            }
+            let mode = if *recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+            if self.watcher.watch(path, mode).is_ok() {
+                self.paths.insert(path.clone(), *recursive);
+            }
+        }
+        let removed: Vec<_> = self
+            .paths
+            .keys()
+            .filter(|path| !paths.contains_key(*path))
+            .cloned()
+            .collect();
+        for path in removed {
+            let _ = self.watcher.unwatch(&path);
+            self.paths.remove(&path);
+        }
+    }
+}
+
+fn linked(project: &Project, index: &TreeIndex) -> BTreeMap<PathBuf, PathBuf> {
+    let mut links = BTreeMap::new();
+    let folders = std::iter::once("").chain(index.folders.iter().map(String::as_str));
+    for folder in folders {
+        let Ok(entries) = fs::read_dir(project.root.join(folder)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|kind| kind.is_symlink()) {
+                continue;
+            }
+            let path = entry.path();
+            let Some(rel) = relative(&project.root, &path) else {
+                continue;
+            };
+            if !shown(project, &rel) || !index.contains(&rel) && path.exists() {
+                continue;
+            }
+            if let Ok(target) = fs::read_link(&path) {
+                let target = path
+                    .parent()
+                    .expect("a directory entry has a parent")
+                    .join(target);
+                links.insert(path, real_path(&target));
+            }
+        }
+    }
+    links
+}
+
+fn changes(
+    event: notify::Event,
+    project: &Project,
+    links: &BTreeMap<PathBuf, PathBuf>,
+) -> Vec<Change> {
     let structural = match event.kind {
         EventKind::Access(_) => return Vec::new(),
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) => {
@@ -48,6 +142,19 @@ fn changes(event: notify::Event, project: &Project) -> Vec<Change> {
         }
         _ => false,
     };
+    let mut paths = BTreeSet::new();
+    for path in event.paths {
+        if path.starts_with(&project.root) {
+            paths.insert(path.clone());
+        }
+        for (alias, target) in links {
+            if let Ok(rest) = path.strip_prefix(target) {
+                paths.insert(alias.join(rest));
+            } else if structural && target.starts_with(&path) {
+                paths.insert(alias.clone());
+            }
+        }
+    }
     let ours = |path: &PathBuf| {
         let top = path
             .strip_prefix(&project.root)
@@ -56,8 +163,11 @@ fn changes(event: notify::Event, project: &Project) -> Vec<Change> {
         top.and_then(OsStr::to_str)
             .is_some_and(|top| project.builds_in(top) || top == HISTORY_DIR)
     };
-    let paths = event.paths.into_iter().filter(|path| !ours(path));
-    paths.map(|path| Change { path, structural }).collect()
+    paths
+        .into_iter()
+        .filter(|path| !ours(path))
+        .map(|path| Change { path, structural })
+        .collect()
 }
 
 #[derive(Default)]
@@ -134,6 +244,11 @@ pub(crate) fn classify(
             meaning.tree = true;
         }
         meaning.settings |= fold_case(&rel) == SETTINGS_FILE;
+        if change.structural && index.folders.contains(&rel) {
+            meaning.listed.extend(
+                index.files.iter().filter(|file| within(file, &rel)).cloned(),
+            );
+        }
         if index.contains(&rel) {
             meaning.listed.insert(rel);
         }
