@@ -5,7 +5,6 @@ import Observation
 final class TeXpressoSession {
     private let store: SessionStore
     private(set) var used = false
-    private var acknowledged = false
 
     init(store: SessionStore) { self.store = store }
 
@@ -13,7 +12,7 @@ final class TeXpressoSession {
     var engine: Engine? { store.live?.engine }
     var active: Bool { phase == .starting || phase == .running }
     private var halted: Bool { store.live?.halted == true }
-    var needsAttention: Bool { halted || !acknowledged && store.live?.failures.isEmpty == false }
+    var needsAttention: Bool { store.live?.attention == true }
 
     var log: String {
         guard let live = store.live else { return "" }
@@ -30,10 +29,5 @@ final class TeXpressoSession {
 
     func heard(_ state: LiveState) {
         if state.phase != .stopped { used = true }
-        if state.phase == .starting { acknowledged = false }
     }
-
-    func logClosed() { if phase == .stopped { acknowledged = true } }
-
-    func alerted() { acknowledged = false }
 }

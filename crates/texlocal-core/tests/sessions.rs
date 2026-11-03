@@ -1357,16 +1357,21 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_live_output_claiming_more_than_was_sent_ends_the_preview() {
+async fn a_live_output_claiming_more_than_was_sent_ends_the_preview_which_needs_attention_until_its_log_closes()
+ {
     let preview = Arc::new(FakePreview::default());
     let rig = Rig::previewing(&[("main.tex", MAIN)], |_| {}, Arc::clone(&preview)).await;
     rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     preview.send(LiveEvent::Synced(preview.revision() + 1));
+    rig.event("liveAlert", |_| true);
     let failed =
         |l: &Value| l["phase"] == "stopped" && l["failures"].as_array().unwrap().len() == 1;
-    rig.section("live", failed);
+    assert_eq!(rig.section("live", failed)["attention"], true);
     assert!(!preview.running());
+    rig.call("LiveLog", json!({ "shown": true }));
+    rig.call("LiveLog", json!({ "shown": false }));
+    rig.section("live", |l| failed(l) && l["attention"] == false);
 }
 
 #[tokio::test(flavor = "multi_thread")]

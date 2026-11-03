@@ -129,7 +129,7 @@ struct PDFTests {
         let defaults = TestDefaults()
         let project = ProjectModel(id: "P", window: defaults.window())
         let views = WorkspaceViews(project: project)
-        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, failures: [], lines: [:]))))
+        project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, attention: false, failures: [], lines: [:]))))
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 0, live: true))))
         let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
         try #require(try textPDF(count: 2).dataRepresentation()).write(to: url)

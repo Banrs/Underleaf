@@ -39,6 +39,8 @@ pub(crate) struct LiveState {
     phase: LivePhase,
     engine: Engine,
     halted: bool,
+    // Halted, or failed with the log not closed since, which the status bar marks.
+    attention: bool,
     failures: Vec<Message>,
     lines: BTreeMap<String, Vec<IssueLine>>,
 }
@@ -60,6 +62,7 @@ pub(crate) struct Live {
     sent: HashMap<String, u64>,
     failure: Option<Message>,
     reported: Option<Message>,
+    seen: bool,
     log_shown: bool,
     halted: bool,
     view: Option<(u32, u32)>,
@@ -110,6 +113,7 @@ impl Actor {
             phase: live.phase,
             engine: Engine::Xelatex,
             halted: live.halted,
+            attention: live.halted || live.failure.is_some() && !live.seen,
             failures: live.failure.iter().cloned().collect(),
             lines: lines.collect(),
         }
@@ -125,6 +129,10 @@ impl Actor {
 
     pub fn show_live_log(&mut self, shown: bool) {
         self.live.log_shown = shown;
+        if !shown && self.live.phase == LivePhase::Stopped && !self.live.seen {
+            self.live.seen = true;
+            self.publish_live(false);
+        }
         self.publish_live_log();
     }
 
@@ -139,6 +147,7 @@ impl Actor {
         let failure = &self.live.failure;
         let alert = failure.is_some() && *failure != self.live.reported;
         self.live.reported.clone_from(failure);
+        self.live.seen &= !alert;
         self.publish_live(alert);
     }
 

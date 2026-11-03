@@ -919,10 +919,11 @@ nonisolated struct LiveState: Decodable, Hashable, Sendable {
     var phase: LivePhase
     var engine: Engine
     var halted: Bool
+    var attention: Bool
     var failures: [Message]
     var lines: [String: [IssueLine]]
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, failures, lines }
+    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, attention, failures, lines }
 }
 
 nonisolated extension LiveState {
@@ -931,6 +932,7 @@ nonisolated extension LiveState {
         phase = try wire.decode(LivePhase.self, forKey: .phase)
         engine = try wire.decode(Engine.self, forKey: .engine)
         halted = try wire.decode(Bool.self, forKey: .halted)
+        attention = try wire.decode(Bool.self, forKey: .attention)
         failures = try wire.decode([Message].self, forKey: .failures)
         lines = try wire.decode([String: [IssueLine]].self, forKey: .lines)
     }

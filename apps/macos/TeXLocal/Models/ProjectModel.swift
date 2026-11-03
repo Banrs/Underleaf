@@ -122,9 +122,7 @@ final class ProjectModel {
         navigator = NavigatorModel(project: id, defaults: window.app.defaults)
         self.window = window
         liveLogWatch = track({ [panel] in panel.showsLiveLog }, initial: false) { [weak self] shown in
-            guard let self else { return }
-            session.send(LiveLog(shown: shown))
-            if !shown { texpresso.logClosed() }
+            self?.session.send(LiveLog(shown: shown))
         }
         session.heard = { [weak self] in self?.handle($0) }
     }
@@ -217,9 +215,7 @@ final class ProjectModel {
         case .buildFinished(let finished): buildFinished(finished)
         case .filesChanged(let paths):
             if let openPath, !editsText, paths.contains(openPath) { previewVersion += 1 }
-        case .liveAlert:
-            texpresso.alerted()
-            panel.show(.texpresso)
+        case .liveAlert: panel.show(.texpresso)
         }
         views?.heard(event)
     }
