@@ -83,7 +83,7 @@ final class WorkspaceController: ThinSplitViewController {
     var toolbarRoom: CGFloat { areaItem.viewController.view.frame.width }
 
     private func buildSidebar() {
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: NavigatorArea(host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth)))
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth))
         sidebarItem.minimumThickness = 222
         let filter = accessory(hostingView(NavigatorFilter(project: project)))
         filter.preferredScrollEdgeEffectStyle = .soft

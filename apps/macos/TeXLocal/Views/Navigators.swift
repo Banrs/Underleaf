@@ -1,32 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The sidebar's content from the toolbar's foot, so its lists scroll beneath the chooser but not on into the titlebar, as
-/// Xcode's stop.
-final class NavigatorArea: NSViewController {
-    private let pane: NSViewController
-
-    init(_ pane: NSViewController) {
-        self.pane = pane
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func loadView() {
-        view = NSView(frame: pane.view.frame)
-        addChild(pane)
-        view.addSubview(pane.view)
-        pane.view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            pane.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            pane.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            pane.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            pane.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
-    }
-}
-
 extension Navigator {
     var title: String {
         switch self {
