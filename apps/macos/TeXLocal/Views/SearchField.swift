@@ -18,7 +18,6 @@ final class FieldHandle {
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
-    var symbol: String?
     var large = false
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
@@ -33,7 +32,6 @@ struct SearchField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
-        lazy var symbol = field.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
 
         init(_ field: SearchField) { self.field = field }
 
@@ -71,8 +69,6 @@ struct SearchField: NSViewRepresentable {
         }
     }
 
-    static let filterSymbol = "line.3.horizontal.decrease.circle"
-
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {
@@ -106,10 +102,6 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
-        // The cell puts its magnifier back whenever its control size changes, as SwiftUI's environment does after makeNSView.
-        if let symbol = context.coordinator.symbol, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell, button.image !== symbol {
-            button.image = symbol
-        }
         if !large, view.font?.pointSize != NSFont.systemFontSize(for: view.controlSize) {
             view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
         }

@@ -27,28 +27,21 @@ struct BuildPanelBar: View {
 
     var body: some View {
         @Bindable var panel = project.panel
-        HStack {
+        let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
+        FilterBar(text: $panel.logFilter) {
             Picker("Show", selection: $panel.tab) {
                 ForEach(PanelTab.allCases, id: \.self) { tab in
                     Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
                 }
             }
-            .pickerStyle(.menu)
-            .buttonStyle(.borderless)
             .labelsHidden()
             .fixedSize()
-            .layoutPriority(1)
-            Spacer(minLength: 0)
-            let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
+        } trailing: {
             Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
+                .labelStyle(.iconOnly)
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
-            SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol)
-                .frame(maxWidth: 180)
         }
-        .buttonStyle(.accessoryBar)
-        .labelStyle(.iconOnly)
-        .font(.subheadline).controlSize(.small).lineLimit(1)
     }
 }
 
