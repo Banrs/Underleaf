@@ -47,7 +47,7 @@ struct PDFTests {
         #expect(view.document === rebuilt && view.scaleFactor == scale && controller.zoom == zoom && view.autoScales == (zoom == .fitWidth))
         #expect(try shown(view) == place)
         #expect(overlays(in: view).contains { $0.covered })
-        try await waitUntil(timeout: .seconds(2)) { !overlays(in: view).contains { $0.covered } }
+        try await waitUntil { !overlays(in: view).contains { $0.covered } }
         for width in [420, 700] as [CGFloat] {
             window.setContentSize(NSSize(width: width, height: 600))
             #expect(try shown(view) == place)
@@ -225,7 +225,7 @@ struct PDFTests {
         let window = try await onScreen(view)
         defer { window.close() }
         try await showLive(["one", "two"], in: controller)
-        try await waitUntil(timeout: .seconds(2)) { !overlays(in: view).contains { $0.covered } }
+        try await waitUntil { !overlays(in: view).contains { $0.covered } }
         let live = try #require(await PDFController.loadPages([0: try typedPage()], covering: view.coverPages))
         #expect(live.covers[0] != nil)
         controller.replace(live)
