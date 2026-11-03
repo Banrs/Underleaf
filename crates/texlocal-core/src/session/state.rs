@@ -9,7 +9,6 @@ use super::build::{BuildState, ShownPdf};
 use super::documents::{DiskConflict, Doc};
 use super::live::LiveState;
 use super::watch::TreeIndex;
-use crate::events::Event;
 use crate::projects::TreeNode;
 use crate::settings::{self, ProjectSettings};
 
@@ -66,32 +65,25 @@ pub(crate) struct OpenFile {
 }
 
 impl Actor {
-    pub fn publish(&mut self, section: SessionSection) -> bool {
-        let Some(said) = self.sent.changed(&section) else {
-            return false;
-        };
-        self.emit(Event::Section(said));
-        true
-    }
-
     pub fn publish_all(&mut self, tree: Vec<TreeNode>) {
-        self.publish(SessionSection::Lifecycle(Lifecycle::Open));
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Open));
         self.show_tree(tree);
         self.publish_documents();
-        self.publish(SessionSection::Outline(None));
+        self.core.publish(SessionSection::Outline(None));
         self.publish_build();
-        self.publish(SessionSection::BuildLog(String::new()));
+        self.core.publish(SessionSection::BuildLog(String::new()));
         self.publish_pdf();
         self.publish_live(false);
-        self.publish(SessionSection::LiveLog(String::new()));
+        self.core.publish(SessionSection::LiveLog(String::new()));
     }
 
     pub fn show_tree(&mut self, tree: Vec<TreeNode>) -> bool {
         self.tree = TreeIndex::of(&tree);
         if let Some(watcher) = &mut self.watcher {
-            watcher.refresh(&self.project, &self.tree);
+            watcher.refresh(&self.core.project, &self.tree);
         }
-        let changed = self.publish(SessionSection::Tree(tree));
+        let changed = self.core.publish(SessionSection::Tree(tree));
         self.publish_project();
         self.publish_open();
         changed
@@ -99,17 +91,17 @@ impl Actor {
 
     pub fn publish_project(&mut self) {
         let project = ProjectState {
-            name: self.project.name(),
-            root: self.project.root.to_string_lossy().into_owned(),
-            settings: settings::shown(&self.project, self.tree.main.clone()),
-            problem: settings::problem(&self.project),
+            name: self.core.project.name(),
+            root: self.core.project.root.to_string_lossy().into_owned(),
+            settings: settings::shown(&self.core.project, self.tree.main.clone()),
+            problem: settings::problem(&self.core.project),
         };
-        self.publish(SessionSection::Project(project));
+        self.core.publish(SessionSection::Project(project));
     }
 
     pub fn publish_documents(&mut self) {
         let documents = self.docs.values().map(Doc::state).collect();
-        self.publish(SessionSection::Documents(documents));
+        self.core.publish(SessionSection::Documents(documents));
     }
 
     pub fn publish_open(&mut self) {
@@ -124,6 +116,6 @@ impl Actor {
             kind: file_kind(&path),
             path,
         });
-        self.publish(SessionSection::OpenFile(open));
+        self.core.publish(SessionSection::OpenFile(open));
     }
 }

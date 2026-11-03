@@ -135,7 +135,7 @@ impl Actor {
             return Ok(None);
         }
         let path =
-            paths::disk_spelling(&self.project.root, path).unwrap_or_else(|| path.to_owned());
+            paths::disk_spelling(&self.core.project.root, path).unwrap_or_else(|| path.to_owned());
         if !self.tree.contains(&path) {
             self.reload_tree();
         }
@@ -152,7 +152,7 @@ impl Actor {
         }
         let was = self.open.replace(path.to_owned());
         if was.as_deref() != Some(path) {
-            self.after(Timer::Symbols);
+            self.core.after(Timer::Symbols);
             self.publish_open();
             if let Some(was) = was
                 && self.flush(Some(&was), true).unwrap_or(false)
@@ -178,7 +178,7 @@ impl Actor {
         if self.docs.contains_key(path) {
             return Ok(());
         }
-        let abs = paths::safe_path(&self.project.root, path)?;
+        let abs = paths::safe_path(&self.core.project.root, path)?;
         let size = fs::metadata(&abs).map_err(CoreError::at(&abs))?.len();
         if size > MAX_EDITED {
             return Err(CoreError::bad_request(messages::too_large_to_edit(
@@ -190,7 +190,13 @@ impl Actor {
         let id = self.next_doc;
         self.next_doc += 1;
         let doc = Doc {
-            doc: Document::new(id, path, &text, self.tx.clone(), Arc::clone(&self.scan)),
+            doc: Document::new(
+                id,
+                path,
+                &text,
+                self.core.tx.clone(),
+                Arc::clone(&self.scan),
+            ),
             path: path.to_owned(),
             saved: 0,
             force: false,
@@ -235,11 +241,11 @@ impl Actor {
             doc.saved = version;
         }
         self.touched(&path, Some(edit));
-        self.after(Timer::Autosave);
+        self.core.after(Timer::Autosave);
         self.live_edited(&path, version, edit);
         match reloaded {
             Some(true) => {
-                self.after(Timer::Symbols);
+                self.core.after(Timer::Symbols);
                 self.check_disk(&path);
             }
             // An edit made before the main thread saw the reload refused it.
@@ -265,8 +271,8 @@ impl Actor {
         for path in self.dirty_paths() {
             ok &= self.save_doc(&path, false, true).unwrap_or(false);
         }
-        if ok && self.auto_compile {
-            self.later.push_back(Later::Compile(true));
+        if ok && self.core.auto_compile {
+            self.core.later.push_back(Later::Compile(true));
         }
     }
 
@@ -289,7 +295,7 @@ impl Actor {
                 return Ok(true);
             }
             if autosave && doc.doc.composing() {
-                self.after(Timer::Autosave);
+                self.core.after(Timer::Autosave);
                 return Ok(false);
             }
             if doc.asking || doc.reloading.is_some() {
@@ -307,7 +313,7 @@ impl Actor {
                 "\n" => Cow::Borrowed(text.as_str()),
                 ending => Cow::Owned(text.replace('\n', ending)),
             };
-            let written = paths::safe_write_path(&self.project, path).and_then(|abs| {
+            let written = paths::safe_write_path(&self.core.project, path).and_then(|abs| {
                 if !as_left(&abs, doc.disk_stamp, doc.disk_text.as_deref()) {
                     return Ok(None);
                 }
@@ -321,8 +327,8 @@ impl Actor {
                 Ok(Some(stamp)) => {
                     (doc.disk_text, doc.disk_stamp) = (Some(text), Some(stamp));
                     (doc.saved, doc.force, doc.error) = (version, false, None);
-                    self.after(Timer::Symbols);
-                    self.snapshot_soon();
+                    self.core.after(Timer::Symbols);
+                    self.core.snapshot_soon();
                     Ok(true)
                 }
                 Err(err) => {
@@ -337,7 +343,7 @@ impl Actor {
     }
 
     pub fn flush_all(&mut self, reporting: bool) -> Result<bool, CoreError> {
-        self.timers.remove(&Timer::Autosave);
+        self.core.timers.remove(&Timer::Autosave);
         self.flush(None, reporting)
     }
 
@@ -383,8 +389,8 @@ impl Actor {
     pub fn save_edits(&mut self, reporting: bool) -> Result<bool, CoreError> {
         let edited = !self.dirty_paths().is_empty();
         let saved = self.flush_all(reporting)?;
-        if saved && edited && self.auto_compile {
-            self.later.push_back(Later::Compile(true));
+        if saved && edited && self.core.auto_compile {
+            self.core.later.push_back(Later::Compile(true));
         }
         Ok(saved)
     }
@@ -456,7 +462,7 @@ impl Actor {
         doc.reloading = Some((version, edit));
         let path = path.to_owned();
         let edits = vec![asked];
-        self.emit(Event::Reload(DocumentEdits {
+        self.core.emit(Event::Reload(DocumentEdits {
             path,
             version,
             edits,
@@ -464,7 +470,7 @@ impl Actor {
     }
 
     pub fn check_disk(&mut self, path: &str) {
-        let abs = self.project.root.join(path);
+        let abs = self.core.project.root.join(path);
         if fs::metadata(&abs).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
             return self.file_gone(path);
         }
@@ -499,7 +505,7 @@ impl Actor {
             if doc.disk_text.as_ref() == Some(text) {
                 if returned {
                     self.publish_documents();
-                    self.after(Timer::Autosave);
+                    self.core.after(Timer::Autosave);
                 }
                 return;
             }
@@ -580,7 +586,7 @@ mod tests {
         actor.open_file("main.tex").unwrap();
         let doc = actor.docs["main.tex"].doc.clone();
         let original = doc.snapshot().0;
-        let path = actor.project.root.join("main.tex");
+        let path = actor.core.project.root.join("main.tex");
         fs::write(&path, "external\n").unwrap();
         actor.check_disk("main.tex");
         assert!(actor.docs["main.tex"].reloading.is_some());

@@ -146,7 +146,7 @@ impl Actor {
         if auto && self.live_previewing() {
             return Ok(());
         }
-        if auto && !*self.service.tex_found.borrow() {
+        if auto && !*self.core.service.tex_found.borrow() {
             self.builds.waiting_for_tex = true;
             return Ok(());
         }
@@ -161,8 +161,8 @@ impl Actor {
         self.builds.built = self.builds.clock;
         self.publish_build();
         let (build, tx) = (
-            self.compiler.compile(self.project.clone(), auto),
-            self.tx.clone(),
+            self.core.compiler.compile(self.core.project.clone(), auto),
+            self.core.tx.clone(),
         );
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
@@ -173,7 +173,7 @@ impl Actor {
     pub fn stop_compile(&mut self) {
         self.builds.queued = None;
         if self.builds.compiling {
-            self.compiler.stop_compile(&self.project.root);
+            self.core.compiler.stop_compile(&self.core.project.root);
         }
     }
 
@@ -188,7 +188,8 @@ impl Actor {
             .chain(&mut result.bad_boxes)
             .filter_map(|item| item.file.as_mut());
         for file in files {
-            let disk = || disk_spelling(&self.project.root, file).unwrap_or_else(|| file.clone());
+            let disk =
+                || disk_spelling(&self.core.project.root, file).unwrap_or_else(|| file.clone());
             *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
         }
         if !result.stopped {
@@ -203,7 +204,7 @@ impl Actor {
             builds.version += u64::from(result.pdf_changed);
             builds.outdated = builds.clock != builds.built;
         } else {
-            builds.pdf = built_pdf(&self.project);
+            builds.pdf = built_pdf(&self.core.project);
         }
         let before = builds
             .result
@@ -221,9 +222,10 @@ impl Actor {
             let _ = self.compile(auto);
         }
         self.publish_build();
-        self.publish(SessionSection::BuildLog(log));
+        self.core.publish(SessionSection::BuildLog(log));
         self.publish_pdf();
-        self.emit(Event::BuildFinished(BuildFinished { auto, announce }));
+        self.core
+            .emit(Event::BuildFinished(BuildFinished { auto, announce }));
         self.close_when_idle();
     }
 
@@ -254,7 +256,7 @@ impl Actor {
             lines: lines.collect(),
         };
         self.builds.marked = build.lines.keys().cloned().collect();
-        self.publish(SessionSection::Build(build));
+        self.core.publish(SessionSection::Build(build));
     }
 
     pub fn publish_pdf(&mut self) {
@@ -263,7 +265,7 @@ impl Actor {
             version: self.builds.version,
             live: self.live.pdf.is_some(),
         };
-        self.publish(SessionSection::ShownPdf(shown));
+        self.core.publish(SessionSection::ShownPdf(shown));
     }
 
     pub fn mark_outdated(&mut self, edited: Option<&str>) {
@@ -285,8 +287,8 @@ impl Actor {
     fn start_clean(&mut self) {
         self.builds.cleaning = Some((self.live.active(), self.live.intent));
         let (clean, tx) = (
-            self.compiler.clean(self.project.build.clone()),
-            self.tx.clone(),
+            self.core.compiler.clean(self.core.project.build.clone()),
+            self.core.tx.clone(),
         );
         tokio::spawn(async move {
             let _ = tx.send(Msg::Cleaned(clean.await));
@@ -299,17 +301,17 @@ impl Actor {
         };
         if result.is_ok() {
             if live && intent == self.live.intent {
-                self.after(Timer::Restart);
+                self.core.after(Timer::Restart);
             }
             let builds = &mut self.builds;
             (builds.pdf, builds.outdated, builds.result) = (None, false, None);
             self.publish_build();
-            self.publish(SessionSection::BuildLog(String::new()));
+            self.core.publish(SessionSection::BuildLog(String::new()));
             self.publish_pdf();
         }
         let queued = self.builds.queued.take();
-        if let Some(auto) = queued.or((result.is_ok() && self.auto_compile).then_some(true)) {
-            self.later.push_back(Later::Compile(auto));
+        if let Some(auto) = queued.or((result.is_ok() && self.core.auto_compile).then_some(true)) {
+            self.core.later.push_back(Later::Compile(auto));
         }
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(result.clone());

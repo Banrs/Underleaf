@@ -26,12 +26,16 @@ pub(crate) struct Usages {
 impl Actor {
     pub fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
-        let (seq, project, tx) = (self.symbols_seq, self.project.clone(), self.tx.clone());
+        let (seq, project, tx) = (
+            self.symbols_seq,
+            self.core.project.clone(),
+            self.core.tx.clone(),
+        );
         let (facts, docs) = (Arc::clone(&self.facts), self.docs.handles());
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
         let (service, main, edits) = (
-            Arc::clone(&self.service),
+            Arc::clone(&self.core.service),
             self.tree.main.clone(),
             self.builds.clock,
         );
@@ -63,12 +67,12 @@ impl Actor {
             let (scan, checks, outline) = *scanned;
             *self.scan.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
             self.checks_done(checks, edits);
-            self.publish(SessionSection::Outline(Some(outline)));
+            self.core.publish(SessionSection::Outline(Some(outline)));
         }
     }
 
     pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
-        let (project, docs) = (self.project.clone(), self.docs.handles());
+        let (project, docs) = (self.core.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
@@ -82,7 +86,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (project, docs) = (self.project.clone(), self.docs.handles());
+        let (project, docs) = (self.core.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let symbol = doc.with(|source| source.symbol_at(offset));
             let named = symbol.and_then(|(kind, name, file)| match kind {

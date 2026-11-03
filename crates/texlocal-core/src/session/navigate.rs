@@ -119,9 +119,9 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.project.root.clone(), self.docs.handles());
-        let settings = settings::read_settings(&self.project.settings);
-        let aux = settings.output(&self.project.build, "aux");
+        let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
+        let settings = settings::read_settings(&self.core.project.settings);
+        let aux = settings.output(&self.core.project.build, "aux");
         tokio::task::spawn_blocking(move || {
             let found = doc.with(|source| {
                 let (kind, name, _) = source.symbol_at(offset)?;
@@ -194,7 +194,7 @@ impl Actor {
         if line < 1 {
             return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
         }
-        let (live, project) = (self.live_pdf(), self.project.clone());
+        let (live, project) = (self.live_pdf(), self.core.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().get(&file).cloned());
         tokio::task::spawn_blocking(move || {
@@ -223,7 +223,7 @@ impl Actor {
         click: Option<PageClick>,
         reply: Pending<InverseLoc>,
     ) {
-        let (live, project) = (self.live_pdf(), self.project.clone());
+        let (live, project) = (self.live_pdf(), self.core.project.clone());
         let sources = self.live.typeset().clone();
         let docs = self.docs.handles();
         tokio::task::spawn_blocking(move || {
@@ -251,7 +251,7 @@ impl Actor {
     ) {
         let (doc, root) = (
             self.docs.get(&file).map(|doc| doc.doc.clone()),
-            self.project.root.clone(),
+            self.core.project.root.clone(),
         );
         tokio::task::spawn_blocking(move || {
             let text = match doc {

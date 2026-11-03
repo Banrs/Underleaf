@@ -134,9 +134,9 @@ impl Actor {
 
     pub fn publish_live(&mut self, alert: bool) {
         let state = self.live_state();
-        self.publish(SessionSection::Live(state));
+        self.core.publish(SessionSection::Live(state));
         if alert {
-            self.emit(Event::LiveAlert);
+            self.core.emit(Event::LiveAlert);
         }
     }
 
@@ -152,7 +152,8 @@ impl Actor {
     pub fn publish_live_log(&mut self) {
         if self.live.log_shown {
             let log = self.live.run.as_ref().map(|run| run.log());
-            self.publish(SessionSection::LiveLog(log.unwrap_or_default()));
+            self.core
+                .publish(SessionSection::LiveLog(log.unwrap_or_default()));
         }
     }
 
@@ -166,7 +167,7 @@ impl Actor {
 
     fn live_reset(&mut self) {
         for timer in [Timer::Caret, Timer::Follow, Timer::Halting, Timer::Issues] {
-            self.timers.remove(&timer);
+            self.core.timers.remove(&timer);
         }
         let live = &mut self.live;
         live.generation += 1;
@@ -179,13 +180,13 @@ impl Actor {
 
     fn live_cancel_work(&mut self) {
         self.live.intent += 1;
-        self.timers.remove(&Timer::Restart);
-        self.timers.remove(&Timer::Disk);
+        self.core.timers.remove(&Timer::Restart);
+        self.core.timers.remove(&Timer::Disk);
         self.live.disk_paths.clear();
     }
 
     pub fn live_previewing(&self) -> bool {
-        self.live.active() || self.timers.contains_key(&Timer::Restart)
+        self.live.active() || self.core.timers.contains_key(&Timer::Restart)
     }
 
     fn ended(&mut self) {
@@ -195,13 +196,13 @@ impl Actor {
         self.publish_live(false);
         self.publish_live_log();
         self.publish_pdf();
-        if self.auto_compile {
-            self.later.push_back(Later::Compile(true));
+        if self.core.auto_compile {
+            self.core.later.push_back(Later::Compile(true));
         }
     }
 
     fn remember_live(&self, on: bool) {
-        let _ = settings::store_ui(&self.project.ui, |ui| {
+        let _ = settings::store_ui(&self.core.project.ui, |ui| {
             ui.live_preview = on;
             Ok(())
         });
@@ -222,12 +223,12 @@ impl Actor {
         (live.failure, live.reported) = (None, None);
         self.live_reset();
         self.publish_live(false);
-        let (tx, generation) = (self.tx.clone(), self.live.generation);
+        let (tx, generation) = (self.core.tx.clone(), self.live.generation);
         let sink = Box::new(move |event| {
             let _ = tx.send(Msg::Live(generation, event));
         });
-        let path_env = self.service.tool_paths().1;
-        match (self.preview).start(&self.project, &path_env, sink) {
+        let path_env = self.core.service.tool_paths().1;
+        match (self.core.preview).start(&self.core.project, &path_env, sink) {
             Ok(run) => {
                 (self.live.run, self.live.phase) = (Some(Arc::clone(&run)), LivePhase::Running);
                 let paths: Vec<String> = self.docs.keys().cloned().collect();
@@ -265,7 +266,7 @@ impl Actor {
 
     pub fn live_follow(&mut self) {
         if self.live.active() {
-            self.after(Timer::Restart);
+            self.core.after(Timer::Restart);
         }
     }
 
@@ -342,14 +343,14 @@ impl Actor {
         }
         self.live.wanted = wanted;
         if self.live.phase == LivePhase::Running {
-            self.after(Timer::Caret);
+            self.core.after(Timer::Caret);
             self.follow_soon();
         }
     }
 
     fn follow_soon(&mut self) {
         self.live.follow = true;
-        self.soon(Timer::Follow);
+        self.core.soon(Timer::Follow);
     }
 
     pub fn follow(&mut self) {
@@ -369,7 +370,7 @@ impl Actor {
         };
         let live = &mut self.live;
         live.follows += 1;
-        let (tx, project) = (self.tx.clone(), self.project.clone());
+        let (tx, project) = (self.core.tx.clone(), self.core.project.clone());
         let (generation, follows) = (live.generation, live.follows);
         tokio::task::spawn_blocking(move || {
             let line = doc.with(|source| source.line_at(offset as u32));
@@ -383,7 +384,7 @@ impl Actor {
             let followed = move |actor: &mut Self| {
                 let live = &actor.live;
                 if (live.generation, live.follows) == (generation, follows) {
-                    actor.emit(Event::LiveFollow(loc));
+                    actor.core.emit(Event::LiveFollow(loc));
                 }
             };
             let _ = tx.send(Msg::Snapshotted(Box::new(followed)));
@@ -406,7 +407,7 @@ impl Actor {
         }
         let tree = &self.tree;
         if self.live.sources.paths().all(|path| tree.contains(path)) {
-            self.later.push_back(Later::Rescan);
+            self.core.later.push_back(Later::Rescan);
         } else {
             self.live_follow();
         }
@@ -423,7 +424,7 @@ impl Actor {
                 continue;
             }
             others = true;
-            let file = self.project.root.join(&path);
+            let file = self.core.project.root.join(&path);
             if is_text(&path)
                 && let Ok(Some(bytes)) = read_capped(&file, MAX_FILE)
             {
@@ -442,7 +443,9 @@ impl Actor {
             return;
         }
         match event {
-            LiveEvent::Page { page, pdf } => self.emit(Event::LivePage(LivePage { page, pdf })),
+            LiveEvent::Page { page, pdf } => {
+                self.core.emit(Event::LivePage(LivePage { page, pdf }));
+            }
             LiveEvent::Document {
                 path,
                 pages,
@@ -458,17 +461,18 @@ impl Actor {
                     self.live.typeset.clone_from(&self.live.sources.read);
                     synctex::warm(PathBuf::from(&path));
                     self.publish_pdf();
-                    self.emit(Event::LiveDocument(LiveDocument { path, changed }));
+                    self.core
+                        .emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
                 self.run_ended(run);
             }
             LiveEvent::Done(run) => self.run_ended(run),
             // A settled viewport can acknowledge changes without changing the whole PDF.
             LiveEvent::Synced(revision) => drop(self.acknowledged(revision)),
-            LiveEvent::Log if self.live.log_shown => self.soon(Timer::Log),
+            LiveEvent::Log if self.live.log_shown => self.core.soon(Timer::Log),
             LiveEvent::Log => {}
             LiveEvent::Ended(error) => {
-                if self.timers.contains_key(&Timer::Restart) {
+                if self.core.timers.contains_key(&Timer::Restart) {
                     self.live.phase = LivePhase::Starting;
                     self.live_reset();
                     return self.publish_live(false);
@@ -494,12 +498,12 @@ impl Actor {
     }
 
     fn run_ended(&mut self, run: RunEnd) {
-        self.after(Timer::Issues);
+        self.core.after(Timer::Issues);
         match run {
             RunEnd::Partial => {}
-            RunEnd::Stopped => self.soon(Timer::Halting),
+            RunEnd::Stopped => self.core.soon(Timer::Halting),
             RunEnd::Complete => {
-                self.timers.remove(&Timer::Halting);
+                self.core.timers.remove(&Timer::Halting);
                 self.live_halted(false);
             }
         }

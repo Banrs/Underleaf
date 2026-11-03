@@ -39,7 +39,7 @@ requests! {
         OpenProject { id: String, auto_compile: bool } -> UiState
             = Err(CoreError::conflict(messages::session_open())),
         CloseProject {} -> bool => actor.close(pending),
-        SetOptions { auto_compile: bool } -> () = Ok(actor.auto_compile = auto_compile),
+        SetOptions { auto_compile: bool } -> () = Ok(actor.core.auto_compile = auto_compile),
         Open { path: RelPath } -> Option<String> = actor.open(&path.0),
         Save { reporting: bool } -> bool = actor.save_edits(reporting),
         Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
@@ -133,8 +133,9 @@ enum Wake {
     TexFound,
 }
 
-pub(crate) struct Actor {
-    pub id: u64,
+/// What every part of a session uses: its project, services and channels, and the work it does later.
+pub(crate) struct Core {
+    id: u64,
     pub children: u64,
     pub project: Project,
     pub service: Arc<Service>,
@@ -142,6 +143,43 @@ pub(crate) struct Actor {
     pub preview: Arc<dyn Preview>,
     events: std::sync::mpsc::Sender<Said>,
     pub tx: mpsc::UnboundedSender<Msg>,
+    sent: Sent<SessionSection>,
+    pub later: VecDeque<Later>,
+    pub timers: BTreeMap<Timer, Instant>,
+    pub auto_compile: bool,
+    pub history: Arc<std::sync::mpsc::Sender<Job>>,
+    pub writes_history: Arc<AtomicBool>,
+}
+
+impl Core {
+    pub fn emit(&self, event: Event) {
+        let session = self.id;
+        let _ = self
+            .events
+            .send(Said::Event(SessionEvent { session, event }));
+    }
+
+    pub fn publish(&mut self, section: SessionSection) -> bool {
+        let Some(said) = self.sent.changed(&section) else {
+            return false;
+        };
+        self.emit(Event::Section(said));
+        true
+    }
+
+    pub fn after(&mut self, timer: Timer) {
+        self.timers.insert(timer, Instant::now() + timer.wait());
+    }
+
+    pub fn soon(&mut self, timer: Timer) {
+        self.timers
+            .entry(timer)
+            .or_insert(Instant::now() + timer.wait());
+    }
+}
+
+pub(crate) struct Actor {
+    pub core: Core,
     pub docs: Docs,
     pub next_doc: u64,
     pub open: Option<String>,
@@ -149,20 +187,14 @@ pub(crate) struct Actor {
     pub scan: Arc<RwLock<Arc<Scan>>>,
     pub symbols_seq: u64,
     pub facts: Arc<projects::Files>,
-    pub auto_compile: bool,
     pub builds: Builds,
     tex: signal::Receiver<bool>,
-    pub timers: BTreeMap<Timer, Instant>,
     pub fs_pending: Vec<Change>,
     pub tree: TreeIndex,
     pub watcher: Option<watch::Watching>,
     pub live: Live,
-    pub later: VecDeque<Later>,
-    pub history: Arc<std::sync::mpsc::Sender<Job>>,
-    pub writes_history: Arc<AtomicBool>,
     pub snapshots: usize,
     pub queued: VecDeque<OnActor>,
-    pub sent: Sent<SessionSection>,
     stage: Stage,
 }
 
@@ -198,7 +230,7 @@ impl Actor {
             later.push_back(Later::Compile(true));
         }
         let history = sessions.service.history(&project);
-        let mut actor = Self {
+        let core = Core {
             id,
             children: sessions.service.processes.owner(),
             project,
@@ -207,6 +239,15 @@ impl Actor {
             preview: Arc::clone(&sessions.preview),
             events: sessions.hub.queue.clone(),
             tx,
+            sent: Sent::default(),
+            later,
+            timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
+            auto_compile,
+            history,
+            writes_history: Arc::new(AtomicBool::new(true)),
+        };
+        let mut actor = Self {
+            core,
             docs,
             next_doc: 1,
             open: None,
@@ -214,25 +255,19 @@ impl Actor {
             scan: Arc::default(),
             symbols_seq: 0,
             facts: Arc::default(),
-            auto_compile,
             builds,
             tex: sessions.service.tex_found.subscribe(),
-            timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
             fs_pending: Vec::new(),
             tree: index,
             watcher,
             live: Live::default(),
-            later,
-            history,
-            writes_history: Arc::new(AtomicBool::new(true)),
             snapshots: 0,
             queued: VecDeque::new(),
-            sent: Sent::default(),
             stage: Stage::Open(in_session),
         };
         actor.reopen(ui.file.clone());
         actor.publish_all(tree);
-        actor.snapshot_soon();
+        actor.core.snapshot_soon();
         Ok((actor, ui))
     }
 
@@ -258,7 +293,7 @@ impl Actor {
             if matches!(self.stage, Stage::Closed) {
                 return;
             }
-            let deadline = self.timers.values().min().copied();
+            let deadline = self.core.timers.values().min().copied();
             let sleep = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now));
             let waiting_for_tex = self.builds.waiting_for_tex;
             woken = tokio::select! {
@@ -277,8 +312,8 @@ impl Actor {
     fn tex_changed(&mut self) {
         if *self.tex.borrow_and_update() {
             self.builds.waiting_for_tex = false;
-            if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
+            if self.core.auto_compile {
+                self.core.later.push_back(Later::Compile(true));
             }
         }
     }
@@ -289,7 +324,7 @@ impl Actor {
             self.stop_compile();
             self.live_stop();
         }));
-        self.stop_history();
+        self.core.stop_history();
         let stopped = Stopped {
             unsaved: self.dirty_paths(),
         };
@@ -302,7 +337,8 @@ impl Actor {
             });
         }
         self.publish_documents();
-        self.publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Stopped(stopped)));
         for close in self.end() {
             close.send(Err(super::stopped()));
         }
@@ -320,13 +356,6 @@ impl Actor {
         for reply in std::mem::take(&mut self.builds.cleaners) {
             reply.send(Err(super::stopped()));
         }
-    }
-
-    pub fn emit(&self, event: Event) {
-        let session = self.id;
-        let _ = self
-            .events
-            .send(Said::Event(SessionEvent { session, event }));
     }
 
     fn handle(&mut self, message: Msg) {
@@ -356,15 +385,15 @@ impl Actor {
             Msg::Snapshotted(finish) => finish(self),
             Msg::Fs(changes) => {
                 self.fs_pending.extend(changes);
-                self.soon(Timer::Fs);
+                self.core.soon(Timer::Fs);
             }
         }
     }
 
     fn fire(&mut self) {
         let now = Instant::now();
-        while let Some((&timer, _)) = self.timers.iter().find(|(_, at)| **at <= now) {
-            self.timers.remove(&timer);
+        while let Some((&timer, _)) = self.core.timers.iter().find(|(_, at)| **at <= now) {
+            self.core.timers.remove(&timer);
             match timer {
                 Timer::Autosave => self.autosave(),
                 Timer::Symbols => self.scan_symbols(),
@@ -372,7 +401,7 @@ impl Actor {
                 Timer::Caret => self.caret_settled(),
                 Timer::Follow => self.follow(),
                 Timer::Halting => self.live_halted(true),
-                Timer::Restart => self.later.push_back(Later::Restart),
+                Timer::Restart => self.core.later.push_back(Later::Restart),
                 Timer::Disk => self.refresh_live_disk(),
                 Timer::Log => self.publish_live_log(),
                 Timer::Issues => self.live_issues_settled(),
@@ -380,20 +409,10 @@ impl Actor {
         }
     }
 
-    pub fn after(&mut self, timer: Timer) {
-        self.timers.insert(timer, Instant::now() + timer.wait());
-    }
-
-    pub fn soon(&mut self, timer: Timer) {
-        self.timers
-            .entry(timer)
-            .or_insert(Instant::now() + timer.wait());
-    }
-
     fn run_later(&mut self) {
-        while let Some(next) = self.later.pop_front() {
+        while let Some(next) = self.core.later.pop_front() {
             if !matches!(self.stage, Stage::Open(_)) {
-                self.later.clear();
+                self.core.later.clear();
                 return;
             }
             match next {
@@ -415,11 +434,12 @@ impl Actor {
             unreachable!("a closing session queues its closes")
         };
         self.stage = Stage::Closing(held, vec![reply]);
-        self.publish(SessionSection::Lifecycle(Lifecycle::Closing));
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Closing));
         self.stop_compile();
         self.live_stop();
         self.docs.clear();
-        self.timers.clear();
+        self.core.timers.clear();
         self.close_when_idle();
     }
 
@@ -427,17 +447,18 @@ impl Actor {
         if self.builds.busy() || self.snapshots > 0 || !matches!(self.stage, Stage::Closing(..)) {
             return;
         }
-        self.stop_history();
+        self.core.stop_history();
         let closes = self.end();
-        self.publish(SessionSection::Lifecycle(Lifecycle::Closed));
-        self.service.relist();
+        self.core
+            .publish(SessionSection::Lifecycle(Lifecycle::Closed));
+        self.core.service.relist();
         for close in closes {
             close.send(Ok(true));
         }
     }
 
     fn end(&mut self) -> Vec<Pending<bool>> {
-        self.service.processes.end(self.children);
+        self.core.service.processes.end(self.core.children);
         match std::mem::replace(&mut self.stage, Stage::Closed) {
             Stage::Closing(held, closes) => {
                 drop(held);

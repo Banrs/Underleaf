@@ -19,11 +19,11 @@ impl Actor {
         if !self.flush_all(true)? {
             return Ok(None);
         }
-        let main = settings::read_settings(&self.project.settings).main_file;
+        let main = settings::read_settings(&self.core.project.settings).main_file;
         if within(&main, path) {
             return Err(CoreError::conflict(messages::main_file_trash()));
         }
-        let trashed = sys::trash(&paths::safe_path(&self.project.root, path)?)?;
+        let trashed = sys::trash(&paths::safe_path(&self.core.project.root, path)?)?;
         if self.open.as_ref().is_some_and(|open| within(open, path))
             && let Some(main) = self.tree.main.clone()
         {
@@ -37,7 +37,7 @@ impl Actor {
     }
 
     pub fn put_back(&mut self, path: &str, trashed: &Path) -> Result<(), CoreError> {
-        projects::untrash(trashed, &paths::safe_write_path(&self.project, path)?)?;
+        projects::untrash(trashed, &paths::safe_write_path(&self.core.project, path)?)?;
         self.reload_tree();
         Ok(())
     }
@@ -49,7 +49,7 @@ impl Actor {
         dir: bool,
     ) -> Result<String, CoreError> {
         let path = paths::in_folder(folder, name);
-        let made = projects::create_free(&self.project, &path, dir)?;
+        let made = projects::create_free(&self.core.project, &path, dir)?;
         self.reload_tree();
         Ok(made)
     }
@@ -57,14 +57,14 @@ impl Actor {
     pub fn files_changed_on_disk(&mut self) {
         let changes = std::mem::take(&mut self.fs_pending);
         let docs: Vec<String> = self.docs.keys().cloned().collect();
-        let meaning = watch::classify(&self.project, &changes, &self.tree, &docs);
+        let meaning = watch::classify(&self.core.project, &changes, &self.tree, &docs);
         if !meaning.tree
             && changes
                 .iter()
                 .any(|change| change.structural && change.path.is_symlink())
             && let Some(watcher) = &mut self.watcher
         {
-            watcher.refresh(&self.project, &self.tree);
+            watcher.refresh(&self.core.project, &self.tree);
         }
         for path in &meaning.docs {
             self.check_disk(path);
@@ -76,17 +76,17 @@ impl Actor {
             .collect();
         let scan = |path: &&String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
         if meaning.tree || others.iter().any(scan) {
-            self.after(Timer::Symbols);
+            self.core.after(Timer::Symbols);
         }
         if !others.is_empty() {
             let paths = others.iter().map(|&path| path.clone()).collect();
-            self.emit(Event::FilesChanged(paths));
+            self.core.emit(Event::FilesChanged(paths));
         }
         if meaning.tree || !others.is_empty() {
             self.builds.edited(None);
             self.mark_outdated(None);
-            if self.auto_compile {
-                self.later.push_back(Later::Compile(true));
+            if self.core.auto_compile {
+                self.core.later.push_back(Later::Compile(true));
             }
         }
         if self.live.active() {
@@ -97,7 +97,7 @@ impl Actor {
             self.reload_tree();
         }
         if meaning.settings {
-            let chosen = settings::read_settings(&self.project.settings).main_file;
+            let chosen = settings::read_settings(&self.core.project.settings).main_file;
             let chosen = paths::fold_case(&chosen);
             let mut files = self.tree.files.iter();
             if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
@@ -106,15 +106,15 @@ impl Actor {
             self.publish_project();
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
-            self.after(Timer::Disk);
+            self.core.after(Timer::Disk);
         }
     }
 
     pub fn reload_tree(&mut self) {
-        if let Ok(tree) = projects::file_tree(&self.project)
+        if let Ok(tree) = projects::file_tree(&self.core.project)
             && self.show_tree(tree)
         {
-            self.after(Timer::Symbols);
+            self.core.after(Timer::Symbols);
             self.live_files_changed();
         }
     }
@@ -125,7 +125,7 @@ impl Actor {
         paths: &[PathBuf],
         conflict: Option<ImportConflict>,
     ) -> Result<Imported, CoreError> {
-        let imported = import::import_files(&self.project, dir, paths, conflict)?;
+        let imported = import::import_files(&self.core.project, dir, paths, conflict)?;
         self.reload_tree();
         Ok(imported)
     }
@@ -134,23 +134,23 @@ impl Actor {
         if let Err(err) = self.save_first() {
             return reply.send(Err(err));
         }
-        let project = self.project.clone();
+        let project = self.core.project.clone();
         tokio::task::spawn_blocking(move || {
             reply.send(zipexport::export_zip(&project, &dest, for_arxiv));
         });
     }
 
     pub fn write_ui(&self, patch: UiPatch) -> Result<(), CoreError> {
-        settings::write_ui(&self.project.ui, patch)
+        settings::write_ui(&self.core.project.ui, patch)
     }
 
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Option<RenameResult>, CoreError> {
         if !self.save_edits(true)? {
             return Ok(None);
         }
-        let renamed = projects::rename_entry(&self.project, from, to)?;
+        let renamed = projects::rename_entry(&self.core.project, from, to)?;
         let (from, to) = (renamed.from.clone(), renamed.to.clone());
-        self.emit(Event::Renamed(Renamed { from, to }));
+        self.core.emit(Event::Renamed(Renamed { from, to }));
         self.live_restart();
         let (from, to) = (renamed.from.as_str(), renamed.to.as_str());
         for path in self.docs_within(to) {
@@ -192,15 +192,15 @@ impl Actor {
     }
 
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
-        let project = &self.project;
+        let project = &self.core.project;
         let main = settings::read_settings(&project.settings).main_file;
         let updated = settings::write_settings(project, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if updated.main_file != main {
             self.live_restart();
             self.main_file_changed();
-        } else if build && self.auto_compile {
-            self.later.push_back(Later::Compile(true));
+        } else if build && self.core.auto_compile {
+            self.core.later.push_back(Later::Compile(true));
         }
         self.publish_project();
         granted.unwrap_or(Ok(()))
@@ -209,12 +209,14 @@ impl Actor {
     fn main_file_changed(&mut self) {
         self.reload_tree();
         self.live_follow();
-        self.builds.pdf = built_pdf(&self.project);
+        self.builds.pdf = built_pdf(&self.core.project);
         self.publish_pdf();
         let building = self.builds.compiling;
         self.stop_compile();
-        if self.auto_compile || building {
-            self.later.push_back(Later::Compile(self.auto_compile));
+        if self.core.auto_compile || building {
+            self.core
+                .later
+                .push_back(Later::Compile(self.core.auto_compile));
         }
     }
 }
