@@ -83,7 +83,7 @@ struct PaneTests {
         #expect(item.keyEquivalent == "s" && item.keyEquivalentModifierMask == [.command, .control])
     }
 
-    @Test func draggingTheBuildPanelShutOrOpenIsWhatTheProjectShows() throws {
+    @Test func theBuildPanelShownIsWhatItsSplitItemSaysHoweverItCollapsesAndFocusLeavesIt() throws {
         let defaults = TestDefaults()
         let (window, workspace) = open(defaults.window())
         defer { workspace.close(); window.close() }
@@ -91,13 +91,12 @@ struct PaneTests {
         let panel = try #require(area.splitViewItems.last)
         #expect(panel.isCollapsed && !workspace.project.panel.shown)
         panel.isCollapsed = false
-        workspace.dragged(workspace.columns.splitView)
-        #expect(!workspace.project.panel.shown)
-        workspace.dragged(area.splitView)
         #expect(workspace.project.panel.shown)
+        window.layoutIfNeeded()
+        let field = try #require(panel.bottomAlignedAccessoryViewControllers.first?.view.descendants(of: NSSearchField.self).first)
+        #expect(window.makeFirstResponder(field))
         panel.isCollapsed = true
-        workspace.dragged(area.splitView)
-        #expect(!workspace.project.panel.shown)
+        #expect(!workspace.project.panel.shown && window.firstResponder === workspace.pdf.view)
     }
 
     @Test func eachPaneAndTheBuildPanelEndInTheirOwnBarAndTheEditorScrollsBeneathIt() throws {
