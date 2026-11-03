@@ -3,7 +3,6 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-@Suite(.serialized)
 struct PaneTests {
     private static let toggleSidebar = #selector(NSSplitViewController.toggleSidebar(_:))
     private static let toggleInspector = #selector(NSSplitViewController.toggleInspector(_:))
