@@ -88,6 +88,17 @@ fn return_after_begin_closes_the_environment() {
 }
 
 #[test]
+fn return_after_begin_keeps_an_existing_end_beyond_the_mirroring_limit() {
+    let text = format!(
+        "\\begin{{itemize}}\n{}\\end{{itemize}}",
+        "word ".repeat(6000)
+    );
+    let mut doc = SourceDocument::new(&text);
+    let answer = run(&mut doc, "InsertNewline", json!({ "selection": caret(15) }));
+    assert_eq!(answer["edit"]["text"], "\n  ");
+}
+
+#[test]
 fn return_after_an_item_starts_another() {
     let mut doc = SourceDocument::new("\\begin{itemize}\n\\item one");
     let answer = run(&mut doc, "InsertNewline", json!({ "selection": caret(25) }));

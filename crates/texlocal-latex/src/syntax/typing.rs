@@ -4,7 +4,6 @@ use std::ops::Range;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use super::preview::AHEAD;
 use super::scan::{End, Group, Scanner, Visit, arguments, blank_line};
 use super::snippet::Snippet;
 use super::{
@@ -214,7 +213,7 @@ impl SourceDocument {
             && blank_line(rest)
         {
             let rest = rest.len();
-            let close = match self.environment_partner(begin) {
+            let close = match self.environment_partner(begin, self.text.units.len()) {
                 Some(_) => String::new(),
                 None => format!("\n{indented}\\end{{{name}}}"),
             };
@@ -325,15 +324,15 @@ impl SourceDocument {
         }
     }
 
-    pub(super) fn environment_partner(&mut self, at: usize) -> Option<usize> {
+    pub(super) fn environment_partner(&mut self, at: usize, until: usize) -> Option<usize> {
         let mut scanner = self.scans.resume(&self.text, at, at).scanner;
         let units = &self.text.units;
-        let ahead = (at + AHEAD).min(units.len());
+        let until = until.min(units.len());
         let mut partner = Partner { at, found: None };
         scanner.run(units, at + 1, &[], &mut partner);
-        while partner.found.is_none() && scanner.i < ahead && scanner.groups().any(|g| g.open == at)
+        while partner.found.is_none() && scanner.i < until && scanner.groups().any(|g| g.open == at)
         {
-            scanner.run(units, (scanner.i + 1024).min(ahead), &[], &mut partner);
+            scanner.run(units, (scanner.i + 1024).min(until), &[], &mut partner);
         }
         partner.found
     }
