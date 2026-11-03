@@ -33,6 +33,38 @@ struct PaneTests {
         #expect(sidebar.descendants(of: NSSearchField.self).map(\.placeholderString) == ["Search Project", "Replace With"])
     }
 
+    @Test func tabbingOutOfFilesSkipsTheHiddenNavigatorsAndFindGivesUpTheKeyboardAsItHides() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        window.autorecalculatesKeyViewLoop = true
+        let project = workspace.project
+        (project.search.replacing, project.navigator.shown) = (true, .files)
+        let sidebar = workspace.splitViewItems[0].viewController.view
+        sidebar.layoutSubtreeIfNeeded()
+        let fields = sidebar.descendants(of: NSSearchField.self), lists = sidebar.descendants(of: NSOutlineView.self)
+        #expect(fields.count == 2 && lists.count == Navigator.allCases.count)
+        func inFind() -> Bool { fields.contains { $0.currentEditor() != nil } }
+        for step in [NSWindow.selectNextKeyView(_:), NSWindow.selectPreviousKeyView(_:)] {
+            #expect(window.makeFirstResponder(lists[0]))
+            var reached: Set<ObjectIdentifier> = []
+            for _ in 0..<20 {
+                step(window)(nil)
+                let responder = try #require(window.firstResponder)
+                #expect(!inFind() && !lists.dropFirst().contains { $0 === responder })
+                reached.insert(ObjectIdentifier(responder))
+            }
+            reached.remove(ObjectIdentifier(lists[0]))
+            #expect(!reached.isEmpty)
+        }
+
+        workspace.focusSearch()
+        #expect(project.navigator.shown == .search && fields[0].currentEditor() != nil)
+        project.navigator.shown = .files
+        sidebar.layoutSubtreeIfNeeded()
+        #expect(!inFind())
+    }
+
     @Test func theStandardActionsCollapseAndRestoreTheSidebarAndTheInspectorFromAnywhereInTheWindow() async throws {
         let defaults = TestDefaults()
         let model = defaults.window()

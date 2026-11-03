@@ -206,7 +206,9 @@ struct NavigatorPane: View {
         ZStack {
             ForEach(Navigator.allCases, id: \.self) { navigator in
                 let shown = navigator == project.navigator.shown
-                list(navigator).opacity(shown ? 1 : 0).disabled(!shown).accessibilityHidden(!shown)
+                // disabled() leaves a List in the key-view loop, where focusable(false) takes it out; with no interactions, a
+                // shown navigator's focusable(true) adds no stop of its own before its list (27.2).
+                list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: []).accessibilityHidden(!shown)
             }
         }
         .environment(\.sidebarRowSize, .small)
