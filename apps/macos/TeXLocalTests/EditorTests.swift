@@ -102,6 +102,8 @@ struct EditorTests {
         #expect(text.string == "\\begin{env}\n  \n\\end{env}")
         undo.undo()
         #expect(text.string == "\\begin" && text.document.text == "\\begin")
+        while undo.canRedo { undo.redo() }
+        #expect(text.string == "\\begin{list}\n  \n\\end{list}" && text.document.text == text.string)
     }
 
     @Test func typingInAnEndsNameMirrorsItsBeginAndKeepsTheCaretAfterTheTypedLetters() {
@@ -250,6 +252,24 @@ struct EditorTests {
             return false
         }
         #expect(colour === HighlightKind.command.color)
+    }
+
+    @Test(arguments: [301, 293])
+    func foldingAtOrAboveTheTopLineOfALongFileKeepsItInPlace(_ line: Int) throws {
+        let block = ["\\begin{itemize}", "\\item " + String(repeating: "word ", count: 30), "\\item b", "\\end{itemize}"]
+        let (editor, window) = Self.editor(Array(repeating: block, count: 100).flatMap { $0 }.joined(separator: "\n"))
+        defer { window.close() }
+        let text = editor.textView
+        window.displayIfNeeded()
+        text.scroll(toTop: text.document.lineStart(301))
+        window.displayIfNeeded()
+        let top = try #require(text.shownTop)
+        try #require(text.document.line(at: top.offset) == 301)
+        text.toggleFold(line: line)
+        #expect(text.folds.ranges.count == 1)
+        window.displayIfNeeded()
+        let shown = try #require(text.shownTop)
+        #expect(shown.offset == top.offset && abs(shown.below - top.below) < 0.5, "\(top) became \(shown)")
     }
 
     private static let typed = NSRange(location: NSNotFound, length: 0)
