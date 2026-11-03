@@ -1569,11 +1569,6 @@ nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
     }
 }
 
-nonisolated struct Reattach: SessionRequest {
-    typealias Reply = Done
-    static let command = "Reattach"
-}
-
 nonisolated struct ReloadProjects: LibraryRequest {
     typealias Reply = Done
     static let command = "ReloadProjects"
@@ -1691,11 +1686,6 @@ nonisolated struct RestoreVersion: SessionRequest {
 
     var id: String
     var paths: [String]?
-}
-
-nonisolated struct Resync: LibraryRequest {
-    typealias Reply = Done
-    static let command = "Resync"
 }
 
 nonisolated enum Said<Payload: Decodable & Sendable>: Decodable, Sendable {

@@ -102,10 +102,6 @@ impl<S: Serialize> Sent<S> {
         }
         Some(said)
     }
-
-    pub fn each(&self) -> impl Iterator<Item = Box<RawValue>> {
-        self.0.iter().map(|(_, said)| said.clone())
-    }
 }
 
 #[derive(Serialize, JsonSchema)]

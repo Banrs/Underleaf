@@ -74,12 +74,6 @@ impl Actor {
         true
     }
 
-    pub fn resync(&self) {
-        for said in self.sent.each() {
-            self.emit(Event::Section(said));
-        }
-    }
-
     pub fn publish_all(&mut self, tree: Vec<TreeNode>) {
         self.publish(SessionSection::Lifecycle(Lifecycle::Open));
         self.show_tree(tree);

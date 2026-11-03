@@ -128,25 +128,6 @@ async fn opening_sends_every_section_before_its_reply_and_its_number_is_taken() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn reattaching_sends_every_section_again_as_it_is_now_before_its_reply() {
-    let rig = project().await;
-    rig.open_document("ch.tex");
-    // A pending scan can publish after forget(); wait for the fixture's outline before measuring the replay.
-    rig.section("outline", |outline| !outline.is_null());
-    rig.forget();
-    rig.call("Reattach", json!({}));
-    every_section_then_the_reply(&rig);
-    assert_eq!(rig.section("openFile", |_| true)["path"], "ch.tex");
-    let documents = rig.section("documents", |_| true);
-    assert_eq!(names(&documents, "path"), ["ch.tex"]);
-    rig.forget();
-    assert!(rig.ask_library("Resync", json!({})).is_ok());
-    let tex = |e: &Value| e["type"] == "library" && e["value"]["type"] == "tex";
-    assert_eq!(rig.find(tex)["value"]["value"], rig.tex);
-    assert_eq!(rig.said().last().map(String::as_str), Some("reply"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn opening_reopens_the_last_open_file_before_its_reply_or_else_the_main_file() {
     let last = |file: &'static str| {
         move |library: &Library| {
