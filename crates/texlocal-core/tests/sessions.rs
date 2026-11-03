@@ -1754,3 +1754,29 @@ async fn a_deleted_file_restored_unchanged_releases_its_question_and_saves_the_e
     assert_eq!(fs::read_to_string(path).unwrap(), format!("mine {CHAPTER}"));
     assert_eq!(rig.call("CloseProject", json!({})), true);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_acknowledgement_keeps_the_shown_pdfs_source_snapshot() {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    let pdf = rig.library.path("live.pdf");
+    fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    let typeset = preview.revision();
+    preview.send(LiveEvent::Document {
+        path: pdf.to_string_lossy().into_owned(),
+        pages: 2,
+        run: RunEnd::Complete,
+        changed: Vec::new(),
+        revision: typeset,
+    });
+    rig.event("liveDocument", |_| true);
+    doc.edit(0, 0, &"% comment\n".repeat(20), None, false);
+    wait_until("the edit reaches Live Preview", || {
+        preview.revision() > typeset
+    });
+    preview.send(LiveEvent::Synced(preview.revision()));
+    let moved = json!({ "file": "main.tex", "line": 30 });
+    assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
+}

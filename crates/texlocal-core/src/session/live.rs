@@ -70,6 +70,7 @@ pub(crate) fn document_lines(doc: &Document, typeset: Option<&str>, line: u32) -
 pub(crate) struct Live {
     phase: LivePhase,
     sources: Sources,
+    typeset: HashMap<String, Arc<str>>,
     /// The version of each document whose whole text was sent, so its edits up to then are skipped.
     sent: HashMap<String, u64>,
     failure: Option<Message>,
@@ -97,7 +98,7 @@ impl Live {
 
     /// The text of each file that the PDF shown was typeset from.
     pub fn typeset(&self) -> &HashMap<String, Arc<str>> {
-        &self.sources.typeset
+        &self.typeset
     }
 
     fn running(&self) -> Option<Arc<dyn LiveRun>> {
@@ -170,6 +171,7 @@ impl Actor {
         let live = &mut self.live;
         live.generation += 1;
         (live.sources, live.sent) = (Sources::default(), HashMap::new());
+        live.typeset.clear();
         (live.halted, live.caret) = (false, None);
         live.issues.clear();
         live.follow = false;
@@ -453,6 +455,7 @@ impl Actor {
                 }
                 if pages > 0 {
                     self.live.pdf = Some(PathBuf::from(&path));
+                    self.live.typeset.clone_from(&self.live.sources.read);
                     synctex::warm(PathBuf::from(&path));
                     self.publish_pdf();
                     self.emit(Event::LiveDocument(LiveDocument { path, changed }));

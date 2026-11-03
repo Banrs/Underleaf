@@ -14,13 +14,12 @@ struct Change {
     text: String,
 }
 
-/// The text TeXpresso was sent and the text its output typeset, in bytes. TeXpresso counts each open
-/// and change it reads and each output names its count, so changes are kept until an output
-/// acknowledges them; taking the latest text sent would label an older SyncTeX with newer lines.
+/// The text TeXpresso was sent and has acknowledged, in bytes. A viewport can acknowledge edits
+/// before a whole PDF arrives, so Live keeps that PDF's source snapshot separately.
 #[derive(Default)]
 pub(super) struct Sources {
     sent: HashMap<String, String>,
-    pub typeset: HashMap<String, Arc<str>>,
+    pub read: HashMap<String, Arc<str>>,
     acknowledged: u64,
     unread: VecDeque<Change>,
 }
@@ -78,7 +77,7 @@ impl Sources {
         offset.inspect(|&offset| run.caret(path, offset)).is_some()
     }
 
-    /// Takes the changes an output says TeXpresso read into the text typeset, rebuilding only the files
+    /// Takes the changes an output says TeXpresso read into the acknowledged text, rebuilding only the files
     /// they touch; None when it claims more than was sent or less than an earlier output.
     pub fn acknowledge(&mut self, revision: u64) -> Option<()> {
         let count = usize::try_from(revision.checked_sub(self.acknowledged)?).ok()?;
@@ -87,16 +86,16 @@ impl Sources {
         }
         let mut changed: HashMap<String, String> = HashMap::new();
         for change in self.unread.drain(..count) {
-            let typeset = |path: &String| self.typeset.get(path).map(ToString::to_string);
+            let read = |path: &String| self.read.get(path).map(ToString::to_string);
             let text = changed
                 .entry(change.path)
-                .or_insert_with_key(|path| typeset(path).unwrap_or_default());
+                .or_insert_with_key(|path| read(path).unwrap_or_default());
             text.replace_range(change.offset..change.offset + change.remove, &change.text);
         }
         let changed = changed
             .into_iter()
             .map(|(path, text)| (path, Arc::from(text)));
-        self.typeset.extend(changed);
+        self.read.extend(changed);
         self.acknowledged = revision;
         Some(())
     }
@@ -185,18 +184,18 @@ mod tests {
         sources.send(&run, "part.tex", "part");
         assert!(sources.edit(&run, "main.tex", &edit(1, 2, "\n")));
         sources.acknowledge(1).unwrap();
-        let first = Arc::clone(&sources.typeset["main.tex"]);
+        let first = Arc::clone(&sources.read["main.tex"]);
         assert_eq!(&*first, "a🔎\nb");
-        assert!(!sources.typeset.contains_key("part.tex"));
+        assert!(!sources.read.contains_key("part.tex"));
         sources.acknowledge(2).unwrap();
-        assert!(Arc::ptr_eq(&first, &sources.typeset["main.tex"]));
-        assert_eq!(&*sources.typeset["part.tex"], "part");
+        assert!(Arc::ptr_eq(&first, &sources.read["main.tex"]));
+        assert_eq!(&*sources.read["part.tex"], "part");
         assert!(sources.acknowledge(1).is_none());
         assert!(sources.acknowledge(4).is_none());
         assert!(!sources.settled());
         sources.acknowledge(3).unwrap();
         assert!(sources.settled());
-        assert_eq!(&*sources.typeset["main.tex"], "a\n\nb");
+        assert_eq!(&*sources.read["main.tex"], "a\n\nb");
         assert_eq!(&*first, "a🔎\nb");
     }
 }
