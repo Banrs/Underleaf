@@ -1263,7 +1263,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
     let at = json!({ "page": 1, "x": picture["h"].as_f64().unwrap() + 1.0,
         "y": picture["v"].as_f64().unwrap() - picture["height"].as_f64().unwrap() / 2.0 });
     let back = rig.call("SynctexInverse", at);
-    assert_eq!((&back["line"], &back["column"]), (&json!(6), &json!(0)));
+    assert_eq!((&back["line"], &back["column"]), (&json!(7), &json!(0)));
 }
 
 #[tokio::test(flavor = "multi_thread")]

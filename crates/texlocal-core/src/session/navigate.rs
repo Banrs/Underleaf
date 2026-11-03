@@ -1,10 +1,12 @@
 use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
+use texlocal_latex::diff::map_line;
 use texlocal_latex::facts::FilePlace;
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
@@ -13,9 +15,9 @@ use texlocal_latex::syntax::{SymbolKind, sync_lines};
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 use texlocal_latex::{bib, project};
 
-use super::Pending;
 use super::actor::Actor;
 use super::live::typeset_lines;
+use super::{Document, Pending};
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
 use crate::{CoreError, lf, lock, lossy_string, messages, paths, settings};
 
@@ -223,14 +225,22 @@ impl Actor {
     ) {
         let (live, project) = (self.live_pdf(), self.project.clone());
         let sources = self.live.typeset.clone();
+        let docs = self
+            .docs
+            .iter()
+            .map(|(path, doc)| (path.clone(), doc.doc.clone()));
+        let docs: HashMap<String, Document> = docs.collect();
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
-                let typeset = |rel: &str| {
-                    live.as_ref()
-                        .and_then(|_| sources.get(rel))
-                        .map(ToString::to_string)
-                };
-                synctex::inverse(&project, page, x, y, click, live.as_deref(), &typeset)
+                let typeset = |rel: &str| live.as_ref().and_then(|_| sources.get(rel));
+                let text = |rel: &str| typeset(rel).map(ToString::to_string);
+                let mut loc =
+                    synctex::inverse(&project, page, x, y, click, live.as_deref(), &text)?;
+                // SyncTeX answers in the typeset text's lines, which edits since may have moved.
+                if let (Some(typeset), Some(doc)) = (typeset(&loc.file), docs.get(&loc.file)) {
+                    loc.line = map_line(&doc.snapshot().0, typeset, loc.line);
+                }
+                Ok(loc)
             }));
         });
     }
