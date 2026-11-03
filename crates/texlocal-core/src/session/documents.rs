@@ -94,6 +94,11 @@ impl Docs {
         Arc::clone(&self.shared)
     }
 
+    /// Each open document as the task about to run finds it, which it reads as it goes.
+    pub fn handles(&self) -> HashMap<String, Document> {
+        lock(&self.shared).clone()
+    }
+
     pub fn get_mut(&mut self, path: &str) -> Option<&mut Doc> {
         self.docs.get_mut(path)
     }

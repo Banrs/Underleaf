@@ -10,12 +10,12 @@ use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
 
+use super::Document;
 use super::actor::Actor;
-use super::documents::Shared;
 use super::state::SessionSection;
 use super::{Msg, Pending};
 use crate::projects::{self, SearchGroup};
-use crate::{CoreError, lock, tex};
+use crate::{CoreError, tex};
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Usages {
@@ -27,7 +27,7 @@ impl Actor {
     pub fn scan_symbols(&mut self) {
         self.symbols_seq += 1;
         let (seq, root, tx) = (self.symbols_seq, self.project.root.clone(), self.tx.clone());
-        let (facts, docs) = (Arc::clone(&self.facts), self.docs.shared());
+        let (facts, docs) = (Arc::clone(&self.facts), self.docs.handles());
         let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
         files.sort_unstable();
         let (service, main, edits) = (
@@ -68,7 +68,7 @@ impl Actor {
     }
 
     pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
-        let (root, docs) = (self.project.root.clone(), self.docs.shared());
+        let (root, docs) = (self.project.root.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
@@ -82,7 +82,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.project.root.clone(), self.docs.shared());
+        let (root, docs) = (self.project.root.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let own = doc.facts();
             let symbol = doc.with(|source| source.symbol_at(&own, offset));
@@ -115,9 +115,9 @@ pub(super) fn tex(rel: &str) -> bool {
     matches!(file_kind(rel), FileKind::Tex | FileKind::Bib)
 }
 
-pub(super) fn texts(docs: &Shared) -> HashMap<String, String> {
-    let docs = lock(docs).clone();
-    docs.into_iter()
-        .map(|(path, doc)| (path, doc.snapshot().0))
-        .collect()
+pub(super) fn texts(docs: &HashMap<String, Document>) -> HashMap<String, String> {
+    let texts = docs
+        .iter()
+        .map(|(path, doc)| (path.clone(), doc.snapshot().0));
+    texts.collect()
 }

@@ -1,5 +1,4 @@
 use std::cmp::Reverse;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError};
@@ -15,11 +14,11 @@ use texlocal_latex::syntax::{SymbolKind, sync_lines};
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 use texlocal_latex::{bib, project};
 
+use super::Pending;
 use super::actor::Actor;
 use super::live::typeset_lines;
-use super::{Document, Pending};
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
-use crate::{CoreError, lf, lock, lossy_string, messages, paths, settings};
+use crate::{CoreError, lf, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
 
@@ -120,7 +119,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.project.root.clone(), self.docs.shared());
+        let (root, docs) = (self.project.root.clone(), self.docs.handles());
         let settings = settings::read_settings(&self.project.settings);
         let aux = settings.output(&self.project.build, "aux");
         tokio::task::spawn_blocking(move || {
@@ -134,7 +133,7 @@ impl Actor {
                 return reply.send(Ok(None));
             };
             let text = |file: &str| {
-                let open = lock(&docs).get(file).cloned();
+                let open = docs.get(file).cloned();
                 match open {
                     Some(doc) => Some(doc.snapshot().0),
                     None => {
@@ -225,11 +224,7 @@ impl Actor {
     ) {
         let (live, project) = (self.live_pdf(), self.project.clone());
         let sources = self.live.typeset().clone();
-        let docs = self
-            .docs
-            .iter()
-            .map(|(path, doc)| (path.clone(), doc.doc.clone()));
-        let docs: HashMap<String, Document> = docs.collect();
+        let docs = self.docs.handles();
         tokio::task::spawn_blocking(move || {
             reply.send(live.and_then(|live| {
                 let typeset = |rel: &str| live.as_ref().and_then(|_| sources.get(rel));
