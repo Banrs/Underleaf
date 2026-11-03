@@ -1645,3 +1645,18 @@ async fn a_fix_adds_the_package_a_command_needs() {
     let unknown = rig.refuse("ApplyFix", json!({ "id": "format:disk" }));
     assert_eq!(unknown, ErrorKind::Invalid);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn naming_a_version_with_nothing_changed_keeps_the_last_ones_name() {
+    let rig = project().await;
+    rig.call("SaveVersion", json!({ "name": "Submitted" }));
+    rig.call("SaveVersion", json!({ "name": "Camera-ready" }));
+    let versions = rig.call("ListVersions", json!({}));
+    let names: Vec<_> = versions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| &v["name"])
+        .collect();
+    assert_eq!(names, [&json!("Camera-ready"), &json!("Submitted")]);
+}

@@ -165,7 +165,7 @@ impl History {
         let unchanged = latest.filter(|(_, last)| last.files == files);
         let (id, snapshot) = match (taken, unchanged) {
             (Taken::Auto, Some(_)) => return Ok(None),
-            (Taken::Named(name), Some((id, last))) => (
+            (Taken::Named(name), Some((id, last))) if last.name.is_none() => (
                 id,
                 Version {
                     name: Some(name),
