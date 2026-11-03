@@ -4,32 +4,34 @@ Last updated 2026-11-03. Any agent can pick up from here. Read `AGENTS.md` first
 
 ## Branches
 
-- **`rewrite/native`:** pull request #128. It holds the native rewrite since #127 and is pushed and clean; see the pull
-  request for its latest CI run. Install it to try with `zsh tools/install-mac.sh --dev`, which installs "TeXLocal Dev" with its own
-  bundle ID and data.
-- **`rewrite/session-parts`:** pushed, no pull request. Six structure-only commits on 7e57218c split the session actor
-  (`crates/texlocal-core`) into Core, Docs, Tree, Builds and Live parts, each owning its timers and sections. Cross-part
-  effects come back as return values. All checks and the real-TeX tests pass, and it merges cleanly onto
-  `rewrite/native`. It adds 149 Rust lines (4430 → 4579), mostly explicit parameters and part boilerplate.
+- **`rewrite/native`:** pull request #128. It holds the native rewrite since #127; see the pull request for its latest
+  CI run. Install it to try with `zsh tools/install-mac.sh --dev`, which installs "TeXLocal Dev" with its own bundle ID
+  and data. It now includes `rewrite/session-parts` (merged in 13cc6d20): the session actor runs as Core, Docs, Tree,
+  Builds and Live parts.
 
 ## Open decisions (the owner's)
 
-1. Merge or drop `rewrite/session-parts`.
-2. The window chrome. `docs/window-chrome.md` has what stands, what was rejected, and an unagreed proposal. Don't
+1. The window chrome. `docs/window-chrome.md` has what stands, what was rejected, and an unagreed proposal. Don't
    implement the proposal until the owner agrees to it on screen.
-3. Whether `PDFPerformanceTests` (6.4 s) runs only when asked.
 
 ## Known issues
 
 - **The add menu's place:** see `docs/window-chrome.md`.
-- **The Trash tests** use the real `~/.Trash`, and a failed run leaves items there.
-- **`WindowTests.eachProjectOpensInAWindowOfItsOwnThatNeverTabsAndOpeningItAgainBringsItForward`** fails while another
-  app is frontmost, because it checks window order. It passes with the test host in front.
-- **`AreaSplitViewController.splitView(_:additionalEffectiveRectOfDividerAt:)`** doesn't call super, which AppKit marks
-  NS_REQUIRES_SUPER. It returns only the status bar's top edge, because a divider's rect takes clicks from the bar's
-  buttons. Check on screen that a union with super's rect leaves the buttons clickable before adding it.
-- **The real-TeX tests** (`cargo test -p texlocal-core -- --ignored`) time out under heavy load (load average ~28). Run
-  them alone.
+- **Agent worktrees:** the Agent tool's worktree isolation starts from local `main` (67f1d769), not this branch. Reset
+  each worktree to the branch tip and check `git log -1` before it builds, or its test host shows old windows.
+- **`PDFPerformanceTests`** run only when asked: `TEST_RUNNER_TEXLOCAL_PERFORMANCE=1 zsh tools/xctest.sh …`. On
+  2026-11-03, `aLivePageReplaceStaysWithinBudget` missed its 8 ms median by about 0.1 ms at load average 3.5 (8.7 ms
+  at 8), with no PDF code changed that day.
+- **The window-order check** in `WindowTests.eachProjectOpensInAWindowOfItsOwnThatNeverTabsAndOpeningItAgainBringsItForward`
+  reads `NSWindow.windowNumbers(options: .allSpaces)`, since `orderedIndex` puts windows off the active Space last. That
+  cause is inferred from c9bc9afa and Apple's documentation, and not yet seen to pass with a full-screen app holding the
+  active Space.
+- **`aProjectOpenInAnotherWindowIsntMovedToTheTrash`** can't take a project back out of `~/.Trash` if it regresses,
+  since the test never learns where it went. The other Trash tests do.
+- **The real-TeX tests** (`cargo test --no-fail-fast -p texlocal-core -- --ignored`) time out under heavy load (load
+  average ~28), so run them alone. Their Live Preview tests need `TEXLOCAL_TEXPRESSO` set to a helper built after
+  ce57f75a, such as `~/Applications/TeXLocal Dev.app/Contents/Helpers/texpresso`. The Nov 2 helper in
+  `/Applications/TeXLocal.app` never finishes a typeset, and every Live test waits out its 120 s.
 
 ## Tried and dropped
 
