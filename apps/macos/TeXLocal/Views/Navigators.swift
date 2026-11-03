@@ -49,138 +49,32 @@ extension Navigator {
     var shortcut: KeyEquivalent { KeyEquivalent(Character(String(Self.allCases.firstIndex(of: self)! + 1))) }
 }
 
-/// The filter bar at the navigator's foot, built as Xcode's large one is: interactive Liquid Glass, which swells under a press,
-/// around a large search field 28 pt tall and 8 pt from the bar's edges, and in Files around a 28 pt add menu 7 pt in, 8 pt
-/// before the field; in Issues a toggle inside the field's trailing end shows only errors.
-final class NavigatorFilterBar: NSView {
-    private let field = NavigatorField()
-    private let fieldGlass = NSGlassEffectView()
-    private let addGlass = NSGlassEffectView()
-    private let onlyErrors = NSButton()
-    private let windowModel: WindowModel
-    private let project: ProjectModel
-    private var watch: Task<Void, Never>?
+/// The navigator's filter, with Files' add menu before it and Issues' errors toggle after it.
+struct NavigatorFilter: View {
+    @Environment(WindowModel.self) private var window
+    let project: ProjectModel
 
-    isolated deinit { watch?.cancel() }
-
-    init(project: ProjectModel, window: WindowModel) {
-        (self.project, windowModel) = (project, window)
-        super.init(frame: .zero)
-        field.controlSize = .large
-        field.drawsBackground = false
-        field.placeholderString = String(localized: "Filter")
-        field.setAccessibilityLabel(String(localized: "Filter"))
-        (field.cell as? NSSearchFieldCell)?.searchButtonCell?.image = NSImage(systemSymbolName: SearchField.filterSymbol, accessibilityDescription: nil)
-        field.sendsSearchStringImmediately = true
-        field.target = self
-        field.action = #selector(filter)
-
-        onlyErrors.setButtonType(.pushOnPushOff)
-        onlyErrors.isBordered = false
-        onlyErrors.image = NSImage(systemSymbolName: "exclamationmark.octagon", accessibilityDescription: String(localized: "Only Errors"))
-        onlyErrors.alternateImage = NSImage(systemSymbolName: "exclamationmark.octagon.fill", accessibilityDescription: String(localized: "Only Errors"))
-        onlyErrors.toolTip = String(localized: "Show only errors")
-        onlyErrors.setAccessibilityLabel(String(localized: "Only Errors"))
-        onlyErrors.target = self
-        onlyErrors.action = #selector(toggleErrors)
-        let content = NSView()
-        content.addSubview(field)
-        content.addSubview(onlyErrors)
-        fieldGlass.contentView = content
-
-        let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))!,
-                           target: self, action: #selector(showAdd(_:)))
-        add.isBordered = false
-        add.setAccessibilityLabel(String(localized: "Add"))
-        addGlass.contentView = add
-
-        for glass in [addGlass, fieldGlass] {
-            glass.cornerRadius = Self.height / 2
-            glass.effectIsInteractive = true
-            addSubview(glass)
+    var body: some View {
+        let navigator = project.navigator
+        FilterBar(text: Bindable(navigator)[dynamicMember: navigator.shown.filter]) {
+            if navigator.shown == .files {
+                Menu("Add", systemImage: "plus") {
+                    ForEach([MenuCommand.fileNew, .fileNewFolder, .fileUpload], id: \.title) { command in
+                        Button(command.title) { window.perform(command, on: project) }
+                    }
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+        } trailing: {
+            if navigator.shown == .issues {
+                Toggle("Only Errors", systemImage: "exclamationmark.octagon",
+                       isOn: Binding { !navigator.showsWarnings } set: { navigator.showsWarnings = !$0 })
+                    .toggleStyle(.button)
+                    .help("Show only errors")
+            }
         }
-        watch = track({ Shown(project.navigator) }) { [weak self] in self?.show($0) }
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    private nonisolated struct Shown: Equatable, Sendable {
-        let navigator: Navigator, text: String, onlyErrors: Bool
-
-        @MainActor init(_ model: NavigatorModel) {
-            (navigator, text, onlyErrors) = (model.shown, model[keyPath: model.shown.filter], !model.showsWarnings)
-        }
-    }
-
-    private func show(_ shown: Shown) {
-        if field.stringValue != shown.text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = shown.text }
-        addGlass.isHidden = shown.navigator != .files
-        onlyErrors.isHidden = shown.navigator != .issues
-        onlyErrors.state = shown.onlyErrors ? .on : .off
-        (field.cell as? NavigatorField.Cell)?.room = onlyErrors.isHidden ? 0 : Self.toggleRoom
-        needsLayout = true
-    }
-
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height + 2 * 8) }
-
-    override func layout() {
-        super.layout()
-        let y = (bounds.height - Self.height) / 2
-        addGlass.frame = NSRect(x: 7, y: y, width: Self.height, height: Self.height)
-        let minX = addGlass.isHidden ? 8 : addGlass.frame.maxX + 8
-        fieldGlass.frame = NSRect(x: minX, y: y, width: bounds.width - minX - 8, height: Self.height)
-        field.frame = fieldGlass.bounds
-        onlyErrors.frame = NSRect(x: fieldGlass.bounds.maxX - 7 - 17, y: fieldGlass.bounds.midY - 8.5, width: 17, height: 17)
-    }
-
-    @objc private func filter() { project.navigator[keyPath: project.navigator.shown.filter] = field.stringValue }
-
-    @objc private func toggleErrors() { project.navigator.showsWarnings = onlyErrors.state == .off }
-
-    @objc private func showAdd(_ button: NSButton) {
-        let menu = NSMenu()
-        for command in [MenuCommand.fileNew, .fileNewFolder, .fileUpload] {
-            let item = menu.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "")
-            (item.target, item.representedObject) = (self, command)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
-    }
-
-    @objc private func add(_ item: NSMenuItem) {
-        if let command = item.representedObject as? MenuCommand { windowModel.perform(command, on: project) }
-    }
-
-    /// Xcode's large filter field and add menu, and the macOS UI Kit's large search field: 28 pt tall.
-    private static let height: CGFloat = 28
-    /// Xcode's field toggles: 17 pt, 7 pt from the field's end.
-    private static let toggleRoom: CGFloat = 7 + 17
-}
-
-/// Xcode's navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 6 pt in
-/// and 15 pt tall, the text from its end, and the clear button 17 pt square 6 pt from the end, before any room kept
-/// for toggles over the end.
-final class NavigatorField: NSSearchField {
-    final class Cell: NSSearchFieldCell {
-        var room: CGFloat = 0
-
-        /// As wide as AppKit's image, 21 pt with the menu's chevron, which a narrower rect clips.
-        override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
-            NSRect(x: rect.minX + 6, y: rect.midY - 7.5, width: searchButtonCell?.image?.size.width ?? 16, height: 15)
-        }
-
-        override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
-            NSRect(x: rect.maxX - room - 6 - 17, y: rect.midY - 8.5, width: 17, height: 17)
-        }
-
-        override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-            let minX = searchButtonRect(forBounds: rect).maxX
-            return NSRect(x: minX, y: rect.midY - 8, width: cancelButtonRect(forBounds: rect).minX - 6 - minX, height: 20)
-        }
-    }
-
-    override class var cellClass: AnyClass? {
-        get { Cell.self }
-        set {}
+        .labelStyle(.iconOnly)
     }
 }
 

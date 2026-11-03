@@ -85,7 +85,9 @@ final class WorkspaceController: ThinSplitViewController {
     private func buildSidebar() {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: NavigatorArea(host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth)))
         sidebarItem.minimumThickness = 222
-        sidebarItem.addBottomAlignedAccessoryViewController(accessory(NavigatorFilterBar(project: project, window: window), edge: .soft))
+        let filter = accessory(hostingView(NavigatorFilter(project: project)))
+        filter.preferredScrollEdgeEffectStyle = .soft
+        sidebarItem.addBottomAlignedAccessoryViewController(filter)
         addSplitViewItem(sidebarItem)
     }
 
