@@ -7,7 +7,7 @@ use std::time::UNIX_EPOCH;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::syntax::SourceDocument;
+use texlocal_latex::syntax::document_class;
 use texlocal_latex::templates::ProjectTemplate;
 use texlocal_latex::{FileKind, file_kind};
 
@@ -180,7 +180,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     let starts_document = |path: &Path| {
         fs::read(path).is_ok_and(|bytes| {
             let text = String::from_utf8_lossy(&bytes);
-            SourceDocument::new(&text).document_class().is_some()
+            document_class(&text).is_some()
         })
     };
     let top = tex

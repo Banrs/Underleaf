@@ -269,9 +269,7 @@ impl Visit for Reader<'_> {
                 self.defined.citations.extend(keys);
             }
             "documentclass" if facts.class.is_none() => {
-                facts.class = braced(&text.units, name_end)
-                    .0
-                    .map(|(class, _)| class.trim().to_owned());
+                facts.class = headings::class(&text.units, name_end);
                 facts.new_package = Some(after_line(text, name_end));
             }
             "usepackage" | "RequirePackage" => {

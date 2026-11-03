@@ -4,28 +4,29 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use super::SourceDocument;
 use super::scan::{self, Scanner, Visit, braced};
 use super::scans::SPACING;
 
-impl SourceDocument {
-    pub fn document_class(&self) -> Option<String> {
-        struct First(Option<usize>);
-        impl Visit for First {
-            fn command(&mut self, name: &str, _: usize, name_end: usize) {
-                if name == "documentclass" {
-                    self.0 = self.0.or(Some(name_end));
-                }
+pub fn document_class(text: &str) -> Option<String> {
+    struct First(Option<usize>);
+    impl Visit for First {
+        fn command(&mut self, name: &str, _: usize, name_end: usize) {
+            if name == "documentclass" {
+                self.0 = self.0.or(Some(name_end));
             }
         }
-        let units = &self.text.units;
-        let (mut scanner, mut first) = (Scanner::default(), First(None));
-        while first.0.is_none() && scanner.i < units.len() {
-            scanner.run(units, scanner.i + SPACING, &[], &mut first);
-        }
-        let (class, _) = braced(units, first.0?).0?;
-        Some(class.trim().to_owned())
     }
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let (mut scanner, mut first) = (Scanner::default(), First(None));
+    while first.0.is_none() && scanner.i < units.len() {
+        scanner.run(&units, scanner.i + SPACING, &[], &mut first);
+    }
+    class(&units, first.0?)
+}
+
+pub(crate) fn class(units: &[u16], name_end: usize) -> Option<String> {
+    let (class, _) = braced(units, name_end).0?;
+    Some(class.trim().to_owned())
 }
 
 pub(crate) const LEVELS: [(&str, &str); 6] = [
