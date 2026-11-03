@@ -9,7 +9,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, in_build_dir, relative, safe_rel_file};
+use crate::paths::{Project, fold_case, relative, safe_rel_file};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
 use crate::{SETTINGS_FILE, atomic};
@@ -30,7 +30,7 @@ pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Res
     let mut writer = ZipWriter::new(file);
     walk(
         &project.root,
-        &|rel| !left_out(rel) && !replaced(rel) && own.as_deref() != Some(rel),
+        &|rel| !left_out(project, rel) && !replaced(rel) && own.as_deref() != Some(rel),
         true,
         &mut |entry| {
             if entry.dir {
@@ -94,8 +94,12 @@ fn arxiv_files(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     Ok(added)
 }
 
-pub(crate) fn left_out(rel: &str) -> bool {
-    in_build_dir(rel) || fold_case(rel) == SETTINGS_FILE || rel.split('/').any(is_litter)
+pub(crate) fn left_out(project: &Project, rel: &str) -> bool {
+    project.builds_in(rel) || private(rel)
+}
+
+pub(crate) fn private(rel: &str) -> bool {
+    fold_case(rel) == SETTINGS_FILE || rel.split('/').any(is_litter)
 }
 
 fn options(modified: io::Result<SystemTime>) -> SimpleFileOptions {

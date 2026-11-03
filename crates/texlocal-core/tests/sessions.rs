@@ -1700,3 +1700,34 @@ async fn naming_a_version_with_nothing_changed_keeps_the_last_ones_name() {
         .collect();
     assert_eq!(names, [&json!("Camera-ready"), &json!("Submitted")]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_opened_in_place_keeps_its_own_build_folder_as_sources() {
+    let rig = project().await;
+    let entry = json!({ "folder": "build", "name": "plot.tex", "dir": false });
+    assert_eq!(rig.refuse("CreateEntry", entry.clone()), ErrorKind::Invalid);
+    let folder = rig.library.path("Thesis");
+    write(&folder, &[("main.tex", MAIN), ("build/fig.png", "png")]);
+    let opened = rig.ask_library("OpenPath", json!({ "path": folder }));
+    let id = opened.unwrap()["project"]["id"].clone();
+    rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    let tree = rig.section_in(2, "tree", |_| true);
+    assert_eq!(names(&tree, "name"), ["build", "main.tex"]);
+    rig.call_to(2, "SaveVersion", json!({ "name": "Draft" }));
+    let versions = rig.call_to(2, "ListVersions", json!({}));
+    let first = &versions.as_array().unwrap().last().unwrap()["changed"];
+    assert_eq!(names(first, "path"), ["build/fig.png", "main.tex"]);
+    assert_eq!(rig.call_to(2, "CreateEntry", entry), "build/plot.tex");
+    fs::write(folder.join("build/new.png"), "png").unwrap();
+    rig.section_in(2, "tree", |t| t.to_string().contains("new.png"));
+    let dest = rig.library.path("Thesis.zip");
+    rig.call_to(2, "ExportZip", json!({ "dest": dest, "forArxiv": false }));
+    let exported = [
+        "build/",
+        "build/fig.png",
+        "build/new.png",
+        "build/plot.tex",
+        "main.tex",
+    ];
+    assert_eq!(zip_names(&dest), exported);
+}

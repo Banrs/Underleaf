@@ -14,7 +14,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::files::{occupied, untrash};
 use super::opened::{self, is_opened};
 use super::skip_unreadable;
-use super::tree::{listed, walk};
+use super::tree::{listed, shown, walk};
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, fold_case, sanitize_name, ui_file};
@@ -79,7 +79,7 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
 fn newest(project: &Project) -> u64 {
     let root = &project.root;
     let mut newest = fs::metadata(root).map_or(0, |meta| mtime_ms(&meta));
-    let _ = walk(root, &listed, false, &mut |entry| {
+    let _ = walk(root, &|rel| shown(project, rel), false, &mut |entry| {
         if (entry.dir || !entry.rel.contains('/'))
             && let Ok(meta) = fs::metadata(&entry.path)
         {

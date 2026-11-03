@@ -8,7 +8,6 @@ use serde::Serialize;
 use texlocal_latex::{FileKind, file_kind};
 
 use super::skip_unreadable;
-use crate::BUILD_DIR;
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, fold_case, identity, relative};
@@ -36,7 +35,11 @@ pub(crate) struct Entry {
 
 pub(crate) fn listed(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    !name.starts_with('.') && fold_case(rel) != BUILD_DIR
+    !name.starts_with('.')
+}
+
+pub(crate) fn shown(project: &Project, rel: &str) -> bool {
+    listed(rel) && !project.builds_in(rel)
 }
 
 fn entries(
@@ -131,7 +134,8 @@ pub(super) fn visit_files(
     project: &Project,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
-    walk(&project.root, &listed, false, &mut |entry| {
+    let shown = |rel: &str| shown(project, rel);
+    walk(&project.root, &shown, false, &mut |entry| {
         if entry.dir {
             return Ok(true);
         }
@@ -141,18 +145,19 @@ pub(super) fn visit_files(
 
 pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     fn nodes(
-        root: &Path,
+        project: &Project,
         folder: Option<&Entry>,
         walked: &mut HashSet<(u64, u64)>,
         main: &str,
     ) -> Result<Vec<TreeNode>, CoreError> {
         let mut found = Vec::new();
-        for entry in entries(root, folder, &listed, false)? {
+        let shown = |rel: &str| shown(project, rel);
+        for entry in entries(&project.root, folder, &shown, false)? {
             if walked_again(walked, &entry) {
                 continue;
             }
             let children = if entry.dir {
-                Some(nodes(root, Some(&entry), walked, main)?)
+                Some(nodes(project, Some(&entry), walked, main)?)
             } else {
                 None
             };
@@ -167,8 +172,8 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
         Ok(found)
     }
     let main = read_settings(&project.settings).main_file;
-    let root = &project.root;
-    nodes(root, None, &mut walked_from(root), &fold_case(&main))
+    let walked = &mut walked_from(&project.root);
+    nodes(project, None, walked, &fold_case(&main))
 }
 
 #[cfg(test)]

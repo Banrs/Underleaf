@@ -1,14 +1,14 @@
 use std::collections::{BTreeSet, HashSet};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::Msg;
-use crate::paths::{Project, disk_spelling, fold_case, in_build_dir, relative, within};
-use crate::projects::{TreeNode, listed};
+use crate::paths::{Project, disk_spelling, fold_case, relative, within};
+use crate::projects::{TreeNode, shown};
 use crate::{HISTORY_DIR, SETTINGS_FILE};
 
 pub(crate) struct Change {
@@ -54,7 +54,7 @@ fn changes(event: notify::Event, project: &Project) -> Vec<Change> {
             .ok()
             .and_then(|rest| rest.iter().next());
         top.and_then(OsStr::to_str)
-            .is_some_and(|top| in_build_dir(top) || top == HISTORY_DIR)
+            .is_some_and(|top| project.builds_in(top) || top == HISTORY_DIR)
     };
     let paths = event.paths.into_iter().filter(|path| !ours(path));
     paths.map(|path| Change { path, structural }).collect()
@@ -130,7 +130,7 @@ pub(crate) fn classify(
         }
         let parent = rel.rsplit_once('/').map_or("", |(parent, _)| parent);
         let shown_folder = parent.is_empty() || index.folders.contains(parent);
-        if change.structural && shown_folder && !listed_as_before(&project.root, &rel, index) {
+        if change.structural && shown_folder && !listed_as_before(project, &rel, index) {
             meaning.tree = true;
         }
         meaning.settings |= fold_case(&rel) == SETTINGS_FILE;
@@ -141,6 +141,7 @@ pub(crate) fn classify(
     meaning
 }
 
-fn listed_as_before(root: &Path, rel: &str, index: &TreeIndex) -> bool {
-    !listed(rel) || index.files.contains(rel) && disk_spelling(root, rel).as_deref() == Some(rel)
+fn listed_as_before(project: &Project, rel: &str, index: &TreeIndex) -> bool {
+    !shown(project, rel)
+        || index.files.contains(rel) && disk_spelling(&project.root, rel).as_deref() == Some(rel)
 }

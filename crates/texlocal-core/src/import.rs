@@ -13,13 +13,13 @@ use zip::result::ZipError;
 
 use crate::messages;
 use crate::paths::{
-    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file,
+    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file, within,
 };
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, copy_ui, new_settings};
-use crate::zipexport::left_out;
-use crate::{CoreError, SETTINGS_FILE, atomic, sys};
+use crate::zipexport::{left_out, private};
+use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, atomic, sys};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -319,7 +319,8 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         mut files,
         main,
     } = open(src)?;
-    files.retain(|(path, _)| !left_out(path));
+    // A library project builds into its build folder, so a zip's own can't land there.
+    files.retain(|(path, _)| !within(path, BUILD_DIR) && !private(path));
     if !files
         .iter()
         .any(|(path, _)| file_kind(path) == FileKind::Tex)
@@ -389,7 +390,7 @@ pub(crate) fn duplicate_project(
     let source = service.project(id)?;
     let root = &source.root;
     let mut files = Vec::new();
-    walk(root, &|rel| !left_out(rel), true, &mut |entry| {
+    walk(root, &|rel| !left_out(&source, rel), true, &mut |entry| {
         if !entry.dir {
             files.push((entry.rel.clone(), Source::File(entry.path.clone())));
         }

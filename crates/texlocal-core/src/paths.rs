@@ -48,6 +48,12 @@ impl Project {
         name.to_string_lossy().into_owned()
     }
 
+    /// Only a library project builds inside its root: a folder opened in place builds into the
+    /// state store, so its own `build` folder holds sources like any other.
+    pub(crate) fn builds_in(&self, rel: &str) -> bool {
+        relative(&self.root, &self.build).is_some_and(|build| within(rel, &build))
+    }
+
     pub(crate) fn in_library(service: &Service, name: &str) -> io::Result<Self> {
         let root = fs::canonicalize(service.data_dir.join(name))?;
         Ok(Self {
@@ -120,19 +126,13 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     }
 }
 
-pub(crate) fn in_build_dir(rel: &str) -> bool {
-    rel.split('/')
-        .next()
-        .is_some_and(|top| fold_case(top) == BUILD_DIR)
-}
-
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(root.join(rel_key(rel)?))
 }
 
 pub fn safe_write_path(project: &Project, rel: &str) -> Result<PathBuf, CoreError> {
     let rel = rel_key(rel)?;
-    if in_build_dir(&rel) {
+    if project.builds_in(&rel) {
         return Err(CoreError::bad_request(messages::build_folder()));
     }
     Ok(project.root.join(rel))
@@ -236,7 +236,7 @@ pub fn source_rel(project: &Project, input: &str) -> Option<String> {
         input
     };
     let rel = safe_rel_file(rel).ok()?;
-    (!in_build_dir(&rel) && root.join(&rel).is_file()).then_some(rel)
+    (!project.builds_in(&rel) && root.join(&rel).is_file()).then_some(rel)
 }
 
 pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
