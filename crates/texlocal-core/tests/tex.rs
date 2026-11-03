@@ -23,7 +23,7 @@ async fn built(files: &[(&str, &str)]) -> (Rig, serde_json::Value) {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs TeX"]
-async fn latexmk_builds_a_pdf_with_its_bibliography() {
+async fn latexmk_builds_a_pdf_with_its_bibliography_and_synctex_goes_from_a_line_to_it_and_back() {
     let (rig, build) = built(&[("main.tex", ARTICLE), ("refs.bib", REFS)]).await;
     let result = &build["result"];
     assert_eq!(result["ok"], true, "{}", log(&rig, SESSION));
@@ -32,16 +32,7 @@ async fn latexmk_builds_a_pdf_with_its_bibliography() {
         json!([]),
         "the reference and citation resolve"
     );
-    let pdf = result["pdf"].as_str().unwrap();
-    assert!(Path::new(pdf).is_file());
-    assert!(rig.root().join("build/main.synctex.gz").is_file());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs TeX"]
-async fn synctex_goes_from_a_line_to_the_pdf_and_back() {
-    let (rig, build) = built(&[("main.tex", ARTICLE), ("refs.bib", REFS)]).await;
-    assert_eq!(build["result"]["ok"], true);
+    assert!(Path::new(result["pdf"].as_str().unwrap()).is_file());
     let forward = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 4 }));
     assert_eq!(forward["page"].as_f64(), Some(1.0));
     let (h, v) = (
