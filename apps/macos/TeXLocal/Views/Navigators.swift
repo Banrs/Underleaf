@@ -139,6 +139,7 @@ private struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
     @State private var folded: Set<String?> = []
+    @State private var confirming: Fix?
 
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
@@ -148,7 +149,7 @@ private struct IssueList: View {
                 ForEach(files, id: \.self) { file in
                     let rows = items.filter { $0.element.file == file }
                     DisclosureGroup(isExpanded: Binding { !folded.contains(file) } set: { if $0 { folded.remove(file) } else { folded.insert(file) } }) {
-                        ForEach(rows, id: \.offset) { IssueRow(item: $0.element, place: $0.offset, project: project) }
+                        ForEach(rows, id: \.offset) { IssueRow(item: $0.element, place: $0.offset, project: project, apply: apply) }
                     } label: {
                         Label {
                             Text("\(file?.fileName ?? project.name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
@@ -174,10 +175,18 @@ private struct IssueList: View {
             .contextMenu(forSelectionType: Int.self) { rows in
                 if let item = rows.first.flatMap(item) {
                     if item.file != nil { Button(item.line == nil ? "Open File" : "Go to Line") { open(item) } }
+                    if let fix = item.fix { Button(fix.title.text) { apply(fix) }.disabled(project.fixing != nil) }
                     Button("Copy") { NSPasteboard.general.replaceContents(with: item.message.text) }
                 }
             } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
             .copyable(project.chosenIssue.flatMap(item).map { [$0.message.text] } ?? [])
+            .alert("\(confirming?.title.text ?? "")?", isPresented: Binding { confirming != nil } set: { if !$0 { confirming = nil } },
+                   presenting: confirming) { fix in
+                Button(fix.title.text) { Task { await project.run(fix) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { fix in
+                Text(fix.confirm?.text ?? "")
+            }
             .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
                 if let place = project.chosenIssue { proxy.scrollTo(place) }
@@ -192,13 +201,15 @@ private struct IssueList: View {
     private func item(_ id: Int) -> LogItem? { items.first { $0.offset == id }?.element }
 
     private func open(_ item: LogItem) { if let file = item.file { Task { await project.open(file, line: item.line, jump: true) } } }
+
+    private func apply(_ fix: Fix) { if fix.confirm == nil { Task { await project.run(fix) } } else { confirming = fix } }
 }
 
 private struct IssueRow: View {
     let item: LogItem
     let place: Int
     let project: ProjectModel
-    @State private var confirming = false
+    let apply: (Fix) -> Void
 
     var body: some View {
         VStack(alignment: .trailing) {
@@ -223,20 +234,12 @@ private struct IssueRow: View {
         if project.fixing == fix {
             ProgressView().controlSize(.small).accessibilityLabel(fix.title.text)
         } else {
-            Button(fix.title.text) { if fix.confirm == nil { run(fix) } else { confirming = true } }
+            Button(fix.title.text) { apply(fix) }
                 .controlSize(.small)
                 .disabled(project.fixing != nil)
                 .help(fix.help.text)
-                .alert("\(fix.title.text)?", isPresented: $confirming) {
-                    Button(fix.title.text) { run(fix) }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text(fix.confirm?.text ?? "")
-                }
         }
     }
-
-    private func run(_ fix: Fix) { Task { await project.run(fix) } }
 
     private var location: String? { item.file.map { file in item.line.map { "\(file), line \($0)" } ?? file } }
 }
