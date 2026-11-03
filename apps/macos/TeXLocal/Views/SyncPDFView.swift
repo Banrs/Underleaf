@@ -253,9 +253,11 @@ final class PageOverlay: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    /// The cover is the whole page, so it follows the overlay, which PDFKit trims by a fraction of a point after a page is
+    /// inserted in place (612 × 792 to 611.94 × 791.74 for a Letter page), rather than going.
     override func setFrameSize(_ newSize: NSSize) {
-        if newSize != frame.size { uncover() }
         super.setFrameSize(newSize)
+        drawing.frame = bounds
     }
 
     func cover(_ image: CGImage) {

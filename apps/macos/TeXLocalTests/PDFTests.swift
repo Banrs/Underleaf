@@ -244,6 +244,19 @@ struct PDFTests {
         #expect(shown.count > 3 && Set(view.coverPages.indices).isSuperset(of: shown))
     }
 
+    @Test func aLivePageIsCoveredByItsDrawingUntilPDFKitDrawsIt() async throws {
+        let controller = PDFController(), view = controller.view
+        let window = try await onScreen(view)
+        defer { window.close() }
+        try await showLive(["one", "two"], in: controller)
+        try await waitUntil(timeout: .seconds(2)) { !overlays(in: view).contains { $0.covered } }
+        let live = try #require(await PDFController.loadPages([0: try typedPage()], covering: view.coverPages))
+        #expect(live.covers[0] != nil)
+        controller.replace(live)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(overlays(in: view).contains { $0.covered })
+    }
+
     @Test func aRebuildFindsAgainInPlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view)
