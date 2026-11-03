@@ -1186,7 +1186,6 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case diskFull = "disk_full"
     case notSaved = "not_saved"
     case trashFailed = "trash_failed"
-    case noTrash = "no_trash"
     case unreadable
     case overOneMb = "over_one_mb"
     case openedElsewhere = "opened_elsewhere"
