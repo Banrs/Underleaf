@@ -130,6 +130,18 @@ struct PaneTests {
         #expect(!workspace.project.panel.shown && window.firstResponder === workspace.pdf.view)
     }
 
+    @Test func onlyTheStatusBarsTopEdgeDragsTheBuildPanelLeavingItsButtonsAndTheEditorTheirClicks() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        let split = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController).splitView
+        let content = try #require(window.contentView)
+        let edge = split.arrangedSubviews[0].frame.maxY - BarMetrics.height
+        func hit(_ y: CGFloat) -> NSView? { content.hitTest(content.superview!.convert(split.convert(NSPoint(x: 300, y: y), to: nil), from: nil)) }
+        #expect(hit(edge) === split)
+        #expect(hit(edge + BarMetrics.height / 2) !== split && hit(edge - 20) !== split)
+    }
+
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {
         let names = ["Workspace 2", "Columns", "Area"]
         let keys = names.map { "NSSplitView Subview Frames \($0)" } + [DefaultsKey.buildPanelHeight]

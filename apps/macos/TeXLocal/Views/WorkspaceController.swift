@@ -310,10 +310,12 @@ private struct Pane<Content: View>: View {
 }
 
 /// The status bar's top edge drags the Logs panel's divider beneath it, opening the panel when it's collapsed, as dragging
-/// Xcode's debug bar does; only the edge, since a divider's rect takes clicks from the bar's buttons.
+/// Xcode's debug bar does; only the edge, since a divider's rect takes clicks from the bar's buttons. Super gives a zero
+/// rect here, which `CGRect.union` would stretch to the origin over the editor; `NSUnionRect` skips an empty rect.
 private final class AreaSplitViewController: ThinSplitViewController {
     override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
         let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
-        return NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4)
+        return NSUnionRect(super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex),
+                           NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4))
     }
 }
