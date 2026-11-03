@@ -18,11 +18,11 @@ struct BuildPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.textSurface)
-        .safeAreaInset(edge: .bottom, spacing: 0) { BuildPanelBar(project: project) }
     }
 }
 
-private struct BuildPanelBar: View {
+/// The panel's bottom split accessory.
+struct BuildPanelBar: View {
     let project: ProjectModel
 
     var body: some View {
@@ -49,16 +49,13 @@ private struct BuildPanelBar: View {
         }
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        .barRow()
-        .background(.textSurface)
-        .barEdge()
+        .font(.subheadline).controlSize(.small).lineLimit(1)
     }
 }
 
 struct LogTextView: NSViewRepresentable {
     let text: String
     let title: String
-    let bottomInset: CGFloat
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -80,13 +77,6 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
-        if scroll.contentInsets.bottom != bottomInset {
-            let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
-            scroll.automaticallyAdjustsContentInsets = false
-            scroll.contentInsets.bottom = bottomInset
-            scroll.scrollerInsets.bottom = bottomInset
-            if atEnd { view.scrollToEndOfDocument(nil) }
-        }
         guard context.coordinator.shown != text else { return }
         updateText(in: scroll)
         context.coordinator.shown = text

@@ -100,12 +100,14 @@ struct PaneTests {
         #expect(!workspace.project.panel.shown)
     }
 
-    @Test func eachPaneEndsInItsHalfOfTheStatusBarAndTheEditorScrollsBeneathIt() throws {
+    @Test func eachPaneAndTheBuildPanelEndInTheirOwnBarAndTheEditorScrollsBeneathIt() throws {
         let defaults = TestDefaults()
         let (window, workspace) = open(defaults.window())
         defer { workspace.close(); window.close() }
-        let bars = try workspace.columns.splitViewItems.map { try #require($0.bottomAlignedAccessoryViewControllers.first) }
-        #expect(bars.count == 2 && bars.allSatisfy { $0.view.frame.height >= 20 })
+        let area = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController)
+        let items = workspace.columns.splitViewItems + [try #require(area.splitViewItems.last)]
+        let bars = try items.map { try #require($0.bottomAlignedAccessoryViewControllers.first) }
+        #expect(bars.count == 3 && bars.prefix(2).allSatisfy { $0.view.frame.height >= 20 })
         workspace.view.layoutSubtreeIfNeeded()
         #expect(workspace.views.editor.scrollView.safeAreaInsets.bottom >= bars[0].view.frame.height)
     }

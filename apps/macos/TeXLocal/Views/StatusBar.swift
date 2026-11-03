@@ -259,21 +259,6 @@ private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short
 }
 
 extension View {
-    func barRow() -> some View {
-        font(.subheadline).controlSize(.small).lineLimit(1).frame(minHeight: 20).padding(.horizontal, 8).padding(.vertical, 8)
-    }
-
-    /// A bar's top edge, one device pixel as AppKit draws the edges of the toolbar and its scroll pockets (measured in
-    /// TextEdit), rather than the 1 pt a split view draws between panes. The status bar has none of its own: its panes'
-    /// hard pockets draw it, and one over it made 1.5 pt over the editor.
-    func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
-
     /// The HIG's least hit region on macOS, 20 by 20 pt.
     fileprivate func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
-}
-
-private struct Hairline: View {
-    @Environment(\.displayScale) private var scale
-
-    var body: some View { Rectangle().fill(.separator).frame(height: 1 / scale) }
 }

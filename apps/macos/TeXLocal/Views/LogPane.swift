@@ -14,10 +14,7 @@ struct LogPane: View {
             if shown.isEmpty {
                 ContentUnavailableView.search(text: filter)
             } else {
-                GeometryReader { geometry in
-                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
-                        .ignoresSafeArea(.container, edges: .bottom)
-                }
+                LogTextView(text: shown, title: title).ignoresSafeArea(.container, edges: .bottom)
             }
         }
         .task(id: [text, filter]) {

@@ -124,6 +124,7 @@ final class WorkspaceController: ThinSplitViewController {
         panelItem.holdingPriority = .defaultLow + 1
         panelItem.canCollapse = true
         panelItem.isCollapsed = true
+        panelItem.addBottomAlignedAccessoryViewController(accessory(hostingView(BuildPanelBar(project: project))))
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
         area.addSplitViewItem(columnsItem)
