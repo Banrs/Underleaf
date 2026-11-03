@@ -17,6 +17,7 @@ use texlocal_latex::{bib, project};
 use super::Pending;
 use super::actor::Actor;
 use super::live::{document_lines, typeset_lines};
+use super::watch::Tree;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
 use crate::{CoreError, lf, lossy_string, messages, paths, settings};
 
@@ -46,10 +47,10 @@ pub(crate) struct QuickHelp {
     place: Option<FilePlace>,
 }
 
-impl Actor {
+impl Tree {
     pub fn quick_open(&self, query: String, reply: Pending<Vec<QuickOpenItem>>) {
         let scan = Arc::clone(&self.scan.read().unwrap_or_else(PoisonError::into_inner));
-        let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
+        let (files, main) = (self.files.clone(), self.main.clone());
         tokio::task::spawn_blocking(move || {
             let mut items: Vec<QuickOpenItem> = files
                 .into_iter()
@@ -114,7 +115,9 @@ impl Actor {
             reply.send(Ok(items.collect()));
         });
     }
+}
 
+impl Actor {
     pub fn quick_help(&self, path: &str, offset: u32, reply: Pending<Option<QuickHelp>>) {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));

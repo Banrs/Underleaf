@@ -8,9 +8,8 @@ use super::actor::Actor;
 use super::build::{BuildState, ShownPdf};
 use super::documents::{DiskConflict, Doc};
 use super::live::LiveState;
-use super::watch::TreeIndex;
 use crate::projects::TreeNode;
-use crate::settings::{self, ProjectSettings};
+use crate::settings::ProjectSettings;
 
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
@@ -44,10 +43,10 @@ pub(crate) struct Stopped {
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct ProjectState {
-    name: String,
-    root: String,
-    settings: ProjectSettings,
-    problem: Option<Message>,
+    pub name: String,
+    pub root: String,
+    pub settings: ProjectSettings,
+    pub problem: Option<Message>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -79,24 +78,9 @@ impl Actor {
     }
 
     pub fn show_tree(&mut self, tree: Vec<TreeNode>) -> bool {
-        self.tree = TreeIndex::of(&tree);
-        if let Some(watcher) = &mut self.watcher {
-            watcher.refresh(&self.core.project, &self.tree);
-        }
-        let changed = self.core.publish(SessionSection::Tree(tree));
-        self.publish_project();
+        let changed = self.tree.show(&mut self.core, tree);
         self.publish_open();
         changed
-    }
-
-    pub fn publish_project(&mut self) {
-        let project = ProjectState {
-            name: self.core.project.name(),
-            root: self.core.project.root.to_string_lossy().into_owned(),
-            settings: settings::shown(&self.core.project, self.tree.main.clone()),
-            problem: settings::problem(&self.core.project),
-        };
-        self.core.publish(SessionSection::Project(project));
     }
 
     pub fn publish_documents(&mut self) {

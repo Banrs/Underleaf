@@ -4,7 +4,6 @@ use texlocal_latex::{FileKind, file_kind, is_text};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
-use super::watch;
 use crate::events::{Event, Renamed};
 use crate::import::{self, ImportConflict, Imported};
 use crate::messages;
@@ -54,17 +53,8 @@ impl Actor {
     }
 
     pub fn files_changed_on_disk(&mut self) {
-        let changes = std::mem::take(&mut self.fs_pending);
         let docs: Vec<String> = self.docs.keys().cloned().collect();
-        let meaning = watch::classify(&self.core.project, &changes, &self.tree, &docs);
-        if !meaning.tree
-            && changes
-                .iter()
-                .any(|change| change.structural && change.path.is_symlink())
-            && let Some(watcher) = &mut self.watcher
-        {
-            watcher.refresh(&self.core.project, &self.tree);
-        }
+        let meaning = self.tree.take_changes(&self.core, &docs);
         for path in &meaning.docs {
             self.check_disk(path);
         }
@@ -101,7 +91,7 @@ impl Actor {
             if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
                 self.main_file_changed();
             }
-            self.publish_project();
+            self.tree.publish_project(&mut self.core);
         }
         if self.live.active() && !self.live.disk_paths.is_empty() {
             self.core.after(Timer::Disk);
@@ -198,7 +188,7 @@ impl Actor {
         } else if build && self.core.auto_compile {
             self.core.later.push_back(Later::Compile(true));
         }
-        self.publish_project();
+        self.tree.publish_project(&mut self.core);
         granted.unwrap_or(Ok(()))
     }
 

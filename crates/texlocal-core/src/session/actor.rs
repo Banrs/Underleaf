@@ -1,13 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use texlocal_latex::diff::DiffLine;
 use texlocal_latex::logparse::Fix;
-use texlocal_latex::project::Scan;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::SymbolKind;
 use texlocal_latex::wordmatch::{PdfHit, PdfPage};
@@ -21,7 +20,7 @@ use super::live::Live;
 use super::navigate::{QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::{Lifecycle, Stopped};
-use super::watch::{self, Change, TreeIndex};
+use super::watch::Tree;
 use super::{Compiler, Msg, OnActor, Pending, Preview, Reply, SessionSection, Sessions};
 use crate::CoreError;
 use crate::events::{Event, Said, Sent, SessionEvent};
@@ -50,7 +49,7 @@ requests! {
             => actor.search(Query::new(&query, match_case, whole_word), pending),
         FindUsages { path: RelPath, offset: u32 } -> Option<Usages> => actor.usages(&path.0, offset, pending),
         LookUp { path: RelPath, offset: u32 } -> Option<QuickHelp> => actor.quick_help(&path.0, offset, pending),
-        QuickOpen { query: String } -> Vec<QuickOpenItem> => actor.quick_open(query, pending),
+        QuickOpen { query: String } -> Vec<QuickOpenItem> => actor.tree.quick_open(query, pending),
         Replace { query: String, replacement: String, match_case: bool, whole_word: bool } -> ProjectEdits => {
             let replace = actor.replace(Query::new(&query, match_case, whole_word), replacement);
             actor.before(Reason::ReplaceAll, replace, pending);
@@ -185,14 +184,9 @@ pub(crate) struct Actor {
     pub next_doc: u64,
     pub open: Option<String>,
     pub opens: Arc<AtomicU64>,
-    pub scan: Arc<RwLock<Arc<Scan>>>,
-    pub symbols_seq: u64,
-    pub facts: Arc<projects::Files>,
     pub builds: Builds,
     tex: signal::Receiver<bool>,
-    pub fs_pending: Vec<Change>,
-    pub tree: TreeIndex,
-    pub watcher: Option<watch::Watching>,
+    pub tree: Tree,
     pub live: Live,
     pub snapshots: usize,
     pub queued: VecDeque<OnActor>,
@@ -213,12 +207,8 @@ impl Actor {
             auto_compile,
         } = opening;
         let (project, in_session) = sessions.service.in_session(&project_id)?;
-        let tree = projects::file_tree(&project)?;
-        let index = TreeIndex::of(&tree);
-        let watcher = sessions
-            .watch
-            .then(|| watch::watch(&project, &index, tx.clone()))
-            .flatten();
+        let nodes = projects::file_tree(&project)?;
+        let tree = Tree::new(&project, &nodes, sessions.watch.then(|| tx.clone()));
         let pdf = Shown {
             built: built_pdf(&project),
             ..Shown::default()
@@ -256,21 +246,16 @@ impl Actor {
             next_doc: 1,
             open: None,
             opens,
-            scan: Arc::default(),
-            symbols_seq: 0,
-            facts: Arc::default(),
             builds: Builds::default(),
             tex: sessions.service.tex_found.subscribe(),
-            fs_pending: Vec::new(),
-            tree: index,
-            watcher,
+            tree,
             live: Live::default(),
             snapshots: 0,
             queued: VecDeque::new(),
             stage: Stage::Open(in_session),
         };
         actor.reopen(ui.file.clone());
-        actor.publish_all(tree);
+        actor.publish_all(nodes);
         actor.core.snapshot_soon();
         Ok((actor, ui))
     }
@@ -379,13 +364,16 @@ impl Actor {
             Msg::Command(command, reply) => command.run(self, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
-            Msg::Symbols { seq, edits, result } => self.symbols_done(seq, edits, result),
+            Msg::Symbols { seq, edits, result } => {
+                if let Some((checks, outline)) = self.tree.scanned(seq, result) {
+                    self.builds
+                        .checks_done(&mut self.core, &self.docs, checks, edits);
+                    self.core.publish(SessionSection::Outline(Some(outline)));
+                }
+            }
             Msg::Live(generation, event) => self.live_event(generation, event),
             Msg::Snapshotted(finish) => finish(self),
-            Msg::Fs(changes) => {
-                self.fs_pending.extend(changes);
-                self.core.soon(Timer::Fs);
-            }
+            Msg::Fs(changes) => self.tree.changed(&mut self.core, changes),
         }
     }
 
@@ -395,7 +383,10 @@ impl Actor {
             self.core.timers.remove(&timer);
             match timer {
                 Timer::Autosave => self.autosave(),
-                Timer::Symbols => self.scan_symbols(),
+                Timer::Symbols => {
+                    let (shown, edits) = (self.open.clone(), self.builds.clock);
+                    self.tree.scan(&self.core, &self.docs, shown, edits);
+                }
                 Timer::Fs => self.files_changed_on_disk(),
                 Timer::Caret => self.caret_settled(),
                 Timer::Follow => self.follow(),

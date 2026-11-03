@@ -1,21 +1,137 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsStr;
 use std::fs;
+use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use texlocal_latex::logparse::LogItem;
+use texlocal_latex::project::{self, Analysis, Scan};
 use tokio::sync::mpsc;
 
 use super::Msg;
+use super::actor::{Core, Timer};
+use super::documents::Docs;
+use super::scans::texts;
+use super::state::{ProjectState, SessionSection};
 use crate::paths::{Project, disk_spelling, fold_case, relative, within};
-use crate::projects::{TreeNode, real_path, shown};
-use crate::{HISTORY_DIR, SETTINGS_FILE, lock};
+use crate::projects::{self, TreeNode, real_path, shown};
+use crate::{CoreError, HISTORY_DIR, SETTINGS_FILE, lock, settings, tex};
 
 pub(crate) struct Change {
     pub path: PathBuf,
     pub structural: bool,
+}
+
+/// The project's files as listed, the watcher on them, and the symbols scanned from them.
+#[derive(Default)]
+pub(crate) struct Tree {
+    index: TreeIndex,
+    watcher: Option<Watching>,
+    pending: Vec<Change>,
+    pub scan: Arc<RwLock<Arc<Scan>>>,
+    scans: u64,
+    pub facts: Arc<projects::Files>,
+}
+
+impl Deref for Tree {
+    type Target = TreeIndex;
+
+    fn deref(&self) -> &TreeIndex {
+        &self.index
+    }
+}
+
+impl Tree {
+    pub fn new(
+        project: &Project,
+        tree: &[TreeNode],
+        tx: Option<mpsc::UnboundedSender<Msg>>,
+    ) -> Self {
+        let index = TreeIndex::of(tree);
+        let watcher = tx.and_then(|tx| watch(project, &index, tx));
+        Self {
+            index,
+            watcher,
+            ..Self::default()
+        }
+    }
+
+    /// Takes in the project's files, true when they differ from those shown.
+    pub fn show(&mut self, cx: &mut Core, tree: Vec<TreeNode>) -> bool {
+        self.index = TreeIndex::of(&tree);
+        if let Some(watcher) = &mut self.watcher {
+            watcher.refresh(&cx.project, &self.index);
+        }
+        let changed = cx.publish(SessionSection::Tree(tree));
+        self.publish_project(cx);
+        changed
+    }
+
+    pub fn publish_project(&self, cx: &mut Core) {
+        let project = ProjectState {
+            name: cx.project.name(),
+            root: cx.project.root.to_string_lossy().into_owned(),
+            settings: settings::shown(&cx.project, self.main.clone()),
+            problem: settings::problem(&cx.project),
+        };
+        cx.publish(SessionSection::Project(project));
+    }
+
+    pub fn changed(&mut self, cx: &mut Core, changes: Vec<Change>) {
+        self.pending.extend(changes);
+        cx.soon(Timer::Fs);
+    }
+
+    /// What the changes on disk since the last mean, refreshing the watcher for a link replaced in place.
+    pub fn take_changes(&mut self, cx: &Core, docs: &[String]) -> Meaning {
+        let changes = std::mem::take(&mut self.pending);
+        let meaning = classify(&cx.project, &changes, &self.index, docs);
+        if !meaning.tree
+            && changes
+                .iter()
+                .any(|change| change.structural && change.path.is_symlink())
+            && let Some(watcher) = &mut self.watcher
+        {
+            watcher.refresh(&cx.project, &self.index);
+        }
+        meaning
+    }
+
+    pub fn scan(&mut self, cx: &Core, docs: &Docs, shown: Option<String>, edits: u64) {
+        self.scans += 1;
+        let (seq, project, tx) = (self.scans, cx.project.clone(), cx.tx.clone());
+        let (facts, docs) = (Arc::clone(&self.facts), docs.handles());
+        let mut files: Vec<String> = self.files.iter().cloned().collect();
+        files.sort_unstable();
+        let (service, main) = (Arc::clone(&cx.service), self.main.clone());
+        tokio::task::spawn_blocking(move || {
+            let read = projects::scan_facts(&project, &facts, &texts(&docs));
+            let installed = tex::installed(&service.tool_paths().0);
+            let result = read.map(|read| {
+                let scan = Scan::new(read, files, installed);
+                let checks = main
+                    .as_deref()
+                    .map_or_else(Vec::new, |main| project::check(&scan, main));
+                let analysis = project::analyze(&scan, main.as_deref(), shown.as_deref());
+                Box::new((scan, checks, analysis))
+            });
+            let _ = tx.send(Msg::Symbols { seq, edits, result });
+        });
+    }
+
+    /// Takes in the latest scan, giving back the checks it found and its outline.
+    pub fn scanned(
+        &self,
+        seq: u64,
+        result: Result<Box<(Scan, Vec<LogItem>, Analysis)>, CoreError>,
+    ) -> Option<(Vec<LogItem>, Analysis)> {
+        let (scan, checks, outline) = *result.ok().filter(|_| seq == self.scans)?;
+        *self.scan.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
+        Some((checks, outline))
+    }
 }
 
 pub(crate) struct Watching {

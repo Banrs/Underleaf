@@ -73,7 +73,7 @@ impl Actor {
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
-        let read = projects::scan_facts(&self.core.project, &self.facts, &texts.collect())?;
+        let read = projects::scan_facts(&self.core.project, &self.tree.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = read.values();
             files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())

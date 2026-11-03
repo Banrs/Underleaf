@@ -195,7 +195,7 @@ impl Actor {
                 path,
                 &text,
                 self.core.tx.clone(),
-                Arc::clone(&self.scan),
+                Arc::clone(&self.tree.scan),
             ),
             path: path.to_owned(),
             saved: 0,
