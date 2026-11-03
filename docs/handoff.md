@@ -28,6 +28,8 @@ Last updated 2026-11-03. Any agent can pick up from here. Read `AGENTS.md` first
   active Space.
 - **`aProjectOpenInAnotherWindowIsntMovedToTheTrash`** can't take a project back out of `~/.Trash` if it regresses,
   since the test never learns where it went. The other Trash tests do.
+- **`two_projects_compile_and_preview_at_once`** times out in CI's TeX check now and then (at 7b3a8ec1, 405d6b65 and
+  b3353ceb, from about a dozen runs) and passes locally. Since 1cec5214 a timeout names the line in the test that waited.
 - **The real-TeX tests** (`cargo test --no-fail-fast -p texlocal-core -- --ignored`) time out under heavy load (load
   average ~28), so run them alone. Their Live Preview tests need `TEXLOCAL_TEXPRESSO` set to a helper built after
   ce57f75a, such as `~/Applications/TeXLocal Dev.app/Contents/Helpers/texpresso`. The Nov 2 helper in
