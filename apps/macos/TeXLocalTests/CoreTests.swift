@@ -255,6 +255,15 @@ struct CoreTests {
         #expect(FixtureUnit.highContrast.title == "High Contrast")
     }
 
+    @Test func aReplyGoesToItsCallerByItsIdEvenWhenTheAppCantReadItsBody() throws {
+        let unreadable = Data(#"{"type":"reply","value":{"id":9,"answer":{"type":"error","value":{"kind":"unheardOf"}}}}"#.utf8)
+        guard case .reply(9) = try Core.heard(unreadable), case .said(.event) = try Core.heard(Data(wireSaid[2].utf8)) else {
+            Issue.record("misrouted")
+            return
+        }
+        #expect(throws: DecodingError.self) { try Core.heard(Data(#"{"type":"event","value":{"session":1}}"#.utf8)) }
+    }
+
     @Test func theAppReadsEachKindOfThingTheCoreSays() throws {
         let said = try wireSaid.map { try JSONDecoder().decode(Said<String>.self, from: Data($0.utf8)) }
         guard case .reply(let ok) = said[0], case .reply(let refused) = said[1], case .event(let event) = said[2],

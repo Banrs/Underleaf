@@ -72,12 +72,13 @@ final class Core {
 
     private init() {
         Task {
-            for await (said, json) in Self.heard.stream {
-                switch said {
-                case .reply(let reply): pending.removeValue(forKey: reply.id)?(json)
-                case .event(let event): observers[event.session]?(event.event)
-                case .library(let section): library.apply(section)
-                case .log(let log): Self.log.log(level: log.level.type, "\(log.text, privacy: .public)")
+            for await (heard, json) in Self.heard.stream {
+                switch heard {
+                case .reply(let id): pending.removeValue(forKey: id)?(json)
+                case .said(.event(let event)): observers[event.session]?(event.event)
+                case .said(.library(let section)): library.apply(section)
+                case .said(.log(let log)): Self.log.log(level: log.level.type, "\(log.text, privacy: .public)")
+                case .said(.reply): break
                 }
             }
         }
@@ -170,16 +171,34 @@ final class Core {
 
     func source(session: UInt64, path: String) -> OpaquePointer? { handle.flatMap { tl_session_source($0, session, path) } }
 
-    private nonisolated struct Unread: Decodable, Sendable {
+    nonisolated struct Unread: Decodable, Sendable {
         init(from decoder: any Decoder) {}
     }
 
-    private nonisolated static let heard = AsyncStream.makeStream(of: (Said<Unread>, Data).self)
+    nonisolated enum Heard: Sendable {
+        case reply(UInt64)
+        case said(Said<Unread>)
+    }
+
+    private nonisolated struct Replying: Decodable {
+        struct Reply: Decodable { let id: UInt64 }
+        let type: String, value: Reply
+    }
+
+    /// A reply goes to its caller by its id alone, which decodes its body, so one the app can't read fails the caller
+    /// rather than leaving it waiting.
+    nonisolated static func heard(_ said: Data) throws -> Heard {
+        let decoder = JSONDecoder()
+        if let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" { return .reply(replying.value.id) }
+        return .said(try decoder.decode(Said<Unread>.self, from: said))
+    }
+
+    private nonisolated static let heard = AsyncStream.makeStream(of: (Heard, Data).self)
 
     private nonisolated static let listener: TlCallback = { _, json in
         let said = Data(bytes: json, count: strlen(json))
         do {
-            Core.heard.continuation.yield((try JSONDecoder().decode(Said<Unread>.self, from: said), said))
+            Core.heard.continuation.yield((try heard(said), said))
         } catch {
             Core.log.error("Something from the core the app can't read: \(String(describing: error), privacy: .public)")
         }
