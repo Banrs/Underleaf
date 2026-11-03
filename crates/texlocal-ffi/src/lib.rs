@@ -230,7 +230,11 @@ pub unsafe extern "C" fn tl_source_select(
     mirroring: bool,
 ) {
     let selection = TextRange { start, length };
-    unsafe { on_source(source, |s| s.with(|doc| doc.select(selection, mirroring))) }
+    let select = |source: &mut TlSource| match source {
+        TlSource::Own(doc) => doc.select(selection, mirroring),
+        TlSource::Session(document) => document.select(selection, mirroring),
+    };
+    unsafe { on_source(source, select) }
 }
 
 #[unsafe(no_mangle)]

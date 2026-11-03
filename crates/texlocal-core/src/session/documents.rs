@@ -253,6 +253,12 @@ impl Actor {
         }
     }
 
+    pub fn selected(&mut self, id: u64, caret: usize) {
+        if let Some(path) = self.docs.values().find(|doc| doc.doc.id() == id) {
+            self.live_caret(path.path.clone(), caret);
+        }
+    }
+
     fn touched(&mut self, path: &str, edit: Option<&TextEdit>) {
         self.edits += 1;
         self.last_edits.insert(path.to_owned(), self.edits);

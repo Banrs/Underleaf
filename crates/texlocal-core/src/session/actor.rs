@@ -67,7 +67,6 @@ requests! {
         StartLive {} -> (),
         StopLive {} -> (),
         LiveView { first: u32, last: u32 } -> (),
-        LiveCaret { path: RelPath, offset: usize } -> (),
         LiveLog { shown: bool } -> (),
         ReloadTree {} -> (),
         ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported,
@@ -343,6 +342,7 @@ impl Actor {
         }
         match message {
             Msg::Edited { doc, version, edit } => self.edited(doc, version, &edit),
+            Msg::Selected { doc, caret } => self.selected(doc, caret),
             Msg::Command(command, reply) => self.command(command, reply),
             Msg::BuildDone(result) => self.build_done(result),
             Msg::Cleaned(result) => self.cleaned(result),
@@ -492,9 +492,6 @@ impl Actor {
             Session::StopLive(StopLive {}, answer) => answer(Ok(self.live_stop_asked())),
             Session::LiveView(LiveView { first, last }, answer) => {
                 answer(Ok(self.live_view(first, last)))
-            }
-            Session::LiveCaret(LiveCaret { path, offset }, answer) => {
-                answer(Ok(self.live_caret(path.0, offset)))
             }
             Session::LiveLog(LiveLog { shown }, answer) => answer(Ok(self.show_live_log(shown))),
             Session::ReloadTree(ReloadTree {}, answer) => answer(Ok(self.reload_tree())),

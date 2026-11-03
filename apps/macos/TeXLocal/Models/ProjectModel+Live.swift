@@ -17,17 +17,11 @@ extension ProjectModel {
 
     func startTeXpresso() {
         guard texpresso.phase == .stopped else { return }
-        if let caret { session.send(LiveCaret(path: caret.path, offset: caret.offset)) }
         session.send(StartLive())
     }
 
     func liveView(_ pages: ClosedRange<Int>) {
         session.send(LiveView(first: pages.lowerBound, last: pages.upperBound))
-    }
-
-    func liveCaret() {
-        guard texpresso.active, let caret else { return }
-        session.send(LiveCaret(path: caret.path, offset: caret.offset))
     }
 
     func canSyncForward(quietly: Bool = false) -> Bool { hasPDF && isLaTeX && (!quietly || window?.showPDF == true) }

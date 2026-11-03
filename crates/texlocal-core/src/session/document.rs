@@ -87,6 +87,15 @@ impl Document {
         let _ = self.0.tx.send(Msg::Edited { doc, version, edit });
     }
 
+    pub fn select(&self, selection: TextRange, mirroring: bool) {
+        lock(&self.0.text).source.select(selection, mirroring);
+        let caret = selection.start as usize;
+        let _ = self.0.tx.send(Msg::Selected {
+            doc: self.0.id,
+            caret,
+        });
+    }
+
     pub fn editable(&self) -> bool {
         !lock(&self.0.text).closed
     }

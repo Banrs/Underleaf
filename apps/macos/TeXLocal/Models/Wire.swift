@@ -882,14 +882,6 @@ nonisolated struct ListVersions: SessionRequest {
     static let command = "ListVersions"
 }
 
-nonisolated struct LiveCaret: SessionRequest {
-    typealias Reply = Done
-    static let command = "LiveCaret"
-
-    var path: String
-    var offset: Int
-}
-
 nonisolated struct LiveDocument: Decodable, Hashable, Sendable {
     var path: String
     var changed: [PageRange]

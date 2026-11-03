@@ -63,7 +63,6 @@ final class ProjectModel {
     private(set) var currentHeading: Int?
     @ObservationIgnored private var currentLine = 1
     @ObservationIgnored private var caretMoved = false
-    @ObservationIgnored private(set) var caret: (path: String, offset: Int)?
     var trail = Trail()
 
     private var root: URL? { store.project.map { URL(filePath: $0.root, directoryHint: .isDirectory) } }
@@ -191,10 +190,7 @@ final class ProjectModel {
         initialLoadComplete = true
     }
 
-    func cursorMoved(to line: Int, column: Int, shownColumn: Int, caret offset: Int, in path: String?) {
-        let moved = caret?.path != path || caret?.offset != offset
-        caret = path.map { ($0, offset) }
-        if moved { liveCaret() }
+    func cursorMoved(to line: Int, column: Int, shownColumn: Int) {
         if shownColumn != self.shownColumn { self.shownColumn = shownColumn }
         guard line != cursorLine || column != cursorColumn else { return }
         (cursorLine, cursorColumn, currentLine) = (line, column, line)

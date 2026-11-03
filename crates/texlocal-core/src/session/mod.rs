@@ -51,6 +51,10 @@ pub(crate) enum Msg {
         version: u64,
         edit: TextEdit,
     },
+    Selected {
+        doc: u64,
+        caret: usize,
+    },
     Command(Session, Reply),
     BuildDone(Result<CompileResult, CoreError>),
     Cleaned(Result<(), CoreError>),

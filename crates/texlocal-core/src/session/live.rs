@@ -338,7 +338,11 @@ impl Actor {
     }
 
     pub fn live_caret(&mut self, path: String, offset: usize) {
-        self.live.wanted = Some((path, offset));
+        let wanted = Some((path, offset));
+        if self.live.wanted == wanted {
+            return;
+        }
+        self.live.wanted = wanted;
         if self.live.phase == LivePhase::Running {
             self.after(Timer::Caret);
             self.follow_soon();

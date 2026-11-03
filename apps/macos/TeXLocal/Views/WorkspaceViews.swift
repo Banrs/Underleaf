@@ -28,9 +28,7 @@ final class WorkspaceViews: ProjectViews {
     isolated deinit { watches.forEach { $0.cancel() } }
 
     private func connect() {
-        editor.onCursor = { [weak self] line, column, shown in
-            if let self { project.cursorMoved(to: line, column: column, shownColumn: shown, caret: editor.caret, in: editor.path) }
-        }
+        editor.onCursor = { [weak self] line, column, shown in self?.project.cursorMoved(to: line, column: column, shownColumn: shown) }
         editor.onScroll = { [weak self] in self?.project.scrolled(to: $0) }
         editor.onChange = { [weak self] in self?.changes += 1 }
         editor.command = { [weak self] in if let project = self?.project { project.window?.perform($0, on: project) } }

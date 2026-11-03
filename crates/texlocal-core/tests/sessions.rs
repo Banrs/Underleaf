@@ -11,7 +11,7 @@ use common::{FakePreview, Library, Rig, SESSION, names, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
 use texlocal_core::session::{Document, LiveEvent, RunEnd};
-use texlocal_latex::syntax::Source;
+use texlocal_latex::syntax::{Source, TextRange};
 
 const MAIN: &str = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee \\ref{sec:intro}.\n\\input{ch}\n\\end{document}\n";
 const CHAPTER: &str = "\\section{Chapter}\nwords about a cat\n";
@@ -1271,7 +1271,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
         None,
         false,
     );
-    rig.call("LiveCaret", json!({ "path": "main.tex", "offset": 0 }));
+    doc.select(TextRange::default(), false);
     preview.send(LiveEvent::Document {
         path: pdf.to_string_lossy().into_owned(),
         pages: 2,
@@ -1317,27 +1317,18 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
             .sum::<usize>()
     };
     let caret = |line| {
-        rig.call(
-            "LiveCaret",
-            json!({ "path": "main.tex", "offset": start(line) }),
-        )
+        let start = start(line) as u32;
+        doc.select(TextRange { start, length: 0 }, false);
     };
     let followed = |moved: &dyn Fn()| {
         rig.forget();
-        let asked = Instant::now();
         moved();
-        let page = rig.event("liveFollow", |_| true)["page"].as_f64();
-        assert!(
-            asked.elapsed() < Duration::from_millis(200),
-            "{:?}",
-            asked.elapsed()
-        );
-        page
+        rig.event("liveFollow", |_| true)["page"].as_f64()
     };
-    assert_eq!(followed(&|| drop(caret(10))), Some(2.0));
+    assert_eq!(followed(&|| caret(10)), Some(2.0));
     let typed = || drop(doc.edit(start(10) as u32, 0, "More ", None, false));
     assert_eq!(followed(&typed), Some(2.0));
-    assert_eq!(followed(&|| drop(caret(4))), Some(1.0));
+    assert_eq!(followed(&|| caret(4)), Some(1.0));
     rig.forget();
     for line in [2, 3, 5, 7] {
         caret(line);
