@@ -94,11 +94,14 @@ async fn fetch(
     to: &Path,
     path_env: &str,
 ) -> Result<(), CoreError> {
-    match run(processes, None, sys::download(url, to, path_env)).await? {
-        (0, _) => Ok(()),
-        (6 | 7, _) => Err(CoreError::unavailable(messages::github_unreachable())),
-        (28, _) => Err(CoreError::unavailable(messages::tinytex_stalled())),
-        (_, out) => Err(CoreError::internal(messages::tinytex_download_failed(
+    // No overall limit: curl's --speed-limit already ends a stalled download, and a slow but
+    // steady one over tlmgr's 600 s is still worth finishing.
+    let download = sys::download(url, to, path_env);
+    match process::run(processes, None, download, None).await? {
+        (0, ..) => Ok(()),
+        (6 | 7, ..) => Err(CoreError::unavailable(messages::github_unreachable())),
+        (28, ..) => Err(CoreError::unavailable(messages::tinytex_stalled())),
+        (_, out, _) => Err(CoreError::internal(messages::tinytex_download_failed(
             crate::tail(out.trim(), 2000),
         ))),
     }
