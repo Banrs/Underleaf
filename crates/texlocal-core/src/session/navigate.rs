@@ -125,7 +125,7 @@ impl Actor {
         tokio::task::spawn_blocking(move || {
             let own = doc.facts();
             let found = doc.with(|source| {
-                let (kind, name, _) = source.symbol_at(&own, offset)?;
+                let (kind, name, _) = source.symbol_in(&own, 0, offset)?;
                 let defined = source.defined(&own, kind, &name).into_iter().next();
                 Some((kind, name, defined))
             });

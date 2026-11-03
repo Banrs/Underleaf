@@ -255,7 +255,7 @@ impl SourceDocument {
 
     pub(crate) fn definition(&self, at: u32) -> Option<Definition> {
         let own = Facts::read(&self.text(), file_kind(&self.path));
-        let (kind, name, file) = self.symbol_at(&own, at)?;
+        let (kind, name, file) = self.symbol_in(&own, 0, at)?;
         let places = match kind {
             SymbolKind::File => {
                 let start = Place {
@@ -275,6 +275,11 @@ impl SourceDocument {
     }
 
     pub(crate) fn symbol(&mut self, at: u32) -> Option<SymbolName> {
+        let (kind, name, _) = self.symbol_at(at)?;
+        Some(SymbolName { kind, name })
+    }
+
+    pub fn symbol_at(&mut self, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
         let text = &self.text;
         let line = text.line_index(at.min(text.len()));
         let blank = |&index: &usize| scan::blank_line(text.line(index));
@@ -299,15 +304,10 @@ impl SourceDocument {
         let end = last.map_or_else(|| text.bounds(window).end, |last| text.lines[last] as usize);
         let paragraph = utf16::lossy(&text.units[text.lines[first] as usize..end]);
         let own = Facts::read(&paragraph, file_kind(&self.path));
-        let (kind, name, _) = self.symbol_in(&own, first, at)?;
-        Some(SymbolName { kind, name })
+        self.symbol_in(&own, first, at)
     }
 
-    pub fn symbol_at(&self, own: &Facts, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
-        self.symbol_in(own, 0, at)
-    }
-
-    fn symbol_in(
+    pub fn symbol_in(
         &self,
         own: &Facts,
         first: usize,

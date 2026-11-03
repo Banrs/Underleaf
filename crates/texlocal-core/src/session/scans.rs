@@ -85,7 +85,7 @@ impl Actor {
         let (project, docs) = (self.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let own = doc.facts();
-            let symbol = doc.with(|source| source.symbol_at(&own, offset));
+            let symbol = doc.with(|source| source.symbol_in(&own, 0, offset));
             let named = symbol.and_then(|(kind, name, file)| match kind {
                 SymbolKind::File => Some((kind, file?)),
                 kind => Some((kind, name)),

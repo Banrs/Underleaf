@@ -209,7 +209,7 @@ fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
         let whole = Facts::read(text, file_kind("main.tex"));
         for at in 0..=text.encode_utf16().count() as u32 {
             let read = doc
-                .symbol_at(&whole, at)
+                .symbol_in(&whole, 0, at)
                 .map(|(kind, name, _)| json!({ "kind": kind, "name": name }));
             let answer = run(&mut doc, "SymbolAt", json!({ "at": at }));
             assert_eq!(answer, read.unwrap_or_default(), "{text:?} at {at}");
