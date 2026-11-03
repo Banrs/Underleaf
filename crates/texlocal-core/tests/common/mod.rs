@@ -88,8 +88,12 @@ pub fn write(root: &Path, files: &[(&str, &str)]) {
     }
 }
 
+/// How long a test waits for what it expects before it fails. Each wait ends as soon as what it
+/// waits for comes, so this only stops a hung run: 20 s failed the TeX tests at a load average of 28.
+const PATIENCE: Duration = Duration::from_secs(120);
+
 pub fn wait_until(why: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PATIENCE;
     while !done() {
         assert!(Instant::now() < deadline, "{why}");
         std::thread::sleep(Duration::from_millis(20));
@@ -273,7 +277,7 @@ impl Rig {
         if let Some(found) = self.seen.lock().unwrap().iter().find(|e| matching(e)) {
             return found.clone();
         }
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + PATIENCE;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let event = self
@@ -339,11 +343,9 @@ impl Drop for Rig {
                 "session {session} closes at the end of the test: {closed:?}"
             );
         }
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while Arc::strong_count(&self.sessions) > 1 {
-            assert!(Instant::now() < deadline, "the session threads end");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until("the session threads end", || {
+            Arc::strong_count(&self.sessions) == 1
+        });
     }
 }
 
