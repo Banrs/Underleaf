@@ -27,38 +27,6 @@ final class NavigatorArea: NSViewController {
     }
 }
 
-/// The navigator chooser: a tabs-role segmented control at the large size, its segments sharing the sidebar's width, as
-/// Xcode's choosers do however few their choices.
-private final class NavigatorChooser: NSSegmentedControl {
-    private weak var project: ProjectModel?
-    private var watch: Task<Void, Never>?
-
-    isolated deinit { watch?.cancel() }
-
-    init(project: ProjectModel) {
-        self.project = project
-        super.init(frame: .zero)
-        let all = Navigator.allCases
-        segmentCount = all.count
-        for (index, navigator) in all.enumerated() {
-            setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
-            setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
-        }
-        segmentDistribution = .fillEqually
-        trackingMode = .selectOne
-        role = .tabs
-        controlSize = .large
-        setAccessibilityLabel(String(localized: "Navigators"))
-        target = self
-        action = #selector(choose)
-        watch = track({ project.navigator.shown }) { [weak self] in self?.selectedSegment = all.firstIndex(of: $0)! }
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    @objc private func choose() { project?.showNavigator(Navigator.allCases[selectedSegment]) }
-}
-
 extension Navigator {
     var title: String {
         switch self {
@@ -246,15 +214,7 @@ private extension Navigator {
     }
 }
 
-private struct Chooser: NSViewRepresentable {
-    let project: ProjectModel
-
-    func makeNSView(context: Context) -> NavigatorChooser { NavigatorChooser(project: project) }
-    func updateNSView(_ view: NavigatorChooser, context: Context) {}
-}
-
-/// The sidebar as Xcode's navigator area: the shown navigator scrolls beneath the chooser at its top, softly, its rows
-/// starting 8 pt below it, as Xcode's do.
+/// The sidebar: the shown navigator scrolls softly beneath the chooser at its top.
 struct NavigatorPane: View {
     let project: ProjectModel
     let field: FieldHandle
@@ -270,10 +230,23 @@ struct NavigatorPane: View {
         }
         .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .safeAreaBar(edge: .top, spacing: 0) {
-            // Xcode's lists start 8 pt below the chooser, and its Find navigator's mode row 2 pt below.
-            Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
+        .safeAreaBar(edge: .top) { chooser }
+    }
+
+    private var chooser: some View {
+        Picker("Navigators", selection: Bindable(project.navigator).shown) {
+            ForEach(Navigator.allCases, id: \.self) { navigator in
+                Label(navigator.title, systemImage: navigator.symbol).help("\(navigator.title) (⌘\(String(navigator.shortcut.character)))")
+            }
         }
+        .pickerStyle(.tabs)
+        .buttonSizing(.flexible)
+        .labelStyle(.iconOnly)
+        .labelsHidden()
+        .controlSize(.large)
+        // As far in as the sidebar's selection and AppKit's split-item accessories inset theirs, 10 pt (measured on 27.2); the
+        // list would otherwise start at its foot.
+        .padding([.horizontal, .bottom], 10)
     }
 
     @ViewBuilder private func list(_ navigator: Navigator) -> some View {
