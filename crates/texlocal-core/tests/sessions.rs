@@ -1743,11 +1743,15 @@ async fn a_deleted_file_restored_unchanged_releases_its_question_and_saves_the_e
     doc.edit(0, 0, "mine ", None, false).unwrap();
     fs::remove_file(&path).unwrap();
     asked(&rig, "ch.tex", "gone");
-    rig.section("tree", |tree| !names(tree, "path").contains(&"ch.tex".into()));
+    rig.section("tree", |tree| {
+        !names(tree, "path").contains(&"ch.tex".into())
+    });
     rig.forget();
 
     fs::write(&path, CHAPTER).unwrap();
-    rig.section("tree", |tree| names(tree, "path").contains(&"ch.tex".into()));
+    rig.section("tree", |tree| {
+        names(tree, "path").contains(&"ch.tex".into())
+    });
     assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
     rig.section("documents", |documents| {
         documents.as_array().unwrap().iter().any(|doc| {
@@ -1793,11 +1797,18 @@ async fn importing_a_folder_leaves_nested_links_unread() {
     write(&outside, &[("private.png", "private")]);
     std::os::unix::fs::symlink(&outside, folder.join("linked")).unwrap();
     fs::set_permissions(&outside, fs::Permissions::from_mode(0)).unwrap();
-    let asked = rig.send(SESSION, "ImportFiles", json!({ "dir": "", "paths": [folder] }));
+    let asked = rig.send(
+        SESSION,
+        "ImportFiles",
+        json!({ "dir": "", "paths": [folder] }),
+    );
     let imported = rig.reply(asked);
     fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(imported.unwrap()["existing"], json!([]));
-    assert_eq!(fs::read(rig.root().join("Import/plot.png")).unwrap(), b"png");
+    assert_eq!(
+        fs::read(rig.root().join("Import/plot.png")).unwrap(),
+        b"png"
+    );
     assert!(!rig.root().join("Import/linked").exists());
 }
 

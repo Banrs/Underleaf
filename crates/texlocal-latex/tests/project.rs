@@ -205,6 +205,10 @@ fn macro_argument_counts_stay_within_texs_limit() {
     ] {
         let source = format!("\\newcommand{{\\test}}{options}{{}}");
         let facts = Facts::read(&source, FileKind::Tex);
-        assert_eq!(facts.defined.commands.len(), usize::from(accepted), "{options}");
+        assert_eq!(
+            facts.defined.commands.len(),
+            usize::from(accepted),
+            "{options}"
+        );
     }
 }
