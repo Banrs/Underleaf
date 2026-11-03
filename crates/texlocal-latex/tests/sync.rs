@@ -161,13 +161,18 @@ fn a_word_is_found_in_the_pdf_by_the_words_around_it() {
 fn a_word_twice_in_the_pdf_needs_the_box_synctex_gives() {
     let twice = json!([{ "page": 1, "text": "a cat. a cat.", "near": [] }]);
     assert_eq!(in_pdf("cat", 1, &pages(twice)), Value::Null);
-    let near = pages(
-        json!([{ "page": 1, "text": "a cat. a cat.", "near": [{ "start": 9, "length": 3 }] }]),
-    );
-    assert_eq!(
-        in_pdf("cat", 1, &near),
-        json!({ "page": 1, "start": 9, "end": 12 })
-    );
+    for length in [3, u32::MAX] {
+        let near = pages(json!([{
+            "page": 1,
+            "text": "a cat. a cat.",
+            "near": [{ "start": 9, "length": length }]
+        }]));
+        assert_eq!(
+            in_pdf("cat", 1, &near),
+            json!({ "page": 1, "start": 9, "end": 12 }),
+            "length {length}"
+        );
+    }
 }
 
 #[test]
