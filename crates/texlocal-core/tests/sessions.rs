@@ -1780,3 +1780,20 @@ async fn a_live_acknowledgement_keeps_the_shown_pdfs_source_snapshot() {
     let moved = json!({ "file": "main.tex", "line": 30 });
     assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn importing_a_folder_leaves_nested_links_unread() {
+    let rig = project().await;
+    let folder = rig.library.path("Import");
+    let outside = rig.library.path("External");
+    write(&folder, &[("plot.png", "png")]);
+    write(&outside, &[("private.png", "private")]);
+    std::os::unix::fs::symlink(&outside, folder.join("linked")).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0)).unwrap();
+    let asked = rig.send(SESSION, "ImportFiles", json!({ "dir": "", "paths": [folder] }));
+    let imported = rig.reply(asked);
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(imported.unwrap()["existing"], json!([]));
+    assert_eq!(fs::read(rig.root().join("Import/plot.png")).unwrap(), b"png");
+    assert!(!rig.root().join("Import/linked").exists());
+}

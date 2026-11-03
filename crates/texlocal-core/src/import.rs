@@ -76,7 +76,7 @@ pub(crate) fn import_files(
         } else if meta.is_dir() {
             walk(
                 abs,
-                &|rel| !rel.split('/').any(is_litter),
+                &|rel| !rel.split('/').any(is_litter) && !abs.join(rel).is_symlink(),
                 true,
                 &mut |entry| {
                     if !entry.dir && !entry.link {
