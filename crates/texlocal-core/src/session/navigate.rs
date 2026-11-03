@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
@@ -17,6 +17,7 @@ use texlocal_latex::{bib, project};
 use super::Pending;
 use super::actor::Actor;
 use super::live::{document_lines, typeset_lines};
+use super::watch::Tree;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
 use crate::{CoreError, lf, lossy_string, messages, paths, settings};
 
@@ -46,10 +47,10 @@ pub(crate) struct QuickHelp {
     place: Option<FilePlace>,
 }
 
-impl Actor {
+impl Tree {
     pub fn quick_open(&self, query: String, reply: Pending<Vec<QuickOpenItem>>) {
         let scan = Arc::clone(&self.scan.read().unwrap_or_else(PoisonError::into_inner));
-        let (files, main) = (self.tree.files.clone(), self.tree.main.clone());
+        let (files, main) = (self.files.clone(), self.main.clone());
         tokio::task::spawn_blocking(move || {
             let mut items: Vec<QuickOpenItem> = files
                 .into_iter()
@@ -114,14 +115,16 @@ impl Actor {
             reply.send(Ok(items.collect()));
         });
     }
+}
 
+impl Actor {
     pub fn quick_help(&self, path: &str, offset: u32, reply: Pending<Option<QuickHelp>>) {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.project.root.clone(), self.docs.handles());
-        let settings = settings::read_settings(&self.project.settings);
-        let aux = settings.output(&self.project.build, "aux");
+        let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
+        let settings = settings::read_settings(&self.core.project.settings);
+        let aux = settings.output(&self.core.project.build, "aux");
         tokio::task::spawn_blocking(move || {
             let found = doc.with(|source| {
                 let (kind, name, _) = source.symbol_at(offset)?;
@@ -180,21 +183,11 @@ impl Actor {
 }
 
 impl Actor {
-    pub fn live_pdf(&self) -> Result<Option<PathBuf>, CoreError> {
-        let Some(pdf) = self.live.pdf.as_ref().filter(|_| self.live.active()) else {
-            return Ok(None);
-        };
-        if !pdf.with_extension("synctex").is_file() {
-            return Err(CoreError::not_found(messages::texpresso_unsynced()));
-        }
-        Ok(Some(pdf.clone()))
-    }
-
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
         if line < 1 {
             return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
         }
-        let (live, project) = (self.live_pdf(), self.project.clone());
+        let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().get(&file).cloned());
         tokio::task::spawn_blocking(move || {
@@ -223,7 +216,7 @@ impl Actor {
         click: Option<PageClick>,
         reply: Pending<InverseLoc>,
     ) {
-        let (live, project) = (self.live_pdf(), self.project.clone());
+        let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let sources = self.live.typeset().clone();
         let docs = self.docs.handles();
         tokio::task::spawn_blocking(move || {
@@ -251,7 +244,7 @@ impl Actor {
     ) {
         let (doc, root) = (
             self.docs.get(&file).map(|doc| doc.doc.clone()),
-            self.project.root.clone(),
+            self.core.project.root.clone(),
         );
         tokio::task::spawn_blocking(move || {
             let text = match doc {

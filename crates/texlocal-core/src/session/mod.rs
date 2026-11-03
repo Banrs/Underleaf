@@ -221,11 +221,11 @@ impl Sessions {
     ) {
         let session = *entry.key();
         let (tx, rx) = mpsc::unbounded_channel();
-        let (docs, opens) = (Docs::default(), Arc::default());
+        let docs = Docs::default();
         entry.insert(Open {
             tx: tx.clone(),
             docs: docs.shared(),
-            opens: Arc::clone(&opens),
+            opens: Arc::clone(&docs.opens),
         });
         let (sessions, runtime) = (Arc::clone(self), tokio::runtime::Handle::current());
         let (mut alive, runtime_gone) = oneshot::channel::<()>();
@@ -236,7 +236,7 @@ impl Sessions {
                 ACTOR.set(true);
                 let _ = catch_unwind(AssertUnwindSafe(|| {
                     let _entered = runtime.enter();
-                    match actor::Actor::new(&sessions, session, opening, docs, opens, tx.clone()) {
+                    match actor::Actor::new(&sessions, session, opening, docs, tx.clone()) {
                         Ok((actor, ui)) => {
                             reply.send(Ok(ui));
                             runtime.block_on(actor.run(rx, runtime_gone));

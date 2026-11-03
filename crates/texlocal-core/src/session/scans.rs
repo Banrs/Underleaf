@@ -1,21 +1,15 @@
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::facts::Facts;
-use texlocal_latex::logparse::LogItem;
-use texlocal_latex::project::{self, Analysis, Scan};
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
 
-use super::Document;
 use super::actor::Actor;
-use super::state::SessionSection;
-use super::{Msg, Pending};
+use super::{Document, Pending};
 use crate::projects::{self, SearchGroup};
-use crate::{CoreError, tex};
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Usages {
@@ -24,51 +18,8 @@ pub(crate) struct Usages {
 }
 
 impl Actor {
-    pub fn scan_symbols(&mut self) {
-        self.symbols_seq += 1;
-        let (seq, project, tx) = (self.symbols_seq, self.project.clone(), self.tx.clone());
-        let (facts, docs) = (Arc::clone(&self.facts), self.docs.handles());
-        let mut files: Vec<String> = self.tree.files.iter().cloned().collect();
-        files.sort_unstable();
-        let (service, main, edits) = (
-            Arc::clone(&self.service),
-            self.tree.main.clone(),
-            self.builds.clock,
-        );
-        let shown = self.open.clone();
-        tokio::task::spawn_blocking(move || {
-            let read = projects::scan_facts(&project, &facts, &texts(&docs));
-            let installed = tex::installed(&service.tool_paths().0);
-            let result = read.map(|read| {
-                let scan = Scan::new(read, files, installed);
-                let checks = main
-                    .as_deref()
-                    .map_or_else(Vec::new, |main| project::check(&scan, main));
-                let analysis = project::analyze(&scan, main.as_deref(), shown.as_deref());
-                Box::new((scan, checks, analysis))
-            });
-            let _ = tx.send(Msg::Symbols { seq, edits, result });
-        });
-    }
-
-    pub fn symbols_done(
-        &mut self,
-        seq: u64,
-        edits: u64,
-        result: Result<Box<(Scan, Vec<LogItem>, Analysis)>, CoreError>,
-    ) {
-        if let Ok(scanned) = result
-            && seq == self.symbols_seq
-        {
-            let (scan, checks, outline) = *scanned;
-            *self.scan.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(scan);
-            self.checks_done(checks, edits);
-            self.publish(SessionSection::Outline(Some(outline)));
-        }
-    }
-
     pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
-        let (project, docs) = (self.project.clone(), self.docs.handles());
+        let (project, docs) = (self.core.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
@@ -82,7 +33,7 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (project, docs) = (self.project.clone(), self.docs.handles());
+        let (project, docs) = (self.core.project.clone(), self.docs.handles());
         tokio::task::spawn_blocking(move || {
             let symbol = doc.with(|source| source.symbol_at(offset));
             let named = symbol.and_then(|(kind, name, file)| match kind {

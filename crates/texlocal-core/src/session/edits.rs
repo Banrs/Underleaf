@@ -73,7 +73,7 @@ impl Actor {
         let texts = open
             .iter()
             .map(|(path, text, _)| (path.clone(), text.clone()));
-        let read = projects::scan_facts(&self.project, &self.facts, &texts.collect())?;
+        let read = projects::scan_facts(&self.core.project, &self.tree.facts, &texts.collect())?;
         let defines = |name: &str| {
             let mut files = read.values();
             files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
@@ -94,7 +94,7 @@ impl Actor {
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
         let edits = match fix {
             Fix::Install(file) => {
-                let (service, children) = (Arc::clone(&self.service), self.children);
+                let (service, children) = (Arc::clone(&self.core.service), self.core.children);
                 tokio::spawn(async move {
                     let path = service.tool_paths().0;
                     let installed =
@@ -148,7 +148,7 @@ impl Actor {
         if let Some(doc) = self.docs.values().find(unsettled) {
             return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }
-        self.save_first()?;
+        self.docs.save_first(&mut self.core)?;
         let text = |doc: &Doc| {
             let (text, version) = doc.doc.snapshot();
             (doc.path.clone(), text, version)
@@ -188,7 +188,7 @@ fn edit_project(
     let open: Vec<String> = open.iter().map(|(path, ..)| path.clone()).collect();
     Ok(Box::new(move |actor, snapshot| {
         let others = |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel);
-        let written = projects::replace_in_files(&actor.project, &others, &found, &to)?;
+        let written = projects::replace_in_files(&actor.core.project, &others, &found, &to)?;
         Ok(ProjectEdits {
             edits,
             written,
