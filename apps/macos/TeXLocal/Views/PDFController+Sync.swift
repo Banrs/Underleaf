@@ -119,11 +119,10 @@ enum SyncTeXGeometry {
 extension PDFPage {
     func click(at point: CGPoint) -> PageClick? {
         guard document != nil, let word = selectionForWord(at: point), let text = string else { return nil }
-        let range = word.range(at: 0, on: self)
-        guard range.location != NSNotFound else { return nil }
-        let offset = (0..<range.length).first { i in
-            selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
-        }
-        return PageClick(text: text, at: range.location + (offset ?? 0))
+        let start = word.range(at: 0, on: self).location
+        guard start != NSNotFound else { return nil }
+        let index = characterIndex(at: point)
+        // Off a glyph, as just above one on the word's line, PDFKit gives NSNotFound rather than the -1 it documents.
+        return PageClick(text: text, at: (0..<NSNotFound).contains(index) ? index : start)
     }
 }

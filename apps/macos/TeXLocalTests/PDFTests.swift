@@ -56,6 +56,17 @@ struct PDFTests {
         #expect(try shown(view).page == 1)
     }
 
+    @Test func aClickGivesTheCharacterUnderItWithThePagesText() throws {
+        let document = try textPDF(["alpha needle"])
+        let page = try #require(document.page(at: 0)), text = try #require(page.string), word = (text as NSString).range(of: "needle")
+        for offset in [0, 2, 5] {
+            let box = try #require(page.selection(for: NSRange(location: word.location + offset, length: 1))).bounds(for: page)
+            #expect(page.click(at: CGPoint(x: box.midX, y: box.midY)) == PageClick(text: text, at: word.location + offset))
+        }
+        let above = try #require(page.selection(for: NSRange(location: word.location + 2, length: 1))).bounds(for: page)
+        #expect(page.click(at: CGPoint(x: above.midX, y: above.maxY + 0.5)) == PageClick(text: text, at: word.location))
+    }
+
     @Test func aZoomChosenWhileThePaneIsHiddenIsTheOneKept() {
         let controller = PDFController()
         controller.setScale(2)
