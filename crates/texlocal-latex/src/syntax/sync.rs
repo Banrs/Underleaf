@@ -59,10 +59,16 @@ impl Visit for Found {
 
 pub fn sync_lines(text: &str, line: u32) -> SyncLines {
     let text = Text::new(text);
-    let units = &text.units;
     let mut found = Found::default();
     let mut scanner = Scanner::default();
-    scanner.run(units, units.len(), &[], &mut found);
+    scanner.run(&text.units, text.units.len(), &[], &mut found);
+    lines_at(&text, found, &scanner, line)
+}
+
+/// The lines from what a scan found, given the scanner where it stopped, whose open environments are taken to run to
+/// the end of the text.
+fn lines_at(text: &Text, mut found: Found, scanner: &Scanner, line: u32) -> SyncLines {
+    let units = &text.units;
     let unclosed = scanner
         .groups()
         .filter_map(|group| group.environment().map(|name| (group, name)));
