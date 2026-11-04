@@ -119,10 +119,10 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
         guard let document = view.document else { return NSRange() }
         if let selection = view.currentSelection, let page = selection.pages.first,
            case let range = selection.range(at: 0, on: page), range.location != NSNotFound,
-           let start = start(of: document.index(for: page)) {
+           let start = span(of: document.index(for: page))?.lowerBound {
             return NSRange(location: start + range.location, length: range.length)
         }
-        guard let shown = view.shownPlace, let page = document.page(ifAt: shown.index), let start = start(of: shown.index) else {
+        guard let shown = view.shownPlace, let page = document.page(ifAt: shown.index), let start = span(of: shown.index)?.lowerBound else {
             return NSRange()
         }
         // Off a glyph, as the shown area's corner usually is, PDFKit gives NSNotFound for the character there.
@@ -142,8 +142,8 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
         return page.selection(for: NSRange(location: range.location - start, length: range.length))
     }
 
-    private func start(of page: Int) -> Int? {
-        pages.withLock { pages in pages.ends.indices.contains(page) ? pages.start(of: page) : nil }
+    private func span(of page: Int) -> Range<Int>? {
+        pages.withLock { pages in pages.ends.indices.contains(page) ? pages.start(of: page)..<pages.ends[page] : nil }
     }
 }
 
