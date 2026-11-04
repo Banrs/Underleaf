@@ -33,6 +33,12 @@ async fn latexmk_builds_a_pdf_with_its_bibliography_and_synctex_goes_from_a_line
         "the reference and citation resolve"
     );
     assert!(Path::new(result["pdf"].as_str().unwrap()).is_file());
+    capture_synctex(
+        result["pdf"].as_str().unwrap(),
+        "compiled-bibliography",
+        "main.tex",
+        ARTICLE,
+    );
     let forward = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 4 }));
     assert_eq!(forward["page"].as_f64(), Some(1.0));
     let (h, v) = (
@@ -83,6 +89,12 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
     let whole = rig.event("liveDocument", |_| true);
+    capture_synctex(
+        whole["path"].as_str().unwrap(),
+        "live-initial",
+        "main.tex",
+        main,
+    );
     let first = Path::new(whole["path"].as_str().unwrap());
     let pdf = std::fs::read(first).unwrap();
     let sync = std::fs::read(first.with_extension("synctex")).unwrap();
@@ -95,6 +107,12 @@ async fn live_preview_writes_pages_as_the_text_changes() {
     assert_eq!(
         std::fs::read(first.with_extension("synctex")).unwrap(),
         sync
+    );
+    capture_synctex(
+        next["path"].as_str().unwrap(),
+        "live-edited",
+        "main.tex",
+        main,
     );
     let second = Path::new(next["path"].as_str().unwrap());
     assert!(second.is_file() && second.with_extension("synctex").is_file());
@@ -126,10 +144,16 @@ async fn forward_sync_follows_the_live_documents_synctex() {
     assert_eq!(page(3), Some(1.0));
     let end = main.find("\\end").unwrap() as u32;
     doc.edit(end, 0, "\\newpage\nSecond page.\n", None, false);
-    rig.event("liveDocument", |e| {
+    let snapshot = rig.event("liveDocument", |e| {
         let second = |r: &serde_json::Value| r["last"].as_u64() >= Some(1);
         e["changed"].as_array().unwrap().iter().any(second)
     });
+    capture_synctex(
+        snapshot["path"].as_str().unwrap(),
+        "live-new-page",
+        "main.tex",
+        &main.replace("\\end", "\\newpage\nSecond page.\n\\end"),
+    );
     assert_eq!(page(5), Some(2.0));
     rig.call("StopLive", json!({}));
 }
@@ -150,7 +174,13 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     rig.open_document("part.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    rig.event("liveDocument", |_| true);
+    let snapshot = rig.event("liveDocument", |_| true);
+    capture_synctex(
+        snapshot["path"].as_str().unwrap(),
+        "live-nested-input",
+        "part.tex",
+        part,
+    );
     let at = json!({ "file": "part.tex", "line": 1 });
     assert_eq!(rig.call("SynctexForward", at)["page"].as_f64(), Some(1.0));
     rig.call("LiveLog", json!({ "shown": true }));
@@ -178,6 +208,28 @@ async fn a_live_edit_to_an_input_after_a_compile_typesets_and_places_its_error()
     rig.call("StopLive", json!({}));
 }
 
+fn capture_synctex(pdf: &str, label: &str, input: &str, source: &str) {
+    let Some(root) = std::env::var_os("TEXLOCAL_SYNCTEX_EXPERIMENT") else {
+        return;
+    };
+    let dir = Path::new(&root).join(label);
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = Path::new(pdf);
+    std::fs::copy(pdf, dir.join("main.pdf")).unwrap();
+    let plain = pdf.with_extension("synctex");
+    let (from, name) = if plain.is_file() {
+        (plain, "main.synctex")
+    } else {
+        (pdf.with_extension("synctex.gz"), "main.synctex.gz")
+    };
+    std::fs::copy(from, dir.join(name)).unwrap();
+    std::fs::write(
+        dir.join("case.json"),
+        json!({ "input": input, "lines": source.lines().count() }).to_string(),
+    )
+    .unwrap();
+}
+
 fn first_page(pdf: &str) -> String {
     let text = Command::new("mutool")
         .args(["draw", "-F", "txt", "-o", "-", pdf, "1"])
@@ -198,9 +250,15 @@ async fn the_live_contents_read_as_the_compiled_ones() {
     rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
-    rig.event("liveDocument", |e| {
+    let snapshot = rig.event("liveDocument", |e| {
         first_page(e["path"].as_str().unwrap()) == compiled
     });
+    capture_synctex(
+        snapshot["path"].as_str().unwrap(),
+        "live-contents",
+        "main.tex",
+        main,
+    );
     rig.call("LiveLog", json!({ "shown": true }));
     let log = rig.section("liveLog", |_| true);
     let log = log.as_str().unwrap();

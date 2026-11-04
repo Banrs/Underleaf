@@ -10,6 +10,7 @@ on:
       - 'crates/texlocal-latex/src/logparse.rs'
       - 'crates/texlocal-latex/src/synctex.rs'
       - 'tools/texpresso/**'
+      - 'tools/synctex-experiment/**'
       - '.github/workflows/tex-check.yml'
 
 permissions:
@@ -29,6 +30,7 @@ jobs:
       TINYTEX: v2026.10
       TEX_PACKAGES: glossaries nomencl makeindex koma-script synctex
       TEXPRESSO: ${{ github.workspace }}/.texpresso
+      TEXLOCAL_SYNCTEX_EXPERIMENT: ${{ runner.temp }}/synctex-experiment
     steps:
       - uses: actions/checkout@v7
       - name: TeXpresso's dependencies
@@ -64,3 +66,11 @@ jobs:
       - run: cargo test --locked --no-fail-fast -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/Helpers/texpresso
+      - name: Compare SyncTeX implementations
+        run: bash tools/synctex-experiment/run.sh "$TEXLOCAL_SYNCTEX_EXPERIMENT"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: synctex-experiment
+          path: ${{ runner.temp }}/synctex-experiment
+          retention-days: 7
