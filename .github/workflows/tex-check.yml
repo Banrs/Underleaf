@@ -30,7 +30,7 @@ jobs:
       TINYTEX: v2026.10
       TEX_PACKAGES: glossaries nomencl makeindex koma-script synctex
       TEXPRESSO: ${{ github.workspace }}/.texpresso
-      TEXLOCAL_SYNCTEX_EXPERIMENT: ${{ runner.temp }}/synctex-experiment
+      TEXLOCAL_SYNCTEX_EXPERIMENT: ${{ github.workspace }}/.synctex-experiment
     steps:
       - uses: actions/checkout@v7
       - name: TeXpresso's dependencies
@@ -72,5 +72,5 @@ jobs:
         if: always()
         with:
           name: synctex-experiment
-          path: ${{ runner.temp }}/synctex-experiment
+          path: ${{ env.TEXLOCAL_SYNCTEX_EXPERIMENT }}
           retention-days: 7
