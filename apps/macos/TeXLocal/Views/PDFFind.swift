@@ -114,20 +114,25 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
 
     func stringLength() -> Int { pages.withLock { $0.ends.last ?? 0 } }
 
-    /// The selection, or with none the place shown, so that the next match is found from the page in view.
+    /// The selection, or with none the place shown, so that the next match is found from the text in view.
     @MainActor var firstSelectedRange: NSRange {
         guard let document = view.document else { return NSRange() }
         if let selection = view.currentSelection, let page = selection.pages.first,
            case let range = selection.range(at: 0, on: page), range.location != NSNotFound,
-           let start = span(of: document.index(for: page))?.lowerBound {
-            return NSRange(location: start + range.location, length: range.length)
+           let span = span(of: document.index(for: page)) {
+            return NSRange(location: span.lowerBound + range.location, length: range.length)
         }
-        guard let shown = view.shownPlace, let page = document.page(ifAt: shown.index), let start = span(of: shown.index)?.lowerBound else {
+        guard let top = view.placeBeneathToolbar, let page = document.page(ifAt: top.index), let span = span(of: top.index) else {
             return NSRange()
         }
-        // Off a glyph, as the shown area's corner usually is, PDFKit gives NSNotFound for the character there.
-        let index = page.characterIndex(at: shown.point)
-        return NSRange(location: start + ((0..<NSNotFound).contains(index) ? index : 0), length: 0)
+        // The shown area's corner is usually off a glyph, where PDFKit finds no character, so this is the first character
+        // from the top beneath the toolbar to the page's foot, across the page, else the page's end. Text under the find
+        // bar counts, as it showed before the bar opened over it.
+        let box = page.bounds(for: view.displayBox)
+        let below = page.selection(for: CGRect(x: box.minX, y: box.minY, width: box.width, height: max(0, top.point.y - box.minY)))
+        let ranges = below.map { below in (0..<below.numberOfTextRanges(on: page)).map { below.range(at: $0, on: page) } } ?? []
+        let first = ranges.map(\.location).filter { $0 != NSNotFound }.min()
+        return NSRange(location: first.map { span.lowerBound + $0 } ?? span.upperBound, length: 0)
     }
 
     @MainActor func scrollRangeToVisible(_ range: NSRange) {

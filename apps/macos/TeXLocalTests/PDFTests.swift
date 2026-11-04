@@ -267,6 +267,33 @@ struct PDFTests {
         #expect(try text.firstSelectedRange == NSRange(location: third, length: 6) && shown(view).page == 2)
     }
 
+    @Test func findWithNothingSelectedGoesOnFromTheTextShownWhenTheShownCornerIsInTheMargin() async throws {
+        let board = NSPasteboard(name: .find), kept = board.string(forType: .string)
+        defer { if let kept { board.clearContents(); board.setString(kept, forType: .string) } }
+        board.clearContents()
+        let controller = PDFController(), view = controller.view, find = view.find
+        let window = try await onScreen(view)
+        defer { window.close() }
+        let filler = Array(repeating: "filler", count: 24).joined(separator: "\n")
+        controller.show(try textPDF(["needle\n\(filler)\nneedle\n\(filler)", "filler"]))
+        try await waitUntil { find.text.pageStrings.count == 2 }
+        find.perform(.showFindInterface)
+        let page = try #require(view.document?.page(at: 0)), string = find.text.pageStrings[0] as NSString
+        let above = string.range(of: "needle"), below = string.range(of: "needle", options: .backwards)
+        let middle = (page.characterBounds(at: above.location).minY + page.characterBounds(at: below.location).maxY) / 2
+        view.go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: middle)))
+        let top = try #require(view.placeBeneathToolbar)
+        #expect(top.index == 0 && !(0..<string.length).contains(page.characterIndex(at: top.point)))
+        // Find Next and Previous both start from here: after the match above and before the one below.
+        let place = find.text.firstSelectedRange
+        #expect(place.length == 0 && (NSMaxRange(above)...below.location).contains(place.location))
+        let field = try #require(view.pageScrollView?.findBarView?.descendants(of: NSSearchField.self).first)
+        try #require(field.currentEditor() as? NSTextView).insertText("needle", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await waitUntil { view.highlightedSelections?.count == 2 }
+        let selection = try #require(view.currentSelection)
+        #expect(selection.pages.first === page && selection.range(at: 0, on: page).location == below.location)
+    }
+
     @Test func findsBarLiesBetweenTheToolbarAndThePagesAndARebuildWithItOpenKeepsThePlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(view)

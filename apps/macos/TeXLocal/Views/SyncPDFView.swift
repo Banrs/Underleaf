@@ -203,6 +203,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var shownPlace: (index: Int, point: CGPoint)? { place(atTop: shownTop) }
 
+    /// The place beneath the toolbar, under the find bar while it shows, which covers what showed before it opened.
+    var placeBeneathToolbar: (index: Int, point: CGPoint)? { place(atTop: bounds.maxY - safeAreaInsets.top) }
+
     private func place(atTop y: CGFloat) -> (index: Int, point: CGPoint)? {
         let top = CGPoint(x: bounds.minX, y: y)
         // Pages have no top margin, so the page whose top edge meets the bar is the one under it, not the one above.
