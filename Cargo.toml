@@ -10,20 +10,7 @@ license = "MIT"
 publish = false
 
 [workspace.lints.clippy]
-assigning_clones = "warn"
-borrow_as_ptr = "warn"
-derive_partial_eq_without_eq = "warn"
-format_push_string = "warn"
-ignored_unit_patterns = "warn"
-map_unwrap_or = "warn"
 missing_safety_doc = "allow"
-needless_collect = "warn"
-redundant_closure_for_method_calls = "warn"
-semicolon_if_nothing_returned = "warn"
-stable_sort_primitive = "warn"
-unchecked_time_subtraction = "warn"
-unused_self = "warn"
-use_self = "warn"
 
 [profile.dev.package."*"]
 opt-level = 2

@@ -120,9 +120,6 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
         guard let top = view.placeBeneathToolbar, let page = document.page(ifAt: top.index), let span = span(of: top.index) else {
             return NSRange()
         }
-        // The shown area's corner is usually off a glyph, where PDFKit finds no character, so this is the first character
-        // from the top beneath the toolbar to the page's foot, across the page, else the page's end. Text under the find
-        // bar counts, as it showed before the bar opened over it.
         let box = page.bounds(for: view.displayBox)
         let below = page.selection(for: CGRect(x: box.minX, y: box.minY, width: box.width, height: max(0, top.point.y - box.minY)))
         let ranges = below.map { below in (0..<below.numberOfTextRanges(on: page)).map { below.range(at: $0, on: page) } } ?? []

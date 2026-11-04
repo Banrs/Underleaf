@@ -2,9 +2,7 @@
 
 # Underleaf
 
-TeXLocal is a LaTeX editor for the Mac that works offline, and Underleaf is its source code. It
-does much of what Overleaf does without an account or a connection: each project is an ordinary
-folder on your disk, compiled by the TeX installation on your Mac.
+TeXLocal is a LaTeX editor for the Mac that works offline, and Underleaf is its source code.
 
 ## Features
 
@@ -19,8 +17,7 @@ folder on your disk, compiled by the TeX installation on your Mac.
   Brackets, dollar signs and environments close as you type, and the maths under the cursor shows
   in a small preview.
 - Compiling with latexmk and pdfLaTeX, XeLaTeX or LuaLaTeX, including BibTeX or biber, glossaries
-  and indexes. As on Overleaf, a build carries on past errors and marks each error and warning on
-  its line. Common errors come with an explanation, and some with a one-click fix, such as
+  and indexes. Common errors come with an explanation, and some with a one-click fix, such as
   installing a missing package.
 - Checks as you type, before you compile: references and citations that point nowhere, labels
   defined twice, missing files, and environments, braces or maths left open.

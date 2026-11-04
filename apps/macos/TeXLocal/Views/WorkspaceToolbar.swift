@@ -209,8 +209,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    /// Called as the columns change size: Compile reads as a word again once the room has grown, since the word last didn't fit,
-    /// by the word's width over the symbol's, so it can't flip back and forth at one width.
     @objc func fit() {
         guard compactCompile, let room = workspace?.toolbarRoom, room + compileButton.intrinsicContentSize.width >= wideRoom else { return }
         setCompact(false)

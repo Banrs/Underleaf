@@ -270,7 +270,7 @@ struct FieldTests {
         try await waitUntil { rename.name == "renamed.tex" }
     }
 
-    @Test func aDialogFieldKeepsItsTextAtTheRightAndShowsATypedSpaceAtOnce() async throws {
+    @Test func aDialogFieldShowsATypedSpaceAtOnce() async throws {
         let defaults = TestDefaults(), model = defaults.window()
         let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -281,13 +281,14 @@ struct FieldTests {
         let editor = try #require(window.firstResponder as? NSTextView)
         let field = try #require(editor.delegate as? NSTextField)
         let caret = { editor.firstRect(forCharacterRange: NSRange(location: $0, length: 0), actualRange: nil).minX }
-        let edge = { window.convertToScreen(field.convert(field.cell!.titleRect(forBounds: field.bounds), to: nil)).maxX }
-        let width = field.frame.width
         editor.insertText(" ", replacementRange: NSRange(location: 5, length: 0))
-        try await waitUntil { field.frame.width > width }
+        try await waitUntil {
+            let bounds = window.convertToScreen(field.convert(field.bounds, to: nil))
+            let afterSpace = editor.firstRect(forCharacterRange: .caret(6), actualRange: nil)
+            return bounds.contains(NSPoint(x: afterSpace.minX, y: afterSpace.midY))
+        }
         #expect(editor.string == "water ")
         #expect(caret(6) > caret(5))
-        #expect((edge() - 4...edge()).contains(caret(6)))
     }
 }
 

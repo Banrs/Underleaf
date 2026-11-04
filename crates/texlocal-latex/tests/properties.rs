@@ -163,10 +163,6 @@ fn apply(
     mirrors.iter().map(|edit| json!(edit)).collect()
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the crate's code starts no threads, which its tests may"
-)]
 fn each_seed(seeds: RangeInclusive<u64>, run: impl Fn(u64) + Sync) {
     std::thread::scope(|scope| {
         for seed in seeds {

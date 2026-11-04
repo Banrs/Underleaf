@@ -1,6 +1,5 @@
 [package]
 name = "texlocal-core"
-description = "TeXLocal's core: projects, sessions, compiling, SyncTeX and the live preview over texlocal-latex — no GUI dependencies"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

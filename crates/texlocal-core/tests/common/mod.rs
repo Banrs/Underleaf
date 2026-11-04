@@ -384,7 +384,6 @@ impl FakePreview {
         self.sink.lock().unwrap().is_some()
     }
 
-    /// The count of opens and changes read, as TeXpresso names it in each output.
     pub fn revision(&self) -> u64 {
         self.revision.load(Ordering::Relaxed)
     }

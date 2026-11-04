@@ -1,6 +1,5 @@
 [package]
 name = "texlocal-wire"
-description = "Writes each client's side of texlocal-core's protocol from its Rust types, with the fixtures every client's tests check"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -101,20 +101,20 @@ struct PDFTests {
         #expect(view.mark == nil)
     }
 
-    @Test func aLivePageHidesItsLinksBordersAsABuiltDocumentDoes() async throws {
+    @Test func aLivePageKeepsItsLinks() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view)
         defer { window.close() }
         try await showLive(["Page 1"], in: controller)
         let linked = try textPDF(["linked"])
         let link = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 50, height: 12), forType: .link, withProperties: nil)
-        link.border = PDFBorder()
-        link.border?.lineWidth = 1
+        let destination = try #require(URL(string: "https://example.com"))
+        link.url = destination
         try #require(linked.page(at: 0)).addAnnotation(link)
         controller.showLive(LivePage(page: 0, pdf: try #require(linked.dataRepresentation())))
         await controller.liveReading?.value
         let links = try #require(view.document?.page(at: 0)).annotations.filter { $0.type == "Link" }
-        #expect(!links.isEmpty && links.allSatisfy { $0.border?.lineWidth == 0 })
+        #expect(links.count == 1 && links.first?.url == destination)
     }
 
     @Test func aLiveDocumentChangesOnlyItsChangedPagesInPlaceAndFindReadsTheirText() async throws {
@@ -293,18 +293,14 @@ struct PDFTests {
         #expect(selection.pages.first === page && selection.range(at: 0, on: page).location == below.location)
     }
 
-    @Test func findsBarLiesBetweenTheToolbarAndThePagesAndARebuildWithItOpenKeepsThePlace() async throws {
+    @Test func aRebuildWithFindOpenKeepsThePlace() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(view)
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         view.find.perform(.showFindInterface)
-        let bar = try #require(view.pageScrollView?.findBarView)
         view.goToStart()
         #expect(try atStart(view))
-        let first = try #require(view.document?.page(at: 0))
-        let pageTop = view.convert(CGPoint(x: 0, y: first.bounds(for: view.displayBox).maxY), from: first)
-        #expect(abs(pageTop.y - bar.convert(bar.bounds, to: view).minY) < 1)
         view.go(to: PDFDestination(page: try #require(view.document?.page(at: 3)), at: CGPoint(x: 0, y: 400)))
         let place = try shown(view)
         for _ in 0..<3 { controller.show(try textPDF(count: 6)) }

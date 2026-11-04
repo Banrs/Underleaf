@@ -83,7 +83,6 @@ impl Tree {
         cx.soon(Timer::Fs);
     }
 
-    /// What the changes on disk since the last mean, refreshing the watcher for a link replaced in place.
     pub fn take_changes(&mut self, cx: &Core, docs: &[String]) -> Meaning {
         let changes = std::mem::take(&mut self.pending);
         let meaning = classify(&cx.project, &changes, &self.index, docs);
