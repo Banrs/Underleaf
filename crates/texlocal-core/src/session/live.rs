@@ -58,15 +58,15 @@ pub(crate) fn typeset_lines(typeset: &str, text: &str, line: u32) -> SyncLines {
 }
 
 /// Reads the document's own checkpoints while it still holds the text typeset: comparing the two takes 0.6 ms on the
-/// 400-page fixture, against 5 ms to scan the text typeset whole. A document edited since is scanned whole outside its
+/// 400-page fixture, against 5 ms to scan the text typeset whole. Both happen under one lock, since an edit between them
+/// would have the edited text's lines read as the typeset text's. A document edited since is scanned whole outside its
 /// lock, which its edits wait on.
 pub(crate) fn document_lines(doc: &Document, typeset: Option<&str>, line: u32) -> SyncLines {
-    if let Some(typeset) = typeset
-        && let Some(text) = doc.with(|source| (!source.holds(typeset)).then(|| source.text()))
-    {
-        return typeset_lines(typeset, &text, line);
-    }
-    doc.with(|source| source.sync_lines(line))
+    let edited = doc.with(|source| match typeset {
+        Some(typeset) if !source.holds(typeset) => Err((typeset, source.text())),
+        _ => Ok(source.sync_lines(line)),
+    });
+    edited.unwrap_or_else(|(typeset, text)| typeset_lines(typeset, &text, line))
 }
 
 #[derive(Default)]
@@ -597,4 +597,45 @@ fn remember(cx: &Core, on: bool) {
         ui.live_preview = on;
         Ok(())
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    #[test]
+    fn a_forward_sync_racing_an_edit_reads_one_text_rather_than_the_edit_as_the_text_typeset() {
+        let typeset =
+            "\\documentclass{article}\n\\begin{document}\nOne.\n\nTwo.\n\\end{document}\n";
+        let (above, added) = (
+            utf16::len("\\documentclass{article}\n\\begin{document}\n") as u32,
+            "A\nB\n",
+        );
+        let edited = typeset.replace("One.", &format!("{added}One."));
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let doc = Document::new(1, "main.tex", typeset, tx, Arc::default());
+        let line = 5;
+        let either = [
+            typeset_lines(typeset, typeset, line),
+            typeset_lines(typeset, &edited, line),
+        ];
+        let done = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..20_000 {
+                    doc.edit(above, 0, added, None, false);
+                    doc.edit(above, utf16::len(added) as u32, "", None, false);
+                }
+                done.store(true, Ordering::Relaxed);
+            });
+            while !done.load(Ordering::Relaxed) {
+                let lines = document_lines(&doc, Some(typeset), line);
+                assert!(either.contains(&lines), "{lines:?} is neither {either:?}");
+            }
+        });
+    }
 }
