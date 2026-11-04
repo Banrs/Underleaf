@@ -253,8 +253,6 @@ impl SourceDocument {
         offer(m.start(), SymbolKind::Command, items)
     }
 
-    /// Definitions come from the last scan, which follows each autosave by 150 ms, so one typed
-    /// since is found about 850 ms later rather than by reading the whole document on each click.
     pub(crate) fn definition(&mut self, at: u32) -> Option<Definition> {
         let (kind, name, file) = self.symbol_at(at)?;
         let places = match kind {

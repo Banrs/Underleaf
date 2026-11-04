@@ -62,8 +62,6 @@ extension PDFController {
         highlight(found?.selection, or: rect, on: page)
     }
 
-    /// Live Preview's caret: scrolls only when its spot is out of view. A page Live Preview hasn't shown yet is
-    /// followed after the next update, if it brings the page.
     func follow(_ loc: ForwardLoc, later: Bool = true) {
         let interval = signposts.beginInterval("follow")
         defer { signposts.endInterval("follow", interval) }

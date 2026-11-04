@@ -140,8 +140,6 @@ pub fn edit_to(text: &str, to: &str) -> Option<TextEdit> {
     })
 }
 
-/// The line of `old` that `line` of `new` stands for: lines before the change keep their number,
-/// lines after it move with it, and lines in it land on the old lines it replaced.
 pub fn map_line(old: &str, new: &str, line: u32) -> u32 {
     let (a, b): (Vec<_>, Vec<_>) = (old.split('\n').collect(), new.split('\n').collect());
     let head = common(a.iter(), b.iter());

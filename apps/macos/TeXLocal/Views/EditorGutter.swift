@@ -23,8 +23,6 @@ struct EditorGutter {
 
     static func digits(_ lineCount: Int) -> Int { max(4, String(lineCount).count) }
 
-    /// The text's line fragment padding is the gutter's unit: the current line's band starts one in, the numbers one inside
-    /// the band, and the fold chevrons take a digit's width between the numbers and the text's own padding.
     mutating func fit(lineCount: Int, numbered: Bool, padding: CGFloat) -> Bool {
         digits = Self.digits(lineCount)
         let digit = ("0" as NSString).size(withAttributes: [.font: font]).width

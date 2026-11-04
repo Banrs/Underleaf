@@ -11,7 +11,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var paper = PDFPaper.white { didSet { matchPaper() } }
     private(set) lazy var find = PDFFind(view: self)
 
-    /// The Find menu's actions go to the find, from the pages and from its bar's field, which lies within the view.
     override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
         action == #selector(PDFFind.performFindPanelAction(_:)) ? find : super.supplementalTarget(forAction: action, sender: sender)
     }
@@ -54,7 +53,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         page.draw(with: box, to: context)
     }
 
-    /// The pages in view, by index, and the pixels per point they show at: what covers are drawn for.
     var coverPages: CoverPages {
         let shown = shownRect
         // Every page from the top of the shown area to its foot, as at a low zoom many show; not `visiblePages`, which
@@ -174,7 +172,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
     }
 
-    /// The place shown before the last resize, which is the one to keep while the pane is collapsed.
     private(set) var lastPlace: (index: Int, point: CGPoint)?
 
     func goToStart() {
@@ -182,14 +179,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
     }
 
-    /// Puts the place's point at the top left of the shown area, on its page or the last one.
     func go(to place: (index: Int, point: CGPoint)) {
         guard let document, let page = document.page(ifAt: min(max(place.index, 0), document.pageCount - 1)) else { return }
         go(to: PDFDestination(page: page, at: place.point))
     }
 
-    /// The top of the area the pages show in: below the toolbar and, while it shows, the find bar, which NSScrollView
-    /// tiles above its pages.
     private var shownTop: CGFloat {
         let bar = pageScrollView.flatMap { $0.isFindBarVisible ? $0.findBarView?.frame.height : nil } ?? 0
         return bounds.maxY - safeAreaInsets.top - bar
@@ -203,7 +197,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var shownPlace: (index: Int, point: CGPoint)? { place(atTop: shownTop) }
 
-    /// The place beneath the toolbar, under the find bar while it shows, which covers what showed before it opened.
     var placeBeneathToolbar: (index: Int, point: CGPoint)? { place(atTop: bounds.maxY - safeAreaInsets.top) }
 
     private func place(atTop y: CGFloat) -> (index: Int, point: CGPoint)? {

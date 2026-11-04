@@ -92,9 +92,6 @@ struct WindowTests {
         await close(app)
     }
 
-    /// At rest nothing is pinned beneath the Projects window's toolbar, so its scroll pocket spans the toolbar alone and
-    /// stays clear; New as a section header pinned there grew the pocket over it, which tinted the toolbar with nothing
-    /// beneath it and joined the two (AppKit's NSScrollPocket, 27.2).
     @Test func theProjectsToolbarStaysClearAtRestWithNothingPinnedBeneathIt() async throws {
         let app = windowedApp()
         let window = try #require(window(of: app.showHome()))

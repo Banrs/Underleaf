@@ -6,13 +6,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     let scrollView = ScrollView()
     var onCursor: (Int, Int, Int) -> Void = { _, _, _ in }
     var onScroll: (Int) -> Void = { _ in }
-    /// Each edit and selection change, for views reading the text or selection to look again.
     var onChange: () -> Void = {}
 
     var path: String?
     var kept: [String: Kept] = [:]
 
-    /// A file's state when another one opened in its place, given back if it opens again unchanged.
     struct Kept {
         let text: String
         let undo: UndoManager

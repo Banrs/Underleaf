@@ -163,8 +163,6 @@ fn apply(
     mirrors.iter().map(|edit| json!(edit)).collect()
 }
 
-/// Runs each seed on a thread of its own: one after another the seeds took 2.3 s, the longest
-/// wait in `cargo test`.
 #[expect(
     clippy::disallowed_methods,
     reason = "the crate's code starts no threads, which its tests may"

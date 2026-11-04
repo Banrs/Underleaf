@@ -88,7 +88,6 @@ pub fn write(root: &Path, files: &[(&str, &str)]) {
     }
 }
 
-/// Takes what a test moved to the real Trash back out if the test stops before putting it back.
 pub struct Trashed(pub PathBuf);
 
 impl Drop for Trashed {
@@ -97,8 +96,6 @@ impl Drop for Trashed {
     }
 }
 
-/// How long a test waits for what it expects before it fails. Each wait ends as soon as what it
-/// waits for comes, so this only stops a hung run: 20 s failed the TeX tests at a load average of 28.
 const PATIENCE: Duration = Duration::from_secs(120);
 
 #[track_caller]
@@ -374,9 +371,7 @@ pub struct FakePreview {
     sink: Mutex<Option<Sink>>,
     pub log: Mutex<String>,
     revision: AtomicU64,
-    /// The offset of the caret last sent, which the session sends once the caret has settled.
     pub caret: Mutex<Option<usize>>,
-    /// Each file as the opens and changes sent make it.
     texts: Mutex<HashMap<String, String>>,
 }
 

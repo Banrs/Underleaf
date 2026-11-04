@@ -1,12 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Find's header, laid out as Xcode's Find navigator lays out its own (IDEFindNavigatorQueryParametersController, read from its
-/// nib and code and measured in Xcode): a row 2 pt under the chooser with Xcode's breadcrumb and a borderless Aa toggle,
-/// regular and gray off, bold and accent on; the query field under it and, in Replace, the replacement field, each keeping
-/// its recents in its symbol's menu, with Replace and Replace All push buttons at its end; then the count of results,
-/// centred in a 22 pt band. Fields and buttons are regular, 24 pt, with small button titles, as Xcode's are, and none is glass:
-/// Xcode's sit in a scroll edge's bar, and only the filter bar floats over the list.
 final class FindHeader: NSView, NSSearchFieldDelegate {
     private lazy var crumb = Breadcrumb { [weak self] item, choice in self?.choose(item, choice) }
     private let usages = NSTextField(labelWithString: "")
@@ -90,7 +84,6 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         guard shown != self.shown else { return }
         let resized = shown.replacing != self.shown?.replacing || (shown.hits > 0) != (self.shown.map { $0.hits > 0 } ?? false)
         self.shown = shown
-        // The header stays built under the other navigators, so it gives up the keyboard as it hides.
         if !shown.visible, [query, replacement].contains(where: { $0.currentEditor() != nil }) { window?.makeFirstResponder(nil) }
         for (field, text) in [(query, shown.query), (replacement, shown.replacement)]
             where field.stringValue != text && (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
@@ -128,11 +121,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         super.layout()
         let width = bounds.width
         let path = crumb.intrinsicContentSize
-        // Where Xcode's sits: 2 pt in, and 2 pt above the field.
         crumb.frame = NSRect(x: 2, y: Self.row - path.height, width: path.width, height: path.height)
         usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
-        // Xcode's nib gives Aa a fixed 21 by 16 pt frame, 8 pt from the end and 2 pt under the breadcrumb's top, so its title
-        // grows from its centre as it turns bold.
         matchCase.frame = NSRect(x: width - 8 - 21, y: crumb.frame.minY + 2, width: 21, height: 16)
         var y = Self.row + 2
         query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field)
@@ -177,7 +167,6 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         Task { await project.replaceAll() }
     }
 
-    /// The rows' heights: the mode row, regular fields and buttons, and Xcode's band for the count.
     private static let row: CGFloat = 20, field: CGFloat = 24, button: CGFloat = 24, band: CGFloat = 22
     private static let modes = [String(localized: "Find"), String(localized: "Replace")]
     private static let criteria = [String(localized: "Containing"), String(localized: "Matching Word")]
@@ -197,7 +186,6 @@ private struct FindHeaderView: NSViewRepresentable {
     }
 }
 
-/// Find's results as Xcode lists them: under a count, each file a row that folds, its results under it.
 struct SearchResults: View {
     let project: ProjectModel
     let field: FieldHandle
@@ -254,7 +242,6 @@ struct SearchResults: View {
         }
     }
 
-    /// Xcode's file rows: the file's icon, its name a little heavier than the results, then its folder, dimmer.
     private func file(_ group: SearchGroup) -> some View {
         Label {
             Text("\(Text(group.file.fileName).fontWeight(.medium)) \(Text(group.file.parentFolder.replacing("/", with: " ▸ ")).foregroundStyle(.secondary))")
@@ -268,7 +255,6 @@ struct SearchResults: View {
         .accessibilityLabel("\(group.file), \(Self.matches(group.hits.count))")
     }
 
-    /// Xcode's result rows: a line glyph, then the line, its match bold.
     private func row(_ hit: SearchHit) -> some View {
         Label {
             Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)").lineLimit(3)

@@ -82,7 +82,6 @@ pub(crate) struct Docs {
     shared: Shared,
     opened: u64,
     pub open: Option<String>,
-    /// The opens asked and not yet run, so only the last one asked runs.
     pub opens: Arc<AtomicU64>,
 }
 
@@ -99,7 +98,6 @@ impl Docs {
         Arc::clone(&self.shared)
     }
 
-    /// Each open document as the task about to run finds it, which it reads as it goes.
     pub fn handles(&self) -> HashMap<String, Document> {
         lock(&self.shared).clone()
     }
@@ -145,7 +143,6 @@ impl Docs {
         cx.publish(SessionSection::OpenFile(open));
     }
 
-    /// Reads a document in from disk, true when it wasn't open already.
     pub fn load(&mut self, cx: &mut Core, path: &str, tree: &Tree) -> Result<bool, CoreError> {
         if self.docs.contains_key(path) {
             return Ok(false);
@@ -179,7 +176,6 @@ impl Docs {
         Ok(true)
     }
 
-    /// Shows a file, closing the document shown before if it saves; true when that closed.
     pub fn show(&mut self, cx: &mut Core, tree: &TreeIndex, path: &str) -> bool {
         let was = self.open.replace(path.to_owned());
         if was.as_deref() == Some(path) {
@@ -192,7 +188,6 @@ impl Docs {
         })
     }
 
-    /// Closes a document, or with `if_saved` only one with nothing typed since it was saved.
     pub fn close(&mut self, cx: &mut Core, path: &str, if_saved: bool) -> bool {
         let saved = |doc: &Doc| !doc.force && doc.doc.close_if(doc.saved);
         if if_saved && !self.docs.get(path).is_some_and(saved) || !self.discard(path) {
@@ -202,7 +197,6 @@ impl Docs {
         true
     }
 
-    /// Moves the documents within `from` to `to`, giving back each one's old and new path.
     pub fn moved(&mut self, from: &str, to: &str) -> Vec<(String, String)> {
         let moved = |path: &str| Some(format!("{to}{}", paths::after_entry(path, from)?));
         if let Some(open) = self.open.as_deref().and_then(moved) {
@@ -230,7 +224,6 @@ impl Docs {
         doc.map(|doc| doc.path.clone())
     }
 
-    /// Takes in an edit the main thread made, true when the reload it was closes its document.
     pub fn edited(&mut self, cx: &mut Core, path: &str, version: u64, edit: &TextEdit) -> bool {
         let Some(doc) = self.docs.get_mut(path) else {
             return false;
@@ -244,7 +237,6 @@ impl Docs {
             cx.after(Timer::Symbols);
             return self.check_disk(cx, path);
         }
-        // An edit made before the main thread saw the reload refused it.
         if reloaded == Some(false) && conflict.is_none() {
             self.ask(cx, path, DiskConflict::Changed);
         }
@@ -311,7 +303,6 @@ impl Docs {
                 projects::write_creating(&abs, file.as_bytes()).map(Some)
             });
             let result = match written {
-                // A dirty document stays open, so the check can't close it.
                 Ok(None) => {
                     self.check_disk(cx, path);
                     continue;
@@ -411,7 +402,6 @@ impl Docs {
         }
     }
 
-    /// Takes the answer to a conflict with the disk, true when it closes the document.
     pub fn resolve(
         &mut self,
         cx: &mut Core,
@@ -430,7 +420,6 @@ impl Docs {
             (DiskConflict::Changed, Resolution::Save) => {
                 (doc.asking, doc.conflict, doc.force) = (false, None, true);
             }
-            // The edits are let go, so the document counts as saved while the main thread takes the disk's text.
             (DiskConflict::Changed, Resolution::Revert) => {
                 let version = doc.doc.version();
                 (doc.asking, doc.conflict, doc.force, doc.saved) = (false, None, false, version);
@@ -444,7 +433,6 @@ impl Docs {
         self.publish(cx);
         match answer {
             Resolution::Save => self.save_edits(cx, true).map(|_| false),
-            // Only the editor showing a document takes a reload, so one not shown closes, to open again from disk.
             Resolution::Revert => Ok(match self.docs[path].disk_text.clone() {
                 Some(text) if self.open.as_deref() == Some(path) => {
                     self.reload(cx, path, &text);
@@ -482,13 +470,11 @@ impl Docs {
         }));
     }
 
-    /// Takes in a document's file as the disk has it now, true when that closes the document.
     pub fn check_disk(&mut self, cx: &mut Core, path: &str) -> bool {
         let abs = cx.project.root.join(path);
         if fs::metadata(&abs).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
             return self.file_gone(cx, path);
         }
-        // A reload in flight checks the disk again once the main thread has taken it.
         let Some(doc) = self
             .docs
             .get_mut(path)
@@ -603,7 +589,6 @@ impl Actor {
         }
     }
 
-    /// Shows what a document closed leaves of the build's and the live preview's issues and the file open.
     pub fn closed(&mut self) {
         self.builds.publish(&mut self.core, &self.docs);
         self.live.publish(&mut self.core, &self.docs, false);
@@ -624,7 +609,6 @@ impl Actor {
 
     pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<(), CoreError> {
         if self.docs.resolve(&mut self.core, path, answer)? {
-            // Live Preview has the edits let go, having passed over the disk's change while the document was open.
             let paths = BTreeSet::from([path.to_owned()]);
             self.live.disk_changed(&mut self.core, &paths);
             self.closed();

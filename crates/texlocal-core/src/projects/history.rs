@@ -136,8 +136,6 @@ impl History {
     }
 
     fn files_now(&self, project: &Project) -> Result<BTreeMap<String, String>, CoreError> {
-        // Every file of a large project, so an auto snapshot reads and hashes only the files
-        // whose stamps changed rather than each one of up to 20 MB.
         static HASHES: Kept<Option<String>> = Kept::holding(16_384);
         let objects = self.objects();
         let mut files = BTreeMap::new();

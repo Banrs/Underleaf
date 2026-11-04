@@ -284,7 +284,6 @@ struct PDFTests {
         view.go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: middle)))
         let top = try #require(view.placeBeneathToolbar)
         #expect(top.index == 0 && !(0..<string.length).contains(page.characterIndex(at: top.point)))
-        // Find Next and Previous both start from here: after the match above and before the one below.
         let place = find.text.firstSelectedRange
         #expect(place.length == 0 && (NSMaxRange(above)...below.location).contains(place.location))
         let field = try #require(view.pageScrollView?.findBarView?.descendants(of: NSSearchField.self).first)
@@ -315,7 +314,6 @@ struct PDFTests {
     @Test func findLightsItsMatchesTakesFindNextFromItsFieldAndDropsThemWhenALiveChangeAltersTheText() async throws {
         let board = NSPasteboard(name: .find), kept = board.string(forType: .string)
         defer { if let kept { board.clearContents(); board.setString(kept, forType: .string) } }
-        // A bar opening on the string about to be typed finds it, and typing it again ends that find with no matches.
         board.clearContents()
         let controller = PDFController(), view = controller.view, find = view.find
         let window = try await onScreen(view)

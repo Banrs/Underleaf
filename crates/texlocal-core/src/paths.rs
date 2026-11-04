@@ -48,8 +48,6 @@ impl Project {
         name.to_string_lossy().into_owned()
     }
 
-    /// Only a library project builds inside its root: a folder opened in place builds into the
-    /// state store, so its own `build` folder holds sources like any other.
     pub(crate) fn builds_in(&self, rel: &str) -> bool {
         relative(&self.root, &self.build).is_some_and(|build| within(rel, &build))
     }

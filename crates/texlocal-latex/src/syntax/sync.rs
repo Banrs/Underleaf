@@ -4,14 +4,10 @@ use std::ops::{Range, RangeInclusive};
 use super::scan::{Group, Scanner, Visit, blank_line, tex_space};
 use super::{SourceDocument, Text};
 
-/// The source lines a forward sync from one line may land on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncLines {
-    /// The line typesets nothing: the preamble, the lines after the document, blank lines and comments.
     Nowhere,
-    /// The line is in a picture, which is shown whole.
     Whole(RangeInclusive<u32>),
-    /// The line itself, else the nearest line after it in its range, else the nearest before it.
     Within {
         line: u32,
         range: RangeInclusive<u32>,
@@ -75,10 +71,6 @@ fn is_document(group: &Group) -> bool {
 }
 
 impl SourceDocument {
-    /// Scans from the checkpoint before the line to the next blank line and the close of each environment open at the
-    /// line's end, rather than the whole text: 13 µs a line with SyncTeX's lookup on the 400-page fixture's 1 MB
-    /// main.tex, against 4.9 ms. A line outside the document environment is still read whole, as only that tells the
-    /// preamble from a file without one.
     pub fn sync_lines(&mut self, line: u32) -> SyncLines {
         let text = &self.text;
         let Some(index) = (line as usize)
@@ -114,8 +106,6 @@ impl SourceDocument {
     }
 }
 
-/// The lines from what a scan found, given the scanner where it stopped, whose open environments are taken to run to
-/// the end of the text.
 fn lines_at(text: &Text, mut found: Found, scanner: &Scanner, line: u32) -> SyncLines {
     let units = &text.units;
     let unclosed = scanner

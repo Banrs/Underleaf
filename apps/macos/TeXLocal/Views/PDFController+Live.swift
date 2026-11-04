@@ -1,21 +1,14 @@
 import PDFKit
 import os
 
-/// Live Preview's feed. While you type TeXpresso sends the pages in view, each as a one-page PDF; after a pause it
-/// writes the whole document, with the pages that changed since the one it wrote before. One read runs at a time, off
-/// the main thread; what arrives meanwhile waits coalesced: one document, whose changed pages merge, and pages by index,
-/// the newest winning, which a newer document replaces with its own.
 struct LiveFeed {
     var document: (path: String, changed: IndexSet)?
     var pages: [Int: Data] = [:]
     var reading: Task<Void, Never>?
     var follow: ForwardLoc?
-    /// The live document shown, which the next one may change in place.
     weak var shown: PDFDocument?
 }
 
-/// Pages pulled out of the document they were read from, by the index they replace, so that the document shown can
-/// take them; `count` is the new document's page count, nil for single pages.
 nonisolated struct LivePages {
     var pages: [Int: PDFPage] = [:]
     var count: Int?
@@ -87,7 +80,6 @@ extension PDFController {
         }
     }
 
-    /// Replaces pages in the document shown, which keeps its place and selection, and trims it to the new count.
     func replace(_ live: LivePages) {
         let interval = signposts.beginInterval("live.page")
         defer { signposts.endInterval("live.page", interval) }

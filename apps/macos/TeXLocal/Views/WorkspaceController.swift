@@ -78,7 +78,6 @@ final class WorkspaceController: ThinSplitViewController {
         if areaItem.minimumThickness != area { areaItem.minimumThickness = area }
     }
 
-    /// The width of the toolbar's middle section: the columns between the sidebar and the inspector.
     var toolbarRoom: CGFloat { areaItem.viewController.view.frame.width }
 
     private func buildSidebar() {
@@ -113,10 +112,6 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        // The bar lies over an empty hard-edge accessory in each pane. One accessory across both panes has a hard pocket of
-        // no colour, resting at AppKit's gray (40 over the 30 editor in Dark, 253 over a 238 pane in Light) and no longer
-        // blurring the PDF once it has been hidden; a pane's own rests at the pane's colour, as Xcode's bar rests at its
-        // editor's (probed on 27.2).
         for item in [sourceItem!, pdfItem!] {
             let space = NSView()
             space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
@@ -162,8 +157,6 @@ final class WorkspaceController: ThinSplitViewController {
         searchField.focus()
     }
 
-    /// However an item collapses, by a drag, VoiceOver or a command, the models follow it, and the keyboard leaves it for a
-    /// pane still shown rather than falling to the window; its accessories lie beside its view, not in it.
     private func collapse(_ id: ObjectIdentifier, before: Bool) {
         guard let item = splitItems.first(where: { ObjectIdentifier($0) == id }) else { return }
         guard before else {
@@ -309,9 +302,6 @@ private struct Pane<Content: View>: View {
     var body: some View { if mount?.shown ?? true { content.disabled(!project.isOpen) } }
 }
 
-/// The status bar's top edge drags the Logs panel's divider beneath it, opening the panel when it's collapsed, as dragging
-/// Xcode's debug bar does; only the edge, since a divider's rect takes clicks from the bar's buttons. Super gives a zero
-/// rect here, which `CGRect.union` would stretch to the origin over the editor; `NSUnionRect` skips an empty rect.
 private final class AreaSplitViewController: ThinSplitViewController {
     override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
         let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height

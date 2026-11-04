@@ -36,8 +36,6 @@ impl Stamp {
     }
 }
 
-/// Values read from files, read again when a file's stamp changes, keeping the most recently
-/// used up to a capacity.
 pub(crate) struct Kept<T> {
     capacity: usize,
     held: Mutex<(u64, BTreeMap<PathBuf, Held<T>>)>,

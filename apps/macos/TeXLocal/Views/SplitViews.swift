@@ -93,7 +93,6 @@ class ThinSplitViewController: NSSplitViewController {
 }
 
 final class ColumnsSplitView: DraggedSplitView {
-    /// The divider stops at the status bar, which lies over both panes and draws no ground to hide it.
     override func drawDivider(in rect: NSRect) {
         super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
     }

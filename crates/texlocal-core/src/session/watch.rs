@@ -58,7 +58,6 @@ impl Tree {
         }
     }
 
-    /// Takes in the project's files, true when they differ from those shown.
     pub fn show(&mut self, cx: &mut Core, tree: Vec<TreeNode>) -> bool {
         self.index = TreeIndex::of(&tree);
         if let Some(watcher) = &mut self.watcher {
@@ -122,7 +121,6 @@ impl Tree {
         });
     }
 
-    /// Takes in the latest scan, giving back the checks it found and its outline.
     pub fn scanned(
         &self,
         seq: u64,

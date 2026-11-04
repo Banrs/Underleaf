@@ -104,8 +104,6 @@ async fn fetch(
     to: &Path,
     path_env: &str,
 ) -> Result<(), CoreError> {
-    // No overall limit: curl's --speed-limit already ends a stalled download, and a slow but
-    // steady one over tlmgr's 600 s is still worth finishing.
     let download = download(url, to, path_env);
     match process::run(processes, None, download, None).await? {
         (0, ..) => Ok(()),

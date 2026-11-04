@@ -19,7 +19,6 @@ final class WindowModel {
 
     var showSource: Bool { didSet { keepLayout() } }
     var showPDF: Bool { didSet { keepLayout() } }
-    /// A project's window reopens in the layout it was left in, as it does with its frame; a new one takes the last used.
     @ObservationIgnored private let layoutKey: String?
 
     init(app: AppModel, project id: String? = nil) {
