@@ -42,3 +42,7 @@ normalization would resolve compatibility, without introducing a production
 preprocessor. File tails and postamble presence are logged for rejected files.
 Native timings exclude a production Rust adapter and synchronization; treat
 them as an optimistic estimate. Parse timings are single samples.
+
+The comparison still runs when an integration test fails, provided setup
+completed and the required snapshots were captured. The job retains the test
+failure. The C probe uses -O3; Rust uses the workspace release profile.

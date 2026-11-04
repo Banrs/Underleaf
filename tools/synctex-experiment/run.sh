@@ -8,7 +8,7 @@ native="$results/upstream"
 mkdir -p "$native"
 curl --retry 3 -fsSL "https://codeload.github.com/jlaurens/synctex/tar.gz/$pin" \
   | tar -xz --strip-components=1 -C "$native"
-cc -O2 -D__SYNCTEX_STRONG_DISPLAY_QUERY__ -I "$native" \
+cc -O3 -D__SYNCTEX_STRONG_DISPLAY_QUERY__ -I "$native" \
   tools/synctex-experiment/probe.c \
   "$native/synctex_parser.c" "$native/synctex_parser_utils.c" \
   -lz -o "$results/upstream-probe"

@@ -299,7 +299,18 @@ impl Rig {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let Ok(event) = self.events.recv_timeout(left) else {
-                panic!("no matching event came");
+                let seen = self.seen.lock().unwrap();
+                let live: Vec<_> = seen
+                    .iter()
+                    .filter(|e| {
+                        e["value"]["event"]["type"] == "liveDocument"
+                            || (e["value"]["event"]["type"] == "section"
+                                && e["value"]["event"]["value"]["type"] == "live")
+                    })
+                    .rev()
+                    .take(12)
+                    .collect();
+                panic!("no matching event came; recent live events: {live:?}");
             };
             self.seen.lock().unwrap().push(event.clone());
             if matching(&event) {

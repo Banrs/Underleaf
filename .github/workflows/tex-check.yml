@@ -67,6 +67,7 @@ jobs:
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/Helpers/texpresso
       - name: Compare SyncTeX implementations
+        if: ${{ !cancelled() }}
         run: bash tools/synctex-experiment/run.sh "$TEXLOCAL_SYNCTEX_EXPERIMENT"
       - uses: actions/upload-artifact@v7
         if: always()
