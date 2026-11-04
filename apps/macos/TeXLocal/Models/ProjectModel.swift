@@ -332,7 +332,6 @@ final class ProjectModel {
         await search.run { try await session.call($0) }
     }
 
-    /// Replaces the chosen hit, which its file shows selected, as Xcode's Replace does, then chooses the hit after it.
     func replaceChosen() async {
         let shown = navigator.filtered(search.groups ?? []).flatMap(\.hits)
         guard let hit = shown.first(where: { $0.id == search.chosen }) else { return }

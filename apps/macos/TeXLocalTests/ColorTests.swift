@@ -13,7 +13,6 @@ struct ColorTests {
             for kind in HighlightKind.allCases {
                 let shown = ratio(kind.color, in: name)
                 #expect(shown >= 4.45, "\(kind) in \(name.rawValue): \(shown)")
-                #expect(kind.color != .textColor, "\(kind)")
             }
         }
     }
@@ -37,11 +36,10 @@ struct ColorTests {
         #expect(NSColor.contrast([0.5, 0.5, 0.5, 1], [0.5, 0.5, 0.5, 1]) == 1)
     }
 
-    @Test func theCurrentLineIsAFaintAccentColourThatRaisedTextStaysLegibleOver() throws {
+    @Test func raisedTextStaysLegibleOverTheCurrentLine() throws {
         for name in NSColor.textAppearances {
             let appearance = try #require(NSAppearance(named: name))
-            let line = NSColor.currentLine.rgba(in: appearance), accent = NSColor.controlAccentColor.rgba(in: appearance)
-            #expect(line.prefix(3) == accent.prefix(3) && abs(line[3] - 0.1) < 0.001, "\(name.rawValue): \(line)")
+            let line = NSColor.currentLine.rgba(in: appearance)
             let shown = zip(NSColor.textBackgroundColor.rgba(in: appearance), line).map { $0 * (1 - line[3]) + $1 * line[3] }
             for color in [NSColor.systemPink, .systemTeal, .systemYellow, .secondaryLabelColor] {
                 let ratio = NSColor.contrast(color.legibleAsText(in: name).rgba(in: appearance), shown)

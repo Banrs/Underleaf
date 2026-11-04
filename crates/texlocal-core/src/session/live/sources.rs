@@ -25,7 +25,6 @@ pub(super) struct Sources {
 }
 
 impl Sources {
-    /// Sends a file's text, whole the first time and after that as its change from the text sent.
     pub fn send(&mut self, run: &dyn LiveRun, path: &str, text: &str) {
         let Some(sent) = self.sent.get(path) else {
             run.open(path, text);
@@ -105,7 +104,6 @@ impl Sources {
         self.acknowledged + self.unread.len() as u64
     }
 
-    /// TeXpresso has read everything sent.
     pub fn settled(&self) -> bool {
         self.unread.is_empty()
     }

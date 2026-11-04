@@ -1,7 +1,6 @@
 #!/bin/zsh
 set -e
 R=${0:A:h:h}
-# Each worktree builds into its own folder, so one never installs another's products.
 W=$(print -rn -- $R | shasum | cut -c1-10)
 if [[ $1 == --dev ]]; then
   shift; NAME="TeXLocal Dev"; ID=com.texlocal.mac.devbuild; DEST=~/Applications/$NAME.app; D=${1:-/private/tmp/underleaf-dev-$W}

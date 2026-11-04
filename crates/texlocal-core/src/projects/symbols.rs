@@ -40,7 +40,6 @@ pub struct Files(Kept<Facts>);
 
 impl Default for Files {
     fn default() -> Self {
-        // Every .tex and .bib file of a large project, so a scan reads only what changed.
         Self(Kept::holding(4096))
     }
 }

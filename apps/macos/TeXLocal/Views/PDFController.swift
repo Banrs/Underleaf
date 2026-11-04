@@ -11,7 +11,6 @@ final class PDFController: NSObject {
     @ObservationIgnored let view = SyncPDFView()
     var page = 0
     var pageCount = 0
-    /// A PDF is being read: the pane's empty state stays hidden meanwhile, as the window no longer waits for it.
     private(set) var isLoading = false
     private(set) var scale: CGFloat = 1
     var zoom = Zoom.fitWidth
@@ -20,7 +19,6 @@ final class PDFController: NSObject {
     var canZoomIn: Bool { scale < Self.maxScale }
     var canZoomOut: Bool { scale > Self.minScale }
 
-    /// The zoom and place a project was left at, taken once the PDF shows with some area.
     @ObservationIgnored var restore: (zoom: Zoom, place: PdfPlace?)?
     @ObservationIgnored var onVisiblePages: (ClosedRange<Int>) -> Void = { _ in }
     @ObservationIgnored private var toldPages: ClosedRange<Int>?
@@ -35,7 +33,6 @@ final class PDFController: NSObject {
     override init() {
         super.init()
         view.backgroundColor = .untintedTextBackground
-        // As Preview's: pages keep PDFKit's side margins, and the first meets the toolbar's edge.
         view.pageBreakMargins.top = 0
         view.autoScales = true
         view.onResize = { [weak self] in
@@ -228,7 +225,6 @@ nonisolated extension PDFDocument {
 }
 
 nonisolated extension PDFPage {
-    /// hyperref boxes links by default; the boxes are for print, so the view shows none.
     func hideLinkBorders() {
         for link in annotations where link.type == "Link" {
             let border = PDFBorder()

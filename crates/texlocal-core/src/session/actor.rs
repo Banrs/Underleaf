@@ -132,7 +132,6 @@ enum Wake {
     TexFound,
 }
 
-/// What every part of a session uses: its project, services and channels, and the work it does later.
 pub(crate) struct Core {
     id: u64,
     pub children: u64,

@@ -96,8 +96,6 @@ final class CompletionList {
 
     private(set) var isAbove = false
 
-    /// Places the list under the caret's line, or over it when the screen has more room there, in a panel of its own so
-    /// that it may run past the editor's column as Xcode's does; `start` and `screen` are in screen coordinates.
     private func place(under start: CGRect, on screen: CGRect, over window: NSWindow, animated: Bool) {
         var frame = CGRect(origin: CGPoint(x: start.minX - Self.textStart, y: 0), size: size)
         frame.size.width = min(size.width, screen.width)
@@ -120,8 +118,6 @@ final class CompletionList {
     func move(_ step: Int) { rows.move(step) }
 }
 
-/// A borderless panel floating over its window as a child window, its shadow the system's, drawn from its glass's shape:
-/// it fades in as it appears, and resizes at the system's pace unless Reduce Motion is on.
 class FloatingPanel: NSPanel {
     private let takesKeys: Bool
 
@@ -162,7 +158,6 @@ class FloatingPanel: NSPanel {
     }
 }
 
-/// Rows inside a glass shape of radius `corner`, a margin in, the chosen one filled in a shape concentric with it.
 struct ChoiceList<Item, Row: View>: View {
     let rows: ChoiceRows<Item>
     let height: CGFloat

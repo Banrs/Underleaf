@@ -823,7 +823,6 @@ fn asked(rig: &Rig, path: &str, kind: &str) {
     rig.section("documents", |d| d.as_array().unwrap().iter().any(asking));
 }
 
-/// Takes the reload asked at the document's version as the editor does, through an edit at that version.
 fn take_reload(rig: &Rig, doc: &Document) {
     let version = doc.version();
     let reload = rig.event("reload", |reload| reload["version"] == version);
@@ -843,7 +842,6 @@ async fn a_change_on_disk_is_taken_by_the_editor_into_a_document_without_edits_w
     let path = rig.root().join("ch.tex");
     let written = rig.library.path("written");
     for theirs in ["theirs\n", "theirs again\n"] {
-        // Written whole, as most editors write, so the session can't read it half written.
         fs::write(&written, theirs).unwrap();
         fs::rename(&written, &path).unwrap();
         take_reload(&rig, &doc);
@@ -915,13 +913,11 @@ async fn revert_takes_the_disks_text() {
     );
 }
 
-/// Edits ch.tex while another app changes it, then answers Revert once main.tex is shown in its place.
 fn revert_once_hidden(rig: &Rig) {
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "mine ", None, false);
     fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
     asked(rig, "ch.tex", "changed");
-    // Answered as a person answers, after Live Preview's 180 ms disk timer has passed over the open document's change.
     std::thread::sleep(Duration::from_millis(300));
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
     rig.forget();

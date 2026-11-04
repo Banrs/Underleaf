@@ -11,7 +11,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var project: ProjectModel { views.project }
     private(set) var workspace: WorkspaceController?
     private var watches: [Task<Void, Never>] = []
-    /// The window took the frame its project was last shown in, so it isn't cascaded from the front window.
     private let framed: Bool
 
     init(app: AppModel, project id: String) {
@@ -30,7 +29,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.autorecalculatesKeyViewLoop = true
         window.contentMinSize = ColumnMetrics.contentMinimum
         window.backgroundColor = .untintedTextBackground
-        // Each project keeps its own frame; the names are unique per project, so no two open windows share one.
         let frameName = "Project \(id)"
         framed = window.setFrameUsingName(frameName)
         if !framed { window.center() }
@@ -54,7 +52,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     func show() {
         if !framed, let window, !window.isVisible, !window.isMiniaturized,
            let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
-            // A project shown for the first time takes the front window's size, as the shared "Main Window" frame gave it before.
             window.setFrame(NSRect(origin: window.frame.origin, size: front.frame.size), display: false)
             window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
@@ -99,8 +96,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         Self.kept.removeAll { $0 === self }
     }
 
-    /// Find with neither pane's keyboard, as from the sidebar: the PDF's when only it shows, else the editor's when it
-    /// shows text. The pane with the keyboard, or its find bar's field, takes Find itself.
     @objc func performFindPanelAction(_ sender: Any?) { findAction(for: sender)?() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {

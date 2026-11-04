@@ -319,7 +319,6 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
         mut files,
         main,
     } = open(src)?;
-    // A library project builds into its build folder, so a zip's own can't land there.
     files.retain(|(path, _)| !within(path, BUILD_DIR) && !private(path));
     if !files
         .iter()

@@ -42,7 +42,6 @@ pub(crate) struct LiveState {
     phase: LivePhase,
     engine: Engine,
     halted: bool,
-    // Halted, or failed with the log not closed since, which the status bar marks.
     attention: bool,
     failures: Vec<Message>,
     lines: BTreeMap<String, Vec<IssueLine>>,
@@ -103,7 +102,6 @@ impl Live {
         (self.active(), self.intent)
     }
 
-    /// The text of each file that the PDF shown was typeset from.
     pub fn typeset(&self) -> &HashMap<String, Arc<str>> {
         &self.typeset
     }
@@ -265,7 +263,6 @@ impl Live {
         }
     }
 
-    /// Restarts a preview running to take in a change to the project's files.
     pub fn restart_soon(&self, cx: &mut Core) {
         if self.active() {
             cx.after(Timer::Restart);
@@ -319,7 +316,6 @@ impl Live {
         self.sent.insert(path.to_owned(), version);
     }
 
-    /// Asks TeXpresso to say when it has read everything sent, which settles its issues.
     fn mark(&self) {
         if let Some(run) = self.running() {
             run.mark(self.sources.revision());
@@ -494,7 +490,6 @@ impl Live {
         }
     }
 
-    /// Takes in what TeXpresso says it has read, and ends a preview that claims what it wasn't sent.
     fn acknowledged(&mut self, cx: &mut Core, docs: &Docs, revision: u64) -> bool {
         if self.sources.acknowledge(revision).is_some() {
             return true;

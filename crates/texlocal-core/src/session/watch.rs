@@ -58,7 +58,6 @@ impl Tree {
         }
     }
 
-    /// Takes in the project's files, true when they differ from those shown.
     pub fn show(&mut self, cx: &mut Core, tree: Vec<TreeNode>) -> bool {
         self.index = TreeIndex::of(&tree);
         if let Some(watcher) = &mut self.watcher {
@@ -84,7 +83,6 @@ impl Tree {
         cx.soon(Timer::Fs);
     }
 
-    /// What the changes on disk since the last mean, refreshing the watcher for a link replaced in place.
     pub fn take_changes(&mut self, cx: &Core, docs: &[String]) -> Meaning {
         let changes = std::mem::take(&mut self.pending);
         let meaning = classify(&cx.project, &changes, &self.index, docs);
@@ -122,7 +120,6 @@ impl Tree {
         });
     }
 
-    /// Takes in the latest scan, giving back the checks it found and its outline.
     pub fn scanned(
         &self,
         seq: u64,

@@ -104,15 +104,12 @@ final class IssueOverlay {
         return issue
     }
 
-    /// A box an issue can show, the width it needs, and whether it leaves some of the message to its tooltip.
     private struct Fit {
         let box: IssueBox
         let width: CGFloat
         let cut: Bool
     }
 
-    /// Widest first: the message, its compact form, its first ten characters cut at the tail (a box that then takes all the
-    /// room it's given), and the symbol alone.
     private func fits(_ number: Int, _ reported: IssueLine, live: Bool, issues: Int) -> [Fit] {
         if let found = measured[number] { return found }
         func box(_ text: String?, truncates: Bool = false) -> IssueBox {

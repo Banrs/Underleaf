@@ -192,13 +192,10 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     if let Some(top) = top {
         return Ok(Some(top.clone()));
     }
-    // A standalone figure or subfile also has a \documentclass, so a nested main.tex wins,
-    // then the shallowest document.
     let mut nested: Option<(bool, usize, String)> = None;
     walk(root, &listed, false, &mut |entry| {
         let (path, rel) = (&entry.path, &entry.rel);
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        // A folder named like a .tex file fails to read, so it never starts a document.
         if file_kind(name) == FileKind::Tex && !name.starts_with('-') && starts_document(path) {
             let found = (
                 fold_case(name) != "main.tex",

@@ -96,7 +96,6 @@ impl Document {
         });
     }
 
-    /// Marked text is being composed, which autosave waits out.
     pub fn compose(&self, composing: bool) {
         lock(&self.0.text).composing = composing;
     }

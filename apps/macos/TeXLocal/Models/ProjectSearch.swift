@@ -13,7 +13,6 @@ final class ProjectSearch {
         set { asked.query = newValue }
     }
     var replacement = ""
-    /// Whether Find shows its replacement field, as Xcode's Find navigator does in its Replace mode.
     var replacing = false
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
     private(set) var groups: [SearchGroup]?
@@ -58,7 +57,6 @@ final class ProjectSearch {
         chosen = (hits.first { ($0.file, $0.line, $0.column) >= (hit.file, line, column) } ?? hits.last)?.id
     }
 
-    /// Chooses the next or previous of the hits shown, `shown` being the results as the navigator's filter leaves them.
     func step(_ step: Int, in shown: [SearchGroup]) -> Bool {
         let hits = shown.flatMap(\.hits).map(\.id)
         guard !hits.isEmpty else { return false }

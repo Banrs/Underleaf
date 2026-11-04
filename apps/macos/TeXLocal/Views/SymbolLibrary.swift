@@ -1,9 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The maths symbols in a utility panel on Liquid Glass, as Xcode keeps its Library on ⇧⌘L (its window controller holds a glass
-/// view): searchable, by the catalogue's categories after the recently used ones. A click inserts at the caret of the frontmost
-/// project, and the panel becomes key only for its search field, so the editor keeps the keyboard.
 final class SymbolLibrary: NSPanel {
     private static var shown: SymbolLibrary?
 
@@ -54,9 +51,7 @@ struct SymbolLibraryView: View {
     let close: @MainActor () -> Void
     @State private var query = ""
 
-    /// The macOS UI Kit's large control height, and the widest row the menu bar's palettes use.
     private static let tile: CGFloat = 28, columns = 7
-    /// The panel's first height: Xcode's Library panel's, read from a capture of it (504 pt).
     static let height: CGFloat = 504
 
     static func target(_ app: AppModel) -> ProjectModel? { app.windows.lazy.compactMap(\.shownProject).first }
@@ -102,7 +97,6 @@ struct SymbolLibraryView: View {
                 }
                 .padding()
             }
-            // The symbols mostly fit, so the grid stretching past them at each end only rebuilt its rows as it bounced.
             .scrollBounceBehavior(.basedOnSize)
             .disabled(Self.target(app)?.sourceToolsEnabled != true)
             .overlay { if sections.isEmpty { ContentUnavailableView.search(text: query) } }

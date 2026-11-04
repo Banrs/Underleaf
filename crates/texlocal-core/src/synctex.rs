@@ -136,7 +136,6 @@ pub(crate) fn inverse(
     if let Some(text) = source.as_deref()
         && let SyncLines::Whole(picture) = sync_lines(text, line)
     {
-        // The caret goes to the picture's \begin, a spot found like a clicked word, so a double-click follows it.
         let line = *picture.start();
         let begin = text.lines().nth(line as usize - 1).unwrap_or_default();
         let column = begin

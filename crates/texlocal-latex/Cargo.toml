@@ -1,6 +1,5 @@
 [package]
 name = "texlocal-latex"
-description = "TeXLocal's LaTeX logic: the editor, outline, checks and the log and SyncTeX parsers — no files, processes, threads or clock"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

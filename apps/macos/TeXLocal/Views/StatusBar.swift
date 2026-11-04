@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Xcode's debug bar and its console's bar, read from their accessibility frames: 36 pt tall, their first and last
-/// controls 8 pt from their ends, and a symbol button 30 pt wide with its symbol centred.
 enum BarMetrics {
     static let height: CGFloat = 36
     static let target: CGFloat = 20
@@ -41,7 +39,6 @@ struct StatusBar: View {
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            // Flush with the toggle, whose 30 pt target pads its symbol, as Xcode's debug bar sets its last divider.
             HStack(spacing: 0) {
                 if window.showSource && project.editsText || PagePlace.shows(project, window) { Divider().frame(height: 12) }
                 PanelToggle(project: project)
@@ -62,7 +59,6 @@ private struct BuildStatus: View {
         .help("Show issues")
     }
 
-    /// The build's state, its symbol replacing the last one as it changes, and pulsing while it compiles.
     private var state: (title: LocalizedStringKey, symbol: String?, color: Color?)? {
         if project.compiling { return ("Compiling…", "progress.indicator", .secondary) }
         guard let result = project.result else { return project.hasPDF ? nil : ("No Build Yet", nil, nil) }
@@ -261,9 +257,6 @@ extension View {
             .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
     }
 
-    /// A bar's top edge, one device pixel as AppKit draws the edges of the toolbar and its scroll pockets (measured in
-    /// TextEdit), rather than the 1 pt a split view draws between panes. The status bar has none of its own: its panes'
-    /// hard pockets draw it, and one over it made 1.5 pt over the editor.
     func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
 
     fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }

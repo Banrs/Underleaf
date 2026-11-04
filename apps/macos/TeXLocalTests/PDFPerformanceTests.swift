@@ -5,8 +5,6 @@ import Testing
 
 private nonisolated let longPDF = URL.homeDirectory.appending(path: "TeXLocal/Test Long (400 pages)/build/main.pdf")
 
-/// Main-thread budgets on the 400-page test project's PDF. A show is measured as the longest run of the main run loop
-/// between waits, so work PDFKit defers to its next pass counts too. They take 6.4 s, so they run only when asked:
 /// `TEST_RUNNER_TEXLOCAL_PERFORMANCE=1 zsh tools/xctest.sh …`, whose prefix xcodebuild strips for the test host.
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PERFORMANCE"] != nil),
        .enabled(if: FileManager.default.fileExists(atPath: longPDF.path(percentEncoded: false))))
@@ -25,9 +23,6 @@ struct PDFPerformanceTests {
         #expect(first <= .milliseconds(50) && swap <= .milliseconds(50))
     }
 
-    /// The replace itself has the 8 ms budget, as a median: most of it is PDFKit laying out all the document's pages after
-    /// each insert and remove. The run-loop pass it is part of also commits the tiles PDFKit renders for the new page,
-    /// which no way of swapping the page avoids, so that pass gets twice the budget.
     @Test func aLivePageReplaceStaysWithinBudget() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view, size: NSSize(width: 700, height: 900))
@@ -48,7 +43,6 @@ struct PDFPerformanceTests {
         #expect(replaces.sorted()[replaces.count / 2] <= .milliseconds(8) && passes.max()! <= .milliseconds(16))
     }
 
-    /// The longest the main run loop ran without waiting, from `work` until 300 ms after it.
     private func busiest(_ work: () async -> Void) async throws -> Duration {
         let busy = MainBusy()
         defer { busy.stop() }

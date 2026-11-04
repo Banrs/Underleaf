@@ -78,7 +78,6 @@ pub(crate) struct ShownPdf {
     live: bool,
 }
 
-/// The PDF shown: a live preview's while it has pages, or else the last build's.
 #[derive(Default)]
 pub(crate) struct Shown {
     pub built: Option<String>,
@@ -97,14 +96,12 @@ impl Core {
     }
 }
 
-/// A finished build's log and announcement, which wait for the build queued behind it to start.
 pub(crate) struct Built(String, BuildFinished);
 
 #[derive(Default)]
 pub(crate) struct Builds {
     /// Counts each change to the project's text, which builds and checks are dated by.
     pub clock: u64,
-    /// The time on the clock that each document was last edited.
     edited_at: HashMap<String, u64>,
     compiling: bool,
     queued: Option<bool>,
@@ -144,7 +141,6 @@ impl Builds {
         self.built().chain(self.checks())
     }
 
-    /// Holds a build back while an auto build waits for TeX, or queues it behind the build or clean running.
     pub fn waits(&mut self, cx: &Core, auto: bool) -> bool {
         if auto && !*cx.service.tex_found.borrow() {
             self.waiting_for_tex = true;
@@ -180,7 +176,6 @@ impl Builds {
         }
     }
 
-    /// Takes in a build's result, and gives back the build queued behind it with what it announces once that starts.
     pub fn done(
         &mut self,
         cx: &mut Core,
@@ -295,7 +290,6 @@ impl Builds {
         }
     }
 
-    /// Notes the live preview running and the starts and stops asked of it, to restart it after the clean.
     fn start_clean(&mut self, cx: &Core, live: (bool, u64)) {
         self.cleaning = Some(live);
         let (clean, tx) = (cx.compiler.clean(cx.project.build.clone()), cx.tx.clone());
@@ -304,7 +298,6 @@ impl Builds {
         });
     }
 
-    /// Whether to restart the live preview the clean stopped, or None for a clean not started.
     pub fn cleaned(
         &mut self,
         cx: &mut Core,

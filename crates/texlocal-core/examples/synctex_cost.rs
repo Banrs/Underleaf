@@ -29,8 +29,6 @@ static COUNTING: Counting = Counting;
 
 const MB: f64 = 1024.0 * 1024.0;
 
-/// What reading a long project's SyncTeX costs: `cargo run --release -p texlocal-core --example synctex_cost [project]`,
-/// by default the 400-page fixture in ~/TeXLocal, built.
 fn main() {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     let fixture = || home.join("TeXLocal/Test Long (400 pages)");

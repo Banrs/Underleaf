@@ -1,11 +1,5 @@
 import AppKit
 
-/// Xcode's breadcrumb, the DVTPathControl its Find navigator builds: small, choosing one component at a time from a menu of
-/// its peers. Drawn as DVTPathComponentCell draws, read from its code and compared with it rendered off-screen, since
-/// NSPathControl draws another chevron, gap and gray: each item 2 pt in (7 for the first), its title in 11 pt, then 14 pt
-/// with the chevron centred in it, none after the last. The item under the pointer gets a rect as tall as the control, at
-/// most 21 pt, with 4 pt corners, filled with 5% of black or white, and its chevron becomes an up and down one, also after
-/// the last item.
 final class Breadcrumb: NSView {
     struct Item: Equatable {
         var choices: [String]
@@ -23,7 +17,6 @@ final class Breadcrumb: NSView {
     private let choose: (_ item: Int, _ choice: Int) -> Void
     private var frames: [NSRect] = []
     private var hovered: Int?
-    /// The item whose menu is open, which stays highlighted, as Xcode's pathCellItemForDisplayedPopover does.
     private var open: Int?
     private var focused = 0 { didSet { noteFocusRingMaskChanged() } }
     private var watch: [any NSObjectProtocol] = []
@@ -39,8 +32,6 @@ final class Breadcrumb: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private static let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-    /// Xcode's chevrons, centred in the 14 pt after a title; its up and down one is DVTKit's own chevrons.popup, for which
-    /// this is SF's, as wide in ink.
     private static let chevron = symbol("chevron.compact.right", 11), popUp = symbol("chevron.up.chevron.down", 8)
 
     private static func symbol(_ name: String, _ size: CGFloat) -> NSImage {
@@ -49,7 +40,6 @@ final class Breadcrumb: NSView {
 
     override var isFlipped: Bool { true }
 
-    // DVTPathControl accepts focus through the key-view loop, not a click that would take focus from Find's field.
     override var acceptsFirstResponder: Bool {
         guard let window else { return false }
         return !items.isEmpty && (window.firstResponder === self || window.keyViewSelectionDirection != .directSelection)
@@ -92,7 +82,6 @@ final class Breadcrumb: NSView {
         }
     }
 
-    /// As tall as Xcode's in its Find navigator.
     override var intrinsicContentSize: NSSize { NSSize(width: widths().reduce(0, +), height: 19) }
 
     private func widths() -> [CGFloat] {
@@ -117,7 +106,6 @@ final class Breadcrumb: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        // Xcode dims the breadcrumb outside the main window, as its cells check the window before choosing colours.
         let active = window?.isMainWindow == true, dimmed: NSColor = dark ? .secondaryLabelColor : .tertiaryLabelColor
         for (index, (item, frame)) in zip(items, frames).enumerated() {
             let lit = index == hovered || index == open
@@ -127,7 +115,6 @@ final class Breadcrumb: NSView {
                 let rect = NSRect(x: frame.minX, y: frame.midY - height / 2, width: frame.width, height: height)
                 NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
             }
-            // As Xcode's Find navigator colours its components: the accent colour only off the first, default choice.
             let color: NSColor = item.chosen != 0 ? .controlAccentColor : active ? .labelColor : dimmed
             let title = NSAttributedString(string: item.choices[item.chosen], attributes: [.font: Self.font, .foregroundColor: color])
             title.draw(at: NSPoint(x: frame.minX + (index == 0 ? 7 : 2), y: frame.midY - title.size().height / 2))
@@ -135,7 +122,6 @@ final class Breadcrumb: NSView {
             let tint: NSColor = lit ? .labelColor : !active ? dimmed : dark ? .labelColor : .secondaryLabelColor
             let mark = lit ? Self.popUp : Self.chevron, size = mark.size
             let place = NSRect(x: frame.maxX - 7 - size.width / 2, y: frame.midY - size.height / 2, width: size.width, height: size.height)
-            // Filled through the symbol's shape, as Xcode tints its chevrons, since a palette colour draws a lighter one.
             NSImage(size: mark.size, flipped: false) { rect in
                 mark.draw(in: rect)
                 tint.set()
@@ -154,7 +140,6 @@ final class Breadcrumb: NSView {
         }
     }
 
-    /// One area an item, tracked as Xcode's path control tracks them: whether or not the window is key, and during drags.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
@@ -189,7 +174,6 @@ final class Breadcrumb: NSView {
         if let index = frames.firstIndex(where: { $0.contains(point) }) { popUp(index) }
     }
 
-    /// Opens the item's menu in the breadcrumb's font, its choice over the item's title, where Xcode's path cell places it.
     private func popUp(_ index: Int) {
         let item = items[index], menu = NSMenu()
         menu.font = Self.font
@@ -200,7 +184,6 @@ final class Breadcrumb: NSView {
         }
         open = index
         needsDisplay = true
-        // Its menu is the item's child while it's open, as Xcode's path control and a pop-up button give theirs.
         let part = (accessibilityChildren() as? [NSAccessibilityElement])?[index]
         part?.setAccessibilityChildren([menu])
         defer { part?.setAccessibilityChildren(nil) }
@@ -215,7 +198,6 @@ final class Breadcrumb: NSView {
         choose(index, entry.tag)
     }
 
-    /// Each item, to accessibility, a pop-up button, as Xcode lists its path control's components.
     private nonisolated final class Part: NSAccessibilityElement {
         private let press: @MainActor @Sendable () -> Void
 

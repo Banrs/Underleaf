@@ -4,8 +4,6 @@ import Testing
 
 struct TimedOut: Error {}
 
-/// Each wait ends as soon as its condition holds, so the timeout only stops a hung test: the core's tests gave up too
-/// soon under load at 20 s.
 func waitUntil(timeout: Duration = .seconds(120), _ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now + timeout
     while !condition() {

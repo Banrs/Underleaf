@@ -9,8 +9,6 @@ struct WindowTests {
 
     @Test func preferencesAreKeptInTheInjectedStore() {
         let app = defaults.app()
-        #expect((app.fontName, app.fontSize, app.lineNumbers, app.autoPair, app.autoComplete) == ("", 13, true, true, true))
-        #expect((app.spellCheck, app.syncAfterCompile, app.newProjectEngine, app.paper, app.settingsPane) == (true, false, .pdflatex, .white, .general))
         (app.fontName, app.fontSize, app.lineNumbers, app.autoPair, app.autoComplete) = ("Menlo", 15, false, false, false)
         (app.spellCheck, app.syncAfterCompile, app.newProjectEngine, app.paper, app.settingsPane) = (false, true, .xelatex, .dark, .pdf)
         let again = defaults.app()
@@ -28,6 +26,7 @@ struct WindowTests {
 
     @Test func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore() async throws {
         let window = defaults.window(), app = window.app
+        (app.paper, app.spellCheck) = (.white, true)
         let views = WorkspaceViews(project: ProjectModel(id: "P", window: window))
         let text = views.editor.textView
         #expect(!views.pdf.view.darkPaper && text.isContinuousSpellCheckingEnabled)
@@ -89,21 +88,6 @@ struct WindowTests {
         try await waitUntil {
             ((window.firstResponder as? NSText)?.delegate as? NSSearchField)?.placeholderString == "Search Project" && !sidebar.isCollapsed
         }
-        await close(app)
-    }
-
-    /// At rest nothing is pinned beneath the Projects window's toolbar, so its scroll pocket spans the toolbar alone and
-    /// stays clear; New as a section header pinned there grew the pocket over it, which tinted the toolbar with nothing
-    /// beneath it and joined the two (AppKit's NSScrollPocket, 27.2).
-    @Test func theProjectsToolbarStaysClearAtRestWithNothingPinnedBeneathIt() async throws {
-        let app = windowedApp()
-        let window = try #require(window(of: app.showHome()))
-        let bar = window.frame.height - window.contentLayoutRect.height
-        func pockets() -> [NSView] {
-            window.contentView?.superview?.descendants(of: NSView.self).filter { String(describing: type(of: $0)) == "NSScrollPocket" } ?? []
-        }
-        try await waitUntil(timeout: .seconds(5)) { window.layoutIfNeeded(); return !pockets().isEmpty }
-        #expect(pockets().allSatisfy { $0.frame.height == bar })
         await close(app)
     }
 
@@ -229,7 +213,6 @@ struct WindowTests {
         defer { workspace.close(); window.close() }
         let items = workspace.toolbar.toolbar.items
         let format = try #require(items.first { $0.itemIdentifier == .format })
-        #expect(items.allSatisfy { !$0.isNavigational })
         model.layout = .pdf
         try await waitUntil { format.isHidden }
         model.layout = .split

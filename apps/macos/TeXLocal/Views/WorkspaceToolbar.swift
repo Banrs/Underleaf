@@ -107,8 +107,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = menuItem(id, "Editor Layout", window.layout.symbol, WorkspaceLayoutPicker(window: window))
             item.toolTip = "Choose Source Only, Source & PDF, or PDF Only"
         case .inspector:
-            // AppKit's own .toggleInspector item always sits on a glass of its own (read from its toolbar platter); this one shares
-            // the Layout menu's, as items beside each other do.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.viewToggleInspector.title
             item.toolTip = "Show or hide the inspector"
@@ -191,13 +189,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         for item in toolbar.items { configure(item, state) }
     }
 
-    /// Below every other item's, so Compile turns compact before AppKit sends anything to the overflow menu, and above them once compact.
     private var compilePriority: NSToolbarItem.VisibilityPriority {
         compactCompile ? .high : NSToolbarItem.VisibilityPriority(rawValue: NSToolbarItem.VisibilityPriority.low.rawValue - 1)
     }
 
-    /// Compile turns compact when AppKit finds no room for it in the toolbar, read from the item leaving for the overflow menu,
-    /// rather than from column widths worked out by hand.
     private func watchOverflow(of item: NSToolbarItem) {
         item.view = compileButton
         compileItem = item
@@ -214,8 +209,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    /// Called as the columns change size: Compile reads as a word again once the room has grown, since the word last didn't fit,
-    /// by the word's width over the symbol's, so it can't flip back and forth at one width.
     @objc func fit() {
         guard compactCompile, let room = workspace?.toolbarRoom, room + compileButton.intrinsicContentSize.width >= wideRoom else { return }
         setCompact(false)
@@ -319,7 +312,6 @@ private final class ZoomControl: NSSegmentedControl {
 
     override var controlSize: NSControl.ControlSize { didSet { font = font } }
 
-    /// Fixes the zoom segment at the width it takes around the widest label, so the control keeps its size as the zoom changes.
     /// A fixed segment width leaves out the padding AppKit adds around a label, so the padding and the other segments (`rest`)
     /// are read as the control's width with the segment fixed at some width, less that width.
     override func layout() {
@@ -337,9 +329,6 @@ private final class ZoomControl: NSSegmentedControl {
     }
 }
 
-/// Compile, or Stop while building, drawn as AppKit draws a titled toolbar item: the NSToolbarButton AppKit makes for one is an
-/// NSButton with the toolbar bezel (read from an instance: 13 pt title, 74 × 36 pt for Compile), so this one keeps AppKit's padding
-/// while holding the build's spinner in its image well, or around a stop symbol when compact.
 private final class CompileButton: NSButton {
     private let spinner = NSProgressIndicator()
     private var widest: CGFloat = 0
@@ -374,7 +363,6 @@ private final class CompileButton: NSButton {
         needsLayout = true
     }
 
-    /// As wide as the widest of Compile and Stop it has shown, so the items beside it stay put as a build starts and ends.
     override var intrinsicContentSize: NSSize {
         var size = super.intrinsicContentSize
         guard !title.isEmpty else { return size }

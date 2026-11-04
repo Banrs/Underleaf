@@ -1,8 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The sidebar's content from the toolbar's foot, so its lists scroll beneath the chooser but not on into the titlebar, as
-/// Xcode's stop.
 final class NavigatorArea: NSViewController {
     private let pane: NSViewController
 
@@ -27,8 +25,6 @@ final class NavigatorArea: NSViewController {
     }
 }
 
-/// The navigator chooser: a tabs-role segmented control at the large size, its segments sharing the sidebar's width, as
-/// Xcode's choosers do however few their choices.
 private final class NavigatorChooser: NSSegmentedControl {
     private weak var project: ProjectModel?
     private var watch: Task<Void, Never>?
@@ -81,9 +77,6 @@ extension Navigator {
     var shortcut: KeyEquivalent { KeyEquivalent(Character(String(Self.allCases.firstIndex(of: self)! + 1))) }
 }
 
-/// The filter bar at the navigator's foot, built as Xcode's large one is: interactive Liquid Glass, which swells under a press,
-/// around a large search field 28 pt tall and 8 pt from the bar's edges, and in Files around a 28 pt add menu 7 pt in, 8 pt
-/// before the field; in Issues a toggle inside the field's trailing end shows only errors.
 final class NavigatorFilterBar: NSView {
     private let field = NavigatorField()
     private let fieldGlass = NSGlassEffectView()
@@ -175,7 +168,6 @@ final class NavigatorFilterBar: NSView {
             let item = menu.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "")
             (item.target, item.representedObject) = (self, command)
         }
-        // Opens up from the +, its left edge on the glass's and 4 pt above it, as a menu from a bar at the window's foot does;
         // a menu placed beneath ran off the screen's foot and AppKit moved it up over the + and the pointer.
         guard let window = button.window else { return }
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
@@ -186,15 +178,10 @@ final class NavigatorFilterBar: NSView {
         if let command = item.representedObject as? MenuCommand { windowModel.perform(command, on: project) }
     }
 
-    /// Xcode's large filter field and add menu, and the macOS UI Kit's large search field: 28 pt tall.
     private static let height: CGFloat = 28
-    /// Xcode's field toggles: 17 pt, 7 pt from the field's end.
     private static let toggleRoom: CGFloat = 7 + 17
 }
 
-/// Xcode's navigator fields, DVTSearchFields such as its filter and Find fields, laid out as they lay out: the symbol 6 pt in
-/// and 15 pt tall, the text from its end, and the clear button 17 pt square 6 pt from the end, before any room kept
-/// for toggles over the end.
 final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         var room: CGFloat = 0
@@ -219,8 +206,6 @@ final class NavigatorField: NSSearchField {
         set {}
     }
 
-    /// Keeps the field's past entries in its symbol's menu, as Xcode's Find and replace fields keep theirs (their controller
-    /// builds each menu from the field's history and Clear Recents), with AppKit's recents.
     func keepRecents(as name: String) {
         recentsAutosaveName = name
         let menu = NSMenu()
@@ -257,15 +242,11 @@ private struct Chooser: NSViewRepresentable {
     func updateNSView(_ view: NavigatorChooser, context: Context) {}
 }
 
-/// The sidebar as Xcode's navigator area: the shown navigator scrolls beneath the chooser at its top, softly, its rows
-/// starting 8 pt below it, as Xcode's do.
 struct NavigatorPane: View {
     let project: ProjectModel
     let field: FieldHandle
 
     var body: some View {
-        // Every navigator stays built, as Xcode's do: building a list on a switch took 45-70 ms on the main thread inside the
-        // chooser's click (Instruments, Animation Hitches), so the capsule's glide started late and hitched.
         ZStack {
             ForEach(Navigator.allCases, id: \.self) { navigator in
                 let shown = navigator == project.navigator.shown
@@ -277,7 +258,6 @@ struct NavigatorPane: View {
         .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaBar(edge: .top, spacing: 0) {
-            // Xcode's lists start 8 pt below the chooser, and its Find navigator's mode row 2 pt below.
             Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
         }
     }
@@ -297,7 +277,6 @@ private struct IssueNavigator: View {
 
     var body: some View {
         let items = project.navigator.rows(of: project.listed)
-        // The list stays when empty, as the other navigators' do, so the chooser keeps to its top over the empty state.
         IssueList(items: items, project: project)
             .overlay { if items.isEmpty { empty } }
     }
@@ -406,7 +385,6 @@ private struct IssueRow: View {
         Label {
             Text(item.message.text).lineLimit(place == project.chosenIssue ? nil : 3)
         } icon: {
-            // Xcode's issue icons: an 18 pt image at the row's text size, where a sidebar row would draw its symbols larger.
             Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
                 .font(.body)
@@ -434,9 +412,6 @@ private struct IssueRow: View {
 }
 
 extension View {
-    /// Xcode's navigator rows: body text, about 16 pt more for each further line. A small sidebar row pads its content by
-    /// 11 pt where Xcode's pad by 6, and List on the Mac takes no row insets, so the content gives back 5 pt; the small
-    /// size's 24 pt floor stays, against Xcode's 22.
     func navigatorRow() -> some View { font(.body).padding(.vertical, -2.5) }
 }
 

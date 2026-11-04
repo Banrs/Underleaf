@@ -1,8 +1,6 @@
 import PDFKit
 import Synchronization
 
-/// Find in the PDF: NSTextFinder and its bar, in PDFKit's own scroll view as the editor's is in its scroll view, over the
-/// pages' text. The view hands it the Find menu's actions.
 final class PDFFind: NSObject, NSMenuItemValidation {
     let text: PDFText
     private let finder = NSTextFinder()
@@ -37,7 +35,6 @@ final class PDFFind: NSObject, NSMenuItemValidation {
 
     func close() { finder.performAction(.hideFindInterface) }
 
-    /// The finder, once a PDF shows in the scroll view that holds its bar.
     private var shown: NSTextFinder? {
         guard view.document != nil, let scrollView = view.pageScrollView else { return nil }
         finder.findBarContainer = scrollView
@@ -77,7 +74,6 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
 
         func start(of page: Int) -> Int { page == 0 ? 0 : ends[page - 1] }
 
-        /// The page holding the character at `index`.
         func page(at index: Int) -> Int? { ends.firstIndex { $0 > index } }
     }
 
@@ -114,7 +110,6 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
 
     func stringLength() -> Int { pages.withLock { $0.ends.last ?? 0 } }
 
-    /// The selection, or with none the place shown, so that the next match is found from the text in view.
     @MainActor var firstSelectedRange: NSRange {
         guard let document = view.document else { return NSRange() }
         if let selection = view.currentSelection, let page = selection.pages.first,
@@ -125,9 +120,6 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
         guard let top = view.placeBeneathToolbar, let page = document.page(ifAt: top.index), let span = span(of: top.index) else {
             return NSRange()
         }
-        // The shown area's corner is usually off a glyph, where PDFKit finds no character, so this is the first character
-        // from the top beneath the toolbar to the page's foot, across the page, else the page's end. Text under the find
-        // bar counts, as it showed before the bar opened over it.
         let box = page.bounds(for: view.displayBox)
         let below = page.selection(for: CGRect(x: box.minX, y: box.minY, width: box.width, height: max(0, top.point.y - box.minY)))
         let ranges = below.map { below in (0..<below.numberOfTextRanges(on: page)).map { below.range(at: $0, on: page) } } ?? []

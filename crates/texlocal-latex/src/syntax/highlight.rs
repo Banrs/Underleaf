@@ -383,7 +383,6 @@ fn verb(s: &mut Stream, state: &mut State, end: usize) -> Option<HighlightKind> 
     None
 }
 
-// Ends inline code where `Scanner::verb` does, so no `$` inside it opens maths.
 fn inline_code_end(line: &[u16], mut i: usize, name: &str) -> usize {
     let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
     let past = |i: usize, close: u16| {

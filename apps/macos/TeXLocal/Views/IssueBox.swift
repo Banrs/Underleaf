@@ -1,9 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// An issue's box at the end of its line: a count when the line has several, the issue's symbol, and as much of its message
-/// as fits. A build issue fills its box and tints its line; a Live Preview issue, which comes and goes as the user types, is
-/// outlined on a neutral line.
 struct IssueBox: View, Equatable {
     let isError: Bool
     let isLive: Bool
@@ -18,7 +15,6 @@ struct IssueBox: View, Equatable {
 
     static func line(error: Bool, live: Bool) -> NSColor { live ? .quaternarySystemFill : tint(error: error).withAlphaComponent(0.1) }
 
-    /// System yellow on white is 1.5:1, so underlines are raised to the 3:1 WCAG 2.1 (1.4.11) asks of a mark that isn't text.
     static let underlines = [false: tint(error: false).legible(ratio: 3), true: tint(error: true).legible(ratio: 3)]
 
     var body: some View {
